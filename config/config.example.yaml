@@ -1,0 +1,48 @@
+# Скопируйте этот файл в config.yaml и заполните своими данными.
+# cp config/config.example.yaml config/config.yaml
+
+account:
+  storage_state_file: data/storage_state/hh_session.json
+
+throttle:
+  min_delay_seconds: 8
+  max_delay_seconds: 25
+  daily_apply_limit: 40
+  daily_bump_limit: 10
+
+cover_letter_default: |
+  Здравствуйте!
+
+  Меня заинтересовала вакансия "{vacancy_title}" в компании {company_name}.
+  Мой опыт и навыки соответствуют требованиям, буду рад обсудить детали.
+
+  С уважением
+
+resumes:
+  - id: "resume-name-1"
+    resume_url: "https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX"
+    search:
+      text: "python developer"
+      area: 1
+      salary_from: 200000
+      experience: "between3And6"
+      schedule: "remote"
+      exclude_employers:
+        - "Компания А"
+        - "Компания Б"
+      exclude_keywords:
+        - "1С"
+        - "холодные звонки"
+    cover_letter: null
+
+  - id: "resume-name-2"
+    resume_url: "https://hh.ru/resume/YYYYYYYYYYYYYYYYYYYYYYYY"
+    search:
+      text: "data analyst"
+      area: 1
+      salary_from: null
+      experience: null
+      schedule: null
+      exclude_employers: []
+      exclude_keywords: []
+    cover_letter: null
