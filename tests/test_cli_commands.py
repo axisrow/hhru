@@ -27,14 +27,14 @@ def _subparser_actions(parser):
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
-    assert set(action.choices) == {"login", "search", "apply", "bump", "run"}
+    assert set(action.choices) == {"login", "search", "apply", "bump", "run", "probe"}
 
 
 def test_register_commands_returns_names():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     names = register_commands(sub)
-    assert set(names) == {"login", "search", "apply", "bump", "run"}
+    assert set(names) == {"login", "search", "apply", "bump", "run", "probe"}
 
 
 def _opts_for(command: str) -> set[str]:
@@ -72,6 +72,15 @@ def test_bump_no_limit():
     opts = _opts_for("bump")
     assert "--resume" in opts
     assert "--dry-run" in opts
+    assert "--limit" not in opts
+
+
+def test_probe_has_vacancy_args():
+    opts = _opts_for("probe")
+    assert "--resume" in opts
+    assert "--vacancy-id" in opts
+    assert "--vacancy-url" in opts
+    # probe не откликается — дневной лимит/limit бессмысленны
     assert "--limit" not in opts
 
 

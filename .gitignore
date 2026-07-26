@@ -10,5 +10,7 @@ config/config.yaml
 data/storage_state/*.json
 data/*.db
 logs/*.log
+logs/probe_*.png
+logs/probe_*.html
 
 .env
