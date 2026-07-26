@@ -13,8 +13,6 @@ import pytest
 
 from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_config
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 def _write_config(tmp_path, body: str):
     path = tmp_path / "config.yaml"
@@ -206,24 +204,41 @@ def test_load_config_account_user_agent_wrong_type(tmp_path):
         load_config(path)
 
 
-def test_session_secret_path_is_gitignored(tmp_path, monkeypatch):
+def _shipped_storage_state_path() -> str:
+    """Берёт storage_state_file прямо из config.example.yaml — shipped контракт."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    example = repo_root / "config" / "config.example.yaml"
+    raw = yaml.safe_load(example.read_text(encoding="utf-8"))
+    return raw["account"]["storage_state_file"]
+
+
+def _is_gitignored_repo(path: Path, repo: Path) -> bool:
+    return (
+        subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", str(path)],
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def test_session_secret_is_gitignored_when_config_in_repo(tmp_path):
     # Инвариант безопасности (#23 review): shipped storage_state_file из
-    # config.example.yaml должен резолвиться в путь, покрытый .gitignore.
-    # Иначе login (auth.py) запишет cookies/localStorage сессии hh.ru в
-    # НЕ-ignored файл → account takeover при случайном коммите.
+    # config.example.yaml должен резолвиться (относительно директории конфига)
+    # в путь, покрытый .gitignore. Иначе login (auth.py) запишет cookies/
+    # localStorage сессии hh.ru в НЕ-ignored файл → account takeover при коммите.
     #
-    # Реальный пользовательский кейс: конфиг лежит в config/config.yaml,
-    # запуск из корня репо. storage_state_file резолвится относительно cwd
-    # (как --config/--history/logs), а НЕ относительно директории конфига —
-    # иначе data/... сместится в config/data/... и выйдет из-под .gitignore.
-    monkeypatch.chdir(REPO_ROOT)
+    # Конфиг лежит в config/config.yaml (как shipped example), запуск из корня.
+    shipped = _shipped_storage_state_path()
     config_in_subdir = tmp_path / "config" / "config.yaml"
     config_in_subdir.parent.mkdir(parents=True)
     config_in_subdir.write_text(
         textwrap.dedent(
-            """
+            f"""
             account:
-              storage_state_file: data/storage_state/hh_session.json
+              storage_state_file: {shipped}
             resumes:
               - id: r1
                 resume_url: "https://hh.ru/resume/SEC1"
@@ -233,18 +248,60 @@ def test_session_secret_path_is_gitignored(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    config = load_config(config_in_subdir)
-
-    # Путь резолвится относительно cwd (корень репо), а не config/.
-    resolved = Path.cwd() / config.storage_state_file
-    ignored = (
-        subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "check-ignore", "-q", str(resolved)],
-            check=False,
-        ).returncode
-        == 0
+    # Имитируем реальный layout: конфиг в <repo>/config/, data/ в <repo>/data/.
+    # load_config резолвит storage_state_file относительно директории конфига.
+    repo_copy = tmp_path / "repo"
+    repo_copy.mkdir()
+    (repo_copy / "config").mkdir()
+    (repo_copy / "data" / "storage_state").mkdir(parents=True)
+    # Инициализируем git + копируем .gitignore, чтобы check-ignore был валиден.
+    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
+    (repo_copy / ".gitignore").write_text(
+        "config/config.yaml\ndata/storage_state/*.json\ndata/*.db\n", encoding="utf-8"
     )
-    assert ignored, (
-        f"storage_state_file резолвится в НЕ-ignored путь: {resolved}. "
+    cfg = repo_copy / "config" / "config.yaml"
+    cfg.write_text(config_in_subdir.read_text(encoding="utf-8"), encoding="utf-8")
+
+    config = load_config(cfg)
+    assert _is_gitignored_repo(config.storage_state_file, repo_copy), (
+        f"storage_state_file резолвится в НЕ-ignored путь: {config.storage_state_file}. "
         "Секрет сессии hh.ru может попасть в git-коммит."
     )
+
+
+def test_session_secret_independent_of_cwd(tmp_path, monkeypatch):
+    # Codex round-2: при запуске из ЧУЖОЙ директории с абсолютным --config путь
+    # всё равно должен указывать на gitignored место (рядом с конфигом), а не
+    # в CWD вызывающего. Регрессия: relative-to-cwd ломал это.
+    shipped = _shipped_storage_state_path()
+    repo_copy = tmp_path / "repo"
+    (repo_copy / "config").mkdir(parents=True)
+    (repo_copy / "data" / "storage_state").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
+    (repo_copy / ".gitignore").write_text(
+        "config/config.yaml\ndata/storage_state/*.json\ndata/*.db\n", encoding="utf-8"
+    )
+    cfg = repo_copy / "config" / "config.yaml"
+    cfg.write_text(
+        textwrap.dedent(
+            f"""
+            account:
+              storage_state_file: {shipped}
+            resumes:
+              - id: r1
+                resume_url: "https://hh.ru/resume/SEC2"
+                search:
+                  text: x
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    # Запуск из /tmp (чужой CWD) с абсолютным путём к конфигу.
+    monkeypatch.chdir(tmp_path)
+    config = load_config(cfg.resolve())
+    assert _is_gitignored_repo(config.storage_state_file, repo_copy), (
+        f"storage_state_file зависит от CWD и попал в НЕ-ignored путь: {config.storage_state_file}"
+    )
+    # Путь указывает рядом с конфигом, а не в текущий CWD.
+    assert repo_copy in config.storage_state_file.parents

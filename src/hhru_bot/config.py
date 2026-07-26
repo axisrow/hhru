@@ -96,12 +96,11 @@ def load_config(path: str | Path) -> AppConfig:
     if not raw:
         raise ConfigError(f"Конфиг {path} пуст или некорректен")
 
-    # storage_state_file хранится как относительный путь из конфига и резолвится
-    # относительно cwd в рантайме — согласовано с --config/--history/logs (см.
-    # cli.py). НЕ relative-to-config-file: при конфиге в config/ shipped-путь
-    # data/... сместился бы в config/data/... и вышел из-под .gitignore (секрет
-    # сессии hh.ru мог бы попасть в коммит — поймано в review #23).
-    account = parse_account(raw.get("account"))
+    # storage_state_file резолвится относительно директории файла конфига —
+    # стабильно, не зависит от cwd (даже при --config с абсолютным путём из
+    # чужой директории). Shipped-путь ../data/... (от config/) → корень репо →
+    # покрыт .gitignore. См. regression-тест test_session_secret_path_is_gitignored.
+    account = parse_account(raw.get("account"), path.parent)
     storage_state_file = account.storage_state_file
     user_agent = account.user_agent
 

@@ -2,7 +2,11 @@
 # cp config/config.example.yaml config/config.yaml
 
 account:
-  storage_state_file: data/storage_state/hh_session.json
+  # Путь резолвится ОТНОСИТЕЛЬНО ЭТОГО файла конфига (config/config.yaml), не от
+  # cwd. ../data/ → корень репо → покрыто .gitignore (data/storage_state/*.json).
+  # НЕ меняйте на data/... без ../ — иначе сессия запишется в config/data/ и
+  # сможет попасть в git-коммит (секрет hh.ru).
+  storage_state_file: ../data/storage_state/hh_session.json
   # user_agent опционален. Закомментирован/отсутствует — Playwright ставит свой
   # родной User-Agent. Раскомментируйте и впишите строку, только если hh.ru
   # требует конкретный UA. Хардкода Chrome/xxx в коде нет (см. #9).
