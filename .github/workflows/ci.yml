@@ -32,6 +32,12 @@ jobs:
       - name: Pytest
         run: pytest
 
+      - name: CLI docs in sync with argparse
+        # Справочник команд в README автогенерируется из argparse. Если кто-то
+        # добавил флаг/команду, но забыл перегенерить доку — шаг падает.
+        # Модель FastAPI/OpenAPI: код = источник правды, .md собирается.
+        run: python3 scripts/gen_cli_docs.py --check
+
   packaging:
     # Страховка, что упакованный дистрибутив (wheel) несёт миграции и History
     # работает при `pip install .`, а не только при запуске из checkout.
