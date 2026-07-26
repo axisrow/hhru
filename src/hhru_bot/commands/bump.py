@@ -25,7 +25,9 @@ def run(args: argparse.Namespace) -> None:
     resumes = resumes_from_args(config, args)
     throttle = Throttle(config.throttle, history)
 
-    with launch_context(config.storage_state_file, headless=args.headless) as context:
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
         page = context.new_page()
         for resume in resumes:
             print(f"\n=== Поднятие резюме: {resume.id} ===")

@@ -23,7 +23,9 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
     resumes = resumes_from_args(config, args)
 
-    with launch_context(config.storage_state_file, headless=args.headless) as context:
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
         page = context.new_page()
         for resume in resumes:
             print(f"\n=== Поиск вакансий для резюме: {resume.id} ===")

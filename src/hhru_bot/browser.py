@@ -10,21 +10,27 @@ logger = logging.getLogger("hhru_bot.browser")
 
 HH_BASE_URL = "https://hh.ru"
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
-
 
 @contextmanager
-def launch_context(storage_state_file: Path, headless: bool = False):
+def launch_context(
+    storage_state_file: Path,
+    headless: bool = False,
+    user_agent: str | None = None,
+):
+    """Контекст браузера с сохранённой сессией.
+
+    user_agent: None (по умолчанию) — пусть Playwright ставит свой родной UA;
+    строка — переопределить UA (если требует hh.ru). Хардкода Chrome/xxx здесь
+    намеренно нет.
+    """
     with sync_playwright() as p:
         browser: Browser = p.chromium.launch(headless=headless)
-        context_kwargs = {
-            "user_agent": USER_AGENT,
+        context_kwargs: dict = {
             "viewport": {"width": 1366, "height": 900},
             "locale": "ru-RU",
         }
+        if user_agent:
+            context_kwargs["user_agent"] = user_agent
         if storage_state_file.exists():
             context_kwargs["storage_state"] = str(storage_state_file)
             logger.info("Загружена сохранённая сессия: %s", storage_state_file)

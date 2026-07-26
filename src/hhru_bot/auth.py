@@ -4,7 +4,7 @@ import logging
 
 from playwright.sync_api import sync_playwright
 
-from .browser import HH_BASE_URL, USER_AGENT
+from .browser import HH_BASE_URL
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
@@ -23,11 +23,15 @@ def login(config: AppConfig) -> None:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        context = browser.new_context(
-            user_agent=USER_AGENT,
-            viewport={"width": 1366, "height": 900},
-            locale="ru-RU",
-        )
+        context_kwargs: dict = {
+            "viewport": {"width": 1366, "height": 900},
+            "locale": "ru-RU",
+        }
+        # user_agent пробрасывается из account.user_agent; без него — родной UA
+        # Playwright (хардкода Chrome/xxx здесь нет, см. #9).
+        if config.user_agent:
+            context_kwargs["user_agent"] = config.user_agent
+        context = browser.new_context(**context_kwargs)
         page = context.new_page()
         page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded")
 
