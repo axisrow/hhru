@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 .venv/
+build/
+dist/
+*.egg-info/
+*.egg
 
 config/config.yaml
 data/storage_state/*.json

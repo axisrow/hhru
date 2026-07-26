@@ -28,6 +28,12 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Миграции — это .sql-ресурсы, их надо явно тащить в wheel/sdist; без этого
+# _available_migrations() через importlib.resources не найдёт 001_actions.sql
+# при `pip install .` и History не создаст таблицу actions.
+[tool.setuptools.package-data]
+"hhru_bot.migrations" = ["*.sql"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
