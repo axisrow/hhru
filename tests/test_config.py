@@ -181,3 +181,22 @@ def test_load_config_account_user_agent_explicit(tmp_path):
     )
     config = load_config(path)
     assert config.user_agent == ("Mozilla/5.0 (X11; Linux x86_64) Chrome/999.0 Safari/537.36")
+
+
+def test_load_config_account_user_agent_wrong_type(tmp_path):
+    # user_agent не-строка → ConfigError (контракт валидации типа, #9).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+          user_agent: 123
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/GGG777"
+            search:
+              text: "x"
+        """,
+    )
+    with pytest.raises(ConfigError, match="user_agent"):
+        load_config(path)

@@ -38,6 +38,7 @@ def parse_account(raw) -> AccountConfig:
         raise ConfigError("Поле 'user_agent' (account) должно быть строкой")
     return AccountConfig(
         storage_state_file=PROJECT_ROOT / storage_state_file,
+        # `or None` намеренно: пустая строка трактуется как «не задано» → родной UA.
         user_agent=user_agent or None,
     )
 
