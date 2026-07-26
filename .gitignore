@@ -9,6 +9,11 @@ dist/
 config/config.yaml
 data/storage_state/*.json
 data/*.db
+# Defence-in-depth: session-секреты hh.ru (cookies/localStorage) игнорируются в
+# ЛЮБОЙ директории, не только в data/. Catch-all покрывает legacy user-конфиги,
+# где старое значение 'data/...' при relative-to-config резолве попадает в
+# config/data/... (не покрыто точечным 'data/storage_state/*.json' выше).
+**/storage_state/*.json
 logs/*.log
 logs/probe_*.png
 logs/probe_*.html

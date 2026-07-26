@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -305,3 +306,41 @@ def test_session_secret_independent_of_cwd(tmp_path, monkeypatch):
     )
     # Путь указывает рядом с конфигом, а не в текущий CWD.
     assert repo_copy in config.storage_state_file.parents
+
+
+def test_session_secret_gitignored_for_legacy_config_value(tmp_path):
+    # Codex round-4: существующие user-конфиги (созданные до этого PR) всё ещё
+    # содержат СТАРОЕ shipped значение 'data/storage_state/hh_session.json'
+    # (без ../). С relative-to-config резолвом при конфиге в config/ это даёт
+    # config/data/storage_state/... — НЕ покрыто точечным правилом
+    # 'data/storage_state/*.json'. Defence-in-depth: РЕАЛЬНЫЙ .gitignore репо
+    # должен покрывать session-файлы в ЛЮБОЙ директории ('**/storage_state/*.json'),
+    # иначе legacy конфиг публикует секрет сессии при git add.
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_copy = tmp_path / "repo"
+    (repo_copy / "config").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
+    # Копируем РЕАЛЬНЫЙ .gitignore репозитория — не выдуманный mock.
+    shutil.copyfile(repo_root / ".gitignore", repo_copy / ".gitignore")
+    cfg = repo_copy / "config" / "config.yaml"
+    cfg.write_text(
+        textwrap.dedent(
+            """
+            account:
+              storage_state_file: data/storage_state/hh_session.json
+            resumes:
+              - id: r1
+                resume_url: "https://hh.ru/resume/LEG1"
+                search:
+                  text: x
+            """
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(cfg)
+    # Legacy значение резолвится в config/data/... — должно быть gitignored.
+    assert _is_gitignored_repo(config.storage_state_file, repo_copy), (
+        f"legacy storage_state_file резолвится в НЕ-ignored путь: "
+        f"{config.storage_state_file}. Defence-in-depth .gitignore нужен "
+        "(**/storage_state/*.json)."
+    )
