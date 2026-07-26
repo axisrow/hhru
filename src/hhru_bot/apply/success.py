@@ -97,6 +97,10 @@ def wait_success_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
     try:
         page.locator(APPLY_SUCCESS_MARKER).wait_for(timeout=timeout_ms)
     except PlaywrightTimeoutError:
-        logger.warning("Не дождались ни одного сигнала успеха за %d мс", timeout_ms)
+        logger.warning(
+            "Не дождались ни одного сигнала успеха за %d мс (url=%s)",
+            timeout_ms,
+            page.url,
+        )
         return False
     return True

@@ -47,6 +47,7 @@ class _FakePage:
         self._markers = markers or set()
         self._success_texts = success_texts or set()
         self._submit_present = submit_present
+        self.url = ""
 
     def locator(self, selector: str):  # noqa: ARG002
         if selector in self._markers:
@@ -96,6 +97,27 @@ def test_success_all_signals_absent_returns_false():
     """Ни маркера, ни текста, submit на месте — таймаут, успеха нет."""
     page = _FakePage(submit_present=True)
     assert success.wait_success_confirmation(page, timeout_ms=0) is False
+
+
+def test_success_timeout_logs_page_url(caplog):
+    """Ишью #7 критерий готовности: ветки ошибок логируют URL.
+
+    На таймауте (ни один сигнал не сработал) предупреждение должно содержать
+    page.url — для диагностики первого живого прогона.
+    """
+    import logging
+
+    page = _FakePage(submit_present=True)
+    page.url = "https://hh.ru/applicant/vacancy_response?vacancyId=42"
+
+    with caplog.at_level(logging.WARNING, logger="hhru_bot.apply.success"):
+        result = success.wait_success_confirmation(page, timeout_ms=0)
+
+    assert result is False
+    assert any(
+        "https://hh.ru/applicant/vacancy_response?vacancyId=42" in rec.message
+        for rec in caplog.records
+    )
 
 
 # --- first_locator ---
