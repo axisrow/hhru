@@ -33,7 +33,7 @@ def login(config: AppConfig) -> None:
             context_kwargs["user_agent"] = config.user_agent
         context = browser.new_context(**context_kwargs)
         page = context.new_page()
-        page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded")
+        page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded", timeout=120000)
 
         print()
         print("=" * 70)
