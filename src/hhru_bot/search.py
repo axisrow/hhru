@@ -92,7 +92,11 @@ def search_vacancies(
                     vacancy_id=vacancy_id,
                     title=title,
                     company=company,
-                    url=href.split("?")[0] if href.startswith("http") else f"{HH_BASE_URL}{href.split('?')[0]}",
+                    url=(
+                        href.split("?")[0]
+                        if href.startswith("http")
+                        else f"{HH_BASE_URL}{href.split('?')[0]}"
+                    ),
                 )
             )
 

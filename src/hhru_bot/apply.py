@@ -4,7 +4,8 @@ import logging
 import time
 from dataclasses import dataclass
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
 from .search import VacancyCard
@@ -48,9 +49,7 @@ def apply_to_vacancy(
     letter = render_cover_letter(cover_letter_template, vacancy)
 
     if dry_run:
-        logger.info(
-            "[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", vacancy.title, letter
-        )
+        logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", vacancy.title, letter)
         return ApplyResult(vacancy, True, "dry-run")
 
     # VACANCY_APPLY_BUTTON — это <a href="/applicant/vacancy_response?..."> (подтверждено

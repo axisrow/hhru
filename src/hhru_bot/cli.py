@@ -44,7 +44,10 @@ def cmd_search(args: argparse.Namespace) -> None:
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
             candidates, skipped = filter_candidates(cards, resume.search, resume.id, history)
 
-            print(f"Найдено всего: {len(cards)}, подходящих: {len(candidates)}, исключено: {len(skipped)}")
+            print(
+                f"Найдено всего: {len(cards)}, "
+                f"подходящих: {len(candidates)}, исключено: {len(skipped)}"
+            )
             for c in candidates:
                 print(f"  [candidate] {c.title} — {c.company} ({c.url})")
             for card, reason in skipped:
@@ -149,9 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hhru_bot",
         description="Автоматизация поиска, откликов и поднятия резюме на hh.ru",
     )
-    parser.add_argument(
-        "--config", default=str(DEFAULT_CONFIG_PATH), help="Путь к config.yaml"
-    )
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Путь к config.yaml")
     parser.add_argument(
         "--history", default=str(DEFAULT_HISTORY_PATH), help="Путь к файлу истории (SQLite)"
     )
@@ -174,11 +175,18 @@ def build_parser() -> argparse.ArgumentParser:
         p = subparsers.add_parser(name, help=help_text)
         p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
         p.add_argument(
-            "--dry-run", action="store_true", help="Показать, что будет сделано, без реальных действий"
+            "--dry-run",
+            action="store_true",
+            help="Показать, что будет сделано, без реальных действий",
         )
         p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
         if name in ("apply", "run"):
-            p.add_argument("--limit", type=int, default=0, help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)")
+            p.add_argument(
+                "--limit",
+                type=int,
+                default=0,
+                help=("Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)"),
+            )
         p.set_defaults(func=func)
 
     return parser
