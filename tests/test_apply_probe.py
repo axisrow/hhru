@@ -66,7 +66,6 @@ class FakeProbePage:
         apply_button: bool = True,
         textarea: bool = True,
         submit: bool = True,
-        already_responded: bool = False,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
@@ -75,7 +74,6 @@ class FakeProbePage:
         self._apply_button = apply_button
         self._textarea = textarea
         self._submit = submit
-        self._already = already_responded
         # Список как мьютабельный счётчик: каждый click submit-локатора добавляет 1.
         self.submit_clicks: list[int] = []
         self._textarea_locator: _FakeLocator | None = None
@@ -93,11 +91,12 @@ class FakeProbePage:
         return "<html><body>probe dump</body></html>"
 
     def locator(self, selector: str):  # noqa: ARG002
-        from hhru_bot.apply import dedup
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
-        if selector == dedup.APPLY_ALREADY_RESPONDED_MARKER:
-            return _FakeLocator(present=self._already)
+        # NOTE: check_already_responded — stub (всегда None) после #3; DOM-маркер
+        # удалён из dedup, поэтому здесь нет ветки для него. probe не блокируется
+        # дедупом (он идёт через history до apply_to_vacancy, а probe — диагностический
+        # режим на конкретной вакансии).
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=self._apply_button)
         if selector == apply_form.APPLY_COVER_LETTER_TEXTAREA:
@@ -204,12 +203,14 @@ def test_probe_no_apply_button_fails(tmp_path: Path):
     assert page.screenshot_calls == 0
 
 
-def test_probe_already_responded_fails_without_dump(tmp_path: Path):
-    page = FakeProbePage(already_responded=True)
+def test_probe_dedup_step_is_passthrough(tmp_path: Path):
+    # check_already_responded — stub (всегда None) после #3: DOM-маркер убран,
+    # дедуп идёт через history до apply_to_vacancy. probe НЕ должен блокироваться
+    # этим шагом — доходит до формы и дампит.
+    page = FakeProbePage(apply_button=True)
 
     result = probe_vacancy(page, _vacancy(), "RID", "x", tmp_path)
 
-    assert result.success is False
-    assert "уже есть отклик" in result.reason
-    # на уже откликнутой форме дампить нечего
-    assert page.screenshot_calls == 0
+    assert result.success is True
+    assert page.screenshot_calls >= 1
+    assert page.content_calls >= 1
