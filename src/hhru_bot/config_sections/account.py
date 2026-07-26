@@ -27,14 +27,15 @@ def _require(mapping: dict, key: str, context: str):
     return mapping[key]
 
 
-def parse_account(raw, base_dir: Path) -> AccountConfig:
+def parse_account(raw) -> AccountConfig:
     """raw — корневая секция account. Возвращает AccountConfig.
 
-    ``base_dir`` — директория файла конфига; относительный путь ``storage_state_file``
-    резолвится от неё, а не от пакета (иначе после `pip install` путь улетел бы в
-    site-packages) и не от cwd (тогда конфиг и data/ разъезжались бы при запуске из
-    произвольной директории). Конфиг лежит рядом с data/ — это и есть база.
-    См. также комментарий в ``load_config``.
+    ``storage_state_file`` хранится как есть (относительный путь из конфига) и
+    резолвится относительно cwd в рантайме — это согласовано с ``--config``/
+    ``--history``/logs (см. ``cli.py``). НЕ резолвится относительно директории
+    конфига: иначе при конфиге в ``config/`` shipped-путь ``data/...`` сместился
+    бы в ``config/data/...`` и вышел из-под ``.gitignore`` (секрет сессии hh.ru
+    мог бы попасть в коммит — security-регрессия, поймана в review #23).
     """
     if not raw:
         raise ConfigError("В конфиге отсутствует обязательное поле 'storage_state_file' (account)")
@@ -44,7 +45,7 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
     if user_agent is not None and not isinstance(user_agent, str):
         raise ConfigError("Поле 'user_agent' (account) должно быть строкой")
     return AccountConfig(
-        storage_state_file=(base_dir / storage_state_file).resolve(),
+        storage_state_file=Path(storage_state_file),
         # `or None` намеренно: пустая строка трактуется как «не задано» → родной UA.
         user_agent=user_agent or None,
     )

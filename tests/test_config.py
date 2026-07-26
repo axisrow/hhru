@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_config
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_config(tmp_path, body: str):
@@ -200,3 +204,47 @@ def test_load_config_account_user_agent_wrong_type(tmp_path):
     )
     with pytest.raises(ConfigError, match="user_agent"):
         load_config(path)
+
+
+def test_session_secret_path_is_gitignored(tmp_path, monkeypatch):
+    # Инвариант безопасности (#23 review): shipped storage_state_file из
+    # config.example.yaml должен резолвиться в путь, покрытый .gitignore.
+    # Иначе login (auth.py) запишет cookies/localStorage сессии hh.ru в
+    # НЕ-ignored файл → account takeover при случайном коммите.
+    #
+    # Реальный пользовательский кейс: конфиг лежит в config/config.yaml,
+    # запуск из корня репо. storage_state_file резолвится относительно cwd
+    # (как --config/--history/logs), а НЕ относительно директории конфига —
+    # иначе data/... сместится в config/data/... и выйдет из-под .gitignore.
+    monkeypatch.chdir(REPO_ROOT)
+    config_in_subdir = tmp_path / "config" / "config.yaml"
+    config_in_subdir.parent.mkdir(parents=True)
+    config_in_subdir.write_text(
+        textwrap.dedent(
+            """
+            account:
+              storage_state_file: data/storage_state/hh_session.json
+            resumes:
+              - id: r1
+                resume_url: "https://hh.ru/resume/SEC1"
+                search:
+                  text: x
+            """
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(config_in_subdir)
+
+    # Путь резолвится относительно cwd (корень репо), а не config/.
+    resolved = Path.cwd() / config.storage_state_file
+    ignored = (
+        subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "check-ignore", "-q", str(resolved)],
+            check=False,
+        ).returncode
+        == 0
+    )
+    assert ignored, (
+        f"storage_state_file резолвится в НЕ-ignored путь: {resolved}. "
+        "Секрет сессии hh.ru может попасть в git-коммит."
+    )
