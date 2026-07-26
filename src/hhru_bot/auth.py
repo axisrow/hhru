@@ -22,7 +22,10 @@ def login(config: AppConfig) -> None:
     storage_state_file.parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context_kwargs: dict = {
             "viewport": {"width": 1366, "height": 900},
             "locale": "ru-RU",
@@ -32,6 +35,13 @@ def login(config: AppConfig) -> None:
         if config.user_agent:
             context_kwargs["user_agent"] = config.user_agent
         context = browser.new_context(**context_kwargs)
+        # Убираем navigator.webdriver и подделываем window.chrome — без этого
+        # hh.ru детектит Playwright и держит кнопку выбора роли disabled. Приём
+        # из YAMAKAYAMACO/hh-autoresponder/manual_login.py (рабочий против hh.ru).
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            "window.chrome = {runtime: {}};"
+        )
         page = context.new_page()
         page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded", timeout=120000)
 

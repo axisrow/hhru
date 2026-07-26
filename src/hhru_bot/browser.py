@@ -24,7 +24,13 @@ def launch_context(
     намеренно нет.
     """
     with sync_playwright() as p:
-        browser: Browser = p.chromium.launch(headless=headless)
+        # --disable-blink-features=AutomationControlled убирает главный флаг, по
+        # которому hh.ru (DDoS-Guard) держит кнопку входа disabled в Playwright.
+        # Приём из YAMAKAYAMACO/hh-autoresponder (рабочий против hh.ru).
+        browser: Browser = p.chromium.launch(
+            headless=headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context_kwargs: dict = {
             "viewport": {"width": 1366, "height": 900},
             "locale": "ru-RU",
@@ -40,6 +46,13 @@ def launch_context(
             )
 
         context: BrowserContext = browser.new_context(**context_kwargs)
+        # Убираем navigator.webdriver и подделываем window.chrome — без этого
+        # hh.ru детектит Playwright и не активирует кнопку входа. Приём из
+        # YAMAKAYAMACO/hh-autoresponder/manual_login.py.
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            "window.chrome = {runtime: {}};"
+        )
         try:
             yield context
         finally:
