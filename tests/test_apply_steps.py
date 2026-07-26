@@ -24,6 +24,10 @@ class _FakeLocator:
     Записывает вызовы click/fill, чтобы тесты проверяли, какие поля реально трогались.
     """
 
+    @property
+    def first(self):
+        return self
+
     def __init__(self, selector: str, state: _SelectorState) -> None:
         self.selector = selector
         self._state = state

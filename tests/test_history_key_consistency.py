@@ -36,6 +36,10 @@ def _resume() -> ResumeConfig:
 class _FakeLocator:
     """Минимальный Playwright-locator для apply-pipeline в dry-run."""
 
+    @property
+    def first(self):
+        return self
+
     def __init__(self, present: bool = False):
         self._present = present
 

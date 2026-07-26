@@ -22,6 +22,10 @@ class _FakeLocator:
     превысит appear_after (моделирует асинхронный рендер сигнала после submit).
     """
 
+    @property
+    def first(self):
+        return self
+
     def __init__(
         self,
         *,
