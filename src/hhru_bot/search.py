@@ -169,21 +169,20 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _ZERO_WEIGHTS() -> ScoringWeights:
-    """Истинно нейтральные веса для legacy-конфига (без секции scoring).
+_ZERO_WEIGHTS = ScoringWeights(
+    must_have=0.0,
+    nice_to_have=0.0,
+    exclude_keyword=0.0,
+    text_match=0.0,
+)
+"""Истинно нейтральные веса для legacy-конфига (без секции scoring).
 
-    Все факторы = 0 → score любой карточки = 0.0 → ранжирование не меняет
-    порядок входа (обратная совместимость candidates[:limit]). НЕ дефолтные
-    веса ScoringWeights(): там text_match=1.0 делал бы legacy score зависимым
-    от filters.text и нарушал бы совместимость, даже если must_have/nice_to_have
-    пусты.
-    """
-    return ScoringWeights(
-        must_have=0.0,
-        nice_to_have=0.0,
-        exclude_keyword=0.0,
-        text_match=0.0,
-    )
+Все факторы = 0 → score любой карточки = 0.0 → ранжирование не меняет
+порядок входа (обратная совместимость candidates[:limit]). НЕ дефолтные
+веса ScoringWeights(): там text_match=1.0 делал бы legacy score зависимым
+от filters.text и нарушал бы совместимость, даже если must_have/nice_to_have
+пусты. frozen-dataclass — переиспользуемая константа (immutable).
+"""
 
 
 def _score_card(
@@ -198,6 +197,13 @@ def _score_card(
       - nice_to_have: +weight за каждое nice_to_have-слово в title.
       - exclude_keyword: +weight (обычно отрицательный) за каждое стоп-слово в title.
       - text_match: +weight × долю токенов filters.text, найденных в title.
+
+    exclude_keyword намеренно дублирует отсев filter_candidates: в нормальном
+    потоке стоп-слова уже отсеяны до rank_candidates, но фактор оставлен для
+    устойчивости (прямой вызов rank_candidates в обход фильтра, будущие
+    изменения filter_candidates). v1 матчит ключевые слова по первому токену —
+    рассчитано на однословные ключи (python/django); многословные ключи
+    ('machine learning') совпадут по любому из своих токенов.
     """
     title_tokens = set(_tokenize(card.title))
 
@@ -243,7 +249,7 @@ def rank_candidates(
     старый candidates[:limit], дневной лимит уходит на тот же набор.
     """
     scoring: ScoringConfig | None = getattr(resume, "scoring", None)
-    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS()
+    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
 
     scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
     for card in candidates:

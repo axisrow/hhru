@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from hhru_bot.config import ResumeConfig, SearchFilters, load_config
+from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_config
 from hhru_bot.config_sections.scoring import ScoringConfig, ScoringWeights
 from hhru_bot.search import VacancyCard, rank_candidates
 
@@ -303,3 +303,27 @@ def test_load_config_scoring_optional_defaults(tmp_path):
     assert r.scoring is None
     assert r.search.must_have == []
     assert r.search.nice_to_have == []
+
+
+def test_load_config_scoring_non_numeric_weight_raises_config_error(tmp_path):
+    """Не-числовой вес → ConfigError (консистентно с _require), а не ValueError."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            account:
+              storage_state_file: data/storage_state/hh_session.json
+            resumes:
+              - id: r1
+                resume_url: "https://hh.ru/resume/AAA111"
+                search:
+                  text: "python"
+                scoring:
+                  weights:
+                    must_have: "not-a-number"
+            """
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="должен быть числом"):
+        load_config(path)

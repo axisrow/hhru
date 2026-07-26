@@ -34,12 +34,23 @@ def _parse_weights(raw, context: str) -> ScoringWeights:
     if not isinstance(raw, dict):
         raise ConfigError(f"Секция '{context}' должна быть отображением weights: ...")
     # Каждый вес опционален; неизвестные ключи игнорируем ради обратной совместимости.
-    return ScoringWeights(
-        must_have=float(raw.get("must_have", ScoringWeights.must_have)),
-        nice_to_have=float(raw.get("nice_to_have", ScoringWeights.nice_to_have)),
-        exclude_keyword=float(raw.get("exclude_keyword", ScoringWeights.exclude_keyword)),
-        text_match=float(raw.get("text_match", ScoringWeights.text_match)),
-    )
+    # Не-числовое значение → ConfigError (консистентно с _require в config.py),
+    # а не «голый» ValueError из float().
+    weights: dict[str, float] = {}
+    for key, default in (
+        ("must_have", ScoringWeights.must_have),
+        ("nice_to_have", ScoringWeights.nice_to_have),
+        ("exclude_keyword", ScoringWeights.exclude_keyword),
+        ("text_match", ScoringWeights.text_match),
+    ):
+        value = raw.get(key, default)
+        try:
+            weights[key] = float(value)
+        except (TypeError, ValueError) as e:
+            raise ConfigError(
+                f"Вес '{key}' в '{context}' должен быть числом, получено: {value!r}"
+            ) from e
+    return ScoringWeights(**weights)
 
 
 @register("scoring")
