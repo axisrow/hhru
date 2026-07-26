@@ -2,13 +2,19 @@
 
 Владелец: #6. #6 правит wait'ы (таймауты, sleep, явные ожидания) здесь — изолированно
 от остальных шагов. Sequence шагов в pipeline.py при этом не меняется.
+
+Принцип ожиданий (см. #6): вместо фиксированных time.sleep и проверок count()>0
+используются явные ожидания Playwright — locator.wait_for(state=..., timeout=...),
+а наличие опционального элемента определяется ловом PlaywrightTimeoutError с коротким
+таймаутом. Троттлинг-паузы (анти-бан) сюда не относятся — они в throttle.wait и их
+трогать нельзя.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -17,6 +23,10 @@ from ..selector_groups import vacancy_page
 logger = logging.getLogger("hhru_bot.apply.steps")
 
 APPLY_TIMEOUT_MS = 10_000
+# Короткий таймаут для проверки опциональных полей формы (резюме/письмо могут
+# отсутствовать — это нормально, а не ошибка). Ждать полной APPLY_TIMEOUT_MS тут
+# бессмысленно: отсутствие поля детерминировано почти сразу.
+OPTIONAL_FIELD_TIMEOUT_MS = 1_500
 
 
 def wait_apply_button(page: Page) -> bool:
@@ -34,36 +44,77 @@ def navigate_to_response_form(page: Page) -> None:
     VACANCY_APPLY_BUTTON — это <a href="/applicant/vacancy_response?..."> (подтверждено
     curl-дампом реальной страницы вакансии), а не триггер модалки на этой же странице.
     Клик вызывает обычную навигацию — дожидаемся её перед поиском полей формы.
+
+    Фиксированный sleep после навигации заменён на явное ожидание готовности DOM:
+    ждём любого индикатора формы (кнопка отправки), максимум APPLY_TIMEOUT_MS.
     """
+    from ..selector_groups import apply_form
+
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON)
     with page.expect_navigation(wait_until="domcontentloaded", timeout=APPLY_TIMEOUT_MS):
         apply_button.click()
-    time.sleep(1)
+    # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
+    try:
+        page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(
+            state="visible", timeout=APPLY_TIMEOUT_MS
+        )
+    except PlaywrightTimeoutError:
+        # Форма не загрузилась — fill_response_form всё равно вернёт причину отказа
+        # (submit не найден), логируем для диагностики устаревшего селектора.
+        logger.warning("Форма отклика не отрисовалась за %d мс", APPLY_TIMEOUT_MS)
+
+
+def _is_visible(page: Page, selector: str, *, timeout_ms: int) -> bool:
+    """Явное ожидание видимости опционального элемента.
+
+    True — элемент появился и видим; False — не дождались или селектор неоднозначен,
+    что для опциональных полей формы означает «на этой странице поля нет / не одно».
+    Заменяет идиому ``locator.count() > 0``, которая проверяет наличие в DOM без
+    гарантии видимости/готовности к взаимодействию.
+
+    Ловим базовый Playwright Error, а не только PlaywrightTimeoutError: ``wait_for``
+    в strict mode при нескольких совпадениях (например, ``APPLY_RESUME_SELECT`` —
+    коллекция резюме) кидает обычный Error, и для опционального поля это не фатал —
+    логика выбора конкретного резюме (``_select_resume_in_form``) разберётся с
+    множественностью сама через count()/nth(). PlaywrightTimeoutError — подкласс Error,
+    поэтому одна ветка ловит оба случая.
+    """
+    try:
+        page.locator(selector).wait_for(state="visible", timeout=timeout_ms)
+    except PlaywrightError:
+        return False
+    return True
 
 
 def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     """Заполняет форму отклика. Возвращает причину отказа или None, если заполнение OK."""
     from ..selector_groups import apply_form
 
-    resume_select = page.locator(apply_form.APPLY_RESUME_SELECT)
-    if resume_select.count() > 0:
+    # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
+    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому «есть ли выбор
+    # резюме» проверяем через count() > 0 (как до #6), а НЕ через _is_visible/wait_for —
+    # иначе при нескольких резюме выбор молча пропускается и submit отправляет резюме
+    # по умолчанию вместо запрошенного resume_id (необратимая отправка неверного резюме).
+    if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
         _select_resume_in_form(page, resume_id)
 
-    letter_toggle = page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE)
-    if letter_toggle.count() > 0:
-        letter_toggle.click()
-        time.sleep(0.5)
+    if _is_visible(
+        page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
+    ):
+        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).click()
+        # Клик раскрывает textarea — ждём её готовности явно, а не слепую паузу.
 
-    textarea = page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA)
-    if textarea.count() > 0:
-        textarea.fill(letter)
-        time.sleep(0.5)
+    if _is_visible(
+        page, apply_form.APPLY_COVER_LETTER_TEXTAREA, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
+    ):
+        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).fill(letter)
+        # fill() синхронно выставляет значение — дополнительное ожидание не нужно.
 
-    submit_button = page.locator(apply_form.APPLY_SUBMIT_BUTTON)
-    if submit_button.count() == 0:
+    # Кнопка отправки — обязательный элемент формы. Не optional: отсутствие = отказ.
+    if not _is_visible(page, apply_form.APPLY_SUBMIT_BUTTON, timeout_ms=APPLY_TIMEOUT_MS):
         return "кнопка отправки отклика не найдена в форме"
 
-    submit_button.click()
+    page.locator(apply_form.APPLY_SUBMIT_BUTTON).click()
     return None
 
 
