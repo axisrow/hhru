@@ -53,7 +53,11 @@ def apply_to_vacancy(
         )
         return ApplyResult(vacancy, True, "dry-run")
 
-    apply_button.click()
+    # VACANCY_APPLY_BUTTON — это <a href="/applicant/vacancy_response?..."> (подтверждено
+    # curl-дампом реальной страницы вакансии), а не триггер модалки на этой же странице.
+    # Клик вызывает обычную навигацию — дожидаемся её перед поиском полей формы.
+    with page.expect_navigation(wait_until="domcontentloaded", timeout=APPLY_TIMEOUT_MS):
+        apply_button.click()
     time.sleep(1)
 
     resume_select = page.locator(sel.APPLY_RESUME_SELECT)

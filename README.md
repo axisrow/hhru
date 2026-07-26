@@ -105,3 +105,75 @@ cp config/config.example.yaml config/config.yaml
 
 Пишутся в `logs/hhru_bot.log` и одновременно в консоль. Используй
 `--verbose` для более подробного вывода.
+
+## Похожие проекты (для идей)
+
+Ссылки ниже — не зависимости и не код для копирования, а источник идей
+и референс: как другие решают отклик, поднятие резюме, обход блокировок и
+устойчивость селекторов. Смотреть, а не переиспользовать.
+
+> **Важный контекст.** 15 декабря 2025 hh.ru закрыл соискательский API:
+> отклик (negotiations) и работа с резюме соискателя для сторонних
+> приложений отключены — остался фактически только поиск вакансий и
+> `GET /me`. Поэтому все живые проекты 2026 года, как и наш, работают
+> через браузер (Playwright), а не через API. API-проекты в списке — лишь
+> справочник по логике, они после декабря 2025 в части откликов/поднятия
+> не работают.
+
+### Браузерные боты (наш стек — Playwright/Selenium)
+
+- [Steev193/hh-ru-apply](https://github.com/Steev193/hh-ru-apply) —
+  Node + Playwright, MIT. Ценно: аккуратно вынесенные селекторы hh.ru
+  (`hh-response-selectors.mjs`, `hh-chat-selectors.mjs`) и codegen-скрипт
+  для их обновления после изменений сайта. Идея для нашего `selectors.py`.
+- [tgeruzov/hh-auto-responder](https://github.com/tgeruzov/hh-auto-responder)
+  — Tampermonkey userscript. Ценно: объект `SELECTORS` с современными
+  (`data-qa`) и legacy-вариантами + эвристический fallback по тексту/роли;
+  роутинг трёх исходов отклика (модалка / редирект с анкетой / прямое
+  подтверждение).
+- [YAMAKAYAMACO/hh-autoresponder](https://github.com/YAMAKAYAMACO/hh-autoresponder)
+  — ближе всего к нашей архитектуре: Python + Playwright + SQLite,
+  rule-based скоринг вакансий без LLM, троттлинг и дневные лимиты.
+- [fikstt2/hh-ai-agent](https://github.com/fikstt2/hh-ai-agent) —
+  Python + Playwright. Ценно: паттерн персистентной сессии (`state.json`)
+  — ручной вход в видимом браузере один раз, затем headless (обход
+  блокировки после закрытия API).
+- [beatwad/XX_Auto_Jobs_Applier](https://github.com/beatwad/XX_Auto_Jobs_Applier)
+  — Python + Playwright, MIT. Ценно: config-driven архитектура (YAML) и
+  приём решения капчи через Telegram.
+- [s3rgeym/hh-applicant-tool](https://github.com/s3rgeym/hh-applicant-tool)
+  — Python, гибрид API + Playwright, зрелый (500+ звёзд). Эталон по
+  шаблонам сопроводительных, схеме SQLite и троттлингу. ⚠️ README
+  запрещает коммерческое использование — только как референс, код не брать.
+
+### Поднятие резюме (наша фича №3)
+
+- [Vlad9572324/hh.ru-clicker](https://github.com/Vlad9572324/hh.ru-clicker)
+  — реализация bump через `/applicant/resumes/touch` и сброс дневного
+  лимита в 00:00 МСК (API-путь; проверять актуальность после дек-2025).
+- [rycln/hhraiser](https://github.com/rycln/hhraiser) — Go. Идея: джиттер
+  расписания (±5 мин) против антифрода при регулярном поднятии.
+
+### Обход DDoS-Guard / антидетект браузера
+
+Наш реальный барьер — детект автоматизации Playwright (`navigator.webdriver`,
+CDP-артефакты) плюс один раз пройденный challenge в cookie `__ddg2`.
+
+- [Kaliiiiiiiiii-Vinyzu/patchright-python](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python)
+  — drop-in замена Playwright (sync API, `storage_state` работают как есть),
+  чинит именно Playwright-детект. Первый кандидат вместо «голого»
+  `p.chromium.launch()`.
+- [daijro/camoufox](https://github.com/daijro/camoufox) — антидетект-форк
+  Firefox, совместим с Playwright-кодом. Другой движок = другой профиль
+  детекта. Второй кандидат (автор предупреждает: «не для стабильного прода»).
+- [ultrafunkamsterdam/nodriver](https://github.com/ultrafunkamsterdam/nodriver)
+  / [cdpdriver/zendriver](https://github.com/cdpdriver/zendriver) — сильнее
+  всех по бенчмаркам и реально применяются против DDoS-Guard, но это **не**
+  Playwright (свой async CDP API) — потребует переписать слой браузера.
+  Тяжёлый резерв.
+
+> Гарантий обхода DDoS-Guard в headless ни одна библиотека не даёт; капчу
+> hh.ru приходится проходить руками. Самый надёжный путь — headed-режим +
+> реальный Chrome-профиль (persistent context) + ручное прохождение
+> challenge один раз с сохранением `__ddg`-cookie в сессии — то, что у нас
+> уже частично делает `login`.
