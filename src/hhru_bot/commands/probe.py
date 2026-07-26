@@ -34,22 +34,42 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
+def _vacancy_from_url(url: str):
+    """Строит VacancyCard для probe из URL вакансии.
+
+    vacancy_id извлекается канонически (через search._extract_vacancy_id: срез
+    ?query, валидация isdigit) — не наивным split('/')[-1], иначе query-параметр
+    попадает в vacancy_id и в имя файла дампа. Невалидный ID → ValueError.
+    """
+    from ..search import VacancyCard, _extract_vacancy_id
+
+    vacancy_id = _extract_vacancy_id(url)
+    if not vacancy_id:
+        raise ValueError(
+            f"Не удалось извлечь числовой ID вакансии из URL: {url} "
+            "(ожидается https://hh.ru/vacancy/<id>)"
+        )
+    return VacancyCard(
+        vacancy_id=vacancy_id,
+        title=f"(probe target #{vacancy_id})",
+        company="",
+        url=url,
+    )
+
+
 def run(args: argparse.Namespace) -> None:
     from ..apply.probe import probe_vacancy
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..search import VacancyCard
 
     config = load_config_or_exit(args.config)
 
     vacancy_url = _resolve_vacancy_url(args)
-    vacancy_id = vacancy_url.rstrip("/").split("/")[-1]
-    vacancy = VacancyCard(
-        vacancy_id=vacancy_id,
-        title=f"(probe target #{vacancy_id})",
-        company="",
-        url=vacancy_url,
-    )
+    try:
+        vacancy = _vacancy_from_url(vacancy_url)
+    except ValueError as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        sys.exit(1)
 
     resumes = resolve_resumes(config, [args.resume] if args.resume else None)
     if not resumes:
