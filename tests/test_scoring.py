@@ -17,7 +17,9 @@ from hhru_bot.search import VacancyCard, rank_candidates
 
 
 def card(vacancy_id: str, title: str = "T", company: str = "C"):
-    return VacancyCard(vacancy_id=vacancy_id, title=title, company=company, url="https://hh.ru/vacancy/0")
+    return VacancyCard(
+        vacancy_id=vacancy_id, title=title, company=company, url="https://hh.ru/vacancy/0"
+    )
 
 
 def resume(
@@ -54,7 +56,7 @@ def test_rank_empty_input():
 def test_factor_must_have_boosts_matching_title():
     filters = SearchFilters(text="python", must_have=["django"])
     cards = [
-        card("1", title="Python Developer"),       # без django
+        card("1", title="Python Developer"),  # без django
         card("2", title="Python Django Developer"),  # django в title
     ]
     ranked = rank_candidates(cards, filters, resume(search=filters))
@@ -81,9 +83,9 @@ def test_factor_must_have_counts_multiple_keywords():
 def test_factor_nice_to_have_lesser_than_must_have():
     filters = SearchFilters(text="python", must_have=["django"], nice_to_have=["docker"])
     cards = [
-        card("a", title="Python Django Developer"),   # только must_have
-        card("b", title="Python Docker Developer"),   # только nice_to_have
-        card("c", title="Python Developer"),          # ничего
+        card("a", title="Python Django Developer"),  # только must_have
+        card("b", title="Python Docker Developer"),  # только nice_to_have
+        card("c", title="Python Developer"),  # ничего
     ]
     ranked = rank_candidates(cards, filters, resume(search=filters))
     order = [c.vacancy_id for c, _s, _b in ranked]
@@ -113,9 +115,9 @@ def test_factor_exclude_keyword_penalty():
 def test_factor_text_match():
     filters = SearchFilters(text="python developer")
     cards = [
-        card("1", title="Python Developer"),       # оба токена
-        card("2", title="Java Developer"),         # один токен
-        card("3", title="Project Manager"),        # ни одного
+        card("1", title="Python Developer"),  # оба токена
+        card("2", title="Java Developer"),  # один токен
+        card("3", title="Project Manager"),  # ни одного
     ]
     ranked = rank_candidates(cards, filters, resume(search=filters))
     by_id = {c.vacancy_id: s for c, s, _b in ranked}
@@ -144,8 +146,14 @@ def test_rank_deterministic_repeated_calls():
         card("1", title="Python Django Docker"),
         card("2", title="Python Django"),
     ]
-    r1 = [(c.vacancy_id, round(s, 6)) for c, s, _b in rank_candidates(cards, filters, resume(search=filters))]
-    r2 = [(c.vacancy_id, round(s, 6)) for c, s, _b in rank_candidates(cards, filters, resume(search=filters))]
+    r1 = [
+        (c.vacancy_id, round(s, 6))
+        for c, s, _b in rank_candidates(cards, filters, resume(search=filters))
+    ]
+    r2 = [
+        (c.vacancy_id, round(s, 6))
+        for c, s, _b in rank_candidates(cards, filters, resume(search=filters))
+    ]
     assert r1 == r2
 
 
@@ -166,7 +174,9 @@ def test_scoring_weights_applied():
     weights = ScoringWeights(must_have=10.0, nice_to_have=1.0, exclude_keyword=0.0, text_match=0.0)
     filters = SearchFilters(text="python", must_have=["django"])
     cards = [card("1", title="Python Django")]
-    ranked = rank_candidates(cards, filters, resume(search=filters, scoring=ScoringConfig(weights=weights)))
+    ranked = rank_candidates(
+        cards, filters, resume(search=filters, scoring=ScoringConfig(weights=weights))
+    )
     _c, score, breakdown = ranked[0]
     assert breakdown["must_have"] == pytest.approx(10.0)
     assert score == pytest.approx(10.0)
