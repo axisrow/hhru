@@ -53,17 +53,19 @@ def login(config: AppConfig) -> None:
         print("=" * 70)
         input("Нажмите Enter после успешного входа... ")
 
-        current_url = page.url
-        if "account/login" in current_url or "hh.ru/account/login" in current_url:
+        # Реальный маркер залогиненности — cookie hhtoken, а не URL (hh.ru после
+        # входа иногда оставляет account/login в реферере/redirect — URL-проверка
+        # давала ложный warning при успешном входе).
+        cookies = context.cookies()
+        has_auth_token = any(c.get("name") == "hhtoken" for c in cookies)
+        if not has_auth_token:
             logger.warning(
-                "Похоже, вы всё ещё на странице логина (%s). "
-                "Сессия всё равно будет сохранена, но вход мог не завершиться.",
-                current_url,
+                "Cookie hhtoken отсутствует — вход, похоже, не завершён. "
+                "Сессия всё равно будет сохранена, но отклик/bump могут не сработать.",
             )
 
         context.storage_state(path=str(storage_state_file))
         logger.info("Сессия сохранена: %s", storage_state_file)
-        print(f"Сессия сохранена в {storage_state_file}")
 
         context.close()
         browser.close()
