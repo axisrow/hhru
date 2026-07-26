@@ -1,8 +1,10 @@
 """Characterization-тесты шага подтверждения успеха отклика (#7).
 
-Поведение: успех определяется по нескольким независимым сигналам —
-success-маркер ИЛИ текст «отклик отправлен» ИЛИ исчезновение submit-кнопки.
-Любой один сигнал достаточен. Без браузера — через FakePage.
+Поведение: успех определяется по ПОЗИТИВНЫМ сигналам — success-маркер
+(CSS-цепочка) ИЛИ текст «отклик отправлен» (регистронезависимо). Сигналы
+опрашиваются в цикле до таймаута (покрывают асинхронный рендер fallback-маркера
+или текста). Отрицательный признак (исчезновение submit) успехом НЕ считается.
+Без браузера — через FakePage.
 """
 
 from __future__ import annotations
@@ -14,44 +16,74 @@ from hhru_bot.apply.locators import first_locator
 
 
 class _FakeLocator:
-    """Имитация Playwright Locator: count()/wait_for()."""
+    """Имитация Playwright Locator: count()/wait_for().
 
-    def __init__(self, *, count_value: int = 0, present: bool | None = None):
+    appear_after: если задано, count() возвращает 0, пока page._probe_count не
+    превысит appear_after (моделирует асинхронный рендер сигнала после submit).
+    """
+
+    def __init__(
+        self,
+        *,
+        count_value: int = 0,
+        present: bool | None = None,
+        appear_after: int | None = None,
+        page: _FakePage | None = None,
+    ):
         if present is not None:
             count_value = 1 if present else 0
         self._count = count_value
+        self._appear_after = appear_after
+        self._page = page
 
     def count(self) -> int:
+        if self._page is not None:
+            self._page._probe_count += 1
+        if self._appear_after is not None and self._page is not None:
+            return 1 if self._page._probe_count > self._appear_after else 0
         return self._count
 
     def wait_for(self, timeout: float = 0) -> None:  # noqa: ARG002
-        if self._count == 0:
+        if self.count() == 0:
             raise PlaywrightTimeoutError("not present")
 
 
 class _FakePage:
     """Имитация Playwright Page для сигналов подтверждения успеха.
 
-    markers: success-маркеры, присутствующие на странице (count>0).
+    markers: success-маркеры, присутствующие сразу (count>0).
+    late_markers: селекторы, появляющиеся после late_after опросов count()
+        (моделирует async-рендер fallback-сигнала после submit).
     success_texts: фразы, которые get_by_text найдёт (сопоставляются с regex).
-    submit_present: фиктивный флаг (success.py submit больше не использует —
-        оставлен, чтобы submit-gone-тесты могли явно выразить «submit исчез»
-        и убедиться, что это НЕ влияет на вердикт).
+    late_success_text: фраза, появляющаяся после late_after опросов.
+    submit_present: фиктивный флаг (success.py submit больше не использует).
     """
 
     def __init__(
         self,
         *,
         markers: set[str] | None = None,
+        late_markers: set[str] | None = None,
         success_texts: set[str] | None = None,
+        late_success_text: str | None = None,
+        late_after: int = 1,
         submit_present: bool = True,
     ):
         self._markers = markers or set()
+        self._late_markers = late_markers or set()
         self._success_texts = success_texts or set()
-        self._submit_present = submit_present  # noqa: ARG002 — фиктивный, см. docstring
+        self._late_success_text = late_success_text
+        self._late_after = late_after
+        self._submit_present = submit_present  # noqa: ARG002 — фиктивный
+        self._probe_count = 0
         self.url = ""
 
+    def wait_for_timeout(self, _ms: float) -> None:  # noqa: ARG002 — мгновенный no-op в тестах
+        return None
+
     def locator(self, selector: str):  # noqa: ARG002
+        if selector in self._late_markers:
+            return _FakeLocator(appear_after=self._late_after, page=self)
         if selector in self._markers:
             return _FakeLocator(count_value=1)
         return _FakeLocator(count_value=0)
@@ -62,6 +94,8 @@ class _FakePage:
         import re
 
         pattern = re.compile(text) if isinstance(text, str) else text
+        if self._late_success_text is not None and pattern.search(self._late_success_text):
+            return _FakeLocator(appear_after=self._late_after, page=self)
         for phrase in self._success_texts:
             if pattern.search(phrase):
                 return _FakeLocator(count_value=1)
@@ -106,6 +140,27 @@ def test_success_via_text_case_insensitive():
 def test_success_via_text_lowercase():
     page = _FakePage(success_texts={"ваш отклик отправлен на вакансию"})
     assert success.wait_success_confirmation(page) is True
+
+
+def test_success_via_late_fallback_marker():
+    """Cycle-3 fix: fallback-маркер отрендерился асинхронно после one-shot опроса.
+
+    Основной маркер отсутствует; fallback-маркер из цепочки появляется после
+    первого опроса. Poll-loop должен поймать его в пределах timeout, а не
+    ждать только основной маркер и не вернуть False (что дало бы status=failed
+    — без дедупликации и без счёта в лимит → повторные попытки сверх лимита).
+    """
+    page = _FakePage(
+        late_markers={success.APPLY_SUCCESS_MARKERS[-1]},
+        late_after=1,
+    )
+    assert success.wait_success_confirmation(page, timeout_ms=2000) is True
+
+
+def test_success_via_late_text():
+    """Cycle-3 fix: текст-признак отрендерился асинхронно после one-shot опроса."""
+    page = _FakePage(late_success_text="Отклик отправлен", late_after=1)
+    assert success.wait_success_confirmation(page, timeout_ms=2000) is True
 
 
 def test_submit_gone_alone_is_not_success():

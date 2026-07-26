@@ -21,17 +21,19 @@ Multi-signal success: один отклик может подтверждать�
 Перечислить все неуспешные состояния для непроверенной вёрстки нельзя, поэтому
 отрицательный признак здесь не источник True — только положительные маркеры.
 
-Если ни один позитивный сигнал не сработал мгновенно — ждём основной маркер до
-таймаута (медленный JS-рендер). На таймаут возвращаем False.
+Если ни один позитивный сигнал не сработал мгновенно — опрашиваем UNION всех
+сигналов (маркеры ИЛИ текст) в цикле до таймаута, т.к. hh.ru рендерит форму
+асинхронно через JS и подтверждение может прийти через fallback-маркер/текст
+позже первого опроса. На таймаут возвращаем False.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 
 from playwright.sync_api import Page
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .locators import first_locator
 
@@ -65,29 +67,60 @@ def _signal_text(page: Page) -> bool:
     return page.get_by_text(APPLY_SUCCESS_TEXT_RE).count() > 0
 
 
+def _any_positive_signal(page: Page) -> str | None:
+    """Union позитивных сигналов: возвращает описание сработавшего или None.
+
+    Опрашивает ВСЕ позитивные сигналы (CSS-цепочка маркеров И текст), а не
+    только основной маркер — т.к. hh.ru рендерит форму отклика асинхронно через
+    JS, и подтверждение может прийти через fallback-маркер или текст, а не
+    через основной data-qa.
+    """
+    if _signal_marker(page):
+        return "success-маркер"
+    if _signal_text(page):
+        return "текст-признак"
+    return None
+
+
+def _sleep(page: Page, ms: float) -> None:
+    """Пауза между опросами: page.wait_for_timeout (Playwright) либо time.sleep."""
+    wait_for_timeout = getattr(page, "wait_for_timeout", None)
+    if callable(wait_for_timeout):
+        wait_for_timeout(ms)
+    else:  # pragma: no cover — fallback для не-Playwright page (напр. тесты без метода)
+        time.sleep(ms / 1000)
+
+
+# Шаг poll-loop между переодпросами сигналов (мс). Меньше — быстрее ловит
+# async-рендер, больше — меньше накладных. 80 мс — баланс для ручного CLI.
+_POLL_INTERVAL_MS = 80
+
+
 def wait_success_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
     """Подтверждает успех отклика по позитивным сигналам.
 
-    Возвращает True, если сработал любой позитивный сигнал: success-маркер
-    (CSS-цепочка) или текст «отклик отправлен» (регистронезависимо). Отрица-
-    тельный признак (исчезновение submit) успехом НЕ считается. Если ни один
-    сигнал не сработал мгновенно — ждёт основной маркер до timeout_ms и на
-    таймаут возвращает False.
-    """
-    if _signal_marker(page):
-        logger.debug("Success подтверждён: success-маркер")
-        return True
-    if _signal_text(page):
-        logger.debug("Success подтверждён: текст-признак")
-        return True
+    Возвращает True, если в пределах timeout_ms появился любой позитивный
+    сигнал: success-маркер (CSS-цепочка) ИЛИ текст «отклик отправлен»
+    (регистронезависимо). Опрашивает UNION всех позитивных сигналов в цикле до
+    таймаута — чтобы поймать асинхронно отрендеренный fallback-маркер или текст
+    (основной data-qa может не появиться или задержаться на непроверенной
+    JS-форме). Отрицательный признак (исчезновение submit) успехом НЕ считается.
 
-    try:
-        page.locator(APPLY_SUCCESS_MARKER).wait_for(timeout=timeout_ms)
-    except PlaywrightTimeoutError:
-        logger.warning(
-            "Не дождались ни одного сигнала успеха за %d мс (url=%s)",
-            timeout_ms,
-            page.url,
-        )
-        return False
-    return True
+    False-NEGATIVE здесь небезопасен: неудачно подтверждённый отклик запишется
+    как status='failed', не дедуплицируется (UNIQUE-индекс только success) и не
+    посчитается в дневной лимит → повторные попытки превысят лимит. Поэтому
+    ждём именно union, а не один маркер.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        if which := _any_positive_signal(page):
+            logger.debug("Success подтверждён: %s", which)
+            return True
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "Не дождались ни одного сигнала успеха за %d мс (url=%s)",
+                timeout_ms,
+                page.url,
+            )
+            return False
+        _sleep(page, _POLL_INTERVAL_MS)
