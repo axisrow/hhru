@@ -12,10 +12,6 @@ from datetime import datetime, timedelta
 from hhru_bot.history import History
 
 
-def _now_iso() -> str:
-    return datetime.now().isoformat()
-
-
 def _iso_days_ago(days: int) -> str:
     return (datetime.now() - timedelta(days=days)).isoformat()
 
