@@ -30,7 +30,7 @@ def run(args: argparse.Namespace) -> None:
         for resume in resumes:
             print(f"\n=== Поиск вакансий для резюме: {resume.id} ===")
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
-            candidates, skipped = filter_candidates(cards, resume.search, resume.id, history)
+            candidates, skipped = filter_candidates(cards, resume.search, resume.resume_id, history)
             ranked = rank_candidates(candidates, resume.search, resume)
 
             print(

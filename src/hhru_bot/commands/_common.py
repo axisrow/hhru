@@ -57,13 +57,13 @@ def run_apply_for_resume(
     print(f"\n=== Отклики для резюме: {resume.id} ===")
 
     try:
-        throttle.check_apply_limit(resume.id, args.dry_run)
+        throttle.check_apply_limit(resume.resume_id, args.dry_run)
     except LimitReached as e:
         print(f"Пропуск: {e}")
         return
 
     cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
-    candidates, skipped = filter_candidates(cards, resume.search, resume.id, history)
+    candidates, skipped = filter_candidates(cards, resume.search, resume.resume_id, history)
 
     for card, reason in skipped:
         logger.debug("Пропуск вакансии %s: %s", card.title, reason)
@@ -78,14 +78,14 @@ def run_apply_for_resume(
     applied_count = 0
     for card, _score, _breakdown in ranked[:limit]:
         try:
-            throttle.check_apply_limit(resume.id, args.dry_run)
+            throttle.check_apply_limit(resume.resume_id, args.dry_run)
         except LimitReached as e:
             print(f"Дневной лимит достигнут, останавливаюсь: {e}")
             break
 
-        result = apply_to_vacancy(page, card, resume.id, cover_letter_template, args.dry_run)
+        result = apply_to_vacancy(page, card, resume.resume_id, cover_letter_template, args.dry_run)
         status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
-        history.record_action(resume.id, card.vacancy_id, "apply", status, result.reason)
+        history.record_action(resume.resume_id, card.vacancy_id, "apply", status, result.reason)
 
         if result.success:
             applied_count += 1

@@ -33,19 +33,19 @@ def run(args: argparse.Namespace) -> None:
             print(f"\n=== Поднятие резюме: {resume.id} ===")
 
             try:
-                throttle.check_bump_limit(resume.id, args.dry_run)
+                throttle.check_bump_limit(resume.resume_id, args.dry_run)
             except LimitReached as e:
                 print(f"Пропуск: {e}")
                 continue
 
-            can_bump, wait_left = throttle.can_bump_now(resume.id)
+            can_bump, wait_left = throttle.can_bump_now(resume.resume_id)
             if not can_bump:
                 print(f"Пропуск: рано поднимать, подождите ещё {wait_left}")
                 continue
 
             result = bump_resume(page, resume, args.dry_run)
             status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
-            history.record_action(resume.id, resume.resume_id, "bump", status, result.reason)
+            history.record_action(resume.resume_id, resume.resume_id, "bump", status, result.reason)
 
             if result.success:
                 print(f"  [OK] {resume.id} поднято")
