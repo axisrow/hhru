@@ -1,11 +1,10 @@
 """Форма отклика на /applicant/vacancy_response — подтверждённые shared-селекторы.
 
 Смягчение #3↔#7: здесь только shared-селекторы формы (resume-select, letter
-toggle/textarea, submit), которые #3 и #7 не трогают. Селекторы статуса отклика
-живут у своих владельцев:
-  - «уже откликались» → apply/dedup.py (#3)
-  - успешная отправка  → apply/success.py (#7)
-Так они полностью изолированы друг от друга.
+toggle/textarea, submit), которые #3 и #7 не трогают. Селектор успешной отправки
+живёт у владельца — apply/success.py (#7). «Уже откликались» (#3) селектора не
+имеет вовсе: дедупликация идёт через history.has_applied() в filter_candidates(),
+см. apply/dedup.py.
 """
 
 from __future__ import annotations

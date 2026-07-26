@@ -44,13 +44,11 @@ class FakePage:
     def __init__(
         self,
         *,
-        already_responded: bool = False,
         apply_button: bool = True,
         success: bool = True,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
-        self._already = already_responded
         self._apply_button = apply_button
         self._success = success
 
@@ -59,11 +57,9 @@ class FakePage:
         self.url = url
 
     def locator(self, selector: str):  # noqa: ARG002
-        from hhru_bot.apply import dedup, success
+        from hhru_bot.apply import success
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
-        if selector == dedup.APPLY_ALREADY_RESPONDED_MARKER:
-            return _FakeLocator(present=self._already)
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=self._apply_button)
         if selector == success.APPLY_SUCCESS_MARKER:
@@ -99,11 +95,17 @@ def test_apply_dry_run_success():
     assert page.goto_calls == ["https://hh.ru/vacancy/1"]
 
 
-def test_apply_already_responded():
-    page = FakePage(already_responded=True)
-    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
-    assert result.success is False
-    assert "уже есть отклик" in result.reason
+def test_apply_already_responded_not_deduped_by_dom():
+    # #3: мёртвый DOM-маркер «уже откликались» убран. Дедупликация идёт через
+    # history.has_applied() в filter_candidates() ещё до apply_to_vacancy, поэтому
+    # check_already_responded на странице вакансии ничего не отсекает — вакансия
+    # доходит до кнопки отклика и идёт по обычному пути (здесь — dry-run стоп на
+    # письме). Раньше этот тест симулировал already-responded состояние страницы,
+    # но после удаления маркера моделировать его больше нечем и не нужно.
+    page = FakePage(apply_button=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+    assert result.success is True
+    assert result.reason == "dry-run"
 
 
 def test_apply_no_apply_button():
