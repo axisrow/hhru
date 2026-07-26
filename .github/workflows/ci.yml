@@ -57,7 +57,7 @@ jobs:
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
           /tmp/venv/bin/pip install dist/*.whl
-          /tmp/venv/bin/pip install playwright PyYAML python-dateutil
+          /tmp/venv/bin/pip install playwright PyYAML
 
       - name: Smoke — migration SQL ships in wheel and History works
         run: /tmp/venv/bin/python tests/packaging_smoke.py
