@@ -37,6 +37,21 @@ resumes:
       exclude_keywords:
         - "1С"
         - "холодные звонки"
+      # Опционально (issue #15): буст за совпадение ключевых слов в title.
+      must_have:
+        - "python"
+        - "django"
+      nice_to_have:
+        - "docker"
+        - "kubernetes"
+    # Опционально (issue #15): веса факторов ранжирования. При отсутствии
+    # секции используются дефолтные веса ниже.
+    scoring:
+      weights:
+        must_have: 2.0        # буст за каждое must_have-совпадение в title
+        nice_to_have: 1.0     # буст за каждое nice_to_have-совпадение
+        exclude_keyword: -3.0 # штраф за стоп-слово в title
+        text_match: 1.0       # буст × доля совпавших токенов filters.text
     cover_letter: null
 
   - id: "resume-name-2"

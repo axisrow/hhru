@@ -13,7 +13,7 @@ import logging
 from ..apply import apply_to_vacancy
 from ..config import AppConfig, ResumeConfig
 from ..history import History
-from ..search import filter_candidates, search_vacancies
+from ..search import filter_candidates, rank_candidates, search_vacancies
 from ..throttle import LimitReached, Throttle
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -68,11 +68,15 @@ def run_apply_for_resume(
     for card, reason in skipped:
         logger.debug("Пропуск вакансии %s: %s", card.title, reason)
 
-    limit = args.limit if args.limit else len(candidates)
+    # Ранжирование кандидатов по score (#15) — строго между filter_candidates
+    # и срезом [:limit], чтобы дневной лимит уходил на лучшие совпадения.
+    ranked = rank_candidates(candidates, resume.search, resume)
+
+    limit = args.limit if args.limit else len(ranked)
     cover_letter_template = config.cover_letter_for(resume)
 
     applied_count = 0
-    for card in candidates[:limit]:
+    for card, _score, _breakdown in ranked[:limit]:
         try:
             throttle.check_apply_limit(resume.id, args.dry_run)
         except LimitReached as e:

@@ -8,7 +8,8 @@ from playwright.sync_api import Page
 
 from . import selectors as sel
 from .browser import HH_BASE_URL
-from .config import SearchFilters
+from .config import ResumeConfig, SearchFilters
+from .config_sections.scoring import ScoringConfig, ScoringWeights
 
 logger = logging.getLogger("hhru_bot.search")
 
@@ -143,3 +144,120 @@ def filter_candidates(
         candidates.append(card)
 
     return candidates, skipped
+
+
+# --- скоринг/ранжирование (issue #15) ---------------------------------------
+
+
+def _tokenize(text: str) -> list[str]:
+    """Простейшая токенизация в нижний регистр по не-буквенно-цифровым границам.
+
+    Намеренно наивная: скоринг v1 работает по title/конфиг-ключевым словам,
+    поэтому лемматизация/морфология не нужны — важна воспроизводимость и
+    дешевизна (без внешних зависимостей).
+    """
+    tokens: list[str] = []
+    current = ""
+    for ch in text.lower():
+        if ch.isalnum():
+            current += ch
+        elif current:
+            tokens.append(current)
+            current = ""
+    if current:
+        tokens.append(current)
+    return tokens
+
+
+_ZERO_WEIGHTS = ScoringWeights(
+    must_have=0.0,
+    nice_to_have=0.0,
+    exclude_keyword=0.0,
+    text_match=0.0,
+)
+"""Истинно нейтральные веса для legacy-конфига (без секции scoring).
+
+Все факторы = 0 → score любой карточки = 0.0 → ранжирование не меняет
+порядок входа (обратная совместимость candidates[:limit]). НЕ дефолтные
+веса ScoringWeights(): там text_match=1.0 делал бы legacy score зависимым
+от filters.text и нарушал бы совместимость, даже если must_have/nice_to_have
+пусты. frozen-dataclass — переиспользуемая константа (immutable).
+"""
+
+
+def _score_card(
+    card: VacancyCard,
+    filters: SearchFilters,
+    weights: ScoringWeights,
+) -> tuple[float, dict[str, float]]:
+    """Считает score карточки и разбивку по факторам.
+
+    Факторы v1 (по доступным полям title/конфиг):
+      - must_have: +weight за каждое must_have-слово, найденное в title (по токену).
+      - nice_to_have: +weight за каждое nice_to_have-слово в title.
+      - exclude_keyword: +weight (обычно отрицательный) за каждое стоп-слово в title.
+      - text_match: +weight × долю токенов filters.text, найденных в title.
+
+    exclude_keyword намеренно дублирует отсев filter_candidates: в нормальном
+    потоке стоп-слова уже отсеяны до rank_candidates, но фактор оставлен для
+    устойчивости (прямой вызов rank_candidates в обход фильтра, будущие
+    изменения filter_candidates). v1 матчит ключевые слова по первому токену —
+    рассчитано на однословные ключи (python/django); многословные ключи
+    ('machine learning') совпадут по любому из своих токенов.
+    """
+    title_tokens = set(_tokenize(card.title))
+
+    def _kw_in_title(kw: str) -> bool:
+        kw_tokens = _tokenize(kw)
+        return bool(kw_tokens) and kw_tokens[0] in title_tokens
+
+    must_have_hits = sum(1 for kw in filters.must_have if _kw_in_title(kw))
+    nice_hits = sum(1 for kw in filters.nice_to_have if _kw_in_title(kw))
+    exclude_hits = sum(1 for kw in filters.exclude_keywords if _kw_in_title(kw))
+
+    text_tokens = _tokenize(filters.text)
+    if text_tokens:
+        matched = sum(1 for t in text_tokens if t in title_tokens)
+        text_ratio = matched / len(text_tokens)
+    else:
+        text_ratio = 0.0
+
+    breakdown: dict[str, float] = {
+        "must_have": weights.must_have * must_have_hits,
+        "nice_to_have": weights.nice_to_have * nice_hits,
+        "exclude_keyword": weights.exclude_keyword * exclude_hits,
+        "text_match": weights.text_match * text_ratio,
+    }
+    return sum(breakdown.values()), breakdown
+
+
+def rank_candidates(
+    candidates: list[VacancyCard],
+    filters: SearchFilters,
+    resume: ResumeConfig,
+) -> list[tuple[VacancyCard, float, dict[str, float]]]:
+    """Ранжирует кандидатов по убыванию score (issue #15).
+
+    Чистая функция без браузера — ради тестируемости (как filter_candidates).
+    Возвращает список (карточка, score, разбивка факторов), отсортированный
+    по убыванию score; при равенстве — стабильно по ВХОДНОМУ порядку
+    (сортировка только по score, стабильность Python-сорта сохраняет порядок).
+
+    Обратная совместимость: без scoring-конфига используются истинно нулевые
+    веса (все факторы = 0), поэтому ВСЕ score = 0.0 и входной порядок
+    сохраняется полностью — ranked[:limit] выбирает те же вакансии, что и
+    старый candidates[:limit], дневной лимит уходит на тот же набор.
+    """
+    scoring: ScoringConfig | None = getattr(resume, "scoring", None)
+    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
+
+    scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
+    for card in candidates:
+        score, breakdown = _score_card(card, filters, weights)
+        scored.append((card, score, breakdown))
+
+    # Стабильно: сортировка только по score; равные score сохраняют входной
+    # порядок (Timsort стабилен). Тай-брейк по vacancy_id намеренно убран —
+    # он переупорядочивал бы legacy candidates[:limit] при перемешанных id.
+    scored.sort(key=lambda item: -item[1])
+    return scored
