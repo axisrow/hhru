@@ -162,7 +162,10 @@ def test_probe_does_not_click_submit(tmp_path: Path):
     page = FakeProbePage(apply_button=True, textarea=True, submit=True)
 
     result = probe_vacancy(
-        page, _vacancy(), resume_id="RID", cover_letter_template="Hi {company_name}",
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Hi {company_name}",
         logs_dir=tmp_path,
     )
 
@@ -180,7 +183,10 @@ def test_probe_fills_cover_letter(tmp_path: Path):
     page = FakeProbePage(textarea=True)
 
     probe_vacancy(
-        page, _vacancy(), resume_id="RID", cover_letter_template="Здравствуйте, {company_name}",
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Здравствуйте, {company_name}",
         logs_dir=tmp_path,
     )
 
