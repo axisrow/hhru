@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -66,14 +67,21 @@ def navigate_to_response_form(page: Page) -> None:
 def _is_visible(page: Page, selector: str, *, timeout_ms: int) -> bool:
     """Явное ожидание видимости опционального элемента.
 
-    True — элемент появился и видим; False — не дождались (PlaywrightTimeoutError),
-    что для опциональных полей формы означает «на этой странице поля нет».
+    True — элемент появился и видим; False — не дождались или селектор неоднозначен,
+    что для опциональных полей формы означает «на этой странице поля нет / не одно».
     Заменяет идиому ``locator.count() > 0``, которая проверяет наличие в DOM без
     гарантии видимости/готовности к взаимодействию.
+
+    Ловим базовый Playwright Error, а не только PlaywrightTimeoutError: ``wait_for``
+    в strict mode при нескольких совпадениях (например, ``APPLY_RESUME_SELECT`` —
+    коллекция резюме) кидает обычный Error, и для опционального поля это не фатал —
+    логика выбора конкретного резюме (``_select_resume_in_form``) разберётся с
+    множественностью сама через count()/nth(). PlaywrightTimeoutError — подкласс Error,
+    поэтому одна ветка ловит оба случая.
     """
     try:
         page.locator(selector).wait_for(state="visible", timeout=timeout_ms)
-    except PlaywrightTimeoutError:
+    except PlaywrightError:
         return False
     return True
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 
+from playwright.sync_api import Error
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
@@ -28,6 +29,14 @@ class _FakeLocator:
         self._state = state
 
     def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+        # Моделируем реальное поведение Playwright: в strict mode при >1 совпадении
+        # wait_for кидает обычный Error (не PlaywrightTimeoutError) — это и есть
+        # регрессия, которую ловит test_fill_form_resume_select_multiple_matches.
+        if self._state.match_count > 1:
+            raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
+                f"strict mode violation: {self.selector} resolved to "
+                f"{self._state.match_count} elements"
+            )
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
@@ -50,6 +59,9 @@ class _FakeLocator:
 class _SelectorState:
     def __init__(self, visible: bool = False) -> None:
         self.visible = visible
+        # match_count>1 имитирует строгий режим Playwright: селектор совпал с
+        # несколькими элементами (коллекция резюме/несколько кнопок).
+        self.match_count = 1
         self.clicks = 0
         self.fills: list[str] = []
 
@@ -67,6 +79,13 @@ class FakeStepsPage:
     def set_visible(self, selector: str, visible: bool = True) -> _SelectorState:
         st = self._state(selector)
         st.visible = visible
+        return st
+
+    def set_match_count(self, selector: str, count: int) -> _SelectorState:
+        """Селектор совпал с `count` элементами → имитация strict-mode нарушения."""
+        st = self._state(selector)
+        st.match_count = count
+        st.visible = count > 0
         return st
 
     def locator(self, selector: str) -> _FakeLocator:
@@ -174,6 +193,22 @@ def test_fill_form_letter_toggle_absent_skips_textarea():
     assert result is None
     assert page._state(apply_form.APPLY_COVER_LETTER_TOGGLE).clicks == 0
     assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == []
+
+
+def test_fill_form_resume_select_multiple_matches_does_not_crash():
+    # Регрессия #6: APPLY_RESUME_SELECT по дизайну коллекция (несколько резюме).
+    # Playwright wait_for в strict mode при >1 совпадении кидает обычный Error
+    # (НЕ PlaywrightTimeoutError) — _is_visible должен это пережить (трактовать как
+    # «поле есть, но не однозначное») и НЕ ронять apply-run необработанным исключением.
+    page = FakeStepsPage()
+    page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    # apply-run не прерван исключением; submit нажат.
+    assert result is None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
 # --- константы ---
