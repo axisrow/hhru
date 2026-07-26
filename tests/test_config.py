@@ -180,6 +180,4 @@ def test_load_config_account_user_agent_explicit(tmp_path):
         """,
     )
     config = load_config(path)
-    assert config.user_agent == (
-        "Mozilla/5.0 (X11; Linux x86_64) Chrome/999.0 Safari/537.36"
-    )
+    assert config.user_agent == ("Mozilla/5.0 (X11; Linux x86_64) Chrome/999.0 Safari/537.36")
