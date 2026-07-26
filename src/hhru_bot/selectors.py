@@ -14,12 +14,10 @@ sel.VACANCY_CARD`), чтобы не править потребителей од
 from __future__ import annotations
 
 from .selector_groups.apply_form import (
-    APPLY_ALREADY_RESPONDED_MARKER,
     APPLY_COVER_LETTER_TEXTAREA,
     APPLY_COVER_LETTER_TOGGLE,
     APPLY_RESUME_SELECT,
     APPLY_SUBMIT_BUTTON,
-    APPLY_SUCCESS_MARKER,
 )
 from .selector_groups.login import LOGIN_URL_MARKER
 from .selector_groups.resume_page import RESUME_BUMP_BUTTON, RESUME_BUMP_DISABLED_HINT
@@ -38,12 +36,10 @@ from .selector_groups.vacancy_page import (
 )
 
 __all__ = [
-    "APPLY_ALREADY_RESPONDED_MARKER",
     "APPLY_COVER_LETTER_TEXTAREA",
     "APPLY_COVER_LETTER_TOGGLE",
     "APPLY_RESUME_SELECT",
     "APPLY_SUBMIT_BUTTON",
-    "APPLY_SUCCESS_MARKER",
     "LOGIN_URL_MARKER",
     "PAGINATION_NEXT",
     "RESUME_BUMP_BUTTON",

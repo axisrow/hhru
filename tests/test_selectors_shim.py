@@ -23,13 +23,11 @@ def test_shim_reexports_all_old_names():
         "VACANCY_APPLY_BUTTON",
         "VACANCY_TITLE",
         "VACANCY_COMPANY_NAME",
-        # apply_form
+        # apply_form (shared-селекторы формы)
         "APPLY_RESUME_SELECT",
         "APPLY_COVER_LETTER_TOGGLE",
         "APPLY_COVER_LETTER_TEXTAREA",
         "APPLY_SUBMIT_BUTTON",
-        "APPLY_SUCCESS_MARKER",
-        "APPLY_ALREADY_RESPONDED_MARKER",
         # resume_page
         "RESUME_BUMP_BUTTON",
         "RESUME_BUMP_DISABLED_HINT",
@@ -38,6 +36,17 @@ def test_shim_reexports_all_old_names():
     }
     for name in expected:
         assert hasattr(sel, name), f"selectors.shim потерял имя {name}"
+
+
+def test_status_markers_moved_to_owners():
+    # Смягчение #3↔#7: маркеры статуса отклика НЕ в shim/apply_form —
+    # они живут у владельцев (apply/dedup.py, apply/success.py).
+    assert not hasattr(sel, "APPLY_SUCCESS_MARKER")
+    assert not hasattr(sel, "APPLY_ALREADY_RESPONDED_MARKER")
+    from hhru_bot.apply import dedup, success
+
+    assert dedup.APPLY_ALREADY_RESPONDED_MARKER
+    assert success.APPLY_SUCCESS_MARKER
 
 
 def test_shim_values_match_groups():
