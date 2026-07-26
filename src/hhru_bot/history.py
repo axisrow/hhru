@@ -146,9 +146,7 @@ class History:
             result["total"] += cnt
         return result
 
-    def list_actions(
-        self, resume_id: str | None, period: str, limit: int = 50
-    ) -> list[dict]:
+    def list_actions(self, resume_id: str | None, period: str, limit: int = 50) -> list[dict]:
         """Последние действия (свежие первыми) для таблицы stats.
 
         Возвращает список словарей с ключами resume_id/vacancy_id/action/status/

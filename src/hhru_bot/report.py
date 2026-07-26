@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Iterable
+from collections.abc import Iterable
 
 SUPPORTED_FORMATS = ("table", "csv", "md")
 
@@ -49,8 +49,7 @@ _SUMMARY_HEADERS = {
 def _check_format(fmt: str) -> None:
     if fmt not in SUPPORTED_FORMATS:
         raise ValueError(
-            f"Неизвестный формат вывода: {fmt!r}. "
-            f"Допустимо: {', '.join(SUPPORTED_FORMATS)}"
+            f"Неизвестный формат вывода: {fmt!r}. Допустимо: {', '.join(SUPPORTED_FORMATS)}"
         )
 
 
@@ -75,8 +74,12 @@ def _summary_rows(summary: dict) -> list[list[str]]:
 def format_summary(summary: dict, fmt: str) -> str:
     """Отрисовать сводку action × status (+ total) в выбранном формате."""
     _check_format(fmt)
-    header = [_SUMMARY_HEADERS["action"], _SUMMARY_HEADERS["success"],
-              _SUMMARY_HEADERS["dry_run"], _SUMMARY_HEADERS["failed"]]
+    header = [
+        _SUMMARY_HEADERS["action"],
+        _SUMMARY_HEADERS["success"],
+        _SUMMARY_HEADERS["dry_run"],
+        _SUMMARY_HEADERS["failed"],
+    ]
     rows = _summary_rows(summary)
     total = summary.get("total", 0)
 
@@ -156,7 +159,9 @@ def _ascii_table(header: list[str], rows: list[list[str]], footer: list[str] | N
         return "+" + "+".join("-" * (w + 2) for w in widths) + "+"
 
     def line(r: list[str]) -> str:
-        cells = [str(r[i]).ljust(widths[i]) if i < len(r) else " " * widths[i] for i in range(n_cols)]
+        cells = [
+            str(r[i]).ljust(widths[i]) if i < len(r) else " " * widths[i] for i in range(n_cols)
+        ]
         return "| " + " | ".join(cells) + " |"
 
     out = [border(), line(header), border()]

@@ -112,7 +112,9 @@ def test_list_actions_returns_dicts_ordered_desc(tmp_path):
     assert rows[1]["vacancy_id"] == "v1"
     # ключи, нужные форматтеру
     for r in rows:
-        assert {"resume_id", "vacancy_id", "action", "status", "reason", "created_at"} <= set(r.keys())
+        assert {"resume_id", "vacancy_id", "action", "status", "reason", "created_at"} <= set(
+            r.keys()
+        )
 
 
 def test_list_actions_respects_limit(tmp_path):

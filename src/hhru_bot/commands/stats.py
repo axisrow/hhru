@@ -14,9 +14,7 @@ FORMATS = ("table", "csv", "md")
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser(
-        "stats", help="Сводка и экспорт истории откликов/поднятий"
-    )
+    p = subparsers.add_parser("stats", help="Сводка и экспорт истории откликов/поднятий")
     p.add_argument("--resume", help="ID резюме (по умолчанию — все)")
     p.add_argument(
         "--period",

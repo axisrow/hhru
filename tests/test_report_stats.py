@@ -142,6 +142,7 @@ def test_format_actions_csv_parses_and_has_header():
 def test_format_actions_md_is_pipe_table():
     out = format_actions(_sample_actions(), "md")
     lines = [ln for ln in out.splitlines() if ln.strip()]
+
     # есть строка-разделитель markdown: ячейки состоят только из '-'
     def is_separator(ln: str) -> bool:
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
