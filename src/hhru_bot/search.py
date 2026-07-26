@@ -169,8 +169,21 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def _DEFAULT_WEIGHTS() -> ScoringWeights:
-    return ScoringWeights()
+def _ZERO_WEIGHTS() -> ScoringWeights:
+    """Истинно нейтральные веса для legacy-конфига (без секции scoring).
+
+    Все факторы = 0 → score любой карточки = 0.0 → ранжирование не меняет
+    порядок входа (обратная совместимость candidates[:limit]). НЕ дефолтные
+    веса ScoringWeights(): там text_match=1.0 делал бы legacy score зависимым
+    от filters.text и нарушал бы совместимость, даже если must_have/nice_to_have
+    пусты.
+    """
+    return ScoringWeights(
+        must_have=0.0,
+        nice_to_have=0.0,
+        exclude_keyword=0.0,
+        text_match=0.0,
+    )
 
 
 def _score_card(
@@ -221,19 +234,24 @@ def rank_candidates(
 
     Чистая функция без браузера — ради тестируемости (как filter_candidates).
     Возвращает список (карточка, score, разбивка факторов), отсортированный
-    по убыванию score; при равенстве — стабильно по vacancy_id (детерминизм).
+    по убыванию score; при равенстве — стабильно по ВХОДНОМУ порядку
+    (сортировка только по score, стабильность Python-сорта сохраняет порядок).
 
-    Обратная совместимость: без scoring-конфига и без must_have/nice_to_have
-    все score = 0.0, а порядок сохраняется (стабильная сортировка по vacancy_id).
+    Обратная совместимость: без scoring-конфига используются истинно нулевые
+    веса (все факторы = 0), поэтому ВСЕ score = 0.0 и входной порядок
+    сохраняется полностью — ranked[:limit] выбирает те же вакансии, что и
+    старый candidates[:limit], дневной лимит уходит на тот же набор.
     """
     scoring: ScoringConfig | None = getattr(resume, "scoring", None)
-    weights = scoring.weights if scoring is not None else _DEFAULT_WEIGHTS()
+    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS()
 
     scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
     for card in candidates:
         score, breakdown = _score_card(card, filters, weights)
         scored.append((card, score, breakdown))
 
-    # Стабильно: равные score упорядочиваются по vacancy_id (лексикографически).
-    scored.sort(key=lambda item: (-item[1], item[0].vacancy_id))
+    # Стабильно: сортировка только по score; равные score сохраняют входной
+    # порядок (Timsort стабилен). Тай-брейк по vacancy_id намеренно убран —
+    # он переупорядочивал бы legacy candidates[:limit] при перемешанных id.
+    scored.sort(key=lambda item: -item[1])
     return scored

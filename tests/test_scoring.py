@@ -13,6 +13,7 @@ import textwrap
 import pytest
 
 from hhru_bot.config import ResumeConfig, SearchFilters, load_config
+from hhru_bot.config_sections.scoring import ScoringConfig, ScoringWeights
 from hhru_bot.search import VacancyCard, rank_candidates
 
 
@@ -26,12 +27,22 @@ def resume(
     search: SearchFilters | None = None,
     scoring=None,
 ) -> ResumeConfig:
+    """resume с явно заданным scoring (по умолчанию None — legacy-путь, нулевые веса)."""
     return ResumeConfig(
         id="r1",
         resume_url="https://hh.ru/resume/AAA111",
         search=search or SearchFilters(text="python"),
         scoring=scoring,
     )
+
+
+def resume_scored(search: SearchFilters, weights: ScoringWeights | None = None) -> ResumeConfig:
+    """resume с включённым scoring и дефолтными весами факторов.
+
+    Для тестов самих факторов (must_have/nice_to_have/exclude/text_match) —
+    в отличие от legacy-тестов, где scoring=None и веса истинно нулевые.
+    """
+    return resume(search=search, scoring=ScoringConfig(weights=weights or ScoringWeights()))
 
 
 # --- обратная совместимость: нет scoring, нет must_have/nice_to_have ---
@@ -44,6 +55,55 @@ def test_rank_empty_weights_preserves_order():
     ranked = rank_candidates(cards, filters, resume(search=filters))
     assert [c.vacancy_id for c, _s, _b in ranked] == ["1", "2", "3"]
     assert all(score == 0.0 for _c, score, _b in ranked)
+
+
+def test_legacy_scoring_zero_scores_even_when_text_matches():
+    """Без scoring-секции score обязан быть 0 даже если filters.text матчит title.
+
+    Регрессия (codex critical): text_match=1.0 в дефолтных весах делал legacy
+    score ненулевым, нарушая обратную совместимость. Дефолт без scoring должен
+    быть истинно нейтральным — все факторы 0.
+    """
+    filters = SearchFilters(text="python developer")
+    cards = [
+        card("1", title="Python Developer"),
+        card("2", title="Senior Python Developer"),
+    ]
+    ranked = rank_candidates(cards, filters, resume(search=filters))  # scoring=None
+    assert all(score == 0.0 for _c, score, _b in ranked)
+
+
+def test_legacy_scoring_preserves_input_order_with_matching_text_and_mixed_ids():
+    """Без scoring-секции порядок входа сохраняется, даже когда:
+
+    - title матчит filters.text (равные score),
+    - vacancy_id идут не по возрастанию (т.е. лексический тай-брейк по id
+      перевернул бы порядок).
+
+    Гарантирует, что ranked[:limit] при legacy-конфиге выбирает ТЕ ЖЕ первые N
+    вакансий, что и старый candidates[:limit] — дневной лимит не уходит на
+    другой набор. (codex critical: раньше ids 300,200,100 → 100,200,300.)
+    """
+    filters = SearchFilters(text="python developer")
+    cards = [
+        card("300", title="Python Developer"),
+        card("200", title="Senior Python Developer"),
+        card("100", title="Python Developer Remote"),
+    ]
+    ranked = rank_candidates(cards, filters, resume(search=filters))
+    assert [c.vacancy_id for c, _s, _b in ranked] == ["300", "200", "100"]
+    # [:limit] должен давать тот же набор, что и входной срез
+    assert [c.vacancy_id for c, _s, _b in ranked[:1]] == ["300"]
+
+
+def test_rank_empty_text_zero_text_match():
+    """filters.text='' → text_ratio=0, фактор text_match отсутствует (ветка)."""
+    filters = SearchFilters(text="")
+    cards = [card("1", title="Python")]
+    ranked = rank_candidates(cards, filters, resume(search=filters))
+    _c, score, breakdown = ranked[0]
+    assert breakdown["text_match"] == 0.0
+    assert score == 0.0
 
 
 def test_rank_empty_input():
@@ -59,7 +119,7 @@ def test_factor_must_have_boosts_matching_title():
         card("1", title="Python Developer"),  # без django
         card("2", title="Python Django Developer"),  # django в title
     ]
-    ranked = rank_candidates(cards, filters, resume(search=filters))
+    ranked = rank_candidates(cards, filters, resume_scored(filters))
     by_id = {c.vacancy_id: (s, b) for c, s, b in ranked}
     # must_have-матч должен дать строго больший score
     assert by_id["2"][0] > by_id["1"][0]
@@ -70,7 +130,7 @@ def test_factor_must_have_boosts_matching_title():
 def test_factor_must_have_counts_multiple_keywords():
     filters = SearchFilters(text="python", must_have=["django", "flask"])
     cards = [card("1", title="Python Django Flask Developer")]
-    ranked = rank_candidates(cards, filters, resume(search=filters))
+    ranked = rank_candidates(cards, filters, resume_scored(filters))
     _c, score, breakdown = ranked[0]
     # оба must_have найдены — буст должен быть больше, чем за один
     assert breakdown["must_have"] > 0.0
@@ -87,7 +147,7 @@ def test_factor_nice_to_have_lesser_than_must_have():
         card("b", title="Python Docker Developer"),  # только nice_to_have
         card("c", title="Python Developer"),  # ничего
     ]
-    ranked = rank_candidates(cards, filters, resume(search=filters))
+    ranked = rank_candidates(cards, filters, resume_scored(filters))
     order = [c.vacancy_id for c, _s, _b in ranked]
     # must_have > nice_to_have > ничего
     assert order == ["a", "b", "c"]
@@ -102,7 +162,7 @@ def test_factor_exclude_keyword_penalty():
         card("1", title="Python Developer"),
         card("2", title="Программист 1С"),
     ]
-    ranked = rank_candidates(cards, filters, resume(search=filters))
+    ranked = rank_candidates(cards, filters, resume_scored(filters))
     by_id = {c.vacancy_id: (s, b) for c, s, b in ranked}
     # стоп-слово в title должно штрафовать (отрицательный фактор)
     assert by_id["2"][1]["exclude_keyword"] < 0.0
@@ -119,7 +179,7 @@ def test_factor_text_match():
         card("2", title="Java Developer"),  # один токен
         card("3", title="Project Manager"),  # ни одного
     ]
-    ranked = rank_candidates(cards, filters, resume(search=filters))
+    ranked = rank_candidates(cards, filters, resume_scored(filters))
     by_id = {c.vacancy_id: s for c, s, _b in ranked}
     assert by_id["1"] > by_id["2"] > by_id["3"]
 
@@ -127,8 +187,12 @@ def test_factor_text_match():
 # --- детерминизм ---
 
 
-def test_tiebreak_by_vacancy_id_when_equal_score():
-    """Равные score → стабильный порядок по vacancy_id (лексикографически)."""
+def test_tiebreak_stable_by_input_order_when_equal_score():
+    """Равные score → стабильный ВХОДНОЙ порядок (Timsort), а не лексически по id.
+
+    Тай-брейк по vacancy_id ломал бы обратную совместимость [:limit] при
+    перемешанных id (codex critical). Сортировка только по score.
+    """
     filters = SearchFilters(text="x")  # ничего не матчит → score 0 у всех
     cards = [
         card("3", title="Same"),
@@ -136,7 +200,7 @@ def test_tiebreak_by_vacancy_id_when_equal_score():
         card("2", title="Same"),
     ]
     ranked = rank_candidates(cards, filters, resume(search=filters))
-    assert [c.vacancy_id for c, _s, _b in ranked] == ["1", "2", "3"]
+    assert [c.vacancy_id for c, _s, _b in ranked] == ["3", "1", "2"]
 
 
 def test_rank_deterministic_repeated_calls():
@@ -148,11 +212,11 @@ def test_rank_deterministic_repeated_calls():
     ]
     r1 = [
         (c.vacancy_id, round(s, 6))
-        for c, s, _b in rank_candidates(cards, filters, resume(search=filters))
+        for c, s, _b in rank_candidates(cards, filters, resume_scored(filters))
     ]
     r2 = [
         (c.vacancy_id, round(s, 6))
-        for c, s, _b in rank_candidates(cards, filters, resume(search=filters))
+        for c, s, _b in rank_candidates(cards, filters, resume_scored(filters))
     ]
     assert r1 == r2
 
