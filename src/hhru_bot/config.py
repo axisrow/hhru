@@ -51,6 +51,8 @@ class AppConfig:
     throttle: ThrottleConfig
     cover_letter_default: str
     resumes: list[ResumeConfig]
+    # None = родной UA Playwright. Пробрасывается из account.user_agent (см. parse_account).
+    user_agent: str | None = None
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
         for resume in self.resumes:
@@ -93,7 +95,9 @@ def load_config(path: str | Path) -> AppConfig:
     if not raw:
         raise ConfigError(f"Конфиг {path} пуст или некорректен")
 
-    storage_state_file = parse_account(raw.get("account"))
+    account = parse_account(raw.get("account"))
+    storage_state_file = account.storage_state_file
+    user_agent = account.user_agent
 
     throttle_raw = raw.get("throttle", {})
     throttle = ThrottleConfig(
@@ -139,6 +143,7 @@ def load_config(path: str | Path) -> AppConfig:
         throttle=throttle,
         cover_letter_default=cover_letter_default,
         resumes=resumes,
+        user_agent=user_agent,
     )
 
 
