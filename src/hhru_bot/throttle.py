@@ -21,7 +21,9 @@ class LimitReached(Exception):
     limit: int
 
     def __str__(self) -> str:
-        return f"Достигнут дневной лимит '{self.action}' для резюме '{self.resume_id}': {self.limit}"
+        return (
+            f"Достигнут дневной лимит '{self.action}' для резюме '{self.resume_id}': {self.limit}"
+        )
 
 
 class Throttle:

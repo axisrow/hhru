@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hhru-bot"
+version = "0.1.0"
+description = "CLI для поиска вакансий, откликов и поднятия резюме на hh.ru (Playwright)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "axisrow" }]
+dependencies = [
+    "playwright>=1.59.0",
+    "PyYAML>=6.0",
+    "python-dateutil>=2.9",
+]
+
+[project.scripts]
+hhru-bot = "hhru_bot.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Миграции — это .sql-ресурсы, их надо явно тащить в wheel/sdist; без этого
+# _available_migrations() через importlib.resources не найдёт 001_actions.sql
+# при `pip install .` и History не создаст таблицу actions.
+[tool.setuptools.package-data]
+"hhru_bot.migrations" = ["*.sql"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

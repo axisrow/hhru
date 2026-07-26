@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
 from .browser import HH_BASE_URL
@@ -22,7 +23,11 @@ class BumpResult:
 
 
 def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
-    url = resume.resume_url if resume.resume_url.startswith("http") else f"{HH_BASE_URL}{resume.resume_url}"
+    url = (
+        resume.resume_url
+        if resume.resume_url.startswith("http")
+        else f"{HH_BASE_URL}{resume.resume_url}"
+    )
     logger.info("Открываю резюме: %s", url)
     page.goto(url, wait_until="domcontentloaded")
 

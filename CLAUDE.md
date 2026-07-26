@@ -85,6 +85,39 @@ cp config/config.example.yaml config/config.yaml
 на этих шагах первый подозреваемый — устаревший непроверенный селектор, а не логика модуля.
 `_select_resume_in_form()` в `apply.py` тоже помечен как приблизительный.
 
+### Структура пакетов под распараллеливание (Wave 0)
+
+Код разложен так, чтобы 10 параллельных воркеров не конфликтовали в общих файлах.
+Каждое feature-ишью владеет **своим файлом/шагом**, а не общим оркестратором.
+При правках соблюдай эту структуру — не сваливай шаги обратно в монолит.
+
+- **`commands/`** — каждая команда = отдельный модуль с `register(subparsers)`.
+  `cli.py` авторегистрирует их через `pkgutil.iter_modules` — добавление команды = новый
+  файл `commands/<name>.py`, **0 правок `cli.py`**. Общие аргументы/контекст — в
+  `commands/_common.py` (`add_common_args`, `run_apply_for_resume`).
+- **`apply/`** — пакет оркестрации отклика. `pipeline.py` — тонкая связка шагов
+  (~не трогается после Wave 0: feature-ишью меняют **внутренности** шагов, не последовательность).
+  Шаги разложены по файлам-владельцам: `dedup.py` (#3 «уже откликались»), `steps.py`
+  (#6 навигация/wait'ы формы), `success.py` (#7 подтверждение успеха), `probe.py`
+  (#8 диагностический снимок, хук `ctx.probe`), `letter.py` (#17 письмо).
+  Селекторы статуса отклика живут **у владельцев** (dedup/success), а не в `selector_groups/`.
+- **`config_sections/`** — реестр парсеров секций `config.yaml` (`@register("<name>")`).
+  `load_config` делегирует resume-подсекции реестру. Новая секция = новый файл
+  `config_sections/<name>.py`, `ResumeConfig` не трогается (для scoring/ai_profile там
+  пред-добавлены нейтральные `Optional`-поля `= None`).
+- **`migrations/`** — миграции SQLite как `.sql` с числовым префиксом, применяется
+  `_runner.apply_migrations` (идемпотентно, таблица `schema_migrations`).
+  **Конвенция: номер миграции = номер ишью** (например `002_responses.sql` для #12,
+  `017_letter.sql` для #17) — снижает коллизию имён между worktree. Не пиши DDL в `history.py`.
+- **`selector_groups/`** — селекторы по страницам. `selectors.py` — тонкий shim
+  (`sel.VACANCY_CARD`...) для обратной совместимости; новый код импортирует из группы.
+- **`tests/`** — characterization-тесты на чистую логику (без браузера): `filter_candidates`,
+  `build_search_url`, `render_cover_letter`, `load_config`, `apply_migrations` идемпотентность,
+  `register_commands` + `--help`. Покрывают реструктуризацию от регрессий.
+
+Конвенция репортов: **один report-топик на файл** (напр. `report.py` vs `report_funnel.py`),
+чтобы параллельные ишью статистики/воронки не конфликтовали.
+
 ## Конфигурация и данные
 
 - `config.py` парсит `config.yaml` в датаклассы (`AppConfig` → `ResumeConfig` → `SearchFilters`)

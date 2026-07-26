@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+
+      - name: Ruff check
+        run: ruff check src tests
+
+      - name: Ruff format check
+        run: ruff format --check src tests
+
+      - name: Pytest
+        run: pytest
+
+  packaging:
+    # Страховка, что упакованный дистрибутив (wheel) несёт миграции и History
+    # работает при `pip install .`, а не только при запуске из checkout.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and install into clean env
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --upgrade pip
+          /tmp/venv/bin/pip install dist/*.whl
+          /tmp/venv/bin/pip install playwright PyYAML python-dateutil
+
+      - name: Smoke — migration SQL ships in wheel and History works
+        run: /tmp/venv/bin/python tests/packaging_smoke.py
+
