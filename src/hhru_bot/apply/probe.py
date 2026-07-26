@@ -29,8 +29,8 @@ from typing import Any
 from playwright.sync_api import Page
 
 from ..config import PROJECT_ROOT
-from ..selector_groups import apply_form
 from ..search import VacancyCard
+from ..selector_groups import apply_form
 from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import render_cover_letter
@@ -59,10 +59,10 @@ class ProbeResult:
     reason: str = ""
     dump_paths: dict[str, Path] = field(default_factory=dict)
 
-    def fail(self, reason: str) -> "ProbeResult":
+    def fail(self, reason: str) -> ProbeResult:
         return ProbeResult(self.vacancy, False, reason)
 
-    def ok(self, reason: str, dump_paths: dict[str, Path]) -> "ProbeResult":
+    def ok(self, reason: str, dump_paths: dict[str, Path]) -> ProbeResult:
         return ProbeResult(self.vacancy, True, reason, dump_paths)
 
 
