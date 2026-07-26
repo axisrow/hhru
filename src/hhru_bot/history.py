@@ -5,21 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS actions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    resume_id TEXT NOT NULL,
-    vacancy_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    status TEXT NOT NULL,
-    reason TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
-    ON actions(resume_id, vacancy_id)
-    WHERE action = 'apply' AND status IN ('success', 'dry_run');
-"""
+from .migrations import apply_migrations
 
 
 class History:
@@ -40,7 +26,7 @@ class History:
 
     def _init_schema(self):
         with self._connect() as conn:
-            conn.executescript(SCHEMA)
+            apply_migrations(conn)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         with self._connect() as conn:
