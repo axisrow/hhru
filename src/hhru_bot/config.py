@@ -34,6 +34,11 @@ class ResumeConfig:
     resume_url: str
     search: SearchFilters
     cover_letter: str | None = None
+    # Пред-добавленные нейтральные заглушки под будущие feature-ишью:
+    # #15 (scoring) и #17 (ai_profile) заполнят их своими датаклассами, не трогая
+    # ResumeConfig. None = секция отсутствует в конфиге.
+    scoring: object | None = None
+    ai_profile: object | None = None
 
     @property
     def resume_id(self) -> str:
@@ -69,6 +74,12 @@ def _require(mapping: dict, key: str, context: str):
 
 
 def load_config(path: str | Path) -> AppConfig:
+    # Lazy-импорт, чтобы разорвать цикл config <-> config_sections
+    # (config_sections.* импортируют типы/PROJECT_ROOT из config на загрузке).
+    from .config_sections import get as section_parser
+    from .config_sections import names as section_names
+    from .config_sections import parse_account
+
     path = Path(path)
     if not path.exists():
         raise ConfigError(
@@ -82,8 +93,7 @@ def load_config(path: str | Path) -> AppConfig:
     if not raw:
         raise ConfigError(f"Конфиг {path} пуст или некорректен")
 
-    account = _require(raw, "account", "корневой раздел")
-    storage_state_file = PROJECT_ROOT / _require(account, "storage_state_file", "account")
+    storage_state_file = parse_account(raw.get("account"))
 
     throttle_raw = raw.get("throttle", {})
     throttle = ThrottleConfig(
@@ -109,23 +119,18 @@ def load_config(path: str | Path) -> AppConfig:
         seen_ids.add(resume_id)
 
         resume_url = _require(r, "resume_url", context)
-        search_raw = _require(r, "search", context)
-        search = SearchFilters(
-            text=_require(search_raw, "text", f"{context}.search"),
-            area=search_raw.get("area"),
-            salary_from=search_raw.get("salary_from"),
-            experience=search_raw.get("experience"),
-            schedule=search_raw.get("schedule"),
-            exclude_employers=search_raw.get("exclude_employers") or [],
-            exclude_keywords=search_raw.get("exclude_keywords") or [],
-        )
+
+        # Парсинг resume-подсекций делегирован реестру config_sections.
+        kwargs: dict[str, object] = {"cover_letter": r.get("cover_letter")}
+        for sec_name in section_names():
+            parser = section_parser(sec_name)
+            kwargs[sec_name] = parser(r.get(sec_name), f"{context}.{sec_name}")
 
         resumes.append(
             ResumeConfig(
                 id=resume_id,
                 resume_url=resume_url,
-                search=search,
-                cover_letter=r.get("cover_letter"),
+                **kwargs,  # type: ignore[arg-type]
             )
         )
 
