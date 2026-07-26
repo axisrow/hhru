@@ -137,9 +137,7 @@ def test_apply_and_bump_record_under_same_resume_key(tmp_path, monkeypatch):
     )
 
     # --- apply-путь (dry-run) ---
-    card = VacancyCard(
-        vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
-    )
+    card = VacancyCard(vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42")
     monkeypatch.setattr(_common, "search_vacancies", lambda page, search, max_pages=5: [card])  # noqa: ARG005
     apply_args = argparse.Namespace(dry_run=True, limit=1, max_pages=5, headless=True)
     _common.run_apply_for_resume(_ApplyFakePage(), config, resume, history, throttle, apply_args)
