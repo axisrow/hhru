@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
-from .config import PROJECT_ROOT
-
-LOG_DIR = PROJECT_ROOT / "logs"
+# Логи — относительно cwd (точки запуска), не относительно пакета: после
+# `pip install` пакет в site-packages, писать логи туда нельзя. См. cli.py.
+LOG_DIR = Path.cwd() / "logs"
 
 
 def setup_logging(verbose: bool = False) -> None:

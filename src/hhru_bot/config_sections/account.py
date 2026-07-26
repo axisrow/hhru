@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import PROJECT_ROOT, ConfigError
+from ..config import ConfigError
 
 
 @dataclass
@@ -27,8 +27,15 @@ def _require(mapping: dict, key: str, context: str):
     return mapping[key]
 
 
-def parse_account(raw) -> AccountConfig:
-    """raw — корневая секция account. Возвращает AccountConfig."""
+def parse_account(raw, base_dir: Path) -> AccountConfig:
+    """raw — корневая секция account. Возвращает AccountConfig.
+
+    ``base_dir`` — директория файла конфига; относительный путь ``storage_state_file``
+    резолвится от неё, а не от пакета (иначе после `pip install` путь улетел бы в
+    site-packages) и не от cwd (тогда конфиг и data/ разъезжались бы при запуске из
+    произвольной директории). Конфиг лежит рядом с data/ — это и есть база.
+    См. также комментарий в ``load_config``.
+    """
     if not raw:
         raise ConfigError("В конфиге отсутствует обязательное поле 'storage_state_file' (account)")
     storage_state_file = _require(raw, "storage_state_file", "account")
@@ -37,7 +44,7 @@ def parse_account(raw) -> AccountConfig:
     if user_agent is not None and not isinstance(user_agent, str):
         raise ConfigError("Поле 'user_agent' (account) должно быть строкой")
     return AccountConfig(
-        storage_state_file=PROJECT_ROOT / storage_state_file,
+        storage_state_file=(base_dir / storage_state_file).resolve(),
         # `or None` намеренно: пустая строка трактуется как «не задано» → родной UA.
         user_agent=user_agent or None,
     )
