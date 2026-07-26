@@ -29,10 +29,9 @@ class _FakeLocator:
         self._state = state
 
     def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
-        # Моделируем реальное поведение Playwright: в strict mode при >1 совпадении
-        # wait_for кидает обычный Error (не PlaywrightTimeoutError) — это и есть
-        # регрессия, которую ловит test_fill_form_resume_select_multiple_matches.
-        if self._state.match_count > 1:
+        # Моделируем реальное поведение Playwright: в strict mode для коллекции
+        # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
+        if self._state.is_collection:
             raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
                 f"strict mode violation: {self.selector} resolved to "
                 f"{self._state.match_count} elements"
@@ -47,23 +46,35 @@ class _FakeLocator:
         self._state.fills.append(value)
 
     def count(self) -> int:
+        # Для коллекции (резюме, set_match_count) count() = число совпадений в DOM.
+        # Иначе — одиночный элемент: 1 если visible, иначе 0.
+        if self._state.is_collection:
+            return self._state.match_count
         return 1 if self._state.visible else 0
 
     def get_attribute(self, _name: str) -> str | None:
-        return None
+        return self._state.current_href
 
-    def nth(self, _i: int) -> _FakeLocator:
+    def nth(self, i: int) -> _FakeLocator:
+        # Каждая опция резюме — свой href; _select_resume_in_form ищет resume_id в нём.
+        if self._state.option_hrefs:
+            self._state.current_href = self._state.option_hrefs[i]
+        self._state.clicks += 1  # клик по выбранной опции
         return self
 
 
 class _SelectorState:
     def __init__(self, visible: bool = False) -> None:
         self.visible = visible
-        # match_count>1 имитирует строгий режим Playwright: селектор совпал с
-        # несколькими элементами (коллекция резюме/несколько кнопок).
+        # is_collection=True имитирует коллекцию (несколько резюме): wait_for кидает
+        # strict-mode Error, count() возвращает match_count.
+        self.is_collection = False
         self.match_count = 1
         self.clicks = 0
         self.fills: list[str] = []
+        # Для коллекции резюме: href каждой опции (current_href ставится в nth()).
+        self.option_hrefs: list[str] = []
+        self.current_href: str | None = None
 
 
 class FakeStepsPage:
@@ -82,8 +93,9 @@ class FakeStepsPage:
         return st
 
     def set_match_count(self, selector: str, count: int) -> _SelectorState:
-        """Селектор совпал с `count` элементами → имитация strict-mode нарушения."""
+        """Селектор совпал с `count` элементами → коллекция (имитация strict-mode)."""
         st = self._state(selector)
+        st.is_collection = True
         st.match_count = count
         st.visible = count > 0
         return st
@@ -195,19 +207,22 @@ def test_fill_form_letter_toggle_absent_skips_textarea():
     assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == []
 
 
-def test_fill_form_resume_select_multiple_matches_does_not_crash():
-    # Регрессия #6: APPLY_RESUME_SELECT по дизайну коллекция (несколько резюме).
-    # Playwright wait_for в strict mode при >1 совпадении кидает обычный Error
-    # (НЕ PlaywrightTimeoutError) — _is_visible должен это пережить (трактовать как
-    # «поле есть, но не однозначное») и НЕ ронять apply-run необработанным исключением.
+def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
+    # Регрессия #6 (cycle-2 review): APPLY_RESUME_SELECT — коллекция (несколько резюме).
+    # wait_for в strict mode при >1 совпадении кидает обычный Error. Проверка «есть ли
+    # поле резюме» НЕ должна идти через _is_visible/wait_for — иначе выбор резюме
+    # пропускается и submit отправляет резюме по умолчанию (не запрошенный resume_id).
+    # Оракул: при двух резюме с разными href должна кликнуться опция, содержащая resume_id.
     page = FakeStepsPage()
-    page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
-    # apply-run не прерван исключением; submit нажат.
+    # Выбор резюме вызвался и кликнул именно опцию с RID (current_href = 2-я опция).
     assert result is None
+    assert st.current_href == "/resume/RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 

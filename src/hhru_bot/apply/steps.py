@@ -90,7 +90,12 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     """Заполняет форму отклика. Возвращает причину отказа или None, если заполнение OK."""
     from ..selector_groups import apply_form
 
-    if _is_visible(page, apply_form.APPLY_RESUME_SELECT, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS):
+    # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
+    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому «есть ли выбор
+    # резюме» проверяем через count() > 0 (как до #6), а НЕ через _is_visible/wait_for —
+    # иначе при нескольких резюме выбор молча пропускается и submit отправляет резюме
+    # по умолчанию вместо запрошенного resume_id (необратимая отправка неверного резюме).
+    if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
         _select_resume_in_form(page, resume_id)
 
     if _is_visible(
