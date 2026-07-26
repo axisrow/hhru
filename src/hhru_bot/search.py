@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -15,11 +16,137 @@ logger = logging.getLogger("hhru_bot.search")
 
 
 @dataclass
+class SalaryInfo:
+    """Распарсенная зарплата вакансии (issue #14).
+
+    salary_from/salary_to могут быть None: диапазон «от N» → from=N, to=None;
+    «до N» → from=None, to=N; «от A до B» → оба. Фиксированное значение N
+    сохраняется как from=to=N (без диапазона). currency — ISO-код валюты
+    (RUB/USD/EUR/KZT/BYN) либо исходная строка, если валюта не распознана.
+    raw — оригинальный текст блока (для логов/диагностики).
+    """
+
+    salary_from: int | None
+    salary_to: int | None
+    currency: str
+    raw: str
+
+
+# --- парсер зарплаты (чистая функция, issue #14) ----------------------------
+#
+# hh.ru форматирует зарплату одним из способов:
+#   «150 000–200 000 руб.»  — диапазон, рубли
+#   «от 80 000 ₽»           — нижняя граница
+#   «до 120 000 руб.»       — верхняя граница
+#   «100 000 ₽»             — фиксированное значение
+#   «3 000–5 000 USD»       — иностранная валюта
+#   «з/п не указана»        — нет данных → None
+# Разделители разрядов: обычный пробел, неразрывный U+00A0 и узкий U+202F.
+# Дефис диапазона: обычный '-', en-dash '–' (U+2013), em-dash '—' (U+2014).
+
+# Любой разделитель разрядов числа (включая неразрывные пробелы hh.ru).
+_DIGIT_GROUP_SEP = r"[   ]"
+
+_NUMBER = rf"\d+(?:{_DIGIT_GROUP_SEP}?\d{{3}})*"
+
+# Карта: распознаваемое в тексте обозначение → ISO-код валюты.
+# Порядок важен: более длинные/специфичные строки раньше коротких.
+_CURRENCY_PATTERNS: list[tuple[str, str]] = [
+    ("бел. руб", "BYN"),
+    ("бел.руб", "BYN"),
+    ("руб.", "RUB"),
+    ("руб", "RUB"),
+    ("₽", "RUB"),
+    ("usd", "USD"),
+    ("$", "USD"),
+    ("eur", "EUR"),
+    ("€", "EUR"),
+    ("kzt", "KZT"),
+    ("тг", "KZT"),
+    ("₸", "KZT"),
+    ("грн", "UAH"),
+    ("₴", "UAH"),
+]
+
+# Заглушки hh.ru, означающие «зарплаты нет».
+_NO_SALARY_MARKERS = ("з/п не указана", "зп не указана", "не указана", "по договоренности")
+
+
+def _strip_digits(token: str) -> int:
+    """Убирает разделители разрядов и возвращает int."""
+    cleaned = re.sub(_DIGIT_GROUP_SEP, "", token)
+    return int(cleaned)
+
+
+def _detect_currency(text: str) -> str:
+    """Возвращает ISO-код валюты или исходный короткий токен, если не распознан."""
+    lower = text.lower()
+    for needle, code in _CURRENCY_PATTERNS:
+        if needle in lower:
+            return code
+    # Незнакомая валюта: вернём последний «словесный» токен (не число),
+    # чтобы не терять информацию и не падать. Пусто → RUB по умолчанию.
+    words = [w for w in re.split(r"[\s.,]+", text) if w and not w.isdigit()]
+    if words:
+        return words[-1]
+    return "RUB"
+
+
+def parse_salary(text: str | None) -> SalaryInfo | None:
+    """Разбирает строку зарплаты hh.ru в SalaryInfo, либо None.
+
+    Чистая функция (без браузера) — ради тестируемости. Принимает «грязный»
+    текст блока компенсации и нормализует его. Возвращает None для заглушек
+    «з/п не указана»/пустоты/None.
+    """
+    if not text:
+        return None
+
+    raw = text.strip()
+    if not raw:
+        return None
+
+    if any(marker in raw.lower() for marker in _NO_SALARY_MARKERS):
+        return None
+
+    currency = _detect_currency(raw)
+    numbers = re.findall(_NUMBER, raw)
+
+    if not numbers:
+        return None
+
+    has_from = "от" in raw.lower()
+    has_to = "до" in raw.lower()
+
+    if len(numbers) >= 2:
+        # Диапазон «A–B».
+        salary_from = _strip_digits(numbers[0])
+        salary_to = _strip_digits(numbers[1])
+    elif has_from:
+        salary_from = _strip_digits(numbers[0])
+        salary_to = None
+    elif has_to:
+        salary_from = None
+        salary_to = _strip_digits(numbers[0])
+    else:
+        # Фиксированное значение.
+        salary_from = salary_to = _strip_digits(numbers[0])
+
+    return SalaryInfo(salary_from=salary_from, salary_to=salary_to, currency=currency, raw=raw)
+
+
+@dataclass
 class VacancyCard:
     vacancy_id: str
     title: str
     company: str
     url: str
+    # Зарплата/дата (issue #14). None — если hh.ru не отдал блок или парсер
+    # не смог разобрать (т.е. «з/п не указана»). raw_date — оригинальный текст
+    # блока даты, как есть; парсинг конкретной даты в этом ишью не делается
+    # (форматы hh.ru зависят от локали и не нужны для вывода поиска).
+    salary: SalaryInfo | None = None
+    raw_date: str | None = None
 
 
 def build_search_url(filters: SearchFilters, page_num: int = 0) -> str:
@@ -84,6 +211,14 @@ def search_vacancies(
             company_locator = card.locator(sel.VACANCY_CARD_COMPANY).first
             company = company_locator.inner_text().strip() if company_locator.count() else ""
 
+            # Зарплата и дата публикации (issue #14). Блоки опциональны: hh.ru
+            # не рендерит compensation, если з/п не указана; date всегда есть,
+            # но на ошибку селектора реагируем мягко (raw_date=None), чтобы
+            # сбор карточек не падал целиком из-за одной страницы.
+            salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
+            salary = parse_salary(salary_text)
+            raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
+
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
                 continue
@@ -98,6 +233,8 @@ def search_vacancies(
                         if href.startswith("http")
                         else f"{HH_BASE_URL}{href.split('?')[0]}"
                     ),
+                    salary=salary,
+                    raw_date=raw_date,
                 )
             )
 
@@ -108,6 +245,20 @@ def search_vacancies(
 
     logger.info("Найдено вакансий всего: %d", len(results))
     return results
+
+
+def _optional_text(card, selector: str) -> str | None:
+    """Возвращает .strip()-текст первого элемента по selector, либо None.
+
+    Для опциональных блоков карточки (зарплата, дата): если элемента нет —
+    None; пустая строка после strip тоже трактуется как None, чтобы парсер
+    зарплаты не пытался разбирать пустоту.
+    """
+    locator = card.locator(selector).first
+    if not locator.count():
+        return None
+    text = locator.inner_text().strip()
+    return text or None
 
 
 def _extract_vacancy_id(href: str) -> str | None:

@@ -7,7 +7,13 @@
 from __future__ import annotations
 
 from hhru_bot.config import SearchFilters
-from hhru_bot.search import VacancyCard, _extract_vacancy_id, build_search_url, filter_candidates
+from hhru_bot.search import (
+    SalaryInfo,
+    VacancyCard,
+    _extract_vacancy_id,
+    build_search_url,
+    filter_candidates,
+)
 
 
 class FakeHistory:
@@ -118,3 +124,27 @@ def test_filter_candidates_excludes_keywords():
     assert [c.vacancy_id for c in candidates] == ["1"]
     assert skipped[0][0].vacancy_id == "2"
     assert "стоп-слово" in skipped[0][1]
+
+
+# --- VacancyCard: поля salary/raw_date (issue #14) --------------------------
+
+
+def test_vacancy_card_salary_and_date_default_none():
+    c = card("1")
+    assert c.salary is None
+    assert c.raw_date is None
+
+
+def test_vacancy_card_accepts_salary_and_date():
+    c = VacancyCard(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        url="https://hh.ru/vacancy/1",
+        salary=SalaryInfo(150000, 200000, "RUB", "150 000–200 000 руб."),
+        raw_date="сегодня",
+    )
+    assert c.salary is not None
+    assert c.salary.salary_from == 150000
+    assert c.salary.salary_to == 200000
+    assert c.raw_date == "сегодня"
