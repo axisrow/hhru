@@ -1,23 +1,28 @@
 """Шаг: подтверждение успешной отправки отклика.
 
 Владелец: #7. Селекторы success-сигналов живут здесь, изолированно от
-APPLY_ALREADY_RESPONDED_MARKER (владение #3, в apply/dedup.py). Shared-селектор
-submit-кнопки читается из selector_groups/apply_form (без правок того файла).
+APPLY_ALREADY_RESPONDED_MARKER (владение #3, в apply/dedup.py).
 
-Multi-signal success: один отклик может подтверждаться любым из независимых
+Multi-signal success: один отклик может подтверждаться любым из ПОЗИТИВНЫХ
 сигналов, т.к. реальная вёрстка hh.ru формы отклика НЕ подтверждена (рендерится
 только залогиненному через JS). Подстраховываемся несколькими признаками:
 
   1. CSS success-маркер (основной + запасные) — first_locator по цепочке.
   2. Текст-признак «отклик отправлен» через page.get_by_text (для вариантов
      вёрстки, где подтверждение — текст, а не data-qa).
-  3. Исчезновение submit-кнопки — после её клика в fill_response_form форма
-     уходит; submit точно был (иначе fill_response_form уже отказал бы). Но
-     исчезновение — отрицательный признак, поэтому он гвардится от известных
-     неуспешных состояний (auth/login/challenge URL, пустой DOM).
 
-Если ни один сигнал не сработал мгновенно — ждём основной маркер до таймаута
-(медленный JS-рендер). На таймаут возвращаем False.
+Важно (отклонение от первоначального дизайна #7): успех подтверждается ТОЛЬКО
+ПОЗИТИВНЫМИ сигналами — присутствием маркера/текста. «Исчезновение submit-кнопки»
+(отрицательный признак) намеренно НЕ используется как самостоятельный сигнал:
+после клика submit любая страница без submit-селектора (auth-redirect при
+истёкшей сессии, CAPTCHA/challenge, ошибка валидации, throttle, maintenance,
+пустой/битой DOM) дала бы false success, который запишется в историю (status=
+'success'), а has_applied() навсегда исключит вакансию и сгорит дневной лимит.
+Перечислить все неуспешные состояния для непроверенной вёрстки нельзя, поэтому
+отрицательный признак здесь не источник True — только положительные маркеры.
+
+Если ни один позитивный сигнал не сработал мгновенно — ждём основной маркер до
+таймаута (медленный JS-рендер). На таймаут возвращаем False.
 """
 
 from __future__ import annotations
@@ -28,7 +33,6 @@ import re
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from ..selector_groups import apply_form
 from .locators import first_locator
 
 logger = logging.getLogger("hhru_bot.apply.success")
@@ -50,15 +54,6 @@ APPLY_SUCCESS_MARKERS = (
 # ревизиями — точное сравнение промахнётся. get_by_text принимает Pattern.
 APPLY_SUCCESS_TEXT_RE = re.compile(r"отклик отправлен|вы откликнулись", re.IGNORECASE)
 
-# Submit-кнопка формы отклика — shared-селектор (читаем, не меняем apply_form).
-APPLY_SUBMIT_SELECTOR = apply_form.APPLY_SUBMIT_BUTTON
-
-# Фрагменты URL, означающие НЕ успех: после клика submit страница без submit-
-# селектора может быть не только успешным ответом, но и редиректом на логин,
-# CAPTCHA/challenge или ошибкой. По ним сигнал submit-gone блокируется, иначе
-# false success запишется в историю и has_applied навсегда исключит вакансию.
-_NON_SUCCESS_URL_FRAGMENTS = ("/auth/", "/account/login", "/login?", "/challenge", "/captcha")
-
 
 def _signal_marker(page: Page) -> bool:
     """Сигнал 1: виден ли хоть один CSS success-маркер."""
@@ -70,41 +65,20 @@ def _signal_text(page: Page) -> bool:
     return page.get_by_text(APPLY_SUCCESS_TEXT_RE).count() > 0
 
 
-def _signal_submit_gone(page: Page) -> bool:
-    """Сигнал 3: submit-кнопка исчезла после отправки (форма ушла = успех).
-
-    Имеет смысл только после клика по submit в fill_response_form — там уже
-    проверено, что кнопка была. Но исчезновение submit — ОТРИЦАТЕЛЬНЫЙ признак
-    (отсутствие элемента), и он удовлетворяется не только успехом, но и любым
-    переходом на страницу без формы: редирект на логин при истёкшей сессии,
-    CAPTCHA/challenge, ошибка валидации, битый/пустой DOM. Поэтому сигнала
-    одного недостаточно — гвардим известные неуспешные состояния по URL и
-    наличию body. Без этой страховки false success пишется в историю (status=
-    'success'), has_applied навсегда исключает вакансию и сгорает дневной лимит.
-    """
-    if any(frag in page.url for frag in _NON_SUCCESS_URL_FRAGMENTS):
-        return False
-    if page.locator("body").count() == 0:
-        return False
-    return page.locator(APPLY_SUBMIT_SELECTOR).count() == 0
-
-
 def wait_success_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
-    """Подтверждает успех отклика по нескольким сигналам.
+    """Подтверждает успех отклика по позитивным сигналам.
 
-    Возвращает True, если сработал любой сигнал: success-маркер, текст
-    «отклик отправлен» или исчезновение submit-кнопки. Если ни один не
-    сработал мгновенно — ждёт основной маркер до timeout_ms и на таймаут
-    возвращает False.
+    Возвращает True, если сработал любой позитивный сигнал: success-маркер
+    (CSS-цепочка) или текст «отклик отправлен» (регистронезависимо). Отрица-
+    тельный признак (исчезновение submit) успехом НЕ считается. Если ни один
+    сигнал не сработал мгновенно — ждёт основной маркер до timeout_ms и на
+    таймаут возвращает False.
     """
     if _signal_marker(page):
         logger.debug("Success подтверждён: success-маркер")
         return True
     if _signal_text(page):
         logger.debug("Success подтверждён: текст-признак")
-        return True
-    if _signal_submit_gone(page):
-        logger.debug("Success подтверждён: submit-кнопка исчезла")
         return True
 
     try:

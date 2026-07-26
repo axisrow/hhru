@@ -34,8 +34,9 @@ class _FakePage:
 
     markers: success-маркеры, присутствующие на странице (count>0).
     success_texts: фразы, которые get_by_text найдёт (сопоставляются с regex).
-    submit_present: видна ли submit-кнопка (False = исчезла = успех).
-    body_present: есть ли body на странице (False = пустой/битый DOM).
+    submit_present: фиктивный флаг (success.py submit больше не использует —
+        оставлен, чтобы submit-gone-тесты могли явно выразить «submit исчез»
+        и убедиться, что это НЕ влияет на вердикт).
     """
 
     def __init__(
@@ -44,21 +45,15 @@ class _FakePage:
         markers: set[str] | None = None,
         success_texts: set[str] | None = None,
         submit_present: bool = True,
-        body_present: bool = True,
     ):
         self._markers = markers or set()
         self._success_texts = success_texts or set()
-        self._submit_present = submit_present
-        self._body_present = body_present
+        self._submit_present = submit_present  # noqa: ARG002 — фиктивный, см. docstring
         self.url = ""
 
     def locator(self, selector: str):  # noqa: ARG002
-        if selector == "body":
-            return _FakeLocator(count_value=1 if self._body_present else 0)
         if selector in self._markers:
             return _FakeLocator(count_value=1)
-        if selector == success.APPLY_SUBMIT_SELECTOR:
-            return _FakeLocator(count_value=1 if self._submit_present else 0)
         return _FakeLocator(count_value=0)
 
     def get_by_text(self, text, exact: bool = False):  # noqa: ARG002
@@ -113,47 +108,37 @@ def test_success_via_text_lowercase():
     assert success.wait_success_confirmation(page) is True
 
 
-def test_success_via_submit_gone():
-    """Submit-кнопка исчезла после отправки — успех."""
-    page = _FakePage(submit_present=False)
-    assert success.wait_success_confirmation(page) is True
+def test_submit_gone_alone_is_not_success():
+    """Cycle-2 fix: исчезновение submit САМО ПО СЕБОЕ — НЕ успех.
 
-
-def test_submit_gone_on_auth_redirect_not_success():
-    """FIX1 (codex critical): submit исчез на странице логина — НЕ успех.
-
-    После клика submit страница без селектора — это не только успех, но и
-    auth-redirect / CAPTCHA / ошибка валидации. URL на /account/login должен
-    блокировать сигнал submit-gone, иначе false success запишется в историю и
-    has_applied навсегда исключит вакансию.
+    Отрицательный признак (отсутствие submit) удовлетворяется не только
+    успехом, но и auth-redirect / CAPTCHA / ошибкой валидации / throttle /
+    maintenance — исчерпать перечень для непроверенной вёрстки hh.ru нельзя.
+    False success пишется в историю (status='success'), has_applied навсегда
+    исключает вакансию, сгорает дневной лимит. Поэтому успех подтверждается
+    только ПОЗИТИВНЫМИ сигналами (маркер / текст); submit-gone не источник True.
     """
+    page = _FakePage(submit_present=False)
+    page.url = "https://hh.ru/applicant/vacancy_response?vacancyId=42"
+    assert success.wait_success_confirmation(page, timeout_ms=0) is False
+
+
+def test_submit_gone_on_auth_url_still_not_success():
+    """Submit исчез + URL логина — по-прежнему НЕ успех (раньше гвардил FIX1)."""
     page = _FakePage(submit_present=False)
     page.url = "https://hh.ru/account/login?back=/applicant/vacancy_response"
     assert success.wait_success_confirmation(page, timeout_ms=0) is False
 
 
-def test_submit_gone_on_challenge_not_success():
-    """FIX1: CAPTCHA/challenge-страница без submit — НЕ успех."""
-    page = _FakePage(submit_present=False)
-    page.url = "https://hh.ru/challenge?captcha=1"
-    assert success.wait_success_confirmation(page, timeout_ms=0) is False
+def test_submit_gone_with_marker_is_success():
+    """Маркер присутствует (позитивный сигнал) — успех, submit тут ни при чём."""
+    page = _FakePage(markers={success.APPLY_SUCCESS_MARKER}, submit_present=False)
+    assert success.wait_success_confirmation(page) is True
 
 
-def test_submit_gone_on_empty_dom_not_success():
-    """FIX1: пустой/битый DOM (body отсутствует) без submit — НЕ успех."""
-    page = _FakePage(submit_present=False, body_present=False)
-    page.url = "https://hh.ru/applicant/vacancy_response"
-    assert success.wait_success_confirmation(page, timeout_ms=0) is False
-
-
-def test_submit_gone_on_form_url_is_success():
-    """FIX1: submit исчез, URL остался на форме отклика — успех (нормальный путь).
-
-    Гварды не должны ломать валидный сигнал: после отправки форма на месте,
-    submit ушёл, URL прежний.
-    """
-    page = _FakePage(submit_present=False)
-    page.url = "https://hh.ru/applicant/vacancy_response?vacancyId=42"
+def test_submit_gone_with_text_is_success():
+    """Текст-признак (позитивный сигнал) — успех, submit тут ни при чём."""
+    page = _FakePage(success_texts={"Отклик отправлен"}, submit_present=False)
     assert success.wait_success_confirmation(page) is True
 
 
