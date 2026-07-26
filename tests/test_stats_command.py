@@ -21,12 +21,14 @@ def _write_config(tmp_path, body: str):
 
 
 def _minimal_config() -> str:
+    # Реалистичный контракт: id (slug) ≠ resume_id (число из URL). apply/bump
+    # пишут историю под resume.resume_id (число), а --resume в CLI получает slug.
     return """
         account:
           storage_state_file: data/storage_state/hh_session.json
         resumes:
-          - id: r1
-            resume_url: "https://hh.ru/resume/AAA111"
+          - id: python
+            resume_url: "https://hh.ru/resume/12345"
             search:
               text: "python developer"
     """
@@ -93,15 +95,20 @@ def test_stats_run_csv_export_machine_readable(capsys, tmp_path):
 
 
 def test_stats_run_resume_filter(capsys, tmp_path):
+    """--resume фильтрует по resume.resume_id (число из URL), как apply/bump.
+
+    Регрессия: PR #31 унифицировал ключ истории на resume.resume_id. stats.run
+    получает slug из --resume и должен резолвить его в resume.resume_id для
+    фильтра — иначе сводка всегда пуста."""
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
-    h.record_action("r1", "v1", "apply", "success")
-    h.record_action("r2", "v9", "apply", "success")  # чужое резюме — отсечётся
+    # apply/bump пишут под resume.resume_id (= "12345" из URL), НЕ под slug "python"
+    h.record_action("12345", "v1", "apply", "success")
+    h.record_action("99999", "v9", "apply", "success")  # другое резюме — отсечётся
 
-    stats_cmd.run(_args(config, tmp_path / "h.db", resume="r1"))
+    # --resume получает slug "python", stats должен найти запись 12345
+    stats_cmd.run(_args(config, tmp_path / "h.db", resume="python"))
     out = capsys.readouterr().out
-    # только одно success-действие r1 (apply success = 1)
-    # в ASCII-таблице apply-строка: "apply" + "1" успех
     apply_line = [ln for ln in out.splitlines() if ln.strip().startswith("| apply")][0]
     assert " 1 " in apply_line or apply_line.strip().endswith("1 |")
 

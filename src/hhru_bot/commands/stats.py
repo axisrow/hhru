@@ -49,18 +49,18 @@ def run(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import format_actions, format_summary
 
-    # Конфиг нужен, чтобы валидировать --resume (если задан) и привести его к
-    # resume.id так же, как в apply/search. Если --resume не задан — конфиг
-    # всё равно грузим для единообразия ошибок.
+    # --resume получает slug из конфига (resume.id), но история apply/bump
+    # хранится под resume.resume_id (стабильный числовой id hh.ru — см. #2).
+    # Резолвим slug -> resume.resume_id тем же ключом, что и записи в БД.
     config = load_config_or_exit(args.config)
-    resume_id = args.resume
-    if resume_id is not None:
+    resume_id = None
+    if args.resume is not None:
         try:
-            # бросит ConfigError, если такого резюме нет в конфиге
-            config.get_resume(resume_id)
+            resume = config.get_resume(args.resume)
         except ConfigError as e:
             print(f"Ошибка конфигурации: {e}", file=sys.stderr)
             sys.exit(1)
+        resume_id = resume.resume_id
 
     history = History(args.history)
 
