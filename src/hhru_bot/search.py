@@ -188,9 +188,13 @@ def _score_card(
     """
     title_tokens = set(_tokenize(card.title))
 
-    must_have_hits = sum(1 for kw in filters.must_have if _tokenize(kw) and _tokenize(kw)[0] in title_tokens)
-    nice_hits = sum(1 for kw in filters.nice_to_have if _tokenize(kw) and _tokenize(kw)[0] in title_tokens)
-    exclude_hits = sum(1 for kw in filters.exclude_keywords if _tokenize(kw) and _tokenize(kw)[0] in title_tokens)
+    def _kw_in_title(kw: str) -> bool:
+        kw_tokens = _tokenize(kw)
+        return bool(kw_tokens) and kw_tokens[0] in title_tokens
+
+    must_have_hits = sum(1 for kw in filters.must_have if _kw_in_title(kw))
+    nice_hits = sum(1 for kw in filters.nice_to_have if _kw_in_title(kw))
+    exclude_hits = sum(1 for kw in filters.exclude_keywords if _kw_in_title(kw))
 
     text_tokens = _tokenize(filters.text)
     if text_tokens:
