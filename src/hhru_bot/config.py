@@ -26,6 +26,9 @@ class SearchFilters:
     schedule: str | None = None
     exclude_employers: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
+    # Опциональные поля ранжирования (#15): буст за совпадение в title.
+    must_have: list[str] = field(default_factory=list)
+    nice_to_have: list[str] = field(default_factory=list)
 
 
 @dataclass

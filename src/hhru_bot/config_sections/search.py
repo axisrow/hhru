@@ -29,4 +29,6 @@ def parse_search(raw, context: str) -> SearchFilters:
         schedule=raw.get("schedule"),
         exclude_employers=raw.get("exclude_employers") or [],
         exclude_keywords=raw.get("exclude_keywords") or [],
+        must_have=raw.get("must_have") or [],
+        nice_to_have=raw.get("nice_to_have") or [],
     )

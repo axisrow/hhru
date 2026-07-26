@@ -17,7 +17,7 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..search import filter_candidates, search_vacancies
+    from ..search import filter_candidates, rank_candidates, search_vacancies
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -29,12 +29,17 @@ def run(args: argparse.Namespace) -> None:
             print(f"\n=== Поиск вакансий для резюме: {resume.id} ===")
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
             candidates, skipped = filter_candidates(cards, resume.search, resume.id, history)
+            ranked = rank_candidates(candidates, resume.search, resume)
 
             print(
                 f"Найдено всего: {len(cards)}, "
                 f"подходящих: {len(candidates)}, исключено: {len(skipped)}"
             )
-            for c in candidates:
-                print(f"  [candidate] {c.title} — {c.company} ({c.url})")
+            for c, score, breakdown in ranked:
+                factors = ", ".join(
+                    f"{name}={value:+.2f}" for name, value in breakdown.items() if value
+                )
+                detail = f" | {factors}" if factors else ""
+                print(f"  [candidate] score={score:+.2f} {c.title} — {c.company} ({c.url}){detail}")
             for card, reason in skipped:
                 print(f"  [skip] {card.title} — {reason}")
