@@ -32,7 +32,7 @@ OPTIONAL_FIELD_TIMEOUT_MS = 1_500
 def wait_apply_button(page: Page) -> bool:
     """Ждёт появления кнопки отклика на странице вакансии. False — не дождались."""
     try:
-        page.locator(vacancy_page.VACANCY_APPLY_BUTTON).wait_for(timeout=APPLY_TIMEOUT_MS)
+        page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first.wait_for(timeout=APPLY_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         return False
     return True
@@ -50,7 +50,7 @@ def navigate_to_response_form(page: Page) -> None:
     """
     from ..selector_groups import apply_form
 
-    apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON)
+    apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
     with page.expect_navigation(wait_until="domcontentloaded", timeout=APPLY_TIMEOUT_MS):
         apply_button.click()
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.

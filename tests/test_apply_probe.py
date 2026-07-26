@@ -17,6 +17,10 @@ from hhru_bot.search import VacancyCard
 class _FakeLocator:
     """Локатор с отслеживанием click() — критично для проверки атомарности."""
 
+    @property
+    def first(self):
+        return self
+
     def __init__(self, present: bool = False, attrs: dict[str, str] | None = None):
         self._present = present
         self._attrs = attrs or {}
