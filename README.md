@@ -121,6 +121,14 @@ cp config/config.example.yaml config/config.yaml
 
 - (без аргументов)
 
+### `probe`
+
+- `--resume` — ID резюме из конфига (по умолчанию — все)
+- `--dry-run` — Показать, что будет сделано, без реальных действий
+- `--max-pages MAX_PAGES` — Максимум страниц поиска (по умолчанию: 5)
+- `--vacancy-id` — ID целевой вакансии (число из URL https://hh.ru/vacancy/<id>)
+- `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
+
 ### `run`
 
 - `--resume` — ID резюме из конфига (по умолчанию — все)

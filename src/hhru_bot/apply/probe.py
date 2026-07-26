@@ -28,7 +28,7 @@ from typing import Any
 
 from playwright.sync_api import Page
 
-from ..config import PROJECT_ROOT
+from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..selector_groups import apply_form
 from . import steps as apply_steps
@@ -37,7 +37,10 @@ from .letter import render_cover_letter
 
 logger = logging.getLogger("hhru_bot.apply.probe")
 
-PROBE_LOG_DIR = PROJECT_ROOT / "logs"
+# Дампы probe пишем туда же, куда и остальные логи — relative-to-cwd (см.
+# logging_setup.LOG_DIR). Раньше было PROJECT_ROOT / "logs", но PROJECT_ROOT
+# убран из config.py (ломался после pip install).
+PROBE_LOG_DIR = LOG_DIR
 
 
 @dataclass
