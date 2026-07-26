@@ -62,10 +62,11 @@ class _FakeLocator:
 
 
 class _ApplyFakePage:
-    """Page для apply-pipeline: есть кнопка отклика, нет маркера «уже откликались».
+    """Page для apply-pipeline: есть кнопка отклика.
 
     Dry-run стопает после кнопки отклика — до навигации на форму, поэтому submit
-    не нужен.
+    не нужен. Дедуп-маркер «уже откликались» убран из pipeline (PR #27), поэтому
+    locator() его больше не получает — check_already_responded всегда возвращает None.
     """
 
     def __init__(self):
@@ -75,11 +76,8 @@ class _ApplyFakePage:
         self.goto_calls.append(url)
 
     def locator(self, selector: str):  # noqa: ARG002
-        from hhru_bot.apply import dedup
         from hhru_bot.selector_groups import vacancy_page
 
-        if selector == dedup.APPLY_ALREADY_RESPONDED_MARKER:
-            return _FakeLocator(present=False)
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=True)
         return _FakeLocator(present=False)
@@ -154,6 +152,10 @@ def test_apply_and_bump_record_under_same_resume_key(tmp_path, monkeypatch):
         def __exit__(self, *_a):  # noqa: ARG002
             return False
 
+    # String-path monkeypatch патчит символ в модуле-источнике (browser/bump/config).
+    # Работает только потому, что bump.run импортирует launch_context/bump_resume/
+    # load_config_or_exit лениво (внутри функции) — каждый вызов подхватывает свежий патч.
+    # Если импорты вынести наверх модуля bump.py — этот тест нужно править.
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _CtxManager())  # noqa: ARG005
     monkeypatch.setattr(
         "hhru_bot.bump.bump_resume",

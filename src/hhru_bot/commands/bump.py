@@ -45,6 +45,9 @@ def run(args: argparse.Namespace) -> None:
 
             result = bump_resume(page, resume, args.dry_run)
             status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+            # Для action='bump' нет естественного vacancy_id (поднятие резюме, не отклик).
+            # actions.vacancy_id NOT NULL — заполняем resume.resume_id как sentinel; UNIQUE-индекс
+            # idx_resume_vacancy_apply существует только WHERE action='apply', так что коллизий нет.
             history.record_action(resume.resume_id, resume.resume_id, "bump", status, result.reason)
 
             if result.success:
