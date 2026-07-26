@@ -27,14 +27,14 @@ def _subparser_actions(parser):
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
-    assert set(action.choices) == {"login", "search", "apply", "bump", "run", "probe"}
+    assert set(action.choices) == {"login", "search", "apply", "bump", "run", "probe", "stats"}
 
 
 def test_register_commands_returns_names():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     names = register_commands(sub)
-    assert set(names) == {"login", "search", "apply", "bump", "run", "probe"}
+    assert set(names) == {"login", "search", "apply", "bump", "run", "probe", "stats"}
 
 
 def _opts_for(command: str) -> set[str]:
@@ -88,3 +88,29 @@ def test_login_no_common_args():
     opts = _opts_for("login")
     assert "--resume" not in opts
     assert "--dry-run" not in opts
+
+
+def test_stats_has_period_and_format():
+    opts = _opts_for("stats")
+    assert "--resume" in opts
+    assert "--period" in opts
+    assert "--format" in opts
+    # stats — не браузерная команда, общих поисковых флагов у неё нет
+    assert "--dry-run" not in opts
+    assert "--max-pages" not in opts
+
+
+def test_stats_period_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["stats"]
+    period = next(a for a in sub._actions if "--period" in a.option_strings)
+    assert set(period.choices) == {"today", "week", "month", "all"}
+
+
+def test_stats_format_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["stats"]
+    fmt = next(a for a in sub._actions if "--format" in a.option_strings)
+    assert set(fmt.choices) == {"table", "csv", "md"}
