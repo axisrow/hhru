@@ -12,8 +12,9 @@ Multi-signal success: один отклик может подтверждать�
   2. Текст-признак «отклик отправлен» через page.get_by_text (для вариантов
      вёрстки, где подтверждение — текст, а не data-qa).
   3. Исчезновение submit-кнопки — после её клика в fill_response_form форма
-     уходит; submit точно был (иначе fill_response_form уже отказал бы), so
-     его исчезновение = успех.
+     уходит; submit точно был (иначе fill_response_form уже отказал бы). Но
+     исчезновение — отрицательный признак, поэтому он гвардится от известных
+     неуспешных состояний (auth/login/challenge URL, пустой DOM).
 
 Если ни один сигнал не сработал мгновенно — ждём основной маркер до таймаута
 (медленный JS-рендер). На таймаут возвращаем False.
@@ -22,6 +23,7 @@ Multi-signal success: один отклик может подтверждать�
 from __future__ import annotations
 
 import logging
+import re
 
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -43,15 +45,19 @@ APPLY_SUCCESS_MARKERS = (
     ".bloko-modal-response-success",
 )
 
-# Текстовые признаки отправленного отклика. get_by_text ищет подстроку, поэтому
-# достаточно устойчивой фразы; перечислены варианты, замеченные на hh.ru.
-APPLY_SUCCESS_TEXTS = (
-    "Отклик отправлен",
-    "Вы откликнулись на вакансию",
-)
+# Текстовые признаки отправленного отклика. Регистронезависимый regex (#7):
+# вёрстка hh.ru не подтверждена, регистр/пунктуация могут различаться между
+# ревизиями — точное сравнение промахнётся. get_by_text принимает Pattern.
+APPLY_SUCCESS_TEXT_RE = re.compile(r"отклик отправлен|вы откликнулись", re.IGNORECASE)
 
 # Submit-кнопка формы отклика — shared-селектор (читаем, не меняем apply_form).
 APPLY_SUBMIT_SELECTOR = apply_form.APPLY_SUBMIT_BUTTON
+
+# Фрагменты URL, означающие НЕ успех: после клика submit страница без submit-
+# селектора может быть не только успешным ответом, но и редиректом на логин,
+# CAPTCHA/challenge или ошибкой. По ним сигнал submit-gone блокируется, иначе
+# false success запишется в историю и has_applied навсегда исключит вакансию.
+_NON_SUCCESS_URL_FRAGMENTS = ("/auth/", "/account/login", "/login?", "/challenge", "/captcha")
 
 
 def _signal_marker(page: Page) -> bool:
@@ -61,18 +67,25 @@ def _signal_marker(page: Page) -> bool:
 
 def _signal_text(page: Page) -> bool:
     """Сигнал 2: есть ли на странице текст-признак отправленного отклика."""
-    for phrase in APPLY_SUCCESS_TEXTS:
-        if page.get_by_text(phrase).count() > 0:
-            return True
-    return False
+    return page.get_by_text(APPLY_SUCCESS_TEXT_RE).count() > 0
 
 
 def _signal_submit_gone(page: Page) -> bool:
     """Сигнал 3: submit-кнопка исчезла после отправки (форма ушла = успех).
 
     Имеет смысл только после клика по submit в fill_response_form — там уже
-    проверено, что кнопка была. Здесь её отсутствие трактуем как успех.
+    проверено, что кнопка была. Но исчезновение submit — ОТРИЦАТЕЛЬНЫЙ признак
+    (отсутствие элемента), и он удовлетворяется не только успехом, но и любым
+    переходом на страницу без формы: редирект на логин при истёкшей сессии,
+    CAPTCHA/challenge, ошибка валидации, битый/пустой DOM. Поэтому сигнала
+    одного недостаточно — гвардим известные неуспешные состояния по URL и
+    наличию body. Без этой страховки false success пишется в историю (status=
+    'success'), has_applied навсегда исключает вакансию и сгорает дневной лимит.
     """
+    if any(frag in page.url for frag in _NON_SUCCESS_URL_FRAGMENTS):
+        return False
+    if page.locator("body").count() == 0:
+        return False
     return page.locator(APPLY_SUBMIT_SELECTOR).count() == 0
 
 
