@@ -39,13 +39,14 @@ def test_shim_reexports_all_old_names():
 
 
 def test_status_markers_moved_to_owners():
-    # Смягчение #3↔#7: маркеры статуса отклика НЕ в shim/apply_form —
-    # они живут у владельцев (apply/dedup.py, apply/success.py).
+    # Смягчение #3↔#7: маркеры статуса отклика НЕ в shim/apply_form.
+    # #3 («уже откликались») мёртвого DOM-маркера больше не имеет — дедуп через
+    # history.has_applied(); остаётся только success-маркер у владельца #7.
     assert not hasattr(sel, "APPLY_SUCCESS_MARKER")
     assert not hasattr(sel, "APPLY_ALREADY_RESPONDED_MARKER")
     from hhru_bot.apply import dedup, success
 
-    assert dedup.APPLY_ALREADY_RESPONDED_MARKER
+    assert not hasattr(dedup, "APPLY_ALREADY_RESPONDED_MARKER")
     assert success.APPLY_SUCCESS_MARKER
 
 
