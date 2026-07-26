@@ -1,61 +1,59 @@
-"""
-Централизованное место для всех CSS/data-qa селекторов hh.ru.
+"""Shim для обратной совместимости: переэкспортирует селекторы из selector_groups/.
 
-Статус проверки: браузерное окружение агента блокируется DDoS-Guard, но
-разметку удалось получить напрямую через curl (анонимно, без логина) для
-страницы поиска (/search/vacancy) и страницы вакансии (/vacancy/{id}).
-Селекторы ниже с пометкой "подтверждено" взяты из реального HTML этих
-страниц. Всё, что рендерится только авторизованному пользователю через JS
-(форма отклика после перехода на /applicant/vacancy_response, страница
-резюме с кнопкой поднятия) — НЕ подтверждено, т.к. для этого нужна live
-сессия с логином. Перед первым реальным запуском `apply`/`bump` нужно
-пройти login, затем открыть эти страницы в обычном браузере и свериться —
-остальной код селекторы не дублирует.
+Канонический источник селекторов теперь — пакет selector_groups/ (по страницам).
+Этот модуль сохраняет старый плоский API (`from . import selectors as sel;
+sel.VACANCY_CARD`), чтобы не править потребителей одновременно с разделением.
+
+Новый код должен импортировать из конкретной группы:
+    from .selector_groups import search_page, apply_form, ...
+
+Статус проверки селекторов (подтверждено curl-дампом / НЕ подтверждено) описан
+в модуле каждой группы.
 """
 
 from __future__ import annotations
 
-# --- Страница поиска вакансий (/search/vacancy) — подтверждено curl-дампом ---
-VACANCY_CARD = "[data-qa='vacancy-serp__vacancy']"
-VACANCY_CARD_TITLE_LINK = "[data-qa='serp-item__title']"
-VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
-# Кнопка отклика прямо в карточке списка (ведёт на
-# /applicant/vacancy_response?vacancyId=...&employerId=...)
-VACANCY_CARD_RESPONSE_BUTTON = "[data-qa='vacancy-serp__vacancy_response']"
-PAGINATION_NEXT = "[data-qa='pager-next']"
-
-# Анонимному curl-запросу hh.ru не показывает маркер "уже откликались" в
-# разметке — этот статус виден только залогиненному пользователю. Дедупликация
-# в этом проекте не полагается на разметку hh.ru, а делается через локальную
-# историю (history.py), поэтому отсутствие проверенного селектора не критично.
-VACANCY_CARD_RESPONSE_STATUS = (
-    "[data-qa='vacancy-serp__vacancy_response_status']"  # НЕ подтверждено
+from .selector_groups.apply_form import (
+    APPLY_ALREADY_RESPONDED_MARKER,
+    APPLY_COVER_LETTER_TEXTAREA,
+    APPLY_COVER_LETTER_TOGGLE,
+    APPLY_RESUME_SELECT,
+    APPLY_SUBMIT_BUTTON,
+    APPLY_SUCCESS_MARKER,
+)
+from .selector_groups.login import LOGIN_URL_MARKER
+from .selector_groups.resume_page import RESUME_BUMP_BUTTON, RESUME_BUMP_DISABLED_HINT
+from .selector_groups.search_page import (
+    PAGINATION_NEXT,
+    VACANCY_CARD,
+    VACANCY_CARD_COMPANY,
+    VACANCY_CARD_RESPONSE_BUTTON,
+    VACANCY_CARD_RESPONSE_STATUS,
+    VACANCY_CARD_TITLE_LINK,
+)
+from .selector_groups.vacancy_page import (
+    VACANCY_APPLY_BUTTON,
+    VACANCY_COMPANY_NAME,
+    VACANCY_TITLE,
 )
 
-# --- Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом ---
-VACANCY_APPLY_BUTTON = "[data-qa='vacancy-response-link-top']"
-VACANCY_TITLE = "[data-qa='vacancy-title']"
-VACANCY_COMPANY_NAME = "[data-qa='vacancy-company-name']"
-
-# VACANCY_APPLY_BUTTON — это ссылка
-# (href="/applicant/vacancy_response?vacancyId=..&employerId=..&hhtmFrom=vacancy"),
-# а НЕ кнопка, открывающая модалку на этой же странице. Переход по ней ведёт
-# на отдельную страницу/попап с формой отклика — apply.py должен это учитывать
-# (перейти по href, а не искать форму сразу после клика на той же странице).
-
-# --- Форма отклика на /applicant/vacancy_response — НЕ подтверждено (требует логина) ---
-APPLY_RESUME_SELECT = "[data-qa='resume-topic-title']"
-APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
-APPLY_COVER_LETTER_TEXTAREA = "textarea[data-qa='vacancy-response-popup-form-letter-input']"
-APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"
-APPLY_SUCCESS_MARKER = "[data-qa='vacancy-response-sent-message']"
-APPLY_ALREADY_RESPONDED_MARKER = (
-    "[data-qa='vacancy-serp__vacancy_response_status']"  # НЕ подтверждено
-)
-
-# --- Страница резюме (/resume/{id}) — НЕ подтверждено (требует логина) ---
-RESUME_BUMP_BUTTON = "[data-qa='resume-update-button']"
-RESUME_BUMP_DISABLED_HINT = "[data-qa='resume-update-button-disabled']"
-
-# --- Логин ---
-LOGIN_URL_MARKER = "account/login"
+__all__ = [
+    "APPLY_ALREADY_RESPONDED_MARKER",
+    "APPLY_COVER_LETTER_TEXTAREA",
+    "APPLY_COVER_LETTER_TOGGLE",
+    "APPLY_RESUME_SELECT",
+    "APPLY_SUBMIT_BUTTON",
+    "APPLY_SUCCESS_MARKER",
+    "LOGIN_URL_MARKER",
+    "PAGINATION_NEXT",
+    "RESUME_BUMP_BUTTON",
+    "RESUME_BUMP_DISABLED_HINT",
+    "VACANCY_APPLY_BUTTON",
+    "VACANCY_CARD",
+    "VACANCY_CARD_COMPANY",
+    "VACANCY_CARD_RESPONSE_BUTTON",
+    "VACANCY_CARD_RESPONSE_STATUS",
+    "VACANCY_CARD_TITLE_LINK",
+    "VACANCY_COMPANY_NAME",
+    "VACANCY_TITLE",
+]
