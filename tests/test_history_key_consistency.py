@@ -57,7 +57,7 @@ class _FakeLocator:
     def get_attribute(self, _name: str) -> str | None:  # noqa: ARG002
         return None
 
-    def nth(self, _i: int) -> "_FakeLocator":  # noqa: ARG002
+    def nth(self, _i: int) -> _FakeLocator:  # noqa: ARG002
         return self
 
 
