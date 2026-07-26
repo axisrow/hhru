@@ -6,8 +6,6 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 
 @dataclass
 class ThrottleConfig:
@@ -80,7 +78,7 @@ def _require(mapping: dict, key: str, context: str):
 
 def load_config(path: str | Path) -> AppConfig:
     # Lazy-импорт, чтобы разорвать цикл config <-> config_sections
-    # (config_sections.* импортируют типы/PROJECT_ROOT из config на загрузке).
+    # (config_sections.* импортируют типы из config на загрузке).
     from .config_sections import get as section_parser
     from .config_sections import names as section_names
     from .config_sections import parse_account
@@ -98,7 +96,11 @@ def load_config(path: str | Path) -> AppConfig:
     if not raw:
         raise ConfigError(f"Конфиг {path} пуст или некорректен")
 
-    account = parse_account(raw.get("account"))
+    # storage_state_file резолвится относительно директории файла конфига —
+    # стабильно, не зависит от cwd (даже при --config с абсолютным путём из
+    # чужой директории). Shipped-путь ../data/... (от config/) → корень репо →
+    # покрыт .gitignore. См. regression-тест test_session_secret_path_is_gitignored.
+    account = parse_account(raw.get("account"), path.parent)
     storage_state_file = account.storage_state_file
     user_agent = account.user_agent
 

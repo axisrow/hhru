@@ -11,13 +11,20 @@ import argparse
 import importlib
 import pkgutil
 import sys
+from pathlib import Path
 
 from . import commands as _commands_pkg
-from .config import PROJECT_ROOT
 from .logging_setup import setup_logging
 
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
-DEFAULT_HISTORY_PATH = PROJECT_ROOT / "data" / "history.db"
+# Дефолтные пути — ОТНОСИТЕЛЬНЫЕ (relative-to-cwd), а не привязанные к пакету.
+# После `pip install` пакет уезжает в site-packages, и привязка путей к
+# расположению кода (как раньше через PROJECT_ROOT = parents[2]) ломала бы поиск
+# config/config.yaml. Относительные пути Python резолвит от cwd в рантайме —
+# пользователь запускает `hhru-bot` из директории проекта, где рядом лежат
+# config/ и data/. Относительные строки также стабильно смотрятся в --help и в
+# автоген-справочнике README (gen_cli_docs.py), не завися от машины.
+DEFAULT_CONFIG_PATH = Path("config") / "config.yaml"
+DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
