@@ -44,13 +44,11 @@ class FakePage:
     def __init__(
         self,
         *,
-        already_responded: bool = False,
         apply_button: bool = True,
         success: bool = True,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
-        self._already = already_responded
         self._apply_button = apply_button
         self._success = success
 
@@ -100,9 +98,11 @@ def test_apply_dry_run_success():
 def test_apply_already_responded_not_deduped_by_dom():
     # #3: мёртвый DOM-маркер «уже откликались» убран. Дедупликация идёт через
     # history.has_applied() в filter_candidates() ещё до apply_to_vacancy, поэтому
-    # check_already_responded на странице вакансии ничего не отсекает. Вакансия
-    # проходит дальше к кнопке отклика (здесь — dry-run стоп уже на письме).
-    page = FakePage(apply_button=True, already_responded=True)
+    # check_already_responded на странице вакансии ничего не отсекает — вакансия
+    # доходит до кнопки отклика и идёт по обычному пути (здесь — dry-run стоп на
+    # письме). Раньше этот тест симулировал already-responded состояние страницы,
+    # но после удаления маркера моделировать его больше нечем и не нужно.
+    page = FakePage(apply_button=True)
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
     assert result.success is True
     assert result.reason == "dry-run"
