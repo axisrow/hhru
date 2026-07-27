@@ -383,19 +383,27 @@
   1. **READ-команда** — вывести из лога (или повторным `search`) сколько и по каким
      причинам было пропущено (повторяет фильтр, не меняя ничего).
   2. **WRITE-local** — если завести таблицу `skipped` в `SCHEMA` (отдельное
-     решение), то чистит её с фильтром по `--reason` (`excluded_employer` /
-     `excluded_keyword` / `already_applied` / `duplicate`).
+     решение), то чистит её с фильтром по `--reason`. Значения `--reason` должны
+     соответствовать **фактическим reason-строкам `filter_candidates`**
+     (`src/hhru_bot/search.py`): на сегодня это `"компания в стоп-списке"`
+     (exclude_employers), `"стоп-слово в названии"` (exclude_keywords) и
+     `"уже откликались ранее"` (history.has_applied). Спека предлагает enum
+     `stoplist_employer` / `stoplist_keyword` / `already_applied` как стабильные
+     ключи (feature-ишью маппит их на строки); `duplicate` отдельной причиной не
+     существует — дедупликация идёт через `already_applied`.
 - **Вывод (вариант 2):**
   ```
-  $ hhru_bot clear-skipped --reason excluded_keyword --dry-run
-  [INFO] Найдено пропущенных (excluded_keyword): 47
+  $ hhru_bot clear-skipped --reason stoplist_keyword --dry-run
+  [INFO] Найдено пропущенных (stoplist_keyword): 47
   [INFO] dry-run: ничего не удалено.
 
-  $ hhru_bot clear-skipped --reason excluded_keyword
-  [OK] Удалено 47 записей пропусков (excluded_keyword).
+  $ hhru_bot clear-skipped --reason stoplist_keyword
+  [OK] Удалено 47 записей пропусков (stoplist_keyword).
   ```
-- **Заметка:** `--reason` берёт значения из причин `filter_candidates`. Если
-  выбран вариант 1 (READ), команда переименовывается в `skipped` или становится
+- **Заметка:** значения `--reason` — проектируемый enum для будущей таблицы `skipped`,
+  привязанный к причинам `filter_candidates` (не к текущим reason-строкам напрямую —
+  маппинг делает feature-ишью). Если выбран вариант 1 (READ), команда
+  переименовывается в `skipped` или становится
   флагом `search --skipped`. Это решение за feature-ишью, не за спекой.
 
 ---
