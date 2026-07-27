@@ -41,6 +41,7 @@ def test_all_commands_registered():
         "mark",
         "query",
         "whoami",
+        "list-resumes",
     }
 
 
@@ -48,6 +49,8 @@ def test_register_commands_returns_names():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     names = register_commands(sub)
+    # register_commands возвращает имена МОДУЛЕЙ (snake_case), а не имена команд:
+    # модуль list_resumes регистрирует команду 'list-resumes'.
     assert set(names) == {
         "login",
         "search",
@@ -62,6 +65,7 @@ def test_register_commands_returns_names():
         "mark",
         "query",
         "whoami",
+        "list_resumes",
     }
 
 

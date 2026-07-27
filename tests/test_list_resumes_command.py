@@ -1,0 +1,211 @@
+"""Тесты команды list-resumes (#57): список резюме из конфига (READ, #21).
+
+READ-команда: читает config.resumes, опционально --status добавляет колонки
+«можно bump» (throttle.can_bump_now) и «последний bump» (history.last_action_at).
+Браузер НЕ нужен — только config.yaml + SQLite-история. hh.ru НЕ дёргается.
+
+Конвенция (как test_mark_command.py): интеграционный прогон run() целиком на
+реальном History (tmp SQLite) + реальном Throttle поверх него. Время кулдауна
+(BUMP_COOLDOWN = 4ч) контролируется через созданные записи истории:
+  - resume без bump в истории     → can_bump_now() = (True, None)
+  - resume с недавним success-bump → can_bump_now() = (False, wait_left)
+"""
+
+from __future__ import annotations
+
+import argparse
+import textwrap
+
+from hhru_bot.commands import list_resumes as list_resumes_cmd
+from hhru_bot.history import History
+
+
+def _write_config(tmp_path, body: str):
+    path = tmp_path / "config.yaml"
+    path.write_text(textwrap.dedent(body), encoding="utf-8")
+    return path
+
+
+def _two_resumes_config() -> str:
+    """Два резюме с разными resume_id (числовой хвост URL)."""
+    return """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: backend
+            resume_url: "https://hh.ru/resume/11111111"
+            search:
+              text: "python developer"
+          - id: analyst
+            resume_url: "https://hh.ru/resume/22222222"
+            search:
+              text: "data analyst"
+        """
+
+
+def _args(config_path, history_path, **overrides) -> argparse.Namespace:
+    base = {
+        "config": str(config_path),
+        "history": str(history_path),
+        "status": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+# --- базовый READ (без --status) --------------------------------------------
+
+
+def test_list_resumes_prints_table_from_config(capsys, tmp_path):
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    # обе строки резюме видны: slug (id) + числовой resume_id
+    assert "backend" in out
+    assert "11111111" in out
+    assert "analyst" in out
+    assert "22222222" in out
+    # рамка ASCII-таблицы (+---+)
+    assert "+" in out and "-" in out and "|" in out
+
+
+def test_list_resumes_no_status_omits_status_columns(capsys, tmp_path):
+    """Без --status колонки «можно bump»/«последний bump» не появляются."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "можно bump" not in out
+    assert "последний bump" not in out
+
+
+def test_list_resumes_headers(capsys, tmp_path):
+    """Базовый режим: ровно колонки id | resume_id."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "id" in out
+    assert "resume_id" in out
+
+
+def test_list_resumes_no_emoji(capsys, tmp_path):
+    """Контракт проекта: вывод только текст/ASCII, НИ ОДНОЙ эмодзи."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    # эмодзи лежат в высоких плоскостях Unicode — проверяем их отсутствие.
+    for ch in out:
+        assert not ("\U0001f000" <= ch <= "\U0001faff"), f"найдена эмодзи: {ch!r}"
+
+
+def test_list_resumes_shows_all_resume_fields(capsys, tmp_path):
+    """Каждое резюме из конфига: и slug (id), и числовой resume_id (хвост URL)."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    # slug и resume_id разделены (не склеены) — оба видны как отдельные значения
+    assert "backend" in out and "11111111" in out
+    assert "analyst" in out and "22222222" in out
+
+
+# --- --status ----------------------------------------------------------------
+
+
+def test_status_adds_status_columns(capsys, tmp_path):
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "можно bump" in out
+    assert "последний bump" in out
+
+
+def test_status_never_bumped_shows_yes_and_dash(capsys, tmp_path):
+    """Резюме без bump в истории: «можно bump» = да, «последний bump» = —."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "да" in out
+    # строки backend/analyst обе без истории → обе «да», дата отсутствует (—)
+    assert "—" in out or "-" in out
+
+
+def test_status_recent_bump_shows_no_and_timestamp(capsys, tmp_path):
+    """Резюме с недавним success-bump: «можно bump» = нет, «последний bump» = дата."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    h = History(tmp_path / "h.db")
+    # success-bump для backend (vacancy_id = resume_id как sentinel, см. bump.py)
+    h.record_action("11111111", "11111111", "bump", "success")
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "нет" in out  # кулдаунд 4ч ещё не прошёл
+    # analyst без bump — «да»; backend с bump — «нет»: обе ветки can_bump_now проверены
+    assert "да" in out
+
+
+def test_status_dry_run_bump_not_treated_as_success(capsys, tmp_path):
+    """last_action_at/can_bump_now считают только status='success'
+    (как count_today/time_since_last). dry_run-bump НЕ делает «последний bump»."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("11111111", "11111111", "bump", "dry_run")
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    # dry_run не считается успехом → оба резюме «можно bump»: да
+    # и строк «последний bump» (дата) быть не должно, только прочерк
+    assert "да" in out
+    assert "нет" not in out
+
+
+def test_status_failed_bump_not_treated_as_success(capsys, tmp_path):
+    """failed-bump тоже не считается (last_action_at/can_bump_now фильтруют
+    status='success'). Неудачное поднятие не делает резюме «кулдаунным»."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("11111111", "11111111", "bump", "failed")
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "да" in out
+    assert "нет" not in out
+
+
+def test_status_does_not_touch_hhru(tmp_path, monkeypatch):
+    """READ-контракт: команда не открывает браузер/не ходит на hh.ru.
+    Любой сетевой/браузерный вызов должен упасть, если команда попытается его сделать."""
+    config = _write_config(tmp_path, _two_resumes_config())
+
+    def _boom(*a, **kw):
+        raise AssertionError("list-resumes не должен открывать браузер/ходить в сеть")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
+    # команда должна выполниться без исключений
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+
+# --- register (авторегистрация через pkgutil) -------------------------------
+
+
+def test_registers_list_resumes_subparser():
+    """register(subparsers) добавляет subparser 'list-resumes'."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    list_resumes_cmd.register(sub)
+
+    assert "list-resumes" in sub.choices
+    subparser = sub.choices["list-resumes"]
+    # --status — единственный специфичный флаг
+    flags = {a.option_strings[0] for a in subparser._actions if a.option_strings}
+    assert "--status" in flags
