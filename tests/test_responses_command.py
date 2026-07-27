@@ -110,16 +110,31 @@ def test_responses_run_expired_session_does_not_corrupt_history(capsys, tmp_path
 
     Регрессия Codex-critical: пустой результат выгруженной сессии не должен
     маскироваться за «нет новых ответов» — иначе приглашения скрываются молча.
+
+    Браузер НЕ поднимается: launch_context замокан (CI не имеет Chromium), а
+    fetch_responses поднимает NotAuthenticated сразу при входе в контекст.
     """
+    import contextlib
+
     from hhru_bot.responses import NotAuthenticated
 
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
     h.upsert_response("v1", "Acme", "invitation", "/c1")  # было ДО обхода
 
+    class _FakeContext:
+        def new_page(self):
+            return object()  # page не используется — fetch падает раньше
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
     def _raise(*_args, **_kwargs):
         raise NotAuthenticated("session expired")
 
+    # НЕ запускаем реальный Chromium: патчим launch_context по источнику импорта.
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr("hhru_bot.commands.responses.fetch_responses", _raise, raising=False)
     # ленивый импорт внутри run кэшируется в sys.modules — патчим по источнику.
     monkeypatch.setattr("hhru_bot.responses.fetch_responses", _raise, raising=False)
