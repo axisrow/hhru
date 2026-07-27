@@ -68,8 +68,16 @@ class _FakeLocator:
 
     def nth(self, i: int) -> _FakeLocator:
         # Каждая опция резюме — свой href; _select_resume_in_form ищет resume_id в нём.
+        self._state._nth_calls += 1
         if self._state.option_hrefs:
-            self._state.current_href = self._state.option_hrefs[i]
+            hrefs = self._state.option_hrefs
+            # reorder_to: после того как scan прочитал все опции один раз
+            # (_nth_calls > match_count), DOM «меняется» и последующие nth() берут
+            # href из reorder_to. Старый код кликал по сохранённому индексу скана →
+            # попадал на WRONG опцию; identity-bound фикс пере-сканирует и кликает верно.
+            if self._state.reorder_to and self._state._nth_calls > self._state.match_count:
+                hrefs = self._state.reorder_to
+            self._state.current_href = hrefs[i]
         self._state.clicks += 1  # клик по выбранной опции
         return self
 
@@ -89,6 +97,11 @@ class _SelectorState:
         # Имитация TOCTOU: селектор был видим в wait_for, но исчез к count().
         # Моделирует transient re-render/drift между двумя вызовами Playwright.
         self.disappear_after_wait = False
+        # Имитация reorder-TOCTOU (cycle-3): после того как scan прочитал все опции
+        # один раз, последующие nth() берут href из reorder_to. Моделирует
+        # переупорядочивание/вставку опций JS между scan и click.
+        self.reorder_to: list[str] | None = None
+        self._nth_calls = 0
 
 
 class FakeStepsPage:
@@ -395,6 +408,39 @@ def test_fill_form_resume_selector_disappears_after_detect_does_not_submit():
 
     assert result is not None
     assert "резюме" in result.lower()
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_reorder_after_scan_clicks_correct_resume():
+    # TOCTOU (Codex cycle-3): JS переупорядочил опции между scan и click. Scan видит
+    # [OTHER, RID] (RID на индексе 1); к моменту клика DOM = [RID, OTHER] (RID на 0).
+    # Оракул: identity-bound выбор пере-сканирует href в момент клика и кликает RID
+    # (а не сохранённый индекс 1, который теперь = OTHER).
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # порядок на scan
+    st.reorder_to = ["/resume/RID", "/resume/OTHER"]  # порядок к моменту клика
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert st.current_href == "/resume/RID"  # кликнули RID, не OTHER
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_resume_dup_appears_at_click_time_does_not_submit():
+    # TOCTOU (Codex cycle-3): к моменту клика href резюме задвоился (JS вставил дубль).
+    # Live-скан находит >1 опции с target_href → неоднозначно → отказ, submit не нажат.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # одна RID на scan
+    st.reorder_to = ["/resume/RID", "/resume/RID"]  # две RID к моменту клика
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 

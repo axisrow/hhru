@@ -170,23 +170,49 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
     """
     from ..selector_groups import apply_form
 
+    # Identity-bound выбор (cycle-3 review): НЕ кликаем по сохранённому индексу —
+    # Playwright резолвит nth(i) против текущего DOM в момент действия, и если JS
+    # переупорядочил/вставил опции между сканом и кликом, тот же индекс = другое
+    # резюме. Вместо этого: находим единственный совпадающий href, а перед кликом
+    # пере-сканируем опции по этому href и требуем строгую уникальность. Любой
+    # drift (переупорядочивание, исчезновение, раздвоение) между scan и click → отказ.
     options = page.locator(apply_form.APPLY_RESUME_SELECT)
     count = options.count()
-    matched: list[int] = []
+    matched_hrefs: list[str] = []
     for i in range(count):
         href = options.nth(i).get_attribute("href") or ""
         if _href_matches_resume_id(href, resume_id):
-            matched.append(i)
-    if len(matched) != 1:
+            matched_hrefs.append(href)
+    if len(matched_hrefs) != 1:
         # 0 — нужного резюме нет среди опций; >1 — неоднозначно. И то и другое = отказ.
         logger.warning(
             "Не удалось однозначно выбрать резюме '%s' в форме отклика "
             "(совпадений: %d) — отправка отменена",
             resume_id,
-            len(matched),
+            len(matched_hrefs),
         )
         return False
-    options.nth(matched[0]).click()
+    target_href = matched_hrefs[0]
+    # Пере-скан в момент клика: ровно одна опция с этим точным href. Если DOM
+    # изменился (переупорядочили/вставили дубль/убрали) — отказ, не клик по индексу.
+    live_count = 0
+    live_index: int | None = None
+    fresh = page.locator(apply_form.APPLY_RESUME_SELECT)
+    fresh_total = fresh.count()
+    for i in range(fresh_total):
+        if (fresh.nth(i).get_attribute("href") or "") == target_href:
+            live_count += 1
+            live_index = i
+    if live_count != 1 or live_index is None:
+        logger.warning(
+            "Резюме '%s' (href=%s) не подтверждено при клике (живых совпадений: %d) "
+            "— отправка отменена",
+            resume_id,
+            target_href,
+            live_count,
+        )
+        return False
+    fresh.nth(live_index).click()
     return True
 
 
