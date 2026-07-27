@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ._common import add_common_args, resolve_resumes
+from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 
 def register(subparsers) -> None:
@@ -77,6 +77,10 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
     resume = resumes[0]
     cover_letter_template = config.cover_letter_for(resume)
+    # #17 (follow-up #54): AI-письмо в probe-дампе. Провайдер строится по тому же
+    # правилу, что и в apply (ai + ai_profile); None → статичный шаблон. Атомарность
+    # probe не страдает: провайдер только генерирует текст письма, submit не кликается.
+    letter_provider = _build_letter_provider(config, resume, cover_letter_template)
 
     print(f"=== probe для резюме: {resume.id} ===")
     print(f"Целевая вакансия: {vacancy.url}")
@@ -88,6 +92,7 @@ def run(args: argparse.Namespace) -> None:
             vacancy,
             resume_id=resume.id,
             cover_letter_template=cover_letter_template,
+            letter_provider=letter_provider,
         )
 
     if result.success:

@@ -33,7 +33,7 @@ from ..search import VacancyCard
 from ..selector_groups import apply_form
 from . import steps as apply_steps
 from .dedup import check_already_responded
-from .letter import render_cover_letter
+from .letter import CoverLetterProvider, render_cover_letter
 
 logger = logging.getLogger("hhru_bot.apply.probe")
 
@@ -116,12 +116,18 @@ def probe_vacancy(
     resume_id: str,
     cover_letter_template: str,
     logs_dir: Path | None = None,
+    letter_provider: CoverLetterProvider | None = None,
 ) -> ProbeResult:
     """Probe одной вакансии: дойти до формы, заполнить письмо, сдампить, НЕ отправлять.
 
     Шаги: открыть вакансию → проверка «уже откликались» → ждать кнопку отклика →
     навигация на форму → заполнить письмо → дамп screenshot+HTML → стоп.
     submit никогда не кликается.
+
+    #17 (follow-up #54): если передан letter_provider — письмо рендерится им
+    (AI под вакансию, виден в дампе формы), иначе — статичный .format (обратная
+    совместимость). Атомарность probe при этом не меняется: провайдер только
+    генерирует текст письма, submit не трогается. Аналогично pipeline._run.
     """
     ctx_dir = ProbeContext(
         vacancy_id=vacancy.vacancy_id,
@@ -143,7 +149,14 @@ def probe_vacancy(
     apply_steps.navigate_to_response_form(page)
     logger.info("[PROBE] Дошёл до формы отклика, заполняю письмо (без отправки)")
 
-    letter = render_cover_letter(cover_letter_template, vacancy)
+    # #17 (follow-up #54): письмо через провайдер, если он задан (AI под вакансию),
+    # иначе статичный .format. Провайдер сам падает на шаблон при сбое LLM —
+    # исключений не ждём (см. ai/letters.py). Атомарность probe не нарушается:
+    # провайдер только генерирует текст, submit не кликается.
+    if letter_provider is not None:
+        letter = letter_provider.render(vacancy).text
+    else:
+        letter = render_cover_letter(cover_letter_template, vacancy)
     _fill_cover_letter_only(page, resume_id, letter)
 
     dump_paths = dump_probe_snapshot(page, ctx_dir)

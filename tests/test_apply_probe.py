@@ -218,3 +218,78 @@ def test_probe_dedup_step_is_passthrough(tmp_path: Path):
     assert result.success is True
     assert page.screenshot_calls >= 1
     assert page.content_calls >= 1
+
+
+# --- #17 (follow-up #54): AI-письмо в probe-дампе через letter_provider ---
+
+
+class _SpyProvider:
+    """Мок CoverLetterProvider для probe: фиксирует render-вызовы, возвращает
+    заданный текст/variant. Не должен знать про textarea/submit — только генерация.
+    """
+
+    def __init__(self, text: str, variant: str = "ai"):
+        self._text = text
+        self._variant = variant
+        self.render_calls: list[VacancyCard] = []
+
+    def render(self, vacancy, resume_profile=None):  # noqa: ARG002
+        from hhru_bot.apply.letter import LetterOutcome
+
+        self.render_calls.append(vacancy)
+        return LetterOutcome(text=self._text, variant=self._variant)
+
+
+def test_probe_uses_letter_provider_text(tmp_path: Path):
+    # Провайдер задан → textarea заполняется текстом от провайдера (AI под вакансию),
+    # а НЕ статичным шаблоном. Главный контракт follow-up #54.
+    page = FakeProbePage(textarea=True)
+    provider = _SpyProvider(text="AI-письмо под Dev от Acme", variant="ai")
+
+    probe_vacancy(
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Здравствуйте, {company_name}",
+        logs_dir=tmp_path,
+        letter_provider=provider,
+    )
+
+    assert provider.render_calls == [_vacancy()]
+    assert page._textarea_locator is not None
+    assert page._textarea_locator.fill_calls == ["AI-письмо под Dev от Acme"]
+
+
+def test_probe_provider_does_not_click_submit(tmp_path: Path):
+    # Атомарность probe сохраняется и с провайдером: submit не кликается.
+    page = FakeProbePage(apply_button=True, textarea=True, submit=True)
+    provider = _SpyProvider(text="AI письмо")
+
+    probe_vacancy(
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Здравствуйте, {company_name}",
+        logs_dir=tmp_path,
+        letter_provider=provider,
+    )
+
+    assert page.submit_clicks == []
+
+
+def test_probe_without_provider_uses_template(tmp_path: Path):
+    # Характеризация обратной совместимости: без провайдера — статичный .format
+    # (текст от шаблона, а не от провайдера).
+    page = FakeProbePage(textarea=True)
+
+    probe_vacancy(
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Здравствуйте, {company_name}",
+        logs_dir=tmp_path,
+        letter_provider=None,
+    )
+
+    assert page._textarea_locator is not None
+    assert page._textarea_locator.fill_calls == ["Здравствуйте, Acme"]
