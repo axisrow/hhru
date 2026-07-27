@@ -364,7 +364,9 @@ class History:
         дошло приглашение, считается и просмотренной; оффер — и просмотренным, и
         приглашённым. Это необходимо, т.к. #12 хранит в responses только ТЕКУЩИЙ
         статус переписки (после read→invitation прежний read уже не виден) —
-        некумулятивный подсчёт давал бы viewed=0 после перехода.
+        некумулятивный подсчёт давал бы viewed=0 после перехода. «Просмотрено» =
+        любой ответ работодателя (#12: read/response/invitation/discard/offer) —
+        отказ или письмо тоже означают, что резюме видели.
 
         Ответы берутся из responses (#12, account-scope по vacancy_id) плюс липкие
         ручные пометки из manual_offers (per-resume). Группировка по actions.resume_id.
@@ -398,7 +400,7 @@ class History:
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id
-                          AND r.status IN ('read', 'invitation', 'offer')
+                          AND r.status IN ('read', 'response', 'invitation', 'discard', 'offer')
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id

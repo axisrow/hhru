@@ -82,6 +82,24 @@ def test_funnel_join_actions_with_responses(tmp_path):
     assert row["offer"] == 0
 
 
+def test_funnel_any_employer_reply_counts_as_viewed(tmp_path):
+    """РЕГРЕССИЯ cycle-2: discard/response — работодатель УВИДЕЛ резюме → viewed.
+
+    Любой ответ работодателя (#12: read/response/invitation/discard) означает, что
+    резюме просмотрели. Раньше discard/response не включались в viewed → вакансия
+    с отказом показывала viewed=0, будто её не видели."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+    h.upsert_response("v1", "Acme", "discard", "/c", topic="1")  # отказ
+    h.upsert_response("v2", "Acme", "response", "/c", topic="2")  # письмо
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["viewed"] == 2  # оба просмотрены (отказ и письмо = работодатель видел)
+    assert row["invited"] == 0  # ни приглашения, ни оффера
+    assert row["offer"] == 0
+
+
 def test_funnel_cumulative_read_to_invitation_regression(tmp_path):
     """РЕГРЕССИЯ cycle-1: read→invitation не должен обнулять viewed.
 
