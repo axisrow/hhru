@@ -3,8 +3,14 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    # Только для статического анализа; реальный импорт был бы циклическим
+    # (config_sections.ai импортирует ConfigError из config).
+    from .config_sections.ai import AiConfig
 
 
 @dataclass
@@ -54,6 +60,9 @@ class AppConfig:
     resumes: list[ResumeConfig]
     # None = родной UA Playwright. Пробрасывается из account.user_agent (см. parse_account).
     user_agent: str | None = None
+    # None = AI-функциональность выключена (issue #16, Этап 5). TOP-LEVEL секция ai
+    # (как account), парсится в load_config через config_sections.ai.parse_ai.
+    ai: AiConfig | None = None
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
         for resume in self.resumes:
@@ -82,6 +91,7 @@ def load_config(path: str | Path) -> AppConfig:
     from .config_sections import get as section_parser
     from .config_sections import names as section_names
     from .config_sections import parse_account
+    from .config_sections.ai import parse_ai
 
     path = Path(path)
     if not path.exists():
@@ -103,6 +113,10 @@ def load_config(path: str | Path) -> AppConfig:
     account = parse_account(raw.get("account"), path.parent)
     storage_state_file = account.storage_state_file
     user_agent = account.user_agent
+
+    # TOP-LEVEL секция ai (issue #16, Этап 5): провайдер/модель/base_url.
+    # Опциональна — None, если секции нет. API-ключ НЕ парсится из yaml (только env).
+    ai = parse_ai(raw.get("ai"), "ai")
 
     throttle_raw = raw.get("throttle", {})
     throttle = ThrottleConfig(
@@ -149,6 +163,7 @@ def load_config(path: str | Path) -> AppConfig:
         cover_letter_default=cover_letter_default,
         resumes=resumes,
         user_agent=user_agent,
+        ai=ai,
     )
 
 

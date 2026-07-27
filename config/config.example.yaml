@@ -12,6 +12,26 @@ account:
   # требует конкретный UA. Хардкода Chrome/xxx в коде нет (см. #9).
   # user_agent: "Mozilla/5.0 ... Chrome/XXX Safari/537.36"
 
+# AI/LLM-провайдер (issue #16, Этап 5) — ОПЦИОНАЛЬНО. TOP-LEVEL секция (как
+# account): один провайдер на весь бот. Раскомментируйте, только если нужна
+# AI-функциональность (ранжирование/сопоставление резюме и т.п.).
+#
+# Требует optional-зависимости:  pip install -e '.[ai]'
+# API-ключ НЕ пишите сюда — он читается из env HHRU_AI_API_KEY (чтобы секрет не
+# рисковал попасть в git-коммит). Пример для OpenAI:
+#
+# ai:
+#   provider: openai
+#   model: gpt-4o
+#   base_url: https://api.openai.com/v1
+#
+# Пример для OpenAI-совместимого шлюза (OpenRouter, локальный Ollama/vLLM, ...):
+#
+# ai:
+#   provider: openrouter
+#   model: anthropic/claude-3.5-sonnet
+#   base_url: https://openrouter.ai/api/v1
+
 throttle:
   min_delay_seconds: 8
   max_delay_seconds: 25
