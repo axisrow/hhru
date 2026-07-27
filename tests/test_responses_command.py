@@ -2,14 +2,19 @@
 
 Проверяем саму функцию run() в режиме без браузера (--since-hours 0: обход hh.ru
 пропускается, выводится история ответов). Через захват stdout, с seeded SQLite-
-историей responses. Браузер не поднимается — это покрывает ASCII-вывод и логику
-new_responses_since без реального fetch_responses.
+историей responses (account-scope: upsert по vacancy_id без resume_id).
+
+Браузерный путь (fetch_responses) покрывается через monkeypatch: проверяем, что
+истёкшая сессия (NotAuthenticated) НЕ затирает историю и НЕ выдаёт пустой
+результат за «нет новых ответов», а `--resume` игнорируется с warning.
 """
 
 from __future__ import annotations
 
 import argparse
 import textwrap
+
+import pytest
 
 from hhru_bot.commands import responses as responses_cmd
 from hhru_bot.history import History
@@ -50,8 +55,8 @@ def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     """--since-hours 0: нет обхода hh.ru, выводится ASCII-таблица из истории."""
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
-    h.upsert_response("12345", "v1", "ACME Corp", "invitation", "/c1")
-    h.upsert_response("12345", "v2", "Beta LLC", "discard", "/c2")
+    h.upsert_response("v1", "ACME Corp", "invitation", "/c1")
+    h.upsert_response("v2", "Beta LLC", "discard", "/c2")
 
     responses_cmd.run(_args(config, tmp_path / "h.db"))
     out = capsys.readouterr().out
@@ -87,14 +92,42 @@ def test_responses_run_empty_history_does_not_crash(capsys, tmp_path):
     assert "нет новых ответов" in out
 
 
-def test_responses_run_resume_filter(capsys, tmp_path):
-    """--resume фильтрует по resume.resume_id (число из URL), как apply/bump/stats."""
+def test_responses_run_resume_arg_is_ignored_with_warning(capsys, tmp_path):
+    """--resume игнорируется: ответы аккаунт-уровневые, атрибуция к резюме недоступна."""
     config = _write_config(tmp_path, _minimal_config())
     h = History(tmp_path / "h.db")
-    h.upsert_response("12345", "v1", "Acme", "invitation", "/c1")
-    h.upsert_response("99999", "v9", "Other", "discard", "/c9")  # чужое резюме
+    h.upsert_response("v1", "Acme", "invitation", "/c1")
 
     responses_cmd.run(_args(config, tmp_path / "h.db", resume="python"))
     out = capsys.readouterr().out
+    assert "--resume игнорируется" in out
+    # история всё равно показывается (без фильтра по резюме).
     assert "v1" in out
-    assert "v9" not in out
+
+
+def test_responses_run_expired_session_does_not_corrupt_history(capsys, tmp_path, monkeypatch):
+    """Истёкшая сессия (NotAuthenticated): exit nonzero, история НЕ затёрта, нет «пусто».
+
+    Регрессия Codex-critical: пустой результат выгруженной сессии не должен
+    маскироваться за «нет новых ответов» — иначе приглашения скрываются молча.
+    """
+    from hhru_bot.responses import NotAuthenticated
+
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "Acme", "invitation", "/c1")  # было ДО обхода
+
+    def _raise(*_args, **_kwargs):
+        raise NotAuthenticated("session expired")
+
+    monkeypatch.setattr("hhru_bot.commands.responses.fetch_responses", _raise, raising=False)
+    # ленивый импорт внутри run кэшируется в sys.modules — патчим по источнику.
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", _raise, raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "сессия истекла" in err or "session expired" in err
+    # история цела — строка не затёрта и не добавлен «пустой» обход.
+    assert h.new_responses_since(__import__("datetime").datetime.min)

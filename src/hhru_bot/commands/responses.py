@@ -4,19 +4,18 @@ Top-level команда ``hhru_bot responses ...`` — регистрирует
 pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
 
 Поток: открыть /applicant/negotiations → responses.fetch_responses собирает
-карточки → history.upsert_response по каждому (resume.resume_id, vacancy_id) →
-печать ASCII-сводки «что нового» (status_changed_at с последней отметки).
+карточки → history.upsert_response по каждому (account-scope, без клонирования
+по резюме) → печать ASCII-сводки «что нового» (status_changed_at с последней
+отметки).
 
-Read-only по hh.ru: страница откликов только читается. Случайная пауза между
-страницами списка (throttle.wait) — анти-фрод принцип CLAUDE.md сохранён.
+Read-only по hh.ru: страница откликов только читается, кликов действий нет.
 Вывод только текст/ASCII — НИКАКИХ эмодзи (правило проекта: CLI чистый).
 """
 
 from __future__ import annotations
 
 import argparse
-
-from ._common import resumes_from_args
+import sys
 
 
 def register(subparsers) -> None:
@@ -93,13 +92,10 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..responses import fetch_responses
-    from ..throttle import Throttle
+    from ..responses import NotAuthenticated, fetch_responses
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    resumes = resumes_from_args(config, args)
-    throttle = Throttle(config.throttle, history)
 
     # «Что нового» меряется по status_changed_at. since = now - since-hours.
     # since-hours<=0 → пользователь явно просит НЕ ходить на hh.ru, а показать
@@ -115,13 +111,18 @@ def run(args: argparse.Namespace) -> None:
     else:
         print(f"\n=== Ответы работодателей (новое за {args.since_hours:g}ч) ===")
 
-    # Срез для итоговой сводки. upsert обновляет только при смене статуса;
-    # vacancy_id, по которому собрали ответ, не привязан к resume в самой карточке
-    # hh.ru (страница общая по аккаунту) — поэтому ответы апдейтим под КАЖДОЕ
-    # резюме из конфига (как делает bump/apply, обходя resumes). Это даёт
-    # корректный new_responses_since(resume_id) в дальнейшем. Если резюме одно —
-    # записей ровно по нему; если несколько — по каждому (дубли по vacancy_id
-    # разнесены resume_id, UNIQUE (resume_id, vacancy_id) не нарушается).
+    # Responses — account-scope: страница /applicant/negotiations общая и НЕ несёт
+    # достоверного признака принадлежности ответа конкретному резюме. Поэтому
+    # карточки persist'ятся ОДИН РАЗ (одна строка на vacancy_id), БЕЗ клонирования
+    # под все resume_id из конфига — клонирование фабриковало бы данные (ответ
+    # резюме A приписывался бы и резюме B). --resume здесь warn+ignore: фильтр по
+    # резюме для ответов работодателя невозможен без достоверной атрибуции.
+    if args.resume is not None:
+        print(
+            "Внимание: --resume игнорируется — ответы работодателя аккаунт-уровневые "
+            "(страница /applicant/negotiations общая, принадлежность резюме недоступна)."
+        )
+
     inserted = updated = unchanged = 0
 
     if not fresh_only:
@@ -129,30 +130,31 @@ def run(args: argparse.Namespace) -> None:
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            cards = fetch_responses(page, max_pages=args.max_pages)
+            try:
+                cards = fetch_responses(page, max_pages=args.max_pages)
+            except NotAuthenticated as e:
+                # Истёкшая сессия: НЕ затираем историю и НЕ выдаём пустой
+                # результат за «нет новых ответов» — выходим с диагностикой.
+                print(f"Ошибка: {e}", file=sys.stderr)
+                sys.exit(1)
+                return
 
         print(f"Собрано карточек переписки: {len(cards)}")
 
-        for resume in resumes:
-            for card in cards:
-                outcome = history.upsert_response(
-                    resume_id=resume.resume_id,
-                    vacancy_id=card.vacancy_id,
-                    employer=card.employer or None,
-                    status=card.status,
-                    chat_url=card.chat_url,
-                    response_date=card.date or None,
-                )
-                if outcome == "inserted":
-                    inserted += 1
-                elif outcome == "updated":
-                    updated += 1
-                else:
-                    unchanged += 1
-            # Анти-бан: между обработкой резюме — случайная пауза (как apply/bump).
-            # При одном резюме паузы нет (как и в apply для одного resume).
-            if len(resumes) > 1:
-                throttle.wait("после обхода ответов одного резюме")
+        for card in cards:
+            outcome = history.upsert_response(
+                vacancy_id=card.vacancy_id,
+                employer=card.employer or None,
+                status=card.status,
+                chat_url=card.chat_url,
+                response_date=card.date or None,
+            )
+            if outcome == "inserted":
+                inserted += 1
+            elif outcome == "updated":
+                updated += 1
+            else:
+                unchanged += 1
 
         print(
             f"Новых ответов: {inserted + updated} "
@@ -161,8 +163,6 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю ответов.")
 
-    # Сводка «что нового» по истории (если резюме одно — фильтруем по нему,
-    # иначе по всем — как stats). fresh_only → показываем все строки истории.
-    resume_id = resumes[0].resume_id if len(resumes) == 1 else None
-    rows = history.new_responses_since(since_summary, resume_id=resume_id)
+    # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
+    rows = history.new_responses_since(since_summary)
     _print_responses_table(rows, "Новые ответы работодателей")

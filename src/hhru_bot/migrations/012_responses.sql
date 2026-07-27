@@ -1,10 +1,19 @@
 -- 012_responses.sql — мониторинг ответов работодателей (#12, Этап 2).
 -- Конвенция: номер миграции = номер ишью (012 = #12).
 
--- Одна строка на пару (resume_id, vacancy_id): текущий «свежий» статус ответа
+-- Одна строка НА ВАКАНСИЮ (account-scope): текущий «свежий» статус ответа
 -- работодателя, перезаписываемый при каждом fetch_responses (upsert). В отличие
 -- от actions (append-only журнал откликов/поднятий), здесь хранится последнее
 -- состояние переписки, а не история переходов — для дашборда «что нового».
+--
+-- Почему account-scope (НЕ на пару resume_id+vacancy_id): страница
+-- /applicant/negotiations общая по аккаунту, и карточка переписки НЕ несёт
+-- достоверного признака «какому резюме принадлежит ответ». Клонирование одного
+-- ответа под все resume_id из конфига фабриковало бы данные (ответ резюме A
+-- приписывался бы и резюме B). Поэтому responses хранятся в один экземпляре на
+-- вакансию; resume_id оставлен опциональной колонкой под будущую достоверную
+-- атрибуцию (напр. через cross-check с actions, где известен (resume_id,
+-- vacancy_id) отклика), но в UNIQUE не входит.
 --
 -- Поля (схема из ишью #12):
 --   status        — текущий статус (invitation|discard|response|read).
@@ -22,7 +31,7 @@
 --                   достаточно текстовой метки).
 CREATE TABLE IF NOT EXISTS responses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    resume_id TEXT NOT NULL,
+    resume_id TEXT,
     vacancy_id TEXT NOT NULL,
     employer TEXT,
     status TEXT NOT NULL,
@@ -32,7 +41,7 @@ CREATE TABLE IF NOT EXISTS responses (
     last_seen_at TEXT NOT NULL,
     status_changed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    UNIQUE (resume_id, vacancy_id)
+    UNIQUE (vacancy_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_responses_status_changed_at

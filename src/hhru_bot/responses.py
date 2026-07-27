@@ -9,8 +9,10 @@
 «что нового» (new_responses_since прошлой отметки).
 
 Read-only по отношению к hh.ru: страница откликов только читается, никаких
-кликов «ответить»/навигации в чат. Анти-фрод принцип CLAUDE.md сохранён: между
-страницами списка — случайная пауза throttle.wait (как и в apply/search).
+кликов «ответить»/навигации в чат. Как и search.search_vacancies, перебор
+страниц списка идёт без throttle-пауз (паузы применяются к ДЕЙСТВИЯМ apply/
+bump, не к чтению списка); истёкшая сессия (редирект на /account/login)
+поднимает NotAuthenticated, чтобы команда не выдала пустой результат за «чисто».
 """
 
 from __future__ import annotations
@@ -27,6 +29,14 @@ from .selector_groups import negotiations as ns
 logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
+
+
+class NotAuthenticated(RuntimeError):
+    """Сессия hh.ru истекла: /applicant/negotiations редиректит на /account/login.
+
+    fetch_responses поднимает это, чтобы команда responses НЕ трактовала пустой
+    результат выгруженной сессии как «нет новых ответов» и НЕ затирала историю.
+    """
 
 
 # --- статусы ответов работодателя -------------------------------------------
@@ -128,8 +138,18 @@ def _extract_vacancy_id(href: str) -> str | None:
     return None
 
 
-def _absolute_url(href: str) -> str:
-    """Делает href абсолютным (как в search.py): http... иначе prepend HH_BASE_URL."""
+def _absolute_url(href: str, *, keep_query: bool = False) -> str:
+    """Делает href абсолютным (как в search.py): http... иначе prepend HH_BASE_URL.
+
+    По умолчанию query-строка срезается (для ссылки вакансии ``/vacancy/123?from=
+    serp`` → чистый URL вакансии, как в search._absolute_url). ``keep_query=True`` —
+    для chat-ссылки ``/applicant/negotiations?topic=77``: topic определяет
+    конкретную переписку, без него ссылка ведёт в общий список, а не в чат.
+    """
+    if keep_query:
+        if href.startswith("http"):
+            return href
+        return f"{HH_BASE_URL}{href}"
     if href.startswith("http"):
         return href.split("?")[0]
     return f"{HH_BASE_URL}{href.split('?')[0]}"
@@ -166,9 +186,12 @@ def parse_response_card(item) -> ResponseItem | None:
 
     chat_link = item.locator(ns.NEGOTIATION_CHAT_LINK).first
     chat_href = chat_link.get_attribute("href") or "" if chat_link.count() else ""
-    # chat_url — на страницу чата; если отдельной ссылки нет, fallback на карточку
-    # вакансии (минимум даёт точку входа).
-    chat_url = _absolute_url(chat_href) if chat_href else _absolute_url(vacancy_href)
+    # chat_url — на страницу чата; keep_query=True: topic определяет конкретную
+    # переписку, без него ссылка ведёт в общий список. Если отдельной чат-ссылки
+    # нет (напр. discard) — fallback на карточку вакансии (query там не нужен).
+    chat_url = (
+        _absolute_url(chat_href, keep_query=True) if chat_href else _absolute_url(vacancy_href)
+    )
 
     return ResponseItem(
         vacancy_id=vacancy_id,
@@ -184,9 +207,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
-    по UNIQUE (resume_id, vacancy_id); resume_id добавляет вызывающий, тут только
-    карточки). Пагинация: до ``max_pages``, стоп на первой пустой/без «далее».
+    по UNIQUE (vacancy_id)). Пагинация: до ``max_pages``, стоп на первой пустой/
+    без «далее».
+
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
+
+    Отличает «явный пустой список» от «страница не загрузилась»: /applicant/
+    negotiations рендерится залогиненному через JS, и истёкшая сессия hh.ru
+    молча редиректит на /account/login. Если это обнаружено — поднимается
+    NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
+    «нет новых ответов» и НЕ должна затирать историю).
     """
     results: list[ResponseItem] = []
 
@@ -194,6 +224,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         logger.info("Загрузка страницы откликов: %s", url)
         page.goto(url, wait_until="domcontentloaded")
+
+        # Истёкшая сессия: hh.ru редиректит /applicant/negotiations на /account/
+        # login. Это надёжный сигнал (не зависит от непроверенных селекторов
+        # negotiations): страница гарантированно НЕ отдаёт карточки переписки
+        # незалогиненному. Поднимаемся — команда не будет выдавать это за «пусто».
+        if "/account/login" in page.url:
+            raise NotAuthenticated(
+                "страница откликов редиректит на /account/login — сессия истекла "
+                "(запустите `login`, затем повторите)"
+            )
 
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()

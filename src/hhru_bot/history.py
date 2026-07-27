@@ -180,14 +180,21 @@ class History:
 
     def upsert_response(
         self,
-        resume_id: str,
         vacancy_id: str,
         employer: str | None,
         status: str,
         chat_url: str | None,
         response_date: str | None = None,
+        resume_id: str | None = None,
     ) -> str:
-        """Записывает/обновляет текущий статус ответа работодателя.
+        """Записывает/обновляет текущий статус ответа работодателя (account-scope).
+
+        Ключ — ``vacancy_id`` (одна строка на вакансию в аккаунте). Страница
+        /applicant/negotiations общая и НЕ несёт достоверного признака
+        принадлежности ответа конкретному резюме, поэтому ответ НЕ клонируется
+        под все resume_id (это фабриковало бы данные). ``resume_id`` опционален —
+        под будущую достоверную атрибуцию (напр. cross-check с actions), в ключ
+        UNIQUE не входит и по умолчанию NULL.
 
         Возвращает одно из: ``"inserted"`` (строка заведена впервые),
         ``"updated"`` (статус сменился — это «новый ответ»: прежний status
@@ -198,8 +205,8 @@ class History:
         now = datetime.now().isoformat()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT status FROM responses WHERE resume_id = ? AND vacancy_id = ?",
-                (resume_id, vacancy_id),
+                "SELECT status FROM responses WHERE vacancy_id = ?",
+                (vacancy_id,),
             ).fetchone()
             if row is None:
                 conn.execute(
@@ -229,20 +236,20 @@ class History:
                 conn.execute(
                     """
                     UPDATE responses
-                       SET employer = ?, last_status = status, status = ?,
+                       SET resume_id = ?, employer = ?, last_status = status, status = ?,
                            chat_url = ?, response_date = ?, last_seen_at = ?,
                            status_changed_at = ?
-                     WHERE resume_id = ? AND vacancy_id = ?
+                     WHERE vacancy_id = ?
                     """,
-                    (employer, status, chat_url, response_date, now, now, resume_id, vacancy_id),
+                    (resume_id, employer, status, chat_url, response_date, now, now, vacancy_id),
                 )
                 return "updated"
             # Статус не изменился — освежаем только «когда последний раз видели»
             # и дату ответа (hh.ru мог обновить блок даты без смены статуса).
             conn.execute(
-                "UPDATE responses SET employer = ?, chat_url = ?, response_date = ?, "
-                "last_seen_at = ? WHERE resume_id = ? AND vacancy_id = ?",
-                (employer, chat_url, response_date, now, resume_id, vacancy_id),
+                "UPDATE responses SET resume_id = ?, employer = ?, chat_url = ?, "
+                "response_date = ?, last_seen_at = ? WHERE vacancy_id = ?",
+                (resume_id, employer, chat_url, response_date, now, vacancy_id),
             )
             return "unchanged"
 

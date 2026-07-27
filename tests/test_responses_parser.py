@@ -109,7 +109,9 @@ def test_parse_response_card_invitation():
     assert item.employer == "ACME Corp"
     assert item.status == ResponseStatus.INVITATION
     assert item.raw_status == "Приглашение"
-    assert item.chat_url == "https://hh.ru/applicant/negotiations"
+    # chat_url СОХРАНЯЕТ query (topic=1): без него ссылка ведёт в общий список,
+    # а не в конкретную переписку (регрессия: раньше _absolute_url срезал query).
+    assert item.chat_url == "https://hh.ru/applicant/negotiations?topic=1"
     assert item.date == "сегодня, 14:05"
 
 
