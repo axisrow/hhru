@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd LaunchAgent (macOS) — ШАБЛОН. Ежедневный apply откликов (#18).
+
+  CLAUDE.md ЗАПРЕЩАЕТ фоновые демоны внутри кода проекта. Этот файл — не часть
+  кода, а конфиг внешнего планировщика ОС (launchd), который пользователь
+  устанавливает САМ под свою машину. Он лишь «нажимает кнопку» — зовёт
+  scripts/scheduled_run.sh раз в день. Предохранители (дневной лимит откликов,
+  дедупликация по истории) живут в коде (throttle.py: check_apply_limit,
+  history.py), поэтому повторный запуск за тот же день не переоткликнется.
+
+  StartCalendarInterval раз в день в 10:00 (измените Hour/Minute под себя).
+  apply --limit 5 ограничивает один прогон (сверх дневного лимита), чтобы не
+  вырабатывать весь daily_apply_limit за раз.
+
+  ПЕРЕД УСТАНОВКОЙ замените плейсхолдеры:
+    __REPO_ROOT__   — абсолютный путь к клону репозитория (напр. /Users/me/hhru)
+    __LOG_DIR__     — каталог логов (напр. __REPO_ROOT__/logs)
+    __PYTHON_BIN__  — абсолютный путь к python из venv проекта
+                      (напр. __REPO_ROOT__/.venv/bin/python; узнать: `which python`
+                      в активированном venv). launchd НЕ активирует venv и имеет
+                      урезанный PATH — без этого джоб упадёт на ModuleNotFoundError:
+                      playwright. scheduled_run.sh читает HHRU_PYTHON.
+
+  Установка:
+    cp deploy/com.hhru.bot.apply.plist ~/Library/LaunchAgents/com.hhru.bot.apply.plist
+    # (предварительно заменив плейсхолдеры в копии)
+    launchctl load ~/Library/LaunchAgents/com.hhru.bot.apply.plist
+  Проверка/выгрузка:
+    launchctl list | grep hhru
+    launchctl unload ~/Library/LaunchAgents/com.hhru.bot.apply.plist
+
+  Эквивалентный конфиг генерируется командой:
+    hhru-bot schedule --format plist --action apply --apply-time 10:00 --apply-limit 5
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hhru.bot.apply</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO_ROOT__/scripts/scheduled_run.sh</string>
+        <string>--headless</string>
+        <string>apply</string>
+        <string>--limit</string>
+        <string>5</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HHRU_PYTHON</key>
+        <string>__PYTHON_BIN__</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/scheduled.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/scheduled.log</string>
+</dict>
+</plist>

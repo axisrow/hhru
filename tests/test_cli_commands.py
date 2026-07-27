@@ -27,14 +27,32 @@ def _subparser_actions(parser):
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
-    assert set(action.choices) == {"login", "search", "apply", "bump", "run", "probe", "stats"}
+    assert set(action.choices) == {
+        "login",
+        "search",
+        "apply",
+        "bump",
+        "run",
+        "probe",
+        "stats",
+        "schedule",
+    }
 
 
 def test_register_commands_returns_names():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     names = register_commands(sub)
-    assert set(names) == {"login", "search", "apply", "bump", "run", "probe", "stats"}
+    assert set(names) == {
+        "login",
+        "search",
+        "apply",
+        "bump",
+        "run",
+        "probe",
+        "stats",
+        "schedule",
+    }
 
 
 def _opts_for(command: str) -> set[str]:
@@ -82,6 +100,36 @@ def test_probe_has_vacancy_args():
     assert "--vacancy-url" in opts
     # probe не откликается — дневной лимит/limit бессмысленны
     assert "--limit" not in opts
+
+
+def test_schedule_has_generator_args():
+    opts = _opts_for("schedule")
+    assert "--format" in opts
+    assert "--action" in opts
+    assert "--bump-interval-hours" in opts
+    assert "--apply-time" in opts
+    assert "--apply-limit" in opts
+    # schedule — генератор конфигов, не браузерная команда: общих поисковых
+    # флагов и resume у неё нет (планировщик зовёт всё из config.yaml).
+    assert "--resume" not in opts
+    assert "--dry-run" not in opts
+    assert "--max-pages" not in opts
+
+
+def test_schedule_format_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["schedule"]
+    fmt = next(a for a in sub._actions if "--format" in a.option_strings)
+    assert set(fmt.choices) == {"plist", "crontab"}
+
+
+def test_schedule_action_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["schedule"]
+    act = next(a for a in sub._actions if "--action" in a.option_strings)
+    assert set(act.choices) == {"bump", "apply"}
 
 
 def test_login_no_common_args():
