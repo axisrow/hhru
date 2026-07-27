@@ -14,9 +14,16 @@ KeyboardInterrupt -> exit 130 (как ``main``).
 setup_logging; см. комментарий в cli.py про отказ от PROJECT_ROOT). Для
 тестируемости путь хранится в args.log_path, а не берётся из глобали в run().
 
+READ-контракт и setup_logging: cli.main ПРОПУСКАЕТ setup_logging для команды log
+(см. cli.main) — иначе FileHandler создал бы logs/hhru_bot.log на запись до run(),
+что (а) нарушает READ-контракт «команда ничего не меняет локально», (б) делает
+ветку «файл не найден» недостижимой (setup_logging создаёт пустой лог), (в) падает
+с PermissionError в read-only-директории. Поэтому для log файл НЕ создаётся и
+missing-file-ветка достижима (цикл ревью #61, находка Codex).
+
 Имя файла ``log_cmd.py`` (не ``log.py``) — чтобы не конфликтовать со stdlib
 ``logging`` и ключевым именем в namespace. Команда регистрируется как ``log``;
-авторегистрация pkgutil в cli.register_commands (cli.py не трогается).
+авторегистрация pkgutil в cli.register_commands.
 """
 
 from __future__ import annotations
@@ -39,6 +46,19 @@ DEFAULT_LINES = 50
 FOLLOW_POLL_INTERVAL = 0.5
 
 
+def _positive_int(value: str) -> int:
+    """``argparse type=``: -n должно быть целым >= 1.
+
+    Без этого ``-n -1`` роняет команду ValueError'ом внутри deque(maxlen=-1),
+    а ``-n 0`` молча печатает пустой хвост (deque(maxlen=0)). Явная ошибка с
+    понятным сообщением лучше некрасивого трейса (цикл ревью #61).
+    """
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"требуется положительное целое, получено {value!r}")
+    return n
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "log",
@@ -47,7 +67,7 @@ def register(subparsers) -> None:
     p.add_argument(
         "-n",
         "--lines",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_LINES,
         help=f"Количество строк (по умолчанию {DEFAULT_LINES})",
     )
@@ -60,42 +80,61 @@ def register(subparsers) -> None:
     p.set_defaults(func=run, log_path=str(DEFAULT_LOG_PATH))
 
 
+def _tail_from(lines_view, n: int) -> list[str]:
+    """Последние ``n`` строк из итерируемого ``lines_view`` (str с \\n).
+
+    Если строк меньше ``n`` — возвращает все. Завершающая пустая строка
+    (артефакт перевода строки ``...c\\n`` → ["a","b","c",""]) отбрасывается,
+    как ``tail -n``. Общая для tail_lines (sync read) и follow (тот же файл).
+    """
+    tail = deque(lines_view, maxlen=n)
+    out = [line.rstrip("\n") for line in tail]
+    while out and out[-1] == "":
+        out.pop()
+    return out
+
+
 def tail_lines(path: Path, n: int) -> list[str]:
     """Возвращает последние ``n`` строк файла ``path`` (как ``tail -n``).
 
-    Если строк меньше ``n`` — возвращает все. Файл оканчивается переводом строки
-    → завершающая пустая строка не возвращается (поведение tail). Чистая функция
-    без побочных эффектов — тестируется без браузера.
+    Чистая функция без побочных эффектов — тестируется без браузера.
     """
     with open(path, encoding="utf-8") as f:
-        # deque(maxlen=n) держит только хвост, не загружая весь файл в память.
-        tail = deque(f, maxlen=n)
-    lines = [line.rstrip("\n") for line in tail]
-    # Файл "...c\n\n" даёт ["a", "b", "c", ""] — отбрасываем хвостовой пустой
-    # элемент (артефакт завершающего перевода строки), как tail -n.
-    while lines and lines[-1] == "":
-        lines.pop()
-    return lines
+        return _tail_from(f, n)
 
 
 def follow(
     path: Path,
     emit,
+    initial_lines: int = 0,
     sleep_interval: float = FOLLOW_POLL_INTERVAL,
     stop_after: int | None = None,
-    before_wait=None,
+    before_read=None,
 ) -> None:
     """Слежение за ``path`` (tail -f): печать дописываемых строк в ``emit``.
 
-    Стандартный tail-loop: встаём в EOF (позиция конца файла), затем в цикле
-    даём тесту/внешнему процессу дописать (``before_wait``), ``read()`` новые
-    байты и короткий ``sleep``. Дописанные в лог строки тут же отдаются в
-    ``emit(str)``.
+    Один открытый дескриптор на весь цикл — начальный хвост и polling читаются
+    из него, позиция непрерывна. Это устраняет TOCTOU-гонку «прочитали хвост →
+    переоткрыли → seek к новому EOF», при которой строка, дописанная между
+    первым read-до-EOF и вторым seek, терялась (не в снапшоте и позади
+    follow-offset). Цикл ревью #61, находка Codex.
+
+    Порядок итерации:
+      1. Печатаем последние ``initial_lines`` строк (если > 0) — это хвост, как
+         ``tail -n`` перед ``tail -f``. После него позиция указывает за эти
+         строки (но НЕ обязательно на EOF снапшота — см. ниже).
+      2. polling: ``before_read`` (хук для тестов), ``read()`` новые байты,
+         ``emit``, короткий ``sleep``.
+
+    Гонка всё ещё принципиально возможна только между шагом 1 и первым read
+    шага 2: ``deque(maxlen=initial_lines)`` дочитывает файл целиком до EOF, так
+    что на шаге 2 позиция уже на EOF — дописанные позже строки подхватятся
+    первым read. Таким образом начальный хвост + polling на одном дескрипторе
+    не теряют строки.
 
     Параметры для тестируемости (не меняют контракт в боевом режиме):
-    - ``stop_after``: ограничение числа polling-итераций (None = бесконечно);
-      используется тестами для одного тика, чтобы не зависеть от времени.
-    - ``before_wait(path, pos)``: хук перед ``read`` на каждой итерации; тесты
+    - ``stop_after``: ограничение числа polling-итераций (None = бесконечно).
+    - ``before_read(path, pos)``: хук перед ``read`` на каждой итерации; тесты
       через него дописывают строку (проверяя, что follow её подхватит).
 
     ``KeyboardInterrupt`` (Ctrl-C в sleep, read или хуке) переводится в
@@ -103,12 +142,20 @@ def follow(
     прерывание tail-loop — ответственность самой функции следования.
     """
     with open(path, encoding="utf-8") as f:
-        f.seek(0, 2)  # в конец файла (EOF) — печатаем только НОВЫЕ строки
+        if initial_lines > 0:
+            # _tail_from итерирует f до EOF → позиция после него = EOF, и дописанные
+            # позже строки подхватятся первым read. Снапшот и follow на одном
+            # дескрипторе без race (цикл ревью #61).
+            for line in _tail_from(f, initial_lines):
+                emit(line + "\n")
+        else:
+            # без начального хвоста — встаём в EOF, печатаем только НОВЫЕ строки.
+            f.seek(0, 2)
         iteration = 0
         while True:
             try:
-                if before_wait is not None:
-                    before_wait(path, f.tell())
+                if before_read is not None:
+                    before_read(path, f.tell())
                 chunk = f.read()
                 if chunk:
                     emit(chunk)
@@ -126,17 +173,18 @@ def run(args: argparse.Namespace) -> None:
     if not path.is_file():
         print(
             f"[FAIL] Файл лога не найден: {path}\n"
-            "[INFO] Лог создаётся при первом запуске любой команды "
-            "(setup_logging). Запустите, например, `hhru_bot search --dry-run`.",
+            "[INFO] Лог создаётся при первом запуске любой WRITE-команды "
+            "(setup_logging открывает FileHandler). Запустите, например, "
+            "`hhru_bot search --dry-run`, затем `hhru_bot log`.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    for line in tail_lines(path, args.lines):
-        print(line)
-
     if args.follow:
-        # Ctrl-C -> exit 130. Ловится внутри follow (tail-loop). Если Ctrl-C
-        # прилетит вне follow (печать хвоста), его перехватит cli.main -> exit 130.
-        follow(path, sys.stdout.write)
+        # initial_lines + polling на одном дескрипторе — без race между хвостом
+        # и follow. Ctrl-C -> exit 130 (внутри follow); вне follow ловит cli.main.
+        follow(path, sys.stdout.write, initial_lines=args.lines)
         sys.stdout.flush()
+    else:
+        for line in tail_lines(path, args.lines):
+            print(line)

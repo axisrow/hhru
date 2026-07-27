@@ -118,7 +118,7 @@ def test_follow_prints_appended_lines(tmp_path):
         out.append(chunk)
 
     # следим с позиции EOF; один тик polling, на котором допишем строку.
-    def append_then_wait(_p, _pos):
+    def append_before_read(_p, _pos):
         with open(_p, "a", encoding="utf-8") as f:
             f.write("appended\n")
 
@@ -128,9 +128,44 @@ def test_follow_prints_appended_lines(tmp_path):
         emit,
         sleep_interval=0,
         stop_after=1,
-        before_wait=append_then_wait,
+        before_read=append_before_read,
     )
     assert "".join(out) == "appended\n"
+
+
+def test_follow_initial_lines_then_polling_one_descriptor(tmp_path):
+    """initial_lines + polling на одном дескрипторе — race «хвост → follow».
+
+    Цикл ревью #61, находка Codex: раньше run() звал tail_lines (читал до EOF и
+    закрывал файл), затем follow переоткрывал и seek'нул к новому EOF — строка,
+    дописанная в окно, терялась. Теперь initial_lines печатается из того же
+    дескриптора, что и polling, поэтому строка, дописанная перед первым read,
+    подхватывается ровно один раз (не теряется, не дублируется).
+    """
+    path = _log_file(tmp_path, ["a", "b", "c"])
+    out: list[str] = []
+
+    def emit(chunk: str) -> None:
+        out.append(chunk)
+
+    def append_before_read(_p, _pos):
+        with open(_p, "a", encoding="utf-8") as f:
+            f.write("d\n")
+
+    follow(
+        path,
+        emit,
+        initial_lines=2,
+        sleep_interval=0,
+        stop_after=1,
+        before_read=append_before_read,
+    )
+    joined = "".join(out)
+    # начальный хвост (последние 2: b, c) + дописанная строка d — без потери.
+    assert "b\n" in joined and "c\n" in joined
+    assert joined.count("d\n") == 1
+    # a в снапшот не попало (за пределами initial_lines=2), в polling тоже нет.
+    assert "a\n" not in joined
 
 
 def test_follow_keyboard_interrupt_exits_130(tmp_path):
@@ -147,6 +182,63 @@ def test_follow_keyboard_interrupt_exits_130(tmp_path):
             out.append,
             sleep_interval=0,
             stop_after=5,
-            before_wait=raise_interrupt,
+            before_read=raise_interrupt,
         )
     assert exc.value.code == 130
+
+
+# --- -n валидация ---------------------------------------------------------
+
+
+def test_register_lines_type_rejects_negative():
+    """argparse type=_positive_int: -n -1 -> ArgumentTypeError (exit 2).
+
+    Цикл ревью #61: без валидатора deque(maxlen=-1) ронял команду ValueError'ом,
+    а -n 0 молча печатал пустой хвост. Теперь явная понятная ошибка.
+    """
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    from hhru_bot.commands.log_cmd import register
+
+    register(sub)
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["log", "-n", "-1"])
+    assert exc.value.code == 2
+
+
+def test_register_lines_type_rejects_zero():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    from hhru_bot.commands.log_cmd import register
+
+    register(sub)
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["log", "-n", "0"])
+    assert exc.value.code == 2
+
+
+# --- cli.main пропускает setup_logging для log ----------------------------
+
+
+def test_log_command_does_not_create_log(tmp_path, monkeypatch):
+    """cli.main('log ...') НЕ создаёт logs/hhru_bot.log (READ-контракт #21).
+
+    Цикл ревью #61, находка Codex: setup_logging открывал FileHandler на запись
+    до run(), из-за чего missing-file-ветка была недостижима и команда «писала»
+    локально. Теперь для log setup_logging не вызывается — файл не создаётся,
+    и `log` честно рапортует об отсутствии лога.
+    """
+    monkeypatch.chdir(tmp_path)
+    from hhru_bot.cli import main
+
+    # лога нет и быть не должно после запуска
+    log_path = tmp_path / "logs" / "hhru_bot.log"
+    assert not log_path.exists()
+
+    with pytest.raises(SystemExit) as exc:
+        main(["log"])
+    assert exc.value.code != 0  # нет файла -> nonzero
+
+    # ключевой ассерт: READ-команда не создала файл/директорию
+    assert not log_path.exists()
+    assert not (tmp_path / "logs").exists()
