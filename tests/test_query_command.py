@@ -15,6 +15,7 @@ CLAUDE.md: history.db пользователь меняет только чер�
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import pytest
 
@@ -265,6 +266,24 @@ def test_query_output_cannot_overwrite_history_db_via_symlink(tmp_path):
 
     assert _count_actions(db) == n_before
     assert db.read_bytes()[:15] == b"SQLite format 3"
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_query_output_cannot_overwrite_sqlite_companion(tmp_path, suffix):
+    """Регрессия (Codex cycle-2, критический): ``-o data/history.db-wal``
+    перезаписывал SQLite companion-файл. Во время конкурентной записи бота
+    committed-транзакции могут жить в WAL/-journal до checkpoint; перезапись
+    теряет данные или калечит БД. Companion-суффиксы главного пути запрещены."""
+    db = _seed_history(tmp_path)
+    companion = Path(str(db) + suffix)
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(db, sql="SELECT 1", output=companion))
+    assert exc.value.code == 1
+
+    # history.db не тронута (и companion не создан перезаписью)
+    assert _count_actions(db) == n_before
 
 
 def test_query_output_nonexistent_dir_reports_error(capsys, tmp_path):

@@ -47,6 +47,11 @@ _READONLY_STMT_RE = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 # Используется только для диагностики — настоящую защиту даёт mode=ro.
 _WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE", "PRAGMA")
 
+# SQLite companion-файлы главного history.db (WAL + shared-memory + rollback
+# journal). -o в любой из них перезаписал бы живой companion во время
+# конкурентной записи бота — запрещаем в _output_is_history.
+_SQLITE_COMPANION_SUFFIXES = ("-wal", "-shm", "-journal")
+
 
 class QueryError(Exception):
     """Ошибка запроса: не-SELECT, синтаксис, отсутствие БД. Печатается в stderr."""
@@ -174,22 +179,34 @@ def _resolve_output_target(output: str | Path) -> Path:
 
 
 def _output_is_history(output_resolved: Path, history_path: str | Path) -> bool:
-    """True, если цель -o указывает на тот же файл history.db (прямо или через
-    symlink/hard-link — сверка по inode samefile, с fallback на строку пути).
+    """True, если цель -o указывает на history.db или его SQLite companion-файлы.
 
-    Регрессия (Codex): ``query ... -o data/history.db`` перезаписывал
-    SQLite-файл ASCII-текстом → необратимая потеря истории. Запрещаем запись
-    результата в саму базу и её aliases.
+    Регрессия (Codex cycle-1): ``query ... -o data/history.db`` перезаписывал
+    SQLite-файл ASCII-текстом → необратимая потеря истории.
+    Регрессия (Codex cycle-2): ``-o data/history.db-wal`` (или ``-shm`` /
+    ``-journal``) перезаписывал companion-файлы SQLite — во время конкурентной
+    записи бота committed-транзакции могут жить в WAL/-journal до checkpoint,
+    перезапись теряет данные или калечит БД.
+
+    Запрещаем: сам главный путь (прямо или через symlink/hard-link по inode) И
+    companion-суффиксы относительно главного пути.
     """
     history_resolved = Path(history_path).resolve()
+    # 1. Тот же путь/indode напрямую или через alias.
     if output_resolved == history_resolved:
         return True
     try:
-        # samefile ловит symlink/hard-link на тот же inode (оба должны
-        # существовать; для ещё не созданного output возвращается False).
-        return output_resolved.samefile(history_resolved)
+        if output_resolved.samefile(history_resolved):
+            return True
     except OSError:
-        return False
+        pass
+    # 2. SQLite companion-файлы: <db>-wal, <db>-shm, <db>-journal. Проверяем
+    # по суффиксу относительно history-пути (resolвленного), чтобы поймать
+    # и несуществующую ещё цель (samefile на нее не сработал бы).
+    history_str = str(history_resolved)
+    if any(str(output_resolved) == history_str + sfx for sfx in _SQLITE_COMPANION_SUFFIXES):
+        return True
+    return False
 
 
 def _write_output(text: str, output: str | Path, history_path: str | Path) -> None:
