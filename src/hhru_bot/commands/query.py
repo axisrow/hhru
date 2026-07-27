@@ -1,0 +1,200 @@
+"""Команда query: произвольный read-only SELECT к локальной history.db (#45).
+
+Образец — s3rgeym/hh-applicant-tool (из аудита #21): позиционный SQL, --csv,
+-o <file>, интерактивный режим без аргументов.
+
+read-only — КРИТИЧНО (CLAUDE.md: history.db пользователь меняет только через
+бот). Двойная защита:
+
+1. Префиксный guard: принимаем только SELECT / WITH ... SELECT. Любой
+   INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/PRAGMA-запись → понятный отказ и
+   exit(1). Регулярка НЕ парсит SQL целиком (хрупко) — только проверяет, что
+   инструкция начинается с разрешённого ключевого слова.
+2. Соединение открывается в режиме SQLite URI ``?mode=ro``: даже если guard
+   как-то пропустит мутирующий запрос, сам движок БД откажет в записи файла.
+
+Вывод — ASCII-таблица через переиспользуемый ``report._ascii_table`` (НЕ
+дублируем форматтер). При --csv — чистый CSV без украшательств (csv.writer).
+Только текст/ASCII — НИКАКИХ эмодзи (правило проекта: CLI-вывод чистый).
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import io
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+from ..report import _ascii_table
+
+# Ключевые слова, с которых может начинаться read-only запрос.
+# Регистронезависимо, допустимы лидирующие пробелы/переносы.
+# WITH ... SELECT (CTE) разрешён — это по-прежнему SELECT-семантика.
+_READONLY_STMT_RE = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
+
+# Ключевые слова мутирующих инструкций (для понятного сообщения об отказе).
+# Используется только для диагностики — настоящую защиту даёт mode=ro.
+_WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE", "PRAGMA")
+
+
+class QueryError(Exception):
+    """Ошибка запроса: не-SELECT, синтаксис, отсутствие БД. Печатается в stderr."""
+
+
+def _ensure_schema(db_path: Path) -> None:
+    """Гарантирует, что файл history.db существует и схема применена.
+
+    Свежий пользователь может запустить ``query`` до любого действия бота —
+    тогда файла нет, и read-only соединение не сможет его создать. Один раз
+    открываем через History (он применит миграции), после чего переходим в
+    read-only режим. Само наличие БД — это тоже часть контракта «меняется
+    только через бот»: миграции применяются движком бота, а не произвольным SQL.
+    """
+    if db_path.exists():
+        return
+    # Ленивый импорт — разрывает цикл (history импортирует migrations и т.д.).
+    from ..history import History
+
+    History(db_path)
+
+
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    """Открывает соединение в режиме read-only (URI ?mode=ro).
+
+    Второй слой защиты после префиксного guard'а: даже если мутирующий запрос
+    пройдёт проверку, SQLite не запишет изменения в файл. URI требует
+    абсолютного пути.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
+def _check_readonly(sql: str) -> None:
+    """Префиксный guard: только SELECT / WITH. Иначе QueryError с понятным текстом."""
+    if not _READONLY_STMT_RE.match(sql):
+        head = sql.strip().split(None, 1)[0] if sql.strip() else "<пусто>"
+        kind = head.upper()
+        write_hint = " (запись)" if kind in _WRITE_KEYWORDS else ""
+        raise QueryError(
+            "Допускаются только read-only запросы (SELECT / WITH ... SELECT). "
+            f"history.db меняется только через бот.{write_hint} "
+            "INSERT/UPDATE/DELETE/DROP/ALTER/CREATE запрещены."
+        )
+
+
+def execute(sql: str, db_path: str | Path, *, csv: bool = False) -> str:
+    """Исполняет один SELECT и возвращает отформатированный результат.
+
+    csv=False → ASCII-таблица (через report._ascii_table).
+    csv=True  → чистый CSV (csv.writer, экранирование по RFC 4180).
+
+    Бросает QueryError при не-SELECT или проблемах с БД; sqlite3.Error при
+    синтаксической ошибке SQL пробрасывается наверх (run() ловит и печатает).
+    """
+    db_path = Path(db_path)
+    _check_readonly(sql)
+    _ensure_schema(db_path)
+
+    try:
+        conn = _connect_readonly(db_path)
+    except sqlite3.OperationalError as e:
+        raise QueryError(f"Не удалось открыть history.db (read-only): {e}") from e
+
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(sql)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        # Пустой результат: fetchall=[]. Достаём имена колонок из
+        # cursor.description, чтобы всё равно рисовать шапку (как stats).
+        col_names = _column_names_from_description(cur.description)
+        rows_str: list[list[str]] = []
+    else:
+        col_names = rows[0].keys()
+        rows_str = [[_cell(v) for v in row] for row in rows]
+
+    return _format_result(list(col_names), rows_str, as_csv=csv)
+
+
+def _format_result(header: list[str], rows: list[list[str]], *, as_csv: bool) -> str:
+    """Отрисовка результата: CSV (чистый) или ASCII-таблица (через report)."""
+    if as_csv:
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(header)
+        writer.writerows(rows)
+        return out.getvalue().rstrip("\n")
+    return _ascii_table(header, rows)
+
+
+def _column_names_from_description(description) -> list[str]:
+    """Имена колонок из cursor.description (для пустого результата).
+
+    SQLite возвращает описание только после execute; для SELECT без строк оно
+    всё равно заполнено именами колонок.
+    """
+    if not description:
+        return []
+    return [d[0] for d in description]
+
+
+def _cell(value) -> str:
+    """Приведение значения ячейки к строке: None → '' (пусто), как в report."""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _emit(text: str, args: argparse.Namespace) -> None:
+    """Куда писать результат: -o <file> или stdout."""
+    if args.output:
+        Path(args.output).write_text(text + "\n", encoding="utf-8")
+    else:
+        print(text)
+
+
+def run(args: argparse.Namespace) -> None:
+    """Точка входа команды query. Исполняет SELECT и печатает результат.
+
+    Без позиционного SQL — интерактивный режим (опционально, отложен до
+    follow-up: сейчас выводим подсказку и выходим с кодом 2).
+    """
+    if not args.sql:
+        print(
+            "Интерактивный режим пока не реализован. Передайте SQL позиционно: "
+            'hhru-bot query "SELECT ..."',
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    try:
+        result = execute(args.sql, args.history, csv=args.csv)
+    except QueryError as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        sys.exit(1)
+    except sqlite3.Error as e:
+        print(f"Ошибка SQL: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    _emit(result, args)
+
+
+def register(subparsers) -> None:
+    p = subparsers.add_parser(
+        "query",
+        help="Произвольный read-only SELECT к локальной history.db",
+        description=(
+            "Исполнить SELECT к history.db и вывести ASCII-таблицу или CSV. "
+            "Только read-only (SELECT/WITH) — история меняется только через бот."
+        ),
+    )
+    p.add_argument("sql", nargs="?", help="SQL-запрос (SELECT / WITH ... SELECT)")
+    p.add_argument("--csv", action="store_true", help="Вывести CSV вместо ASCII-таблицы")
+    p.add_argument("-o", dest="output", help="Записать результат в файл вместо stdout")
+    p.set_defaults(func=run)
