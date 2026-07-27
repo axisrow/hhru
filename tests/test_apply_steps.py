@@ -26,16 +26,21 @@ class _FakeLocator:
 
     @property
     def first(self):
-        return self
+        # В реальном Playwright .first снимает strict mode: wait_for на коллекции
+        # через .first проходит (ждёт первый совпавший), а на всей коллекции без .first
+        # кидает strict-mode Error. Возвращаем локатор с _strict=False.
+        return _FakeLocator(self.selector, self._state, strict=False)
 
-    def __init__(self, selector: str, state: _SelectorState) -> None:
+    def __init__(self, selector: str, state: _SelectorState, *, strict: bool = True) -> None:
         self.selector = selector
         self._state = state
+        self._strict = strict
 
     def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
         # Моделируем реальное поведение Playwright: в strict mode для коллекции
         # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
-        if self._state.is_collection:
+        # Через .first strict mode снимается — тогда ждём видимость коллекции.
+        if self._state.is_collection and self._strict:
             raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
                 f"strict mode violation: {self.selector} resolved to "
                 f"{self._state.match_count} elements"
@@ -228,6 +233,72 @@ def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
     assert result is None
     assert st.current_href == "/resume/RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+# --- fill_response_form: выбор резюме fail-closed (#33) ---
+#
+# Регрессия #33: ранее при отсутствии опции с совпадающим resume_id форма всё равно
+# отправлялась (fail-open — submit кликался, уходило резюме по умолчанию). Теперь
+# неоднозначность/отсутствие нужного резюме = отказ: submit НЕ нажимается, возвращается
+# причина. Совпадение resume_id проверяется как сегмент пути (/resume/{id} или
+# resume_id={id}), не как голая подстрока href — снижает случайные лжесовпадения.
+
+
+def test_fill_form_resume_no_match_does_not_submit_returns_reason():
+    # Коллекция резюме есть, но ни одна опция не содержит запрошенный resume_id.
+    # Оракул: submit НЕ нажат, возвращена причина отказа (а не None).
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER1", "/resume/OTHER2"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "резюме" in result.lower()
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_ambiguous_match_does_not_submit_returns_reason():
+    # Две опции совпадают по resume_id — неоднозначность = отказ, а не «кликни первое».
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/RID", "/resume/RID"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "резюме" in result.lower()
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_single_match_submits_and_returns_none():
+    # Ровно одна опция с совпадающим resume_id → выбор успешен, submit нажат, None.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 3)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID", "/resume/THIRD"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert st.current_href == "/resume/RID"
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_resume_match_requires_path_segment_not_bare_substring():
+    # resume_id должен совпасть как сегмент пути, а не как подстрока где попало.
+    # Здесь "RID" — лишь подстрока чужого href /resume/PONDERING, сегмента /resume/RID нет.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/PONDERING"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
 # --- константы ---

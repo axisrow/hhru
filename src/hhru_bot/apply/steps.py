@@ -92,11 +92,26 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
 
     # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
     # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому «есть ли выбор
-    # резюме» проверяем через count() > 0 (как до #6), а НЕ через _is_visible/wait_for —
-    # иначе при нескольких резюме выбор молча пропускается и submit отправляет резюме
-    # по умолчанию вместо запрошенного resume_id (необратимая отправка неверного резюме).
-    if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
-        _select_resume_in_form(page, resume_id)
+    # резюме» проверяем через .first.wait_for(state='visible') (.first снимает strict
+    # mode — см. инвариант из PR #29), а затем _select_resume_in_form работает по
+    # count()/nth(). Это закрывает гонку рендера: коллекция может появиться позже
+    # submit-кнопки, и мгновенный count() > 0 пропустил бы выбор резюме.
+    #
+    # fail-closed (#33): если нужное резюме не найдено или совпадение неоднозначно —
+    # НЕ отправляем (submit не кликается), возвращаем причину. Иначе отправка ушла бы
+    # с резюме по умолчанию вместо запрошенного resume_id — необратимая отправка
+    # неверного резюме/персональных данных работодателю.
+    try:
+        page.locator(apply_form.APPLY_RESUME_SELECT).first.wait_for(
+            state="visible", timeout=OPTIONAL_FIELD_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        resume_select_present = False
+    else:
+        resume_select_present = True
+    if resume_select_present and page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
+        if not _select_resume_in_form(page, resume_id):
+            return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
 
     if _is_visible(
         page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
@@ -118,26 +133,48 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     return None
 
 
-def _select_resume_in_form(page: Page, resume_id: str) -> None:
-    """
-    Если у пользователя несколько резюме, hh.ru может показать выбор резюме
-    в форме отклика. Селектор APPLY_RESUME_SELECT — приблизительный и почти
-    наверняка потребует уточнения при первом реальном запуске: нужно найти
-    конкретный пункт списка, соответствующий resume_id, и кликнуть на него.
-    Пока реализация ищет опцию, содержащую resume_id в data-атрибуте или href.
+def _select_resume_in_form(page: Page, resume_id: str) -> bool:
+    """Выбирает резюме ``resume_id`` в форме отклика. True — выбрано, False — нет.
+
+    Если у пользователя несколько резюме, hh.ru показывает выбор резюме в форме
+    отклика. Селектор APPLY_RESUME_SELECT — приблизительный (не подтверждён
+    curl-дампом, рендерится только залогиненному через JS) и наверняка потребует
+    уточнения при первом реальном запуске.
+
+    Совпадение resume_id ищется как **сегмент пути**, а не как голая подстрока href:
+    ``/resume/{resume_id}`` или ``resume_id={resume_id}``. Голая подстрока давала бы
+    лжесовпадения (напр. ``RID`` внутри ``/resume/PONDERING``).
+
+    fail-closed: ровно одна подходящая опция → кликаем, возвращаем True. Ноль или
+    больше одной (неоднозначно) → возвращаем False, отправка не состоится.
     """
     from ..selector_groups import apply_form
 
     options = page.locator(apply_form.APPLY_RESUME_SELECT)
     count = options.count()
+    matched: list[int] = []
     for i in range(count):
-        option = options.nth(i)
-        href = option.get_attribute("href") or ""
-        if resume_id in href:
-            option.click()
-            return
-    logger.warning(
-        "Не удалось однозначно выбрать резюме '%s' в форме отклика — "
-        "используется резюме, выбранное hh.ru по умолчанию",
-        resume_id,
-    )
+        href = options.nth(i).get_attribute("href") or ""
+        if _href_matches_resume_id(href, resume_id):
+            matched.append(i)
+    if len(matched) != 1:
+        # 0 — нужного резюме нет среди опций; >1 — неоднозначно. И то и другое = отказ.
+        logger.warning(
+            "Не удалось однозначно выбрать резюме '%s' в форме отклика "
+            "(совпадений: %d) — отправка отменена",
+            resume_id,
+            len(matched),
+        )
+        return False
+    options.nth(matched[0]).click()
+    return True
+
+
+def _href_matches_resume_id(href: str, resume_id: str) -> bool:
+    """Совпадает ли ``resume_id`` с ``href`` как сегмент пути, а не как подстрока.
+
+    Принимает стандартные формы hh.ru: ``/resume/{id}`` (путь) и ``resume_id={id}``
+    (query). Голая подстрока (``resume_id in href``) отвергается — она ловит
+    случайные вхождения (``RID`` внутри ``PONDERING``).
+    """
+    return f"/resume/{resume_id}" in href or f"resume_id={resume_id}" in href
