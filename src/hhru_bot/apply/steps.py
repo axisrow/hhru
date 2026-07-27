@@ -100,37 +100,41 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     from ..selector_groups import apply_form
 
     # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
-    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому «есть ли выбор
-    # резюме» проверяем через .first.wait_for(state='visible') (.first снимает strict
-    # mode — см. инвариант из PR #29), а затем _select_resume_in_form работает по
-    # count()/nth(). Это закрывает гонку рендера: коллекция может появиться позже
-    # submit-кнопки, и мгновенный count() > 0 пропустил бы выбор резюме.
+    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому ждём появление
+    # коллекции через .first.wait_for(state='attached') (.first снимает strict mode —
+    # см. инвариант из PR #29; state='attached' = наличие в DOM, НЕ видимость), а
+    # решающую проверку «есть ли выбор» делаем по count(). Это закрывает и гонку
+    # рендера (коллекция может появиться позже submit-кнопки), и баг cycle-4: раньше
+    # .first.wait_for(state='visible') видел только первый DOM-матч — если первый
+    # скрыт, а другой видим, таймаут ошибочно трактовался как «выбора нет» → submit
+    # дефолтного резюме.
     #
-    # fail-closed (#33): если нужное резюме не найдено или совпадение неоднозначно —
-    # НЕ отправляем (submit не кликается), возвращаем причину. Иначе отправка ушла бы
-    # с резюме по умолчанию вместо запрошенного resume_id — необратимая отправка
-    # неверного резюме/персональных данных работодателю.
+    # fail-closed (#33): count() > 0 → выбор ОБЯЗАТЕЛЕН (_select_resume_in_form сам
+    # fail-closed). Не найдено/неоднозначно — НЕ отправляем, возвращаем причину.
+    # count() == 0 (детерминированное отсутствие после долгого ожидания) — выбора нет
+    # (одно резюме), submit разрешён.
     try:
         page.locator(apply_form.APPLY_RESUME_SELECT).first.wait_for(
-            state="visible", timeout=RESUME_SELECT_TIMEOUT_MS
+            state="attached", timeout=RESUME_SELECT_TIMEOUT_MS
         )
     except PlaywrightError:
-        resume_select_present = False
+        # Селектор не появился в DOM за долгий таймаут — выбора на этой странице нет
+        # (одно резюме, happy path). submit разрешён ниже.
+        options_count = 0
     else:
-        resume_select_present = True
-    if resume_select_present:
-        # TOCTOU (cycle-2 review): селектор был видим в wait_for, но исчез к count()
-        # (transient re-render/drift). count()==0 после detect — НЕ «одно резюме»
-        # (там wait_for таймаутит → resume_select_present=False), а нестабильный
-        # селектор на multi-resume форме. Fail-closed: отказ, не submit дефолтного.
-        if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
-            if not _select_resume_in_form(page, resume_id):
-                return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
-        else:
+        options_count = page.locator(apply_form.APPLY_RESUME_SELECT).count()
+        if options_count == 0:
+            # TOCTOU (cycle-2): был прикреплён в wait_for, но исчез к count()
+            # (transient re-render/drift). Это НЕ «одно резюме» (там wait_for таймаутит
+            # и мы в ветке except выше), а нестабильный селектор. Fail-closed: отказ.
             return (
                 "селектор выбора резюме исчез после обнаружения — "
                 "отправка отменена (нестабильная форма отклика)"
             )
+    if options_count > 0:
+        # Выбор есть (multi-resume) — выбираем нужное; _select_resume_in_form fail-closed.
+        if not _select_resume_in_form(page, resume_id):
+            return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
 
     if _is_visible(
         page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS

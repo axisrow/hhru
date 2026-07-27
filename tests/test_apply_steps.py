@@ -62,12 +62,23 @@ class _FakeLocator:
     def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
         # Моделируем реальное поведение Playwright: в strict mode для коллекции
         # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
-        # Через .first strict mode снимается — тогда ждём видимость коллекции.
+        # Через .first strict mode снимается — тогда ждём готовность коллекции.
         if self._state.is_collection and self._strict and self._href_filter is None:
             raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
                 f"strict mode violation: {self.selector} resolved to "
                 f"{self._state.match_count} elements"
             )
+        if state == "attached":
+            # state='attached' — наличие в DOM (match_count>0 для коллекции), без
+            # требования видимости. Моделирует cycle-4 фикс: скрытый первый элемент
+            # всё равно «прикреплён», и count() решает, есть ли выбор.
+            if self._state.is_collection:
+                if self._state.match_count == 0:
+                    raise PlaywrightTimeoutError(f"{self.selector} not attached")
+                return
+            if not self._state.visible:
+                raise PlaywrightTimeoutError(f"{self.selector} not attached")
+            return
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
@@ -497,6 +508,25 @@ def test_fill_form_resume_target_disappears_at_click_time_does_not_submit():
 
     assert result is not None
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_hidden_first_match_still_selects_not_submit_default():
+    # Codex cycle-4: .first.wait_for(state='visible') видел только первый DOM-матч.
+    # Если первый скрыт, а другой видим — старый код таймаутил → «выбора нет» → submit
+    # дефолтного резюме. Фикс: wait_for(state='attached') + решающая проверка по count().
+    # Оракул: коллекция прикреплена (count=2) → выбор вызывается → клик по RID.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.visible = False  # первый элемент скрыт → wait_for(state='visible') таймаутил бы
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    # С фиксом: count()==2 → выбор → клик RID, submit нажат.
+    assert result is None
+    assert st.current_href == "/resume/RID"
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
 # --- константы ---
