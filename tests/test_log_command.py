@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pytest
@@ -185,6 +186,65 @@ def test_follow_keyboard_interrupt_exits_130(tmp_path):
             before_read=raise_interrupt,
         )
     assert exc.value.code == 130
+
+
+def test_follow_survives_truncation(tmp_path):
+    """Лог усечён во время follow — новые записи не теряются (copytruncate).
+
+    Цикл ревью #61, раунд 2, находка Codex: без truncation-detection offset
+    оставался за новым EOF и записи пропускались, пока файл не перерастёт
+    прежний размер.
+    """
+    path = _log_file(tmp_path, ["old1", "old2", "old3"])
+    out: list[str] = []
+
+    called = {"n": 0}
+
+    def truncate_then_append(_p, _pos):
+        called["n"] += 1
+        if called["n"] == 1:
+            # copytruncate: обрезаем файл, потом пишем свежий контент
+            with open(_p, "w", encoding="utf-8") as f:
+                f.write("fresh1\nfresh2\n")
+
+    follow(
+        path,
+        out.append,
+        initial_lines=0,
+        sleep_interval=0,
+        stop_after=1,
+        before_read=truncate_then_append,
+    )
+    joined = "".join(out)
+    assert "fresh1" in joined and "fresh2" in joined
+
+
+# --- realtime flush при pipe -------------------------------------------------
+
+
+def test_flushing_stdout_write_flushes_after_each_chunk(monkeypatch):
+    """emit для follow flush'ит stdout после каждой записи (realtime при pipe).
+
+    Цикл ревью #61, раунд 2, находка Codex: без flush `log -f | grep` висел до
+    заполнения block-buffered stdout.
+    """
+    from hhru_bot.commands.log_cmd import _flushing_stdout_write
+
+    flushed: list[int] = []
+    written: list[str] = []
+
+    class _FakeStdout:
+        def write(self, s):
+            written.append(s)
+
+        def flush(self):
+            flushed.append(len(written))
+
+    monkeypatch.setattr(sys, "stdout", _FakeStdout())
+    _flushing_stdout_write("a")
+    _flushing_stdout_write("b")
+    assert written == ["a", "b"]
+    assert len(flushed) == 2  # flush после КАЖДОЙ записи
 
 
 # --- -n валидация ---------------------------------------------------------

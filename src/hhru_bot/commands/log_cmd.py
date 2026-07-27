@@ -29,6 +29,7 @@ missing-file-ветка достижима (цикл ревью #61, наход�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from collections import deque
@@ -140,6 +141,13 @@ def follow(
     ``KeyboardInterrupt`` (Ctrl-C в sleep, read или хуке) переводится в
     ``sys.exit(130)`` — как ``main``. Ловится здесь, а не в ``run``, потому что
     прерывание tail-loop — ответственность самой функции следования.
+
+    Truncation (logrotate copytruncate / ручная очистка): если размер файла
+    стал меньше текущей позиции — файл усечён, переходим в начало и читаем
+    заново. Без этого offset остался бы за новым EOF и записи пропускались бы,
+    пока файл не перерастёт прежний размер (цикл ревью #61, раунд 2). Замену
+    inode (move+create ротация) этот дескриптор не отследит — это более редкий
+    случай, для ручного CLI без ротации достаточен copytruncate-cover.
     """
     with open(path, encoding="utf-8") as f:
         if initial_lines > 0:
@@ -156,6 +164,7 @@ def follow(
             try:
                 if before_read is not None:
                     before_read(path, f.tell())
+                _handle_truncation(f)
                 chunk = f.read()
                 if chunk:
                     emit(chunk)
@@ -165,6 +174,19 @@ def follow(
                 time.sleep(sleep_interval)
             except KeyboardInterrupt:
                 sys.exit(130)
+
+
+def _handle_truncation(f) -> None:
+    """Если файл усечён (позиция за новым EOF) — перемотать в начало.
+
+    copytruncate-ротация или ручная очистка лога уменьшают размер файла; без
+    перемотки offset остаётся за EOF и новые записи не читаются, пока файл не
+    перерастёт прежнюю длину (цикл ревью #61, раунд 2, находка Codex).
+    """
+    pos = f.tell()
+    size = os.fstat(f.fileno()).st_size
+    if pos > size:
+        f.seek(0)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -183,8 +205,16 @@ def run(args: argparse.Namespace) -> None:
     if args.follow:
         # initial_lines + polling на одном дескрипторе — без race между хвостом
         # и follow. Ctrl-C -> exit 130 (внутри follow); вне follow ловит cli.main.
-        follow(path, sys.stdout.write, initial_lines=args.lines)
-        sys.stdout.flush()
+        # flush после каждого chunk'а: при pipe (block-buffered stdout) иначе
+        # строки не доходили до читателя в реальном времени — `log -f | grep`
+        # висел бы до заполнения буфера (цикл ревью #61, раунд 2, находка Codex).
+        follow(path, _flushing_stdout_write, initial_lines=args.lines)
     else:
         for line in tail_lines(path, args.lines):
             print(line)
+
+
+def _flushing_stdout_write(chunk: str) -> None:
+    """emit для follow: пишет в stdout и сразу flush (realtime при pipe)."""
+    sys.stdout.write(chunk)
+    sys.stdout.flush()
