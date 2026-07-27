@@ -23,6 +23,14 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
 ]
+# AI/LLM-функциональность (issue #16, Этап 5). Не входит в базовые dependencies —
+# бот работает без LLM; установите группу [ai] только когда нужна AI-интеграция:
+#   pip install -e '.[ai]'
+# openai импортируется лениво внутри hhru_bot.ai.llm_client, поэтому отсутствие
+# пакета не ломает импорт остального кода.
+ai = [
+    "openai>=1.50",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
