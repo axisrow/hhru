@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -27,6 +28,14 @@ APPLY_TIMEOUT_MS = 10_000
 # отсутствовать — это нормально, а не ошибка). Ждать полной APPLY_TIMEOUT_MS тут
 # бессмысленно: отсутствие поля детерминировано почти сразу.
 OPTIONAL_FIELD_TIMEOUT_MS = 1_500
+# Таймаут ожидания селектора выбора резюме. Это НЕ опциональное поле вроде
+# cover-letter: если на multi-resume аккаунте селектор резюме не успел отрисоваться
+# за короткий OPTIONAL_FIELD_TIMEOUT_MS (медленный JS-рендер залогиненной формы),
+# выбор молча пропускается и submit отправляет резюме по умолчанию (fail-open,
+# см. cycle-2 review #33). Поэтому селектор резюме ждём как обязательный элемент:
+# появится — выберем нужное, детерминированно отсутствует после долгого ожидания —
+# на этой странице выбора нет (одно резюме), submit разрешён.
+RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
 
 
 def wait_apply_button(page: Page) -> bool:
@@ -91,12 +100,50 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     from ..selector_groups import apply_form
 
     # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
-    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому «есть ли выбор
-    # резюме» проверяем через count() > 0 (как до #6), а НЕ через _is_visible/wait_for —
-    # иначе при нескольких резюме выбор молча пропускается и submit отправляет резюме
-    # по умолчанию вместо запрошенного resume_id (необратимая отправка неверного резюме).
-    if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
-        _select_resume_in_form(page, resume_id)
+    # и wait_for в strict mode при >1 совпадении кидает Error. Поэтому ждём появление
+    # коллекции через .first.wait_for(state='attached') (.first снимает strict mode —
+    # см. инвариант из PR #29; state='attached' = наличие в DOM, НЕ видимость), а
+    # решающую проверку «есть ли выбор» делаем по count(). Это закрывает и гонку
+    # рендера (коллекция может появиться позже submit-кнопки), и баг cycle-4: раньше
+    # .first.wait_for(state='visible') видел только первый DOM-матч — если первый
+    # скрыт, а другой видим, таймаут ошибочно трактовался как «выбора нет» → submit
+    # дефолтного резюме.
+    #
+    # fail-closed (#33): count() > 0 → выбор ОБЯЗАТЕЛЕН (_select_resume_in_form сам
+    # fail-closed). Не найдено/неоднозначно — НЕ отправляем, возвращаем причину.
+    # count() == 0 (детерминированное отсутствие после долгого ожидания) — выбора нет
+    # (одно резюме), submit разрешён.
+    try:
+        page.locator(apply_form.APPLY_RESUME_SELECT).first.wait_for(
+            state="attached", timeout=RESUME_SELECT_TIMEOUT_MS
+        )
+    except PlaywrightTimeoutError:
+        # Легитимное «селектор не появился в DOM за долгий таймаут» — выбора на этой
+        # странице нет (одно резюме, happy path). submit разрешён ниже.
+        options_count = 0
+    except PlaywrightError:
+        # Cycle-5 review: НЕ маскировать не-timeout ошибки (runtime/selector failure)
+        # под «выбора нет» — это пропустило бы count() и выбор → submit дефолтного
+        # резюме. Только PlaywrightTimeoutError = легитимное отсутствие; прочие
+        # PlaywrightError — аномалия, fail-closed отказ.
+        return (
+            "ошибка при проверке выбора резюме в форме отклика — "
+            "отправка отменена (нестабильная страница)"
+        )
+    else:
+        options_count = page.locator(apply_form.APPLY_RESUME_SELECT).count()
+        if options_count == 0:
+            # TOCTOU (cycle-2): был прикреплён в wait_for, но исчез к count()
+            # (transient re-render/drift). Это НЕ «одно резюме» (там wait_for таймаутит
+            # и мы в ветке except выше), а нестабильный селектор. Fail-closed: отказ.
+            return (
+                "селектор выбора резюме исчез после обнаружения — "
+                "отправка отменена (нестабильная форма отклика)"
+            )
+    if options_count > 0:
+        # Выбор есть (multi-resume) — выбираем нужное; _select_resume_in_form fail-closed.
+        if not _select_resume_in_form(page, resume_id):
+            return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
 
     if _is_visible(
         page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
@@ -118,26 +165,95 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     return None
 
 
-def _select_resume_in_form(page: Page, resume_id: str) -> None:
-    """
-    Если у пользователя несколько резюме, hh.ru может показать выбор резюме
-    в форме отклика. Селектор APPLY_RESUME_SELECT — приблизительный и почти
-    наверняка потребует уточнения при первом реальном запуске: нужно найти
-    конкретный пункт списка, соответствующий resume_id, и кликнуть на него.
-    Пока реализация ищет опцию, содержащую resume_id в data-атрибуте или href.
+def _select_resume_in_form(page: Page, resume_id: str) -> bool:
+    """Выбирает резюме ``resume_id`` в форме отклика. True — выбрано, False — нет.
+
+    Если у пользователя несколько резюме, hh.ru показывает выбор резюме в форме
+    отклика. Селектор APPLY_RESUME_SELECT — приблизительный (не подтверждён
+    curl-дампом, рендерится только залогиненному через JS) и наверняка потребует
+    уточнения при первом реальном запуске.
+
+    Совпадение resume_id требует **точного равенства** сегмента/значения (см.
+    ``_href_matches_resume_id``): последний сегмент пути (``/resume/{id}``) или
+    значение query-параметра ``resume_id``. Голая подстрока отвергается — она давала
+    лжесовпадения (``RID`` внутри ``/resume/RID2``, ``?other_resume_id=RID``).
+
+    fail-closed: ровно одна подходящая опция → кликаем, возвращаем True. Ноль или
+    больше одной (неоднозначно) → возвращаем False, отправка не состоится.
     """
     from ..selector_groups import apply_form
 
+    # Identity-bound выбор (cycle-3 review): НЕ кликаем по сохранённому индексу —
+    # Playwright резолвит nth(i) против текущего DOM в момент действия, и если JS
+    # переупорядочил/вставил опции между сканом и кликом, тот же индекс = другое
+    # резюме. Вместо этого: находим единственный совпадающий href, а перед кликом
+    # пере-сканируем опции по этому href и требуем строгую уникальность. Любой
+    # drift (переупорядочивание, исчезновение, раздвоение) между scan и click → отказ.
     options = page.locator(apply_form.APPLY_RESUME_SELECT)
     count = options.count()
+    matched_hrefs: list[str] = []
     for i in range(count):
-        option = options.nth(i)
-        href = option.get_attribute("href") or ""
-        if resume_id in href:
-            option.click()
-            return
-    logger.warning(
-        "Не удалось однозначно выбрать резюме '%s' в форме отклика — "
-        "используется резюме, выбранное hh.ru по умолчанию",
-        resume_id,
-    )
+        href = options.nth(i).get_attribute("href") or ""
+        if _href_matches_resume_id(href, resume_id):
+            matched_hrefs.append(href)
+    if len(matched_hrefs) != 1:
+        # 0 — нужного резюме нет среди опций; >1 — неоднозначно. И то и другое = отказ.
+        logger.warning(
+            "Не удалось однозначно выбрать резюме '%s' в форме отклика "
+            "(совпадений: %d) — отправка отменена",
+            resume_id,
+            len(matched_hrefs),
+        )
+        return False
+    target_href = matched_hrefs[0]
+    # Клик по strict href-локатору, БЕЗ конвертации обратно в индекс (cycle-3 review):
+    # nth(i).click() re-resolves индекс в момент действия — любой scan→click gap даёт
+    # TOCTOU (JS reorder/insert → тот же индекс = другое резюме). Вместо этого кликаем
+    # строгий локатор, привязанный к точному href: Playwright сам резолвит его в момент
+    # click() и кидает Error (strict mode) при != 1 совпадении — дубль/исчезновение/
+    # переупорядочивание между scan и click ловятся как отказ. href — стабильная
+    # identity резюме на hh.ru, не позиция в коллекции.
+    try:
+        page.locator(_resume_option_by_href_selector(target_href)).click()
+    except PlaywrightError as exc:
+        # strict-mode violation (>1 совпадение), element not found (исчез) или detach —
+        # любое из этого = не удалось гарантированно кликнуть нужное резюме → отказ.
+        logger.warning(
+            "Резюме '%s' (href=%s) не подтверждено при клике (%s) — отправка отменена",
+            resume_id,
+            target_href,
+            exc,
+        )
+        return False
+    return True
+
+
+def _resume_option_by_href_selector(href: str) -> str:
+    """CSS-селектор опции резюме по точному href, для strict-клика в момент действия.
+
+    Совмещает APPLY_RESUME_SELECT с фильтром по атрибуту href. Quote обратными кавычками
+    для CSS-безопасности (значение берётся из DOM страницы, не из ввода пользователя).
+    """
+    from ..selector_groups import apply_form
+
+    escaped = href.replace("\\", "\\\\").replace("'", "\\'")
+    return f"{apply_form.APPLY_RESUME_SELECT}[href='{escaped}']"
+
+
+def _href_matches_resume_id(href: str, resume_id: str) -> bool:
+    """Совпадает ли ``resume_id`` с ``href`` как **полный** сегмент/значение.
+
+    Принимает стандартные формы hh.ru: ``/resume/{id}`` (последний сегмент пути) и
+    ``resume_id={id}`` (значение query-параметра). Требуется **точное равенство**
+    сегмента/значения, а не вхождение подстроки — иначе ``resume_id="RID"`` ложно
+    совпадает с ``/resume/RID2`` (суффикс) или ``?other_resume_id=RID``
+    (похожий параметр), и кликается чужое резюме (cycle-2 review #33).
+    """
+    parsed = urlparse(href)
+    # Путь: /resume/{id} — последний сегмент должен совпадать ровно.
+    last_segment = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    if last_segment == resume_id:
+        return True
+    # Query: resume_id={id} — точное значение параметра (не похоже названного).
+    query = parse_qs(parsed.query)
+    return query.get("resume_id", [None])[0] == resume_id
