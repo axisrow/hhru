@@ -42,6 +42,7 @@ def test_all_commands_registered():
         "query",
         "whoami",
         "list-resumes",
+        "log",
     }
 
 
@@ -49,8 +50,11 @@ def test_register_commands_returns_names():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     names = register_commands(sub)
-    # register_commands возвращает имена МОДУЛЕЙ (snake_case), а не имена команд:
-    # модуль list_resumes регистрирует команду 'list-resumes'.
+    # register_commands возвращает имена МОДУЛЕЙ (pkgutil module_info.name), а не
+    # имена команд. Для log имя файла log_cmd.py (не log.py — конфликт stdlib),
+    # поэтому модуль здесь — "log_cmd", хотя команда регистрируется как "log"
+    # (проверяется отдельно в test_all_commands_registered через action.choices).
+    # Аналогично модуль list_resumes регистрирует команду 'list-resumes'.
     assert set(names) == {
         "login",
         "search",
@@ -66,6 +70,7 @@ def test_register_commands_returns_names():
         "query",
         "whoami",
         "list_resumes",
+        "log_cmd",
     }
 
 
@@ -230,3 +235,22 @@ def test_whoami_has_resume_only():
     # --dry-run/--limit здесь бессмысленны (контракт спеки #21 §whoami).
     assert "--dry-run" not in opts
     assert "--limit" not in opts
+
+
+def test_log_has_lines_and_follow():
+    # _opts_for берёт option_strings[0] — у log флаги короткие: -n/-f.
+    opts = _opts_for("log")
+    assert "-n" in opts
+    assert "-f" in opts
+    # log — READ: ни резюме, ни dry-run/limit (не делает действий)
+    assert "--resume" not in opts
+    assert "--dry-run" not in opts
+    assert "--limit" not in opts
+
+
+def test_log_default_lines():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["log"]
+    lines = next(a for a in sub._actions if "--lines" in a.option_strings)
+    assert lines.default == 50

@@ -65,7 +65,13 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    setup_logging(verbose=args.verbose)
+    # READ-команда `log` намеренно минует setup_logging: FileHandler создал бы
+    # logs/hhru_bot.log на запись до run(), что нарушает READ-контракт «не меняет
+    # локально» (#21), делает ветку «файл не найден» недостижимой (setup_logging
+    # создаёт пустой лог) и падает PermissionError в read-only-директории.
+    # log сам ничего не логирует — ему не нужны handlers (цикл ревью #61, #58).
+    if args.command != "log":
+        setup_logging(verbose=args.verbose)
 
     try:
         args.func(args)
