@@ -39,6 +39,7 @@ def test_all_commands_registered():
         "responses",
         "funnel",
         "mark",
+        "query",
     }
 
 
@@ -58,6 +59,7 @@ def test_register_commands_returns_names():
         "responses",
         "funnel",
         "mark",
+        "query",
     }
 
 
