@@ -2,14 +2,15 @@
 
 ``mark --vacancy <id> --status offer`` — hh.ru не отдаёт оффер как статус
 переговоров, поэтому верхний шаг воронки (оффер) заполняется вручную. Пишет
-запись в responses со status='offer' (insert-only: если уже есть — no-op).
+ЛИПСКУЮ пометку в отдельную таблицу manual_offers (НЕ в responses #12 — тот
+перезаписывается каждым scrape'ом и затёр бы ручной offer).
 
 Браузер НЕ нужен — только SQLite. Регистрируется автоматически через
 pkgutil.iter_modules (cli.py не трогается).
 
---resume обязателен: ключ responses = UNIQUE(resume_id, vacancy_id), поэтому
-пометка привязана к конкретному резюме (воронка per-resume). Резолвится slug
-→ resume.resume_id тем же ключом, что и apply/bump/stats.
+--resume обязателен: ключ manual_offers = UNIQUE(resume_id, vacancy_id), пометка
+привязана к конкретному резюме. Резолвится slug → resume.resume_id тем же ключом,
+что и apply/bump/stats.
 """
 
 from __future__ import annotations

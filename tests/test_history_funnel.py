@@ -1,14 +1,16 @@
 """Characterization-тесты методов воронки для команды funnel (#13).
 
-Покрывает JOIN actions × responses, конверсии между шагами воронки
-(деление на ноль → 0%), «мёртвую зону» (отклики без ответа за N дней) и
-ручную пометку оффера (mark_offer). Без браузера — только SQLite.
+Покрывает JOIN actions × responses, КУМУЛЯТИВНЫЕ этапы воронки (read→invitation
+не «теряет» просмотр), «мёртвую зону» (отклики без ответа за N дней) и липкую
+ручную пометку оффера (mark_offer в отдельной таблице manual_offers, durable
+против последующих scrape'ов #12). Без браузера — только SQLite.
 
 Таблица responses — account-scope (#12, миграция 012): ключ UNIQUE(vacancy_id,
-topic), resume_id опционален. Поэтому воронка JOIN'ит по vacancy_id и
-группируется по actions.resume_id. Статусы read/invitation/discard наполняет
-#12 через upsert_response; offer — ручная пометка mark_offer (hh.ru оффер не
-отдаёт). В тестах read/invitation сидируем через upsert_response #12.
+topic), хранит ТЕКУЩИЙ статус. Поэтому воронка JOIN'ит по vacancy_id, группируется
+по actions.resume_id, а этапы кумулятивны (sent ⊇ viewed ⊇ invited ⊇ offer) —
+иначе read→invitation регрессировал бы viewed до 0. Ручной offer живёт в
+manual_offers (per-resume, липкая), не в responses. Статусы read/invitation в
+тестах сидируем через upsert_response #12 с явным topic.
 """
 
 from __future__ import annotations
@@ -22,17 +24,19 @@ def _iso_days_ago(days: int) -> str:
     return (datetime.now() - timedelta(days=days)).isoformat()
 
 
-# --- структура: responses существует после инициализации (создаётся #12) ----
+# --- структура: responses и manual_offers существуют после инициализации ----
 
 
-def test_responses_table_exists_after_init(tmp_path):
-    """History создаёт таблицу responses при инициализации (миграция 012, #12)."""
+def test_responses_and_manual_offers_tables_exist(tmp_path):
+    """History создаёт responses (#12) и manual_offers (#13) при инициализации."""
     h = History(tmp_path / "h.db")
     with h._connect() as conn:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='responses'"
-        ).fetchone()
-    assert row is not None
+        for tbl in ("responses", "manual_offers"):
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (tbl,),
+            ).fetchone()
+            assert row is not None, f"таблица {tbl} не создана"
 
 
 # --- funnel_by_resume ------------------------------------------------------
@@ -46,7 +50,7 @@ def test_funnel_empty_returns_zero_conversions(tmp_path):
 
 
 def test_funnel_counts_sent_without_response(tmp_path):
-    """Отправленные отклики без записи в responses: sent>0, viewed/invited/offer=0."""
+    """Отправленные отклики без записи в responses/manual_offers: sent>0, rest=0."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r1", "v2", "apply", "success")
@@ -59,7 +63,6 @@ def test_funnel_counts_sent_without_response(tmp_path):
     assert row["viewed"] == 0
     assert row["invited"] == 0
     assert row["offer"] == 0
-    # конверсия sent→viewed при viewed=0 → 0% (деление на ноль безопасно)
     assert row["view_rate"] == 0.0
 
 
@@ -68,44 +71,77 @@ def test_funnel_join_actions_with_responses(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")  # просмотрен
     h.record_action("r1", "v2", "apply", "success")  # приглашение
-    h.record_action("r1", "v3", "apply", "success")  # мёртв (нет в responses)
-    h.upsert_response("v1", "Acme", "read", "/chat/v1")
-    h.upsert_response("v2", "Acme", "invitation", "/chat/v2")
+    h.record_action("r1", "v3", "apply", "success")  # мёртв
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
+    h.upsert_response("v2", "Acme", "invitation", "/c", topic="2")
 
-    funnel = h.funnel_by_resume(since=None)
-    row = funnel[0]
+    row = h.funnel_by_resume(since=None)[0]
     assert row["sent"] == 3
-    assert row["viewed"] == 1  # только read
-    assert row["invited"] == 1  # только invitation
+    assert row["viewed"] == 2  # read (v1) + invitation (v2) — оба «просмотрены» (кумулятивно)
+    assert row["invited"] == 1  # только invitation (v2)
     assert row["offer"] == 0
+
+
+def test_funnel_cumulative_read_to_invitation_regression(tmp_path):
+    """РЕГРЕССИЯ cycle-1: read→invitation не должен обнулять viewed.
+
+    #12 хранит ТЕКУЩИЙ статус. После read→invitation (та же переписка topic=1
+    сменила статус) некумулятивный подсчёт давал viewed=0. Кумулятивные этапы:
+    invitation включает просмотр → viewed остаётся 1."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
+    h.upsert_response("v1", "Acme", "invitation", "/c", topic="1")  # переход статуса
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["viewed"] == 1  # НЕ 0 — кумулятивно
+    assert row["invited"] == 1
+    assert row["invite_rate"] == 100.0  # 1/1, а не 0% при viewed=0
 
 
 def test_funnel_conversions_are_percent(tmp_path):
     """view_rate — процент (0..100) от sent."""
     h = History(tmp_path / "h.db")
-    # 2 отправлено, 1 просмотрен → view_rate=50%
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r1", "v2", "apply", "success")
-    h.upsert_response("v1", "Acme", "read", "/chat/v1")
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
 
     row = h.funnel_by_resume(since=None)[0]
     assert row["viewed"] == 1
     assert row["sent"] == 2
-    assert row["view_rate"] == 50.0  # 1/2*100
+    assert row["view_rate"] == 50.0
 
 
 def test_funnel_offer_counted_from_mark(tmp_path):
-    """Оффер (status='offer', ручная пометка mark_offer) поднимается в воронку."""
+    """Оффер (ручная пометка mark_offer) поднимается в воронку (через manual_offers)."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
-    h.mark_offer("v1")
+    h.mark_offer("v1", "r1")
 
     row = h.funnel_by_resume(since=None)[0]
     assert row["offer"] == 1
-    # offer — отдельный статус (не read/invitation). offer_rate = offer/invited,
-    # invited=0 → 0% (деление на ноль → 0%).
-    assert row["invited"] == 0
-    assert row["offer_rate"] == 0.0
+    # кумулятивно: offer → и viewed, и invited тоже
+    assert row["viewed"] == 1
+    assert row["invited"] == 1
+
+
+def test_funnel_multi_topic_vacancy_no_inflation(tmp_path):
+    """РЕГРЕССИЯ cycle-1: вакансия с ответами в разных topic — счётчики не завышаются.
+
+    Реальный production-кейс (#12 кладёт ответы с разными topic): вакансия v1
+    имеет read (topic=1) + invitation (topic=2) + ручной offer. Кумулятивно:
+    viewed=1 (одна вакансия), invited=1, offer=1, sent=1 — без декартова раздувания."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
+    h.upsert_response("v1", "Acme", "invitation", "/c", topic="2")
+    h.mark_offer("v1", "r1")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["sent"] == 1
+    assert row["viewed"] == 1
+    assert row["invited"] == 1
+    assert row["offer"] == 1
 
 
 def test_funnel_separates_resumes(tmp_path):
@@ -113,7 +149,7 @@ def test_funnel_separates_resumes(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r2", "v9", "apply", "success")
-    h.upsert_response("v1", "Acme", "read", "/chat/v1")
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
 
     funnel = h.funnel_by_resume(since=None)
     by_resume = {r["resume_id"]: r for r in funnel}
@@ -158,28 +194,25 @@ def test_dead_responses_counts_stale_without_status(tmp_path):
     total_sent = отклики старше days (знаменатель), dead = из них без ответа.
     """
     h = History(tmp_path / "h.db")
-    # свежий отклик (моложе 7 дней) — не участвует в «мёртвой зоне»
-    h.record_action("r1", "v1", "apply", "success")
-    # старый отклик без ответа — мёртвый
-    with h._connect() as conn:
+    h.record_action("r1", "v1", "apply", "success")  # свежий — вне зоны
+    with h._connect() as conn:  # старый без ответа — мёртвый
         conn.execute(
             "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
             "VALUES ('r1','v2','apply','success','', ?)",
             (_iso_days_ago(10),),
         )
-    # старый отклик, но есть ответ — не мёртвый
-    with h._connect() as conn:
+    with h._connect() as conn:  # старый с ответом — не мёртвый
         conn.execute(
             "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
             "VALUES ('r1','v3','apply','success','', ?)",
             (_iso_days_ago(10),),
         )
-    h.upsert_response("v3", "Acme", "read", "/chat/v3")
+    h.upsert_response("v3", "Acme", "read", "/c", topic="3")
 
     dead = h.dead_responses(days=7)
-    assert dead["total_sent"] == 2  # 2 старых отклика (v2, v3) — знаменатель
-    assert dead["dead"] == 1  # только v2 без ответа
-    assert dead["dead_rate"] == 50.0  # 1/2*100
+    assert dead["total_sent"] == 2
+    assert dead["dead"] == 1
+    assert dead["dead_rate"] == 50.0
 
 
 def test_dead_responses_empty_is_zero(tmp_path):
@@ -191,59 +224,57 @@ def test_dead_responses_empty_is_zero(tmp_path):
     assert dead["dead_rate"] == 0.0
 
 
-# --- mark_offer: ручная пометка оффера -------------------------------------
+# --- mark_offer: липкая ручная пометка (manual_offers) ---------------------
 
 
-def test_mark_offer_inserts_response_with_offer_status(tmp_path):
-    """mark_offer создаёт запись в responses со status='offer' (по topic=NULL)."""
+def test_mark_offer_inserts_into_manual_offers(tmp_path):
+    """mark_offer создаёт запись в manual_offers со связью resume+vacancy."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
 
-    h.mark_offer("v1")
+    assert h.mark_offer("v1", "r1") is True
 
     row = h.funnel_by_resume(since=None)[0]
     assert row["offer"] == 1
 
 
-def test_mark_offer_idempotent_no_duplicate(tmp_path):
-    """Повторный mark_offer на ту же вакансию — no-op (offer уже стоит)."""
+def test_mark_offer_idempotent(tmp_path):
+    """Повторный mark_offer на ту же (resume, vacancy) — no-op."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
 
-    assert h.mark_offer("v1") is True
-    assert h.mark_offer("v1") is False  # второй — уже offer
+    assert h.mark_offer("v1", "r1") is True
+    assert h.mark_offer("v1", "r1") is False
 
     row = h.funnel_by_resume(since=None)[0]
     assert row["offer"] == 1
 
 
-def test_mark_offer_overwrites_other_status(tmp_path):
-    """mark_offer по вакансии с прежним статусом (read/invitation) — создаёт offer.
+def test_mark_offer_durable_against_subsequent_scrape(tmp_path):
+    """РЕГРЕССИЯ cycle-1: ручной offer НЕ затирается следующим scrape'ом #12.
 
-    responses — account-scope по (vacancy_id, topic). Прежний ответ (напр.
-    invitation через topic=chat_url) остаётся; mark_offer добавляет отдельную
-    строку topic=NULL со status='offer'. Воронка считает offer (JOIN по
-    vacancy_id)."""
+    Прежний баг: mark_offer писал offer в responses (topic=NULL), а следующий
+    upsert_response(topic=None) перезаписывал его скрейпнутым статусом → offer
+    молча пропадал. Теперь offer в manual_offers (липкая), scrape responses его
+    не трогает."""
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")
-    h.upsert_response("v1", "Acme", "invitation", "/chat/v1")  # был приглашение
-
-    changed = h.mark_offer("v1")
-    assert changed is True
+    h.mark_offer("v1", "r1")
+    # Имитация последующего scrape #12: discard без topic по той же вакансии
+    h.upsert_response("v1", "Acme", "discard", None, topic=None)
 
     row = h.funnel_by_resume(since=None)[0]
-    assert row["offer"] == 1
+    assert row["offer"] == 1  # ручной offer уцелел
 
 
-def test_mark_offer_creates_response_even_without_action(tmp_path):
-    """mark_offer работает и без записи в actions: просто создаёт response."""
+def test_mark_offer_creates_record_even_without_action(tmp_path):
+    """mark_offer работает и без записи в actions: просто создаёт manual_offer."""
     h = History(tmp_path / "h.db")
-    h.mark_offer("v1")  # actions пусто
+    h.mark_offer("v1", "r1")  # actions пусто
 
     with h._connect() as conn:
         row = conn.execute(
-            "SELECT status FROM responses WHERE vacancy_id=? AND topic IS NULL",
-            ("v1",),
+            "SELECT resume_id, vacancy_id FROM manual_offers WHERE resume_id=? AND vacancy_id=?",
+            ("r1", "v1"),
         ).fetchone()
     assert row is not None
-    assert row["status"] == "offer"
