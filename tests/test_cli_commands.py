@@ -40,6 +40,7 @@ def test_all_commands_registered():
         "funnel",
         "mark",
         "query",
+        "whoami",
     }
 
 
@@ -60,6 +61,7 @@ def test_register_commands_returns_names():
         "funnel",
         "mark",
         "query",
+        "whoami",
     }
 
 
@@ -215,3 +217,12 @@ def test_mark_status_choices():
     sub = action.choices["mark"]
     status = next(a for a in sub._actions if "--status" in a.option_strings)
     assert set(status.choices) == {"offer"}
+
+
+def test_whoami_has_resume_only():
+    opts = _opts_for("whoami")
+    assert "--resume" in opts
+    # READ-команда: ничего не отправляет и не делает действий под лимит —
+    # --dry-run/--limit здесь бессмысленны (контракт спеки #21 §whoami).
+    assert "--dry-run" not in opts
+    assert "--limit" not in opts
