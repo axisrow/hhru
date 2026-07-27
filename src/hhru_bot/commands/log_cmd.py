@@ -45,6 +45,12 @@ DEFAULT_LINES = 50
 # follow: пауза между polling-итерациями. Короткая — чтобы вывод появлялся
 # быстро, но не жечь CPU. Стандартный tail-loop.
 FOLLOW_POLL_INTERVAL = 0.5
+# read лога толерантен к невалидному UTF-8: при copytruncate+regrow-race (см.
+# _handle_truncation) read может начаться внутри многобайтового символа.
+# errors="replace" подставляет U+FFFD вместо UnicodeDecodeError-крэша — лог
+# пишется Python-логгером (всегда валидный UTF-8), так что замена срабатывает
+# только в диагностическом edge-case, не в штатном режиме (цикл ревью #61, р.3).
+LOG_READ_ERRORS = "replace"
 
 
 def _positive_int(value: str) -> int:
@@ -100,7 +106,7 @@ def tail_lines(path: Path, n: int) -> list[str]:
 
     Чистая функция без побочных эффектов — тестируется без браузера.
     """
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8", errors=LOG_READ_ERRORS) as f:
         return _tail_from(f, n)
 
 
@@ -145,11 +151,18 @@ def follow(
     Truncation (logrotate copytruncate / ручная очистка): если размер файла
     стал меньше текущей позиции — файл усечён, переходим в начало и читаем
     заново. Без этого offset остался бы за новым EOF и записи пропускались бы,
-    пока файл не перерастёт прежний размер (цикл ревью #61, раунд 2). Замену
-    inode (move+create ротация) этот дескриптор не отследит — это более редкий
-    случай, для ручного CLI без ротации достаточен copytruncate-cover.
+    пока файл не перерастёт прежний размер (цикл ревью #61, раунд 2).
+
+    Known limitation (цикл ревью #61, раунд 3, находка Codex): size-only-детектор
+    не ловит truncate-and-regrow — если активный writer после copytruncate
+    допишет столько, что новый размер ПЕРЕРАСТЁТ старый offset за один poll
+    (0.5с), условие size<pos ложно и read уйдёт с середины нового поколения.
+    read с errors="replace" (LOG_READ_ERRORS) не роняет follow на partial-UTF8,
+    а пропущенные первые байты поколения — acceptable для ручного CLI без
+    настроенной ротации (лог пишет один hhru_bot-процесс, log его читает).
+    Полный file-generation-детектор (sentinel/inode) — over-engineering здесь.
     """
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8", errors=LOG_READ_ERRORS) as f:
         if initial_lines > 0:
             # _tail_from итерирует f до EOF → позиция после него = EOF, и дописанные
             # позже строки подхватятся первым read. Снапшот и follow на одном

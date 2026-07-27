@@ -68,6 +68,22 @@ def test_tail_lines_empty_file(tmp_path):
     assert tail_lines(path, n=50) == []
 
 
+def test_tail_lines_tolerates_invalid_utf8(tmp_path):
+    """Невалидный UTF-8 не роняет read — errors="replace" подставляет U+FFFD.
+
+    Цикл ревью #61, раунд 3: при truncate-and-regrow-race read мог начаться
+    внутри многобайтового символа и упасть UnicodeDecodeError'ом, роняя follow.
+    Лог пишется Python-логгером (валидный UTF-8), но errors="replace" даёт
+    робастность в диагностическом edge-case.
+    """
+    path = tmp_path / "hhru_bot.log"
+    path.write_bytes(b"valid line\n\xff\xfe invalid bytes\n")
+    lines = tail_lines(path, n=50)
+    assert len(lines) == 2
+    assert lines[0] == "valid line"
+    assert "�" in lines[1]  # невалидные байты заменены, не UnicodeDecodeError
+
+
 # --- run: вывод последних строк -------------------------------------------
 
 
