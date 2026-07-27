@@ -36,6 +36,7 @@ def test_all_commands_registered():
         "probe",
         "stats",
         "schedule",
+        "responses",
     }
 
 
@@ -52,6 +53,7 @@ def test_register_commands_returns_names():
         "probe",
         "stats",
         "schedule",
+        "responses",
     }
 
 
@@ -162,3 +164,14 @@ def test_stats_format_choices():
     sub = action.choices["stats"]
     fmt = next(a for a in sub._actions if "--format" in a.option_strings)
     assert set(fmt.choices) == {"table", "csv", "md"}
+
+
+def test_responses_has_resume_max_pages_since_hours():
+    opts = _opts_for("responses")
+    assert "--resume" in opts
+    assert "--max-pages" in opts
+    assert "--since-hours" in opts
+    # responses — read-only мониторинг: нет --dry-run (ничего не отправляет),
+    # нет дневного лимита/--limit (не делает действий, подлежащих лимиту).
+    assert "--dry-run" not in opts
+    assert "--limit" not in opts
