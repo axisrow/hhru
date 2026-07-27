@@ -37,6 +37,8 @@ def test_all_commands_registered():
         "stats",
         "schedule",
         "responses",
+        "funnel",
+        "mark",
     }
 
 
@@ -54,6 +56,8 @@ def test_register_commands_returns_names():
         "stats",
         "schedule",
         "responses",
+        "funnel",
+        "mark",
     }
 
 
@@ -175,3 +179,37 @@ def test_responses_has_resume_max_pages_since_hours():
     # нет дневного лимита/--limit (не делает действий, подлежащих лимиту).
     assert "--dry-run" not in opts
     assert "--limit" not in opts
+
+
+def test_funnel_has_format_and_dead_flags():
+    opts = _opts_for("funnel")
+    assert "--resume" in opts
+    assert "--format" in opts
+    assert "--dead" in opts
+    assert "--dead-days" in opts
+    # воронка — не браузерная команда
+    assert "--dry-run" not in opts
+
+
+def test_funnel_format_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["funnel"]
+    fmt = next(a for a in sub._actions if "--format" in a.option_strings)
+    # воронка — table/md (без csv, как stats #11)
+    assert set(fmt.choices) == {"table", "md"}
+
+
+def test_mark_requires_resume_and_vacancy():
+    opts = _opts_for("mark")
+    assert "--resume" in opts
+    assert "--vacancy" in opts
+    assert "--status" in opts
+
+
+def test_mark_status_choices():
+    parser = _build()
+    action = _subparser_actions(parser)
+    sub = action.choices["mark"]
+    status = next(a for a in sub._actions if "--status" in a.option_strings)
+    assert set(status.choices) == {"offer"}
