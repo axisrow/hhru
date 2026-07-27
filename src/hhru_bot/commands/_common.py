@@ -11,6 +11,7 @@ import argparse
 import logging
 
 from ..apply import apply_to_vacancy
+from ..apply.letter import CoverLetterProvider
 from ..config import AppConfig, ResumeConfig
 from ..history import History
 from ..search import filter_candidates, rank_candidates, search_vacancies
@@ -40,6 +41,49 @@ def resumes_from_args(config: AppConfig, args: argparse.Namespace) -> list[Resum
     return resolve_resumes(config, [args.resume] if args.resume else None)
 
 
+def _build_letter_provider(
+    config: AppConfig,
+    resume: ResumeConfig,
+    cover_letter_template: str,
+) -> CoverLetterProvider | None:
+    """Строит AI-провайдер писем, если AI включён (#17).
+
+    AI включён = есть ТОП-ЛЕВЕЛ секция ai (LLM-провайдер, #16) И resume-секция
+    ai_profile (данные кандидата). Иначе None → статичный .format (обратная
+    совместимость, дефолт).
+
+    Построение LLMClient тянет openai (lazy, но при construction). Если openai
+    не установлен ([ai] optional-deps) — логируем и откатываемся на шаблон:
+    отсутствие AI-зависимости не должно валить обычный отклик. Сам провайдер
+    дальше устойчив (любой сбой LLM → fallback внутри), см. ai/letters.py.
+    """
+    ai_config = getattr(config, "ai", None)
+    profile = getattr(resume, "ai_profile", None)
+    if ai_config is None or profile is None:
+        return None
+
+    from ..ai.letters import AICoverLetterProvider
+    from ..ai.llm_client import LLMClient
+
+    try:
+        llm_client = LLMClient(ai_config)
+    except ImportError as e:
+        logger.warning(
+            "AI-письма недоступны для резюме '%s' (openai не установлен?): %s — "
+            "используется статичный шаблон. Установите: pip install -e '.[ai]'",
+            resume.id,
+            e,
+        )
+        return None
+
+    logger.info("AI-письма включены для резюме '%s' (провайдер: %s)", resume.id, ai_config.provider)
+    return AICoverLetterProvider(
+        llm_client=llm_client,
+        resume_profile=profile,
+        fallback_template=cover_letter_template,
+    )
+
+
 def run_apply_for_resume(
     page,
     config: AppConfig,
@@ -53,6 +97,10 @@ def run_apply_for_resume(
     Перенесено дословно из cli._apply_for_resume. Принципы CLAUDE.md сохранены:
     дедупликация и стоп-листы через filter_candidates (history-based),
     дневной лимит проверяется перед каждым откликом, throttle.wait между откликами.
+
+    #17: если включён AI (секция ai + ai_profile) — отклик идёт через
+    CoverLetterProvider; иначе (провайдер None) — статичный шаблон, поведение
+    не меняется. letter_variant пишется в history для A/B-среза (Этап 3).
     """
     print(f"\n=== Отклики для резюме: {resume.id} ===")
 
@@ -74,6 +122,7 @@ def run_apply_for_resume(
 
     limit = args.limit if args.limit else len(ranked)
     cover_letter_template = config.cover_letter_for(resume)
+    letter_provider = _build_letter_provider(config, resume, cover_letter_template)
 
     applied_count = 0
     for card, _score, _breakdown in ranked[:limit]:
@@ -83,9 +132,23 @@ def run_apply_for_resume(
             print(f"Дневной лимит достигнут, останавливаюсь: {e}")
             break
 
-        result = apply_to_vacancy(page, card, resume.resume_id, cover_letter_template, args.dry_run)
+        result = apply_to_vacancy(
+            page,
+            card,
+            resume.resume_id,
+            cover_letter_template,
+            args.dry_run,
+            letter_provider=letter_provider,
+        )
         status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
-        history.record_action(resume.resume_id, card.vacancy_id, "apply", status, result.reason)
+        history.record_action(
+            resume.resume_id,
+            card.vacancy_id,
+            "apply",
+            status,
+            result.reason,
+            letter_variant=result.letter_variant,
+        )
 
         if result.success:
             applied_count += 1

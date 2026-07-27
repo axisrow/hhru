@@ -19,7 +19,7 @@ from playwright.sync_api import Page
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .dedup import check_already_responded
-from .letter import render_cover_letter
+from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
 from .success import wait_success_confirmation
 
@@ -31,6 +31,9 @@ class ApplyResult:
     vacancy: VacancyCard
     success: bool
     reason: str = ""
+    # A/B-вариант письма (#17): 'template' / 'ai' / 'ai_fallback'. Для записи в
+    # history.actions.letter_variant. По умолчанию 'template' (без AI-провайдера).
+    letter_variant: str = VARIANT_TEMPLATE
 
 
 @dataclass
@@ -43,12 +46,17 @@ class ApplyContext:
     cover_letter_template: str
     dry_run: bool
     probe: ProbeHook = field(default_factory=lambda: NOOP_PROBE)
+    # #17: провайдер письма (шаблон/AI). None → статичный .format (обратная
+    # совместимость). Провайдер сам отвечает за fallback, исключений не кидает.
+    letter_provider: CoverLetterProvider | None = None
+    # Заполняется в _run после рендера письма — итоговый variant для ApplyResult.
+    letter_variant: str = VARIANT_TEMPLATE
 
     def fail(self, reason: str) -> ApplyResult:
-        return ApplyResult(self.vacancy, False, reason)
+        return ApplyResult(self.vacancy, False, reason, letter_variant=self.letter_variant)
 
     def ok(self, reason: str) -> ApplyResult:
-        return ApplyResult(self.vacancy, True, reason)
+        return ApplyResult(self.vacancy, True, reason, letter_variant=self.letter_variant)
 
 
 def apply_to_vacancy(
@@ -58,6 +66,7 @@ def apply_to_vacancy(
     cover_letter_template: str,
     dry_run: bool,
     probe: ProbeHook | None = None,
+    letter_provider: CoverLetterProvider | None = None,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -66,6 +75,7 @@ def apply_to_vacancy(
         cover_letter_template=cover_letter_template,
         dry_run=dry_run,
         probe=probe or NOOP_PROBE,
+        letter_provider=letter_provider,
     )
     return _run(ctx)
 
@@ -81,7 +91,16 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     if not apply_steps.wait_apply_button(ctx.page):
         return ctx.fail("кнопка отклика не найдена на странице")
 
-    letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
+    # #17: рендер письма через провайдер, если он задан (AI/шаблон). Провайдер
+    # сам падает на шаблон при сбое — исключений не ждём. variant фиксируем в
+    # контексте, чтобы ApplyResult понёс его в history (A/B-срез, Этап 3).
+    if ctx.letter_provider is not None:
+        outcome = ctx.letter_provider.render(ctx.vacancy)
+        letter = outcome.text
+        ctx.letter_variant = outcome.variant
+    else:
+        letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
+        ctx.letter_variant = VARIANT_TEMPLATE
 
     if ctx.dry_run:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)

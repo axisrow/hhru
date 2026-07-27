@@ -82,9 +82,18 @@ class History:
             conn.close()
 
     def _init_schema(self):
-        """Создаёт все таблицы (CREATE IF NOT EXISTS). Идемпотентно."""
+        """Создаёт все таблицы (CREATE IF NOT EXISTS). Идемпотентно.
+
+        CAVEAT (#51): CREATE TABLE IF NOT EXISTS НЕ добавляет колонку в уже
+        существующую таблицу. Новые колонки в существующих таблицах добавляем
+        через ALTER TABLE ADD COLUMN под идемпотентной обёрткой PRAGMA
+        table_info (добавляем только если колонки ещё нет — иначе повторный
+        запуск упадёт на 'duplicate column'). Это безопаснее пересоздания БД:
+        не теряем историю откликов.
+        """
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            _ensure_column(conn, "actions", "letter_variant", "TEXT")
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         with self._connect() as conn:
@@ -106,14 +115,24 @@ class History:
         action: str,
         status: str,
         reason: str | None = None,
+        letter_variant: str | None = None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO actions
+                    (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (resume_id, vacancy_id, action, status, reason, datetime.now().isoformat()),
+                (
+                    resume_id,
+                    vacancy_id,
+                    action,
+                    status,
+                    reason,
+                    letter_variant,
+                    datetime.now().isoformat(),
+                ),
             )
 
     def count_today(self, resume_id: str, action: str) -> int:
@@ -525,3 +544,29 @@ class History:
             "dead": dead,
             "dead_rate": self._pct(dead, total_sent),
         }
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+    """Идемпотентно добавляет колонку в существующую таблицу через ALTER TABLE.
+
+    CREATE TABLE IF NOT EXISTS не добавляет колонку в уже созданную таблицу
+    (#51 caveat). Эта функция проверяет наличие колонки через PRAGMA table_info
+    и добавляет ALTER TABLE ADD COLUMN только если её нет — иначе повторный
+    запуск History упал бы на 'duplicate column name'. Используется в
+    _init_schema ПОСЛЕ executescript(SCHEMA).
+
+    table/column/ddl_type интерполируются в DDL напрямую — это безопасно:
+    значения caller-controlled (строковые литералы в коде истории), не ввод
+    пользователя. Если хелпер когда-нибудь примет данные из конфига —
+    потребуется валидация идентификатора.
+    """
+    # Нет таблицы → нечего дополнять (executescript(SCHEMA) должен был её
+    # создать; если нет — это баг выше по потоку, не здесь).
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    if not exists:
+        return
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
