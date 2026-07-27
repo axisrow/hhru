@@ -45,6 +45,21 @@ class LLMClient:
         self._config = ai_config
         self._runtime = resolve_runtime_provider(ai_config, api_key=api_key, api_mode=api_mode)
         self._api_mode = self._runtime["api_mode"]
+        # The OpenAI client owns a persistent httpx connection pool; construct it
+        # once and reuse it across calls rather than paying pool setup per chat().
+        # ``openai`` is imported lazily here (not at module import) so the package
+        # stays importable without the optional [ai] extra installed.
+        try:
+            from openai import OpenAI
+        except ImportError as e:
+            raise ImportError(
+                "openai SDK is required for LLM calls. Install it with: "
+                "pip install -e '.[ai]'  (or: pip install openai)"
+            ) from e
+        self._client = OpenAI(
+            base_url=self._runtime["base_url"],
+            api_key=self._runtime["api_key"],
+        )
 
     @property
     def runtime(self) -> dict[str, Any]:
@@ -64,14 +79,6 @@ class LLMClient:
         (e.g. ``temperature``, ``max_tokens``, ``timeout``). ``openai`` SDK
         exceptions propagate to the caller unchanged -- this layer does not retry.
         """
-        try:
-            from openai import OpenAI
-        except ImportError as e:  # pragma: no cover - exercised manually with [ai]
-            raise ImportError(
-                "openai SDK is required for LLM calls. Install it with: "
-                "pip install -e '.[ai]'  (or: pip install openai)"
-            ) from e
-
         transport = get_transport(self._api_mode)
         if transport is None:
             raise RuntimeError(
@@ -85,9 +92,5 @@ class LLMClient:
             tools,
             **params,
         )
-        client = OpenAI(
-            base_url=self._runtime["base_url"],
-            api_key=self._runtime["api_key"],
-        )
-        response = client.chat.completions.create(**kwargs)
+        response = self._client.chat.completions.create(**kwargs)
         return transport.normalize_response(response)

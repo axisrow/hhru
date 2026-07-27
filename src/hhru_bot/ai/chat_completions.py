@@ -290,8 +290,12 @@ class ChatCompletionsTransport(ProviderTransport):
         if usage is None:
             return None
         details = getattr(usage, "prompt_tokens_details", None)
-        cached = getattr(details, "cached_tokens", 0) or 0 if details else 0
-        written = getattr(details, "cache_write_tokens", 0) or 0 if details else 0
+        if details:
+            cached = getattr(details, "cached_tokens", 0) or 0
+            written = getattr(details, "cache_write_tokens", 0) or 0
+        else:
+            cached = 0
+            written = 0
         if not cached:
             # DeepSeek native API shape: top-level prompt_cache_hit_tokens.
             cached = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
