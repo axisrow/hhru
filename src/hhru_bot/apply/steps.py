@@ -118,9 +118,19 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
         resume_select_present = False
     else:
         resume_select_present = True
-    if resume_select_present and page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
-        if not _select_resume_in_form(page, resume_id):
-            return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
+    if resume_select_present:
+        # TOCTOU (cycle-2 review): селектор был видим в wait_for, но исчез к count()
+        # (transient re-render/drift). count()==0 после detect — НЕ «одно резюме»
+        # (там wait_for таймаутит → resume_select_present=False), а нестабильный
+        # селектор на multi-resume форме. Fail-closed: отказ, не submit дефолтного.
+        if page.locator(apply_form.APPLY_RESUME_SELECT).count() > 0:
+            if not _select_resume_in_form(page, resume_id):
+                return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
+        else:
+            return (
+                "селектор выбора резюме исчез после обнаружения — "
+                "отправка отменена (нестабильная форма отклика)"
+            )
 
     if _is_visible(
         page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
@@ -150,9 +160,10 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
     curl-дампом, рендерится только залогиненному через JS) и наверняка потребует
     уточнения при первом реальном запуске.
 
-    Совпадение resume_id ищется как **сегмент пути**, а не как голая подстрока href:
-    ``/resume/{resume_id}`` или ``resume_id={resume_id}``. Голая подстрока давала бы
-    лжесовпадения (напр. ``RID`` внутри ``/resume/PONDERING``).
+    Совпадение resume_id требует **точного равенства** сегмента/значения (см.
+    ``_href_matches_resume_id``): последний сегмент пути (``/resume/{id}``) или
+    значение query-параметра ``resume_id``. Голая подстрока отвергается — она давала
+    лжесовпадения (``RID`` внутри ``/resume/RID2``, ``?other_resume_id=RID``).
 
     fail-closed: ровно одна подходящая опция → кликаем, возвращаем True. Ноль или
     больше одной (неоднозначно) → возвращаем False, отправка не состоится.

@@ -58,6 +58,8 @@ class _FakeLocator:
         # Для коллекции (резюме, set_match_count) count() = число совпадений в DOM.
         # Иначе — одиночный элемент: 1 если visible, иначе 0.
         if self._state.is_collection:
+            if self._state.disappear_after_wait:
+                return 0  # TOCTOU: селектор исчез между wait_for и count
             return self._state.match_count
         return 1 if self._state.visible else 0
 
@@ -84,6 +86,9 @@ class _SelectorState:
         # Для коллекции резюме: href каждой опции (current_href ставится в nth()).
         self.option_hrefs: list[str] = []
         self.current_href: str | None = None
+        # Имитация TOCTOU: селектор был видим в wait_for, но исчез к count().
+        # Моделирует transient re-render/drift между двумя вызовами Playwright.
+        self.disappear_after_wait = False
 
 
 class FakeStepsPage:
@@ -374,6 +379,23 @@ def test_fill_form_resume_select_absent_single_resume_submits():
 
     assert result is None
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_resume_selector_disappears_after_detect_does_not_submit():
+    # TOCTOU (Codex cycle-2): селектор выбора резюме был видим в wait_for, но исчез
+    # к count() (transient re-render/drift). Оракул: submit НЕ нажат, возвращена
+    # причина отказа — не отправляем резюме по умолчанию при нестабильном селекторе.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/RID", "/resume/OTHER"]
+    st.disappear_after_wait = True  # wait_for проходит, count() → 0
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "резюме" in result.lower()
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
 # --- константы ---
