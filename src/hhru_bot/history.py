@@ -554,7 +554,19 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
     и добавляет ALTER TABLE ADD COLUMN только если её нет — иначе повторный
     запуск History упал бы на 'duplicate column name'. Используется в
     _init_schema ПОСЛЕ executescript(SCHEMA).
+
+    table/column/ddl_type интерполируются в DDL напрямую — это безопасно:
+    значения caller-controlled (строковые литералы в коде истории), не ввод
+    пользователя. Если хелпер когда-нибудь примет данные из конфига —
+    потребуется валидация идентификатора.
     """
+    # Нет таблицы → нечего дополнять (executescript(SCHEMA) должен был её
+    # создать; если нет — это баг выше по потоку, не здесь).
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    if not exists:
+        return
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")

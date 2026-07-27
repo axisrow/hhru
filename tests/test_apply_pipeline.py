@@ -130,3 +130,50 @@ def test_apply_probe_hook_invoked_noop_default():
     page = FakePage(apply_button=True)
     apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True, probe=Spy())  # type: ignore[arg-type]
     assert "vacancy_loaded" in calls
+
+
+# --- #17: провайдер письма в pipeline ---
+
+
+def test_apply_uses_letter_provider_when_given():
+    # Прямая pipeline-интеграция: apply_to_vacancy(letter_provider=...) рендерит
+    # письмо через провайдер (а не статичный .format), и ApplyResult несёт его
+    # variant. Это точка подключения #17, отдельная от _common.run_apply_for_resume.
+    from hhru_bot.apply.letter import LetterOutcome
+
+    class _SpyProvider:
+        def __init__(self):
+            self.rendered_with = None
+
+        def render(self, vacancy, resume_profile=None):  # noqa: ARG002
+            self.rendered_with = vacancy.title
+            return LetterOutcome(text="ai-letter-text", variant="ai")
+
+    spy = _SpyProvider()
+    page = FakePage(apply_button=True)
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "IGNORED-TEMPLATE", dry_run=True, letter_provider=spy
+    )
+    assert result.success is True
+    assert spy.rendered_with == "Dev"  # провайдер получил вакансию
+    assert result.letter_variant == "ai"
+
+
+def test_apply_letter_variant_template_without_provider():
+    # Без провайдера variant остаётся 'template' (обратная совместимость).
+    page = FakePage(apply_button=True)
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "Hi {company_name}", dry_run=True, letter_provider=None
+    )
+    assert result.success is True
+    assert result.letter_variant == "template"
+
+
+def test_apply_letter_variant_preserved_on_fail():
+    # fail() после рендера письма несёт variant провайдера (например, кнопка
+    # отклика отсутствует — но это до рендера; проверяем путь с провайдером
+    # и кнопкой нет → variant дефолт template, т.к. письмо не генерилось).
+    page = FakePage(apply_button=False)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True, letter_provider=None)
+    assert result.success is False
+    assert result.letter_variant == "template"
