@@ -187,25 +187,33 @@ def _output_is_history(output_resolved: Path, history_path: str | Path) -> bool:
     ``-journal``) перезаписывал companion-файлы SQLite — во время конкурентной
     записи бота committed-транзакции могут жить в WAL/-journal до checkpoint,
     перезапись теряет данные или калечит БД.
+    Регрессия (Codex cycle-3): case-вариант пути (``history.db-WAL`` на
+    case-insensitive FS) и hard link на companion имеют тот же inode, но
+    другой путь — строковое сравнение их пропускало.
 
-    Запрещаем: сам главный путь (прямо или через symlink/hard-link по inode) И
-    companion-суффиксы относительно главного пути.
+    Запрещаем: главный путь и каждый companion-кандидат, сверяя И путь
+    (case-folded, для несуществующих целей), И inode (samefile, для
+    существующих alias'ов — symlink/hard-link/case-variant).
     """
     history_resolved = Path(history_path).resolve()
-    # 1. Тот же путь/indode напрямую или через alias.
-    if output_resolved == history_resolved:
-        return True
-    try:
-        if output_resolved.samefile(history_resolved):
+    # Кандидаты на «нельзя перезаписывать»: сама БД + companion-файлы.
+    companion_candidates = [history_resolved] + [
+        Path(str(history_resolved) + sfx) for sfx in _SQLITE_COMPANION_SUFFIXES
+    ]
+    out_norm = str(output_resolved).casefold()
+    for cand in companion_candidates:
+        # 1. Совпадение пути case-insensitively — ловит и несуществующую цель
+        #    (например будущий history.db-WAL на case-insensitive FS).
+        if out_norm == str(cand).casefold():
             return True
-    except OSError:
-        pass
-    # 2. SQLite companion-файлы: <db>-wal, <db>-shm, <db>-journal. Проверяем
-    # по суффиксу относительно history-пути (resolвленного), чтобы поймать
-    # и несуществующую ещё цель (samefile на нее не сработал бы).
-    history_str = str(history_resolved)
-    if any(str(output_resolved) == history_str + sfx for sfx in _SQLITE_COMPANION_SUFFIXES):
-        return True
+        # 2. Совпадение inode — ловит существующий alias (hard link, symlink,
+        #    case-variant того же файла). samefile требует существования обеих
+        #    сторон; для отсутствующей цели просто пропускает (п.1 уже покрыл).
+        try:
+            if output_resolved.samefile(cand):
+                return True
+        except OSError:
+            continue
     return False
 
 

@@ -286,6 +286,50 @@ def test_query_output_cannot_overwrite_sqlite_companion(tmp_path, suffix):
     assert _count_actions(db) == n_before
 
 
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_query_output_cannot_overwrite_companion_via_case_variant(tmp_path, suffix):
+    """Регрессия (Codex cycle-3, критический): на case-insensitive FS
+    ``history.db-WAL`` — тот же inode, что ``history.db-wal``, но resolve()
+    сохраняет регистр caller'а → строковое сравнение суффикса пропускало.
+    Case-вариант companion-пути тоже запрещён."""
+    db = _seed_history(tmp_path)
+    # uppercase-вариант суффикса (на APFS/HFS+ — alias того же файла)
+    companion_upper = Path(str(db) + suffix.upper())
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(db, sql="SELECT 1", output=companion_upper))
+    assert exc.value.code == 1
+    assert _count_actions(db) == n_before
+
+
+def test_query_output_cannot_overwrite_companion_via_hardlink(tmp_path):
+    """Регрессия (Codex cycle-3, критический): hard link на существующий
+    companion-файл имеет тот же inode, но другой путь — строковое сравнение
+    его пропускало. samefile() по companion-кандидатам обязан его поймать.
+
+    Тестируем инвариант на уровне _output_is_history (детерминированно, без
+    открытия БД между шагами — оно меняет FS-состояние и рвёт hardlink):
+    hardlink-alias на -wal должен распознаваться как «тот же inode, что
+    companion-кандидат»."""
+    db = tmp_path / "h.db"
+    wal = Path(str(db) + "-wal")
+    wal.write_bytes(b"\x00" * 16)  # имитация живого WAL (без создания самой БД,
+    # чтобы не открывать sqlite и не трогать FS-состояние до проверки)
+    alias = tmp_path / "alias-wal"
+    try:
+        alias.hardlink_to(wal)  # Python 3.10+
+    except (OSError, AttributeError):
+        pytest.skip("hardlink unavailable on this FS/python")
+    # sanity: alias реально тот же inode, что wal (иначе тест бессмысленен)
+    if not alias.samefile(wal):
+        pytest.skip("hardlink did not create same-inode alias on this FS")
+
+    output_resolved = query_cmd._resolve_output_target(alias)
+    # КЛЮЧЕВОЙ инвариант: hardlink на companion распознан как alias history
+    assert query_cmd._output_is_history(output_resolved, db) is True
+
+
 def test_query_output_nonexistent_dir_reports_error(capsys, tmp_path):
     """-o в несуществующий каталог → понятная ошибка + exit(1), а не
     необработанный FileNotFoundError с traceback (регрессия UX)."""
