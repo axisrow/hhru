@@ -143,6 +143,13 @@ cp config/config.example.yaml config/config.yaml
 - `--vacancy-id` — ID целевой вакансии (число из URL https://hh.ru/vacancy/<id>)
 - `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
 
+### `query`
+
+Исполнить SELECT к history.db и вывести ASCII-таблицу или CSV. Только read-only (SELECT/WITH) — история меняется только через бот.
+
+- `--csv` — Вывести CSV вместо ASCII-таблицы
+- `-o` — Записать результат в файл вместо stdout
+
 ### `responses`
 
 - `--resume` — ID резюме из конфига (по умолчанию — все)
