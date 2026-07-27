@@ -4,14 +4,22 @@
 -o <file>, интерактивный режим без аргументов.
 
 read-only — КРИТИЧНО (CLAUDE.md: history.db пользователь меняет только через
-бот). Двойная защита:
+бот). Тройная защита:
 
 1. Префиксный guard: принимаем только SELECT / WITH ... SELECT. Любой
    INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/PRAGMA-запись → понятный отказ и
    exit(1). Регулярка НЕ парсит SQL целиком (хрупко) — только проверяет, что
-   инструкция начинается с разрешённого ключевого слова.
-2. Соединение открывается в режиме SQLite URI ``?mode=ro``: даже если guard
-   как-то пропустит мутирующий запрос, сам движок БД откажет в записи файла.
+   инструкция начинается с разрешённого ключевого слова. НЕ единственная
+   защита: ``WITH ... DELETE/UPDATE/INSERT`` тоже начинается с WITH — их
+   блокирует слой 3.
+2. Соединение открывается в режиме SQLite URI ``?mode=ro``, причём URI
+   строится через ``Path.as_uri()`` (percent-encoding). Наивная f-строка
+   ``file:{path}?mode=ro`` позволяла caller-у подложить ``?mode=rw`` в путь и
+   переопределить режим — закодированный URI этого не даёт.
+3. ``PRAGMA query_only=ON`` — независимый слой на стороне движка: запрещает
+   любые мутации (включая ``WITH ... DELETE``) независимо от режима
+   соединения и валидности URI. Это последний бастиер, если URI как-то
+   пропустит rw.
 
 Вывод — ASCII-таблица через переиспользуемый ``report._ascii_table`` (НЕ
 дублируем форматтер). При --csv — чистый CSV без украшательств (csv.writer).
@@ -62,14 +70,23 @@ def _ensure_schema(db_path: Path) -> None:
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    """Открывает соединение в режиме read-only (URI ?mode=ro).
+    """Открывает соединение в режиме read-only (URI ?mode=ro) + query_only.
 
-    Второй слой защиты после префиксного guard'а: даже если мутирующий запрос
-    пройдёт проверку, SQLite не запишет изменения в файл. URI требует
-    абсолютного пути.
+    URI строится через ``Path.as_uri()`` (percent-encoding), а НЕ f-строкой:
+    иначе caller мог подставить ``?mode=rw`` в путь history и переопределить
+    режим. ``?mode=ro`` дописывается к уже закодированному URI.
+
+    Дополнительно включается ``PRAGMA query_only=ON`` — независимый слой,
+    блокирующий мутации на уровне движка даже при гипотетическом обходе URI.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
-    return sqlite3.connect(uri, uri=True)
+    resolved = db_path.resolve()
+    uri = resolved.as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    # Третий слой защиты: движок запрещает запись независимо от режима
+    # соединения. PRAGMA read-only по intent (запись настроек), но здесь мы
+    # её ВКЛЮЧАЕМ как защиту — это не user-SQL, а наш собственный setup.
+    conn.execute("PRAGMA query_only=ON")
+    return conn
 
 
 def _check_readonly(sql: str) -> None:
@@ -151,10 +168,50 @@ def _cell(value) -> str:
     return str(value)
 
 
+def _resolve_output_target(output: str | Path) -> Path:
+    """Резолвит цель -o в абсолютный путь (для сверки с history)."""
+    return Path(output).resolve()
+
+
+def _output_is_history(output_resolved: Path, history_path: str | Path) -> bool:
+    """True, если цель -o указывает на тот же файл history.db (прямо или через
+    symlink/hard-link — сверка по inode samefile, с fallback на строку пути).
+
+    Регрессия (Codex): ``query ... -o data/history.db`` перезаписывал
+    SQLite-файл ASCII-текстом → необратимая потеря истории. Запрещаем запись
+    результата в саму базу и её aliases.
+    """
+    history_resolved = Path(history_path).resolve()
+    if output_resolved == history_resolved:
+        return True
+    try:
+        # samefile ловит symlink/hard-link на тот же inode (оба должны
+        # существовать; для ещё не созданного output возвращается False).
+        return output_resolved.samefile(history_resolved)
+    except OSError:
+        return False
+
+
+def _write_output(text: str, output: str | Path, history_path: str | Path) -> None:
+    """Пишет результат в файл -o с проверками. Бросает QueryError при отказе."""
+    output_resolved = _resolve_output_target(output)
+    if _output_is_history(output_resolved, history_path):
+        raise QueryError(
+            f"Отказ: -o указывает на саму history.db ({output_resolved}). "
+            "Запись результата в базу уничтожит историю — выберите другой файл."
+        )
+    try:
+        output_resolved.write_text(text + "\n", encoding="utf-8")
+    except OSError as e:
+        # Понятная ошибка вместо необработанного traceback (несуществующий
+        # каталог, нет прав и т.п.) — единый стиль с ошибками SQL/guard.
+        raise QueryError(f"Не удалось записать результат в {output_resolved}: {e}") from e
+
+
 def _emit(text: str, args: argparse.Namespace) -> None:
-    """Куда писать результат: -o <file> или stdout."""
+    """Куда писать результат: -o <file> (с защитой от перезаписи history) или stdout."""
     if args.output:
-        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        _write_output(text, args.output, args.history)
     else:
         print(text)
 
@@ -175,14 +232,13 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         result = execute(args.sql, args.history, csv=args.csv)
+        _emit(result, args)
     except QueryError as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
     except sqlite3.Error as e:
         print(f"Ошибка SQL: {e}", file=sys.stderr)
         sys.exit(1)
-
-    _emit(result, args)
 
 
 def register(subparsers) -> None:

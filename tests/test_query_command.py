@@ -121,19 +121,32 @@ def test_query_csv_quoting(tmp_path):
 # --- read-only guard ---------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "INSERT INTO actions (resume_id) VALUES ('x')",
-        "UPDATE actions SET status = 'success'",
-        "DELETE FROM actions",
-        "DROP TABLE actions",
-        "ALTER TABLE actions ADD COLUMN x TEXT",
-        "CREATE TABLE evil (id INTEGER)",
-    ],
-)
-def test_query_rejects_non_select(capsys, tmp_path, sql):
-    """Любая мутирующая инструкция → отказ с понятным сообщением, exit 1,
+# Прямые мутирующие инструкции — guard отсекает их ещё на префиксе (понятное
+# сообщение о запрете SELECT-only).
+_DIRECT_WRITE_STMTS = [
+    "INSERT INTO actions (resume_id) VALUES ('x')",
+    "UPDATE actions SET status = 'success'",
+    "DELETE FROM actions",
+    "DROP TABLE actions",
+    "ALTER TABLE actions ADD COLUMN x TEXT",
+    "CREATE TABLE evil (id INTEGER)",
+]
+
+# WITH-обёртки над мутациями — префикс начинается с WITH (guard их пропускает),
+# поэтому их обязан блокировать слой query_only=ON на уровне движка. Главное
+# here: данные не меняются + exit(1); текст ошибки SQLite варьируется
+# (write-block для DELETE/UPDATE, схема-валидация для INSERT с неверным числом
+# колонок — но запись НЕ происходит ни в одном случае).
+_WITH_WRITE_STMTS = [
+    "WITH c AS (SELECT 1) DELETE FROM actions",
+    "WITH c AS (SELECT 1) UPDATE actions SET status = 'success'",
+    "WITH c AS (SELECT 1) INSERT INTO actions SELECT 1 FROM c",
+]
+
+
+@pytest.mark.parametrize("sql", _DIRECT_WRITE_STMTS)
+def test_query_rejects_direct_write_with_message(capsys, tmp_path, sql):
+    """Прямая мутирующая инструкция → отказ с понятным сообщением, exit 1,
     данные не тронуты."""
     db = _seed_history(tmp_path)
     n_before = _count_actions(db)
@@ -143,10 +156,27 @@ def test_query_rejects_non_select(capsys, tmp_path, sql):
     assert exc.value.code == 1
 
     err = capsys.readouterr().err
-    # понятное человеку сообщение о запрете записи
+    # понятное человеку сообщение о заприте записи
     assert "SELECT" in err or "select" in err.lower() or "read-only" in err.lower()
 
     # БД не изменилась — read-only гарантия
+    assert _count_actions(db) == n_before
+
+
+@pytest.mark.parametrize("sql", _WITH_WRITE_STMTS)
+def test_query_blocks_with_wrapped_write(tmp_path, sql):
+    """``WITH ... DELETE/UPDATE/INSERT`` начинается с WITH (guard пропускает) —
+    блокируется слоем query_only=ON. Регрессия (Codex, критический): craft пути
+    переопределял mode=ro, и эти формы мутировали боевую БД. Данные обязаны
+    остаться нетронутыми, команда — exit(1)."""
+    db = _seed_history(tmp_path)
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(db, sql=sql))
+    assert exc.value.code == 1
+
+    # КРИТИЧНО: ни одна строка не удалена/изменена/добавлена
     assert _count_actions(db) == n_before
 
 
@@ -187,6 +217,68 @@ def test_query_rejects_sqlite_pragma_write(tmp_path):
     db = _seed_history(tmp_path)
     with pytest.raises(SystemExit):
         query_cmd.run(_args(db, sql="PRAGMA journal_mode=WAL"))
+
+
+def test_query_crafted_path_cannot_override_readonly(tmp_path):
+    """Регрессия (Codex, критический): caller передаёт --history с суффиксом
+    ``?mode=rw&...`` — без percent-encoding URI это переопределяло mode=ro, и
+    ``WITH ... DELETE`` мутировал боевую БД. Третий слой (PRAGMA query_only=ON)
+    обязан блокировать запись независимо от режима соединения/URI."""
+    db = _seed_history(tmp_path)
+    crafted = str(db) + "?mode=rw&ignored="  # попытка инъекции в URI
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(crafted, sql="WITH c AS (SELECT 1) DELETE FROM actions"))
+    assert exc.value.code == 1
+
+    # БД не тронута — критическая data-loss регрессия закрыта
+    assert _count_actions(db) == n_before
+
+
+def test_query_output_cannot_overwrite_history_db(tmp_path):
+    """Регрессия (Codex, критический): ``query ... -o data/history.db``
+    перезаписывал SQLite-файл ASCII-текстом → необратимая потеря истории.
+    -o, резолвящийся в путь history (или alias того же inode), запрещён."""
+    db = _seed_history(tmp_path)
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(db, sql="SELECT COUNT(*) FROM actions", output=db))
+    assert exc.value.code == 1
+
+    # БД осталась валидной SQLite — не перезаписана текстом
+    assert _count_actions(db) == n_before
+    # файл всё ещё SQLite (магические байты "SQLite format 3")
+    assert db.read_bytes()[:15] == b"SQLite format 3"
+
+
+def test_query_output_cannot_overwrite_history_db_via_symlink(tmp_path):
+    """Тот же inode через symlink тоже запрещён (alias на history.db)."""
+    db = _seed_history(tmp_path)
+    alias = tmp_path / "history-link.db"
+    alias.symlink_to(db)
+    n_before = _count_actions(db)
+
+    with pytest.raises(SystemExit):
+        query_cmd.run(_args(db, sql="SELECT 1", output=alias))
+
+    assert _count_actions(db) == n_before
+    assert db.read_bytes()[:15] == b"SQLite format 3"
+
+
+def test_query_output_nonexistent_dir_reports_error(capsys, tmp_path):
+    """-o в несуществующий каталог → понятная ошибка + exit(1), а не
+    необработанный FileNotFoundError с traceback (регрессия UX)."""
+    db = _seed_history(tmp_path)
+    bad_output = tmp_path / "no-such-dir" / "out.txt"
+
+    with pytest.raises(SystemExit) as exc:
+        query_cmd.run(_args(db, sql="SELECT 1", output=bad_output))
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.strip() != ""
+    assert "traceback" not in err.lower()
 
 
 # --- -o <file> ---------------------------------------------------------------
