@@ -27,6 +27,27 @@ class History:
     def _init_schema(self):
         with self._connect() as conn:
             apply_migrations(conn)
+            # Ручные пометки офферов (#13) — ОТДЕЛЬНО от responses (#12).
+            # responses хранит текущий статус переписки и перезаписывается каждым
+            # scrape'ом #12 (upsert_response), поэтому хранить ручной offer там
+            # было бы недолговечно: следующий scrape затёр бы его скрейпнутым
+            # статусом. manual_offers — липкая ручная пометка, UNIQUE(resume_id,
+            # vacancy_id) — per-resume (в отличие от account-scope responses).
+            # Воронка (#13) считает оффером И status='offer' в responses (если
+            # когда-то туда попадёт), И наличие строки в manual_offers.
+            # Без миграции — CREATE IF NOT EXISTS (решение пользователя: проект
+            # слишком мал для системы миграций, схему правит пересоздание базы).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS manual_offers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    resume_id TEXT NOT NULL,
+                    vacancy_id TEXT NOT NULL,
+                    marked_at TEXT NOT NULL,
+                    UNIQUE (resume_id, vacancy_id)
+                )
+                """
+            )
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         with self._connect() as conn:
@@ -291,3 +312,179 @@ class History:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # --- Воронка и ручная пометка оффера (#13) ----------------------------
+    # Воронка JOIN'ит actions × responses. Таблица responses — account-scope
+    # (#12, миграция 012): ключ UNIQUE(vacancy_id, topic), resume_id опционален
+    # и НЕ в ключе (страница /applicant/negotiations не несёт достоверного
+    # признака принадлежности ответа конкретному резюме). Поэтому JOIN идёт по
+    # vacancy_id, а группировка воронки — по actions.resume_id (где отклик
+    # отправлен). status='offer' — ручная пометка командой mark (hh.ru оффер
+    # как статус переговоров не отдаёт); остальных статусов (read/invitation/
+    # discard/response) наполняет #12 через upsert_response из живых переговоров.
+
+    @staticmethod
+    def _pct(numerator: int, denominator: int) -> float:
+        """Конверсия в процентах с защитой от деления на ноль: 0/0 → 0.0.
+
+        Округление до 1 знака — для читаемого CLI-вывода (воронка — для людей).
+        """
+        if denominator <= 0:
+            return 0.0
+        return round(numerator / denominator * 100, 1)
+
+    def mark_offer(self, vacancy_id: str, resume_id: str) -> bool:
+        """Ручная пометка оффера — липкая, per-resume, в отдельной таблице.
+
+        hh.ru не отдаёт оффер как статус переговоров, поэтому верхний шаг
+        воронки заполняется вручную командой ``mark --vacancy <id> --status offer``.
+        Хранится в ``manual_offers`` (НЕ в responses #12): responses перезаписывается
+        каждым scrape'ом #12 и затёр бы ручной offer; manual_offers — липкая пометка,
+        survives последующие scrape'ы. Ключ UNIQUE(resume_id, vacancy_id) — per-resume
+        (resume_id обязателен). Возвращает True, если пометка создана, False — если
+        уже была.
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO manual_offers (resume_id, vacancy_id, marked_at) "
+                "VALUES (?, ?, ?)",
+                (resume_id, vacancy_id, now),
+            )
+            return cur.rowcount > 0
+
+    def funnel_by_resume(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> list[dict]:
+        """Воронка отправлено → просмотрено → приглашение → оффер по резюме.
+
+        Этапы КУМУЛЯТИВНЫЕ (sent ⊇ viewed ⊇ invited ⊇ offer): вакансия, до которой
+        дошло приглашение, считается и просмотренной; оффер — и просмотренным, и
+        приглашённым. Это необходимо, т.к. #12 хранит в responses только ТЕКУЩИЙ
+        статус переписки (после read→invitation прежний read уже не виден) —
+        некумулятивный подсчёт давал бы viewed=0 после перехода. «Просмотрено» =
+        любой ответ работодателя (#12: read/response/invitation/discard/offer) —
+        отказ или письмо тоже означают, что резюме видели.
+
+        Ответы берутся из responses (#12, account-scope по vacancy_id) плюс липкие
+        ручные пометки из manual_offers (per-resume). Группировка по actions.resume_id.
+        Пер-резюме точность ограничена account-scope responses (ответ одной вакансии
+        зачтётся всем резюме, откликнувшимся в неё) — это ограничение источника
+        данных #12 (нет достоверного связывания ответ→резюме).
+
+        Конверсии: view_rate=viewed/sent, invite_rate=invited/viewed, offer_rate=
+        offer/invited; 0% при пустом знаменателе. Возвращает список словарей (по
+        строке на resume_id, отсортированных по убыванию отправленных). Пусто → [].
+        """
+        where = ["a.action = 'apply'", "a.status = 'success'"]
+        params: list = []
+        if since is not None:
+            where.append("a.created_at >= ?")
+            params.append(since)
+        if resume_id is not None:
+            where.append("a.resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+
+        # EXISTS-подзапросы вместо тройного LEFT JOIN: нет декартова произведения
+        # при нескольких responses-строках одной вакансии (разные topic), и этапы
+        # кумулятивны по построению (каждый следующий INCLUDE-список шире).
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    a.resume_id AS resume_id,
+                    COUNT(DISTINCT a.vacancy_id) AS sent,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('read', 'response', 'invitation', 'discard', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.vacancy_id END) AS viewed,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('invitation', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.vacancy_id END) AS invited,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.vacancy_id END) AS offer
+                FROM actions AS a
+                {clause}
+                GROUP BY a.resume_id
+                ORDER BY sent DESC, a.resume_id
+                """,
+                params,
+            ).fetchall()
+
+        funnel: list[dict] = []
+        for row in rows:
+            sent, viewed, invited, offer = row["sent"], row["viewed"], row["invited"], row["offer"]
+            funnel.append(
+                {
+                    "resume_id": row["resume_id"],
+                    "sent": sent,
+                    "viewed": viewed,
+                    "invited": invited,
+                    "offer": offer,
+                    "view_rate": self._pct(viewed, sent),
+                    "invite_rate": self._pct(invited, viewed),
+                    "offer_rate": self._pct(offer, invited),
+                }
+            )
+        return funnel
+
+    def dead_responses(self, days: int, resume_id: str | None = None) -> dict:
+        """«Мёртвая зона»: доля откликов без ответа старше N дней.
+
+        Кандидат на смену письма/резюме — отклик отправлен, но ответа от
+        работодателя нет уже дольше ``days`` дней. «Отвеченный» = есть любая
+        responses-строка по вакансии (включая ``read`` — работодатель посмотрел
+        резюме, это валидный сигнал; invitation/discard/response — тем более).
+        JOIN по vacancy_id (как в воронке, account-scope).
+
+        total_sent здесь = отклики СТАРШЕ N дней (кандидаты стать мёртвыми), НЕ
+        все отправленные (как в воронке) — поле переиспользовано, подпись в
+        format_dead проясняет semantics. Возвращает {total_sent, dead, dead_rate};
+        dead_rate в процентах (0.0 при пустой истории).
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        where = ["a.action = 'apply'", "a.status = 'success'", "a.created_at < ?"]
+        params: list = [cutoff]
+        if resume_id is not None:
+            where.append("a.resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(DISTINCT a.vacancy_id) AS total_sent,
+                    COUNT(DISTINCT CASE WHEN r.vacancy_id IS NULL
+                                        THEN a.vacancy_id END) AS dead
+                FROM actions AS a
+                LEFT JOIN responses AS r ON r.vacancy_id = a.vacancy_id
+                {clause}
+                """,
+                params,
+            ).fetchone()
+
+        total_sent = row["total_sent"] if row else 0
+        dead = row["dead"] if row else 0
+        return {
+            "total_sent": total_sent,
+            "dead": dead,
+            "dead_rate": self._pct(dead, total_sent),
+        }
