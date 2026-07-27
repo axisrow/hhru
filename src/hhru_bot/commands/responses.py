@@ -49,7 +49,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
         return
 
     # Колонки фиксированной ширины для читаемого выравнивания (чистый ASCII).
-    headers = ("Вакансия", "Работодатель", "Статус", "Изменён")
+    headers = ("Вакансия", "Работодатель", "Статус", "Дата", "Изменён")
     # Статус-ключ → человекочитаемая метка для вывода (storage хранит ключ).
     status_label = {
         "invitation": "Приглашение",
@@ -63,9 +63,12 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
         vac = r.get("vacancy_id", "")
         emp = (r.get("employer") or "").strip() or "(скрыт)"
         st = status_label.get(r.get("status", ""), r.get("status", "") or "?")
+        # Дата ответа с hh.ru как есть (текстовый блок карточки); «-» если hh.ru
+        # не отдал блок даты.
+        date = (r.get("response_date") or "").strip() or "-"
         # Обрезаем ISO-время до минут: «2026-07-27 14:05» (полная секунда избыточна).
         changed = (r.get("status_changed_at") or "")[:16].replace("T", " ")
-        body.append((vac, emp, st, changed))
+        body.append((vac, emp, st, date, changed))
 
     cols = list(zip(headers, *body, strict=False))
     widths = [max(len(str(c)) for c in col) for col in cols]
@@ -138,6 +141,7 @@ def run(args: argparse.Namespace) -> None:
                     employer=card.employer or None,
                     status=card.status,
                     chat_url=card.chat_url,
+                    response_date=card.date or None,
                 )
                 if outcome == "inserted":
                     inserted += 1

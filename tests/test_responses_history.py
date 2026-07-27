@@ -49,10 +49,12 @@ def test_upsert_inserts_new_response(tmp_path):
 
     with h._connect() as conn:
         row = conn.execute(
-            "SELECT resume_id, vacancy_id, employer, status, chat_url "
+            "SELECT resume_id, vacancy_id, employer, status, last_status, chat_url "
             "FROM responses WHERE resume_id='r1' AND vacancy_id='v1'"
         ).fetchone()
     assert row["status"] == "read"
+    # last_status при первом insert = NULL (смены статуса ещё не было).
+    assert row["last_status"] is None
     assert row["employer"] == "Acme"
     assert row["chat_url"] == "/chat/1"
 
@@ -77,14 +79,21 @@ def test_upsert_status_change_updates_status_and_changed_at(tmp_path):
             (past,),
         )
 
-    outcome = h.upsert_response("r1", "v1", "Acme Corp", "invitation", "/chat/1")
+    outcome = h.upsert_response(
+        "r1", "v1", "Acme Corp", "invitation", "/chat/1", response_date="сегодня"
+    )
     assert outcome == "updated"
 
     with h._connect() as conn:
         row = conn.execute(
-            "SELECT status, status_changed_at FROM responses WHERE resume_id='r1' AND vacancy_id='v1'"
+            "SELECT status, last_status, response_date, status_changed_at "
+            "FROM responses WHERE resume_id='r1' AND vacancy_id='v1'"
         ).fetchone()
     assert row["status"] == "invitation"
+    # last_status = ПРЕДЫДУЩИЙ статус (read), скопированный в момент смены —
+    # даёт «откуда → куда» (read→invitation) для дашборда «что нового».
+    assert row["last_status"] == "read"
+    assert row["response_date"] == "сегодня"
     # status_changed_at сдвинулся с прошлого на свежее (now).
     assert row["status_changed_at"] > past
     assert row["status_changed_at"] >= first_changed
@@ -193,7 +202,9 @@ def test_new_responses_since_includes_inserted_rows(tmp_path):
         "vacancy_id",
         "employer",
         "status",
+        "last_status",
         "chat_url",
+        "response_date",
         "status_changed_at",
     } <= set(rows[0].keys())
 

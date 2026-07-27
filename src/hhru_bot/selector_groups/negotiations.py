@@ -29,6 +29,10 @@ NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
 # Бейдж текущего статуса переписки (текст нормализуется: Приглашение→invitation
 # и т.д.). Опциональный: для свежего отклика без ответа статуса-бейджа может не быть.
 NEGOTIATION_STATUS = "[data-qa='negotiations-item__state']"
+# Дата ответа/последнего сообщения в карточке (как текст; парсинг конкретной
+# даты не делается — форматы hh.ru зависят от локали, как raw_date в VacancyCard).
+# Опциональна: hh.ru не всегда рендерит блок даты.
+NEGOTIATION_DATE = "[data-qa='negotiations-item__date']"
 # Ссылка «перейти в чат» с работодателем — chat_url (опциональна: у части статусов
 # чата нет, напр. discard). Берётся из href, как fallback — href ссылки вакансии.
 NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"

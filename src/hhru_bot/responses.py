@@ -95,15 +95,16 @@ class ResponseItem:
     """Один ответ работодателя из /applicant/negotiations.
 
     status — стабильный ключ (ResponseStatus.*), не сырой текст hh.ru;
-    employer/chat_url могут быть None/пустыми (hh.ru прячет компанию для части
-    вакансий, чата нет при отказе). raw_status — оригинальный текст бейджа
-    для вывода/диагностики.
+    employer/chat_url/date могут быть пустыми (hh.ru прячет компанию для части
+    вакансий, чата нет при отказе, дата рендерится не всегда). raw_status —
+    оригинальный текст бейджа для вывода/диагностики.
     """
 
     vacancy_id: str
     status: str
     employer: str = ""
     chat_url: str | None = None
+    date: str = ""
     raw_status: str = ""
 
 
@@ -161,6 +162,7 @@ def parse_response_card(item) -> ResponseItem | None:
 
     raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
     employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER)
+    date = _optional_text(item, ns.NEGOTIATION_DATE)
 
     chat_link = item.locator(ns.NEGOTIATION_CHAT_LINK).first
     chat_href = chat_link.get_attribute("href") or "" if chat_link.count() else ""
@@ -173,6 +175,7 @@ def parse_response_card(item) -> ResponseItem | None:
         status=normalize_status(raw_status),
         employer=employer,
         chat_url=chat_url,
+        date=date,
         raw_status=raw_status,
     )
 

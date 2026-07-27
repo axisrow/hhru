@@ -61,6 +61,7 @@ def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     assert "Вакансия" in out
     assert "Работодатель" in out
     assert "Статус" in out
+    assert "Дата" in out  # дата ответа с hh.ru (response_date)
     # Статус-ключи → человекочитаемые метки (не ключи storage).
     assert "Приглашение" in out
     assert "Отказ" in out

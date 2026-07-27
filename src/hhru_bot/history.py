@@ -185,13 +185,15 @@ class History:
         employer: str | None,
         status: str,
         chat_url: str | None,
+        response_date: str | None = None,
     ) -> str:
         """Записывает/обновляет текущий статус ответа работодателя.
 
         Возвращает одно из: ``"inserted"`` (строка заведена впервые),
-        ``"updated"`` (статус сменился — это «новый ответ», метка времени
-        status_changed_at сдвигается), ``"unchanged"`` (строка была, статус тот
-        же — обновляем только last_seen_at, как «свежий взгляд без изменений»).
+        ``"updated"`` (статус сменился — это «новый ответ»: прежний status
+        копируется в last_status, метка status_changed_at сдвигается),
+        ``"unchanged"`` (строка была, статус тот же — обновляем только last_seen_at
+        и response_date, как «свежий взгляд без изменений»).
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -203,29 +205,44 @@ class History:
                 conn.execute(
                     """
                     INSERT INTO responses
-                        (resume_id, vacancy_id, employer, status, chat_url,
+                        (resume_id, vacancy_id, employer, status, chat_url, response_date,
                          last_seen_at, status_changed_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (resume_id, vacancy_id, employer, status, chat_url, now, now, now),
+                    (
+                        resume_id,
+                        vacancy_id,
+                        employer,
+                        status,
+                        chat_url,
+                        response_date,
+                        now,
+                        now,
+                        now,
+                    ),
                 )
                 return "inserted"
             if row["status"] != status:
+                # Статус сменился: прежний → last_status, новый → status, двигаем
+                # status_changed_at. employer/chat_url/response_date освежаются тоже
+                # (работодатель мог смениться или hh.ru отдал свежую дату ответа).
                 conn.execute(
                     """
                     UPDATE responses
-                       SET employer = ?, status = ?, chat_url = ?, last_seen_at = ?,
+                       SET employer = ?, last_status = status, status = ?,
+                           chat_url = ?, response_date = ?, last_seen_at = ?,
                            status_changed_at = ?
                      WHERE resume_id = ? AND vacancy_id = ?
                     """,
-                    (employer, status, chat_url, now, now, resume_id, vacancy_id),
+                    (employer, status, chat_url, response_date, now, now, resume_id, vacancy_id),
                 )
                 return "updated"
-            # Статус не изменился — освежаем только «когда последний раз видели».
+            # Статус не изменился — освежаем только «когда последний раз видели»
+            # и дату ответа (hh.ru мог обновить блок даты без смены статуса).
             conn.execute(
-                "UPDATE responses SET employer = ?, chat_url = ?, last_seen_at = ? "
-                "WHERE resume_id = ? AND vacancy_id = ?",
-                (employer, chat_url, now, resume_id, vacancy_id),
+                "UPDATE responses SET employer = ?, chat_url = ?, response_date = ?, "
+                "last_seen_at = ? WHERE resume_id = ? AND vacancy_id = ?",
+                (employer, chat_url, response_date, now, resume_id, vacancy_id),
             )
             return "unchanged"
 
@@ -235,7 +252,8 @@ class History:
         «Новый ответ» = status_changed_at > since (включает впервые заведённые
         строки: у них status_changed_at == created_at). resume_id=None — по всем
         резюме. Свежие первыми. Возвращает словари с ключами resume_id/vacancy_id/
-        employer/status/chat_url/status_changed_at — для вывода команды responses.
+        employer/status/last_status/chat_url/response_date/status_changed_at —
+        для вывода команды responses.
         """
         where = ["status_changed_at > ?"]
         params: list = [since.isoformat()]
@@ -245,7 +263,8 @@ class History:
         clause = " WHERE " + " AND ".join(where)
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT resume_id, vacancy_id, employer, status, chat_url, status_changed_at "
+                f"SELECT resume_id, vacancy_id, employer, status, last_status, chat_url, "
+                f"response_date, status_changed_at "
                 f"FROM responses{clause} ORDER BY status_changed_at DESC, id DESC",
                 params,
             ).fetchall()

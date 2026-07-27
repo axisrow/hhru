@@ -81,6 +81,7 @@ _NEGOTIATIONS_HTML = """
   <a data-qa="negotiations-item__vacancy-link" href="/vacancy/111111?from=responses">Python Developer</a>
   <span data-qa="negotiations-item__employer">ACME Corp</span>
   <span data-qa="negotiations-item__state">Приглашение</span>
+  <span data-qa="negotiations-item__date">сегодня, 14:05</span>
   <a data-qa="negotiations-item__messages-link" href="/applicant/negotiations?topic=1">Чат</a>
 </div>
 <div data-qa="negotiations-item">
@@ -109,6 +110,7 @@ def test_parse_response_card_invitation():
     assert item.status == ResponseStatus.INVITATION
     assert item.raw_status == "Приглашение"
     assert item.chat_url == "https://hh.ru/applicant/negotiations"
+    assert item.date == "сегодня, 14:05"
 
 
 def test_parse_response_card_discard_no_chat_link_falls_back_to_vacancy():
@@ -119,10 +121,12 @@ def test_parse_response_card_discard_no_chat_link_falls_back_to_vacancy():
     assert item.vacancy_id == "222222"
     assert item.status == ResponseStatus.DISCARD
     assert item.chat_url == "https://hh.ru/applicant/vacancy/222222"
+    # блока даты нет во второй карточке → пустая строка.
+    assert item.date == ""
 
 
 def test_parse_response_card_fresh_apply_read_empty_fields():
-    """Свежий отклик: работодатель скрыт, бейджа нет → read, employer пустой."""
+    """Свежий отклик: работодатель скрыт, бейджа/даты нет → read, поля пустые."""
     page = NegotiationsPage(_NEGOTIATIONS_HTML)
     item = parse_response_card(page.items[2])
     assert item is not None
@@ -130,6 +134,7 @@ def test_parse_response_card_fresh_apply_read_empty_fields():
     assert item.status == ResponseStatus.READ
     assert item.employer == ""
     assert item.raw_status == ""
+    assert item.date == ""
 
 
 def test_parse_response_card_missing_vacancy_link_returns_none():
@@ -143,4 +148,5 @@ def test_response_item_dataclass_fields():
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)
     assert item.employer == ""
     assert item.chat_url is None
+    assert item.date == ""
     assert item.raw_status == ""
