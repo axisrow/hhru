@@ -18,6 +18,13 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${PROJECT_ROOT}/src"
 
+# CLI резолвит config/config.yaml, data/history.db и logs/ ОТНОСИТЕЛЬНО cwd
+# (см. cli.py: DEFAULT_CONFIG_PATH = Path("config")/"config.yaml"). launchd и
+# cron НЕ гарантируют cwd = корень репо (часто это / или $HOME) — без этого cd
+# плановый джоб не найдёт конфиг или создаст data/ в системном cwd, ломая
+# дедупликацию и throttle. Явно переходим в корень репозитория.
+cd "${PROJECT_ROOT}"
+
 LOG_DIR="${PROJECT_ROOT}/logs"
 mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/scheduled.log"

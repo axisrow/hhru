@@ -89,10 +89,15 @@ def _program_arguments(action: str, apply_limit: int) -> list[str]:
     bump — без лимита (дневной лимит и кулдаун 4ч держит throttle).
     apply — с --limit N (сверх дневного лимита, чтобы один прогон не
     выработал весь daily_apply_limit за раз).
+
+    --headless ставится ПЕРВЫМ (до subcommand): это глобальный флаг корневого
+    парсера cli.py, а не аргумент команды. `bump --headless` → argparse exit 2
+    (unrecognized arguments); валидный порядок — `--headless bump ...`.
+    Плановый прогон идёт без GUI, поэтому --headless захардкожен.
     """
     if action == "bump":
-        return ["bump", "--headless"]
-    return ["apply", "--headless", "--limit", str(apply_limit)]
+        return ["--headless", "bump"]
+    return ["--headless", "apply", "--limit", str(apply_limit)]
 
 
 def render_schedule(
@@ -124,6 +129,12 @@ def render_schedule(
 
 
 def _render_plist(cfg: ScheduleConfig) -> str:
+    """Чистый launchd .plist (валидный XML), БЕЗ #-инструкций перед <?xml>.
+
+    Инструкции живут отдельно (_instructions) и печатаются в stderr — тогда
+    `hhru-bot schedule ... > x.plist` сохраняет в файл валидный plist, который
+    launchd примет как есть (plutil -lint / plistlib не ругаются на '#').
+    """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
     args = [wrapper, *_program_arguments(cfg.action, cfg.apply_limit)]
     label = f"com.hhru.bot.{cfg.action}"
@@ -132,8 +143,6 @@ def _render_plist(cfg: ScheduleConfig) -> str:
 
     start_block = _plist_start_block(cfg)
 
-    # XML собираем вручную, чтобы сохранить читаемый шаблонный вид с комментариями
-    # и плейсхолдерами (plistlib escapes всё и теряет комментарии-инструкции).
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -154,18 +163,7 @@ def _render_plist(cfg: ScheduleConfig) -> str:
         "</dict>",
         "</plist>",
     ]
-    header = (
-        "# launchd LaunchAgent (macOS) — ШАБЛОН.\n"
-        "# Замените плейсхолдеры под свою машину:\n"
-        f"#   {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория (напр. /Users/me/hhru)\n"
-        f"#   {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
-        "# Установка: скопируйте в ~/Library/LaunchAgents/<label>.plist и\n"
-        "#   launchctl load ~/Library/LaunchAgents/<label>.plist\n"
-        "# Предохранители в коде (throttle.py) не дадут сработать раньше срока:\n"
-        "#   bump — кулдаун 4ч (can_bump_now), apply — дневной лимит (check_apply_limit).\n"
-        "#\n"
-    )
-    return header + "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n"
 
 
 def _plist_start_block(cfg: ScheduleConfig) -> str:
@@ -186,30 +184,57 @@ def _plist_start_block(cfg: ScheduleConfig) -> str:
 
 
 def _render_crontab(cfg: ScheduleConfig) -> str:
+    """Чистая crontab-строка (расписание + команда), БЕЗ #-инструкций.
+
+    Инструкции — в stderr через _instructions. Тогда `hhru-bot schedule
+    --format crontab ...` можно вставить вывод напрямую в `crontab -e`
+    (cron '#'-комментарии валидны, но единообразие с plist и тишина в stdout
+    при редиректе важнее).
+    """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
     # Командная часть без пробелов внутри одного аргумента — собираем через join.
     cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit))
     command = f"{wrapper} {cmd_args}"
 
     if cfg.action == "bump":
-        # каждые N часов: запуск в :00 каждого N-го часа дня.
-        # «0 */N * * *» срабатывает раз в N часов в начале часа.
+        # «0 */N * * *» срабатывает в начале каждого N-го часа от полуночи
+        # (0:00, N:00, 2N:00, ...). Для N, не делящего 24, последний интервал
+        # до следующей полуночи короче — это свойство cron, не баг. Для
+        # дефолта N=4 (0,4,8,12,16,20) — ровно раз в 4 часа.
         schedule = f"0 */{cfg.interval_hours} * * *"
     else:
         hour, minute = _parse_time(cfg.apply_time)
         schedule = f"{minute} {hour} * * *"
 
-    header = (
-        "# crontab (Linux/macOS) — ШАБЛОН.\n"
-        "# Замените плейсхолдеры под свою машину:\n"
-        f"#   {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория\n"
-        f"#   {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
-        "# Установка: crontab -e и вставьте строки ниже.\n"
-        "# Лог: обёртка scheduled_run.sh уже пишет в logs/scheduled.log.\n"
-        "# Предохранители в коде (throttle.py) не дадут сработать раньше срока.\n"
-        "#\n"
+    return f"{schedule} {command} >> {PLACEHOLDER_LOG_DIR}/scheduled.log 2>&1\n"
+
+
+def _instructions(cfg: ScheduleConfig) -> str:
+    """Человекочитаемые инструкции по установке (печатаются в stderr).
+
+    Не часть генерируемого конфига: stdout содержит только валидный plist/
+    crontab, чтобы редирект `> file` давал рабочий файл без правки.
+    """
+    if cfg.format == "plist":
+        return (
+            "launchd LaunchAgent (macOS) — ШАБЛОН. Скопируйте stdout в файл.\n"
+            "Замените плейсхолдеры под свою машину:\n"
+            f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория (напр. /Users/me/hhru)\n"
+            f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+            "Установка: cp файл в ~/Library/LaunchAgents/<label>.plist и\n"
+            "  launchctl load ~/Library/LaunchAgents/<label>.plist\n"
+            "Предохранители в коде (throttle.py) не дадут сработать раньше срока:\n"
+            "  bump — кулдаун 4ч (can_bump_now), apply — дневной лимит (check_apply_limit).\n"
+        )
+    return (
+        "crontab (Linux/macOS) — ШАБЛОН. Скопируйте строку из stdout.\n"
+        "Замените плейсхолдеры под свою машину:\n"
+        f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория\n"
+        f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+        "Установка: crontab -e и вставьте строку.\n"
+        "Лог: обёртка scheduled_run.sh уже пишет в logs/scheduled.log.\n"
+        "Предохранители в коде (throttle.py) не дадут сработать раньше срока.\n"
     )
-    return f"{header}{schedule} {command} >> {PLACEHOLDER_LOG_DIR}/scheduled.log 2>&1\n"
 
 
 def register(subparsers) -> None:
@@ -250,15 +275,27 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
+    cfg = ScheduleConfig(
+        format=args.format,
+        action=args.action,
+        interval_hours=args.bump_interval_hours,
+        apply_time=args.apply_time,
+        apply_limit=args.apply_limit,
+    )
     try:
+        cfg.validate()
         text = render_schedule(
-            format=args.format,
-            action=args.action,
-            interval_hours=args.bump_interval_hours,
-            apply_time=args.apply_time,
-            apply_limit=args.apply_limit,
+            format=cfg.format,
+            action=cfg.action,
+            interval_hours=cfg.interval_hours,
+            apply_time=cfg.apply_time,
+            apply_limit=cfg.apply_limit,
         )
     except ValueError as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
+    # Инструкции — в stderr, чтобы stdout содержал ТОЛЬКО конфиг: тогда
+    # `hhru-bot schedule ... > x.plist` / `> crontab.txt` даёт рабочий файл
+    # без ручной правки (для plist критично: '#' перед <?xml невалиден).
+    print(_instructions(cfg), file=sys.stderr, end="")
     print(text)

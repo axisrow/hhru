@@ -42,13 +42,14 @@ def test_plist_apply_uses_start_calendar_interval():
 
 
 def test_plist_parseable_by_plistlib():
-    """Сгенерированный .plist — валидный XML property list."""
+    """Сгенерированный .plist — валидный XML property list (полный stdout, без преамбулы).
+
+    Раньше этот тест вырезал #-преамбулу перед парсингом — и скрывал дефект, что
+    полный stdout НЕ валиден как plist. Теперь валидируется немодифицированный
+    вывод целиком (как его сохранит пользователь в ~/Library/LaunchAgents/).
+    """
     out = render_schedule(format="plist", action="bump", interval_hours=4)
-    # plistlib парсит XML; до и после plist-блока могут быть комментарии —
-    # вырежем чисто XML-документ (от <?xml ... до закрывающего </plist>).
-    start = out.index("<?xml")
-    end = out.index("</plist>") + len("</plist>")
-    parsed = plistlib.loads(out[start:end].encode("utf-8"))
+    parsed = plistlib.loads(out.encode("utf-8"))
     assert isinstance(parsed, dict)
     # launchd .plist обязан содержать Label и ProgramArguments
     assert "Label" in parsed
@@ -109,3 +110,81 @@ def test_unknown_format_raises():
 def test_unknown_action_raises():
     with pytest.raises((ValueError, TypeError)):
         render_schedule(format="plist", action="something", interval_hours=4)
+
+
+def _plist(out: str):
+    """Парсит полный stdout render_schedule как plist (без вырезания преамбулы)."""
+    return plistlib.loads(out.encode("utf-8"))
+
+
+# --- FIX: --headless должен идти ДО subcommand (глобальный флаг корневого парсера) ---
+
+
+def test_program_arguments_headless_before_subcommand_bump():
+    """--headless — глобальный флаг cli.py; после subcommand argparse его не примет.
+
+    scheduled_run.sh пробрасывает argv дальше как есть, поэтому порядок в
+    ProgramArguments критичен: `--headless bump ...`, НЕ `bump --headless ...`.
+    """
+    from hhru_bot.commands.schedule import _program_arguments
+
+    assert _program_arguments("bump", 5) == ["--headless", "bump"]
+
+
+def test_program_arguments_headless_before_subcommand_apply():
+    from hhru_bot.commands.schedule import _program_arguments
+
+    assert _program_arguments("apply", 5) == ["--headless", "apply", "--limit", "5"]
+
+
+def test_plist_programarguments_headless_before_action():
+    """В сгенерированном .plist ProgramArguments[1] должен быть --headless, а не subcommand."""
+    out = render_schedule(format="plist", action="bump", interval_hours=4)
+    parsed = _plist(out)
+    argv = parsed["ProgramArguments"]
+    # argv[0] = wrapper (scheduled_run.sh), argv[1] обязан быть --headless
+    assert argv[1] == "--headless"
+    assert argv[2] in {"bump", "apply"}
+
+
+def test_cli_accepts_emitted_argv_bump():
+    """End-to-end: эмитенный argv (через корневой парсер) НЕ должен падать с exit 2.
+
+    `bump --headless` → argparse 'unrecognized arguments'. `--headless bump` —
+    принимается (упадёт дальше по конфигу, но НЕ на разборе аргументов).
+    Гарантирует, что planned-argv действительно запустится.
+    """
+    from hhru_bot.cli import build_parser
+
+    parser = build_parser()
+    for action in ("bump", "apply"):
+        argv = ["--headless", action] + (["--limit", "5"] if action == "apply" else [])
+        # parse_args бросает SystemExit(2) при 'unrecognized arguments'
+        ns = parser.parse_args(argv)
+        assert ns.headless is True
+        assert ns.command == action
+
+
+# --- FIX: полный stdout schedule — валидный plist (без shell-комментариев перед <?xml) ---
+
+
+def test_full_plist_stdout_parseable_no_preamble():
+    """Полный немодифицированный stdout должен быть валидным plist.
+
+    Если _render_plist ставит #-инструкции перед <?xml, plutil/plistlib отвергают
+    файл ('Unexpected character # at line 1'). Пользователь делает
+    `hhru-bot schedule ... > x.plist` — он должен загрузиться в launchd как есть.
+    """
+    out = render_schedule(format="plist", action="bump", interval_hours=4)
+    # первая строка — xml-декларация, не shell-комментарий
+    assert out.lstrip().startswith("<?xml"), "stdout должен начинаться с <?xml, без #-преамбулы"
+    parsed = _plist(out)
+    assert "Label" in parsed
+    assert "ProgramArguments" in parsed
+
+
+def test_full_plist_stdout_apply_parseable():
+    out = render_schedule(format="plist", action="apply", apply_time="10:00", apply_limit=5)
+    assert out.lstrip().startswith("<?xml")
+    parsed = _plist(out)
+    assert "StartCalendarInterval" in parsed

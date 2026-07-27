@@ -32,8 +32,8 @@
     <key>ProgramArguments</key>
     <array>
         <string>__REPO_ROOT__/scripts/scheduled_run.sh</string>
-        <string>bump</string>
         <string>--headless</string>
+        <string>bump</string>
     </array>
     <key>StartInterval</key>
     <integer>14400</integer>

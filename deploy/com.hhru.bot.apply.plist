@@ -36,8 +36,8 @@
     <key>ProgramArguments</key>
     <array>
         <string>__REPO_ROOT__/scripts/scheduled_run.sh</string>
-        <string>apply</string>
         <string>--headless</string>
+        <string>apply</string>
         <string>--limit</string>
         <string>5</string>
     </array>
