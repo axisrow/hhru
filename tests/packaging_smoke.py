@@ -1,8 +1,11 @@
-"""Smoke-проверка упакованного дистрибутива: .sql миграция входит в wheel и History работает.
+"""Smoke-проверка упакованного дистрибутива: History создаёт таблицы в wheel.
 
 Запускается CI job `packaging` в чистом venv после `pip install dist/*.whl`.
-Локально это обычный тест pytest (из checkout). Цель — поймать регрессию, при которой
-package-data перестаёт тащить migrations/*.sql и History не создаёт таблицу actions.
+Локально это обычный тест pytest (из checkout). Цель — поймать регрессию, при
+которой History перестаёт создавать таблицы при установке пакета (раньше
+схема ехала в wheel как .sql-ресурс migrations/*.sql; теперь схема — Python-код
+в history.SCHEMA, который всегда входит в пакет, но проверка остаётся
+страховкой, что History работает при `pip install .`, а не только из checkout).
 
 Запуск как скрипта: `python tests/packaging_smoke.py` (exit 0 = OK).
 """
@@ -12,15 +15,10 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from importlib import resources
 
 
 def main() -> None:
-    # 1. .sql миграция доступна как ресурс в установленном пакете.
-    files = [p.name for p in resources.files("hhru_bot.migrations").iterdir()]
-    assert any(f.endswith(".sql") for f in files), f"нет .sql миграции в пакете: {files}"
-
-    # 2. History создаёт таблицу actions (миграция применилась).
+    # History создаёт таблицу actions и пишет/читает запись (схема применилась).
     from hhru_bot.history import History
 
     with tempfile.TemporaryDirectory() as d:

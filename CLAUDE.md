@@ -105,14 +105,17 @@ cp config/config.example.yaml config/config.yaml
   `load_config` делегирует resume-подсекции реестру. Новая секция = новый файл
   `config_sections/<name>.py`, `ResumeConfig` не трогается (для scoring/ai_profile там
   пред-добавлены нейтральные `Optional`-поля `= None`).
-- **`migrations/`** — миграции SQLite как `.sql` с числовым префиксом, применяется
-  `_runner.apply_migrations` (идемпотентно, таблица `schema_migrations`).
-  **Конвенция: номер миграции = номер ишью** (например `002_responses.sql` для #12,
-  `017_letter.sql` для #17) — снижает коллизию имён между worktree. Не пиши DDL в `history.py`.
+- **Схема SQLite — одна константа `SCHEMA` в `history.py`** (а не пакет `migrations/`):
+  `CREATE TABLE IF NOT EXISTS` для всех таблиц (actions, responses, manual_offers),
+  применяется `_init_schema()` через `conn.executescript(SCHEMA)` в `History.__init__`.
+  Системы миграций в проекте нет намеренно (оверинжиниринг для такого размера) — при
+  сильных изменениях схемы базу пересоздают заново (данных мало). Не заводи DDL в `.sql`
+  и не вводи таблицу `schema_migrations`; новые таблицы дописывай в `SCHEMA`.
 - **`selector_groups/`** — селекторы по страницам. `selectors.py` — тонкий shim
   (`sel.VACANCY_CARD`...) для обратной совместимости; новый код импортирует из группы.
 - **`tests/`** — characterization-тесты на чистую логику (без браузера): `filter_candidates`,
-  `build_search_url`, `render_cover_letter`, `load_config`, `apply_migrations` идемпотентность,
+  `build_search_url`, `render_cover_letter`, `load_config`, `_init_schema` идемпотентность
+  (создание таблиц + повторный запуск через `IF NOT EXISTS`),
   `register_commands` + `--help`. Покрывают реструктуризацию от регрессий.
 
 Конвенция репортов: **один report-топик на файл** (напр. `report.py` vs `report_funnel.py`),

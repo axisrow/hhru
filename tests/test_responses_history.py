@@ -1,7 +1,7 @@
 """Characterization-тесты мониторинга ответов работодателей (#12, Этап 2).
 
-Покрывает history.upsert_response / history.new_responses_since и миграцию
-012_responses.sql (account-scope: UNIQUE по vacancy_id — страница
+Покрывает history.upsert_response / history.new_responses_since и таблицу
+responses из history.SCHEMA (account-scope: UNIQUE по vacancy_id — страница
 /applicant/negotiations общая, карточка не несёт признака резюме, поэтому ответ
 НЕ клонируется под все resume_id): переход статуса read→invitation фиксируется
 как «обновление» (status_changed_at сдвигается, прежний статус → last_status),
@@ -14,29 +14,31 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
-from hhru_bot.history import History
-from hhru_bot.migrations import apply_migrations
+from hhru_bot.history import SCHEMA, History
 
-# --- миграция 012_responses.sql ---------------------------------------------
+# --- таблица responses в history.SCHEMA ------------------------------------
 
 
-def test_migration_creates_responses_table():
+def test_schema_creates_responses_table():
     conn = sqlite3.connect(":memory:")
     try:
-        apply_migrations(conn)
+        conn.executescript(SCHEMA)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "responses" in tables
     finally:
         conn.close()
 
 
-def test_migration_idempotent_responses():
+def test_schema_idempotent_responses():
+    # Двойной executescript — таблица одна, дубль не создаётся (IF NOT EXISTS).
     conn = sqlite3.connect(":memory:")
     try:
-        first = apply_migrations(conn)
-        second = apply_migrations(conn)
-        assert any("012" in name for name in first)
-        assert second == []
+        conn.executescript(SCHEMA)
+        conn.executescript(SCHEMA)
+        cnt = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='responses'"
+        ).fetchone()[0]
+        assert cnt == 1
     finally:
         conn.close()
 
