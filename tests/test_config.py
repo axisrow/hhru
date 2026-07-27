@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_config
+from hhru_bot.config_sections.ai_profile import AIProfile
 
 
 def _write_config(tmp_path, body: str):
@@ -344,3 +345,126 @@ def test_session_secret_gitignored_for_legacy_config_value(tmp_path):
         f"{config.storage_state_file}. Defence-in-depth .gitignore нужен "
         "(**/storage_state/*.json)."
     )
+
+
+# --- ai_profile: опциональная resume-секция для AI-писем (#17) ---
+
+
+def test_load_config_ai_profile_none_when_absent(tmp_path):
+    # Без секции ai_profile → ResumeConfig.ai_profile = None (AI выключен).
+    config = load_config(_write_config(tmp_path, _minimal_config()))
+    assert config.resumes[0].ai_profile is None
+
+
+def test_load_config_ai_profile_full(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI100"
+            search:
+              text: "python developer"
+            ai_profile:
+              summary: "Бэкенд-разработчик"
+              skills: ["python", "django"]
+              highlights: ["Поднял throughput в 3 раза"]
+              desired_role: "Senior Python Developer"
+              tone: friendly
+        """,
+    )
+    config = load_config(path)
+    profile: AIProfile = config.resumes[0].ai_profile  # type: ignore[assignment]
+    assert profile is not None
+    assert profile.summary == "Бэкенд-разработчик"
+    assert profile.skills == ["python", "django"]
+    assert profile.highlights == ["Поднял throughput в 3 раза"]
+    assert profile.desired_role == "Senior Python Developer"
+    assert profile.tone == "friendly"
+
+
+def test_load_config_ai_profile_defaults_partial(tmp_path):
+    # Поля опциональны по отдельности: задан только один — остальные дефолты.
+    # Консистентно с scoring: пустая {} трактуется как отсутствие секции (None).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI200"
+            search:
+              text: "x"
+            ai_profile:
+              summary: "Краткое описание"
+        """,
+    )
+    profile: AIProfile = load_config(path).resumes[0].ai_profile  # type: ignore[assignment]
+    assert profile is not None
+    assert profile.summary == "Краткое описание"
+    assert profile.skills == []
+    assert profile.highlights == []
+    assert profile.desired_role == ""
+    assert profile.tone == "formal"
+
+
+def test_load_config_ai_profile_empty_dict_is_none(tmp_path):
+    # Пустая секция ai_profile: {} трактуется как отсутствие (None) —
+    # консистентно с поведением parse_scoring для scoring: {}.
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI250"
+            search:
+              text: "x"
+            ai_profile: {}
+        """,
+    )
+    assert load_config(path).resumes[0].ai_profile is None
+
+
+def test_load_config_ai_profile_invalid_tone(tmp_path):
+    # Неизвестный tone → ConfigError (явный контракт, не молчаливый пропуск).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI300"
+            search:
+              text: "x"
+            ai_profile:
+              tone: casual
+        """,
+    )
+    with pytest.raises(ConfigError, match="tone"):
+        load_config(path)
+
+
+def test_load_config_ai_profile_skills_wrong_type(tmp_path):
+    # skills не список строк → ConfigError.
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI400"
+            search:
+              text: "x"
+            ai_profile:
+              skills: "python"
+        """,
+    )
+    with pytest.raises(ConfigError, match="skills"):
+        load_config(path)

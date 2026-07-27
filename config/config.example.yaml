@@ -76,6 +76,19 @@ resumes:
         nice_to_have: 1.0     # буст за каждое nice_to_have-совпадение
         exclude_keyword: -3.0 # штраф за стоп-слово в title
         text_match: 1.0       # буст × доля совпавших токенов filters.text
+    # Опционально (issue #17): профиль кандидата для AI-генерации писем под
+    # конкретную вакансию. Включает AI ТОЛЬКО ВМЕСТЕ с топ-левел секцией ai
+    # (см. выше): нет ai или нет ai_profile → отклик идёт со статичным шаблоном
+    # cover_letter (поведение не меняется). При сбое LLM письмо откатывается на
+    # шаблон автоматически (variant 'ai_fallback' пишется в историю для A/B).
+    # ai_profile:
+    #   summary: "Бэкенд-разработчик с фокусом на высоконагруженные сервисы"
+    #   skills: ["python", "django", "postgresql", "docker"]
+    #   highlights:
+    #     - "Поднял throughput API в 3 раза"
+    #     - "Выстроил CI/CD с нуля"
+    #   desired_role: "Senior Python Developer"
+    #   tone: formal   # formal | friendly (по умолчанию formal)
     cover_letter: null
 
   - id: "resume-name-2"
