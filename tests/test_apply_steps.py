@@ -10,6 +10,7 @@ submit даёт отказ при отсутствии.
 from __future__ import annotations
 
 import contextlib
+import re
 
 from playwright.sync_api import Error
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -31,16 +32,38 @@ class _FakeLocator:
         # кидает strict-mode Error. Возвращаем локатор с _strict=False.
         return _FakeLocator(self.selector, self._state, strict=False)
 
-    def __init__(self, selector: str, state: _SelectorState, *, strict: bool = True) -> None:
+    def __init__(
+        self,
+        selector: str,
+        state: _SelectorState,
+        *,
+        strict: bool = True,
+        href_filter: str | None = None,
+    ) -> None:
         self.selector = selector
         self._state = state
         self._strict = strict
+        # href_filter: селектор уточнён [href='...'] — strict-локатор, привязанный к
+        # identity. click()/count() резолвятся по живым href с учётом reorder (cycle-3).
+        self._href_filter = href_filter
+
+    def _live_hrefs(self) -> list[str]:
+        # Текущие «живые» href опций. href-локатор моделирует «момент клика» — после
+        # scan, поэтому при заданном reorder он всегда отражает post-scan DOM. Обычный
+        # nth-доступ активирует reorder после полного scan (nth_calls > match_count).
+        hrefs = self._state.option_hrefs
+        if self._href_filter is not None:
+            if self._state.reorder_to:
+                hrefs = self._state.reorder_to
+        elif self._state.reorder_to and self._state._nth_calls > self._state.match_count:
+            hrefs = self._state.reorder_to
+        return hrefs
 
     def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
         # Моделируем реальное поведение Playwright: в strict mode для коллекции
         # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
         # Через .first strict mode снимается — тогда ждём видимость коллекции.
-        if self._state.is_collection and self._strict:
+        if self._state.is_collection and self._strict and self._href_filter is None:
             raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
                 f"strict mode violation: {self.selector} resolved to "
                 f"{self._state.match_count} elements"
@@ -49,6 +72,16 @@ class _FakeLocator:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
     def click(self) -> None:
+        if self._href_filter is not None:
+            # Strict href-локатор: ровно одна живая опция с этим href, иначе Error
+            # (как реальный Playwright strict mode при != 1 совпадении).
+            matches = [h for h in self._live_hrefs() if h == self._href_filter]
+            if len(matches) != 1:
+                raise Error(  # noqa: TRY002
+                    f"strict mode violation: {self.selector} resolved to {len(matches)} "
+                    f"elements (href={self._href_filter!r})"
+                )
+            self._state.current_href = matches[0]
         self._state.clicks += 1
 
     def fill(self, value: str) -> None:
@@ -128,6 +161,13 @@ class FakeStepsPage:
         return st
 
     def locator(self, selector: str) -> _FakeLocator:
+        # Селектор опции резюме по точному href: BASE[href='...']. Резолвится к тому же
+        # состоянию коллекции APPLY_RESUME_SELECT, но с href_filter для strict-клика
+        # в момент действия (cycle-3 identity-bound выбор).
+        m = re.match(r"^(.+?)\[href='(.*)'\]$", selector)
+        if m:
+            base, href = m.group(1), m.group(2).replace("\\'", "'")
+            return _FakeLocator(selector, self._state(base), href_filter=href)
         return _FakeLocator(selector, self._state(selector))
 
     @contextlib.contextmanager
@@ -431,11 +471,26 @@ def test_fill_form_resume_reorder_after_scan_clicks_correct_resume():
 
 def test_fill_form_resume_dup_appears_at_click_time_does_not_submit():
     # TOCTOU (Codex cycle-3): к моменту клика href резюме задвоился (JS вставил дубль).
-    # Live-скан находит >1 опции с target_href → неоднозначно → отказ, submit не нажат.
+    # href-локатор strict → >1 совпадение → Error → отказ, submit не нажат.
     page = FakeStepsPage()
     st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
     st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # одна RID на scan
     st.reorder_to = ["/resume/RID", "/resume/RID"]  # две RID к моменту клика
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_target_disappears_at_click_time_does_not_submit():
+    # TOCTOU (Codex cycle-3 verify): target-href исчез между scan и click.
+    # href-локатор strict → 0 совпадений → Error → отказ, submit не нажат.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # RID есть на scan
+    st.reorder_to = ["/resume/OTHER", "/resume/THIRD"]  # RID исчез к моменту клика
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")

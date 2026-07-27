@@ -193,27 +193,38 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
         )
         return False
     target_href = matched_hrefs[0]
-    # Пере-скан в момент клика: ровно одна опция с этим точным href. Если DOM
-    # изменился (переупорядочили/вставили дубль/убрали) — отказ, не клик по индексу.
-    live_count = 0
-    live_index: int | None = None
-    fresh = page.locator(apply_form.APPLY_RESUME_SELECT)
-    fresh_total = fresh.count()
-    for i in range(fresh_total):
-        if (fresh.nth(i).get_attribute("href") or "") == target_href:
-            live_count += 1
-            live_index = i
-    if live_count != 1 or live_index is None:
+    # Клик по strict href-локатору, БЕЗ конвертации обратно в индекс (cycle-3 review):
+    # nth(i).click() re-resolves индекс в момент действия — любой scan→click gap даёт
+    # TOCTOU (JS reorder/insert → тот же индекс = другое резюме). Вместо этого кликаем
+    # строгий локатор, привязанный к точному href: Playwright сам резолвит его в момент
+    # click() и кидает Error (strict mode) при != 1 совпадении — дубль/исчезновение/
+    # переупорядочивание между scan и click ловятся как отказ. href — стабильная
+    # identity резюме на hh.ru, не позиция в коллекции.
+    try:
+        page.locator(_resume_option_by_href_selector(target_href)).click()
+    except PlaywrightError as exc:
+        # strict-mode violation (>1 совпадение), element not found (исчез) или detach —
+        # любое из этого = не удалось гарантированно кликнуть нужное резюме → отказ.
         logger.warning(
-            "Резюме '%s' (href=%s) не подтверждено при клике (живых совпадений: %d) "
-            "— отправка отменена",
+            "Резюме '%s' (href=%s) не подтверждено при клике (%s) — отправка отменена",
             resume_id,
             target_href,
-            live_count,
+            exc,
         )
         return False
-    fresh.nth(live_index).click()
     return True
+
+
+def _resume_option_by_href_selector(href: str) -> str:
+    """CSS-селектор опции резюме по точному href, для strict-клика в момент действия.
+
+    Совмещает APPLY_RESUME_SELECT с фильтром по атрибуту href. Quote обратными кавычками
+    для CSS-безопасности (значение берётся из DOM страницы, не из ввода пользователя).
+    """
+    from ..selector_groups import apply_form
+
+    escaped = href.replace("\\", "\\\\").replace("'", "\\'")
+    return f"{apply_form.APPLY_RESUME_SELECT}[href='{escaped}']"
 
 
 def _href_matches_resume_id(href: str, resume_id: str) -> bool:
