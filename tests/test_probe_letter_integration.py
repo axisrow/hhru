@@ -175,4 +175,4 @@ def test_probe_command_no_resume_exits(tmp_path, monkeypatch, capsys):
 
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
-    assert "не выбрано резюме" in err.lower() or "резюме" in err.lower()
+    assert "не выбрано резюме" in err.lower()
