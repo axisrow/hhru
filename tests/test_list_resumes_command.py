@@ -166,6 +166,20 @@ def test_status_dry_run_bump_not_treated_as_success(capsys, tmp_path):
     assert "нет" not in out
 
 
+def test_status_failed_bump_not_treated_as_success(capsys, tmp_path):
+    """failed-bump тоже не считается (last_action_at/can_bump_now фильтруют
+    status='success'). Неудачное поднятие не делает резюме «кулдаунным»."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("11111111", "11111111", "bump", "failed")
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "да" in out
+    assert "нет" not in out
+
+
 def test_status_does_not_touch_hhru(tmp_path, monkeypatch):
     """READ-контракт: команда не открывает браузер/не ходит на hh.ru.
     Любой сетевой/браузерный вызов должен упасть, если команда попытается его сделать."""
