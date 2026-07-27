@@ -156,20 +156,28 @@ NOT EXISTS`, **без миграций**, см. CLAUDE.md / #50):
 -- (account-scope, см. §1.3 — достоверной атрибуции к резюме нет).
 CREATE TABLE IF NOT EXISTS reply_claims (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL,              -- immutable владелец аккаунта (см. A.4, аудит Codex)
     topic TEXT NOT NULL,
-    inbound_message_id TEXT NOT NULL,      -- id сообщения HR, на которое отвечаем
+    inbound_message_id TEXT NOT NULL,      -- id сообщения HR, на которое отвечаем (= idempotency key)
     vacancy_id TEXT,                       -- для связи с responses/воронкой (опц.)
-    resume_id TEXT,                        -- опционален, account-scope
+    resume_id TEXT,                        -- опционален, НЕ в ключе (account-scope, недостоверная атрибуция)
     reply_state TEXT NOT NULL,             -- pending | in_flight | sent
+    attempt INTEGER NOT NULL DEFAULT 0,    -- retry-счётчик (audit Codex: retry с idempotency key)
     claim_created_at TEXT NOT NULL,        -- момент взятия claim (pre-submit)
     submit_started_at TEXT,                -- переход pending→in_flight
+    lease_expires_at TEXT,                 -- lease/timeout зависшего in_flight (audit Codex §2)
     settled_at TEXT,                       -- переход в sent (или reconciled)
     note TEXT,                             -- причина FAIL / неоднозначный результат
-    UNIQUE (topic, inbound_message_id)     -- один claim на (чат, сообщение)
+    UNIQUE (account_id, topic, inbound_message_id)  -- один claim на (аккаунт, чат, сообщение)
 );
 
 CREATE INDEX IF NOT EXISTS idx_reply_claims_state
     ON reply_claims(reply_state);
+-- Найти зависшие in_flight для reconciliation/lease-cleanup:
+--   WHERE reply_state = 'in_flight' AND lease_expires_at < now
+CREATE INDEX IF NOT EXISTS idx_reply_claims_in_flight_lease
+    ON reply_claims(reply_state, lease_expires_at)
+    WHERE reply_state = 'in_flight';
 ```
 
 `responses` **не трогается** — остаётся read-only мониторингом. Write-semantics живут в
@@ -178,12 +186,15 @@ CREATE INDEX IF NOT EXISTS idx_reply_claims_state
 **Плюсы:**
 - Чистое разделение: scrape (read-only, перезаписываемый) ≠ claim (write, append-only).
   Тот же принцип, что `manual_offers` отдельно от `responses` (history.py:55).
-- UNIQUE `(topic, inbound_message_id)` — физическая основа state machine из спеки: claim
-  создаётся `INSERT` ДО submit (атомарно), коллизия = уже взят другим процессом.
-- `reply_state` выражает «сколько заявок по чату» естественным образом (по строкам).
+- UNIQUE `(account_id, topic, inbound_message_id)` — физическая основа state machine из
+  спеки: claim создаётся `INSERT` ДО submit (атомарно), коллизия = уже взят другим процессом.
+  `inbound_message_id` одновременно служит **idempotency key** для retry (audit Codex §2).
+- `reply_state` + `attempt` выражают «сколько заявок по чату и сколько retry» по строкам.
+- `lease_expires_at` + partial index на `in_flight` дают готовую точку для reconciliation
+  и cleanup зависших claims (см. §A.5 «Codex-audit»).
 - Append-only → аудит «что мы пытались отправить и когда» бесплатен.
 - Линейно ложится на методы-владельца в `history.py` (`claim_reply`, `mark_in_flight`,
-  `mark_sent`, `reconcile_in_flight`), каждый — `with self._connect()`.
+  `mark_sent`, `reconcile_in_flight`, `expire_in_flight_leases`), каждый — `with self._connect()`.
 
 **Минусы:**
 - Новый `message_id`/автор должны **появиться в парсере** (`responses.py` /
@@ -238,25 +249,94 @@ write в write-таблице).
 **Вердикт:** **допустим**, если хочется «нужен ли ответ» решать одним SELECT к `responses`,
 не открывая чат отдельно. Но это оптимизация; A2 достаточен.
 
-### A.4. Атрибуция к резюме (отдельный подвопрос)
+### A.4. Атрибуция к резюме и аккаунту (отдельный подвопрос)
 
 Достоверной связи ответ→резюме на `/applicant/negotiations` **нет** (§1.3). Поэтому:
 
-- **Рекомендация:** закрепить `reply-employers` и `clear-negotiations` как **account-scope**
-  (что спека уже и сделала — запретила `--resume` в боевом режиме). `resume_id` в
-  `reply_claims` оставить **опциональным** для будущего (если hh.ru когда-то отдаст
-  надёжный признак), в ключ UNIQUE **не** включать.
+- **Account-scope закрепить явно.** Аудит Codex (§4) усиливает рекомендацию: `account_scope`
+  должен входить в ключи/foreign keys атрибуции. Поэтому в `reply_claims` `account_id`
+  (**immutable** идентификатор аккаунта) — **NOT NULL и часть UNIQUE-ключа**, а не
+  опциональный `resume_id`. Один текста/profile URL недостаточно: резюме меняются, `topic`
+  может переиспользоваться — immutable `account_id` страхует от смешения записей разных
+  аккаунтов в одной БД (сейчас проект single-account, но ключ закладывает корректность
+  на будущее без стоимости).
+- `resume_id` — **опционален**, НЕ в ключе (недостоверная атрибуция). Если hh.ru когда-то
+  отдаст надёжный признак — дополнительно храним snapshot резюме (Codex: «надёжнее хранить
+  immutable identity + snapshot», одного текущего URL мало).
 - **Не** пытаться фабриковать атрибуцию (клонировать ответ под все резюме) — это нарушало
   бы принцип «не фабриковать данные», уже зафиксированный в `upsert_response`
   (history.py:268-279).
 
-### A.5. Сводная таблица вариантов
+### A.5. Codex-audit: что нужно добавить к A2 (внешний аудит gpt-5.6-sol/xhigh)
+
+Внешний аудит (Codex session `019fa440-...`) подтвердил рекомендацию A2, но указал, что
+`UNIQUE + pending→in_flight→sent` — это **«хорошая база, но не полная state machine»**.
+Ниже — пробелы и третий путь хранения read-state, перенесённые из аудита в модель. **Это
+дополнения к A2, не смена рекомендации.**
+
+#### A.5.1. Lease / timeout для зависших `in_flight` (audit §2, §5)
+
+Моя исходная модель опиралась на reconciliation «следующий запуск рассосёт `in_flight`». Но
+если следующий запуск не приходит (пользователь перестал пользоваться ботом), `in_flight`
+висит вечно, а «зависший» claim без таймстампа нельзя отличить от «только что ушёл в полёт».
+
+**Решение (уже в SQL A.2):** колонка `lease_expires_at` ставится при `pending→in_flight`,
+равна `submit_started_at + LEASE_TTL` (напр. 1 час — больше любого разумного submit +
+timeout). Partial index `WHERE reply_state='in_flight'` даёт дешёвый выборку
+`lease_expires_at < now` для reconciliation. Метод `expire_in_flight_leases()` помечает
+просроченные → кандидат на live-reconciliation (не авто-retry вслепую).
+
+#### A.5.2. Retry с idempotency key (audit §2)
+
+`inbound_message_id` = idempotency key: retry того же claim'а (после clean-fail из `pending`,
+где внешнего эффекта не было) инкрементирует `attempt`, не создаёт новую строку. UNIQUE
+гарантирует: второй параллельный процесс на тот же `(account, topic, message)` упрётся в
+коллизию, а не отправит дубль.
+
+#### A.5.3. Где хранить author/read-state: третий путь — `live_chat_snapshot` (audit §3)
+
+Codex предпочитает **отдельную таблицу-снапшот** моим A3-колонкам в `responses»:
+
+| Подход | Что хранит | Плюс | Минус |
+|--------|------------|------|-------|
+| Колонки в `responses` (A3) | `last_message_author`/`last_message_id` | один SELECT | перезапись scrape'ом; нет «качества источника» |
+| Live-обход в момент запуска | ничего (читаем hh.ru на лету) | всегда свежие | **нет аудита** + TOCTOU-гонка (Codex §3) |
+| **`live_chat_snapshot` (Codex)** | `(account_id, topic, observed_author, observed_read_state, source_quality, observed_at)` | аудит + «наблюдали в момент T» + отметка достоверности источника | +1 таблица |
+
+`source_quality` (`verified` | `inferred` | `unknown`) — критично при **неподтверждённых
+селекторах** (§1.2): если автор/`message_id` вытащен из ненадёжного селектора, метка
+`inferred` не даёт модели молча поверить грязному источнику — fail-closed (§принцип проекта:
+лучше пропустить чат, чем ответить не туда). Это третий подвариант хранения read-state,
+альтернатива A3-колонкам; выбор между ними — за feature-ишью на `reply-employers` после
+верификации селекторов.
+
+#### A.5.4. Dual-write сбой (audit §2)
+
+Claim и outbound-результат пишутся в две точки (claim-state в `reply_claims`, аудит в
+`actions`). Сбой между ними → рассинхрон. Codex предлагает transactional outbox или явную
+сверку claim/outbound. Для SQLite + single-writer проекта достаточна **одна транзакция** на
+оба INSERT (в одном `with self._connect()` → один `commit`), без outbox: это закрывает
+dual-write в рамках модели. Outbox — овереринжиниринг здесь (нет распределённой записи).
+
+#### A.5.5. Edge cases (audit §5) — перенесены в требования feature-ишью
+
+Реализация `reply-employers` обязана покрыть: повторный inbound (новый `message_id` → новый
+claim, старый остаётся `sent`), reordered events, concurrent workers (UNIQUE закрывает),
+удалённый/изменённый чат (live-reconciliation находит пустой чат → `sent`-候选 не
+ретраится вслепую), partial provider failure, claim после отправки без локального commit.
+Retention/compaction append-only `reply_claims` (и `live_chat_snapshot`, если выбран) —
+`DELETE WHERE settled_at < cutoff AND reply_state='sent'` раз в N, не критично при объёмах
+проекта, но должно быть задокументировано.
+
+### A.6. Сводная таблица вариантов
 
 | Вариант | Where | Идемпотентность | Риск | Влияние на funnel/dead | Рекомендация |
 |---------|-------|-----------------|------|------------------------|--------------|
 | A1 — расширить `responses` | in-place | ❌ ломается scrape'ом | высокий | нет | **нет** |
-| A2 — таблица `reply_claims` | новая | ✅ UNIQUE + append-only | средний (в селекторах) | нет | **да (основной)** |
+| **A2 — таблица `reply_claims`** | новая | ✅ UNIQUE + append-only | средний (в селекторах) | нет | **да (основной)** |
+| A2+ (A2 + Codex-audit §A.5) | новая | ✅ + lease/timeout + idempotency key (`attempt`) + `account_id` в ключе | средний (в селекторах) | нет | **да (с дополнениями)** |
 | A3 — A2 + read-поля в `responses` | гибрид | ✅ | средний | нет | допустим |
+| read-state: `live_chat_snapshot` (Codex §A.5.3) | новая (для author/read-state) | ✅ + `source_quality` для fail-closed при грязном селекторе | средний (в селекторах) | нет | альтернатива A3-колонкам |
 
 **Блокер реализации (общий для A2/A3):** селекторы negotiations **не подтверждены** (§1.2).
 До первого боевого входа и сверки F12 мы не знаем, отдаёт ли hh.ru `message_id`/автора на
@@ -363,12 +443,19 @@ design-док. Противоречия «write-контракт vs read-only-м
 
 ## Рекомендация (для решения пользователем)
 
-**ЧАСТЬ A — Вариант A2 (отдельная таблица `reply_claims`).**
+**ЧАСТЬ A — Вариант A2+ (отдельная таблица `reply_claims` + дополнения Codex-аудита §A.5).**
 - Чистое разделение read-only scrape (`responses`) и write state (`reply_claims`) —
-  повторяет уже принятый паттерн `manual_offers`.
-- UNIQUE `(topic, inbound_message_id)` — физическая основа state machine из спеки.
+  повторяет уже принятый паттерн `manual_offers`. Подтверждено внешним аудитом (Codex).
+- UNIQUE `(account_id, topic, inbound_message_id)`, где `inbound_message_id` = idempotency
+  key, а `account_id` immutable в ключе — физическая основа state machine из спеки.
 - Append-only даёт аудит бесплатно.
-- `resume_id` опционален, account-scope закреплён явно (§A.4).
+- Дополнения §A.5 (Codex): `lease_expires_at` + partial index для cleanup зависших
+  `in_flight`; `attempt` для retry с idempotency key; одна транзакция на dual-write
+  claim+audit (без outbox — достаточно SQLite single-writer).
+- Хранение author/read-state: на выбор feature-ишью — A3-колонки в `responses` **или**
+  отдельная `live_chat_snapshot` с `source_quality` (Codex §A.5.3; последний предпочтительнее
+  при неподтверждённых селекторах, т.к. fail-closed по качеству источника).
+- `resume_id` опционален, account-scope закреплён явно через immutable `account_id` (§A.4).
 - **Блокер реализации** (общий): селекторы negotiations не подтверждены — модель можно
   принять сейчас, реализация команд ждёт ручной сверки F12.
 
@@ -379,11 +466,15 @@ design-док. Противоречия «write-контракт vs read-only-м
 - Чистый эффект: ~−160 строк реализационных деталей из эталона.
 
 **После решения пользователя — разбить на sub-issues:**
-1. Расширение `SCHEMA`: таблица `reply_claims` (A2) + методы `claim_reply`/`mark_in_flight`/
-   `mark_sent`/`reconcile_in_flight` + characterization-тесты state machine.
-2. Рефакторинг `docs/cli-spec.md` §3.3 по плану B.3 (срез write-контрактов).
-3. Реализация `reply-employers` (после верификации селекторов negotiations) поверх `reply_claims`.
-4. Реализация `clear-negotiations` (literal fail-closed по `--topic`).
+1. Расширение `SCHEMA`: таблица `reply_claims` (A2+, с `lease_expires_at`/`attempt`/
+   `account_id`) + методы `claim_reply`/`mark_in_flight`/`mark_sent`/`reconcile_in_flight`/
+   `expire_in_flight_leases` + characterization-тесты state machine (включая lease/timeout,
+   idempotency-retry, dual-write в одной транзакции).
+2. (Опционально, на выбор feature-ишью) `live_chat_snapshot` с `source_quality` ИЛИ
+   read-колонки в `responses` (A3) — после верификации селекторов.
+3. Рефакторинг `docs/cli-spec.md` §3.3 по плану B.3 (срез write-контрактов).
+4. Реализация `reply-employers` (после верификации селекторов negotiations) поверх `reply_claims`.
+5. Реализация `clear-negotiations` (literal fail-closed по `--topic`).
 
 ---
 
