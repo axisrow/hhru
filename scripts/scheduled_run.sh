@@ -39,8 +39,17 @@ LOG_FILE="${LOG_DIR}/scheduled.log"
 # Запускаем CLI, вывод дублируется в scheduled.log. tee без буферизации (-a —
 # дозапись, чтобы история запусков копилась). exit-код пробрасываем дальше,
 # чтобы планировщик видел упавший прогон.
+#
+# Интерпретатор: launchd/cron имеют УРЕЗАННЫЙ PATH и НЕ активируют виртуальное
+# окружение проекта (.venv), поэтому голый `python3` резолвится в системный
+# /usr/bin/python3 без playwright → ModuleNotFoundError до любого действия.
+# Обёртка читает HHRU_PYTHON (абсолютный путь к python из venv) — его задаёт
+# launchd-агент через EnvironmentVariables (см. deploy/*.plist) или cron через
+# префикс `HHRU_PYTHON=/path/to/venv/bin/python`. Без него падаем на тот же
+# python3, что и интерактивный run.sh (совместимость с ручным запуском).
+PYTHON_BIN="${HHRU_PYTHON:-python3}"
 run_cli() {
-  python3 -m hhru_bot.cli "$@" 2>&1 | tee -a "${LOG_FILE}"
+  "${PYTHON_BIN}" -m hhru_bot.cli "$@" 2>&1 | tee -a "${LOG_FILE}"
   return "${PIPESTATUS[0]}"
 }
 

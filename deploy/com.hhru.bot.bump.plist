@@ -10,8 +10,13 @@
   повторный запуск не поднимет резюме раньше срока.
 
   ПЕРЕД УСТАНОВКОЙ замените плейсхолдеры:
-    __REPO_ROOT__ — абсолютный путь к клону репозитория (напр. /Users/me/hhru)
-    __LOG_DIR__   — каталог логов (напр. __REPO_ROOT__/logs)
+    __REPO_ROOT__   — абсолютный путь к клону репозитория (напр. /Users/me/hhru)
+    __LOG_DIR__     — каталог логов (напр. __REPO_ROOT__/logs)
+    __PYTHON_BIN__  — абсолютный путь к python из venv проекта
+                      (напр. __REPO_ROOT__/.venv/bin/python; узнать: `which python`
+                      в активированном venv). launchd НЕ активирует venv и имеет
+                      урезанный PATH — без этого джоб упадёт на ModuleNotFoundError:
+                      playwright. scheduled_run.sh читает HHRU_PYTHON.
 
   Установка:
     cp deploy/com.hhru.bot.bump.plist ~/Library/LaunchAgents/com.hhru.bot.bump.plist
@@ -37,6 +42,11 @@
     </array>
     <key>StartInterval</key>
     <integer>14400</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HHRU_PYTHON</key>
+        <string>__PYTHON_BIN__</string>
+    </dict>
     <key>StandardOutPath</key>
     <string>__LOG_DIR__/scheduled.log</string>
     <key>StandardErrorPath</key>

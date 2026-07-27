@@ -188,3 +188,32 @@ def test_full_plist_stdout_apply_parseable():
     assert out.lstrip().startswith("<?xml")
     parsed = _plist(out)
     assert "StartCalendarInterval" in parsed
+
+
+# --- FIX: launchd/cron имеют урезанный PATH и не активируют venv →
+#     голый python3 падает на ModuleNotFoundError: playwright.
+#     scheduled_run.sh читает HHRU_PYTHON; конфиги несут плейсхолдер __PYTHON_BIN__. ---
+
+
+def test_plist_has_hhru_python_env_var():
+    """launchd .plist должен задавать EnvironmentVariables>HHRU_PYTHON.
+
+    launchd даёт агенту урезанный PATH и не активирует venv — без явного
+    интерпретатора джоб упадёт на ModuleNotFoundError: playwright.
+    """
+    out = render_schedule(format="plist", action="bump", interval_hours=4)
+    parsed = _plist(out)
+    env = parsed["EnvironmentVariables"]
+    assert env["HHRU_PYTHON"] == "__PYTHON_BIN__"
+
+
+def test_crontab_has_hhru_python_prefix():
+    """crontab-строка должна иметь префикс HHRU_PYTHON=__PYTHON_BIN__.
+
+    cron не активирует venv проекта; scheduled_run.sh читает HHRU_PYTHON.
+    """
+    out = render_schedule(format="crontab", action="bump", interval_hours=4)
+    job = next(ln for ln in out.splitlines() if "scheduled_run.sh" in ln and not ln.startswith("#"))
+    assert "HHRU_PYTHON=__PYTHON_BIN__" in job
+    # префикс идёт ДО scheduled_run.sh (env-присваивание перед командой)
+    assert job.index("HHRU_PYTHON=") < job.index("scheduled_run.sh")

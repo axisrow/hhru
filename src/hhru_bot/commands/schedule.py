@@ -35,6 +35,10 @@ VALID_FORMATS = ("plist", "crontab")
 # коммитятся без раскрытия чьей-либо файловой системы.
 PLACEHOLDER_REPO_ROOT = "__REPO_ROOT__"
 PLACEHOLDER_LOG_DIR = "__LOG_DIR__"
+# Абсолютный путь к python из venv проекта (напр. __REPO_ROOT__/.venv/bin/python).
+# launchd/cron не активируют venv и имеют урезанный PATH — голый python3
+# резолвится в системный без playwright. scheduled_run.sh читает HHRU_PYTHON.
+PLACEHOLDER_PYTHON_BIN = "__PYTHON_BIN__"
 
 # Дефолты повторяют логику авторегулярного запуска: bump не чаще 4ч (равен
 # BUMP_COOLDOWN в throttle.py, чтобы запуск приходился на границу кулдауна),
@@ -143,6 +147,19 @@ def _render_plist(cfg: ScheduleConfig) -> str:
 
     start_block = _plist_start_block(cfg)
 
+    # launchd даёт агенту УРЕЗАННЫЙ PATH и НЕ активирует venv проекта — голый
+    # python3 резолвится в системный /usr/bin/python3 без playwright.
+    # EnvironmentVariables>HHRU_PYTHON фиксирует интерпретатор (читается
+    # scheduled_run.sh). PATH добавляем на всякий случай — chromium/playwright
+    # могут искать системные утилиты.
+    env_block = (
+        "    <key>EnvironmentVariables</key>\n"
+        "    <dict>\n"
+        f"        <key>HHRU_PYTHON</key>\n"
+        f"        <string>{PLACEHOLDER_PYTHON_BIN}</string>\n"
+        "    </dict>"
+    )
+
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -156,6 +173,7 @@ def _render_plist(cfg: ScheduleConfig) -> str:
         *[f"        <string>{a}</string>" for a in args],
         "    </array>",
         start_block,
+        env_block,
         "    <key>StandardOutPath</key>",
         f"    <string>{log_out}</string>",
         "    <key>StandardErrorPath</key>",
@@ -194,7 +212,9 @@ def _render_crontab(cfg: ScheduleConfig) -> str:
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
     # Командная часть без пробелов внутри одного аргумента — собираем через join.
     cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit))
-    command = f"{wrapper} {cmd_args}"
+    # HHRU_PYTHON префиксом: cron НЕ активирует venv проекта, голый python3 в
+    # cron-окружении не имеет playwright. scheduled_run.sh читает HHRU_PYTHON.
+    command = f"HHRU_PYTHON={PLACEHOLDER_PYTHON_BIN} {wrapper} {cmd_args}"
 
     if cfg.action == "bump":
         # «0 */N * * *» срабатывает в начале каждого N-го часа от полуночи
@@ -221,6 +241,10 @@ def _instructions(cfg: ScheduleConfig) -> str:
             "Замените плейсхолдеры под свою машину:\n"
             f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория (напр. /Users/me/hhru)\n"
             f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+            f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
+            f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python; узнать: `which python`"
+            " в активированном venv). launchd НЕ активирует venv — без этого\n"
+            "    джоб упадёт на ModuleNotFoundError: playwright.\n"
             "Установка: cp файл в ~/Library/LaunchAgents/<label>.plist и\n"
             "  launchctl load ~/Library/LaunchAgents/<label>.plist\n"
             "Предохранители в коде (throttle.py) не дадут сработать раньше срока:\n"
@@ -231,6 +255,9 @@ def _instructions(cfg: ScheduleConfig) -> str:
         "Замените плейсхолдеры под свою машину:\n"
         f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория\n"
         f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+        f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
+        f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python). cron НЕ активирует\n"
+        "    venv — без этого джоб упадёт на ModuleNotFoundError: playwright.\n"
         "Установка: crontab -e и вставьте строку.\n"
         "Лог: обёртка scheduled_run.sh уже пишет в logs/scheduled.log.\n"
         "Предохранители в коде (throttle.py) не дадут сработать раньше срока.\n"
