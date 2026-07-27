@@ -5,7 +5,64 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .migrations import apply_migrations
+# Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
+# Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
+# сильных изменениях схемы базу пересоздают заново (данных мало). _init_schema()
+# применяет SCHEMA идемпотентно при каждом открытии — IF NOT EXISTS гарантирует,
+# что повторный запуск на существующей базе не падает и не трогает данные.
+SCHEMA = """\
+-- actions — журнал откликов/поднятий резюме (append-only).
+CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
+    ON actions(resume_id, vacancy_id)
+    WHERE action = 'apply' AND status IN ('success', 'dry_run');
+
+-- responses — мониторинг ответов работодателей (#12, account-scope).
+-- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
+-- перезаписываемый при каждом fetch_responses (upsert_response). Ключ
+-- UNIQUE(vacancy_id, topic): страница /applicant/negotiations общая по аккаунту,
+-- карточка переписки НЕ несёт достоверного признака «какому резюме принадлежит
+-- ответ» (resume_id опционален и НЕ входит в ключ). topic=NULL (ответ без чата)
+-- группируется по vacancy_id — UNIQUE допускает несколько NULL.
+CREATE TABLE IF NOT EXISTS responses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT,
+    vacancy_id TEXT NOT NULL,
+    topic TEXT,
+    employer TEXT,
+    status TEXT NOT NULL,
+    last_status TEXT,
+    chat_url TEXT,
+    response_date TEXT,
+    last_seen_at TEXT NOT NULL,
+    status_changed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (vacancy_id, topic)
+);
+
+CREATE INDEX IF NOT EXISTS idx_responses_status_changed_at
+    ON responses(status_changed_at);
+
+-- manual_offers — ручные пометки офферов (#13), ОТДЕЛЬНО от responses (#12).
+-- responses перезаписывается каждым scrape'ом #12 и затёр бы ручной offer;
+-- manual_offers — липкая ручная пометка, per-resume: UNIQUE(resume_id, vacancy_id).
+CREATE TABLE IF NOT EXISTS manual_offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    marked_at TEXT NOT NULL,
+    UNIQUE (resume_id, vacancy_id)
+);
+"""
 
 
 class History:
@@ -25,29 +82,9 @@ class History:
             conn.close()
 
     def _init_schema(self):
+        """Создаёт все таблицы (CREATE IF NOT EXISTS). Идемпотентно."""
         with self._connect() as conn:
-            apply_migrations(conn)
-            # Ручные пометки офферов (#13) — ОТДЕЛЬНО от responses (#12).
-            # responses хранит текущий статус переписки и перезаписывается каждым
-            # scrape'ом #12 (upsert_response), поэтому хранить ручной offer там
-            # было бы недолговечно: следующий scrape затёр бы его скрейпнутым
-            # статусом. manual_offers — липкая ручная пометка, UNIQUE(resume_id,
-            # vacancy_id) — per-resume (в отличие от account-scope responses).
-            # Воронка (#13) считает оффером И status='offer' в responses (если
-            # когда-то туда попадёт), И наличие строки в manual_offers.
-            # Без миграции — CREATE IF NOT EXISTS (решение пользователя: проект
-            # слишком мал для системы миграций, схему правит пересоздание базы).
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS manual_offers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    resume_id TEXT NOT NULL,
-                    vacancy_id TEXT NOT NULL,
-                    marked_at TEXT NOT NULL,
-                    UNIQUE (resume_id, vacancy_id)
-                )
-                """
-            )
+            conn.executescript(SCHEMA)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         with self._connect() as conn:
@@ -194,8 +231,8 @@ class History:
 
     # --- Мониторинг ответов работодателей (#12, Этап 2) ------------------------
     # Новые методы в конец файла (паттерн with self._connect(), существующие
-    # не трогаем). responses — отдельная таблица (миграция 012), хранит ПОСЛЕДНЕЕ
-    # состояние переписки по (resume_id, vacancy_id), а не журнал переходов.
+    # не трогаем). responses — отдельная таблица (см. SCHEMA), хранит ПОСЛЕДНЕЕ
+    # состояние переписки по (vacancy_id, topic), а не журнал переходов.
     # upsert перезаписывает статус только при смене; last_seen_at обновляется
     # всегда (каждый fetch_responses видел эту вакансию в списке).
 
@@ -315,9 +352,9 @@ class History:
 
     # --- Воронка и ручная пометка оффера (#13) ----------------------------
     # Воронка JOIN'ит actions × responses. Таблица responses — account-scope
-    # (#12, миграция 012): ключ UNIQUE(vacancy_id, topic), resume_id опционален
-    # и НЕ в ключе (страница /applicant/negotiations не несёт достоверного
-    # признака принадлежности ответа конкретному резюме). Поэтому JOIN идёт по
+    # (#12): ключ UNIQUE(vacancy_id, topic), resume_id опционален и НЕ в ключе
+    # (страница /applicant/negotiations не несёт достоверного признака
+    # принадлежности ответа конкретному резюме). Поэтому JOIN идёт по
     # vacancy_id, а группировка воронки — по actions.resume_id (где отклик
     # отправлен). status='offer' — ручная пометка командой mark (hh.ru оффер
     # как статус переговоров не отдаёт); остальных статусов (read/invitation/

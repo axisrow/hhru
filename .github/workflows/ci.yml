@@ -39,8 +39,8 @@ jobs:
         run: python3 scripts/gen_cli_docs.py --check
 
   packaging:
-    # Страховка, что упакованный дистрибутив (wheel) несёт миграции и History
-    # работает при `pip install .`, а не только при запуске из checkout.
+    # Страховка, что упакованный дистрибутив (wheel) работает при `pip install .`,
+    # а не только при запуске из checkout: History создаёт таблицы и пишет/читает.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +59,6 @@ jobs:
           /tmp/venv/bin/pip install dist/*.whl
           /tmp/venv/bin/pip install playwright PyYAML
 
-      - name: Smoke — migration SQL ships in wheel and History works
+      - name: Smoke — History works from installed wheel
         run: /tmp/venv/bin/python tests/packaging_smoke.py
 
