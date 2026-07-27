@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -27,6 +28,14 @@ APPLY_TIMEOUT_MS = 10_000
 # отсутствовать — это нормально, а не ошибка). Ждать полной APPLY_TIMEOUT_MS тут
 # бессмысленно: отсутствие поля детерминировано почти сразу.
 OPTIONAL_FIELD_TIMEOUT_MS = 1_500
+# Таймаут ожидания селектора выбора резюме. Это НЕ опциональное поле вроде
+# cover-letter: если на multi-resume аккаунте селектор резюме не успел отрисоваться
+# за короткий OPTIONAL_FIELD_TIMEOUT_MS (медленный JS-рендер залогиненной формы),
+# выбор молча пропускается и submit отправляет резюме по умолчанию (fail-open,
+# см. cycle-2 review #33). Поэтому селектор резюме ждём как обязательный элемент:
+# появится — выберем нужное, детерминированно отсутствует после долгого ожидания —
+# на этой странице выбора нет (одно резюме), submit разрешён.
+RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
 
 
 def wait_apply_button(page: Page) -> bool:
@@ -103,7 +112,7 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     # неверного резюме/персональных данных работодателю.
     try:
         page.locator(apply_form.APPLY_RESUME_SELECT).first.wait_for(
-            state="visible", timeout=OPTIONAL_FIELD_TIMEOUT_MS
+            state="visible", timeout=RESUME_SELECT_TIMEOUT_MS
         )
     except PlaywrightError:
         resume_select_present = False
@@ -171,10 +180,19 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
 
 
 def _href_matches_resume_id(href: str, resume_id: str) -> bool:
-    """Совпадает ли ``resume_id`` с ``href`` как сегмент пути, а не как подстрока.
+    """Совпадает ли ``resume_id`` с ``href`` как **полный** сегмент/значение.
 
-    Принимает стандартные формы hh.ru: ``/resume/{id}`` (путь) и ``resume_id={id}``
-    (query). Голая подстрока (``resume_id in href``) отвергается — она ловит
-    случайные вхождения (``RID`` внутри ``PONDERING``).
+    Принимает стандартные формы hh.ru: ``/resume/{id}`` (последний сегмент пути) и
+    ``resume_id={id}`` (значение query-параметра). Требуется **точное равенство**
+    сегмента/значения, а не вхождение подстроки — иначе ``resume_id="RID"`` ложно
+    совпадает с ``/resume/RID2`` (суффикс) или ``?other_resume_id=RID``
+    (похожий параметр), и кликается чужое резюме (cycle-2 review #33).
     """
-    return f"/resume/{resume_id}" in href or f"resume_id={resume_id}" in href
+    parsed = urlparse(href)
+    # Путь: /resume/{id} — последний сегмент должен совпадать ровно.
+    last_segment = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    if last_segment == resume_id:
+        return True
+    # Query: resume_id={id} — точное значение параметра (не похоже названного).
+    query = parse_qs(parsed.query)
+    return query.get("resume_id", [None])[0] == resume_id

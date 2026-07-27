@@ -301,6 +301,81 @@ def test_fill_form_resume_match_requires_path_segment_not_bare_substring():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
+# --- fill_response_form: точное совпадение сегмента (cycle-2 review, Codex) ---
+#
+# Codex cycle-1: совпадение как сегмент всё ещё подстрока — /resume/RID2 и
+# other_resume_id=RID ложно матчат resume_id=RID → клик неверной опции → submit.
+# Оракул: точное равенство сегмента пути/значения query, без префиксных/суффиксных
+# лжесовпадений.
+
+
+def test_fill_form_resume_match_rejects_suffix_in_path_segment():
+    # /resume/RID2 НЕ должно совпадать с resume_id="RID": это чужое резюме.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID2"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_match_rejects_similarly_named_query_param():
+    # ?other_resume_id=RID НЕ должно совпадать: совпадает только resume_id=RID.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/app/applicant/vacancy_response?other_resume_id=RID"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_match_accepts_resume_id_query_param():
+    # Позитивный контроль: ?resume_id=RID (точное значение) → выбор успешен.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/app/applicant/vacancy_response?resume_id=RID&topic=1"]
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+# --- выбор резюме: долгое ожидание селектора (cycle-2 review, Codex) ---
+#
+# Codex cycle-1: короткий OPTIONAL_FIELD_TIMEOUT_MS (1.5с) для селектора резюме
+# пропускает выбор при медленном JS-рендере залогиненной формы на multi-resume
+# аккаунте → submit отправляет резюме по умолчанию (fail-open). Селектор резюме —
+# критичнее cover-letter: ждём его как обязательный элемент (APPLY_TIMEOUT_MS), и
+# только отсутствие после долгого ожидания = «на этой странице выбора нет».
+
+
+def test_resume_select_uses_full_timeout_not_optional():
+    # Оракул: ожидание селектора резюме — APPLY_TIMEOUT_MS, не OPTIONAL_FIELD_TIMEOUT_MS.
+    # Это закрывает гонку рендера (селектор может появиться позже submit-кнопки).
+    assert steps.RESUME_SELECT_TIMEOUT_MS >= steps.APPLY_TIMEOUT_MS
+
+
+def test_fill_form_resume_select_absent_single_resume_submits():
+    # Happy path одного резюме: выбора нет (селектор отсутствует после долгого ожидания)
+    # → submit жмётся. Не ломаем аккаунты с одним резюме.
+    page = FakeStepsPage()
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    # APPLY_RESUME_SELECT намеренно отсутствует.
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
 # --- константы ---
 
 
