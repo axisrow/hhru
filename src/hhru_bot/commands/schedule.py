@@ -149,9 +149,8 @@ def _render_plist(cfg: ScheduleConfig) -> str:
 
     # launchd даёт агенту УРЕЗАННЫЙ PATH и НЕ активирует venv проекта — голый
     # python3 резолвится в системный /usr/bin/python3 без playwright.
-    # EnvironmentVariables>HHRU_PYTHON фиксирует интерпретатор (читается
-    # scheduled_run.sh). PATH добавляем на всякий случай — chromium/playwright
-    # могут искать системные утилиты.
+    # EnvironmentVariables>HHRU_PYTHON фиксирует интерпретатор (абсолютный путь
+    # к venv-python, читается scheduled_run.sh).
     env_block = (
         "    <key>EnvironmentVariables</key>\n"
         "    <dict>\n"
