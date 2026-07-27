@@ -21,6 +21,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from .browser import HH_BASE_URL
@@ -29,6 +30,11 @@ from .selector_groups import negotiations as ns
 logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
+
+# Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
+# рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
+# устаревшим (см. fetch_responses). Не бесконечно, чтобы обход не зависал.
+RENDER_TIMEOUT_MS = 10_000
 
 
 class NotAuthenticated(RuntimeError):
@@ -107,13 +113,16 @@ class ResponseItem:
     status — стабильный ключ (ResponseStatus.*), не сырой текст hh.ru;
     employer/chat_url/date могут быть пустыми (hh.ru прячет компанию для части
     вакансий, чата нет при отказе, дата рендерится не всегда). raw_status —
-    оригинальный текст бейджа для вывода/диагностики.
+    оригинальный текст бейджа для вывода/диагностики. topic — идентификатор
+    переписки (из chat_url ?topic=...), уникальный для конкретного чата; None,
+    если chat_url без topic (ответ без чата).
     """
 
     vacancy_id: str
     status: str
     employer: str = ""
     chat_url: str | None = None
+    topic: str | None = None
     date: str = ""
     raw_status: str = ""
 
@@ -136,6 +145,21 @@ def _extract_vacancy_id(href: str) -> str | None:
     if m:
         return m.group(1)
     return None
+
+
+def _extract_topic(chat_url: str | None) -> str | None:
+    """Достаёт topic (идентификатор переписки) из chat_url, либо None.
+
+    chat_url чата hh.ru: ``/applicant/negotiations?topic=77&vacancyId=...`` —
+    ``topic`` уникален для конкретной переписки (одна вакансия может дать
+    НЕСКОЛЬКО переписок, напр. при отклике с разных резюме). None — если chat_url
+    без topic (ответ без чата, напр. discard; fallback на карточку вакансии).
+    """
+    if not chat_url:
+        return None
+    _, _, query = chat_url.partition("?")
+    m = re.search(r"(?:^|&)topic=(\d+)", query)
+    return m.group(1) if m else None
 
 
 def _absolute_url(href: str, *, keep_query: bool = False) -> str:
@@ -192,12 +216,17 @@ def parse_response_card(item) -> ResponseItem | None:
     chat_url = (
         _absolute_url(chat_href, keep_query=True) if chat_href else _absolute_url(vacancy_href)
     )
+    # topic — идентификатор переписки из chat_url (?topic=...); уникален для
+    # конкретного чата (одна вакансия → несколько переписок). None, если chat_url
+    # без topic (fallback на карточку вакансии / ответ без чата).
+    topic = _extract_topic(chat_url)
 
     return ResponseItem(
         vacancy_id=vacancy_id,
         status=normalize_status(raw_status),
         employer=employer,
         chat_url=chat_url,
+        topic=topic,
         date=date,
         raw_status=raw_status,
     )
@@ -207,16 +236,19 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
-    по UNIQUE (vacancy_id)). Пагинация: до ``max_pages``, стоп на первой пустой/
-    без «далее».
+    по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп на первой
+    пустой/без «далее».
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
-    Отличает «явный пустой список» от «страница не загрузилась»: /applicant/
-    negotiations рендерится залогиненному через JS, и истёкшая сессия hh.ru
-    молча редиректит на /account/login. Если это обнаружено — поднимается
-    NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
-    «нет новых ответов» и НЕ должна затирать историю).
+    Защита от ложного «пустого inbox»: страница рендерится JS, поэтому после
+    DOMContentLoaded ждём bounded таймаут появления карточки (RENDER_TIMEOUT_MS),
+    а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
+    /account/login — если это обнаружено, поднимается NotAuthenticated (команда НЕ
+    должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
+    затирать историю). Таймаут рендера логируется warning'ом — без верифицирован-
+    ного empty-state-селектора отличить genuine-empty от устаревшего селектора
+    нельзя, но ложный empty из-за медленного рендера устранён.
     """
     results: list[ResponseItem] = []
 
@@ -233,6 +265,25 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             raise NotAuthenticated(
                 "страница откликов редиректит на /account/login — сессия истекла "
                 "(запустите `login`, затем повторите)"
+            )
+
+        # Страница рендерится JS: DOMContentLoaded приходит раньше карточек. Ждём
+        # bounded таймаут появления хотя бы одной карточки, иначе count() считал бы
+        # «пусто» на ещё не отрисовавшейся странице (ложный empty inbox). Ловим
+        # базовый Playwright Error (в т.ч. TimeoutError и strict-mode множественность):
+        # карточка не появилась за таймаут — не можем отличить genuine-empty от
+        # устаревшего селектора, логируем предупреждение и трактуем как пустую
+        # страницу (селекторы negotiations непроверены — первый подозреваемый).
+        try:
+            page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
+                state="attached", timeout=RENDER_TIMEOUT_MS
+            )
+        except PlaywrightError:
+            logger.warning(
+                "Страница %d: карточки переписки не появились за %d мс — "
+                "возможно, список пуст, либо устарел селектор negotiations-item",
+                page_num,
+                RENDER_TIMEOUT_MS,
             )
 
         cards = page.locator(ns.NEGOTIATION_ITEM)

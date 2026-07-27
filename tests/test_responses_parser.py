@@ -12,6 +12,7 @@ from _fakes import NegotiationsPage
 from hhru_bot.responses import (
     ResponseItem,
     ResponseStatus,
+    _extract_topic,
     _extract_vacancy_id,
     normalize_status,
     parse_response_card,
@@ -69,6 +70,21 @@ def test_extract_vacancy_id_empty_and_garbage():
     assert _extract_vacancy_id("/vacancy/abc") is None
 
 
+# --- _extract_topic (идентификатор переписки из chat_url) -------------------
+
+
+def test_extract_topic_from_chat_url():
+    assert _extract_topic("/applicant/negotiations?topic=77&vacancyId=12345") == "77"
+    assert _extract_topic("https://hh.ru/applicant/negotiations?topic=42") == "42"
+
+
+def test_extract_topic_none_when_absent():
+    # Без topic (ответ без чата, fallback на карточку вакансии).
+    assert _extract_topic("/vacancy/12345") is None
+    assert _extract_topic("") is None
+    assert _extract_topic(None) is None
+
+
 # --- parse_response_card на HTML-фикстуре -----------------------------------
 #
 # Фикстура повторяет структуру карточки /applicant/negotiations по data-qa из
@@ -112,6 +128,7 @@ def test_parse_response_card_invitation():
     # chat_url СОХРАНЯЕТ query (topic=1): без него ссылка ведёт в общий список,
     # а не в конкретную переписку (регрессия: раньше _absolute_url срезал query).
     assert item.chat_url == "https://hh.ru/applicant/negotiations?topic=1"
+    assert item.topic == "1"  # идентификатор переписки извлечён из chat_url
     assert item.date == "сегодня, 14:05"
 
 
@@ -125,6 +142,8 @@ def test_parse_response_card_discard_no_chat_link_falls_back_to_vacancy():
     assert item.chat_url == "https://hh.ru/applicant/vacancy/222222"
     # блока даты нет во второй карточке → пустая строка.
     assert item.date == ""
+    # chat_url без topic (fallback на вакансию) → topic None.
+    assert item.topic is None
 
 
 def test_parse_response_card_fresh_apply_read_empty_fields():
@@ -150,5 +169,6 @@ def test_response_item_dataclass_fields():
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)
     assert item.employer == ""
     assert item.chat_url is None
+    assert item.topic is None
     assert item.date == ""
     assert item.raw_status == ""

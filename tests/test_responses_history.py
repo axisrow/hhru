@@ -161,6 +161,49 @@ def test_upsert_account_scope_no_cloning_across_resumes(tmp_path):
     assert rows[0]["resume_id"] == "r1"  # опциональная атрибуция сохранена при апдейте
 
 
+def test_upsert_same_vacancy_different_topics_are_distinct_rows(tmp_path):
+    """Регрессия Codex-critical round 2: одна вакансия → НЕСКОЛЬКО переписок.
+
+    Ключ по vacancy_id затирал бы соседние переписки (разные topic = разные чаты,
+    напр. отклик с разных резюме). Ключ (vacancy_id, topic) хранит каждую отдельно:
+    статус и chat_url одной не затирают другую.
+    """
+    h = History(tmp_path / "h.db")
+    # Две переписки по вакансии v1: topic=1 (invitation) и topic=2 (discard).
+    h.upsert_response("v1", "Acme", "invitation", "/applicant/negotiations?topic=1", topic="1")
+    h.upsert_response("v1", "Acme", "discard", "/applicant/negotiations?topic=2", topic="2")
+
+    with h._connect() as conn:
+        rows = {
+            r["topic"]: (r["status"], r["chat_url"])
+            for r in conn.execute("SELECT topic, status, chat_url FROM responses")
+        }
+    assert set(rows) == {"1", "2"}
+    assert rows["1"] == ("invitation", "/applicant/negotiations?topic=1")
+    assert rows["2"] == ("discard", "/applicant/negotiations?topic=2")
+
+    # Повторный обход обновляет СВОЮ переписку, не трогая соседнюю.
+    h.upsert_response("v1", "Acme", "response", "/applicant/negotiations?topic=1", topic="1")
+    with h._connect() as conn:
+        rows = {
+            r["topic"]: r["status"] for r in conn.execute("SELECT topic, status FROM responses")
+        }
+    assert rows == {"1": "response", "2": "discard"}  # topic=2 не затёрт
+
+
+def test_upsert_topic_null_groups_by_vacancy(tmp_path):
+    """topic=None (ответ без чата): группируется по vacancy_id, не плодит дублей."""
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "Acme", "read", "/vacancy/v1")  # topic=None
+    h.upsert_response("v1", "Acme", "discard", "/vacancy/v1")  # тот же vacancy, topic=None
+
+    with h._connect() as conn:
+        cnt = conn.execute(
+            "SELECT COUNT(*) AS c FROM responses WHERE vacancy_id='v1' AND topic IS NULL"
+        ).fetchone()["c"]
+    assert cnt == 1  # одна строка (UNIQUE(vacancy_id, topic) с topic=NULL)
+
+
 # --- new_responses_since ----------------------------------------------------
 
 
@@ -201,6 +244,7 @@ def test_new_responses_since_includes_inserted_rows(tmp_path):
     assert {
         "resume_id",
         "vacancy_id",
+        "topic",
         "employer",
         "status",
         "last_status",

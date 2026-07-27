@@ -147,6 +147,7 @@ def run(args: argparse.Namespace) -> None:
                 employer=card.employer or None,
                 status=card.status,
                 chat_url=card.chat_url,
+                topic=card.topic,
                 response_date=card.date or None,
             )
             if outcome == "inserted":
