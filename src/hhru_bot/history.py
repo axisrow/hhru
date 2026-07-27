@@ -170,3 +170,83 @@ class History:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # --- Мониторинг ответов работодателей (#12, Этап 2) ------------------------
+    # Новые методы в конец файла (паттерн with self._connect(), существующие
+    # не трогаем). responses — отдельная таблица (миграция 012), хранит ПОСЛЕДНЕЕ
+    # состояние переписки по (resume_id, vacancy_id), а не журнал переходов.
+    # upsert перезаписывает статус только при смене; last_seen_at обновляется
+    # всегда (каждый fetch_responses видел эту вакансию в списке).
+
+    def upsert_response(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        employer: str | None,
+        status: str,
+        chat_url: str | None,
+    ) -> str:
+        """Записывает/обновляет текущий статус ответа работодателя.
+
+        Возвращает одно из: ``"inserted"`` (строка заведена впервые),
+        ``"updated"`` (статус сменился — это «новый ответ», метка времени
+        status_changed_at сдвигается), ``"unchanged"`` (строка была, статус тот
+        же — обновляем только last_seen_at, как «свежий взгляд без изменений»).
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM responses WHERE resume_id = ? AND vacancy_id = ?",
+                (resume_id, vacancy_id),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO responses
+                        (resume_id, vacancy_id, employer, status, chat_url,
+                         last_seen_at, status_changed_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (resume_id, vacancy_id, employer, status, chat_url, now, now, now),
+                )
+                return "inserted"
+            if row["status"] != status:
+                conn.execute(
+                    """
+                    UPDATE responses
+                       SET employer = ?, status = ?, chat_url = ?, last_seen_at = ?,
+                           status_changed_at = ?
+                     WHERE resume_id = ? AND vacancy_id = ?
+                    """,
+                    (employer, status, chat_url, now, now, resume_id, vacancy_id),
+                )
+                return "updated"
+            # Статус не изменился — освежаем только «когда последний раз видели».
+            conn.execute(
+                "UPDATE responses SET employer = ?, chat_url = ?, last_seen_at = ? "
+                "WHERE resume_id = ? AND vacancy_id = ?",
+                (employer, chat_url, now, resume_id, vacancy_id),
+            )
+            return "unchanged"
+
+    def new_responses_since(self, since: datetime, resume_id: str | None = None) -> list[dict]:
+        """Ответы работодателей, чей статус сменился после ``since``.
+
+        «Новый ответ» = status_changed_at > since (включает впервые заведённые
+        строки: у них status_changed_at == created_at). resume_id=None — по всем
+        резюме. Свежие первыми. Возвращает словари с ключами resume_id/vacancy_id/
+        employer/status/chat_url/status_changed_at — для вывода команды responses.
+        """
+        where = ["status_changed_at > ?"]
+        params: list = [since.isoformat()]
+        if resume_id is not None:
+            where.append("resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT resume_id, vacancy_id, employer, status, chat_url, status_changed_at "
+                f"FROM responses{clause} ORDER BY status_changed_at DESC, id DESC",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
