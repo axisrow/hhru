@@ -117,10 +117,19 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
         page.locator(apply_form.APPLY_RESUME_SELECT).first.wait_for(
             state="attached", timeout=RESUME_SELECT_TIMEOUT_MS
         )
-    except PlaywrightError:
-        # Селектор не появился в DOM за долгий таймаут — выбора на этой странице нет
-        # (одно резюме, happy path). submit разрешён ниже.
+    except PlaywrightTimeoutError:
+        # Легитимное «селектор не появился в DOM за долгий таймаут» — выбора на этой
+        # странице нет (одно резюме, happy path). submit разрешён ниже.
         options_count = 0
+    except PlaywrightError:
+        # Cycle-5 review: НЕ маскировать не-timeout ошибки (runtime/selector failure)
+        # под «выбора нет» — это пропустило бы count() и выбор → submit дефолтного
+        # резюме. Только PlaywrightTimeoutError = легитимное отсутствие; прочие
+        # PlaywrightError — аномалия, fail-closed отказ.
+        return (
+            "ошибка при проверке выбора резюме в форме отклика — "
+            "отправка отменена (нестабильная страница)"
+        )
     else:
         options_count = page.locator(apply_form.APPLY_RESUME_SELECT).count()
         if options_count == 0:

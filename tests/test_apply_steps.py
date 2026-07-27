@@ -63,6 +63,9 @@ class _FakeLocator:
         # Моделируем реальное поведение Playwright: в strict mode для коллекции
         # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
         # Через .first strict mode снимается — тогда ждём готовность коллекции.
+        if self._state.wait_error:
+            # Cycle-5: имитация не-timeout PlaywrightError (runtime/selector failure).
+            raise Error(f"runtime error waiting for {self.selector}")
         if self._state.is_collection and self._strict and self._href_filter is None:
             raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
                 f"strict mode violation: {self.selector} resolved to "
@@ -146,6 +149,9 @@ class _SelectorState:
         # переупорядочивание/вставку опций JS между scan и click.
         self.reorder_to: list[str] | None = None
         self._nth_calls = 0
+        # Имитация не-timeout PlaywrightError в wait_for (cycle-5): runtime/selector
+        # failure, который НЕ должен маскироваться под «выбора нет».
+        self.wait_error = False
 
 
 class FakeStepsPage:
@@ -527,6 +533,23 @@ def test_fill_form_resume_hidden_first_match_still_selects_not_submit_default():
     assert result is None
     assert st.current_href == "/resume/RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_resume_wait_runtime_error_does_not_submit():
+    # Codex cycle-5: except ловил ЛЮБОЙ PlaywrightError → options_count=0. Не-timeout
+    # runtime/selector failure маскировался под «выбора нет» → skip count()/выбор →
+    # submit дефолтного резюме. Фикс: ловим только PlaywrightTimeoutError; прочие
+    # PlaywrightError → отказ. Оракул: submit НЕ нажат.
+    page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
+    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
+    st.wait_error = True  # wait_for кидает generic PlaywrightError (НЕ timeout)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
 # --- константы ---
