@@ -166,3 +166,134 @@ def test_format_table_groups_by_page():
     assert "vacancy" in out
     # обе страницы в выводе
     assert out.index("search") < out.index("vacancy") or out.count("A") >= 1
+
+
+# --- cycle-1 (Codex F1): required vs optional — здоровая страница не «ломается» ---
+
+
+def test_optional_selector_absent_is_not_failure():
+    """Опциональный селектор (легитимно отсутствует: пагинация в конце выдачи,
+    compensation после magritte-перехода hh.ru) НЕ считается провалом, даже если
+    count()=0. Иначе здоровая страница репортилась бы [FAIL] (Codex F1)."""
+    # required=False, found=0 → статус OPTIONAL_ABSENT, fails=False
+    sel = probe_cmd.SelectorCheck(
+        "COMPENSATION", "[data-qa='vacancy-serp__vacancy-compensation']", 0, required=False
+    )
+    assert sel.status == probe_cmd.STATUS_OPTIONAL_ABSENT
+    assert sel.fails is False
+
+
+def test_required_selector_absent_is_failure():
+    """Обязательный селектор с count()=0 — это реальный провал (статус NOT_FOUND)."""
+    sel = probe_cmd.SelectorCheck("CARD", "[data-qa='vacancy-serp__vacancy']", 0, required=True)
+    assert sel.status == probe_cmd.STATUS_NOT_FOUND
+    assert sel.fails is True
+
+
+def test_optional_selector_present_is_ok():
+    sel = probe_cmd.SelectorCheck("PAGINATION_NEXT", "[data-qa='pager-next']", 1, required=False)
+    assert sel.status == probe_cmd.STATUS_OK
+    assert sel.fails is False
+
+
+def test_check_selectors_marks_optional_via_spec_tuple():
+    """3-tuple в spec: (name, selector, required). required по умолчанию True
+    (обратная совместимость с 2-tuple). Опциональный селектор с 0 совпадений не
+    роняет страницу."""
+    page = _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>")  # нет compensation, нет pager
+    spec = [
+        (
+            "search",
+            "https://hh.ru/search/vacancy",
+            [
+                ("CARD", "[data-qa='vacancy-serp__vacancy']", True),  # required, найден
+                (
+                    "COMPENSATION",
+                    "[data-qa='vacancy-serp__vacancy-compensation']",
+                    False,
+                ),  # optional, 0
+                ("PAGER", "[data-qa='pager-next']", False),  # optional, 0
+            ],
+        )
+    ]
+    pages = probe_cmd.check_selectors(page, spec)
+    res = {r.name: r for r in pages[0].results}
+    assert res["CARD"].status == "OK" and res["CARD"].fails is False
+    assert res["COMPENSATION"].status == "OPTIONAL_ABSENT" and res["COMPENSATION"].fails is False
+    assert res["PAGER"].status == "OPTIONAL_ABSENT" and res["PAGER"].fails is False
+
+
+def test_healthcheck_spec_no_fake_vacancy_url():
+    """Codex F1: resume_id — это id РЕЗЮМЕ (/resume/<id>), НЕ вакансии. Раньше spec
+    строил /vacancy/<resume_id> (404 → все vacancy-селекторы NOT_FOUND на здоровом
+    аккаунте). Фикс: spec НЕ содержит страниц, требующих id вакансии, которого у
+    healthcheck нет (vacancy / apply_form). Только search/negotiations/resume —
+    URL, доступные без контекста конкретной вакансии."""
+    from hhru_bot.config import ResumeConfig
+
+    config = _StubConfig(
+        resumes=[ResumeConfig(id="r1", resume_url="https://hh.ru/resume/12345", search=_search())]
+    )
+    spec = probe_cmd._healthcheck_spec(config)
+    names = {p[0] for p in spec}
+    assert "search" in names
+    assert "negotiations" in names
+    assert "resume" in names
+    # vacancy/apply_form убраны: нет валидного id вакансии для goto
+    assert "vacancy" not in names
+    assert "apply_form" not in names
+    # resume-страница использует корректный resume_id (id резюме, не вакансии)
+    resume_entry = next(p for p in spec if p[0] == "resume")
+    assert resume_entry[1] == "https://hh.ru/resume/12345"
+
+
+def test_healthcheck_spec_marks_obsolete_and_conditional_optional():
+    """Codex F1: VACANCY_CARD_COMPENSATION документированно НЕ работает на живом
+    hh.ru с 2025 (magritte), пагинация legitimately отсутствует в конце выдачи.
+    Их required=False — иначе гарантированный [FAIL] на здоровом аккаунте."""
+    from hhru_bot.config import ResumeConfig
+
+    config = _StubConfig(
+        resumes=[ResumeConfig(id="r1", resume_url="https://hh.ru/resume/1", search=_search())]
+    )
+    spec = probe_cmd._healthcheck_spec(config)
+    search = next(p for p in spec if p[0] == "search")
+    sel_required = {name: req for name, _sel, req in search[2]}
+    # основные карточные селекторы — required
+    assert sel_required["VACANCY_CARD"] is True
+    assert sel_required["VACANCY_CARD_TITLE_LINK"] is True
+    # устаревший/условно-отсутствующий — optional
+    assert sel_required["VACANCY_CARD_COMPENSATION"] is False
+    assert sel_required["PAGINATION_NEXT"] is False
+
+
+class _StubConfig:
+    """Минимальный конфиг для _healthcheck_spec: только resumes (остальное не нужно)."""
+
+    def __init__(self, resumes):
+        self.resumes = resumes
+
+
+def _search():
+    """Минимальный SearchFilters (text обязателен) — search-поля healthcheck не нужны."""
+    from hhru_bot.config import SearchFilters
+
+    return SearchFilters(text="python")
+
+
+def test_run_healthcheck_fail_only_on_required_missing(capsys):
+    """Итоговый [FAIL] считается ТОЛЬКО по required-NOT_FOUND. Optional-ABSENT
+    не делает здоровый аккаунт «сломанным» (Codex F1 — главная претензия)."""
+    pages = [
+        probe_cmd.PageCheck(
+            "search",
+            "u",
+            [
+                probe_cmd.SelectorCheck("CARD", "[data-qa='c']", 1, required=True),
+                probe_cmd.SelectorCheck("COMP", "[data-qa='x']", 0, required=False),
+            ],
+        )
+    ]
+    # required CARD найден, COMP optional отсутствует → НЕ провал
+    missing = sum(1 for pg in pages for r in pg.results if r.fails)
+    assert missing == 0
