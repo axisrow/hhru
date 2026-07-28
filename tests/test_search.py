@@ -247,3 +247,56 @@ def test_rank_candidates_with_provider_uses_provider_score():
     assert spy.called == ["1", "2"]
     assert [c.vacancy_id for c, _s, _b in ranked] == ["1", "2"]
     assert ranked[0][2] == {"llm": 90.0}
+
+
+# --- rank_candidates: shortlist-кэп LLM-запросов (#74 F3, анти-фрод) ---------
+
+
+def test_rank_candidates_llm_shortlist_caps_provider_calls():
+    """F3: с llm_shortlist=K провайдер зовётся только на топ-K по эвристике;
+    остальные сохраняют эвристический score. Число LLM-запросов ≤ K."""
+    from hhru_bot.config_sections.scoring import ScoringConfig
+    from hhru_bot.scoring import ScoreOutcome
+
+    class _CountingProvider:
+        def __init__(self):
+            self.called: list[str] = []
+
+        def score(self, card, resume_profile=None):  # noqa: ARG002
+            self.called.append(card.vacancy_id)
+            return ScoreOutcome(score_0_100=50.0, mode="llm", breakdown={"llm": 50.0})
+
+    # Эвристика: title с must_have-матчем выше. must_have=['django'].
+    filters = SearchFilters(text="python", must_have=["django"])
+    cards = [
+        VacancyCard(vacancy_id="no1", title="Python Developer", company="C", url="u"),
+        VacancyCard(vacancy_id="yes2", title="Python Django Developer", company="C", url="u"),
+        VacancyCard(vacancy_id="no3", title="Python Other", company="C", url="u"),
+        VacancyCard(vacancy_id="no4", title="Python Foo", company="C", url="u"),
+    ]
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=filters,
+        scoring=ScoringConfig(),
+    )
+    provider = _CountingProvider()
+    ranked = rank_candidates(cards, filters, resume, scoring_provider=provider, llm_shortlist=1)
+    # LLM позван только на 1 карточку — топ эвристики (django-матч 'yes2').
+    assert provider.called == ["yes2"]
+    # Финальный порядок: yes2 (LLM=50) — но эвристика yes2 была выше; проверим,
+    # что остальные карточки сохранили эвристический breakdown (без ключа llm).
+    by_id = {c.vacancy_id: b for c, _s, b in ranked}
+    assert "llm" in by_id["yes2"]  # LLM-скоринг
+    assert "llm" not in by_id["no1"]  # эвристика, LLM не звался
+    assert "llm" not in by_id["no4"]
+
+
+def test_rank_candidates_shortlist_ignored_without_provider():
+    """F3: llm_shortlist без провайдера игнорируется — обычная эвристика #15."""
+    filters = SearchFilters(text="python")
+    cards = [VacancyCard(vacancy_id="1", title="A", company="C", url="u")]
+    resume = ResumeConfig(id="r1", resume_url="https://hh.ru/resume/AAA111", search=filters)
+    # Не должно падать; llm_shortlist без эффекта.
+    ranked = rank_candidates(cards, filters, resume, llm_shortlist=5)
+    assert len(ranked) == 1

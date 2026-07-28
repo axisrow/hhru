@@ -57,9 +57,10 @@ class KnownCompanyTier:
     UNKNOWN = "unknown"  # ООО «Ромашка» без отзывов — буста нет
 
 
-# Гиганты RU: top tech + крупные банки/ритейл. Ключ — нижний регистр, проверка
-# подстрокой (чтобы «ООО Яндекс»/«Яндекс.Такси»/«Yandex» матчило). Бренды, а не
-# юр. лица: пользователь видит на hh.ru именно бренд.
+# Гиганты RU: top tech + крупные банки/ритейл. Проверяем СТРОГИМ токен-матчем
+# (см. _name_matches), НЕ подстрокой — иначе «Metallurg» ложно матчит «meta»,
+# а «vk» — любое имя с этим сочетанием букв. Бренды, а не юр. лица: пользователь
+# видит на hh.ru именно бренд («Яндекс», не «ООО Яндекс»).
 _KNOWN_TOP_TECH_RU = (
     "яндекс",
     "yandex",
@@ -68,48 +69,46 @@ _KNOWN_TOP_TECH_RU = (
     "sber",
     "vk",
     "вконтакте",
+    "vkontakte",
     "ozon",
     "озон",
-    "т-банк",
     "тинькофф",
     "tinkoff",
+    "т-банк",
     "авито",
     "avito",
     "wildberries",
     "headhunter",
-    "hh.ru",
     "газпромбанк",
-    "российские железные дороги",
     "ржд",
 )
 
 # Крупный бизнес второй линии (банки/телеком/ритейл): буст ниже top tech, но
-# выше неизвестной компании.
+# выше неизвестной компании. Т-Банк здесь дублируется с top_tech намеренно —
+# бренд «т-банк»/«тинькофф» — топ-тех, но alias «tinkoff» в обоих списках
+# безвреден (раньше проверка top_tech идёт первой).
 _KNOWN_BIG_CORP_RU = (
     "мтс",
     "mts",
     "альфа-банк",
     "alfabank",
-    "альфа",
     "втб",
     "vtb",
     "мегамаркет",
     "ламода",
-    "ламода",
-    "ручная",
-    "озон тех",
     "контур",
-    "т-банк",
     "билайн",
     "beeline",
     "мегафон",
     "megafon",
     "ростелеком",
     "rtk",
-    "ozon tech",
+    "озон тех",
 )
 
 # Глобальные гиганты (FAANG/BigTech): высокий буст, как у RU top tech.
+# Одиночные короткие alias'ы («meta», «ibm») матчатся строго как отдельный
+# токен имени — «Metallurg»/«IBMeter» НЕ матчат.
 _KNOWN_GLOBAL = (
     "google",
     "гугл",
@@ -137,9 +136,55 @@ _KNOWN_GLOBAL = (
 _REVIEWS_COUNT_MID_THRESHOLD = 100
 
 
-def _matches_any(name_lower: str, candidates: tuple[str, ...]) -> bool:
-    """Проверяет, содержит ли name_lower любую из подстрок candidates."""
-    return any(c in name_lower for c in candidates)
+# Regex для токенизации имени работодателя: разбиваем по любым не-буквенно-
+# цифровым границам (пробелы, дефисы hh.ru «альфа-банк»/«т-банк», точки «Яндекс.
+# Такси», кавычки ООО). Цифры оставляем (напр. «1С»), но брендов с цифрами в
+# списке нет — это просто сохраняет информацию. Кириллица входит в \w с re.U.
+_TOKEN_SEP = re.compile(r"[^\w]+", re.UNICODE)
+
+
+def _tokenize_name(name_lower: str) -> list[str]:
+    """Токенизирует имя работодателя в нижнем регистре по не-буквенно-цифровым границам.
+
+    «ООО Яндекс.Такси» → ['ооо', 'яндекс', 'такси']; «Alpha-Bank» → ['alpha', 'bank'].
+    Пустые токены фильтруются.
+    """
+    return [t for t in _TOKEN_SEP.split(name_lower) if t]
+
+
+def _name_matches(name_lower: str, brands: tuple[str, ...]) -> bool:
+    """Строгий матч бренда против имени работодателя.
+
+    Бренд матчит, если:
+      - однословный бренд ('meta', 'vk') равен одному из ТОКЕНОВ имени (точное
+        равенство, не подстрока) — «Metallurg» → токен 'metallurg' ≠ 'meta';
+      - многословный бренд ('ozon tech', 'альфа-банк') присутствует в имени как
+        идущая ПОДРЯД последовательность токенов.
+
+    Так исключается спуфинг короткими alias'ами и подстроками (Codex #74 F4),
+    но сохраняется матч бренда внутри юр. лица/дочки («Яндекс.Такси»).
+    """
+    if not name_lower:
+        return False
+    tokens = _tokenize_name(name_lower)
+    if not tokens:
+        return False
+    token_set = set(tokens)
+    for brand in brands:
+        b_tokens = _tokenize_name(brand)
+        if not b_tokens:
+            continue
+        if len(b_tokens) == 1:
+            if b_tokens[0] in token_set:
+                return True
+        else:
+            # Многословный бренд: ищем как подпоследовательность идущих подряд токенов.
+            first = b_tokens[0]
+            n = len(b_tokens)
+            for i in (idx for idx, t in enumerate(tokens) if t == first):
+                if tokens[i : i + n] == b_tokens:
+                    return True
+    return False
 
 
 def classify_employer(name: str | None, info: EmployerInfo | None = None) -> str:
@@ -156,16 +201,18 @@ def classify_employer(name: str | None, info: EmployerInfo | None = None) -> str
       5. Иначе → ``unknown``.
 
     ``info`` опционален: без него работает только lookup по имени. Регистр
-    игнорируется; матчится подстрока (бренд внутри юр. лица/дочки).
+    игнорируется; матчится СТРОГИЙ токен-матч (бренд как отдельный токен имени
+    или идущая подряд последовательность токенов), а не подстрока — чтобы
+    «Metallurg» не ложно матчило «meta» (Codex #74 F4).
     """
     name_lower = (name or "").lower()
 
     if name_lower and (
-        _matches_any(name_lower, _KNOWN_TOP_TECH_RU) or _matches_any(name_lower, _KNOWN_GLOBAL)
+        _name_matches(name_lower, _KNOWN_TOP_TECH_RU) or _name_matches(name_lower, _KNOWN_GLOBAL)
     ):
         return KnownCompanyTier.TOP_TECH
 
-    if name_lower and _matches_any(name_lower, _KNOWN_BIG_CORP_RU):
+    if name_lower and _name_matches(name_lower, _KNOWN_BIG_CORP_RU):
         return KnownCompanyTier.BIG_CORP
 
     if info is not None:
@@ -210,15 +257,42 @@ class EmployerInfo:
 class ScoreOutcome:
     """Результат скоринга одной вакансии (0-100 + rationale + разбивка).
 
-    score_0_100 — итоговый скор в диапазоне [0, 100] (нормализованный, для LLM;
-    эвристика отдаёт свой сырой score как есть, без перекладки в 0-100 — её
-    ранжирование и так корректно по относительным величинам). rationale —
-    короткое текстовое объяснение (для логов/A/B). breakdown — факторы по имени.
+    score_0_100 — итоговый скор В ДИАПАЗОНЕ [0, 100]. LLM отдаёт 0-100 напрямую;
+    эвристика нормализует свой сырой score в [0, 100] монотонным clamp'ом (см.
+    HeuristicScoringProvider), чтобы fallback и LLM-скор были на ОДНОЙ шкале —
+    иначе при частичном сбое LLM таймаут на релевантной вакансии опускал бы её
+    ниже посредственных LLM-успехов (Codex #74 F2). mode — источник скоринга
+    ('heuristic' | 'llm') для логов/A/B и диагностики смешанных батчей. rationale
+    — короткое текстовое объяснение. breakdown — факторы по имени.
     """
 
     score_0_100: float
+    mode: str = "heuristic"
     rationale: str = ""
     breakdown: dict[str, float] = field(default_factory=dict)
+
+
+# Диапазон нормализации эвристического score (Codex #74 F2). Эвристика #15 —
+# взвешенная сумма факторов, может быть отрицательной (штраф за стоп-слово) или
+# большой (много must_have-хитов + tier-буст). Монотонный clamp в [0, 100]:
+# сохраняет ОТНОСИТЕЛЬНЫЙ порядок карточек эвристики (важно для ранжирования) и
+# приводит шкалу к LLM-диапазону, чтобы смешанный батч сортировался корректно.
+_HEURISTIC_SCORE_FLOOR = 0.0
+_HEURISTIC_SCORE_CEIL = 100.0
+
+
+def _normalize_heuristic_score(raw: float) -> float:
+    """Монотонно отображает сырой эвристический score в [0, 100].
+
+    Clamp (не сигмоид): проще, детерминированно, сохраняет порядок эвристики.
+    Карточки с raw >= 100 склеиваются в 100 (теряется разрешение только при
+    больших пересечениях стека — редкий случай, приемлемо для v1).
+    """
+    if raw < _HEURISTIC_SCORE_FLOOR:
+        return _HEURISTIC_SCORE_FLOOR
+    if raw > _HEURISTIC_SCORE_CEIL:
+        return _HEURISTIC_SCORE_CEIL
+    return raw
 
 
 class ScoringProvider(Protocol):
@@ -282,7 +356,14 @@ class HeuristicScoringProvider:
 
     def score(self, card: VacancyCard, resume_profile=None) -> ScoreOutcome:  # noqa: ARG002
         raw, breakdown = heuristic_score(card, self._filters, self._weights)
-        return ScoreOutcome(score_0_100=raw, breakdown=breakdown)
+        # Нормализация в [0, 100]: шкала эвристики приводится к LLM-диапазону,
+        # чтобы смешанный батч (LLM-успех + fallback) сортировался корректно
+        # (Codex #74 F2). mode='heuristic' — маркер источника для логов/A/B.
+        return ScoreOutcome(
+            score_0_100=_normalize_heuristic_score(raw),
+            mode="heuristic",
+            breakdown=breakdown,
+        )
 
 
 # --- LLMScoringProvider (#74 Этап 3) -----------------------------------------
@@ -292,6 +373,19 @@ class HeuristicScoringProvider:
 # "factors": {...}}. factors опциональны — главное поле score. Рационально
 # ограничиваем длину, чтобы не тащить простыню текста в breakdown/логи.
 _MAX_RATIONALE_LEN = 240
+
+# Границы LLM-запроса (Codex #74 F3). JSON-ответ скоринга короткий → 256 токенов
+# с запасом; жёсткий timeout, чтобы деградировавший endpoint не держал автоматику
+# hh.ru бесконечно (принцип «не выглядеть подозрительно» — меньше зависших
+# сессий). LLMClient.forward'ит **params в transport (temperature/max_tokens/timeout).
+_LLM_MAX_TOKENS = 256
+_LLM_TIMEOUT = 30.0
+
+# Circuit breaker: сколько ПОДРЯД fallback'ов терпим, прежде чем решить, что
+# endpoint деградировал, и перестать звать LLM до конца батча (Codex #74 F3).
+# Любой успех обнуляет счётчик (endpoint ожил). Без этого деградация грозила
+# десятками повисших синхронных запросов к hh.ru/LLM.
+_LLM_CIRCUIT_FAILURE_THRESHOLD = 3
 
 
 class LLMScoringProvider:
@@ -306,6 +400,13 @@ class LLMScoringProvider:
     Главный инвариант: ``score`` НИКОГДА не бросает — сбой LLM не должен валить
     ранжирование (иначе автоматика hh.ru теряет лучшие совпадения из-за временной
     недоступности LLM). Точно как AICoverLetterProvider в #17.
+
+    Circuit breaker (Codex #74 F3): после ``circuit_failure_threshold`` ПОДРЯД
+    fallback'ов подряд следующие карточки сразу уходят на эвристику, не делая
+    LLM-запрос — деградировавший endpoint не тратит время/деньги и не плодит
+    подозрительную нагрузку. Любой успех обнуляет счётчик. Жёсткий timeout +
+    max_tokens ограничивают каждый запрос. stateful — счётчик живёт один батч
+    (один вызов rank_candidates).
     """
 
     def __init__(
@@ -315,6 +416,9 @@ class LLMScoringProvider:
         resume_profile: AIProfile | None = None,
         *,
         temperature: float = 0.3,
+        max_tokens: int = _LLM_MAX_TOKENS,
+        timeout: float = _LLM_TIMEOUT,
+        circuit_failure_threshold: int = _LLM_CIRCUIT_FAILURE_THRESHOLD,
     ):
         self._llm = llm_client
         self._fallback = fallback
@@ -323,19 +427,39 @@ class LLMScoringProvider:
         # а не «творческим» (как письмо). Меньше разброса между одинаковыми
         # вакансиями → стабильнее ранжирование.
         self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._timeout = timeout
+        self._circuit_failure_threshold = circuit_failure_threshold
+        # Счётчик подряд идущих fallback'ов (circuit breaker). Обнуляется на успехе.
+        self._consecutive_failures = 0
 
     def score(self, card: VacancyCard, resume_profile=None) -> ScoreOutcome:
         profile = resume_profile or self._profile
+
+        # Circuit breaker открыт: endpoint деградировал, не делаем запрос —
+        # сразу эвристика (без наращивания счётчика: мы LLM не звали).
+        if self._consecutive_failures >= self._circuit_failure_threshold:
+            logger.info(
+                "LLM scoring circuit open for '%s' — heuristic fallback (no LLM call)",
+                card.title,
+            )
+            return self._fallback.score(card, profile)
+
         messages = _build_scoring_prompt(card, profile)
         try:
-            response = self._llm.chat(messages, temperature=self._temperature)
+            response = self._llm.chat(
+                messages,
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+                timeout=self._timeout,
+            )
         except Exception as e:  # noqa: BLE001 — широкий: любой сбой AI → fallback
             logger.warning(
                 "LLM scoring failed for '%s': %s — fallback to heuristic",
                 card.title,
                 e,
             )
-            return self._fallback.score(card, profile)
+            return self._fallback_for_failure(card, profile)
 
         content = response.content if response is not None else None
         outcome = _parse_llm_score(content, card)
@@ -345,9 +469,16 @@ class LLMScoringProvider:
                 card.title,
                 getattr(response, "finish_reason", "?"),
             )
-            return self._fallback.score(card, profile)
+            return self._fallback_for_failure(card, profile)
 
+        # Успех: обнуляем счётчик подряд-сбоев (endpoint ожил).
+        self._consecutive_failures = 0
         return outcome
+
+    def _fallback_for_failure(self, card: VacancyCard, profile) -> ScoreOutcome:
+        """Фиксирует подряд-сбой в счётчике breaker'а и отдаёт эвристику."""
+        self._consecutive_failures += 1
+        return self._fallback.score(card, profile)
 
 
 def _parse_llm_score(content: str | None, card: VacancyCard) -> ScoreOutcome | None:
@@ -398,7 +529,7 @@ def _parse_llm_score(content: str | None, card: VacancyCard) -> ScoreOutcome | N
             except (TypeError, ValueError):
                 continue
 
-    return ScoreOutcome(score_0_100=score, rationale=rationale, breakdown=breakdown)
+    return ScoreOutcome(score_0_100=score, mode="llm", rationale=rationale, breakdown=breakdown)
 
 
 def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[dict[str, str]]:

@@ -511,6 +511,8 @@ def rank_candidates(
     filters: SearchFilters,
     resume: ResumeConfig,
     scoring_provider=None,
+    *,
+    llm_shortlist: int | None = None,
 ) -> list[tuple[VacancyCard, float, dict[str, float]]]:
     """Ранжирует кандидатов по убыванию score (issue #15, расширено #74).
 
@@ -523,9 +525,17 @@ def rank_candidates(
     LLMScoringProvider). Если передан — score/breakdown берутся из
     provider.score(card) (fallback внутри провайдера); иначе — эвристика
     #15 (``_score_card``). Обратная совместимость: provider=None = текущее
-    поведение, nothing changes — тот же приём, что ``letter_provider`` в
+    поведение, ничего не меняется — тот же приём, что ``letter_provider`` в
     ApplyContext (#17). ai_profile (если есть) передаётся провайдеру как
     профиль кандидата.
+
+    llm_shortlist (Codex #74 F3, анти-фрод): ограничивает число LLM-запросов.
+    Когда задан (>0), сначала ВСЕ кандидаты скорятся дешёвой эвристикой
+    (``_score_card``), сортируются, и провайдер (LLM) вызывается ТОЛЬКО на
+    топ-K. Остальные сохраняют эвристический score. Так при dozens кандидатов
+    число синхронных LLM-запросов = ≤ K, а не длина списка — критично, чтобы
+    не выглядеть подозрительно для анти-фрода hh.ru и не раздувать стоимость.
+    Без провайдера параметр игнорируется.
 
     Обратная совместимость: без scoring-конфига (и без provider) используются
     истинно нулевые веса (все факторы = 0), поэтому ВСЕ score = 0.0 и входной
@@ -535,6 +545,12 @@ def rank_candidates(
     scoring: ScoringConfig | None = getattr(resume, "scoring", None)
     weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
     profile = getattr(resume, "ai_profile", None)
+
+    # Shortlist-режим (Codex #74 F3): предранжируем эвристикой, LLM — только топ-K.
+    if scoring_provider is not None and llm_shortlist and llm_shortlist > 0:
+        return _rank_with_llm_shortlist(
+            candidates, filters, weights, profile, scoring_provider, llm_shortlist
+        )
 
     scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
     for card in candidates:
@@ -549,5 +565,52 @@ def rank_candidates(
     # Стабильно: сортировка только по score; равные score сохраняют входной
     # порядок (Timsort стабилен). Тай-брейк по vacancy_id намеренно убран —
     # он переупорядочивал бы legacy candidates[:limit] при перемешанных id.
+    scored.sort(key=lambda item: -item[1])
+    return scored
+
+
+# Максимальный размер shortlist для LLM-скоринга по умолчанию (Codex #74 F3).
+# Топ-10 эвристики — достаточно, чтобы дневной лимит откликов ушёл на лучшие
+# совпадения, при этом число LLM-запросов ограничено десятью на батч.
+_LLM_SHORTLIST_DEFAULT = 10
+
+
+def _rank_with_llm_shortlist(
+    candidates: list[VacancyCard],
+    filters: SearchFilters,
+    weights,
+    profile,
+    scoring_provider,
+    shortlist_size: int,
+) -> list[tuple[VacancyCard, float, dict[str, float]]]:
+    """Предранжирование эвристикой → LLM только по топ-K (Codex #74 F3).
+
+    1. Все кандидаты получают эвристический score (дёшево, без LLM/сети).
+    2. Сортируются по эвристике; берётся топ-K (shortlist).
+    3. К топ-K применяется провайдер (LLM); score/breakdown заменяются на его.
+       Карточки вне shortlist сохраняют эвристический score.
+    4. Финальная сортировка по итоговому score. Circuit-breaker провайдера
+       дополнительно ограничивает LLM-запросы при деградации endpoint'а.
+    """
+    # Шаг 1: эвристический score для всех.
+    heur: list[tuple[VacancyCard, float, dict[str, float]]] = []
+    for card in candidates:
+        score, breakdown = _score_card(card, filters, weights)
+        heur.append((card, score, breakdown))
+
+    # Шаг 2: топ-K по эвристике (стабильно по входному порядку при равенстве).
+    heur.sort(key=lambda item: -item[1])
+    shortlist_ids = {heur[i][0].vacancy_id for i in range(min(shortlist_size, len(heur)))}
+
+    # Шаг 3: заменяем score у карточек shortlist на результат провайдера (LLM).
+    scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
+    for card, heur_score, heur_breakdown in heur:
+        if card.vacancy_id in shortlist_ids:
+            outcome = scoring_provider.score(card, profile)
+            scored.append((card, outcome.score_0_100, outcome.breakdown))
+        else:
+            scored.append((card, heur_score, heur_breakdown))
+
+    # Шаг 4: финальная стабильная сортировка по итоговому score.
     scored.sort(key=lambda item: -item[1])
     return scored

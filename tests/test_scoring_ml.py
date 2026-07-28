@@ -122,6 +122,52 @@ def test_classify_empty_name_unknown():
     assert classify_employer(None) == KnownCompanyTier.UNKNOWN
 
 
+# --- adversarial: спуфинг подстрокой НЕ должен матччить (Codex #74 F4) -------
+#
+# До фикса classify_employer матчил бренд подстрокой: «Metallurg» ложно матчило
+# «meta» (TOP_TECH), короткие alias'ы («vk») — любые имена с этим сочетанием.
+# Строгий токен-матч закрывает это: бренд = отдельный токен или идущая подряд
+# последовательность токенов, не подстрока.
+
+
+def test_adversarial_meta_substring_not_matched():
+    # «Metallurg» содержит «meta» как подстроку, но НЕ как токен → unknown.
+    assert classify_employer("Metallurg LLC") == KnownCompanyTier.UNKNOWN
+    assert classify_employer("Metamorphosis") == KnownCompanyTier.UNKNOWN
+
+
+def test_adversarial_vk_substring_not_matched():
+    # «vk» как подстрока внутри слова не матчит.
+    assert (
+        classify_employer("Vkontakte-sub") == KnownCompanyTier.TOP_TECH
+    )  # токен «vkontakte» есть — это валидный alias
+    assert (
+        classify_employer("Advokat i K") == KnownCompanyTier.UNKNOWN
+    )  # «vk»-подстрока, но токена «vk» нет
+
+
+def test_adversarial_short_alias_only_exact_token():
+    # Короткие alias'ы матчат ТОЛЬКО как точный токен.
+    assert classify_employer("IBM") == KnownCompanyTier.TOP_TECH
+    assert classify_employer("IBMeter Solutions") == KnownCompanyTier.UNKNOWN
+    assert classify_employer("Tesla") == KnownCompanyTier.TOP_TECH
+    assert classify_employer("Teslaco") == KnownCompanyTier.UNKNOWN
+
+
+def test_adversarial_brand_inside_legal_entity_still_matches():
+    # Строгий токен-матч НЕ ломает валидный кейс: бренд внутри юр. лица/дочки.
+    assert classify_employer("ООО Яндекс") == KnownCompanyTier.TOP_TECH
+    assert classify_employer("Яндекс.Такси") == KnownCompanyTier.TOP_TECH
+    assert classify_employer("Yandex LLC") == KnownCompanyTier.TOP_TECH
+
+
+def test_adversarial_brand_spoof_with_suffix_not_matched():
+    # «YandexReviews» (без разделителя) — один токен, ≠ «yandex» → не матчит.
+    # Так отсекаются имперсонации-слияния.
+    assert classify_employer("YandexReviews") == KnownCompanyTier.UNKNOWN
+    assert classify_employer("SberFraud") == KnownCompanyTier.UNKNOWN
+
+
 # --- classify_employer: эвристики по info из карточки (Этап 1 + 2) ----------
 
 
@@ -273,3 +319,143 @@ def test_heuristic_provider_applies_tier_boost_for_known_company():
     assert known.score_0_100 > unknown.score_0_100
     assert known.breakdown["employer_tier"] > 0.0
     assert unknown.breakdown["employer_tier"] == 0.0
+
+
+# --- F2: эвристика нормализована в 0-100, единая шкала с LLM (#74 F2) --------
+
+
+def test_heuristic_provider_score_in_0_100_range():
+    provider = heuristic_provider(weights=ScoringWeights(must_have=200.0))
+    # must_have-матч даёт сырой score > 100 — нормализация должна зажать в 100.
+    outcome = provider.score(card(title="Python Django", company="C"))
+    assert 0.0 <= outcome.score_0_100 <= 100.0
+    assert outcome.score_0_100 == 100.0
+    assert outcome.mode == "heuristic"
+
+
+def test_heuristic_provider_negative_penalty_clamped_to_zero():
+    # Штраф за стоп-слово → сырой score отрицательный → clamp в 0.
+    provider = heuristic_provider(weights=ScoringWeights(exclude_keyword=-50.0))
+    outcome = provider.score(card(title="Программист 1С", company="C"))
+    assert outcome.score_0_100 == 0.0
+
+
+def test_llm_success_outcome_mode_is_llm():
+    llm = _RecordingLLM('{"score": 80}')
+    provider = LLMScoringProvider(llm_client=llm, fallback=heuristic_provider())
+    outcome = provider.score(card())
+    assert outcome.mode == "llm"
+    assert outcome.score_0_100 == 80.0
+
+
+def test_mixed_batch_no_scale_corruption():
+    """F2: смешанный батч (LLM-успех + LLM-fallback на эвристике) сортируется
+    на ЕДИНОЙ шкале [0,100]. До фикса fallback отдавал сырой score эвристики,
+    могущий быть сколь угодно большим/отрицательным → сортировка ломалась.
+
+    Сценарий: вакансия A (LLM-таймаут → fallback, эвристика ~сырой) и B (LLM-успех
+    80). После нормализации обе шкалы — [0,100], сравнение корректно.
+    """
+    # Провайдер: первый вызов падает (timeout), второй — успех 80.
+    llm = _FailingThenRecordingLLM(
+        fail=ConnectionError("LLM timeout"), then_content='{"score": 80}'
+    )
+    provider = LLMScoringProvider(llm_client=llm, fallback=heuristic_provider())
+    a = provider.score(card(vacancy_id="A", title="Python Django"))  # → fallback
+    b = provider.score(card(vacancy_id="B", title="Python"))  # → LLM 80
+    # Оба на единой шкале [0,100] — это и есть контракт F2.
+    assert 0.0 <= a.score_0_100 <= 100.0
+    assert 0.0 <= b.score_0_100 <= 100.0
+    assert a.mode == "heuristic"
+    assert b.mode == "llm"
+    assert b.score_0_100 == 80.0
+
+
+# --- F3: circuit-breaker + bounded chat (Codex #74 F3) ----------------------
+
+
+class _RecordingLLMWithParams(_RecordingLLM):
+    """Как _RecordingLLM, но сохраняет параметры (max_tokens/timeout) запроса."""
+
+    def chat(self, messages, **params):
+        self.calls.append((messages, params))
+        return NormalizedResponse(
+            content=self._content, tool_calls=None, finish_reason=self._finish_reason
+        )
+
+
+class _FailingThenRecordingLLM:
+    """Первый chat() бросает, последующие — отдают заданный content."""
+
+    def __init__(self, fail: Exception, then_content: str | None):
+        self._fail = fail
+        self._then = then_content
+        self._failed = False
+        self.calls: list[tuple[list, dict]] = []
+
+    def chat(self, messages, **params):
+        self.calls.append((messages, params))
+        if not self._failed:
+            self._failed = True
+            raise self._fail
+        return NormalizedResponse(content=self._then, tool_calls=None, finish_reason="stop")
+
+
+def test_llm_provider_passes_max_tokens_and_timeout():
+    llm = _RecordingLLMWithParams('{"score": 50}')
+    provider = LLMScoringProvider(
+        llm_client=llm, fallback=heuristic_provider(), max_tokens=128, timeout=12.5
+    )
+    provider.score(card())
+    params = llm.calls[0][1]
+    assert params["max_tokens"] == 128
+    assert params["timeout"] == 12.5
+
+
+def test_circuit_breaker_skips_llm_after_consecutive_failures():
+    """F3: после N подряд fallback'ов следующие карточки идут на эвристику
+    БЕЗ LLM-запроса — деградировавший endpoint не плодит повисшие запросы."""
+    llm = _FailingLLM(ConnectionError("down"))  # все вызовы падают
+    provider = LLMScoringProvider(
+        llm_client=llm, fallback=heuristic_provider(), circuit_failure_threshold=3
+    )
+    # Первые 3 — делают LLM-запрос (и падают → fallback).
+    for i in range(3):
+        outcome = provider.score(card(vacancy_id=str(i)))
+        assert outcome.mode == "heuristic"
+    # 4-я карточка — breaker открыт (3 сбоя подряд), LLM НЕ зовётся → сразу эвристика.
+    outcome = provider.score(card(vacancy_id="4"))
+    assert outcome.mode == "heuristic"
+
+
+def test_circuit_breaker_resets_on_success():
+    """F3: любой успех обнуляет счётчик подряд-сбоёв — endpoint ожил, LLM снова зовётся."""
+    llm = _FlakyThenOKLLM(fail=ConnectionError("down"), fails=2, ok_content='{"score": 70}')
+    provider = LLMScoringProvider(
+        llm_client=llm, fallback=heuristic_provider(), circuit_failure_threshold=3
+    )
+    # 2 сбоя подряд (счётчик=2, < порога 3).
+    assert provider.score(card(vacancy_id="1")).mode == "heuristic"
+    assert provider.score(card(vacancy_id="2")).mode == "heuristic"
+    # Успех — счётчик обнулён, mode=llm.
+    assert provider.score(card(vacancy_id="3")).mode == "llm"
+    # Следующий снова зовёт LLM (breaker закрыт).
+    assert provider.score(card(vacancy_id="4")).mode == "llm"
+
+
+class _FlakyThenOKLLM:
+    """Первые ``fails`` вызовов бросают, дальше — успех с ok_content."""
+
+    def __init__(self, fail: Exception, fails: int, ok_content: str | None):
+        self._fail = fail
+        self._fails = fails
+        self._ok = ok_content
+        self._n = 0
+        self.calls: list[tuple[list, dict]] = []
+
+    def chat(self, messages, **params):
+        self.calls.append((messages, params))
+        self._n += 1
+        if self._n <= self._fails:
+            raise self._fail
+        return NormalizedResponse(content=self._ok, tool_calls=None, finish_reason="stop")
