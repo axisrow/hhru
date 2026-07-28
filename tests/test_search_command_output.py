@@ -70,3 +70,59 @@ def test_card_line_with_salary_and_date():
     salary = SalaryInfo(150000, 200000, "RUB", "raw")
     line = _format_card_line(_card(salary=salary, raw_date="сегодня"))
     assert "150000-200000 RUB / сегодня" in line
+
+
+# --- запись собранных карточек в рынок (#66) ---------------------------------
+#
+# search СОБИРАЕТ карточки (VacancyCard с salary, #34), но НЕ писал их в БД —
+# рынок-анализ был не из чего строить. _record_seen = побочный эффект сбора:
+# пишет ВСЕ собранные карточки в vacancies_seen, не трогая отбор/скоринг/вывод.
+
+
+def test_record_seen_writes_all_cards(tmp_path):
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "h.db")
+    cards = [
+        VacancyCard(
+            vacancy_id="1",
+            title="Backend",
+            company="Yandex",
+            url="https://hh.ru/vacancy/1",
+            salary=SalaryInfo(300000, 400000, "RUB", "raw"),
+            raw_date="сегодня",
+        ),
+        VacancyCard(
+            vacancy_id="2",
+            title="DevOps",
+            company="Acme",
+            url="https://hh.ru/vacancy/2",
+            salary=None,
+            raw_date=None,
+        ),
+    ]
+    _record_seen(cards, "python backend", history)
+
+    rows = history.list_vacancies_seen()
+    assert len(rows) == 2
+    by_id = {r["vacancy_id"]: r for r in rows}
+    assert by_id["1"]["salary_from"] == 300000
+    assert by_id["1"]["search_query"] == "python backend"
+    # вакансия без зарплаты тоже записана
+    assert by_id["2"]["salary_from"] is None
+
+
+def test_record_seen_failure_does_not_raise(tmp_path):
+    """Сбой записи НЕ должен валить поиск — рынок лишь удобство."""
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "h.db")
+
+    def _boom(**_kwargs):
+        raise RuntimeError("boom")
+
+    history.upsert_vacancy_seen = _boom  # type: ignore[method-assign]
+    cards = [VacancyCard(vacancy_id="1", title="T", company="C", url="https://hh.ru/vacancy/1")]
+    _record_seen(cards, "python", history)  # не должно упасть

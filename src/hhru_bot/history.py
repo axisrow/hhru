@@ -62,6 +62,30 @@ CREATE TABLE IF NOT EXISTS manual_offers (
     marked_at TEXT NOT NULL,
     UNIQUE (resume_id, vacancy_id)
 );
+
+-- vacancies_seen — собранные карточки вакансий (#66, Этап 1: рынок).
+-- search СОБИРАЕТ VacancyCard с зарплатой/датой (#34), но НЕ писал их в БД —
+-- рынок-анализ (сравнение сфер по медианной ЗП) был не из чего строить. Эта
+-- таблица — побочный эффект сбора: одна строка на (vacancy_id, search_query),
+-- upsert по свежему scrape обновляет поля и двигает last_seen_at, first_seen_at
+-- остаётся первым появлением. Зарплата из SalaryInfo (#34): salary_from/salary_to
+-- оба NULL = «з/п не указана» (для доли рынка без зарплаты). Поля НЕ нормализуют
+-- валюту в одну — разные сферы могут быть в USD/EUR/RUB, медиана считается в
+-- рамках одного search_query (он обычно одной валюты).
+CREATE TABLE IF NOT EXISTS vacancies_seen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vacancy_id TEXT NOT NULL,
+    title TEXT,
+    company TEXT,
+    salary_from INTEGER,
+    salary_to INTEGER,
+    salary_currency TEXT,
+    raw_date TEXT,
+    search_query TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    UNIQUE (vacancy_id, search_query)
+);
 """
 
 
@@ -544,6 +568,133 @@ class History:
             "dead": dead,
             "dead_rate": self._pct(dead, total_sent),
         }
+
+    # --- Рынок вакансий: собранные карточки (#66, Этап 1) ----------------------
+    # Новые методы в конец файла (паттерн with self._connect(), существующие
+    # не трогаем). vacancies_seen — побочный эффект search: запись собранных
+    # карточек, чтобы рынок-анализ (сравнение сфер по медианной ЗП) строился из
+    # реальных данных, а не из эфемерного вывода консоли. Цель Этапа 1 (#65):
+    # МАКСИМИЗАЦИЯ ДОХОДА — подсветить сферы с ВЫШЕ медианной зарплатой.
+
+    def upsert_vacancy_seen(
+        self,
+        vacancy_id: str,
+        search_query: str,
+        title: str | None = None,
+        company: str | None = None,
+        salary_from: int | None = None,
+        salary_to: int | None = None,
+        salary_currency: str | None = None,
+        raw_date: str | None = None,
+    ) -> None:
+        """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
+
+        Ключ UNIQUE(vacancy_id, search_query): одна вакансия по разным поисковым
+        запросам — отдельные строки (рынок хочет видеть, по каким запросам что
+        находится и за сколько). При повторном scrape та же пара обновляет
+        title/company/salary/raw_date (hh.ru мог поменять вилку) и двигает
+        ``last_seen_at``; ``first_seen_at`` хранит ПЕРВОЕ появление и не трогается.
+
+        Зарплата приходит из ``SalaryInfo`` (#34): ``salary_from``/``salary_to``
+        оба NULL = «з/п не указана» (``parse_salary`` вернул None) — такая
+        вакансия тоже пишется, для подсчёта доли рынка без зарплаты. Валюта НЕ
+        нормализуется в одну: медиана считается в рамках одного search_query
+        (внутри сферы валюта обычно однородна).
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            # INSERT ... ON CONFLICT DO UPDATE: атомарный upsert по
+            # UNIQUE(vacancy_id, search_query). first_seen_at — из исходной
+            # строки (excluded.first_seen_at = текущий now, но ON CONFLICT
+            # перезаписывает только перечисленные поля, first_seen_at не трогаем).
+            conn.execute(
+                """
+                INSERT INTO vacancies_seen
+                    (vacancy_id, title, company, salary_from, salary_to,
+                     salary_currency, raw_date, search_query, first_seen_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
+                    title = excluded.title,
+                    company = excluded.company,
+                    salary_from = excluded.salary_from,
+                    salary_to = excluded.salary_to,
+                    salary_currency = excluded.salary_currency,
+                    raw_date = excluded.raw_date,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    vacancy_id,
+                    title,
+                    company,
+                    salary_from,
+                    salary_to,
+                    salary_currency,
+                    raw_date,
+                    search_query,
+                    now,
+                    now,
+                ),
+            )
+
+    def list_vacancies_seen(self) -> list[dict]:
+        """Все собранные вакансии, свежие первыми (по last_seen_at).
+
+        Для диагностики и прямого SELECT из query (#45). Возвращает словари со
+        всеми колонками таблицы.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
+                "raw_date, search_query, first_seen_at, last_seen_at "
+                "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def market_salary_by_query(self) -> list[dict]:
+        """Медиана зарплаты по поисковому запросу — сравнение сфер по доходу.
+
+        Главная цель #66: ранжировать сферы по медианной ``salary_to``
+        (верхняя граница диапазона или фикс. значение — отражает потолок
+        предложения, а не заниженную «от N»). Сортировка по убыванию медианы —
+        выгодные направления наверху (максимизация дохода).
+
+        ``count`` = все собранные вакансии сферы (включая без зарплаты),
+        ``with_salary`` = сколько с указанной зарплатой (поле данных для оценки
+        полноты картины). Вакансии без ``salary_to`` в медиану не идут.
+        Возвращает список словарей: search_query/median_to/count/with_salary.
+        Пусто → [].
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    v.search_query AS search_query,
+                    COALESCE((
+                        SELECT AVG(salary_to)
+                        FROM (
+                            SELECT salary_to, ROW_NUMBER() OVER (ORDER BY salary_to) AS rn,
+                                   COUNT(*) OVER () AS total
+                            FROM vacancies_seen
+                            WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                        )
+                        WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
+                    ), 0) AS median_to,
+                    COUNT(*) AS count,
+                    COUNT(salary_to) AS with_salary
+                FROM vacancies_seen AS v
+                GROUP BY v.search_query
+                ORDER BY median_to DESC, count DESC, v.search_query
+                """
+            ).fetchall()
+        return [
+            {
+                "search_query": row["search_query"],
+                "median_to": int(row["median_to"]) if row["median_to"] else 0,
+                "count": row["count"],
+                "with_salary": row["with_salary"],
+            }
+            for row in rows
+        ]
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:

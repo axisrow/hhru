@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
+from ..history import History
 from ..search import SalaryInfo, VacancyCard
 from ._common import add_common_args, resumes_from_args
+
+logger = logging.getLogger("hhru_bot.cli")
 
 
 def register(subparsers) -> None:
@@ -49,10 +53,35 @@ def _format_card_line(card: VacancyCard) -> str:
     return f"{card.title} — {card.company} ({card.url}){suffix}"
 
 
+def _record_seen(cards: list[VacancyCard], search_query: str, history: History) -> None:
+    """Записывает собранные карточки в vacancies_seen (#66, рынок).
+
+    Побочный эффект сбора — НЕ влияет на поиск/скоринг/вывод. Пишет ВСЕ
+    собранные карточки (до фильтра stop-списками/историей): рынок хочет полную
+    картину сферы, а не только тех, на кого решился откликнуться. Зарплата из
+    SalaryInfo (#34); None → «з/п не указана» (тоже пишется для доли рынка без
+    зарплаты). Сбой записи НЕ должен валить поиск — рынок лишь удобство.
+    """
+    for card in cards:
+        salary = card.salary
+        try:
+            history.upsert_vacancy_seen(
+                vacancy_id=card.vacancy_id,
+                search_query=search_query,
+                title=card.title,
+                company=card.company,
+                salary_from=salary.salary_from if salary else None,
+                salary_to=salary.salary_to if salary else None,
+                salary_currency=salary.currency if salary else None,
+                raw_date=card.raw_date,
+            )
+        except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
+            logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)
+
+
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..history import History
     from ..search import filter_candidates, rank_candidates, search_vacancies
 
     config = load_config_or_exit(args.config)
@@ -66,6 +95,9 @@ def run(args: argparse.Namespace) -> None:
         for resume in resumes:
             print(f"\n=== Поиск вакансий для резюме: {resume.id} ===")
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+            # #66: запись собранных карточек в рынок (побочный эффект сбора) —
+            # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
+            _record_seen(cards, resume.search.text, history)
             candidates, skipped = filter_candidates(cards, resume.search, resume.resume_id, history)
             ranked = rank_candidates(candidates, resume.search, resume)
 
