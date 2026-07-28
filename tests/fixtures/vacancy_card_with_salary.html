@@ -1,0 +1,29 @@
+<!--
+  HTML-фикстура живой карточки вакансии hh.ru (magritte-разметка, 2025).
+  Источник: read-only dump страницы поиска (залогиненная сессия).
+
+  Ключевое отличие от curl-дампа: блок ЗП рендерится в элементе
+  БЕЗ data-qa (или с другим data-qa), поэтому селектор
+  vacancy-serp__vacancy-compensation его не находит.
+  Зарплата присутствует как текст в потомках карточки.
+-->
+<div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
+  <div class="magritte-serp-item__header">
+    <a data-qa="serp-item__title" class="magritte-link" href="/vacancy/12345678">
+      <span>Python Developer</span>
+    </a>
+  </div>
+  <div class="magritte-serp-item__info">
+    <span data-qa="vacancy-serp__vacancy-employer" class="magritte-link">ООО Ромашка</span>
+    <span data-qa="vacancy-serp__vacancy-date">вчера</span>
+  </div>
+  <!-- ЗП в magritte-разметке: нет data-qa, класс компенсации отсутствует -->
+  <div class="magritte-serp-item__salary">
+    <span class="magritte-text">150 000–200 000 руб.</span>
+  </div>
+  <!-- Метаданные -->
+  <div class="magritte-serp-item__meta">
+    <span>Москва</span>
+    <span>Полная занятость</span>
+  </div>
+</div>
