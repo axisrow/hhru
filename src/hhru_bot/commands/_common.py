@@ -14,7 +14,13 @@ from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
 from ..config import AppConfig, ResumeConfig
 from ..history import History
-from ..search import filter_candidates, rank_candidates, search_vacancies
+from ..search import (
+    _LLM_SHORTLIST_DEFAULT,
+    _ZERO_WEIGHTS,
+    filter_candidates,
+    rank_candidates,
+    search_vacancies,
+)
 from ..throttle import LimitReached, Throttle
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -84,6 +90,60 @@ def _build_letter_provider(
     )
 
 
+def _build_scoring_provider(config: AppConfig, resume: ResumeConfig):
+    """Строит ML scoring-провайдер для ранжирования, если AI включён (#81).
+
+    Зеркало ``_build_letter_provider`` (#17): AI включён = есть ТОП-ЛЕВЕЛ секция
+    ai (LLM-провайдер, #16) И resume-секция ai_profile (данные кандидата). Иначе
+    None → ``rank_candidates`` без провайдера = чистая эвристика #15 (обратная
+    совместимость, поведение не меняется — тот же приём, что letter_provider).
+
+    При AI строит: LLMClient → HeuristicScoringProvider (fallback: эвристика #15
+    + tier-буст #74) → LLMScoringProvider. Построение LLMClient тянет openai
+    (lazy, при construction): если openai не установлен ([ai] optional-deps) —
+    логируем и откатываемся на None (эвристику), как с письмами. Отсутствие
+    AI-зависимости не должно валить обычный отклик. Сам провайдер дальше устойчив
+    (любой сбой LLM → fallback внутри, circuit-breaker), см. scoring.py.
+
+    Отдельный LLMClient (не из _build_letter_provider) — намеренно, ради простоты
+    и независимости циклов (см. замечание по дизайну в #81).
+    """
+    ai_config = getattr(config, "ai", None)
+    profile = getattr(resume, "ai_profile", None)
+    if ai_config is None or profile is None:
+        return None
+
+    from ..scoring import HeuristicScoringProvider, LLMScoringProvider
+
+    # weights — ровно как в rank_candidates: из resume.scoring, иначе нулевые
+    # веса (_ZERO_WEIGHTS). HeuristicScoringProvider — fallback LLMScoringProvider
+    # и должен скорить на той же шкале [0,100] (нормализация F2 из #74), что и
+    # эвристический путь rank_candidates без провайдера.
+    scoring = getattr(resume, "scoring", None)
+    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
+    heuristic = HeuristicScoringProvider(resume.search, weights)
+
+    from ..ai.llm_client import LLMClient
+
+    try:
+        llm_client = LLMClient(ai_config)
+    except ImportError as e:
+        logger.warning(
+            "ML-скоринг недоступен для резюме '%s' (openai не установлен?): %s — "
+            "ранжирование идёт по эвристике. Установите: pip install -e '.[ai]'",
+            resume.id,
+            e,
+        )
+        return None
+
+    logger.info("ML-скоринг включён для резюме '%s' (провайдер: %s)", resume.id, ai_config.provider)
+    return LLMScoringProvider(
+        llm_client=llm_client,
+        fallback=heuristic,
+        resume_profile=profile,
+    )
+
+
 def run_apply_for_resume(
     page,
     config: AppConfig,
@@ -118,7 +178,18 @@ def run_apply_for_resume(
 
     # Ранжирование кандидатов по score (#15) — строго между filter_candidates
     # и срезом [:limit], чтобы дневной лимит уходил на лучшие совпадения.
-    ranked = rank_candidates(candidates, resume.search, resume)
+    # #81: при включённом AI ранжирование идёт через LLMScoringProvider (#74),
+    # иначе (провайдер None) — чистая эвристика #15 (поведение не меняется).
+    # llm_shortlist обязателен при провайдере: предранжирование эвристикой →
+    # LLM только по топ-10, иначе десятки синхронных запросов (анти-фрод, F3).
+    scoring_provider = _build_scoring_provider(config, resume)
+    ranked = rank_candidates(
+        candidates,
+        resume.search,
+        resume,
+        scoring_provider=scoring_provider,
+        llm_shortlist=_LLM_SHORTLIST_DEFAULT,
+    )
 
     limit = args.limit if args.limit else len(ranked)
     cover_letter_template = config.cover_letter_for(resume)
