@@ -19,7 +19,7 @@ import pytest
 
 from hhru_bot.config import ConfigError, SearchFilters, load_config
 from hhru_bot.config_sections.scoring import PrefilterConfig, parse_scoring
-from hhru_bot.history import History
+from hhru_bot.history import SKIP_REASONS, History
 from hhru_bot.scoring import (
     PREFILTER_SKIP_REASON,
     EmployerInfo,
@@ -46,17 +46,31 @@ def card(
 
 
 class FakeHistory:
-    """История с заглушками has_applied и employer_interacted для чистых тестов."""
+    """История с заглушками has_applied и employer_interacted для чистых тестов.
+
+    is_skipped/record_skip добавлены под #87 (журнал отсева skipped): filter_candidates
+    теперь зовёт их — no-op здесь, т.к. pre-LLM фильтр #85 тестируется на ЧИСТОЙ
+    логике отсева, без кэша skipped.
+    """
 
     def __init__(self, applied: set | None = None, interacted: bool = False):
         self._applied = applied or set()
         self._interacted = interacted
+        self.recorded_skips: list[tuple[str, str, str]] = []
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         return (resume_id, vacancy_id) in self._applied
 
     def employer_interacted(self, vacancy_id=None, employer=None, resume_id=None) -> bool:
         return self._interacted
+
+    def is_skipped(self, resume_id: str, vacancy_id: str) -> bool:  # noqa: ARG002
+        return False
+
+    def record_skip(self, resume_id: str, vacancy_id: str, reason: str) -> None:  # noqa: ARG002
+        # Журнал записанных skip-причин — для проверки координации #87×#85
+        # (pre-LLM-отсеянная карточка пишется в skipped).
+        self.recorded_skips.append((resume_id, vacancy_id, reason))
 
 
 THRESHOLDS = PrefilterConfig(enabled=True, rating_min=3.5, reviews_min=10)
@@ -278,13 +292,14 @@ def test_filter_candidates_prefilter_skips_low_employer_signal():
         card("1", company="Яндекс"),  # top_tech → проходит
         card("2", company="ООО Ромашка"),  # unknown → отсев
     ]
-    candidates, skipped = filter_candidates(
-        cards, filters, "r1", FakeHistory(interacted=False), THRESHOLDS
-    )
+    history = FakeHistory(interacted=False)
+    candidates, skipped = filter_candidates(cards, filters, "r1", history, THRESHOLDS)
     assert [c.vacancy_id for c in candidates] == ["1"]
     assert len(skipped) == 1
     assert skipped[0][0].vacancy_id == "2"
     assert skipped[0][1] == PREFILTER_SKIP_REASON
+    # #87 координация: pre-LLM-отсев пишется в журнал skipped (кэш консистентен).
+    assert ("r1", "2", SKIP_REASONS.LOW_EMPLOYER_SIGNAL) in history.recorded_skips
 
 
 def test_filter_candidates_prefilter_disabled_keeps_all():

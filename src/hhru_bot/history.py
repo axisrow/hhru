@@ -86,7 +86,68 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     last_seen_at TEXT NOT NULL,
     UNIQUE (vacancy_id, search_query)
 );
+
+-- skipped — журнал отсева вакансий (#87, append-only).
+-- filter_candidates логирует ``[skip] причина``, но НЕ писал её в БД → повторный
+-- search пересматривал те же вакансии заново (трата LLM/времени, когда работают
+-- pre-LLM фильтр #85 или LLM-скоринг #74). Эта таблица — кэш отсева: одна строка
+-- на (resume_id, vacancy_id, reason). Partial-UNIQUE по этой тройке (как
+-- actions/responses): один reason на пару, РАЗНЫЕ reasons — разные строки (вакансия
+-- могла быть отсеяна по стоп-слову в одном запуске и как «уже откликались» в другом).
+-- reason — стабильный enum-ключ (см. SKIP_REASONS), НЕ человекочитаемая строка
+-- filter_candidates: маппинг строка→ключ делает feature-ишью (cli-spec §clear-skipped).
+CREATE TABLE IF NOT EXISTS skipped (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (resume_id, vacancy_id, reason)
+);
 """
+
+
+class _SkipReasons:
+    """Стабильные enum-ключи причин отсева (#87, cli-spec §clear-skipped).
+
+    Хранятся в ``skipped.reason`` и идут в ``--reason`` команды clear-skipped.
+    НЕ человекочитаемые строки filter_candidates (``"уже откликались ранее"`` и
+    т.п.) — маппинг строка→ключ делает ``filter_candidates`` в search.py. Так
+    вывод фильтра остаётся локализованным для людей, а ключи в БД стабильны
+    между запусками (cli-spec: ключи — проектируемый enum, привязанный к
+    ПРИЧИНАМ filter_candidates, не к их строкам напрямую).
+
+    Зарезервированы и будущие причины (#85 pre-LLM ``low_employer_signal`` и
+    #84 ``has_questions``) — EnumExtension точка: новые значения добавляются
+    сюда, миграций не требуется (``reason`` — свободный TEXT, валидация только
+    на уровне команды clear-skipped через choices).
+    """
+
+    STOPWORD_TITLE = "stopword_title"  # exclude_keywords совпал в названии
+    STOPWORD_EMPLOYER = "stopword_employer"  # exclude_employers — стоп-компания
+    ALREADY_APPLIED = "already_applied"  # history.has_applied — уже откликались
+    LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
+    LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
+    HAS_QUESTIONS = "has_questions"  # #84 идея №7 (зарезервирован)
+    DUPLICATE = "duplicate"  # дубликат вакансии в одном сборе
+
+
+#: Enum-объект причин отсева. Используется как ``SKIP_REASONS.STOPWORD_TITLE``
+#: — читаемее строковых литералов в filter_candidates/команде. Значения полей =
+#: стабильные ключи в ``skipped.reason``.
+SKIP_REASONS = _SkipReasons()
+
+#: Все стабильные причины отсева (для ``--reason`` choices в clear-skipped и
+#: валидации). Кортеж, не set — порядок стабилен для ``--help``.
+SKIP_REASON_VALUES = (
+    _SkipReasons.STOPWORD_TITLE,
+    _SkipReasons.STOPWORD_EMPLOYER,
+    _SkipReasons.ALREADY_APPLIED,
+    _SkipReasons.LOW_EMPLOYER_SIGNAL,
+    _SkipReasons.LOW_LLM_SCORE,
+    _SkipReasons.HAS_QUESTIONS,
+    _SkipReasons.DUPLICATE,
+)
 
 
 class History:
@@ -763,6 +824,78 @@ class History:
             }
             for row in rows
         ]
+
+    # --- Журнал отсева skipped (#87) ------------------------------------------
+    # Отдельный слой в конец файла (паттерн with self._connect(), существующие
+    # методы не трогаем). skipped — append-only кэш отсева filter_candidates:
+    # повторный search видит «уже отсеяна» и не дёргает LLM/фильтры повторно
+    # (экономия #74/#85). Ключ UNIQUE(resume_id, vacancy_id, reason): разные
+    # причины — разные строки, как actions/responses. record_skip идемпотентен
+    # по UNIQUE (INSERT OR IGNORE). Координируется с #85 (pre-LLM фильтр пишет
+    # свои причины сюда же) — слой общий, точки записи не конфликтуют.
+
+    def record_skip(self, resume_id: str, vacancy_id: str, reason: str) -> None:
+        """Записывает причину отсева вакансии (идемпотентно по UNIQUE).
+
+        ``reason`` — стабильный enum-ключ из :data:`SKIP_REASONS` (НЕ
+        человекочитаемая строка filter_candidates — маппинг делает вызывающий).
+        Повторная запись той же (resume_id, vacancy_id, reason) — no-op
+        (INSERT OR IGNORE под partial-UNIQUE): кэш не раздувается дублями при
+        повторных search. Разные причины на одну пару — разные строки.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO skipped (resume_id, vacancy_id, reason, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (resume_id, vacancy_id, reason, datetime.now().isoformat()),
+            )
+
+    def is_skipped(self, resume_id: str, vacancy_id: str) -> bool:
+        """True, если вакансия отсеяна по ЛЮБОЙ причине для этого резюме."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM skipped WHERE resume_id = ? AND vacancy_id = ? LIMIT 1",
+                (resume_id, vacancy_id),
+            ).fetchone()
+            return row is not None
+
+    def is_skipped_for(self, resume_id: str, vacancy_id: str, reason: str) -> bool:
+        """True, если вакансия отсеяна по КОНКРЕТНОЙ причине."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM skipped "
+                "WHERE resume_id = ? AND vacancy_id = ? AND reason = ? LIMIT 1",
+                (resume_id, vacancy_id, reason),
+            ).fetchone()
+            return row is not None
+
+    def clear_skipped(self, reason: str | None = None) -> int:
+        """Удаляет записи отсева, возвращает число удалённых строк.
+
+        ``reason=None`` — чистит всё (любые причины). Иначе — только строки с
+        этой причиной. Используется командой clear-skipped (cli-spec §clear-skipped);
+        возвращает число для вывода ``[OK] Удалено N``.
+        """
+        with self._connect() as conn:
+            if reason is None:
+                cur = conn.execute("DELETE FROM skipped")
+            else:
+                cur = conn.execute("DELETE FROM skipped WHERE reason = ?", (reason,))
+            return cur.rowcount
+
+    def count_skipped(self, reason: str | None = None) -> int:
+        """Число записей отсева (для dry-run/подтверждения clear-skipped).
+
+        ``reason=None`` — все причины, иначе — только указанная. Не удаляет.
+        """
+        with self._connect() as conn:
+            if reason is None:
+                row = conn.execute("SELECT COUNT(*) AS cnt FROM skipped").fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM skipped WHERE reason = ?", (reason,)
+                ).fetchone()
+            return row["cnt"] if row else 0
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:

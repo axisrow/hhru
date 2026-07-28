@@ -20,11 +20,27 @@ from hhru_bot.search import (
 class FakeHistory:
     """История, которая знает только заданный набор (resume_id, vacancy_id)."""
 
-    def __init__(self, applied: set[tuple[str, str]] | None = None):
+    def __init__(
+        self,
+        applied: set[tuple[str, str]] | None = None,
+        skipped: set[tuple[str, str]] | None = None,
+    ):
         self._applied = applied or set()
+        self._skipped = skipped or set()
+        # Журнал записанных skip-причин для проверки интеграции (#87).
+        self.recorded_skips: list[tuple[str, str, str]] = []
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         return (resume_id, vacancy_id) in self._applied
+
+    def is_skipped(self, resume_id: str, vacancy_id: str) -> bool:
+        return (resume_id, vacancy_id) in self._skipped
+
+    def is_skipped_for(self, resume_id: str, vacancy_id: str, reason: str) -> bool:  # noqa: ARG002
+        return (resume_id, vacancy_id) in self._skipped
+
+    def record_skip(self, resume_id: str, vacancy_id: str, reason: str) -> None:
+        self.recorded_skips.append((resume_id, vacancy_id, reason))
 
 
 def card(
@@ -125,6 +141,61 @@ def test_filter_candidates_excludes_keywords():
     assert [c.vacancy_id for c in candidates] == ["1"]
     assert skipped[0][0].vacancy_id == "2"
     assert "стоп-слово" in skipped[0][1]
+
+
+# --- filter_candidates: запись skip-причин в журнал skipped (#87) -----------
+
+
+def test_filter_candidates_records_skip_reason_for_already_applied():
+    """#87: отсеянная «уже откликались» вакансия пишется в журнал skipped."""
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x")
+    history = FakeHistory(applied={("r1", "1")})
+    filter_candidates([card("1"), card("2")], filters, "r1", history)
+    assert ("r1", "1", SKIP_REASONS.ALREADY_APPLIED) in history.recorded_skips
+
+
+def test_filter_candidates_records_skip_reason_for_excluded_employer():
+    """#87: стоп-компания → reason STOPWORD_EMPLOYER в журнале."""
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", exclude_employers=["BadCorp"])
+    history = FakeHistory()
+    filter_candidates([card("1", title="Dev", company="BadCorp Inc")], filters, "r1", history)
+    assert ("r1", "1", SKIP_REASONS.STOPWORD_EMPLOYER) in history.recorded_skips
+
+
+def test_filter_candidates_records_skip_reason_for_excluded_keyword():
+    """#87: стоп-слово в названии → reason STOPWORD_TITLE в журнале."""
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", exclude_keywords=["1С"])
+    history = FakeHistory()
+    filter_candidates([card("1", title="Программист 1С")], filters, "r1", history)
+    assert ("r1", "1", SKIP_REASONS.STOPWORD_TITLE) in history.recorded_skips
+
+
+def test_filter_candidates_does_not_record_clean_cards():
+    """#87: чистые кандидаты НЕ пишутся в skipped (только отсев)."""
+    history = FakeHistory()
+    filter_candidates([card("1")], SearchFilters(text="x"), "r1", history)
+    assert history.recorded_skips == []
+
+
+def test_filter_candidates_skips_cached_skipped_vacancy():
+    """#87: кэш is_skipped — вакансия из журнала отсева не проходит дальше.
+
+    Ради экономии LLM/времени (#74/#85): повторный search не пересматривает
+    уже отсеянные вакансии. is_skipped срабатывает раньше has_applied/exclude
+    и не перезаписывает журнал (запись уже есть — дублировать незачем).
+    """
+    history = FakeHistory(skipped={("r1", "9")})
+    candidates, skipped = filter_candidates([card("9")], SearchFilters(text="x"), "r1", history)
+    assert candidates == []
+    assert len(skipped) == 1
+    assert skipped[0][0].vacancy_id == "9"
+    assert history.recorded_skips == []  # кэш-срабатывание не пишет дубль
 
 
 # --- VacancyCard: поля salary/raw_date (issue #14) --------------------------
