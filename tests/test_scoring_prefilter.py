@@ -214,6 +214,19 @@ def test_employer_interacted_both_vacancy_and_employer(tmp_path):
     assert h.employer_interacted(vacancy_id="v1", employer="Acme") is True
 
 
+def test_employer_interacted_vacancy_id_none_employer_match(tmp_path):
+    """vacancy_id=None + employer — матч по имени компании (account-scope).
+
+    Сценарий pre-фильтра: новой карточки ещё нет в responses, но работодатель
+    отвечал по ДРУГОЙ своей вакансии. vacancy_id=None (новая) → поиск только по
+    employer; SQLite `vacancy_id = ?` с None не добавляется в clauses.
+    """
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v_old", "Acme", "invitation", "/chat/1")
+    assert h.employer_interacted(vacancy_id=None, employer="Acme") is True
+    assert h.employer_interacted(vacancy_id=None, employer="Nobody") is False
+
+
 # --- parse_scoring: prefilter ----------------------------------------------
 
 
