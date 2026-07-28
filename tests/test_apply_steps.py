@@ -16,6 +16,7 @@ from playwright.sync_api import Error
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
+from hhru_bot.browser import GOTO_TIMEOUT_MS
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
 
@@ -85,7 +86,11 @@ class _FakeLocator:
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
-    def click(self) -> None:
+    def click(self, **kwargs) -> None:
+        # Фиксируем kwargs клика — регрессия #80: клик apply-кнопки, триггерящий
+        # навигацию, должен идти с no_wait_after=True (ожидание навигации владеет
+        # внешний 90с expect_navigation, а не внутренний 30с action-timeout клика).
+        self._state.click_kwargs.append(kwargs)
         if self._href_filter is not None:
             # Strict href-локатор: ровно одна живая опция с этим href, иначе Error
             # (как реальный Playwright strict mode при != 1 совпадении).
@@ -137,6 +142,7 @@ class _SelectorState:
         self.is_collection = False
         self.match_count = 1
         self.clicks = 0
+        self.click_kwargs: list[dict] = []
         self.fills: list[str] = []
         # Для коллекции резюме: href каждой опции (current_href ставится в nth()).
         self.option_hrefs: list[str] = []
@@ -160,6 +166,7 @@ class FakeStepsPage:
     def __init__(self) -> None:
         self.states: dict[str, _SelectorState] = {}
         self.navigation_entered = 0
+        self.last_navigation_timeout: int | None = None
 
     def _state(self, selector: str) -> _SelectorState:
         return self.states.setdefault(selector, _SelectorState())
@@ -188,8 +195,12 @@ class FakeStepsPage:
         return _FakeLocator(selector, self._state(selector))
 
     @contextlib.contextmanager
-    def expect_navigation(self, **_kwargs):
+    def expect_navigation(self, **kwargs):
         self.navigation_entered += 1
+        # Фиксируем timeout навигации — регрессия #80: двухшаговая навигация на
+        # форму отклика должна использовать потолок GOTO_TIMEOUT_MS (медленный
+        # hh.ru), а не дефолт/короткий APPLY_TIMEOUT_MS.
+        self.last_navigation_timeout = kwargs.get("timeout")
         yield
 
 
@@ -232,6 +243,37 @@ def test_navigate_does_not_raise_when_form_never_renders():
     steps.navigate_to_response_form(page)  # не должен бросать
 
     assert page.navigation_entered == 1
+
+
+def test_navigate_uses_goto_timeout_for_form_navigation():
+    # #80 регрессия: двухшаговая навигация на форму отклика (expect_navigation
+    # после клика по apply-кнопке) — это сетевая навигация hh.ru, которая под
+    # DDoS-Guard грузится 33с+. Де­фолт/короткий APPLY_TIMEOUT_MS (10с) тут
+    # падает; потолок должен быть GOTO_TIMEOUT_MS, как и у всех goto в проекте.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page)
+
+    assert page.last_navigation_timeout == GOTO_TIMEOUT_MS
+
+
+def test_navigate_clicks_apply_button_with_no_wait_after():
+    # #80 регрессия (cycle-2): Locator.click, триггерящий навигацию, имеет внутренний
+    # шаг «wait for initiated navigations», ограниченный ACTION timeout
+    # (set_default_timeout, дефолт 30с), а НЕ set_default_navigation_timeout. На
+    # навигации 33с+ клик падал бы через 30с раньше 90с expect_navigation. Фикс:
+    # no_wait_after=True — ожидание навигации полностью владеет внешний 90с waiter.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page)
+
+    apply_state = page._state(vacancy_page.VACANCY_APPLY_BUTTON)
+    assert apply_state.clicks == 1
+    assert apply_state.click_kwargs == [{"no_wait_after": True}]
 
 
 # --- fill_response_form: только обязательный submit ---
