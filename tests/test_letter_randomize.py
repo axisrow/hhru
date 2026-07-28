@@ -83,6 +83,20 @@ def test_empty_alternative_is_allowed():
         assert _format_template("X{a||c}Y", _card()) == "XY"
 
 
+def test_braces_inside_alternative_do_not_match():
+    # Класс [^{}] запрещает {/} внутри группы альтернатив. Поэтому {a|{x}}
+    # (вложенность) внешней группой НЕ матчится — random.choice не вызывается и
+    # текст возвращается _resolve_alternatives нетронутым. Этот инвариант
+    # критичен: он гарантирует, что выбранная альтернатива никогда не содержит
+    # {x}, а значит последующий .format(...) не получит KeyError от случайной
+    # скобки внутри варианта (внутри валидной {a|b} группы скобок быть не может).
+    from hhru_bot.apply.letter import _resolve_alternatives
+
+    with patch("hhru_bot.apply.letter.random.choice") as mock_choice:
+        assert _resolve_alternatives("pre {a|{x}} post") == "pre {a|{x}} post"
+    mock_choice.assert_not_called()
+
+
 def test_single_option_inside_braces_not_matched():
     # {vacancy_title} — единственный «вариант» без |, не матчится как альтернатива,
     # random.choice не вызывается.
