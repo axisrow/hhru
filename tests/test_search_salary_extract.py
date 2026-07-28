@@ -29,7 +29,8 @@ def test_extract_salary_from_card_with_salary():
     text = extract_salary_text_from_html(html)
     assert text is not None
     assert "150" in text
-    assert "руб" in text
+    # Валюта рублей в magritte-разметке -- символ ₽ или слово «руб».
+    assert "₽" in text or "руб" in text
 
 
 def test_extract_salary_from_card_no_salary_returns_none():
@@ -123,6 +124,33 @@ def test_extract_salary_strips_html_tags():
     result = parse_salary(text)
     assert result is not None
     assert result.raw == text
+
+
+def test_extract_salary_split_across_spans():
+    """Регрессия #78: magritte разбивает ЗП по spans.
+
+    Живая разметка hh.ru: «<span>150</span><span> </span><span>000</span>
+    <span>₽</span>» — теги внутри числа разрывают матч «digits+валюта подряд»,
+    и регексп по СЫРОЙ HTML даёт None. Фикс: regex применяется к тексту без
+    тегов. До фикса этот тест падал (salary=NULL у всех вакансий).
+    """
+    html = (
+        '<div class="magritte-serp-item__salary">'
+        '<span class="magritte-text__tg3gq5">'
+        "<span>150</span><span> </span><span>000</span>"
+        "<span>–</span>"
+        "<span>200</span><span> </span><span>000</span>"
+        "<span> </span><span>₽</span>"
+        "</span></div>"
+    )
+    text = extract_salary_text_from_html(html)
+    assert text is not None
+    assert "<span" not in text
+    result = parse_salary(text)
+    assert result is not None
+    assert result.salary_from == 150000
+    assert result.salary_to == 200000
+    assert result.currency == "RUB"
 
 
 def test_extract_salary_boundary_min():
