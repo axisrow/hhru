@@ -12,6 +12,12 @@ VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
 # пуст. Селектор оставлен для обратной совместимости (старые кэши/curl-дампы).
 VACANCY_CARD_COMPENSATION = "[data-qa='vacancy-serp__vacancy-compensation']"
 VACANCY_CARD_DATE = "[data-qa='vacancy-serp__vacancy-date']"
+# Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в
+# DOM-дампе (read-only, 2026-07-28): rating/trusted рендерятся в карточке
+# списка для работодателей с отзывами. Блоки опциональны.
+COMPANY_RATING_VALUE = "[data-qa='company-review-rating-value']"
+COMPANY_RATING_REVIEWS_COUNT = "[data-qa='company-review-rating-reviews-count']"
+TRUSTED_EMPLOYER_LINK = "[data-qa='trusted-employer-link']"
 # Кнопка отклика прямо в карточке списка (ведёт на
 # /applicant/vacancy_response?vacancyId=...&employerId=...)
 VACANCY_CARD_RESPONSE_BUTTON = "[data-qa='vacancy-serp__vacancy_response']"

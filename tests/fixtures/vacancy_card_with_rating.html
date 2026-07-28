@@ -1,0 +1,44 @@
+<!--
+  HTML-фикстура живой карточки вакансии hh.ru с блоком рейтинга работодателя
+  (magritte-разметка, 2026). Источник: read-only dump страницы поиска.
+
+  Подтверждённые data-qa блоков работодателя (issue #74, Этап 1):
+    - company-review-rating-value        — числовое значение рейтинга (4,5)
+    - company-review-rating-reviews-count— «245 отзывов»
+    - trusted-employer-link              — бейдж «надёжный работодатель»
+    - vacancy-serp__vacancy-employer     — название компании
+
+  Используется тестами парсинга employer_info (rating/reviews_count/trusted).
+  Десятичный разделитель рейтинга — запятая (русская локаль). reviews_count —
+  с разделителем разрядов (неразрывный пробел), чтобы проверить нормализацию.
+-->
+<div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
+  <div class="magritte-serp-item__header">
+    <a data-qa="serp-item__title" class="magritte-link" href="/vacancy/99887766">
+      <span>Senior Python Developer</span>
+    </a>
+  </div>
+  <div class="magritte-serp-item__info">
+    <span data-qa="vacancy-serp__vacancy-employer" class="magritte-link">ООО Ромашка</span>
+    <span data-qa="vacancy-serp__vacancy-date">2 дня назад</span>
+  </div>
+  <!-- ЗП -->
+  <div class="magritte-serp-item__salary">
+    <span class="magritte-text">от 300 000 руб.</span>
+  </div>
+  <!-- Блок рейтинга работодателя -->
+  <div class="magritte-serp-item__employer-rating">
+    <a data-qa="trusted-employer-link" class="magritte-link" href="/employer/12345">
+      <span>Надёжный работодатель</span>
+    </a>
+    <div data-qa="company-review-rating" class="magritte-rating">
+      <span data-qa="company-review-rating-value">4,5</span>
+      <span data-qa="company-review-rating-reviews-count">245&nbsp;отзывов</span>
+    </div>
+  </div>
+  <!-- Метаданные -->
+  <div class="magritte-serp-item__meta">
+    <span>Москва</span>
+    <span>Полная занятость</span>
+  </div>
+</div>

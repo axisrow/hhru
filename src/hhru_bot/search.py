@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 from playwright.sync_api import Page
@@ -11,6 +12,12 @@ from . import selectors as sel
 from .browser import HH_BASE_URL
 from .config import ResumeConfig, SearchFilters
 from .config_sections.scoring import ScoringConfig, ScoringWeights
+
+if TYPE_CHECKING:
+    # EmployerInfo живёт в scoring.py; импортируем только для type-checking,
+    # чтобы не создавать цикл search <-> scoring (scoring лениво тянет
+    # search._score_card). На runtime нужен лишь конструктор (см. _parse_*).
+    from .scoring import EmployerInfo
 
 logger = logging.getLogger("hhru_bot.search")
 
@@ -147,6 +154,12 @@ class VacancyCard:
     # (форматы hh.ru зависят от локали и не нужны для вывода поиска).
     salary: SalaryInfo | None = None
     raw_date: str | None = None
+    # Инфо о работодателе из карточки поиска (issue #74, Этап 1): рейтинг,
+    # число отзывов, бейдж «надёжный работодатель». hh.ru показывает эти блоки
+    # не для всех карточек → None/False по умолчанию. Источник факторов для
+    # classify_employer и LLM-скоринга (#74 Этапы 2-3). Ленивый импорт типа —
+    # чтобы не тащить scoring.py (а с ним ai) на уровень search.py импорта.
+    employer_info: EmployerInfo | None = None
 
 
 def build_search_url(filters: SearchFilters, page_num: int = 0) -> str:
@@ -226,6 +239,13 @@ def search_vacancies(
             salary = parse_salary(salary_text)
             raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
 
+            # Инфо о работодателе (issue #74, Этап 1): рейтинг/отзывы/trusted.
+            # Блоки опциональны (не у всех работодателей). Парсим мягко — ни одно
+            # поле не должно ронять сбор карточек. EmployerInfo импортируется
+            # локально, чтобы не создавать цикл search <-> scoring на уровне
+            # модуля (и не тянуть scoring/ai при import search).
+            employer_info = _parse_employer_info(card)
+
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
                 continue
@@ -242,6 +262,7 @@ def search_vacancies(
                     ),
                     salary=salary,
                     raw_date=raw_date,
+                    employer_info=employer_info,
                 )
             )
 
@@ -308,6 +329,60 @@ def _optional_text(card, selector: str) -> str | None:
         return None
     text = locator.inner_text().strip()
     return text or None
+
+
+# --- парсинг инфо о работодателе из карточки (issue #74, Этап 1) -------------
+#
+# Селекторы подтверждены в DOM-дампе (read-only, 2026-07-28): rating-value,
+# reviews-count, trusted-employer-link. Все три блока опциональны. Парсим
+# мягко: число с разделителями разрядов (неразрывные пробелы), запятую как
+# десятичный разделитель рейтинга. Любой сбой → None/False, не роняем сбор.
+
+
+def _parse_employer_info(card) -> EmployerInfo | None:
+    """Собирает EmployerInfo (рейтинг/отзывы/trusted) из карточки поиска (#74).
+
+    Локальный импорт EmployerInfo — ради разрыва цикла search <-> scoring.
+    Возвращает None, если ни одного блока работодателя в карточке нет (нет
+    смысла хранить пустой info); иначе EmployerInfo с теми полями, что удалось
+    распарсить (остальные — None/False).
+    """
+    from .scoring import EmployerInfo
+
+    rating_text = _optional_text(card, sel.COMPANY_RATING_VALUE)
+    reviews_text = _optional_text(card, sel.COMPANY_RATING_REVIEWS_COUNT)
+
+    rating = _parse_rating(rating_text)
+    reviews = _parse_reviews_count(reviews_text)
+    trusted = bool(card.locator(sel.TRUSTED_EMPLOYER_LINK).first.count())
+
+    if rating is None and reviews is None and not trusted:
+        return None
+    return EmployerInfo(rating=rating, reviews_count=reviews, trusted=trusted)
+
+
+def _parse_rating(text: str | None) -> float | None:
+    """Парсит «4,5» → 4.5; None/не-число → None. Запятая как десятичный разделитель."""
+    if not text:
+        return None
+    cleaned = text.strip().replace(",", ".").split()[0]  # берём первый токен
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_reviews_count(text: str | None) -> int | None:
+    """Парсит «245 отзывов» → 245 (с разделителями разрядов); None/нет числа → None."""
+    if not text:
+        return None
+    numbers = re.findall(_NUMBER, text)
+    if not numbers:
+        return None
+    try:
+        return _strip_digits(numbers[0])
+    except ValueError:
+        return None
 
 
 def _extract_vacancy_id(href: str) -> str | None:
@@ -435,25 +510,40 @@ def rank_candidates(
     candidates: list[VacancyCard],
     filters: SearchFilters,
     resume: ResumeConfig,
+    scoring_provider=None,
 ) -> list[tuple[VacancyCard, float, dict[str, float]]]:
-    """Ранжирует кандидатов по убыванию score (issue #15).
+    """Ранжирует кандидатов по убыванию score (issue #15, расширено #74).
 
     Чистая функция без браузера — ради тестируемости (как filter_candidates).
     Возвращает список (карточка, score, разбивка факторов), отсортированный
     по убыванию score; при равенстве — стабильно по ВХОДНОМУ порядку
     (сортировка только по score, стабильность Python-сорта сохраняет порядок).
 
-    Обратная совместимость: без scoring-конфига используются истинно нулевые
-    веса (все факторы = 0), поэтому ВСЕ score = 0.0 и входной порядок
-    сохраняется полностью — ranked[:limit] выбирает те же вакансии, что и
-    старый candidates[:limit], дневной лимит уходит на тот же набор.
+    scoring_provider (issue #74): опциональный ScoringProvider (напр.
+    LLMScoringProvider). Если передан — score/breakdown берутся из
+    provider.score(card) (fallback внутри провайдера); иначе — эвристика
+    #15 (``_score_card``). Обратная совместимость: provider=None = текущее
+    поведение, nothing changes — тот же приём, что ``letter_provider`` в
+    ApplyContext (#17). ai_profile (если есть) передаётся провайдеру как
+    профиль кандидата.
+
+    Обратная совместимость: без scoring-конфига (и без provider) используются
+    истинно нулевые веса (все факторы = 0), поэтому ВСЕ score = 0.0 и входной
+    порядок сохраняется полностью — ranked[:limit] выбирает те же вакансии,
+    что и старый candidates[:limit], дневной лимит уходит на тот же набор.
     """
     scoring: ScoringConfig | None = getattr(resume, "scoring", None)
     weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
+    profile = getattr(resume, "ai_profile", None)
 
     scored: list[tuple[VacancyCard, float, dict[str, float]]] = []
     for card in candidates:
-        score, breakdown = _score_card(card, filters, weights)
+        if scoring_provider is not None:
+            outcome = scoring_provider.score(card, profile)
+            score = outcome.score_0_100
+            breakdown = outcome.breakdown
+        else:
+            score, breakdown = _score_card(card, filters, weights)
         scored.append((card, score, breakdown))
 
     # Стабильно: сортировка только по score; равные score сохраняют входной
