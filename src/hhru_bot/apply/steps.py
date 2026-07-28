@@ -66,7 +66,11 @@ def navigate_to_response_form(page: Page) -> None:
     # DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал, context-wide
     # set_default_navigation_timeout перебивается явным timeout.
     with page.expect_navigation(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS):
-        apply_button.click()
+        # no_wait_after=True: клик НЕ ждёт навигацию своим внутренним action-timeout
+        # шагом (дефолт set_default_timeout 30с,有别 от navigation-timeout) — иначе на
+        # навигации 33с+ он упал бы через 30с раньше 90с expect_navigation. Ожидание
+        # навигации полностью владеет внешний 90с waiter expect_navigation.
+        apply_button.click(no_wait_after=True)
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(

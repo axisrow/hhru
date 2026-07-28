@@ -36,7 +36,7 @@ class _FakeLocator:
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self) -> None:
+    def click(self, **_kwargs) -> None:
         self.click_calls += 1
 
     def fill(self, value: str) -> None:
@@ -56,7 +56,7 @@ class _ClickTrackingLocator(_FakeLocator):
         super().__init__(present=present)
         self._submit_clicks = submit_clicks
 
-    def click(self) -> None:
+    def click(self, **_kwargs) -> None:
         self._submit_clicks.append(1)
         super().click()
 

@@ -86,7 +86,11 @@ class _FakeLocator:
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
-    def click(self) -> None:
+    def click(self, **kwargs) -> None:
+        # Фиксируем kwargs клика — регрессия #80: клик apply-кнопки, триггерящий
+        # навигацию, должен идти с no_wait_after=True (ожидание навигации владеет
+        # внешний 90с expect_navigation, а не внутренний 30с action-timeout клика).
+        self._state.click_kwargs.append(kwargs)
         if self._href_filter is not None:
             # Strict href-локатор: ровно одна живая опция с этим href, иначе Error
             # (как реальный Playwright strict mode при != 1 совпадении).
@@ -138,6 +142,7 @@ class _SelectorState:
         self.is_collection = False
         self.match_count = 1
         self.clicks = 0
+        self.click_kwargs: list[dict] = []
         self.fills: list[str] = []
         # Для коллекции резюме: href каждой опции (current_href ставится в nth()).
         self.option_hrefs: list[str] = []
@@ -252,6 +257,23 @@ def test_navigate_uses_goto_timeout_for_form_navigation():
     steps.navigate_to_response_form(page)
 
     assert page.last_navigation_timeout == GOTO_TIMEOUT_MS
+
+
+def test_navigate_clicks_apply_button_with_no_wait_after():
+    # #80 регрессия (cycle-2): Locator.click, триггерящий навигацию, имеет внутренний
+    # шаг «wait for initiated navigations», ограниченный ACTION timeout
+    # (set_default_timeout, дефолт 30с), а НЕ set_default_navigation_timeout. На
+    # навигации 33с+ клик падал бы через 30с раньше 90с expect_navigation. Фикс:
+    # no_wait_after=True — ожидание навигации полностью владеет внешний 90с waiter.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page)
+
+    apply_state = page._state(vacancy_page.VACANCY_APPLY_BUTTON)
+    assert apply_state.clicks == 1
+    assert apply_state.click_kwargs == [{"no_wait_after": True}]
 
 
 # --- fill_response_form: только обязательный submit ---

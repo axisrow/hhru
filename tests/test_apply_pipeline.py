@@ -29,7 +29,7 @@ class _FakeLocator:
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self) -> None:
+    def click(self, **_kwargs) -> None:
         return None
 
     def fill(self, _value: str) -> None:
