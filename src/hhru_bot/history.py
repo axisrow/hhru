@@ -4,6 +4,13 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # SalaryInfo (доменный тип #34) возвращается estimate_salary (#93). Ленивый
+    # импорт внутри метода разрывает цикл history <-> search (search тянет history
+    # на верхнем уровне через SKIP_REASONS), здесь — только для type-checking.
+    from .search import SalaryInfo
 
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
 # Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
@@ -72,6 +79,13 @@ CREATE TABLE IF NOT EXISTS manual_offers (
 -- оба NULL = «з/п не указана» (для доли рынка без зарплаты). Поля НЕ нормализуют
 -- валюту в одну — разные сферы могут быть в USD/EUR/RUB, медиана считается в
 -- рамках одного search_query (он обычно одной валюты).
+-- employer_tier (#93) — уровень известности работодателя (KnownCompanyTier из
+-- scoring.classify_employer: top_tech/big_corp/mid/unknown). Записывается при
+-- сборе в commands/search._record_seen. Нужен для estimate_salary — эвристической
+-- оценки ЗП вакансий без указанной: медиана salary_to по (search_query, tier).
+-- Коэффициенты tier'ов считаются ИЗ ДАННЫХ (медианы по tier внутри сферы), а не
+-- априорными константами — проверяет гипотезу «известные платят меньше».
+
 CREATE TABLE IF NOT EXISTS vacancies_seen (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vacancy_id TEXT NOT NULL,
@@ -84,6 +98,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     search_query TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
+    employer_tier TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -179,6 +194,10 @@ class History:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
+            # #93: employer_tier в vacancies_seen (для estimate_salary). CREATE TABLE
+            # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
+            # поэтому ALTER'ом идемпотентно доводим старые базы.
+            _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         with self._connect() as conn:
@@ -647,6 +666,7 @@ class History:
         salary_to: int | None = None,
         salary_currency: str | None = None,
         raw_date: str | None = None,
+        employer_tier: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -661,6 +681,12 @@ class History:
         вакансия тоже пишется, для подсчёта доли рынка без зарплаты. Валюта НЕ
         нормализуется в одну: медиана считается в рамках одного search_query
         (внутри сферы валюта обычно однородна).
+
+        ``employer_tier`` (#93) — уровень известности работодателя
+        (``classify_employer``: top_tech/big_corp/mid/unknown). Записывается при
+        сборе для группировки медианы в ``estimate_salary``. При обновлении
+        существующей строки tier тоже освежается (компания могла получить бейдж
+        trusted / накопить отзывы между scrape'ами).
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -672,8 +698,9 @@ class History:
                 """
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
-                     salary_currency, raw_date, search_query, first_seen_at, last_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     salary_currency, raw_date, search_query, first_seen_at,
+                     last_seen_at, employer_tier)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -681,6 +708,7 @@ class History:
                     salary_to = excluded.salary_to,
                     salary_currency = excluded.salary_currency,
                     raw_date = excluded.raw_date,
+                    employer_tier = excluded.employer_tier,
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -694,6 +722,7 @@ class History:
                     search_query,
                     now,
                     now,
+                    employer_tier,
                 ),
             )
 
@@ -706,7 +735,7 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "raw_date, search_query, first_seen_at, last_seen_at "
+                "raw_date, search_query, first_seen_at, last_seen_at, employer_tier "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]
@@ -779,7 +808,7 @@ class History:
             ).fetchone()
             return row is not None
 
-    def market_salary_by_query(self) -> list[dict]:
+    def market_salary_by_query(self, include_estimates: bool = False) -> list[dict]:
         """Медиана зарплаты по поисковому запросу — сравнение сфер по доходу.
 
         Главная цель #66: ранжировать сферы по медианной ``salary_to``
@@ -792,6 +821,15 @@ class History:
         полноты картины). Вакансии без ``salary_to`` в медиану не идут.
         Возвращает список словарей: search_query/median_to/count/with_salary.
         Пусто → [].
+
+        ``include_estimates`` (#93): если True — вакансии без указанной ЗП
+        получают эвристическую оценку ``estimate_salary(search_query, tier)``
+        (медиана по (query, tier) из данных) и включаются в медиану сферы. Так
+        сферы, где большинство без ЗП, получают осмысленную медиану, а не 0/None.
+        Сфера, в медиану которой вошли оценки, помечается ``estimated=True`` —
+        ``market_summary`` рисует перед её медианой ``~`` (derived-view, честно
+        отличать реальную медиану от оценки). ``with_salary`` остаётся числом
+        РЕАЛЬНЫХ ЗП (coverage доверия), независимо от оценок.
         """
         with self._connect() as conn:
             rows = conn.execute(
@@ -815,15 +853,208 @@ class History:
                 ORDER BY median_to DESC, count DESC, v.search_query
                 """
             ).fetchall()
-        return [
-            {
-                "search_query": row["search_query"],
-                "median_to": int(row["median_to"]) if row["median_to"] else 0,
-                "count": row["count"],
-                "with_salary": row["with_salary"],
-            }
-            for row in rows
+            out: list[dict] = []
+            for row in rows:
+                entry = {
+                    "search_query": row["search_query"],
+                    "median_to": int(row["median_to"]) if row["median_to"] else 0,
+                    "count": row["count"],
+                    "with_salary": row["with_salary"],
+                    "estimated": False,
+                }
+                if include_estimates:
+                    self._augment_with_estimates(conn, entry)
+                out.append(entry)
+            # #93 cleanup: при include_estimates _augment_with_estimates меняет
+            # median_to в Python — SQL-сортировка (по реальной медиане) уже не
+            # соответствует показанным оценочным значениям. Пересортируем по
+            # итоговой median_to убыванием (выгодные-наверху), стабильный тай-брейк
+            # по search_query — как в SQL (ORDER BY ... , v.search_query).
+            if include_estimates:
+                out.sort(key=lambda e: (-e["median_to"], e["search_query"]))
+            return out
+
+    def _augment_with_estimates(self, conn, entry: dict) -> None:
+        """#93: если в сфере есть вакансии БЕЗ ЗП — дополняет медиану их оценками.
+
+        Берёт все вакансии сферы без salary_to, для каждой считает
+        ``estimate_salary``-медиану по её tier (через ``_median_salary_to`` на
+        том же соединении — без рекурсивного open), и если оценки есть —
+        пересчитывает медиану сферы по РЕАЛЬНЫМ ЗП + оценкам, помечая
+        ``estimated=True``. Чистая медиана реальных ЗП (без вакансий без ЗП)
+        остаётся ``with_salary``-покрытием; оценка НЕ подменяет реальную, а
+        достраивает картину для сфер, где реальных ЗП мало/нет.
+        """
+        query = entry["search_query"]
+        # Реальные salary_to сферы (уже есть) + оценки для вакансий без ЗП.
+        real = [
+            r["salary_to"]
+            for r in conn.execute(
+                "SELECT salary_to FROM vacancies_seen "
+                "WHERE search_query = ? AND salary_to IS NOT NULL",
+                [query],
+            ).fetchall()
         ]
+        # Вакансии без ЗП — их tier'ы (для оценки).
+        no_salary_tiers = [
+            r["employer_tier"]
+            for r in conn.execute(
+                "SELECT employer_tier FROM vacancies_seen "
+                "WHERE search_query = ? AND salary_to IS NULL",
+                [query],
+            ).fetchall()
+        ]
+        if not no_salary_tiers:
+            return  # все вакансии с ЗП — оценки не нужны, медиана реальная.
+
+        # Оценка одна на tier внутри сферы (медиана по (query, tier)).
+        # ВНИМАНИЕ: здесь, в агрегате сферы, НЕ применяется порог _ESTIMATE_TIER_MIN_N
+        # (в отличие от точечной estimate_salary): на уровне сферы бёрём любую
+        # доступную tier-информацию (медиана по tier, иначе вся сфера), т.к. оценки
+        # взвешиваются количеством и сходятся к реальной медиане. estimate_salary —
+        # точечная оценка одной вакансии, там порог n>=5 отсекает шумный tier.
+        tier_estimate: dict[str, int] = {}
+        for tier in set(t for t in no_salary_tiers if t):
+            med, _ = self._median_salary_to(
+                conn, "search_query = ? AND employer_tier = ?", [query, tier]
+            )
+            if med is None:
+                # fallback на всю сферу.
+                med, _ = self._median_salary_to(conn, "search_query = ?", [query])
+            if med is not None:
+                tier_estimate[tier] = med
+
+        if not tier_estimate and not real:
+            return  # оценок и реальных ЗП нет — оставляем как есть (0).
+
+        combined = list(real)
+        used_estimate = False
+        for tier in no_salary_tiers:
+            est = tier_estimate.get(tier or "")  # tier может быть NULL
+            if est is not None:
+                combined.append(est)
+                used_estimate = True
+            elif tier_estimate:
+                # tier NULL/незнакомый, но оценки по др. tier есть → средняя оценка сферы.
+                combined.append(sum(tier_estimate.values()) // len(tier_estimate))
+                used_estimate = True
+
+        if not combined:
+            return
+        combined.sort()
+        n = len(combined)
+        # Медиана тем же приёмом, что SQL-путь (AVG двух центральных, потом int):
+        # _median_salary_to делает int(AVG(...)), здесь — int((a+b)/2) с round,
+        # чтобы обе ветки считали медиану одинаково (без расхождения на 0.5).
+        if n % 2 == 1:
+            median = combined[n // 2]
+        else:
+            median = round((combined[n // 2 - 1] + combined[n // 2]) / 2)
+        entry["median_to"] = int(median)
+        if used_estimate:
+            entry["estimated"] = True
+
+    # --- Эвристическая оценка ЗП для вакансий без указанной (#93, часть B) -----
+    #
+    # ~50% вакансий на hh.ru РЕАЛЬНО без ЗП. Для рынок-анализа по доходу (#66)
+    # нужны оценки. Гипотеза пользователя: «известные компании платят меньше,
+    # потому что известные» (бренд-наценка наоборот). Это ГИПОТЕЗА — поэтому
+    # коэффициенты tier'ов считаются ИЗ ДАННЫХ (медиана salary_to по
+    # (search_query, tier)), а НЕ априорными константами «top_tech × 1.5».
+    # Если данные покажут «top_tech < unknown» — эвристика это отразит; если по
+    # tier мало данных (n<5) — fallback на медиану по всей сфере.
+
+    # Минимум вакансий с ЗП по (query, tier), чтобы доверять tier-оценке, а не
+    # падать на сферу. Мало данных → медиана по tier шумная → честнее сфера.
+    _ESTIMATE_TIER_MIN_N = 5
+
+    def _median_salary_to(self, conn, where_clause: str, params: list) -> tuple[int | None, int]:
+        """Медиана salary_to по произвольному условию + число строк с ЗП.
+
+        Возвращает (median, count_with_salary). median=None, count=0 — нет строк
+        с указанной ЗП. Переиспользует percentile-через-AVG-двух-центральных из
+        market_salary_by_query (тот же приём для той же шкалы salary_to).
+
+        ВАЖНО: count берём из ``COUNT(*) OVER ()`` окна (число строк с ЗП в группе),
+        а НЕ внешним ``COUNT(*)`` — внешний работает уже после ``WHERE rn IN (...)``
+        (1-2 центральные строки) и давал бы 1/2, а не реальное число значений.
+        """
+        row = conn.execute(
+            f"""
+            SELECT AVG(salary_to) AS median, MAX(total) AS cnt
+            FROM (
+                SELECT salary_to, ROW_NUMBER() OVER (ORDER BY salary_to) AS rn,
+                       COUNT(*) OVER () AS total
+                FROM vacancies_seen
+                WHERE salary_to IS NOT NULL AND {where_clause}
+            )
+            WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
+            """,
+            params,
+        ).fetchone()
+        if row is None or not row["cnt"]:
+            return None, 0
+        median = row["median"]
+        return (int(median) if median else None, row["cnt"])
+
+    def estimate_salary(self, search_query: str, employer_tier: str) -> SalaryInfo | None:
+        """Эвристическая оценка ЗП для вакансии БЕЗ указанной (#93, часть B).
+
+        Считает медиану ``salary_to`` по собранным вакансиям сферы ``search_query``
+        и tier'а ``employer_tier`` (top_tech/big_corp/mid/unknown). Коэффициенты
+        tier'ов — ИЗ ДАННЫХ (медиана по tier внутри сферы), не априорные константы:
+        если на практике «top_tech платит меньше» — оценка для top_tech будет
+        ниже, гипотеза проверяется данными, а не угадывается.
+
+        Fallback по убыванию доверия:
+          1. Медиана по (search_query, tier), если по tier достаточно данных
+             (n >= ``_ESTIMATE_TIER_MIN_N``). Наиболее точная оценка под конкретный
+             tier работодателя.
+          2. Иначе (мало данных по tier) — медиана по всей сфере (search_query,
+             любой tier). Грубее, но не нулевая.
+          3. Иначе — None (данных вообще нет, оценки не существует).
+
+        Возвращает ``SalaryInfo`` (#34) с from=to=медиана (фиксированная оценка),
+        currency подобранная из сферы (любая непустая), либо None. ``SalaryInfo``
+        импортируется лениво — разрыв цикла history ↔ search (search тянет history
+        на верхнем уровне через SKIP_REASONS).
+
+        Это derived-view: оценка честно отличается от реальной ЗП пометкой
+        ``~оценка`` в выводе (см. report_market.market_summary).
+        """
+        from .search import SalaryInfo
+
+        with self._connect() as conn:
+            # 1. Медиана по (query, tier).
+            median, n_tier = self._median_salary_to(
+                conn, "search_query = ? AND employer_tier = ?", [search_query, employer_tier]
+            )
+            source_tier = False
+            if median is not None and n_tier >= self._ESTIMATE_TIER_MIN_N:
+                source_tier = True
+
+            # 2. Fallback на всю сферу, если по tier мало/нет данных.
+            if not source_tier:
+                median, _ = self._median_salary_to(conn, "search_query = ?", [search_query])
+
+            if median is None:
+                return None
+
+            # currency — любая непустая в сфере (внутри search_query она обычно
+            # однородна, см. upsert_vacancy_seen). NULL неприемлем для SalaryInfo.
+            currency_row = conn.execute(
+                "SELECT salary_currency FROM vacancies_seen "
+                "WHERE search_query = ? AND salary_currency IS NOT NULL LIMIT 1",
+                [search_query],
+            ).fetchone()
+            currency = currency_row["salary_currency"] if currency_row else "RUB"
+
+        return SalaryInfo(
+            salary_from=median,
+            salary_to=median,
+            currency=currency,
+            raw=f"~оценка {median} {currency}",
+        )
 
     # --- Журнал отсева skipped (#87) ------------------------------------------
     # Отдельный слой в конец файла (паттерн with self._connect(), существующие

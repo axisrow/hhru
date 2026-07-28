@@ -97,6 +97,78 @@ def test_upsert_accepts_null_salary(tmp_path):
     assert row["salary_currency"] is None
 
 
+# --- employer_tier (#93) -----------------------------------------------------
+
+
+def test_upsert_records_employer_tier(tmp_path):
+    """#93: tier работодателя пишется в vacancies_seen для estimate_salary."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="Backend",
+        company="Яндекс",
+        salary_from=300000,
+        salary_to=400000,
+        salary_currency="RUB",
+        search_query="python",
+        employer_tier="top_tech",
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["employer_tier"] == "top_tech"
+
+
+def test_upsert_updates_employer_tier_on_rescrape(tmp_path):
+    """#93: при повторном scrape tier обновляется (компания получила trusted/отзывы)."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(vacancy_id="1", title="T", company="C", search_query="python")
+    assert h.list_vacancies_seen()[0]["employer_tier"] is None
+
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        employer_tier="mid",
+    )
+    assert h.list_vacancies_seen()[0]["employer_tier"] == "mid"
+
+
+def test_employer_tier_column_added_to_existing_db(tmp_path):
+    """#93: колонка employer_tier добавляется в уже существующую БД (#51 паттерн).
+    Моделируем «старую» БД: создаём таблицу БЕЗ employer_tier, открываем History —
+    _ensure_column должен ALTER'ом довести схему без потери данных."""
+    db = tmp_path / "h.db"
+    # «Старая» схема (до #93): без employer_tier.
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE vacancies_seen ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, vacancy_id TEXT, title TEXT, "
+        "company TEXT, salary_from INTEGER, salary_to INTEGER, "
+        "salary_currency TEXT, raw_date TEXT, search_query TEXT, "
+        "first_seen_at TEXT, last_seen_at TEXT, "
+        "UNIQUE (vacancy_id, search_query))"
+    )
+    conn.execute(
+        "INSERT INTO vacancies_seen (vacancy_id, search_query, first_seen_at, last_seen_at) "
+        "VALUES ('1', 'python', '2024-01-01', '2024-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    # _init_schema должен идемпотентно добавить employer_tier, не потеряв строку.
+    h = History(db)
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        employer_tier="unknown",
+    )
+    rows = h.list_vacancies_seen()
+    assert len(rows) == 1  # старая строка не потеряна, не задвоилась
+    assert rows[0]["employer_tier"] == "unknown"
+
+
 # --- агрегаты рынка (медиана по сфере) ---------------------------------------
 
 
@@ -252,3 +324,94 @@ def test_market_aggregates_visible_to_readonly_query(tmp_path):
         conn.close()
     assert row[0] == "python"
     assert row[1] == 1
+
+
+# --- include_estimates (#93) -------------------------------------------------
+
+
+def test_market_salary_default_excludes_estimates(tmp_path):
+    """#93: по умолчанию include_estimates=False — вакансии без ЗП в медиану не
+    идут, поле estimated=False (медиана реальная)."""
+    h = History(tmp_path / "h.db")
+    # top_tech: реальные ЗП 100..500 → медиана 300.
+    for i, s in enumerate([100, 200, 300, 400, 500]):
+        h.upsert_vacancy_seen(
+            vacancy_id=f"t{i}",
+            title="T",
+            company="C",
+            salary_from=s,
+            salary_to=s,
+            salary_currency="RUB",
+            search_query="python",
+            employer_tier="top_tech",
+        )
+    # вакансия без ЗП (не должна влиять на медиану без оценок).
+    h.upsert_vacancy_seen(
+        vacancy_id="x",
+        title="T",
+        company="C",
+        search_query="python",
+        employer_tier="top_tech",
+    )
+    rows = h.market_salary_by_query()
+    row = rows[0]
+    assert row["median_to"] == 300
+    assert row["estimated"] is False
+    assert row["count"] == 6
+    assert row["with_salary"] == 5
+
+
+def test_market_salary_with_estimates_fills_zero_median(tmp_path):
+    """#93: include_estimates=True — сфера, где ВСЕ без ЗП, получает оценочную
+    медиану по tier'ам (если по tier есть данные с ЗП в той же сфере)."""
+    h = History(tmp_path / "h.db")
+    # top_tech с ЗП: 100..500 → медиана 300 (источник оценки).
+    for i, s in enumerate([100, 200, 300, 400, 500]):
+        h.upsert_vacancy_seen(
+            vacancy_id=f"t{i}",
+            title="T",
+            company="C",
+            salary_from=s,
+            salary_to=s,
+            salary_currency="RUB",
+            search_query="python",
+            employer_tier="top_tech",
+        )
+    # вакансии БЕЗ ЗП того же tier'а — оценятся в 300.
+    for i in range(3):
+        h.upsert_vacancy_seen(
+            vacancy_id=f"u{i}",
+            title="T",
+            company="C",
+            search_query="python",
+            employer_tier="top_tech",
+        )
+
+    plain = h.market_salary_by_query()[0]
+    assert plain["with_salary"] == 5  # реальные
+
+    est = h.market_salary_by_query(include_estimates=True)[0]
+    assert est["estimated"] is True
+    assert est["with_salary"] == 5  # coverage реальных не испорчен оценками
+    # combined = 5 реальных (медиана 300) + 3 оценки (300) → медиана 300.
+    assert est["median_to"] == 300
+
+
+def test_market_salary_with_estimates_marks_estimated_flag(tmp_path):
+    """#93: флаг estimated=True только когда в медиану реально вошли оценки
+    (есть вакансии без ЗП и нашлась оценка). Без вакансий без ЗП — False."""
+    h = History(tmp_path / "h.db")
+    for i, s in enumerate([100, 200, 300, 400, 500]):
+        h.upsert_vacancy_seen(
+            vacancy_id=f"t{i}",
+            title="T",
+            company="C",
+            salary_from=s,
+            salary_to=s,
+            salary_currency="RUB",
+            search_query="python",
+            employer_tier="top_tech",
+        )
+    est = h.market_salary_by_query(include_estimates=True)[0]
+    # все вакансии с ЗП — оценки не понадобились, estimated=False.
+    assert est["estimated"] is False

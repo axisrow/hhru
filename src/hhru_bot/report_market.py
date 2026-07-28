@@ -35,6 +35,11 @@ def market_summary(rows: list[dict]) -> str:
     Вакансий / С ЗП (coverage — сколько вакансий с указанной зарплатой, для
     оценки доверия к медиане; мало данных с ЗП → оценка шаткая).
 
+    ``estimated`` (#93): сфера, в медиану которой вошли эвристические оценки
+    ЗП вакансий без указанной — помечается ``~`` перед суммой (derived-view,
+    честно отличать реальную медиану от оценки). Знак ``~`` — НЕ эмодзи,
+    ASCII-тильда; правило «без эмодзи» соблюдено.
+
     Пустой список → строка «Нет данных о рынке. Запустите ``search``, чтобы
     собрать вакансии.» (подсказка, что рынок пуст, пока search не записал).
     """
@@ -44,10 +49,14 @@ def market_summary(rows: list[dict]) -> str:
     header = ["Сфера", "Медиана", "Вакансий", "С ЗП"]
     body: list[list[str]] = []
     for r in rows:
+        amount = _format_amount(int(r.get("median_to", 0)))
+        if r.get("estimated"):
+            # ~ — ASCII-тильда, пометка эвристической оценки (НЕ эмодзи).
+            amount = f"~{amount}" if amount != "—" else amount
         body.append(
             [
                 str(r.get("search_query", "")),
-                _format_amount(int(r.get("median_to", 0))),
+                amount,
                 str(r.get("count", 0)),
                 str(r.get("with_salary", 0)),
             ]

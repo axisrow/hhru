@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hhru_bot.search import (
+    extract_salary_text,
     extract_salary_text_from_html,
     parse_salary,
 )
@@ -171,3 +172,52 @@ def test_extract_salary_below_min():
     """999 руб. -- ниже нижней границы, отсекается."""
     html = "<div>999 руб.</div>"
     assert extract_salary_text_from_html(html) is None
+
+
+# --- #93: textContent (inner_text) вместо innerHTML ---------------------------
+#
+# Аудит #93: hh.ru для части вакансий отдаёт ЗП только в textContent
+# (card.inner_text()), а в innerHTML блока нет — регексп по innerHTML пропускал
+# такие ЗП (5/15 → 19/20). extract_salary_text кормится именно textContent.
+
+
+def test_extract_salary_from_inner_text_text_content():
+    """textContent из inner_text() — ЗП ловится, как и из HTML без тегов (#93)."""
+    text = "Senior Backend Developer\nООО Технологии\nсегодня\nот 350 000 ₽\nМосква"
+    salary_text = extract_salary_text(text)
+    assert salary_text is not None
+    result = parse_salary(salary_text)
+    assert result is not None
+    assert result.salary_from == 350000
+    assert result.salary_to is None
+    assert result.currency == "RUB"
+
+
+def test_extract_salary_inner_text_fixture_html_has_no_salary():
+    """Регрессия #93 (часть A): в HTML фикстуры text-only ЗП нет совсем —
+    innerHTML-regex НЕ находит (моделирует JS-рендер ЗП в textContent)."""
+    html = _load("vacancy_card_text_only_salary.html")
+    assert extract_salary_text(html) is None
+
+
+def test_extract_salary_inner_text_fixture_text_has_salary():
+    """Регрессия #93 (часть A): textContent (inner_text) той же карточки несёт
+    ЗП — extract_salary_text её находит. Это и есть суть фикса: меняя источник
+    innerHTML→inner_text в search_vacancies, ловим ранее пропущенные ЗП."""
+    text = _load("vacancy_card_text_only_salary.txt")
+    salary_text = extract_salary_text(text)
+    assert salary_text is not None
+    result = parse_salary(salary_text)
+    assert result is not None
+    assert result.salary_from == 350000
+
+
+def test_extract_salary_alias_delegates():
+    """extract_salary_text_from_html — deprecated-алиас, делегирует в новое имя."""
+    assert extract_salary_text("от 80 000 ₽") == extract_salary_text_from_html("от 80 000 ₽")
+
+
+def test_extract_salary_text_rejects_no_currency():
+    """Ложные срабатывания на textContent без валюты отсекаются."""
+    text = "Backend Developer\nООО Ромашка\nМосква\n3 000 отзывов\n50 вакансий"
+    assert extract_salary_text(text) is None

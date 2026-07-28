@@ -61,9 +61,18 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
     картину сферы, а не только тех, на кого решился откликнуться. Зарплата из
     SalaryInfo (#34); None → «з/п не указана» (тоже пишется для доли рынка без
     зарплаты). Сбой записи НЕ должен валить поиск — рынок лишь удобство.
+
+    employer_tier (#93): classify_employer(company, employer_info) на каждую
+    карточку — уровень известности (top_tech/big_corp/mid/unknown). Нужен для
+    estimate_salary (медиана salary_to по (search_query, tier) — оценка ЗП для
+    вакансий без указанной). Локальный импорт classify_employer: scoring лениво
+    тянет search (цикл), тащить его на уровень модуля search-команды не нужно.
     """
+    from ..scoring import classify_employer
+
     for card in cards:
         salary = card.salary
+        tier = classify_employer(card.company, getattr(card, "employer_info", None))
         try:
             history.upsert_vacancy_seen(
                 vacancy_id=card.vacancy_id,
@@ -74,6 +83,7 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 salary_to=salary.salary_to if salary else None,
                 salary_currency=salary.currency if salary else None,
                 raw_date=card.raw_date,
+                employer_tier=tier,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)
