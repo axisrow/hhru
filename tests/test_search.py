@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
-from hhru_bot.config import SearchFilters
+from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.search import (
     SalaryInfo,
     VacancyCard,
     _extract_vacancy_id,
     build_search_url,
     filter_candidates,
+    rank_candidates,
 )
 
 
@@ -148,3 +149,154 @@ def test_vacancy_card_accepts_salary_and_date():
     assert c.salary.salary_from == 150000
     assert c.salary.salary_to == 200000
     assert c.raw_date == "сегодня"
+
+
+# --- VacancyCard: employer_info + парсинг рейтинга (issue #74) --------------
+
+
+def test_vacancy_card_employer_info_default_none():
+    c = card("1")
+    assert c.employer_info is None
+
+
+def test_parse_rating_comma_decimal_separator():
+    # Русская локаль: «4,5» → 4.5. Берётся первый токен.
+    from hhru_bot.search import _parse_rating
+
+    assert _parse_rating("4,5") == 4.5
+    assert _parse_rating("4.5") == 4.5
+
+
+def test_parse_rating_handles_garbage():
+    from hhru_bot.search import _parse_rating
+
+    assert _parse_rating(None) is None
+    assert _parse_rating("") is None
+    assert _parse_rating("нет рейтинга") is None
+
+
+def test_parse_reviews_count_with_separators():
+    # «245 отзывов» / «1 245 отзывов» (с разделителем разрядов) → int.
+    from hhru_bot.search import _parse_reviews_count
+
+    assert _parse_reviews_count("245 отзывов") == 245
+    assert _parse_reviews_count("1\xa0024 отзыва") == 1024  # nbsp-разделитель
+
+
+def test_parse_reviews_count_none_when_no_number():
+    from hhru_bot.search import _parse_reviews_count
+
+    assert _parse_reviews_count(None) is None
+    assert _parse_reviews_count("") is None
+    assert _parse_reviews_count("нет отзывов") is None
+
+
+# --- rank_candidates: обратная совместимость без provider (регрессия #74) ----
+
+
+def test_rank_candidates_without_provider_uses_legacy_heuristic():
+    """Без scoring_provider ранжирование = эвристика #15 (поведение не изменилось).
+
+    Регрессия #74: новый опц. параметр не должен сломать существующий путь.
+    breakdown не содержит employer_tier (это маркер HeuristicScoringProvider,
+    а rank_candidates без provider зовёт _score_card напрямую — как в #15).
+    """
+    from hhru_bot.config_sections.scoring import ScoringConfig
+
+    filters = SearchFilters(text="python", must_have=["django"])
+    cards = [
+        VacancyCard(vacancy_id="1", title="Python Developer", company="C", url="u"),
+        VacancyCard(vacancy_id="2", title="Python Django Developer", company="C", url="u"),
+    ]
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=filters,
+        scoring=ScoringConfig(),
+    )
+    ranked = rank_candidates(cards, filters, resume)  # без provider
+    order = [c.vacancy_id for c, _s, _b in ranked]
+    assert order == ["2", "1"]  # django-матч выше
+    _c, _s, breakdown = ranked[0]
+    assert "employer_tier" not in breakdown  # эвристика #15 без tier-буста
+
+
+def test_rank_candidates_with_provider_uses_provider_score():
+    """Со scoring_provider score/breakdown берутся из provider.score()."""
+    from hhru_bot.scoring import ScoreOutcome
+
+    class _SpyProvider:
+        def __init__(self):
+            self.called: list[str] = []
+
+        def score(self, card, resume_profile=None):  # noqa: ARG002
+            self.called.append(card.vacancy_id)
+            # Даём разный score, чтобы проверить сортировку по provider-скору.
+            s = 90.0 if card.vacancy_id == "1" else 10.0
+            return ScoreOutcome(score_0_100=s, breakdown={"llm": s})
+
+    filters = SearchFilters(text="python")
+    cards = [
+        VacancyCard(vacancy_id="1", title="A", company="C", url="u"),
+        VacancyCard(vacancy_id="2", title="B", company="C", url="u"),
+    ]
+    resume = ResumeConfig(id="r1", resume_url="https://hh.ru/resume/AAA111", search=filters)
+    spy = _SpyProvider()
+    ranked = rank_candidates(cards, filters, resume, scoring_provider=spy)
+    # Provider вызван на каждую карточку; сортировка по его score (desc).
+    assert spy.called == ["1", "2"]
+    assert [c.vacancy_id for c, _s, _b in ranked] == ["1", "2"]
+    assert ranked[0][2] == {"llm": 90.0}
+
+
+# --- rank_candidates: shortlist-кэп LLM-запросов (#74 F3, анти-фрод) ---------
+
+
+def test_rank_candidates_llm_shortlist_caps_provider_calls():
+    """F3: с llm_shortlist=K провайдер зовётся только на топ-K по эвристике;
+    остальные сохраняют эвристический score. Число LLM-запросов ≤ K."""
+    from hhru_bot.config_sections.scoring import ScoringConfig
+    from hhru_bot.scoring import ScoreOutcome
+
+    class _CountingProvider:
+        def __init__(self):
+            self.called: list[str] = []
+
+        def score(self, card, resume_profile=None):  # noqa: ARG002
+            self.called.append(card.vacancy_id)
+            return ScoreOutcome(score_0_100=50.0, mode="llm", breakdown={"llm": 50.0})
+
+    # Эвристика: title с must_have-матчем выше. must_have=['django'].
+    filters = SearchFilters(text="python", must_have=["django"])
+    cards = [
+        VacancyCard(vacancy_id="no1", title="Python Developer", company="C", url="u"),
+        VacancyCard(vacancy_id="yes2", title="Python Django Developer", company="C", url="u"),
+        VacancyCard(vacancy_id="no3", title="Python Other", company="C", url="u"),
+        VacancyCard(vacancy_id="no4", title="Python Foo", company="C", url="u"),
+    ]
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=filters,
+        scoring=ScoringConfig(),
+    )
+    provider = _CountingProvider()
+    ranked = rank_candidates(cards, filters, resume, scoring_provider=provider, llm_shortlist=1)
+    # LLM позван только на 1 карточку — топ эвристики (django-матч 'yes2').
+    assert provider.called == ["yes2"]
+    # Финальный порядок: yes2 (LLM=50) — но эвристика yes2 была выше; проверим,
+    # что остальные карточки сохранили эвристический breakdown (без ключа llm).
+    by_id = {c.vacancy_id: b for c, _s, b in ranked}
+    assert "llm" in by_id["yes2"]  # LLM-скоринг
+    assert "llm" not in by_id["no1"]  # эвристика, LLM не звался
+    assert "llm" not in by_id["no4"]
+
+
+def test_rank_candidates_shortlist_ignored_without_provider():
+    """F3: llm_shortlist без провайдера игнорируется — обычная эвристика #15."""
+    filters = SearchFilters(text="python")
+    cards = [VacancyCard(vacancy_id="1", title="A", company="C", url="u")]
+    resume = ResumeConfig(id="r1", resume_url="https://hh.ru/resume/AAA111", search=filters)
+    # Не должно падать; llm_shortlist без эффекта.
+    ranked = rank_candidates(cards, filters, resume, llm_shortlist=5)
+    assert len(ranked) == 1
