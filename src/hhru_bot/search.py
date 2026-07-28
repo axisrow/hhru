@@ -410,11 +410,23 @@ def filter_candidates(
     filters: SearchFilters,
     resume_id: str,
     history,
+    prefilter_thresholds=None,
 ) -> tuple[list[VacancyCard], list[tuple[VacancyCard, str]]]:
     """
     Разделяет карточки на (подходящие, исключённые с причиной).
-    Причины исключения: уже откликались ранее ИЛИ попадание в стоп-лист.
+    Причины исключения: уже откликались ранее, попадание в стоп-лист, ИЛИ
+    (опц.) непрохождение эвристического pre-LLM фильтра работодателя (#85).
+
+    prefilter_thresholds (issue #85): опциональный PrefilterConfig. Если передан
+    и enabled — после дедупа/стоп-листов применяется employer_passes_prefilter
+    (чистая функция из scoring): карточки без сигнала работодателя (неизвестная
+    компания, нет рейтинга/отзывов, не приглашал ранее) отсекаются ДО ранжирования
+    и LLM-скоринга (#74) — экономия токенов. None / enabled=False = фильтр откл.
+    (обратная совместимость, поведение не меняется). Применяется ПОСЛЕ дедупа/
+    стоп-листов: «уже откликались» и стоп-слова — более определённые причины.
     """
+    from .scoring import employer_passes_prefilter  # локальный импорт: цикл search<->scoring
+
     candidates: list[VacancyCard] = []
     skipped: list[tuple[VacancyCard, str]] = []
 
@@ -426,6 +438,15 @@ def filter_candidates(
         reason = _matches_exclusions(card, filters)
         if reason:
             skipped.append((card, reason))
+            continue
+
+        # Pre-LLM фильтр работодателя (#85): отсев «слепых откликов» ДО скоринга.
+        # None/disabled внутри функции = no-op (обратная совместимость).
+        passes, prefilter_reason = employer_passes_prefilter(
+            card, history, resume_id, prefilter_thresholds
+        )
+        if not passes:
+            skipped.append((card, prefilter_reason))
             continue
 
         candidates.append(card)

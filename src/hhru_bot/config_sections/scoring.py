@@ -3,6 +3,13 @@
 Веса факторов ранжирования вакансий. Секция опциональна: при отсутствии
 load_config оставит ResumeConfig.scoring = None (обратная совместимость —
 rank_candidates тогда использует нейтральные дефолтные веса).
+
+Расширено issue #85: подсекция ``prefilter`` — пороги эвристического
+pre-LLM фильтра работодателя (отсев мусора ДО LLM-скоринга, 0 токенов).
+``prefilter`` опционален и по умолчанию ОТКЛЮЧЕН (полная обратная
+совместимость: без секции pre-фильтр не применяется — поведение не меняется).
+Включается флагом ``enabled: true``; пороги rating_min/reviews_min — мягкие
+дефолты, перевешиваемые конфигом (см. PrefilterConfig).
 """
 
 from __future__ import annotations
@@ -23,9 +30,36 @@ class ScoringWeights:
     text_match: float = 1.0
 
 
+# Дефолтные пороги pre-LLM фильтра работодателя (#85). Мягкие: отсекают только
+# «слепые отклики в пустоту» (неизвестная компания без рейтинга/отзывов и без
+# былого взаимодействия), не трогая всё, что выше. Десятки отзывов на hh.ru —
+# уже заметный работодатель; рейтинг 3.5 — средний+ (из 5), ниже — рискованно.
+_PREFILTER_DEFAULT_RATING_MIN = 3.5
+_PREFILTER_DEFAULT_REVIEWS_MIN = 10
+
+
+@dataclass(frozen=True)
+class PrefilterConfig:
+    """Пороги эвристического pre-LLM фильтра работодателя (#85).
+
+    ``enabled`` — флаг включения фильтра (по умолчанию False: opt-in, обратная
+    совместимость). ``rating_min`` — минимальный рейтинг (0-5) работодателя,
+    чтобы пройти фильтр «по рейтингу». ``reviews_min`` — минимальное число
+    отзывов. Карточка проходит pre-фильтр, если выполняется ЛЮБОЕ из: известная
+    компания (top_tech/big_corp), trusted-бейдж, rating>=rating_min,
+    reviews_count>=reviews_min, работодатель раньше приглашал/смотрел
+    (history.employer_interacted). Иначе отсекается как «low employer signal».
+    """
+
+    enabled: bool = False
+    rating_min: float = _PREFILTER_DEFAULT_RATING_MIN
+    reviews_min: int = _PREFILTER_DEFAULT_REVIEWS_MIN
+
+
 @dataclass(frozen=True)
 class ScoringConfig:
     weights: ScoringWeights = ScoringWeights()
+    prefilter: PrefilterConfig | None = None
 
 
 def _parse_weights(raw, context: str) -> ScoringWeights:
@@ -53,6 +87,38 @@ def _parse_weights(raw, context: str) -> ScoringWeights:
     return ScoringWeights(**weights)
 
 
+def _parse_prefilter(raw, context: str) -> PrefilterConfig | None:
+    """raw — подсекция prefilter (может быть None/отсутствовать → None).
+
+    None/пусто → фильтр отключен (обратная совместимость). ``enabled: true``
+    включает фильтр; пороги опциональны с мягкими дефолтами PrefilterConfig.
+    """
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"Секция '{context}' должна быть отображением")
+
+    enabled = bool(raw.get("enabled", False))
+
+    rating_min = raw.get("rating_min", _PREFILTER_DEFAULT_RATING_MIN)
+    try:
+        rating_min = float(rating_min)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(
+            f"Порог 'rating_min' в '{context}' должен быть числом, получено: {rating_min!r}"
+        ) from e
+
+    reviews_min = raw.get("reviews_min", _PREFILTER_DEFAULT_REVIEWS_MIN)
+    try:
+        reviews_min = int(reviews_min)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(
+            f"Порог 'reviews_min' в '{context}' должен быть целым числом, получено: {reviews_min!r}"
+        ) from e
+
+    return PrefilterConfig(enabled=enabled, rating_min=rating_min, reviews_min=reviews_min)
+
+
 @register("scoring")
 def parse_scoring(raw, context: str) -> ScoringConfig | None:
     """raw — подсекция scoring (может быть None/отсутствовать)."""
@@ -60,4 +126,7 @@ def parse_scoring(raw, context: str) -> ScoringConfig | None:
         return None
     if not isinstance(raw, dict):
         raise ConfigError(f"Секция '{context}' должна быть отображением")
-    return ScoringConfig(weights=_parse_weights(raw.get("weights"), f"{context}.weights"))
+    return ScoringConfig(
+        weights=_parse_weights(raw.get("weights"), f"{context}.weights"),
+        prefilter=_parse_prefilter(raw.get("prefilter"), f"{context}.prefilter"),
+    )

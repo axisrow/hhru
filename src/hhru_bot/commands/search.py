@@ -98,7 +98,11 @@ def run(args: argparse.Namespace) -> None:
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
             _record_seen(cards, resume.search.text, history)
-            candidates, skipped = filter_candidates(cards, resume.search, resume.resume_id, history)
+            # pre-LLM фильтр работодателя (#85): пороги из опц. scoring.prefilter.
+            prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
+            candidates, skipped = filter_candidates(
+                cards, resume.search, resume.resume_id, history, prefilter
+            )
             ranked = rank_candidates(candidates, resume.search, resume)
 
             print(

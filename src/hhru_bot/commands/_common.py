@@ -111,7 +111,13 @@ def run_apply_for_resume(
         return
 
     cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
-    candidates, skipped = filter_candidates(cards, resume.search, resume.resume_id, history)
+    # pre-LLM фильтр работодателя (#85): пороги из опц. секции scoring.prefilter.
+    # resume.scoring=None / prefilter=None / enabled=False → фильтр откл. (no-op
+    # внутри filter_candidates), обратная совместимость.
+    prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
+    candidates, skipped = filter_candidates(
+        cards, resume.search, resume.resume_id, history, prefilter
+    )
 
     for card, reason in skipped:
         logger.debug("Пропуск вакансии %s: %s", card.title, reason)
