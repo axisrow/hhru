@@ -6,9 +6,10 @@ VACANCY_CARD = "[data-qa='vacancy-serp__vacancy']"
 VACANCY_CARD_TITLE_LINK = "[data-qa='serp-item__title']"
 VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
 # Зарплата и дата публикации в карточке списка (issue #14).
-# Селекторы подтверждены curl-дампом страницы поиска вместе с остальной
-# разметкой serp; парсер зарплаты устойчив к «з/п не указана» и отсутствию
-# блока (контейнер не рендерится hh.ru, если з/п не задана).
+# VACANCY_CARD_COMPENSATION: НЕ работает на живом hh.ru с 2025 — hh.ru
+# перешёл на magritte-разметку, блок ЗП рендерится без этого data-qa (#73).
+# search.py использует regex-fallback по innerHTML карточки когда селектор
+# пуст. Селектор оставлен для обратной совместимости (старые кэши/curl-дампы).
 VACANCY_CARD_COMPENSATION = "[data-qa='vacancy-serp__vacancy-compensation']"
 VACANCY_CARD_DATE = "[data-qa='vacancy-serp__vacancy-date']"
 # Кнопка отклика прямо в карточке списка (ведёт на

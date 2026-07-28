@@ -1,0 +1,20 @@
+<!--
+  HTML-фикстура живой карточки вакансии hh.ru (magritte-разметка, 2025).
+  Вакансия БЕЗ указанной зарплаты -- блок ЗП не рендерится hh.ru.
+-->
+<div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
+  <div class="magritte-serp-item__header">
+    <a data-qa="serp-item__title" class="magritte-link" href="/vacancy/87654321">
+      <span>Junior Developer</span>
+    </a>
+  </div>
+  <div class="magritte-serp-item__info">
+    <span data-qa="vacancy-serp__vacancy-employer" class="magritte-link">Стартап</span>
+    <span data-qa="vacancy-serp__vacancy-date">сегодня</span>
+  </div>
+  <!-- Нет блока ЗП -- hh.ru не рендерит его -->
+  <div class="magritte-serp-item__meta">
+    <span>Удалённо</span>
+    <span>Полная занятость</span>
+  </div>
+</div>

@@ -215,7 +215,14 @@ def search_vacancies(
             # не рендерит compensation, если з/п не указана; date всегда есть,
             # но на ошибку селектора реагируем мягко (raw_date=None), чтобы
             # сбор карточек не падал целиком из-за одной страницы.
+            # ЗП: сначала пробуем data-qa селектор, потом regex-fallback
+            # по HTML карточки (hh.ru перешёл на magritte, #73).
             salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
+            if salary_text is None:
+                try:
+                    salary_text = extract_salary_text_from_html(card.evaluate("el => el.innerHTML"))
+                except Exception:
+                    logger.warning("Не удалось получить innerHTML для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
             raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
 
@@ -245,6 +252,48 @@ def search_vacancies(
 
     logger.info("Найдено вакансий всего: %d", len(results))
     return results
+
+
+# --- извлечение ЗП из текста карточки (fallback при устаревшем data-qa, #73) ----
+
+# Валидный диапазон зарплаты (issue #73). Отсекает ложные срабатывания
+# на числах вроде «3000 отзывов» — но только если число стоит рядом с валютой.
+# Нижняя граница 1 000 (покрывает USD/EUR/KZT), верхняя 50 000 000 (KZT).
+_SALARY_MIN = 1_000
+_SALARY_MAX = 50_000_000
+
+# Шаблон: число с разделителями разрядов (>=3 цифры), опционально диапазон,
+# затем валюта. currency_list = все строки из _CURRENCY_PATTERNS + символы.
+_CURRENCY_ALT = r"(?:руб|руб\.|RUB|₽|USD|\$|EUR|€|KZT|тг|₸|BYN|бел\.?\s*руб|UAH|грн|₴)"
+
+# Соответствует «150 000», «150 000–200 000», «от 80 000», «до 120 000».
+_SALARY_PATTERN = re.compile(
+    rf"(?:от\s+|до\s+)?{_NUMBER}(?:\s*[–—-]\s*{_NUMBER})?\s*{_CURRENCY_ALT}",
+    re.IGNORECASE,
+)
+
+
+def _salary_value_in_range(raw: str) -> bool:
+    """Проверяет, что хотя бы одно число в строке ЗП попадает в [_SALARY_MIN, _SALARY_MAX]."""
+    numbers = re.findall(_NUMBER, raw)
+    return any(_SALARY_MIN <= _strip_digits(n) <= _SALARY_MAX for n in numbers)
+
+
+def extract_salary_text_from_html(html: str) -> str | None:
+    """Извлекает текст ЗП из HTML карточки regex'ом (fallback, issue #73).
+
+    Когда data-qa селектор vacancy-serp__vacancy-compensation не находит
+    элемент (hh.ru перешёл на magritte-разметку), пробуем найти ЗП по
+    текстовому паттерну в HTML карточки. Фильтруем по валидному диапазону,
+    чтобы отсечь ложные срабатывания ("3000 отзывов" и пр.).
+    """
+    match = _SALARY_PATTERN.search(html)
+    if not match:
+        return None
+    text = re.sub(r"<[^>]+>", "", match.group(0))
+    if not _salary_value_in_range(text):
+        return None
+    return text
 
 
 def _optional_text(card, selector: str) -> str | None:
