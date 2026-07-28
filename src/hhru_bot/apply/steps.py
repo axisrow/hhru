@@ -19,6 +19,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from ..browser import GOTO_TIMEOUT_MS
 from ..selector_groups import vacancy_page
 
 logger = logging.getLogger("hhru_bot.apply.steps")
@@ -60,7 +61,11 @@ def navigate_to_response_form(page: Page) -> None:
     from ..selector_groups import apply_form
 
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
-    with page.expect_navigation(wait_until="domcontentloaded", timeout=APPLY_TIMEOUT_MS):
+    # #80: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех goto).
+    # Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru, который под
+    # DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал, context-wide
+    # set_default_navigation_timeout перебивается явным timeout.
+    with page.expect_navigation(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS):
         apply_button.click()
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:

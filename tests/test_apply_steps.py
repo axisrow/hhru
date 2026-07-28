@@ -16,6 +16,7 @@ from playwright.sync_api import Error
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
+from hhru_bot.browser import GOTO_TIMEOUT_MS
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
 
@@ -160,6 +161,7 @@ class FakeStepsPage:
     def __init__(self) -> None:
         self.states: dict[str, _SelectorState] = {}
         self.navigation_entered = 0
+        self.last_navigation_timeout: int | None = None
 
     def _state(self, selector: str) -> _SelectorState:
         return self.states.setdefault(selector, _SelectorState())
@@ -188,8 +190,12 @@ class FakeStepsPage:
         return _FakeLocator(selector, self._state(selector))
 
     @contextlib.contextmanager
-    def expect_navigation(self, **_kwargs):
+    def expect_navigation(self, **kwargs):
         self.navigation_entered += 1
+        # Фиксируем timeout навигации — регрессия #80: двухшаговая навигация на
+        # форму отклика должна использовать потолок GOTO_TIMEOUT_MS (медленный
+        # hh.ru), а не дефолт/короткий APPLY_TIMEOUT_MS.
+        self.last_navigation_timeout = kwargs.get("timeout")
         yield
 
 
@@ -232,6 +238,20 @@ def test_navigate_does_not_raise_when_form_never_renders():
     steps.navigate_to_response_form(page)  # не должен бросать
 
     assert page.navigation_entered == 1
+
+
+def test_navigate_uses_goto_timeout_for_form_navigation():
+    # #80 регрессия: двухшаговая навигация на форму отклика (expect_navigation
+    # после клика по apply-кнопке) — это сетевая навигация hh.ru, которая под
+    # DDoS-Guard грузится 33с+. Де­фолт/короткий APPLY_TIMEOUT_MS (10с) тут
+    # падает; потолок должен быть GOTO_TIMEOUT_MS, как и у всех goto в проекте.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page)
+
+    assert page.last_navigation_timeout == GOTO_TIMEOUT_MS
 
 
 # --- fill_response_form: только обязательный submit ---
