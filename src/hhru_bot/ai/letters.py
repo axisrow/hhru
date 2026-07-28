@@ -111,15 +111,38 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
     Этапе 4; здесь v1 обходимся карточкой, чтобы не плодить лишних запросов к
     hh.ru (анти-фрод: меньше запросов — ниже риск детекта).
 
-    #86: поля профиля (summary/skills/highlights/desired_role) могут содержать
-    альтернативы {a|b|c} — рандомизируем их (_resolve_alternatives), чтобы
-    промпт (и, значит, генерируемое письмо) варьировался между запусками.
+    #86: поля профиля (summary/skills/highlights/desired_role) и few-shot-
+    примеры (cover_letter_examples) могут содержать альтернативы {a|b|c} —
+    рандомизируем их (_resolve_alternatives), чтобы промпт (и, значит,
+    генерируемое письмо) варьировался между запусками.
+
+    #96: cover_letter_examples подаются как few-shot — отдельное user-сообщение
+    с образцами стиля ДО запроса письма, чтобы LLM имитировал тон автора. Пусто
+    = без few-shot (поведение #17 не меняется, отдельное сообщение не пишется).
     """
     system = (
         "Ты помогаешь писать короткие сопроводительные письма для отклика на "
         "вакансии на hh.ru. Пиши на русском, вежливо, без воды и без выдуманных "
         "фактов о кандидате. Только текст письма, без пояснений и без темы."
     )
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+
+    # #96: few-shot стиль — образцы прошлых писём идут первым user-сообщением,
+    # до контекста вакансии и запроса. Рандомизация {a|b|c} (#86) применяется к
+    # каждому примеру до подстановки — примеры тоже варьируются между запусками.
+    if profile is not None and profile.cover_letter_examples:
+        examples = [_resolve_alternatives(e) for e in profile.cover_letter_examples]
+        body = "\n\n".join(f"Пример {i + 1}:\n{e}" for i, e in enumerate(examples))
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Вот несколько моих прошлых сопроводительных писем. "
+                    "Старайся писать новое письмо в том же стиле, тоне и структуре:\n\n" + body
+                ),
+            }
+        )
 
     lines = [f"Вакансия: {vacancy.title}.", f"Компания: {vacancy.company or 'не указана'}."]
     if profile is not None:
@@ -141,8 +164,6 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
         else:
             lines.append("Тон: формальный.")
     lines.append("Напиши сопроводительное письмо под эту вакансию.")
+    messages.append({"role": "user", "content": "\n".join(lines)})
 
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "\n".join(lines)},
-    ]
+    return messages

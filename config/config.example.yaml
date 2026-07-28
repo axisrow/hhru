@@ -89,6 +89,13 @@ resumes:
     #     - "Выстроил CI/CD с нуля"
     #   desired_role: "Senior Python Developer"
     #   tone: formal   # formal | friendly (по умолчанию formal)
+    #   # few-shot стиль (issue #96): образцы прошлых писём — LLM имитирует ваш
+    #   # тон/структуру. Опционально (пусто = без few-shot, поведение #17).
+    #   # Поддерживают рандомизацию {a|b|c} (#86). При сбое LLM — fallback на
+    #   # cover_letter (variant 'ai_fallback').
+    #   cover_letter_examples:
+    #     - "Здравствуйте! Пишу как бэкенд-разработчик, откликаюсь на вакансию."
+    #     - "Добрый день. Мой опыт в {python|django} релевантен вашей задаче."
     cover_letter: null
 
   - id: "resume-name-2"
