@@ -123,3 +123,23 @@ def test_extract_salary_strips_html_tags():
     result = parse_salary(text)
     assert result is not None
     assert result.raw == text
+
+
+def test_extract_salary_boundary_min():
+    """1 000 руб. -- ровно на нижней границе, валидно."""
+    html = "<div>1 000 руб.</div>"
+    text = extract_salary_text_from_html(html)
+    assert text is not None
+
+
+def test_extract_salary_boundary_max():
+    """50 000 000 руб. -- ровно на верхней границе, валидно."""
+    html = "<div>50 000 000 руб.</div>"
+    text = extract_salary_text_from_html(html)
+    assert text is not None
+
+
+def test_extract_salary_below_min():
+    """999 руб. -- ниже нижней границы, отсекается."""
+    html = "<div>999 руб.</div>"
+    assert extract_salary_text_from_html(html) is None
