@@ -558,6 +558,18 @@ def rank_candidates(
     weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
     profile = getattr(resume, "ai_profile", None)
 
+    # AI-путь без scoring-секции (#81, фикс Codex-ревью): при нейтральных весах
+    # (_ZERO_WEIGHTS) все кандидаты tie на предранжировании → shortlist берёт
+    # первые K по входному порядку, а не лучшие. LLM тогда скорит произвольные
+    # первые K, а реально релевантные кандидаты за пределами K никогда не
+    # displac'нутся → дневная квота уходит на неоптимальный набор. Поэтому для
+    # AI-пути (provider передан) без явной scoring-секции предранжирование идёт
+    # по дефолтным весам ScoringWeights() — top-K действительно лучшие, LLM
+    # доранжирует релевантных. Legacy (provider=None) НЕ затрагивается: для него
+    # веса по-прежнему _ZERO_WEIGHTS → входной порядок candidates[:limit] сохранён.
+    if scoring is None and scoring_provider is not None:
+        weights = ScoringWeights()
+
     # Shortlist-режим (Codex #74 F3): предранжируем эвристикой, LLM — только топ-K.
     if scoring_provider is not None and llm_shortlist and llm_shortlist > 0:
         return _rank_with_llm_shortlist(

@@ -9,19 +9,23 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
 from ..config import AppConfig, ResumeConfig
+from ..config_sections.scoring import ScoringWeights
 from ..history import History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
-    _ZERO_WEIGHTS,
     filter_candidates,
     rank_candidates,
     search_vacancies,
 )
 from ..throttle import LimitReached, Throttle
+
+if TYPE_CHECKING:
+    from ..scoring import LLMScoringProvider
 
 logger = logging.getLogger("hhru_bot.cli")
 
@@ -90,7 +94,10 @@ def _build_letter_provider(
     )
 
 
-def _build_scoring_provider(config: AppConfig, resume: ResumeConfig):
+def _build_scoring_provider(
+    config: AppConfig,
+    resume: ResumeConfig,
+) -> LLMScoringProvider | None:
     """Строит ML scoring-провайдер для ранжирования, если AI включён (#81).
 
     Зеркало ``_build_letter_provider`` (#17): AI включён = есть ТОП-ЛЕВЕЛ секция
@@ -115,12 +122,15 @@ def _build_scoring_provider(config: AppConfig, resume: ResumeConfig):
 
     from ..scoring import HeuristicScoringProvider, LLMScoringProvider
 
-    # weights — ровно как в rank_candidates: из resume.scoring, иначе нулевые
-    # веса (_ZERO_WEIGHTS). HeuristicScoringProvider — fallback LLMScoringProvider
-    # и должен скорить на той же шкале [0,100] (нормализация F2 из #74), что и
-    # эвристический путь rank_candidates без провайдера.
+    # weights — ровно как в rank_candidates для AI-пути: из resume.scoring, иначе
+    # дефолтные ScoringWeights() (НЕ _ZERO_WEIGHTS). HeuristicScoringProvider —
+    # fallback LLMScoringProvider и должен скорить на той же шкале/весах, что
+    # предранжирование в rank_candidates (нормализация F2 из #74). Согласовано с
+    # rank_candidates: scoring is None + provider is not None → ScoringWeights()
+    # (фикс Codex-ревью #81: иначе нейтральные веса → shortlist берёт первые K
+    # по входу, а не лучших).
     scoring = getattr(resume, "scoring", None)
-    weights = scoring.weights if scoring is not None else _ZERO_WEIGHTS
+    weights = scoring.weights if scoring is not None else ScoringWeights()
     heuristic = HeuristicScoringProvider(resume.search, weights)
 
     from ..ai.llm_client import LLMClient
