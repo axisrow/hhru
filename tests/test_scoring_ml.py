@@ -459,3 +459,98 @@ class _FlakyThenOKLLM:
         if self._n <= self._fails:
             raise self._fail
         return NormalizedResponse(content=self._ok, tool_calls=None, finish_reason="stop")
+
+
+# --- rank_candidates: shortlist при нейтральных весах (регрессия #81) -------
+#
+# Codex-ревью #81: при ai+ai_profile БЕЗ scoring-секции предранжирование шло по
+# _ZERO_WEIGHTS → все кандидаты tie → llm_shortlist брал первые K по входному
+# порядку, а реально релевантные (LLM дал бы им высокий score) за пределами K
+# никогда не displac'нулись. Фикс: AI-путь без scoring-секции использует дефолтные
+# ScoringWeights() для предранжирования → top-K действительно лучшие.
+
+
+class _RelevanceLLM:
+    """Мок LLM: высокий score карточкам, чей title содержит ``high_kw``."""
+
+    def __init__(self, high_kw: str):
+        self._kw = high_kw
+        self.calls: list[VacancyCard] = []
+
+    def chat(self, messages, **params):  # noqa: ARG002
+        # messages[1] (user) содержит title вакансии (см. _build_scoring_prompt).
+        text = " ".join(m.get("content", "") for m in messages)
+        score = 95.0 if self._kw in text else 20.0
+        content = f'{{"score": {int(score)}, "rationale": "r", "factors": {{}}}}'
+        return NormalizedResponse(content=content, tool_calls=None, finish_reason="stop")
+
+
+def _resume_no_scoring() -> object:
+    """ResumeConfig без scoring-секции (legacy AI-конфиг: ai+ai_profile, без scoring)."""
+    from hhru_bot.config import ResumeConfig
+    from hhru_bot.config_sections.ai_profile import AIProfile
+
+    return ResumeConfig(
+        id="py",
+        resume_url="https://hh.ru/resume/X",
+        search=SearchFilters(text="python", must_have=["django"]),
+        ai_profile=AIProfile(summary="Бэкенд", skills=["python"], desired_role="Dev"),
+    )
+
+
+def test_rank_candidates_shortlist_picks_relevant_beyond_first_k():
+    """AI-путь без scoring: релевантные карточки вне первых-10 displac'нут топ.
+
+    12 карточек: первые 10 (id 0-9) нерелевантные (title без 'django'), последние
+    2 (id 10,11) — релевантные ('django' в title, в конце входного порядка).
+    Без фикса: llm_shortlist=10 берёт id 0-9 по входу → LLM их и скорит, id 10,11
+    остаются с эвристическим score и никогда не displac'нут топ. С фиксом:
+    дефолтные веса предранжируют 'django'-карточки вверх → они в shortlist → LLM
+    даёт им 95 → они в начале ranked[:limit].
+    """
+    from hhru_bot.search import rank_candidates
+
+    cards = [card(vacancy_id=str(i), title="Python role no kw") for i in range(10)] + [
+        card(vacancy_id="10", title="Python django lead"),
+        card(vacancy_id="11", title="django backend"),
+    ]
+
+    llm = _RelevanceLLM(high_kw="django")
+    provider = LLMScoringProvider(llm_client=llm, fallback=heuristic_provider())
+
+    ranked = rank_candidates(
+        cards,
+        SearchFilters(text="python", must_have=["django"]),
+        _resume_no_scoring(),
+        scoring_provider=provider,
+        llm_shortlist=10,
+    )
+    top_ids = [c.vacancy_id for c, _, _ in ranked]
+
+    # Релевантные id 10,11 должны возглавить ранжирование (LLM-score 95 > 20).
+    assert top_ids[:2] == ["10", "11"] or set(top_ids[:2]) == {"10", "11"}, top_ids
+
+
+def test_rank_candidates_no_provider_keeps_legacy_zero_weights():
+    """Без provider (legacy) weights остаются _ZERO_WEIGHTS — входной порядок.
+
+    Регресс-страховка фикса #81: AI-путь меняет веса только когда provider передан.
+    Без provider поведение legacy не меняется (candidates[:limit] по входу).
+    """
+    from hhru_bot.search import rank_candidates
+
+    cards = [card(vacancy_id=str(i), title="Python django lead") for i in range(5)] + [
+        card(vacancy_id="9", title="nope")
+    ]
+
+    ranked = rank_candidates(
+        cards,
+        SearchFilters(text="python", must_have=["django"]),
+        _resume_no_scoring(),
+        scoring_provider=None,
+        llm_shortlist=10,
+    )
+    top_ids = [c.vacancy_id for c, _, _ in ranked]
+
+    # Все score 0.0 (zero weights) → стабильный входной порядок сохранён.
+    assert top_ids == ["0", "1", "2", "3", "4", "9"]
