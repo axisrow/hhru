@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from playwright.sync_api import Page
 
 from . import selectors as sel
-from .browser import HH_BASE_URL
+from .browser import HH_BASE_URL, goto_hh
 from .config import ResumeConfig, SearchFilters
 from .config_sections.scoring import ScoringConfig, ScoringWeights
 
@@ -206,7 +206,7 @@ def search_vacancies(
     for page_num in range(max_pages):
         url = build_search_url(filters, page_num)
         logger.info("Загрузка страницы поиска: %s", url)
-        page.goto(url, wait_until="domcontentloaded")
+        goto_hh(page, url)
 
         cards = page.locator(sel.VACANCY_CARD)
         count = cards.count()

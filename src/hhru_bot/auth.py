@@ -4,7 +4,7 @@ import logging
 
 from playwright.sync_api import sync_playwright
 
-from .browser import HH_BASE_URL
+from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
@@ -35,6 +35,9 @@ def login(config: AppConfig) -> None:
         if config.user_agent:
             context_kwargs["user_agent"] = config.user_agent
         context = browser.new_context(**context_kwargs)
+        # #80: context-wide потолок навигации (как в launch_context) — единый
+        # источник GOTO_TIMEOUT_MS, вместо хардкода 120000 на самом goto.
+        context.set_default_navigation_timeout(GOTO_TIMEOUT_MS)
         # Убираем navigator.webdriver и подделываем window.chrome — без этого
         # hh.ru детектит Playwright и держит кнопку выбора роли disabled. Приём
         # из YAMAKAYAMACO/hh-autoresponder/manual_login.py (рабочий против hh.ru).
@@ -43,7 +46,7 @@ def login(config: AppConfig) -> None:
             "window.chrome = {runtime: {}};"
         )
         page = context.new_page()
-        page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded", timeout=120000)
+        goto_hh(page, f"{HH_BASE_URL}/account/login")
 
         print()
         print("=" * 70)

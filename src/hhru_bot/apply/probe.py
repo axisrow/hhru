@@ -28,6 +28,7 @@ from typing import Any
 
 from playwright.sync_api import Page
 
+from ..browser import goto_hh
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..selector_groups import apply_form
@@ -137,7 +138,7 @@ def probe_vacancy(
     )
 
     logger.info("[PROBE] Открываю вакансию: %s (%s)", vacancy.title, vacancy.url)
-    page.goto(vacancy.url, wait_until="domcontentloaded")
+    goto_hh(page, vacancy.url)
 
     if reason := check_already_responded(page, vacancy):
         logger.info("[PROBE] Вакансия '%s' уже откликнута — пропускаю без дампа", vacancy.title)

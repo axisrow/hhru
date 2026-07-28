@@ -1,14 +1,73 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger("hhru_bot.browser")
 
 HH_BASE_URL = "https://hh.ru"
+
+# Потолок ожидания навигации по hh.ru. Дефолт Playwright 30с — hh.ru под
+# DDoS-Guard/нагрузкой грузится 33с+ (см. #80), и goto падает. Ставим
+# context-wide через set_default_navigation_timeout — покрывает ВСЕ goto/
+# expect_navigation одним источником (включая двухшаговую навигацию формы
+# отклика, CLAUDE.md п.4), без явного timeout в каждом вызове. 90с (не 120с
+# как в auth.py раньше): достаточно для медленного hh.ru, но не слепое
+# зависание на 1.5 мин при реально упавшем запросе.
+GOTO_TIMEOUT_MS = 90_000
+
+# Retry goto: DDoS-Guard регулярно пропускает запрос со 2-й попытки. 3 попытки,
+# линейный backoff 2с → 4с.
+_GOTO_MAX_ATTEMPTS = 3
+_GOTO_BACKOFF_SECONDS = 2.0
+
+
+def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
+    """page.goto с retry и готовностью страницы hh.ru (#80).
+
+    Базовый потолок ожидания задаёт context-wide set_default_navigation_timeout
+    (GOTO_TIMEOUT_MS), поэтому тут timeout не дублируем — DRY.
+
+    Поведение:
+    1. До ``_GOTO_MAX_ATTEMPTS`` попыток goto(wait_until='domcontentloaded').
+       Ловим PlaywrightTimeoutError/PlaywrightError — hh.ru под DDoS-Guard
+       часто отвечает со 2-й попытки; на последней попытке ошибку пробрасываем
+       (как обычный goto без retry).
+    2. ``ready_selector`` (опц.) — после удачного goto дождаться конкретного
+       ``data-qa`` маркера страницы (короткий GOTO_TIMEOUT_MS, если не задан
+       context-timeout), вместо ненадёжного networkidle. None — не ждать.
+
+    domcontentloaded НЕ меняем (рекомендация референсов #80: DDoS-Guard держит
+    сеть активной, networkidle может не сработать).
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, _GOTO_MAX_ATTEMPTS + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            if ready_selector:
+                page.locator(ready_selector).wait_for(timeout=GOTO_TIMEOUT_MS)
+            return
+        except (PlaywrightTimeoutError, PlaywrightError) as exc:
+            last_error = exc
+            if attempt < _GOTO_MAX_ATTEMPTS:
+                wait = _GOTO_BACKOFF_SECONDS * attempt
+                logger.warning(
+                    "goto не прошёл (попытка %d/%d): %s — повтор через %.1fs",
+                    attempt,
+                    _GOTO_MAX_ATTEMPTS,
+                    exc,
+                    wait,
+                )
+                time.sleep(wait)
+    # Последняя попытка провалилась — пробрасываем, как обычный goto.
+    assert last_error is not None
+    raise last_error
 
 
 @contextmanager
@@ -46,6 +105,9 @@ def launch_context(
             )
 
         context: BrowserContext = browser.new_context(**context_kwargs)
+        # #80: потолок навигации context-wide — покрывает ВСЕ goto/expect_navigation
+        # единым источником (включая двухшаговую навигацию формы отклика).
+        context.set_default_navigation_timeout(GOTO_TIMEOUT_MS)
         # Убираем navigator.webdriver и подделываем window.chrome — без этого
         # hh.ru детектит Playwright и не активирует кнопку входа. Приём из
         # YAMAKAYAMACO/hh-autoresponder/manual_login.py.
@@ -61,5 +123,5 @@ def launch_context(
 
 
 def is_logged_in(page: Page) -> bool:
-    page.goto(f"{HH_BASE_URL}/account/login", wait_until="domcontentloaded")
+    goto_hh(page, f"{HH_BASE_URL}/account/login")
     return "account/login" not in page.url

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL
+from .browser import HH_BASE_URL, goto_hh
 from .selector_groups import negotiations as ns
 
 logger = logging.getLogger("hhru_bot.responses")
@@ -255,7 +255,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         logger.info("Загрузка страницы откликов: %s", url)
-        page.goto(url, wait_until="domcontentloaded")
+        goto_hh(page, url)
 
         # Истёкшая сессия: hh.ru редиректит /applicant/negotiations на /account/
         # login. Это надёжный сигнал (не зависит от непроверенных селекторов

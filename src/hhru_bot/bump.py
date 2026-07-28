@@ -7,7 +7,7 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
-from .browser import HH_BASE_URL
+from .browser import HH_BASE_URL, goto_hh
 from .config import ResumeConfig
 
 logger = logging.getLogger("hhru_bot.bump")
@@ -29,7 +29,7 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         else f"{HH_BASE_URL}{resume.resume_url}"
     )
     logger.info("Открываю резюме: %s", url)
-    page.goto(url, wait_until="domcontentloaded")
+    goto_hh(page, url)
 
     disabled_hint = page.locator(sel.RESUME_BUMP_DISABLED_HINT)
     if disabled_hint.count() > 0:
