@@ -650,6 +650,74 @@ class History:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # --- Pre-LLM фильтр работодателя (#85) -----------------------------------
+    # Новый метод в конец файла (паттерн with self._connect(), существующие
+    # не трогаем). employer_interacted — позитивный сигнал для эвристического
+    # pre-фильтра: работодатель УЖЕ проявлял интерес (приглашал/смотрел резюме),
+    # значит отклик по новой вакансии от него — высокая конверсия, не отсекаем.
+    # Источник — responses (#12, account-scope) + manual_offers (#13), JOIN по
+    # vacancy_id (точный матч) и/или employer (имя компании, account-scope).
+
+    def employer_interacted(
+        self,
+        vacancy_id: str | None = None,
+        employer: str | None = None,
+        resume_id: str | None = None,
+    ) -> bool:
+        """Был ли ранее интерес работодателя (приглашение/просмотр) — сигнал pre-фильтра (#85).
+
+        Account-scope (как responses #12): НЕ требует resume_id. Проверяет по
+        ``vacancy_id`` (точный матч — работодатель отвечал по ЭТОЙ вакансии) И/ИЛИ
+        по ``employer`` (имя компании — работодатель когда-то отвечал по ЛЮБОЙ из
+        своих вакансий). resume_id опционален и сужает manual_offers до резюме
+        (responses и так account-scope, resume_id в их ключ не входит — #12).
+
+        «Взаимодействие» = есть responses-строка с активным статусом работодателя
+        (read/response/invitation/discard/offer — любой ответ = резюме видели) ИЛИ
+        липкая ручная пометка оффера в manual_offers. Чистые вакансии без ответа
+        (нет строки в responses) → False. Возвращает True при первом совпадении.
+        """
+        if vacancy_id is None and employer is None:
+            return False
+
+        clauses = []
+        params: list = []
+        # responses: активный статус работодателя (любой ответ). read включаем —
+        # работодатель ПОСМОТРЕЛ резюме, это валидный сигнал интереса.
+        clauses.append("status IN ('read', 'response', 'invitation', 'discard', 'offer')")
+        if vacancy_id is not None:
+            clauses.append("vacancy_id = ?")
+            params.append(vacancy_id)
+        if employer is not None:
+            clauses.append("employer = ?")
+            params.append(employer)
+        responses_where = " AND ".join(clauses)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM responses WHERE {responses_where} LIMIT 1",
+                params,
+            ).fetchone()
+            if row is not None:
+                return True
+
+            # manual_offers: липкая ручная пометка оффера. resume_id обязателен в
+            # таблице, но здесь опционален — без него учитываем все пометки.
+            offer_clauses = []
+            offer_params: list = []
+            if vacancy_id is not None:
+                offer_clauses.append("vacancy_id = ?")
+                offer_params.append(vacancy_id)
+            if resume_id is not None:
+                offer_clauses.append("resume_id = ?")
+                offer_params.append(resume_id)
+            offer_where = (" WHERE " + " AND ".join(offer_clauses)) if offer_clauses else ""
+            row = conn.execute(
+                f"SELECT 1 FROM manual_offers{offer_where} LIMIT 1",
+                offer_params,
+            ).fetchone()
+            return row is not None
+
     def market_salary_by_query(self) -> list[dict]:
         """Медиана зарплаты по поисковому запросу — сравнение сфер по доходу.
 
