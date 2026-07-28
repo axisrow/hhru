@@ -5,7 +5,11 @@
   Ключевое отличие от curl-дампа: блок ЗП рендерится в элементе
   БЕЗ data-qa (или с другим data-qa), поэтому селектор
   vacancy-serp__vacancy-compensation его не находит.
-  Зарплата присутствует как текст в потомках карточки.
+
+  magritte-особенность (#78): ЗП разбита по отдельным <span> — отдельный
+  спан на число, на разделитель разрядов (пробел как отдельный узел/спан),
+  на валюту. Регексп по СЫРОЙ HTML здесь НЕ сматчит «digits+валюта подряд»
+  (теги разрывают матч) — должен применяться к тексту без тегов.
 -->
 <div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
   <div class="magritte-serp-item__header">
@@ -17,9 +21,11 @@
     <span data-qa="vacancy-serp__vacancy-employer" class="magritte-link">ООО Ромашка</span>
     <span data-qa="vacancy-serp__vacancy-date">вчера</span>
   </div>
-  <!-- ЗП в magritte-разметке: нет data-qa, класс компенсации отсутствует -->
+  <!-- ЗП в magritte: каждый фрагмент в своём span -->
   <div class="magritte-serp-item__salary">
-    <span class="magritte-text">150 000–200 000 руб.</span>
+    <span class="magritte-text__tg3gq5">
+      <span>150</span><span> </span><span>000</span><span>–</span><span>200</span><span> </span><span>000</span><span> </span><span>₽</span>
+    </span>
   </div>
   <!-- Метаданные -->
   <div class="magritte-serp-item__meta">

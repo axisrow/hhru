@@ -279,21 +279,33 @@ def _salary_value_in_range(raw: str) -> bool:
     return any(_SALARY_MIN <= _strip_digits(n) <= _SALARY_MAX for n in numbers)
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
 def extract_salary_text_from_html(html: str) -> str | None:
     """Извлекает текст ЗП из HTML карточки regex'ом (fallback, issue #73).
 
     Когда data-qa селектор vacancy-serp__vacancy-compensation не находит
     элемент (hh.ru перешёл на magritte-разметку), пробуем найти ЗП по
-    текстовому паттерну в HTML карточки. Фильтруем по валидному диапазону,
+    текстовому паттерну в карточке. Фильтруем по валидному диапазону,
     чтобы отсечь ложные срабатывания ("3000 отзывов" и пр.).
+
+    Важно: regex применяется к ТЕКСТУ БЕЗ ТЕГОВ, а не к сырой HTML (#78).
+    hh.ru (magritte) разбивает ЗП по spans: ``<span>150</span><span> </span>
+    <span>000</span><span> </span><span>₽</span>`` — теги внутри числа и
+    whitespace-only спаны (разделитель разрядов) разрывают «digits+валюта
+    подряд», и регексп по сырой HTML не срабатывает. Удаляем теги в пустую
+    строку и нормализуем пробелы — получаем «150 000 ₽», точно как
+    ``card.inner_text()``, и число снова матчится единым фрагментом.
     """
-    match = _SALARY_PATTERN.search(html)
+    text = _TAG_RE.sub("", html)
+    match = _SALARY_PATTERN.search(text)
     if not match:
         return None
-    text = re.sub(r"<[^>]+>", "", match.group(0))
-    if not _salary_value_in_range(text):
+    salary_text = " ".join(match.group(0).split())
+    if not _salary_value_in_range(salary_text):
         return None
-    return text
+    return salary_text
 
 
 def _optional_text(card, selector: str) -> str | None:

@@ -1,5 +1,7 @@
 <!--
-  HTML-фикстура: ЗП в USD, формат "от N".
+  HTML-фикстура живой карточки вакансии hh.ru (magritte-разметка, 2025).
+  ЗП в USD, формат "от N". magritte разбивает по spans (#78): «от», число,
+  разделитель, валюта — отдельные span.
 -->
 <div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
   <div class="magritte-serp-item__header">
@@ -12,7 +14,9 @@
     <span data-qa="vacancy-serp__vacancy-date">3 дня назад</span>
   </div>
   <div class="magritte-serp-item__salary">
-    <span class="magritte-text">от 3 000 $</span>
+    <span class="magritte-text__tg3gq5">
+      <span>от</span><span> </span><span>3</span><span> </span><span>000</span><span> </span><span>$</span>
+    </span>
   </div>
   <div class="magritte-serp-item__meta">
     <span>Удалённо</span>
