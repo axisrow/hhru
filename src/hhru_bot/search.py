@@ -219,7 +219,10 @@ def search_vacancies(
             # по HTML карточки (hh.ru перешёл на magritte, #73).
             salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
             if salary_text is None:
-                salary_text = extract_salary_text_from_html(card.evaluate("el => el.innerHTML"))
+                try:
+                    salary_text = extract_salary_text_from_html(card.evaluate("el => el.innerHTML"))
+                except Exception:
+                    logger.warning("Не удалось получить innerHTML для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
             raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
 
@@ -287,7 +290,7 @@ def extract_salary_text_from_html(html: str) -> str | None:
     match = _SALARY_PATTERN.search(html)
     if not match:
         return None
-    text = match.group(0)
+    text = re.sub(r"<[^>]+>", "", match.group(0))
     if not _salary_value_in_range(text):
         return None
     return text

@@ -111,3 +111,15 @@ def test_extract_salary_only_employer():
         "</div>"
     )
     assert extract_salary_text_from_html(html) is None
+
+
+def test_extract_salary_strips_html_tags():
+    """Результат extract не содержит HTML-тегов (raw в SalaryInfo чистый)."""
+    html = '<div><span class="mt">150 000–200 000 руб.</span></div>'
+    text = extract_salary_text_from_html(html)
+    assert text is not None
+    assert "<span" not in text
+    assert "<div" not in text
+    result = parse_salary(text)
+    assert result is not None
+    assert result.raw == text
