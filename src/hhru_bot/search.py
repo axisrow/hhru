@@ -219,9 +219,15 @@ def search_vacancies(
             salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
             if salary_text is None:
                 try:
-                    salary_text = extract_salary_text_from_html(card.evaluate("el => el.innerHTML"))
+                    # #93: textContent (inner_text) вместо innerHTML. Аудит показал,
+                    # что hh.ru для части вакансий отдаёт ЗП только в textContent
+                    # (JS-рендер в текстовый узел), а в innerHTML блока нет — регексп
+                    # по innerHTML пропускал такие ЗП (5/15 → 19/20 ловится по тексту).
+                    # extract_salary_text корректно работает и с HTML, и с голым текстом
+                    # (удаление тегов на тексте = no-op), поэтому кормим её textContent.
+                    salary_text = extract_salary_text(card.inner_text())
                 except Exception:
-                    logger.warning("Не удалось получить innerHTML для ЗП-fallback", exc_info=True)
+                    logger.warning("Не удалось получить inner_text для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
             raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
 
@@ -289,23 +295,27 @@ def _salary_value_in_range(raw: str) -> bool:
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-def extract_salary_text_from_html(html: str) -> str | None:
-    """Извлекает текст ЗП из HTML карточки regex'ом (fallback, issue #73).
+def extract_salary_text(text: str) -> str | None:
+    """Извлекает текст ЗП из текста карточки regex'ом (fallback, issue #73/#93).
 
-    Когда data-qa селектор vacancy-serp__vacancy-compensation не находит
-    элемент (hh.ru перешёл на magritte-разметку), пробуем найти ЗП по
-    текстовому паттерну в карточке. Фильтруем по валидному диапазону,
-    чтобы отсечь ложные срабатывания ("3000 отзывов" и пр.).
+    Принимает ``textContent`` карточки (``card.inner_text()``) — НЕ сырой HTML
+    (#93). Аудит показал: hh.ru для части вакансий отдаёт ЗП только в textContent
+    (JS-рендер в текстовый узел), а в ``innerHTML`` блока нет — регексп по
+    ``innerHTML`` пропускал такие ЗП. ``search_vacancies`` кормит эту функцию
+    именно textContent, и ЗП ловится (5/15 → 19/20 по аудиту).
 
-    Важно: regex применяется к ТЕКСТУ БЕЗ ТЕГОВ, а не к сырой HTML (#78).
-    hh.ru (magritte) разбивает ЗП по spans: ``<span>150</span><span> </span>
-    <span>000</span><span> </span><span>₽</span>`` — теги внутри числа и
-    whitespace-only спаны (разделитель разрядов) разрывают «digits+валюта
-    подряд», и регексп по сырой HTML не срабатывает. Удаляем теги в пустую
-    строку и нормализуем пробелы — получаем «150 000 ₽», точно как
-    ``card.inner_text()``, и число снова матчится единым фрагментом.
+    Ради обратной совместимости функция также принимает сырую HTML (как #73/#78):
+    ``_TAG_RE`` удаляет теги (на чистом тексте — no-op), и regex применяется к
+    тексту без тегов. hh.ru (magritte) разбивает ЗП по spans: ``<span>150</span>
+    <span> </span><span>000</span><span> </span><span>₽</span>`` — теги внутри
+    числа и whitespace-only спаны разрывают «digits+валюта подряд», и регексп по
+    сырой HTML не срабатывает. Удаляем теги и нормализуем пробелы — получаем
+    «150 000 ₽», точно как ``card.inner_text()``.
+
+    Фильтруем по валидному диапазону (``_salary_value_in_range``), чтобы отсечь
+    ложные срабатывания ("3000 отзывов" и пр.).
     """
-    text = _TAG_RE.sub("", html)
+    text = _TAG_RE.sub("", text)
     match = _SALARY_PATTERN.search(text)
     if not match:
         return None
@@ -313,6 +323,17 @@ def extract_salary_text_from_html(html: str) -> str | None:
     if not _salary_value_in_range(salary_text):
         return None
     return salary_text
+
+
+def extract_salary_text_from_html(html: str) -> str | None:
+    """Deprecated-алиас для :func:`extract_salary_text` (#93).
+
+    Историческое имя из #73/#78 — когда источник был ``innerHTML``. С #93
+    источник сменился на ``inner_text`` (textContent), функция переименована в
+    ``extract_salary_text`` (HTML теперь не предполагается). Алиас оставлен ради
+    обратной совместимости существующих импортов/тестов и делегирует в новое имя.
+    """
+    return extract_salary_text(html)
 
 
 def _optional_text(card, selector: str) -> str | None:

@@ -1,0 +1,36 @@
+<!--
+  HTML-фикстура живой карточки hh.ru — случай из аудита #93 (часть A).
+
+  Аудит показал: для части вакансий hh.ru отдаёт ЗП ТОЛЬКО в textContent
+  (innerText), а в innerHTML блока ЗП нет совсем (JS-рендерит компенсацию в
+  текстовый узел после загрузки, либо блок вообще без разметки ЗП в исходном
+  HTML). innerHTML-regex здесь ЗП НЕ находит (её там нет), а inner_text() —
+  находит, т.к. textContent включает динамически добавленный текст.
+
+  Пары файлов:
+    .html  — то, что возвращает card.evaluate("el => el.innerHTML")
+    .txt   — то, что возвращает card.inner_text() (textContent, БЕЗ тегов)
+
+  Фикс #93: search_vacancies кормит extract_salary_text текстом из inner_text(),
+  а не innerHTML → ЗП ловится (5/15 → 19/20 по аудиту).
+
+  Регресс: прежде всего это проверяет, что extractor корректно обрабатывает
+  голый текст (textContent) так же, как HTML без тегов.
+-->
+<div data-qa="vacancy-serp__vacancy" class="magritte-card-serp-item__main">
+  <div class="magritte-serp-item__header">
+    <a data-qa="serp-item__title" class="magritte-link" href="/vacancy/87654321">
+      <span>Senior Backend Developer</span>
+    </a>
+  </div>
+  <div class="magritte-serp-item__info">
+    <span data-qa="vacancy-serp__vacancy-employer" class="magritte-link">ООО Технологии</span>
+    <span data-qa="vacancy-serp__vacancy-date">сегодня</span>
+  </div>
+  <!-- ВАЖНО: блока magritte-serp-item__salary НЕТ — ЗП не в HTML этой карточки.
+       hh.ru для таких вакансий отдаёт ЗП только в textContent (JS-рендер). -->
+  <div class="magritte-serp-item__meta">
+    <span>Москва</span>
+    <span>Полная занятость</span>
+  </div>
+</div>

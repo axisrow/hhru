@@ -67,3 +67,52 @@ def test_market_summary_shows_coverage():
     out = market_summary(rows)
     # with_salary/count видны — coverage сигнала
     assert "10" in out and "12" in out
+
+
+# --- #93: пометка ~оценка для эвристических ЗП --------------------------------
+
+
+def test_market_summary_marks_estimated_sphere():
+    """#93: сфера, медиана которой построена с оценками, помечается ~ (ASCII-тильда,
+    НЕ эмодзи) — честно отличать реальную медиану от derived-view оценки."""
+    rows = [
+        {
+            "search_query": "python",
+            "median_to": 300000,
+            "count": 12,
+            "with_salary": 2,
+            "estimated": True,
+        },
+    ]
+    out = market_summary(rows)
+    assert "~300 000" in out or "~300000" in out
+    assert not _has_emoji(out)
+
+
+def test_market_summary_does_not_mark_real_salary():
+    """#93: сфера с реальной медианой (estimated=False/отсутствует) — БЕЗ ~."""
+    rows = [
+        {
+            "search_query": "python",
+            "median_to": 300000,
+            "count": 12,
+            "with_salary": 12,
+            "estimated": False,
+        },
+    ]
+    out = market_summary(rows)
+    assert "~" not in out
+
+
+def test_market_summary_estimated_no_emoji():
+    """#93: пометка оценки — ASCII-тильда, в выводе нет эмодзи (правило проекта)."""
+    rows = [
+        {
+            "search_query": "python",
+            "median_to": 250000,
+            "count": 5,
+            "with_salary": 1,
+            "estimated": True,
+        },
+    ]
+    assert not _has_emoji(market_summary(rows))
