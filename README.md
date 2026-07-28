@@ -151,6 +151,7 @@ cp config/config.example.yaml config/config.yaml
 - `--max-pages MAX_PAGES` — Максимум страниц поиска (по умолчанию: 5)
 - `--vacancy-id` — ID целевой вакансии (число из URL https://hh.ru/vacancy/<id>)
 - `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
+- `--healthcheck` — Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)
 
 ### `query`
 

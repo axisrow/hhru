@@ -1,20 +1,48 @@
-"""Команда probe (#8): дамп формы отклика одной вакансии без отправки.
+"""Команда probe (#8, #88): диагностика селекторов hh.ru без отклика.
 
 Top-level команда `hhru_bot probe ...` — регистрируется автоматически через
 pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
 
-Безопасный диагностический режим: доходит до формы отклика целевой вакансии,
-заполняет сопроводительное письмо и сдампит screenshot + HTML в logs/, после
-чего останавчивается. submit не вызывается — ничего не отправляется.
-По дампу сверяются непроверенные селекторы формы отклика (см. #10).
+Два read-only режима:
+
+* По умолчанию (#8): доходит до формы отклика целевой вакансии, заполняет
+  сопроводительное письмо и сдампит screenshot + HTML в logs/, после чего
+  останавливается. submit не вызывается — ничего не отправляется. По дампу
+  сверяются непроверенные селекторы формы отклика (см. #10).
+* ``--healthcheck`` (#88): открывает ключевые страницы hh.ru (search/
+  negotiations/resume — URL без контекста конкретной вакансии) и считает
+  ``locator.count()`` для селекторов из ``selector_groups/``. Read-only: только
+  ``goto`` + ``count``, никаких кликов apply/отправки. Вывод — ASCII-таблица
+  ``page | selector | status | count`` со статусами OK (>0) / NOT_FOUND (обязательный,
+  0 — провал) / OPTIONAL_ABSENT (опциональный, легитимно отсутствует). Помогает при
+  регрессии (CLAUDE.md: «первый подозреваемый — устаревший селектор») до реального
+  падения команды. Итоговый [FAIL] считается только по обязательным селекторам.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
+from dataclasses import dataclass, field
 
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
+
+# ``[data-qa='name']`` → name. Селекторы hh.ru в этом проекте — только этот вид
+# (см. selector_groups/). Нужен, чтобы перечислить ключевые селекторы healthcheck
+# именами констант в выводе, не таща полноценный CSS-парсер.
+_QA_RE = re.compile(r"^\[data-qa=(?:['\"])([A-Za-z0-9_\-]+)(?:['\"])\]$")
+
+
+def _parse_qa_selector(selector: str) -> str | None:
+    """Извлекает data-qa-имя из ``[data-qa='...']``; иначе None.
+
+    Селекторы проекта — однородные (только data-qa). None здесь значит
+    «селектор не нашего вида» — в FakePage/test'е count() по нему вернёт 0, как
+    и по пустому DOM. В боевом Playwright count() работает с любым CSS-селектором.
+    """
+    m = _QA_RE.match(selector.strip())
+    return m.group(1) if m else None
 
 
 def register(subparsers) -> None:
@@ -31,7 +59,231 @@ def register(subparsers) -> None:
         "--vacancy-url",
         help="URL целевой вакансии (альтернатива --vacancy-id)",
     )
+    p.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)",
+    )
     p.set_defaults(func=run)
+
+
+# --- healthcheck (#88): чистая read-only логика, тестируемая без браузера ---
+
+# Статус одного селектора. OK = найден (>0). NOT_FOUND = обязательный, но 0
+# совпадений (провал). OPTIONAL_ABSENT = опциональный и отсутствует (легитимно —
+# пагинация в конце выдачи, compensation после magritte-перехода hh.ru 2025).
+STATUS_OK = "OK"
+STATUS_NOT_FOUND = "NOT_FOUND"
+STATUS_OPTIONAL_ABSENT = "OPTIONAL_ABSENT"
+
+
+@dataclass
+class SelectorCheck:
+    """Результат проверки одного селектора на странице.
+
+    ``name`` — человекочитаемая метка (имя константы из selector_groups),
+    ``selector`` — исходный CSS, ``found`` — ``locator.count()``,
+    ``required`` — обязателен ли селектор (False = легитимно может отсутствовать).
+
+    Различение required/optional критично (Codex F1): иначе любой здоровый
+    аккаунт репортится [FAIL] из-за селекторов, которые hh.ru НЕ рендерит по
+    дизайну (compensation после magritte, пагинация в конце выдачи).
+    """
+
+    name: str
+    selector: str
+    found: int
+    required: bool = True
+
+    @property
+    def status(self) -> str:
+        if self.found > 0:
+            return STATUS_OK
+        return STATUS_NOT_FOUND if self.required else STATUS_OPTIONAL_ABSENT
+
+    @property
+    def fails(self) -> bool:
+        """Провал = обязательный селектор не найден. Optional-ABSENT НЕ провал."""
+        return self.required and self.found == 0
+
+
+@dataclass
+class PageCheck:
+    """Результат проверки одной страницы: URL + список статусов селекторов."""
+
+    name: str
+    url: str
+    results: list[SelectorCheck] = field(default_factory=list)
+
+
+def check_selectors(page, spec, page_loader=None):
+    """Read-only прогон селекторов по страницам.
+
+    ``spec`` — список ``(page_name, url, [(name, selector, required?), ...])``.
+    ``required`` опционален (по умолчанию True — обратная совместимость с 2-tuple
+    ``(name, selector)``). Для каждой страницы: открыть (``page.goto``) и для
+    каждого селектора взять ``page.locator(selector).count()`` → SelectorCheck.
+    Ничего не кликает и не отправляет — это главный инвариант #88 (read-only).
+
+    ``page_loader(page, url, name)`` — опциональный хук, вызываемый ПОСЛЕ goto:
+    в боевом прогоне не нужен (DOM рендерит живой hh.ru), а в тестах через него
+    подменяют HTML фикстурой (имитация «браузер загрузил страницу»).
+    """
+    pages: list[PageCheck] = []
+    for name, url, selectors in spec:
+        page.goto(url, wait_until="domcontentloaded")
+        if page_loader is not None:
+            page_loader(page, url, name)
+        results = [
+            SelectorCheck(
+                name=sel_name,
+                selector=sel,
+                found=page.locator(sel).count(),
+                required=sel_required,
+            )
+            for sel_name, sel, sel_required in (_with_required(s) for s in selectors)
+        ]
+        pages.append(PageCheck(name=name, url=url, results=results))
+    return pages
+
+
+def _with_required(sel):
+    """Нормализует элемент spec в 3-tuple ``(name, selector, required)``.
+
+    Принимает 2-tuple ``(name, selector)`` (required=True по умолчанию) и
+    3-tuple ``(name, selector, required)``. Так старые тесты/spec без required
+    остаются обязательными, а новые помечают опциональные селекторы явно.
+    """
+    if len(sel) == 3:
+        return sel[0], sel[1], sel[2]
+    return sel[0], sel[1], True
+
+
+def format_healthcheck_table(pages: list[PageCheck]) -> str:
+    """ASCII-таблица статусов: ``страница | selector | status | count``.
+
+    Переиспользует ``report._ascii_table`` (общая ASCII-рамка проекта) — НЕ
+    дублирует отрисовку. Пустой список всё равно рисует шапку (контракт таблицы).
+    """
+    from ..report import _ascii_table
+
+    rows: list[list[str]] = []
+    for pg in pages:
+        for r in pg.results:
+            rows.append([pg.name, r.name, r.status, str(r.found)])
+    return _ascii_table(["page", "selector", "status", "count"], rows)
+
+
+def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]]]]:
+    """Список страниц и ключевых селекторов для проверки.
+
+    Читает селекторы из ``selector_groups/`` (не дублирует их). Состав страниц —
+    только те, чьи URL доступны БЕЗ контекста конкретной вакансии (Codex F1):
+    search/negotiations рендерятся как списки, resume использует resume_id из
+    конфига (id РЕЗЮМЕ — корректный для /resume/<id>). Страницы vacancy/
+    apply_form требуют реальный id вакансии (+ vacancyId/employerId в query),
+    которого у healthcheck нет — их здесь нет, иначе goto шёл бы на 404 и
+    ронял все их селекторы в NOT_FOUND на здоровом аккаунте.
+
+    ``required`` (3-й элемент каждого селектора) — обязателен ли он. Optional
+    помечены селекторы, которые hh.ru легитимно НЕ рендерит по дизайну:
+    compensation (устарел после magritte-перехода 2025, см. search_page.py),
+    пагинация (отсутствует в конце/начале выдачи). Иначе здоровая страница
+    репортилась бы [FAIL] (Codex F1).
+    """
+    from ..selector_groups import negotiations, resume_page, search_page
+
+    spec: list[tuple[str, str, list[tuple[str, str, bool]]]] = [
+        (
+            "search",
+            "https://hh.ru/search/vacancy",
+            [
+                ("VACANCY_CARD", search_page.VACANCY_CARD, True),
+                ("VACANCY_CARD_TITLE_LINK", search_page.VACANCY_CARD_TITLE_LINK, True),
+                ("VACANCY_CARD_COMPANY", search_page.VACANCY_CARD_COMPANY, True),
+                ("VACANCY_CARD_COMPENSATION", search_page.VACANCY_CARD_COMPENSATION, False),
+                ("PAGINATION_NEXT", search_page.PAGINATION_NEXT, False),
+            ],
+        ),
+        (
+            "negotiations",
+            "https://hh.ru/applicant/negotiations",
+            [
+                ("NEGOTIATION_ITEM", negotiations.NEGOTIATION_ITEM, True),
+                ("NEGOTIATION_VACANCY_LINK", negotiations.NEGOTIATION_VACANCY_LINK, True),
+                ("NEGOTIATIONS_PAGINATION_NEXT", negotiations.NEGOTIATIONS_PAGINATION_NEXT, False),
+            ],
+        ),
+    ]
+
+    # Страница резюме — только если в конфиге есть resume_url (URL для goto).
+    # resume_id здесь — id РЕЗЮМЕ (хвост resume_url), это корректный сегмент
+    # /resume/<id>, а НЕ id вакансии.
+    resume_url = _first_resume_url(config)
+    if resume_url:
+        spec.append(
+            (
+                "resume",
+                resume_url,
+                [
+                    ("RESUME_BUMP_BUTTON", resume_page.RESUME_BUMP_BUTTON, True),
+                ],
+            )
+        )
+    return spec
+
+
+def _first_resume_url(config) -> str | None:
+    """URL страницы резюме для goto (если в конфиге есть resume_url)."""
+    if not getattr(config, "resumes", None):
+        return None
+    resume = config.resumes[0]
+    return getattr(resume, "resume_url", None)
+
+
+def run_healthcheck(args: argparse.Namespace) -> None:
+    """Открывает браузер и печатает ASCII-таблицу статусов ключевых селекторов.
+
+    Read-only: только ``goto`` + ``locator.count()``. ``set_default_navigation_timeout``
+    (#80) поднимается, т.к. hh.ru может грузиться медленно. apply/submit не
+    трогаются.
+    """
+    from ..browser import launch_context
+    from ..config import load_config_or_exit
+
+    config = load_config_or_exit(args.config)
+    spec = _healthcheck_spec(config)
+
+    print("[INFO] healthcheck: read-only проверка селекторов hh.ru (без отклика)")
+    with launch_context(config.storage_state_file, headless=args.headless) as context:
+        page = context.new_page()
+        # #80: страницы hh.ru могут грузиться медленно — поднимаем навигационный
+        # timeout, чтобы healthcheck не падал по таймауту на медленном соединении.
+        page.set_default_navigation_timeout(60000)
+        pages = check_selectors(page, spec)
+
+    print(format_healthcheck_table(pages))
+    # Итог — только по required-селекторам (Codex F1): optional-ABSENT легитимен
+    # (пагинация/compensation) и НЕ делает здоровый аккаунт «сломанным».
+    required_ok = sum(1 for pg in pages for r in pg.results if r.required and r.found > 0)
+    required_missing = sum(1 for pg in pages for r in pg.results if r.fails)
+    optional_absent = sum(
+        1 for pg in pages for r in pg.results if r.status == STATUS_OPTIONAL_ABSENT
+    )
+    if required_missing:
+        print(
+            f"[FAIL] обязательных найдено {required_ok}, НЕ найдено {required_missing} "
+            "(см. NOT_FOUND выше); опциональных отсутствует "
+            f"{optional_absent} (норма)"
+        )
+    else:
+        print(
+            f"[OK] все {required_ok} обязательных селекторов найдены "
+            f"(опциональных отсутствует {optional_absent} — норма)"
+        )
+
+
+# --- probe-дамп формы (#8) -------------------------------------------------
 
 
 def _vacancy_from_url(url: str):
@@ -58,6 +310,10 @@ def _vacancy_from_url(url: str):
 
 
 def run(args: argparse.Namespace) -> None:
+    if getattr(args, "healthcheck", False):
+        run_healthcheck(args)
+        return
+
     from ..apply.probe import probe_vacancy
     from ..browser import launch_context
     from ..config import load_config_or_exit
