@@ -865,6 +865,13 @@ class History:
                 if include_estimates:
                     self._augment_with_estimates(conn, entry)
                 out.append(entry)
+            # #93 cleanup: при include_estimates _augment_with_estimates меняет
+            # median_to в Python — SQL-сортировка (по реальной медиане) уже не
+            # соответствует показанным оценочным значениям. Пересортируем по
+            # итоговой median_to убыванием (выгодные-наверху), стабильный тай-брейк
+            # по search_query — как в SQL (ORDER BY ... , v.search_query).
+            if include_estimates:
+                out.sort(key=lambda e: (-e["median_to"], e["search_query"]))
             return out
 
     def _augment_with_estimates(self, conn, entry: dict) -> None:
@@ -936,7 +943,13 @@ class History:
             return
         combined.sort()
         n = len(combined)
-        median = combined[n // 2] if n % 2 == 1 else (combined[n // 2 - 1] + combined[n // 2]) // 2
+        # Медиана тем же приёмом, что SQL-путь (AVG двух центральных, потом int):
+        # _median_salary_to делает int(AVG(...)), здесь — int((a+b)/2) с round,
+        # чтобы обе ветки считали медиану одинаково (без расхождения на 0.5).
+        if n % 2 == 1:
+            median = combined[n // 2]
+        else:
+            median = round((combined[n // 2 - 1] + combined[n // 2]) / 2)
         entry["median_to"] = int(median)
         if used_estimate:
             entry["estimated"] = True
