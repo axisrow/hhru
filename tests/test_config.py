@@ -468,3 +468,74 @@ def test_load_config_ai_profile_skills_wrong_type(tmp_path):
     )
     with pytest.raises(ConfigError, match="skills"):
         load_config(path)
+
+
+# --- ai_profile.cover_letter_examples: few-shot стиль писём (#96) ---
+
+
+def test_load_config_ai_profile_cover_letter_examples(tmp_path):
+    # cover_letter_examples — список прошлых писем как образцы стиля (#96).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI500"
+            search:
+              text: "x"
+            ai_profile:
+              summary: "Бэкенд-разработчик"
+              cover_letter_examples:
+                - "Здравствуйте! Пишу как бэкенд-разработчик."
+                - "Добрый день. Мой опыт в python релевантен."
+        """,
+    )
+    profile: AIProfile = load_config(path).resumes[0].ai_profile  # type: ignore[assignment]
+    assert profile is not None
+    assert profile.cover_letter_examples == [
+        "Здравствуйте! Пишу как бэкенд-разработчик.",
+        "Добрый день. Мой опыт в python релевантен.",
+    ]
+
+
+def test_load_config_ai_profile_cover_letter_examples_default_empty(tmp_path):
+    # Без cover_letter_examples → [] (опционально, обратная совместимость #17).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI600"
+            search:
+              text: "x"
+            ai_profile:
+              summary: "Краткое описание"
+        """,
+    )
+    profile: AIProfile = load_config(path).resumes[0].ai_profile  # type: ignore[assignment]
+    assert profile is not None
+    assert profile.cover_letter_examples == []
+
+
+def test_load_config_ai_profile_cover_letter_examples_wrong_type(tmp_path):
+    # cover_letter_examples не список строк → ConfigError.
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AI700"
+            search:
+              text: "x"
+            ai_profile:
+              cover_letter_examples: "не список"
+        """,
+    )
+    with pytest.raises(ConfigError, match="cover_letter_examples"):
+        load_config(path)
