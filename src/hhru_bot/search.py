@@ -12,6 +12,7 @@ from . import selectors as sel
 from .browser import HH_BASE_URL, goto_hh
 from .config import ResumeConfig, SearchFilters
 from .config_sections.scoring import ScoringConfig, ScoringWeights
+from .history import SKIP_REASONS
 
 if TYPE_CHECKING:
     # EmployerInfo живёт в scoring.py; импортируем только для type-checking,
@@ -173,21 +174,6 @@ def build_search_url(filters: SearchFilters, page_num: int = 0) -> str:
     if filters.schedule is not None:
         params["schedule"] = filters.schedule
     return f"{HH_BASE_URL}/search/vacancy?{urlencode(params)}"
-
-
-def _matches_exclusions(card: VacancyCard, filters: SearchFilters) -> str | None:
-    """Возвращает причину исключения вакансии, либо None если она подходит."""
-    company_lower = card.company.lower()
-    for excluded in filters.exclude_employers:
-        if excluded.lower() in company_lower:
-            return f"компания в стоп-списке: {excluded}"
-
-    title_lower = card.title.lower()
-    for keyword in filters.exclude_keywords:
-        if keyword.lower() in title_lower:
-            return f"стоп-слово в названии: {keyword}"
-
-    return None
 
 
 def search_vacancies(
@@ -424,6 +410,14 @@ def filter_candidates(
     и LLM-скоринга (#74) — экономия токенов. None / enabled=False = фильтр откл.
     (обратная совместимость, поведение не меняется). Применяется ПОСЛЕ дедупа/
     стоп-листов: «уже откликались» и стоп-слова — более определённые причины.
+
+    #87: причины отсева пишутся в журнал ``skipped`` через ``history.record_skip``
+    (стабильные enum-ключи SKIP_REASONS) — это кэш отсева: повторный search видит
+    «уже отсеяна» и не пересматривает повторно (экономия LLM/времени #74/#85).
+    ``is_skipped`` проверяется ПЕРВЫМ — если вакансия уже в кэше отсева, она не
+    доходит ни до has_applied, ни до стоп-листов, и журнал не дублируется. Все
+    ветки отсева (уже откликались / стоп-листы / pre-LLM фильтр #85) пишут свою
+    причину — кэш консистентен по всем путям отсева.
     """
     from .scoring import employer_passes_prefilter  # локальный импорт: цикл search<->scoring
 
@@ -431,22 +425,47 @@ def filter_candidates(
     skipped: list[tuple[VacancyCard, str]] = []
 
     for card in cards:
-        if history.has_applied(resume_id, card.vacancy_id):
-            skipped.append((card, "уже откликались ранее"))
+        # #87 кэш отсева: вакансия уже отсеяна ранее — пропускаем без повторного
+        # разбора (и без дублирующей записи в журнал). Экономит LLM/время.
+        if history.is_skipped(resume_id, card.vacancy_id):
+            skipped.append((card, "ранее отсеяна"))
             continue
 
-        reason = _matches_exclusions(card, filters)
-        if reason:
-            skipped.append((card, reason))
+        if history.has_applied(resume_id, card.vacancy_id):
+            skipped.append((card, "уже откликались ранее"))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.ALREADY_APPLIED)
+            continue
+
+        # Стоп-листы: employer и keyword — РАЗНЫЕ enum-причины, поэтому проверяем
+        # каждую отдельно (раньше их сливала отдельная функция в одну строку).
+        # Порядок employer→keyword сохранён. Совпадение берём конкретное — для
+        # человекочитаемого вывода причины.
+        company_lower = card.company.lower()
+        employer_hit = next(
+            (e for e in filters.exclude_employers if e.lower() in company_lower), None
+        )
+        if employer_hit is not None:
+            skipped.append((card, f"компания в стоп-списке: {employer_hit}"))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.STOPWORD_EMPLOYER)
+            continue
+
+        title_lower = card.title.lower()
+        keyword_hit = next((k for k in filters.exclude_keywords if k.lower() in title_lower), None)
+        if keyword_hit is not None:
+            skipped.append((card, f"стоп-слово в названии: {keyword_hit}"))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.STOPWORD_TITLE)
             continue
 
         # Pre-LLM фильтр работодателя (#85): отсев «слепых откликов» ДО скоринга.
-        # None/disabled внутри функции = no-op (обратная совместимость).
+        # None/disabled внутри функции = no-op (обратная совместимость). Отсеянная
+        # здесь карточка пишется в skipped (#87) — кэш консистентен по всем путям
+        # отсева, повторный search не пересматривает её.
         passes, prefilter_reason = employer_passes_prefilter(
             card, history, resume_id, prefilter_thresholds
         )
         if not passes:
             skipped.append((card, prefilter_reason))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_EMPLOYER_SIGNAL)
             continue
 
         candidates.append(card)

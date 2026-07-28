@@ -43,6 +43,7 @@ def test_all_commands_registered():
         "whoami",
         "list-resumes",
         "log",
+        "clear-skipped",
     }
 
 
@@ -71,6 +72,7 @@ def test_register_commands_returns_names():
         "whoami",
         "list_resumes",
         "log_cmd",
+        "clear_skipped",
     }
 
 
