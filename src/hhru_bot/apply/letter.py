@@ -14,10 +14,19 @@ apply.py НЕ знает, статичный провайдер или LLM: ед
 LetterOutcome.variant — A/B-признак для истории (actions.letter_variant):
 'template' (статичный шаблон) / 'ai' (LLM-генерация) / 'ai_fallback' (LLM не
 сработал, откатились на шаблон).
+
+#86: рандомизация альтернатив ``{a|b|c}`` → ``random.choice`` (``_resolve_
+alternatives``). Применяется в ``_format_template`` ДО плейсхолдеров — значит,
+работает сразу для статичного шаблона, для AI-fallback-шаблона (тоже через
+``_format_template``) и для AI-промпта (``ai/letters._build_prompt`` применяет
+``_resolve_alternatives`` к полям профиля). Одиночный плейсхолдер ``{vacancy_
+title}`` без ``|`` не матчится и остаётся для ``.format``.
 """
 
 from __future__ import annotations
 
+import random
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -79,8 +88,29 @@ class TemplateCoverLetterProvider:
         )
 
 
+# Рандомизация альтернатив {a|b|c} (#86): матчит {вариант1|вариант2|...} —
+# обязателен хотя бы один '|', альтернативы могут быть пустыми ({a||c} → иногда
+# пусто). Внутри группы не допускаются фигурные скобки (вложенность не нужна).
+# Одиночный плейсхолдер {vacancy_title} (без '|') не матчится — остаётся для .format.
+_ALTERNATIVES_RE = re.compile(r"\{([^{}]*\|[^{}]*)\}")
+
+
+def _resolve_alternatives(text: str) -> str:
+    """Заменяет каждую группу ``{a|b|c}`` на один случайный вариант (random.choice).
+
+    Применяется ДО плейсхолдеров ``{vacancy_title}``/``{company_name}``: так
+    одиночный плейсхолдер (без ``|``) не матчится этим регекспом и доходит до
+    ``.format`` нетронутым. Снижает шаблонность писём — анти-фрод + AI-детекторы
+    (HIGH-идея №2 из #84, паттерн s3rgeym ``rand_text()``). random без seed:
+    каждый рендер — разный вывод.
+    """
+    return _ALTERNATIVES_RE.sub(lambda m: random.choice(m.group(1).split("|")), text)
+
+
 def _format_template(template: str, vacancy: VacancyCard) -> str:
-    return template.format(vacancy_title=vacancy.title, company_name=vacancy.company)
+    return _resolve_alternatives(template).format(
+        vacancy_title=vacancy.title, company_name=vacancy.company
+    )
 
 
 def render_cover_letter(

@@ -30,6 +30,7 @@ from ..apply.letter import (
     CoverLetterProvider,
     LetterOutcome,
     _format_template,
+    _resolve_alternatives,
 )
 from ..search import VacancyCard
 
@@ -109,6 +110,10 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
     vacancy-description) требует доп. захода на страницу (троттлинг) и живёт в
     Этапе 4; здесь v1 обходимся карточкой, чтобы не плодить лишних запросов к
     hh.ru (анти-фрод: меньше запросов — ниже риск детекта).
+
+    #86: поля профиля (summary/skills/highlights/desired_role) могут содержать
+    альтернативы {a|b|c} — рандомизируем их (_resolve_alternatives), чтобы
+    промпт (и, значит, генерируемое письмо) варьировался между запусками.
     """
     system = (
         "Ты помогаешь писать короткие сопроводительные письма для отклика на "
@@ -118,14 +123,19 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
 
     lines = [f"Вакансия: {vacancy.title}.", f"Компания: {vacancy.company or 'не указана'}."]
     if profile is not None:
-        if profile.summary:
-            lines.append(f"О кандидате: {profile.summary}.")
-        if profile.skills:
-            lines.append("Ключевые навыки: " + ", ".join(profile.skills) + ".")
-        if profile.highlights:
-            lines.append("Достижения: " + "; ".join(profile.highlights) + ".")
-        if profile.desired_role:
-            lines.append(f"Желаемая роль: {profile.desired_role}.")
+        # Рандомизация {a|b|c} в каждом поле профиля — до подстановки в промпт.
+        summary = _resolve_alternatives(profile.summary)
+        skills = [_resolve_alternatives(s) for s in profile.skills]
+        highlights = [_resolve_alternatives(h) for h in profile.highlights]
+        desired_role = _resolve_alternatives(profile.desired_role)
+        if summary:
+            lines.append(f"О кандидате: {summary}.")
+        if skills:
+            lines.append("Ключевые навыки: " + ", ".join(skills) + ".")
+        if highlights:
+            lines.append("Достижения: " + "; ".join(highlights) + ".")
+        if desired_role:
+            lines.append(f"Желаемая роль: {desired_role}.")
         if profile.tone == "friendly":
             lines.append("Тон: дружелюбный, но профессиональный.")
         else:
