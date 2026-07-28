@@ -102,9 +102,14 @@ def test_empty_examples_omit_few_shot_from_prompt():
 
     provider.render(_card("Dev", "Acme"), resume_profile=None)
 
-    prompt = str(llm_no_examples.prompts[0])
-    assert "пример" not in prompt.lower() or "примеров" not in prompt
-    assert "стил" not in prompt.lower()
+    # Без examples few-shot user-сообщение не пишется вовсе. Проверяем absence
+    # по точному few-shot-маркеру (уникальная строка из этого сообщения), а не по
+    # хрупким русскоязычным корням вроде «стил»/«пример».
+    messages = llm_no_examples.prompts[0]
+    assert [m["role"] for m in messages] == ["system", "user"]
+    content = "\n".join(m["content"] for m in messages)
+    assert "прошлых сопроводительных писем" not in content
+    assert "в том же стиле" not in content
 
 
 def test_empty_examples_prompt_matches_pure_profile_prompt():
