@@ -127,7 +127,12 @@ class _Page:
 
 def test_detect_no_questions_clean_form():
     """Форма без вопросов (только cover-letter textarea) → has_questions False."""
-    html = "<textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>"
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
     page = _Page(html)
     result = detect_questions(page)
     assert result.has_questions is False
@@ -146,8 +151,11 @@ def test_detect_task_body_present():
 def test_detect_radio_heuristic():
     """Форма с radio + cover-letter → True (heuristic)."""
     html = """
-        <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
-        <input type='radio' name='q1' value='a'>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
     """
     page = _Page(html)
     result = detect_questions(page)
@@ -158,8 +166,11 @@ def test_detect_radio_heuristic():
 def test_detect_checkbox_heuristic():
     """Форма с checkbox + cover-letter → True (heuristic)."""
     html = """
-        <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
-        <input type='checkbox' name='q1' value='a'>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='checkbox' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
     """
     page = _Page(html)
     result = detect_questions(page)
@@ -170,8 +181,11 @@ def test_detect_checkbox_heuristic():
 def test_detect_textarea_outside_cover_letter():
     """Cover-letter popup + голый textarea (вопрос) → True (total−cover_letter=1)."""
     html = """
-        <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
-        <textarea></textarea>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <textarea></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
     """
     page = _Page(html)
     result = detect_questions(page)
@@ -181,7 +195,12 @@ def test_detect_textarea_outside_cover_letter():
 
 def test_detect_full_page_cover_letter_only():
     """Только full-page cover-letter variant → False (не false-positive)."""
-    html = "<textarea data-qa='vacancy-response-form-letter-input'></textarea>"
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
     page = _Page(html)
     result = detect_questions(page)
     assert result.has_questions is False
@@ -265,3 +284,62 @@ def test_detect_radio_inside_form_still_detected():
     result = detect_questions(page)
     assert result.has_questions is True
     assert "radio/checkbox" in result.reason
+
+
+def test_detect_indeterminate_when_submit_not_in_form():
+    """Round-2 regression: submit НЕ обёрнут в <form> (SPA без семантического
+    form-тега) → indeterminate=True, has_questions=True (fail-closed на submit),
+    НО НЕ обычный подтверждённый heuristic-skip — pipeline должен трактовать
+    это как fail (не persistent skip), см. apply/pipeline.py::_run."""
+    html = """
+        <div class='cookie-banner'>
+            <input type='checkbox' name='consent' value='1'>
+        </div>
+        <div>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </div>
+    """
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is True
+    assert result.indeterminate is True
+
+
+def test_detect_indeterminate_when_submit_missing():
+    """Submit-кнопка вообще отсутствует на странице → indeterminate (не должно
+    штатно происходить — wait_apply_button гарантирует наличие ранее, но
+    detect_questions обязан вести себя fail-closed-без-persist и в этом случае)."""
+    html = "<textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>"
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is True
+    assert result.indeterminate is True
+
+
+def test_detect_not_indeterminate_for_confirmed_and_normal_paths():
+    """Confirmed task-body путь и чистая форма НЕ помечаются indeterminate —
+    только неопределившийся form-scope должен его выставлять."""
+    clean = _Page("""
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """)
+    assert detect_questions(clean).indeterminate is False
+
+    task_body = _Page("<div data-qa='task-body'>...</div>")
+    result = detect_questions(task_body)
+    assert result.has_questions is True
+    assert result.indeterminate is False
+
+    scoped_radio = _Page("""
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """)
+    result = detect_questions(scoped_radio)
+    assert result.has_questions is True
+    assert result.indeterminate is False

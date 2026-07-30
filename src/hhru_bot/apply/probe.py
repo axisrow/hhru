@@ -155,9 +155,12 @@ def probe_vacancy(
 
     # #95: detect-only. Если форма требует анкеты — НЕ заполняем и НЕ дампим вопросы,
     # возвращаем skip (record_skip делает apply-цикл, у которого есть history).
+    # round-2 fix: indeterminate (границы формы не резолвились) — тоже без дампа,
+    # но помечаем отдельно в логе для диагностики (не подтверждённый has_questions).
     questions = detect_questions(page)
     if questions.has_questions:
-        logger.info("[INFO] %s — %s", vacancy.title, questions.reason)
+        marker = "[WARN indeterminate]" if questions.indeterminate else "[INFO]"
+        logger.info("%s %s — %s", marker, vacancy.title, questions.reason)
         return ProbeResult(vacancy, success=False, reason=questions.reason, skipped=True)
 
     # #17 (follow-up #54): письмо через провайдер, если он задан (AI под вакансию),

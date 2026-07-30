@@ -48,6 +48,13 @@ class _FakeLocator:
     def nth(self, _i: int) -> _FakeLocator:
         return self
 
+    def locator(self, _selector: str) -> _FakeLocator:
+        # Chained locator (#95 heuristic form-scope) — фейк не различает
+        # вложенность формы, "внутри формы" считается пустым (0): тесты этого
+        # файла не проверяют heuristic-содержимое, только сам факт
+        # resolve/no-resolve form-scope через APPLY_SUBMIT_BUTTON.
+        return _FakeLocator(present=False)
+
 
 class _ClickTrackingLocator(_FakeLocator):
     """Локатор, сообщающий о каждом click() в общий счётчик владельца-страницы."""
@@ -108,6 +115,12 @@ class FakeProbePage:
             return self._textarea_locator
         if selector == apply_form.APPLY_COVER_LETTER_TOGGLE:
             return _FakeLocator(present=False)
+        if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
+            # #95 round-2: submit обёрнут в <form> — used by detect_questions()
+            # form-scope resolve. present=self._submit (та же готовность формы,
+            # что и у самого submit — фейк не моделирует "submit есть, но вне
+            # <form>" отдельно от готовности формы).
+            return _FakeLocator(present=self._submit)
         if selector == apply_form.APPLY_SUBMIT_BUTTON:
             # Если probe вообще запросит submit — любой click будет зафиксирован.
             return _ClickTrackingLocator(present=self._submit, submit_clicks=self.submit_clicks)

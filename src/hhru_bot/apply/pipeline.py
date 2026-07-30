@@ -130,6 +130,12 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
     # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).
     questions = detect_questions(ctx.page)
+    if questions.indeterminate:
+        # round-2 fix: границы формы не резолвились — блокируем отправку, но НЕ
+        # пишем persistent skip (fail, не skip): недостоверная причина не должна
+        # навсегда исключать вакансию из is_skipped (#87).
+        logger.warning("[FAIL] %s — %s", ctx.vacancy.title, questions.reason)
+        return ctx.fail(questions.reason)
     if questions.has_questions:
         logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
         return ctx.skip(questions.reason)

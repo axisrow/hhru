@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from ..selector_groups import apply_form
 
@@ -39,10 +39,19 @@ _COVER_LETTER_TEXTAREAS = (
 
 @dataclass(frozen=True)
 class QuestionDetection:
-    """Результат детекции вопросов. has_questions=True → skip без submit (#95)."""
+    """Результат детекции вопросов. has_questions=True → skip без submit (#95).
+
+    indeterminate=True (round-2 fix): границы формы не удалось определить
+    (нет <form>-предка у кнопки submit), heuristic-часть не выполнялась — тоже
+    отправку блокируем (fail-closed), НО pipeline трактует это как обычный fail,
+    а не как подтверждённый skip: без persistent-записи в skipped (#87), иначе
+    один неопределившийся scope навсегда блокирует вакансию по недостоверной
+    причине (тот же класс бага, что unscoped heuristic в round 1).
+    """
 
     has_questions: bool
     reason: str = ""
+    indeterminate: bool = False
 
     @classmethod
     def no(cls) -> QuestionDetection:
@@ -52,20 +61,23 @@ class QuestionDetection:
     def yes(cls, reason: str) -> QuestionDetection:
         return cls(True, reason)
 
+    @classmethod
+    def indeterminate_scope(cls, reason: str) -> QuestionDetection:
+        return cls(True, reason, indeterminate=True)
 
-def _heuristic_scope(page: Page):
-    """Скоуп для heuristic-поиска (#95 fix): ближайший предок-<form> кнопки
-    отправки, а не весь документ. Без скоупинга page.locator() резолвится от
-    document root и ловит посторонние radio/checkbox/textarea за пределами
-    формы отклика (cookie-баннер, чат-виджет, футер) — false positive
-    навсегда пишется в постоянный skip-кэш (#87 is_skipped), см. #95 fix.
-    Playwright `xpath=ancestor::form[1]` от кнопки submit — форма отклика
-    (popup и full-page варианты) обёрнута в <form>, submit всегда внутри неё.
-    Fallback на весь page, если <form>-предок не найден (не должно происходить
-    в норме — submit уже был дождан в navigate_to_response_form/wait_apply_button).
+
+_SCOPE_NOT_FOUND_REASON = "не удалось определить границы формы отклика (нет <form>-предка у submit)"
+
+
+def _form_scope(page: Page) -> Locator | None:
+    """Ищет ближайший предок-<form> кнопки submit — граница heuristic-поиска
+    (#95 round-1 fix). Возвращает Locator при успехе, None если <form>-предок
+    не найден — НЕТ fallback на весь page (round-2 fix): без надёжной границы
+    heuristic не выполняется вовсе, чтобы посторонний page-level
+    radio/checkbox/textarea не порождал ложный persistent skip.
     """
     scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
-    return scope if scope.count() > 0 else page
+    return scope if scope.count() > 0 else None
 
 
 def detect_questions(page: Page) -> QuestionDetection:
@@ -79,15 +91,20 @@ def detect_questions(page: Page) -> QuestionDetection:
       1. data-qa task-body (подтверждено konard): count() > 0 → yes.
       2. Heuristic (НЕ подтверждено), скоуплено внутрь <form>: radio/checkbox в
          любом количестве → yes; либо textarea, не входящая в известные
-         cover-letter textareas → yes.
+         cover-letter textareas → yes. Если границы формы не резолвятся —
+         indeterminate (round-2 fix): блокируем отправку, но БЕЗ persistent skip.
     Никаких кликов, заполнений, навигаций — только count() поверх локаторов.
     """
     # (1) Подтверждённый data-qa путь — task-body специфичен, скоупинг не нужен.
     if page.locator(apply_form.APPLY_QUESTION_BODY).count() > 0:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (task-body)")
 
-    # (2) Heuristic fallback, скоуплено внутрь формы отклика (см. _heuristic_scope).
-    scope = _heuristic_scope(page)
+    # (2) Heuristic fallback, скоуплено внутрь формы отклика. Без формы-границы
+    # heuristic не выполняется — indeterminate вместо unscoped-поиска по page.
+    scope = _form_scope(page)
+    if scope is None:
+        return QuestionDetection.indeterminate_scope(_SCOPE_NOT_FOUND_REASON)
+
     if scope.locator(_RADIO).count() > 0 or scope.locator(_CHECKBOX).count() > 0:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (radio/checkbox)")
 
