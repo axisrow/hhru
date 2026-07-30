@@ -12,6 +12,19 @@
 textarea за вычетом известных cover-letter textareas → True; иначе False.
 
 Чистая функция поверх page.locator().count() — без браузера тестируется на HTML-фикстуре.
+
+ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ (round 3, НЕ подтверждено на живом hh.ru): heuristic-путь
+(2) скоупится через ближайший <form>-предок APPLY_SUBMIT_BUTTON (см. _form_scope).
+konard-референс подтверждает только наличие data-qa атрибутов, а НЕ то, что кнопка
+submit обёрнута именно в семантический <form>-тег — этот факт нигде не проверен
+живым дампом (форма отклика в CLAUDE.md сама помечена «НЕ подтверждено»). Если
+допущение неверно (SPA без <form>, submit через onClick — обычная практика для
+React), _form_scope() будет систематически возвращать None → detect_questions()
+всегда вернёт indeterminate=True → pipeline будет fail'ить КАЖДЫЙ non-dry-run
+apply ещё до fill_response_form, независимо от наличия вопросов в форме.
+ОБЯЗАТЕЛЬНО перед первым боевым apply/bump: прогнать `probe` на реальной вакансии
+и проверить лог на "[WARN indeterminate]" — если он появляется на форме БЕЗ
+вопросов, admission `<form>`-скоупинга неверно и требует ревизии (см. #95).
 """
 
 from __future__ import annotations
