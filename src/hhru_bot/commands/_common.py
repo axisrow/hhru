@@ -15,7 +15,7 @@ from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
 from ..config import AppConfig, ResumeConfig
 from ..config_sections.scoring import ScoringWeights
-from ..history import History
+from ..history import SKIP_REASONS, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     filter_candidates,
@@ -227,6 +227,15 @@ def run_apply_for_resume(
             args.dry_run,
             letter_provider=letter_provider,
         )
+
+        if result.skipped:
+            # #95: форма требует анкеты — НЕ считаем откликом, НЕ пишем actions,
+            # НЕ ждём throttle (отправки не было — анти-бан-пауза не нужна). Кэш
+            # skipped (#87) не даст повторно дойти до формы на следующем search.
+            history.record_skip(resume.resume_id, card.vacancy_id, SKIP_REASONS.HAS_QUESTIONS)
+            print(f"  [skip] {card.title} — {result.reason}")
+            continue
+
         status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
         history.record_action(
             resume.resume_id,

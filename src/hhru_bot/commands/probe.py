@@ -351,7 +351,10 @@ def run(args: argparse.Namespace) -> None:
             letter_provider=letter_provider,
         )
 
-    if result.success:
+    if result.skipped:
+        # #95: форма требует анкеты — это не ошибка и не успех.
+        print(f"[INFO] {result.reason}")
+    elif result.success:
         png = result.dump_paths.get("screenshot")
         html = result.dump_paths.get("html")
         print("[OK] Дамп формы отклика сохранён (отправка НЕ выполнена):")
