@@ -53,6 +53,21 @@ class QuestionDetection:
         return cls(True, reason)
 
 
+def _heuristic_scope(page: Page):
+    """Скоуп для heuristic-поиска (#95 fix): ближайший предок-<form> кнопки
+    отправки, а не весь документ. Без скоупинга page.locator() резолвится от
+    document root и ловит посторонние radio/checkbox/textarea за пределами
+    формы отклика (cookie-баннер, чат-виджет, футер) — false positive
+    навсегда пишется в постоянный skip-кэш (#87 is_skipped), см. #95 fix.
+    Playwright `xpath=ancestor::form[1]` от кнопки submit — форма отклика
+    (popup и full-page варианты) обёрнута в <form>, submit всегда внутри неё.
+    Fallback на весь page, если <form>-предок не найден (не должно происходить
+    в норме — submit уже был дождан в navigate_to_response_form/wait_apply_button).
+    """
+    scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
+    return scope if scope.count() > 0 else page
+
+
 def detect_questions(page: Page) -> QuestionDetection:
     """Чистая проверка формы отклика на наличие вопросов/анкеты (#95).
 
@@ -62,22 +77,24 @@ def detect_questions(page: Page) -> QuestionDetection:
 
     Порядок проверок (fail-closed — при сомнении склоняемся к «вопрос есть»):
       1. data-qa task-body (подтверждено konard): count() > 0 → yes.
-      2. Heuristic (НЕ подтверждено): radio/checkbox в любом количестве → yes;
-         либо textarea, не входящая в известные cover-letter textareas → yes.
+      2. Heuristic (НЕ подтверждено), скоуплено внутрь <form>: radio/checkbox в
+         любом количестве → yes; либо textarea, не входящая в известные
+         cover-letter textareas → yes.
     Никаких кликов, заполнений, навигаций — только count() поверх локаторов.
     """
-    # (1) Подтверждённый data-qa путь.
+    # (1) Подтверждённый data-qa путь — task-body специфичен, скоупинг не нужен.
     if page.locator(apply_form.APPLY_QUESTION_BODY).count() > 0:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (task-body)")
 
-    # (2) Heuristic fallback. radio/checkbox в нормальной форме отклика не бывает —
-    # их наличие = вопросы. Считаем по отдельности (не :is(), чтобы оставить читаемость).
-    if page.locator(_RADIO).count() > 0 or page.locator(_CHECKBOX).count() > 0:
+    # (2) Heuristic fallback, скоуплено внутрь формы отклика (см. _heuristic_scope).
+    scope = _heuristic_scope(page)
+    if scope.locator(_RADIO).count() > 0 or scope.locator(_CHECKBOX).count() > 0:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (radio/checkbox)")
 
-    # textarea: все минус cover-letter. Если осталась хоть одна — это вопрос-ответ.
-    total_textareas = page.locator(_TEXTAREA).count()
-    cover_letter_count = sum(page.locator(sel).count() for sel in _COVER_LETTER_TEXTAREAS)
+    # textarea: все минус cover-letter, в пределах формы. Если осталась хоть
+    # одна — это вопрос-ответ.
+    total_textareas = scope.locator(_TEXTAREA).count()
+    cover_letter_count = sum(scope.locator(sel).count() for sel in _COVER_LETTER_TEXTAREAS)
     if total_textareas > cover_letter_count:
         return QuestionDetection.yes(
             "вакансия требует заполнения анкеты (textarea вне cover-letter)"

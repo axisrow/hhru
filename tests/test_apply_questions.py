@@ -73,12 +73,40 @@ def _match(node, sel):
     return False
 
 
+def _find_parent(root, target):
+    for c in root.children:
+        if c is target:
+            return root
+        found = _find_parent(c, target)
+        if found is not None:
+            return found
+    return None
+
+
+def _ancestor_form(root, node):
+    """Эмулирует Playwright xpath=ancestor::form[1]: ближайший предок-<form>."""
+    cur = node
+    while True:
+        parent = _find_parent(root, cur)
+        if parent is None:
+            return None
+        if parent.tag == "form":
+            return parent
+        cur = parent
+
+
 class _Loc:
     def __init__(self, nodes):
         self._n = nodes
 
     def count(self):
         return len(self._n)
+
+    def locator(self, sel):
+        scope = self._n[0] if self._n else None
+        if scope is None:
+            return _Loc([])
+        return _Loc([n for n in _all(scope) if _match(n, sel)])
 
 
 class _Page:
@@ -87,6 +115,13 @@ class _Page:
         self._tree = self._root.feed(html)
 
     def locator(self, sel):
+        if ">> xpath=ancestor::form" in sel:
+            base_sel = sel.split(" >> xpath=ancestor::form")[0]
+            submit = next((n for n in _all(self._tree) if _match(n, base_sel)), None)
+            if submit is None:
+                return _Loc([])
+            form = _ancestor_form(self._tree, submit)
+            return _Loc([form] if form is not None else [])
         return _Loc([n for n in _all(self._tree) if _match(n, sel)])
 
 
@@ -158,3 +193,75 @@ def test_question_detection_no_yes_classmethods():
     assert QuestionDetection.no().reason == ""
     assert QuestionDetection.yes("test").has_questions is True
     assert QuestionDetection.yes("test").reason == "test"
+
+
+def test_detect_ignores_checkbox_outside_form():
+    """Посторонний checkbox ВНЕ формы (напр. cookie-баннер) не должен давать
+    ложный has_questions=True — форма отклика сама по себе чистая (#95 regression:
+    detect_questions обязан скоупить heuristic-поиск внутри <form>, а не по всей
+    странице)."""
+    html = """
+        <div class='cookie-banner'>
+            <input type='checkbox' name='consent' value='1'>
+        </div>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is False
+    assert result.reason == ""
+
+
+def test_detect_ignores_radio_outside_form():
+    """Посторонний radio ВНЕ формы (напр. чат-виджет) не должен давать ложный
+    has_questions=True."""
+    html = """
+        <div class='chat-widget'>
+            <input type='radio' name='rating' value='5'>
+        </div>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is False
+    assert result.reason == ""
+
+
+def test_detect_ignores_textarea_outside_form():
+    """Посторонняя textarea ВНЕ формы (напр. форма подписки в футере) не должна
+    давать ложный has_questions=True."""
+    html = """
+        <footer>
+            <textarea></textarea>
+        </footer>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is False
+    assert result.reason == ""
+
+
+def test_detect_radio_inside_form_still_detected():
+    """Radio ВНУТРИ формы (реальный вопрос) по-прежнему детектится после
+    добавления скоупинга — регрессия не должна убить основной сценарий."""
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html)
+    result = detect_questions(page)
+    assert result.has_questions is True
+    assert "radio/checkbox" in result.reason
