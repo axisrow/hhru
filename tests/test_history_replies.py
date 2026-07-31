@@ -6,6 +6,10 @@ scrape'ом fetch_responses и затёр бы факт нашей отправ�
 manual_offers (#13) и skipped (#87): своя таблица в общем SCHEMA-блоке,
 CREATE TABLE IF NOT EXISTS, БЕЗ миграций (#50).
 
+Ключ — partial-UNIQUE(topic, inbound_marker) WHERE status='success' (тот же
+приём, что idx_resume_vacancy_apply у actions): dry_run/failed ключ не занимают,
+поэтому «сначала --dry-run, потом боевая отправка» не теряет факт отправки.
+
 ВАЖНО (контракт #55): replies — источник для аналитики и планирования, но НЕ
 единственный источник правды об отправке. Живой чат подтверждает финально
 (пользователь мог ответить вручную с телефона). Тесты фиксируют именно этот
@@ -17,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
-from hhru_bot.history import SCHEMA, History
+from hhru_bot.history import REPLY_STATUS_VALUES, SCHEMA, History
 
 # --- SCHEMA: таблица replies ----------------------------------------------
 
@@ -56,8 +60,8 @@ def test_schema_replies_created_at_index():
         conn.close()
 
 
-def test_replies_unique_topic_marker_collides():
-    # Та же (topic, inbound_marker) дважды → IntegrityError.
+def test_replies_partial_unique_success_collides():
+    # Та же (topic, inbound_marker) со статусом success дважды → IntegrityError.
     conn = sqlite3.connect(":memory:")
     try:
         conn.executescript(SCHEMA)
@@ -73,7 +77,25 @@ def test_replies_unique_topic_marker_collides():
         except sqlite3.IntegrityError:
             pass
         else:  # pragma: no cover
-            raise AssertionError("ожидалась IntegrityError от UNIQUE(topic, inbound_marker)")
+            raise AssertionError("ожидалась IntegrityError от partial-UNIQUE replies")
+    finally:
+        conn.close()
+
+
+def test_replies_partial_unique_allows_non_success_duplicates():
+    # dry_run/failed НЕ занимают ключ: попытки копятся, и позднейший success
+    # на ту же пару вставляется штатно.
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(SCHEMA)
+        for status in ("dry_run", "dry_run", "failed", "success"):
+            conn.execute(
+                "INSERT INTO replies (topic, inbound_marker, status, created_at) "
+                "VALUES ('t1','m1',?,'2026-01-01')",
+                (status,),
+            )
+        rows = conn.execute("SELECT status FROM replies WHERE topic='t1'").fetchall()
+        assert len(rows) == 4
     finally:
         conn.close()
 
@@ -115,7 +137,7 @@ def test_replies_resume_id_not_in_key_account_scope():
         except sqlite3.IntegrityError:
             pass
         else:  # pragma: no cover
-            raise AssertionError("resume_id не должен входить в ключ UNIQUE")
+            raise AssertionError("resume_id не должен входить в ключ partial-UNIQUE")
     finally:
         conn.close()
 
@@ -144,15 +166,55 @@ def test_record_reply_idempotent_same_marker(tmp_path):
     assert len(h.replies_since(datetime(2000, 1, 1))) == 1
 
 
-def test_record_reply_idempotent_does_not_overwrite_first_row(tmp_path):
-    # Append-only: первая запись остаётся, повтор не перезаписывает поля.
+def test_record_reply_success_not_overwritten_by_later_attempt(tmp_path):
+    # Успешная отправка — терминальное состояние: повторный вызов (в т.ч. с
+    # другим статусом) не затирает её и не плодит вторую success-строку.
     h = History(tmp_path / "h.db")
     h.record_reply("t1", "m1", status="success", note="первый")
     h.record_reply("t1", "m1", status="failed", note="второй")
+    successes = [r for r in h.replies_since(datetime(2000, 1, 1)) if r["status"] == "success"]
+    assert len(successes) == 1
+    assert successes[0]["note"] == "первый"
+    assert h.has_replied("t1", "m1")
+
+
+def test_dry_run_then_success_is_recorded(tmp_path):
+    # Штатный сценарий: сначала --dry-run, потом боевая отправка. Успех НЕ
+    # должен потеряться из-за холостого прогона, иначе has_replied навсегда
+    # остался бы False и журнал потерял бы факт отправки.
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="dry_run")
+    assert not h.has_replied("t1", "m1")
+    h.record_reply("t1", "m1", status="success")
+    assert h.has_replied("t1", "m1")
+
+
+def test_failed_then_success_is_recorded(tmp_path):
+    # Ретрай после сбоя отправки: успех должен записаться.
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="failed")
+    assert not h.has_replied("t1", "m1")
+    h.record_reply("t1", "m1", status="success")
+    assert h.has_replied("t1", "m1")
+
+
+def test_failed_attempts_are_all_kept_for_analytics(tmp_path):
+    # Неуспешные попытки не занимают ключ и копятся в журнале — append-only.
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="failed", note="таймаут")
+    h.record_reply("t1", "m1", status="failed", note="капча")
     rows = h.replies_since(datetime(2000, 1, 1))
-    assert len(rows) == 1
-    assert rows[0]["status"] == "success"
-    assert rows[0]["note"] == "первый"
+    assert len(rows) == 2
+    assert {r["note"] for r in rows} == {"таймаут", "капча"}
+    assert not h.has_replied("t1", "m1")
+
+
+def test_record_reply_idempotent_repeated_success(tmp_path):
+    # Повторная успешная запись того же ответа — no-op по partial-UNIQUE.
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="success")
+    h.record_reply("t1", "m1", status="success")
+    assert len(h.replies_since(datetime(2000, 1, 1))) == 1
 
 
 def test_record_reply_different_markers_same_topic_distinct(tmp_path):
@@ -229,6 +291,36 @@ def test_record_reply_surrogate_marker_is_opaque(tmp_path):
     assert h.has_replied("t2", "2026-07-31:9f86d081884c")
 
 
+# --- валидация status ------------------------------------------------------
+
+
+def test_record_reply_rejects_unknown_status(tmp_path):
+    # Опечатка/синоним статуса не должна тихо проходить: строка легла бы в БД,
+    # has_replied навсегда вернул бы False, и бот отправил бы работодателю
+    # второе сообщение. Дешевле упасть на записи.
+    h = History(tmp_path / "h.db")
+    for bad in ("SUCCESS", "sent", "ok", "", "pending"):
+        try:
+            h.record_reply("t1", "m1", status=bad)
+        except ValueError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError(f"ожидалась ValueError на status={bad!r}")
+    assert h.replies_since(datetime(2000, 1, 1)) == []
+
+
+def test_record_reply_accepts_known_statuses(tmp_path):
+    h = History(tmp_path / "h.db")
+    for i, status in enumerate(REPLY_STATUS_VALUES):
+        h.record_reply(f"t{i}", f"m{i}", status=status)
+    assert len(h.replies_since(datetime(2000, 1, 1))) == len(REPLY_STATUS_VALUES)
+
+
+def test_reply_status_values_match_actions_vocabulary():
+    # Словарь тот же, что у actions (#55): без новых состояний.
+    assert set(REPLY_STATUS_VALUES) == {"success", "failed", "dry_run"}
+
+
 # --- replies_since ---------------------------------------------------------
 
 
@@ -247,12 +339,37 @@ def test_replies_since_empty_history(tmp_path):
 
 
 def test_replies_since_newest_first(tmp_path):
+    # Явно РАЗНЫЕ created_at (через сырой INSERT): record_reply в тесном цикле
+    # даёт одинаковый timestamp, и тогда проверялся бы только тайбрейк id DESC,
+    # а не сам ключ сортировки created_at DESC.
     h = History(tmp_path / "h.db")
-    h.record_reply("t1", "m1", status="success")
-    h.record_reply("t2", "m2", status="success")
-    h.record_reply("t3", "m3", status="success")
+    with h._connect() as conn:
+        for topic, created_at in (
+            ("t1", "2026-01-01T10:00:00"),
+            ("t2", "2026-01-03T10:00:00"),
+            ("t3", "2026-01-02T10:00:00"),
+        ):
+            conn.execute(
+                "INSERT INTO replies (topic, inbound_marker, status, created_at) "
+                "VALUES (?, ?, 'success', ?)",
+                (topic, f"m-{topic}", created_at),
+            )
     topics = [r["topic"] for r in h.replies_since(datetime(2000, 1, 1))]
-    assert topics == ["t3", "t2", "t1"]
+    assert topics == ["t2", "t3", "t1"]
+
+
+def test_replies_since_tiebreak_newest_id_first(tmp_path):
+    # Одинаковый created_at → тайбрейк по id DESC (свежая вставка первой).
+    h = History(tmp_path / "h.db")
+    with h._connect() as conn:
+        for topic in ("t1", "t2"):
+            conn.execute(
+                "INSERT INTO replies (topic, inbound_marker, status, created_at) "
+                "VALUES (?, ?, 'success', '2026-01-01T10:00:00')",
+                (topic, f"m-{topic}"),
+            )
+    topics = [r["topic"] for r in h.replies_since(datetime(2000, 1, 1))]
+    assert topics == ["t2", "t1"]
 
 
 def test_replies_since_includes_created_at(tmp_path):

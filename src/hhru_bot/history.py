@@ -146,9 +146,24 @@ CREATE TABLE IF NOT EXISTS replies (
     status TEXT NOT NULL,
     letter_variant TEXT,
     note TEXT,
-    created_at TEXT NOT NULL,
-    UNIQUE (topic, inbound_marker)
+    created_at TEXT NOT NULL
 );
+
+-- Ключ PARTIAL-UNIQUE только по успешным ответам (тот же приём, что
+-- idx_resume_vacancy_apply у actions). Так одно входящее не может получить два
+-- успешных ответа, а dry_run/failed ключ НЕ занимают. Table-level
+-- UNIQUE(topic, inbound_marker) здесь был бы багом: штатный сценарий «сначала
+-- --dry-run, потом боевая отправка» (и ретрай после failed) молча терял бы
+-- success под INSERT OR IGNORE — has_replied навсегда остался бы False, а
+-- журнал потерял бы сам факт отправки. Неуспешные попытки при этом копятся
+-- строками — это и есть материал для аналитики.
+-- CAVEAT (#50, без миграций): если БД была создана ранней версией этой ветки с
+-- table-level UNIQUE(topic, inbound_marker), CREATE TABLE IF NOT EXISTS её НЕ
+-- переделает и старое ограничение останется рядом с новым индексом. Лечение по
+-- решению проекта — удалить data/history.db и дать пересоздаться (данных мало).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
+    ON replies(topic, inbound_marker)
+    WHERE status = 'success';
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 """
@@ -195,6 +210,17 @@ SKIP_REASON_VALUES = (
     _SkipReasons.HAS_QUESTIONS,
     _SkipReasons.DUPLICATE,
 )
+
+
+#: Допустимые значения ``replies.status`` (#108). Тот же словарь, что у actions
+#: — новых состояний не вводим (решение #55: без машины состояний). Кортеж, не
+#: set: порядок стабилен для сообщений об ошибке.
+#:
+#: Валидируется в record_reply намеренно (в отличие от record_action): опечатка
+#: или синоним (``"SUCCESS"``, ``"sent"``) прошли бы в БД молча, has_replied
+#: навсегда вернул бы False, и бот отправил бы работодателю ВТОРОЕ сообщение.
+#: В actions такая же ошибка лишь искажает статистику, здесь — видна человеку.
+REPLY_STATUS_VALUES = ("success", "failed", "dry_run")
 
 
 class History:
@@ -1163,10 +1189,11 @@ class History:
     # --- Журнал ответов работодателям replies (#108, решение #55) -------------
     # Отдельный слой в конец файла (паттерн with self._connect(), существующие
     # методы не трогаем). replies — append-only журнал НАШИХ ответов в чатах
-    # negotiations, отдельно от перезаписываемой responses (#12). Ключ
-    # UNIQUE(topic, inbound_marker): один ответ на одно входящее, повторные
-    # запуски не плодят строк (INSERT OR IGNORE). Account-scope: resume_id
-    # опционален и не в ключе.
+    # negotiations, отдельно от перезаписываемой responses (#12). Ключ —
+    # partial-UNIQUE(topic, inbound_marker) WHERE status='success': одно входящее
+    # не получит двух успешных ответов, повторный success — no-op (INSERT OR
+    # IGNORE), а dry_run/failed ключ не занимают и копятся для аналитики.
+    # Account-scope: resume_id опционален и не в ключе.
     #
     # ГРАНИЦА ОТВЕТСТВЕННОСТИ (#55): этот слой отвечает «мы уже писали ответ на
     # это входящее», а НЕ «в чате уже есть наш ответ». Второе знает только живой
@@ -1192,10 +1219,21 @@ class History:
         — из словаря actions (``success``/``failed``/``dry_run``), новых состояний
         не вводим (#55).
 
-        Повторный вызов с той же (topic, inbound_marker) — no-op (INSERT OR
-        IGNORE): журнал append-only, первая запись НЕ перезаписывается. Разные
+        Идемпотентность — по partial-UNIQUE, то есть только по УСПЕШНЫМ ответам:
+        повторный ``success`` на ту же (topic, inbound_marker) — no-op (INSERT OR
+        IGNORE), первая успешная запись не перезаписывается. Неуспешные попытки
+        (``dry_run``/``failed``) ключ не занимают: они копятся строками для
+        аналитики и НЕ блокируют последующий ``success`` — иначе штатный сценарий
+        «сначала --dry-run, потом боевая отправка» терял бы факт отправки. Разные
         входящие в одном чате — разные строки (диалог продолжается).
+
+        :raises ValueError: ``status`` вне :data:`REPLY_STATUS_VALUES`.
         """
+        if status not in REPLY_STATUS_VALUES:
+            raise ValueError(
+                f"недопустимый status={status!r} для replies; "
+                f"ожидается одно из {REPLY_STATUS_VALUES}"
+            )
         with self._connect() as conn:
             conn.execute(
                 """
@@ -1242,6 +1280,14 @@ class History:
         журнал полный, фильтр «успешных» — задача вызывающего. Ключи словарей:
         topic/inbound_marker/vacancy_id/resume_id/status/letter_variant/note/
         created_at.
+
+        ``since`` — НАИВНЫЙ datetime в локальном времени (как ``datetime.now()``,
+        которым пишется ``created_at``): сравнение идёт лексикографически по
+        ISO-строке, и tz-aware значение (суффикс ``+00:00``) дало бы мусорный
+        результат. Граница ИСКЛЮЧАЮЩАЯ (``>``, как в new_responses_since).
+        Не курсор: ``isoformat()`` опускает микросекунды, когда они ровно нули,
+        поэтому передача ``created_at`` последней строки как ``since`` может
+        пропустить строку той же секунды — для дозапроса фильтруй по id.
         """
         with self._connect() as conn:
             rows = conn.execute(
