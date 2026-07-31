@@ -12,13 +12,14 @@ README и не по памяти. Дата: 2026-07-31. Предыдущие и�
 | [fikstt2/hh-ai-agent](https://github.com/fikstt2/hh-ai-agent) | Python, Playwright + Telegram | MIT | `vacancy_filter.py`, `approval.py`, `llm/` |
 | [Steev193/hh-ru-apply](https://github.com/Steev193/hh-ru-apply) | Node.js, Playwright | MIT | `README.md`, `docs/USAGE.md`, `dashboard/` |
 | [tgeruzov/hh-auto-responder](https://github.com/tgeruzov/hh-auto-responder) | Tampermonkey userscript | MIT | `script.js` (~3200 строк) |
-| [konard/hh-job-application-automation](https://github.com/konard/hh-job-application-automation) | Node.js, Puppeteer | Unlicense | `src/qa-database.mjs`, `src/qa.mjs`, `src/ignored-vacancies-db.mjs`, `src/vacancy-response.mjs` |
+| [konard/hh-job-application-automation](https://github.com/konard/hh-job-application-automation) | Bun, Playwright **и** Puppeteer (`--engine`, `package.json:12-25`) | Unlicense | `src/qa-database.mjs`, `src/qa.mjs`, `src/ignored-vacancies-db.mjs`, `src/vacancy-response.mjs` |
 
 **Важное различие стека.** s3rgeym работает через официальный REST API (`api_client.post`,
 `_xsrf`, `X-Xsrftoken`), остальные четыре — через браузер. Наш проект браузерный, поэтому
 целые классы решений s3rgeym (в частности ответы на тест-вопросы) к нам **не переносятся
 механически** — это уточнение по сравнению с ранними итерациями #84, где они значились
-как «MEDIUM, подсмотреть у s3rgeym».
+как «MEDIUM, подсмотреть у s3rgeym». И наоборот: konard поддерживает **Playwright** наравне
+с Puppeteer, то есть его паттерны (в частности идея №2) переносятся к нам ближе всего.
 
 ## Что уже закрыто с прошлых итераций #84
 
@@ -67,8 +68,8 @@ CLAUDE.md и `docs/cli-spec.md`.
 | AI-Vision решение капчи | s3rgeym `_solve_captcha_async` | Обход анти-фрода. Правильное поведение — идея №1 (остановиться и позвать человека) |
 | Бесконечный цикл / автопилот в процессе | s3rgeym (`crontab` + docker), fikstt2 `main.py:153` (`while True` + `check_interval_minutes`) | Запрещены фоновые режимы. У нас `schedule` (#18) отдаёт это launchd/cron — нативнее |
 | `clear-negotiations` (массовый отзыв откликов) | s3rgeym `operations/clear_negotiations.py` | Деструктивно и редко. Уже спроектировано в #111 под #55 — новой идеей не считается |
-| `clone-resume` для обхода дневного лимита | s3rgeym `operations/clone_resume.py` | **Отклонено как обход лимита.** В прошлых итерациях #84 стояло «MEDIUM, если упрёмся в лимит» — по коду видно, что назначение именно такое. Дневной лимит hh.ru — ограничение, которое мы уважаем, а не обходим клонами. У самого s3rgeym основной payload закомментирован, рабочего решения там нет |
-| regex по полной `description` вакансии | s3rgeym `apply_vacancies.py::_is_excluded` | Дополнительный HTTP-запрос на каждую вакансию ради узкого выигрыша над snippet-фильтром. Не окупается |
+| `clone-resume` | s3rgeym `operations/clone_resume.py:97-109`, `README.md:133` | Не окупается. По коду это рабочий `POST /resume_profile` с `clone_resume_id`, а по README назначение — «когда закончились подходящие вакансии, клонируйте резюме и делайте активным», то есть скорее обновление/переподнятие резюме, чем обход лимита (в прошлых итерациях #84 стояло «MEDIUM, если упрёмся в лимит» — код этого прочтения не подтверждает). Для нас нереализуемо в текущем стеке: это REST-вызов, а не действие в браузере. Если однажды понадобится — это ручной шаг раз в месяц, ради которого не нужна команда. **Оговорка:** если брать, то как способ освежить резюме, а не размножить лимит — размножение лимита мы отклоняем по принципу |
+| regex по полной `description` вакансии | s3rgeym `apply_vacancies.py:1444-1474` (`_is_excluded`) | Реализовано аккуратно — сначала regex по `name + snippet`, полная страница грузится **только если локальный матч не сработал**. Но выигрыш всё равно узкий: лишний HTTP-запрос на каждую вакансию, которую snippet-фильтр не отсеял, то есть на большинство. У нас пре-фильтр (#85) и так режет до этой точки. Не окупается |
 
 ## Приоритизация
 
@@ -109,6 +110,12 @@ CLAUDE.md и `docs/cli-spec.md`.
 
 Проверено по коду, не по README: circuit breaker на LLM (#74) — ни у кого из пяти;
 воронка откликов (#13), `probe` с дампом формы без отправки (#8), анализ рынка по
-доходу (#66), pre-LLM эвристический фильтр за 0 токенов (#85) — тоже уникальны.
+доходу (#66) — тоже уникальны.
+
+Про pre-LLM фильтр (#85) уточнение: **сама идея отсева до LLM не уникальна** — у fikstt2
+`main.py:73-87` `title_rejection_reason()` вызывается до `analyzer.assess()`. Уникален
+наш **признак** отсева: fikstt2 фильтрует по стоп-словам в заголовке, мы — по сигналам
+работодателя (tier/trusted/rating/reviews/предыдущее взаимодействие). Это ортогональные
+слои, и по стоп-словам у нас как раз зазор — см. идею №4.
 `schedule` через launchd/cron (#18) чище бесконечного цикла s3rgeym/fikstt2, а
 detect-only на тест-вопросы (#95) — честнее их авто-ответов.
