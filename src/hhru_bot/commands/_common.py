@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
-from ..config import AppConfig, ResumeConfig
+from ..config import AppConfig, ResumeConfig, SearchFilters
 from ..config_sections.scoring import ScoringWeights
 from ..history import SKIP_REASONS, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
+    VacancyCard,
     filter_candidates,
     rank_candidates,
     search_vacancies,
@@ -25,7 +27,7 @@ from ..search import (
 from ..throttle import LimitReached, Throttle
 
 if TYPE_CHECKING:
-    from ..scoring import LLMScoringProvider
+    from ..scoring import LLMScoringProvider, ScoringProvider
 
 logger = logging.getLogger("hhru_bot.cli")
 
@@ -154,6 +156,68 @@ def _build_scoring_provider(
     )
 
 
+@dataclass
+class ApplyPlan:
+    """План отклика по резюме: ранжированные кандидаты + статистика построения.
+
+    Чистый результат build_apply_plan (#101) — без браузера, без побочных
+    эффектов. ranked — тот же формат, что возвращает rank_candidates: список
+    (карточка, score, разбивка факторов), уже урезанный по limit. total/
+    after_filter/after_limit — счётчики для логов/отчётов по стадиям
+    filter -> rank -> limit; skipped — пары (карточка, причина) из
+    filter_candidates, для отладочного логирования вызывающей стороной.
+    """
+
+    ranked: list[tuple[VacancyCard, float, dict[str, float]]]
+    skipped: list[tuple[VacancyCard, str]] = field(default_factory=list)
+    total: int = 0
+    after_filter: int = 0
+    after_limit: int = 0
+
+
+def build_apply_plan(
+    candidates: list[VacancyCard],
+    filters: SearchFilters,
+    resume: ResumeConfig,
+    history: History,
+    scoring_provider: ScoringProvider | None = None,
+    limit: int | None = None,
+) -> ApplyPlan:
+    """Строит план откликов: filter -> pre-LLM -> rank -> slice по limit.
+
+    Чистая функция (без браузера) — вынесена из run_apply_for_resume (#101),
+    чтобы решения filter/rank/limit были тестируемы без hh.ru. candidates —
+    СЫРЫЕ карточки из search_vacancies (ещё без применения exclude_employers/
+    exclude_keywords/истории — это делает filter_candidates внутри, см.
+    CLAUDE.md про разделение поиска и фильтрации).
+
+    limit: None или 0 (CLI-конвенция args.limit по умолчанию 0 = флаг не задан)
+    означают "без среза" — берутся все ranked-кандидаты, как раньше
+    (candidates[:limit] с limit=len(ranked)).
+    """
+    prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
+    filtered, skipped = filter_candidates(candidates, filters, resume.resume_id, history, prefilter)
+
+    ranked = rank_candidates(
+        filtered,
+        filters,
+        resume,
+        scoring_provider=scoring_provider,
+        llm_shortlist=_LLM_SHORTLIST_DEFAULT,
+    )
+
+    effective_limit = limit if limit else len(ranked)
+    sliced = ranked[:effective_limit]
+
+    return ApplyPlan(
+        ranked=sliced,
+        skipped=skipped,
+        total=len(candidates),
+        after_filter=len(filtered),
+        after_limit=len(sliced),
+    )
+
+
 def run_apply_for_resume(
     page,
     config: AppConfig,
@@ -171,6 +235,10 @@ def run_apply_for_resume(
     #17: если включён AI (секция ai + ai_profile) — отклик идёт через
     CoverLetterProvider; иначе (провайдер None) — статичный шаблон, поведение
     не меняется. letter_variant пишется в history для A/B-среза (Этап 3).
+
+    #101: план (filter → rank → limit) строится чистой build_apply_plan;
+    здесь остаётся только execution-оркестрация (providers, apply_to_vacancy,
+    запись истории, throttle).
     """
     print(f"\n=== Отклики для резюме: {resume.id} ===")
 
@@ -181,38 +249,24 @@ def run_apply_for_resume(
         return
 
     cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
-    # pre-LLM фильтр работодателя (#85): пороги из опц. секции scoring.prefilter.
-    # resume.scoring=None / prefilter=None / enabled=False → фильтр откл. (no-op
-    # внутри filter_candidates), обратная совместимость.
-    prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
-    candidates, skipped = filter_candidates(
-        cards, resume.search, resume.resume_id, history, prefilter
-    )
-
-    for card, reason in skipped:
-        logger.debug("Пропуск вакансии %s: %s", card.title, reason)
-
-    # Ранжирование кандидатов по score (#15) — строго между filter_candidates
-    # и срезом [:limit], чтобы дневной лимит уходил на лучшие совпадения.
-    # #81: при включённом AI ранжирование идёт через LLMScoringProvider (#74),
-    # иначе (провайдер None) — чистая эвристика #15 (поведение не меняется).
-    # llm_shortlist обязателен при провайдере: предранжирование эвристикой →
-    # LLM только по топ-10, иначе десятки синхронных запросов (анти-фрод, F3).
     scoring_provider = _build_scoring_provider(config, resume)
-    ranked = rank_candidates(
-        candidates,
+    plan = build_apply_plan(
+        cards,
         resume.search,
         resume,
+        history,
         scoring_provider=scoring_provider,
-        llm_shortlist=_LLM_SHORTLIST_DEFAULT,
+        limit=args.limit,
     )
 
-    limit = args.limit if args.limit else len(ranked)
+    for card, reason in plan.skipped:
+        logger.debug("Пропуск вакансии %s: %s", card.title, reason)
+
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
 
     applied_count = 0
-    for card, _score, _breakdown in ranked[:limit]:
+    for card, _score, _breakdown in plan.ranked:
         try:
             throttle.check_apply_limit(resume.resume_id, args.dry_run)
         except LimitReached as e:
