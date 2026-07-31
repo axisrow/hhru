@@ -62,10 +62,10 @@ CLAUDE.md и `docs/cli-spec.md`.
 | Bézier-траектории курсора + имитация чтения | tgeruzov `script.js`, konard | Оверинжиниринг для ручного CLI. Мы и так между действиями держим `throttle.wait()`. Наша защита — низкий темп и дневные лимиты, а не правдоподобность мышиных движений |
 | Multi-account (`--profile`) | s3rgeym `operations/config.py` | Принцип проекта: один аккаунт. Мультиаккаунт — это уже про массовость |
 | Telegram-бот / inbound-уведомления | fikstt2 `tg_bot.py`, Steev193 | CLI-only; уведомление — это stdout запущенной вручную команды |
-| Web-дашборд | s3rgeym `ui/`, Steev193 `dashboard/` (:3849) | CLI-only, вывод текст/ASCII |
+| Графический интерфейс | s3rgeym `ui/__init__.py` (десктопное окно pywebview, не веб-сервер), Steev193 `dashboard/` (веб на :3849) | CLI-only, вывод текст/ASCII. Формы у них разные, вывод для нас один |
 | `--send-email` напрямую (SMTP) | s3rgeym `apply_vacancies.py:1147` | Принцип: коммуникация только внутри hh.ru |
 | AI-Vision решение капчи | s3rgeym `_solve_captcha_async` | Обход анти-фрода. Правильное поведение — идея №1 (остановиться и позвать человека) |
-| Бесконечный цикл / автопилот в процессе | s3rgeym (docker+cron), fikstt2 (loop 30 мин) | Запрещены фоновые режимы. У нас `schedule` (#18) отдаёт это launchd/cron — нативнее |
+| Бесконечный цикл / автопилот в процессе | s3rgeym (`crontab` + docker), fikstt2 `main.py:153` (`while True` + `check_interval_minutes`) | Запрещены фоновые режимы. У нас `schedule` (#18) отдаёт это launchd/cron — нативнее |
 | `clear-negotiations` (массовый отзыв откликов) | s3rgeym `operations/clear_negotiations.py` | Деструктивно и редко. Уже спроектировано в #111 под #55 — новой идеей не считается |
 | `clone-resume` для обхода дневного лимита | s3rgeym `operations/clone_resume.py` | **Отклонено как обход лимита.** В прошлых итерациях #84 стояло «MEDIUM, если упрёмся в лимит» — по коду видно, что назначение именно такое. Дневной лимит hh.ru — ограничение, которое мы уважаем, а не обходим клонами. У самого s3rgeym основной payload закомментирован, рабочего решения там нет |
 | regex по полной `description` вакансии | s3rgeym `apply_vacancies.py::_is_excluded` | Дополнительный HTTP-запрос на каждую вакансию ради узкого выигрыша над snippet-фильтром. Не окупается |
