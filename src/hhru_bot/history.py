@@ -119,6 +119,38 @@ CREATE TABLE IF NOT EXISTS skipped (
     created_at TEXT NOT NULL,
     UNIQUE (resume_id, vacancy_id, reason)
 );
+
+-- replies — журнал НАШИХ ответов работодателям в переписках (#108, решение #55).
+-- ОТДЕЛЬНО от responses (#12) по той же причине, что manual_offers (#13):
+-- responses перезаписывается каждым scrape'ом fetch_responses и затёр бы факт
+-- нашей отправки. replies — append-only: одна строка на «ответ на конкретное
+-- входящее».
+-- inbound_marker — признак входящего сообщения, на которое отвечаем. Непрозрачная
+-- для БД строка: реальный message_id, если hh.ru его отдаёт, иначе суррогат
+-- (дата + хеш текста последнего входящего). Конкретный вид определяет вызывающий
+-- по итогам probe --negotiations (#107) — схема НЕ завязана на один вариант.
+-- ВАЖНО: replies — источник для аналитики и планирования, но НЕ единственный
+-- источник правды об отправке. Перед боевой отправкой pipeline обязан свериться
+-- с ЖИВЫМ чатом: пользователь мог ответить вручную с телефона, и БД об этом не
+-- знает. has_replied отсекает заведомо отвеченные, живой чат подтверждает финально.
+-- status — те же значения, что в actions (success/failed/dry_run), НЕ новый
+-- словарь состояний: машины состояний (pending/in_flight/sent) по решению #55 нет.
+-- Account-scope как responses: resume_id опционален и НЕ в ключе
+-- (/applicant/negotiations не даёт достоверной привязки чата к резюме).
+CREATE TABLE IF NOT EXISTS replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    inbound_marker TEXT NOT NULL,
+    vacancy_id TEXT,
+    resume_id TEXT,
+    status TEXT NOT NULL,
+    letter_variant TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (topic, inbound_marker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 """
 
 
@@ -1127,6 +1159,102 @@ class History:
                     "SELECT COUNT(*) AS cnt FROM skipped WHERE reason = ?", (reason,)
                 ).fetchone()
             return row["cnt"] if row else 0
+
+    # --- Журнал ответов работодателям replies (#108, решение #55) -------------
+    # Отдельный слой в конец файла (паттерн with self._connect(), существующие
+    # методы не трогаем). replies — append-only журнал НАШИХ ответов в чатах
+    # negotiations, отдельно от перезаписываемой responses (#12). Ключ
+    # UNIQUE(topic, inbound_marker): один ответ на одно входящее, повторные
+    # запуски не плодят строк (INSERT OR IGNORE). Account-scope: resume_id
+    # опционален и не в ключе.
+    #
+    # ГРАНИЦА ОТВЕТСТВЕННОСТИ (#55): этот слой отвечает «мы уже писали ответ на
+    # это входящее», а НЕ «в чате уже есть наш ответ». Второе знает только живой
+    # чат (пользователь мог ответить вручную с телефона). Планирование отсекает
+    # по has_replied дёшево, боевая отправка обязана свериться с чатом в точке
+    # отправки. Не превращать этот слой в единственный источник правды.
+
+    def record_reply(
+        self,
+        topic: str,
+        inbound_marker: str,
+        *,
+        vacancy_id: str | None = None,
+        resume_id: str | None = None,
+        status: str,
+        letter_variant: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Записывает наш ответ на входящее сообщение (идемпотентно по UNIQUE).
+
+        ``inbound_marker`` — непрозрачный признак входящего: реальный message_id
+        либо суррогат (дата + хеш текста), см. комментарий к таблице. ``status``
+        — из словаря actions (``success``/``failed``/``dry_run``), новых состояний
+        не вводим (#55).
+
+        Повторный вызов с той же (topic, inbound_marker) — no-op (INSERT OR
+        IGNORE): журнал append-only, первая запись НЕ перезаписывается. Разные
+        входящие в одном чате — разные строки (диалог продолжается).
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO replies
+                    (topic, inbound_marker, vacancy_id, resume_id, status,
+                     letter_variant, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    topic,
+                    inbound_marker,
+                    vacancy_id,
+                    resume_id,
+                    status,
+                    letter_variant,
+                    note,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def has_replied(self, topic: str, inbound_marker: str) -> bool:
+        """True, если мы УСПЕШНО ответили на это входящее (для планирования).
+
+        Только ``status='success'``: ``dry_run`` и ``failed`` отправкой не
+        считаются. Это намеренно ИНАЧЕ, чем в :meth:`has_applied` (#3), где
+        dry_run дедуплицирует отклик: там повторный отклик безвреден, а здесь
+        холостой прогон навсегда заблокировал бы боевой ответ на живое входящее.
+
+        НЕ финальная проверка перед отправкой — см. границу ответственности выше:
+        False здесь не значит «в чате нет нашего ответа».
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM replies "
+                "WHERE topic = ? AND inbound_marker = ? AND status = 'success' LIMIT 1",
+                (topic, inbound_marker),
+            ).fetchone()
+            return row is not None
+
+    def replies_since(self, since: datetime) -> list[dict]:
+        """Наши ответы, записанные после ``since`` — для аналитики и отчётов.
+
+        Свежие первыми. Возвращает ВСЕ статусы (включая ``dry_run``/``failed``):
+        журнал полный, фильтр «успешных» — задача вызывающего. Ключи словарей:
+        topic/inbound_marker/vacancy_id/resume_id/status/letter_variant/note/
+        created_at.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT topic, inbound_marker, vacancy_id, resume_id, status,
+                       letter_variant, note, created_at
+                FROM replies
+                WHERE created_at > ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (since.isoformat(),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
