@@ -48,7 +48,7 @@ cp config/config.example.yaml config/config.yaml
 (`search_vacancies`, живёт в `search.py`) → **фильтрация/отсев** (`filter_candidates`
 + pre-LLM-префильтр #85 + таблица skipped #87, живёт в `search.py`/`history.py`) →
 **планирование** (`run_apply_for_resume` — ранжирование/скоринг #74 + дневной лимит,
-живёт в `commands/_common.py`) → **действие** (`apply_to_vacancy`/`bump`, живёт в
+живёт в `commands/_common.py`) → **действие** (`apply_to_vacancy`/`bump_resume`, живёт в
 `apply/`/`bump.py`) → **запись результата** (`history`, живёт в `history.py`). Каждая
 ответственность — отдельный модуль с чистыми переиспользуемыми функциями (см. `apply/`
 ниже); имена файлов — это «где живёт», а не суть шага. Все браузерные модули
