@@ -22,6 +22,7 @@ from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
+from .questions import detect_questions
 from .success import wait_success_confirmation
 
 logger = logging.getLogger("hhru_bot.apply")
@@ -35,6 +36,10 @@ class ApplyResult:
     # A/B-вариант письма (#17): 'template' / 'ai' / 'ai_fallback'. Для записи в
     # history.actions.letter_variant. По умолчанию 'template' (без AI-провайдера).
     letter_variant: str = VARIANT_TEMPLATE
+    # #95: skip — третий исход (помимо success/fail). True → вакансия требует анкеты,
+    # submit НЕ выполнялся. В отличие от fail, skip не пишет status='failed' в actions
+    # и не расходует дневной лимит/троттл (см. commands/_common.run_apply_for_resume).
+    skipped: bool = False
 
 
 @dataclass
@@ -58,6 +63,18 @@ class ApplyContext:
 
     def ok(self, reason: str) -> ApplyResult:
         return ApplyResult(self.vacancy, True, reason, letter_variant=self.letter_variant)
+
+    def skip(self, reason: str) -> ApplyResult:
+        # #95: skip отличён от fail — отправки не было, но и ошибки нет. success=False,
+        # skipped=True: цикл откликов пишет record_skip (НЕ record_action failed) и
+        # не ждёт throttle. mirror of fail()/ok() — несёт letter_variant для консистентности.
+        return ApplyResult(
+            self.vacancy,
+            success=False,
+            reason=reason,
+            letter_variant=self.letter_variant,
+            skipped=True,
+        )
 
 
 def apply_to_vacancy(
@@ -109,6 +126,19 @@ def _run(ctx: ApplyContext) -> ApplyResult:
 
     apply_steps.navigate_to_response_form(ctx.page)
     ctx.probe("form_loaded")
+
+    # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
+    # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).
+    questions = detect_questions(ctx.page)
+    if questions.indeterminate:
+        # round-2 fix: границы формы не резолвились — блокируем отправку, но НЕ
+        # пишем persistent skip (fail, не skip): недостоверная причина не должна
+        # навсегда исключать вакансию из is_skipped (#87).
+        logger.warning("[FAIL] %s — %s", ctx.vacancy.title, questions.reason)
+        return ctx.fail(questions.reason)
+    if questions.has_questions:
+        logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
+        return ctx.skip(questions.reason)
 
     if reason := apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter):
         return ctx.fail(reason)

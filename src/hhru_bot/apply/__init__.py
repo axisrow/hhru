@@ -11,5 +11,14 @@ from __future__ import annotations
 from .letter import render_cover_letter
 from .pipeline import ApplyContext, ApplyResult, apply_to_vacancy
 from .probe import ProbeHook
+from .questions import QuestionDetection, detect_questions
 
-__all__ = ["ApplyContext", "ApplyResult", "ProbeHook", "apply_to_vacancy", "render_cover_letter"]
+__all__ = [
+    "ApplyContext",
+    "ApplyResult",
+    "ProbeHook",
+    "QuestionDetection",
+    "apply_to_vacancy",
+    "detect_questions",
+    "render_cover_letter",
+]

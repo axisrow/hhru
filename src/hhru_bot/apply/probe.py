@@ -35,6 +35,7 @@ from ..selector_groups import apply_form
 from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import CoverLetterProvider, render_cover_letter
+from .questions import detect_questions
 
 logger = logging.getLogger("hhru_bot.apply.probe")
 
@@ -62,6 +63,8 @@ class ProbeResult:
     success: bool
     reason: str = ""
     dump_paths: dict[str, Path] = field(default_factory=dict)
+    # #95: форма требует анкеты — dump не делается, submit не кликается.
+    skipped: bool = False
 
     def fail(self, reason: str) -> ProbeResult:
         return ProbeResult(self.vacancy, False, reason)
@@ -149,6 +152,16 @@ def probe_vacancy(
 
     apply_steps.navigate_to_response_form(page)
     logger.info("[PROBE] Дошёл до формы отклика, заполняю письмо (без отправки)")
+
+    # #95: detect-only. Если форма требует анкеты — НЕ заполняем и НЕ дампим вопросы,
+    # возвращаем skip (record_skip делает apply-цикл, у которого есть history).
+    # round-2 fix: indeterminate (границы формы не резолвились) — тоже без дампа,
+    # но помечаем отдельно в логе для диагностики (не подтверждённый has_questions).
+    questions = detect_questions(page)
+    if questions.has_questions:
+        marker = "[WARN indeterminate]" if questions.indeterminate else "[INFO]"
+        logger.info("%s %s — %s", marker, vacancy.title, questions.reason)
+        return ProbeResult(vacancy, success=False, reason=questions.reason, skipped=True)
 
     # #17 (follow-up #54): письмо через провайдер, если он задан (AI под вакансию),
     # иначе статичный .format. Провайдер сам падает на шаблон при сбое LLM —

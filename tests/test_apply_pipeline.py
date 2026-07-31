@@ -23,7 +23,7 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -41,6 +41,13 @@ class _FakeLocator:
     def nth(self, _i: int) -> _FakeLocator:
         return self
 
+    def locator(self, _selector: str) -> _FakeLocator:
+        # Chained locator (используется #95 heuristic-скоупингом внутри найденной
+        # <form>) — фейк не различает вложенность, считает "ничего внутри" (0),
+        # т.к. тесты этого файла не проверяют heuristic-содержимое формы, только
+        # сам факт resolve/no-resolve form-scope (indeterminate-путь).
+        return _FakeLocator(present=False)
+
 
 class FakePage:
     """Имитирует Playwright Page для путей pipeline. Настраивает «состояние» страницы."""
@@ -50,11 +57,16 @@ class FakePage:
         *,
         apply_button: bool = True,
         success: bool = True,
+        submit_in_form: bool = False,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
         self._success = success
+        # #95 round-2: submit обёрнут в <form> (детектится xpath=ancestor::form[1]
+        # в apply/questions.py::_form_scope) — по умолчанию False, чтобы явно
+        # моделировать indeterminate-путь там, где тест его не настраивает.
+        self._submit_in_form = submit_in_form
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -68,6 +80,8 @@ class FakePage:
             return _FakeLocator(present=self._apply_button)
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
+        if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
+            return _FakeLocator(present=self._success and self._submit_in_form)
         # Прочие селекторы формы — считаем отсутствующими (форма не заполнена,
         # но submit присутствует в фейковом успехе через success-путь ниже).
         if selector == apply_form.APPLY_SUBMIT_BUTTON:
@@ -177,3 +191,30 @@ def test_apply_letter_variant_preserved_on_fail():
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True, letter_provider=None)
     assert result.success is False
     assert result.letter_variant == "template"
+
+
+# --- #95 round-2: indeterminate form-scope не должен персиститься как skip ---
+
+
+def test_apply_non_dry_run_success_when_submit_scoped_in_form():
+    # non-dry-run путь доходит до detect_questions; когда submit корректно
+    # обёрнут в <form> (обычный случай на реальном hh.ru), форма без вопросов
+    # проходит как раньше — success, не regression от round-2 fix.
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is True
+    assert result.skipped is False
+
+
+def test_apply_non_dry_run_indeterminate_is_fail_not_skip():
+    # #95 round-2 fix (Codex finding): если submit НЕ резолвится внутри <form>
+    # (граница формы не определилась), detect_questions() возвращает
+    # indeterminate — pipeline обязан трактовать это как fail (ApplyResult.skipped
+    # остаётся False), а не как подтверждённый has_questions-skip. Иначе
+    # неопределившийся scope навсегда пишется в permanent skip-кэш (#87) по
+    # недостоверной причине — именно баг, который round-2 фикс устраняет.
+    page = FakePage(apply_button=True, success=True, submit_in_form=False)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is False
+    assert result.skipped is False
+    assert "границы формы" in result.reason
