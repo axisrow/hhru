@@ -47,7 +47,7 @@ cp config/config.example.yaml config/config.yaml
 Поток данных — цепочка ответственностей, не файлов: **сбор вакансий**
 (`search_vacancies`, живёт в `search.py`) → **фильтрация/отсев** (`filter_candidates`
 + pre-LLM-префильтр #85 + таблица skipped #87, живёт в `search.py`/`history.py`) →
-**планирование** (`build_apply_plan` — ранжирование/скоринг #74 + дневной лимит,
+**планирование** (`run_apply_for_resume` — ранжирование/скоринг #74 + дневной лимит,
 живёт в `commands/_common.py`) → **действие** (`apply_to_vacancy`/`bump`, живёт в
 `apply/`/`bump.py`) → **запись результата** (`history`, живёт в `history.py`). Каждая
 ответственность — отдельный модуль с чистыми переиспользуемыми функциями (см. `apply/`
