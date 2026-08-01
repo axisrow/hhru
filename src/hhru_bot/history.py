@@ -894,6 +894,16 @@ class History:
                 """
                 SELECT
                     v.search_query AS search_query,
+                    -- #122: медиана считается ТОЛЬКО по доминирующей валюте сферы.
+                    -- salary_currency не нормализована: «от 6000 USD» рядом с
+                    -- рублёвыми вилками занижало бы медиану, причём незаметно.
+                    (
+                        SELECT salary_currency FROM vacancies_seen
+                        WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                        GROUP BY salary_currency
+                        ORDER BY COUNT(*) DESC, salary_currency
+                        LIMIT 1
+                    ) AS currency,
                     COALESCE((
                         SELECT AVG(salary_to)
                         FROM (
@@ -901,11 +911,29 @@ class History:
                                    COUNT(*) OVER () AS total
                             FROM vacancies_seen
                             WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                              AND salary_currency IS (
+                                SELECT salary_currency FROM vacancies_seen
+                                WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                                GROUP BY salary_currency
+                                ORDER BY COUNT(*) DESC, salary_currency
+                                LIMIT 1
+                              )
                         )
                         WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
                     ), 0) AS median_to,
                     COUNT(*) AS count,
-                    COUNT(salary_to) AS with_salary
+                    COUNT(salary_to) AS with_salary,
+                    -- Сколько вакансий сферы имеют ЗП в ДРУГОЙ валюте (не вошли
+                    -- в медиану) — чтобы отчёт мог честно об этом сказать.
+                    SUM(
+                        CASE WHEN v.salary_to IS NOT NULL AND v.salary_currency IS NOT (
+                            SELECT salary_currency FROM vacancies_seen
+                            WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                            GROUP BY salary_currency
+                            ORDER BY COUNT(*) DESC, salary_currency
+                            LIMIT 1
+                        ) THEN 1 ELSE 0 END
+                    ) AS other_currency
                 FROM vacancies_seen AS v
                 GROUP BY v.search_query
                 ORDER BY median_to DESC, count DESC, v.search_query
@@ -918,6 +946,8 @@ class History:
                     "median_to": int(row["median_to"]) if row["median_to"] else 0,
                     "count": row["count"],
                     "with_salary": row["with_salary"],
+                    "currency": row["currency"],
+                    "other_currency": row["other_currency"] or 0,
                     "estimated": False,
                 }
                 if include_estimates:
@@ -945,12 +975,15 @@ class History:
         """
         query = entry["search_query"]
         # Реальные salary_to сферы (уже есть) + оценки для вакансий без ЗП.
+        # #122: только доминирующая валюта — та же, по которой посчитана медиана
+        # в market_salary_by_query, иначе оценки вернули бы смешение валют назад.
         real = [
             r["salary_to"]
             for r in conn.execute(
                 "SELECT salary_to FROM vacancies_seen "
-                "WHERE search_query = ? AND salary_to IS NOT NULL",
-                [query],
+                "WHERE search_query = ? AND salary_to IS NOT NULL "
+                "AND salary_currency IS ?",
+                [query, entry.get("currency")],
             ).fetchall()
         ]
         # Вакансии без ЗП — их tier'ы (для оценки).

@@ -176,6 +176,39 @@ def build_search_url(filters: SearchFilters, page_num: int = 0) -> str:
     return f"{HH_BASE_URL}/search/vacancy?{urlencode(params)}"
 
 
+def _has_next_page(page: Page, page_num: int) -> bool:
+    """Есть ли страница после ``page_num`` (issue #123).
+
+    hh.ru отдаёт пагинацию в двух вариантах разметки (см. комментарий у
+    ``PAGINATION_PAGE``): с кнопкой ``pager-next`` и без неё. Раньше признак
+    брался только от ``pager-next``, поэтому во втором варианте сбор молча
+    обрывался на первой странице — терялось до 90% выдачи.
+
+    Признак берётся от пронумерованных ссылок ``pager-page``, которые есть в
+    ОБОИХ вариантах: если среди них найден номер больше текущего (нумерация в
+    UI с единицы, ``page_num`` с нуля), значит следующая страница существует.
+    ``pager-next`` используется как дополнительный положительный сигнал — он
+    достаточен, но не необходим.
+
+    Нераспарсенные подписи (``...`` между номерами) игнорируются: они не несут
+    номера страницы. Если пагинации нет вовсе (единственная страница выдачи),
+    возвращается False — прежнее поведение.
+    """
+    if page.locator(sel.PAGINATION_NEXT).count() > 0:
+        return True
+
+    pages = page.locator(sel.PAGINATION_PAGE)
+    for i in range(pages.count()):
+        label = pages.nth(i).inner_text().strip()
+        try:
+            number = int(label)
+        except ValueError:
+            continue  # «...» и прочие не-номера
+        if number > page_num + 1:
+            return True
+    return False
+
+
 def search_vacancies(
     page: Page,
     filters: SearchFilters,
@@ -258,8 +291,7 @@ def search_vacancies(
                 )
             )
 
-        next_button = page.locator(sel.PAGINATION_NEXT)
-        if next_button.count() == 0:
+        if not _has_next_page(page, page_num):
             logger.info("Достигнута последняя страница поиска (%d)", page_num)
             break
 

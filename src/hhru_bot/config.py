@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
+
+logger = logging.getLogger("hhru_bot.config")
 
 if TYPE_CHECKING:
     # Только для статического анализа; реальный импорт был бы циклическим
@@ -149,13 +152,13 @@ def load_config(path: str | Path) -> AppConfig:
             parser = section_parser(sec_name)
             kwargs[sec_name] = parser(r.get(sec_name), f"{context}.{sec_name}")
 
-        resumes.append(
-            ResumeConfig(
-                id=resume_id,
-                resume_url=resume_url,
-                **kwargs,  # type: ignore[arg-type]
-            )
+        resume = ResumeConfig(
+            id=resume_id,
+            resume_url=resume_url,
+            **kwargs,  # type: ignore[arg-type]
         )
+        _warn_if_scoring_keywords_inert(resume, context)
+        resumes.append(resume)
 
     return AppConfig(
         storage_state_file=storage_state_file,
@@ -165,6 +168,30 @@ def load_config(path: str | Path) -> AppConfig:
         user_agent=user_agent,
         ai=ai,
     )
+
+
+def _warn_if_scoring_keywords_inert(resume: ResumeConfig, context: str) -> None:
+    """Предупреждает о молча неработающих must_have/nice_to_have (issue #121).
+
+    Ключевые слова задаются в секции ``search``, а ВКЛЮЧАЮТСЯ секцией
+    ``scoring``: без неё ранжирование использует нулевые веса (``_ZERO_WEIGHTS``
+    в search.py — намеренно, ради обратной совместимости ``candidates[:limit]``),
+    и score всех вакансий = 0.00. Конфиг при этом выглядит настроенным, поэтому
+    молчание здесь хуже, чем явно выключённая фича.
+
+    Поведение НЕ меняется (веса остаются нулевыми) — добавляется только
+    диагностика: сломать существующие конфиги предупреждением нельзя.
+    """
+    filters = getattr(resume, "search", None)
+    if filters is None or getattr(resume, "scoring", None) is not None:
+        return
+    if getattr(filters, "must_have", None) or getattr(filters, "nice_to_have", None):
+        logger.warning(
+            "%s: must_have/nice_to_have заданы, но секции 'scoring' нет — "
+            "веса нулевые, ранжирование отключено (score всех вакансий 0.00). "
+            "Добавьте scoring.weights, чтобы ключевые слова заработали.",
+            context,
+        )
 
 
 def load_config_or_exit(path: str | Path) -> AppConfig:

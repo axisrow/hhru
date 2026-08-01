@@ -21,7 +21,18 @@ TRUSTED_EMPLOYER_LINK = "[data-qa='trusted-employer-link']"
 # Кнопка отклика прямо в карточке списка (ведёт на
 # /applicant/vacancy_response?vacancyId=...&employerId=...)
 VACANCY_CARD_RESPONSE_BUTTON = "[data-qa='vacancy-serp__vacancy_response']"
+# Пагинация (#123). hh.ru отдаёт ДВА варианта разметки пагинации, и это
+# подтверждено живым залогиненным дампом (2026-08-01):
+#   1. с кнопками навигации — есть [data-qa='pager-next'];
+#   2. без них — контейнер несёт класс-модификатор
+#      `magritte-number-pages-wrapper-without-navigation-buttons`, и
+#      pager-next НЕ рендерится вообще (ожидание его не находит никогда).
+# В обоих вариантах присутствуют пронумерованные ссылки pager-page, поэтому
+# признак «есть следующая страница» берётся от них, а не от pager-next.
+# Вариант вёрстки прилетает независимо от запроса (похоже на A/B-тест), так
+# что опираться на один только PAGINATION_NEXT нельзя.
 PAGINATION_NEXT = "[data-qa='pager-next']"
+PAGINATION_PAGE = "[data-qa='pager-page']"
 
 # Анонимному curl-запросу hh.ru не показывает маркер "уже откликались" в
 # разметке — этот статус виден только залогиненному пользователю. Дедупликация
