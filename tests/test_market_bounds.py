@@ -243,6 +243,66 @@ class TestSortingWithSmallSample:
         rows = h.market_salary_by_query()
         assert [r["search_query"] for r in rows] == ["small-high", "small-low"]
 
+    def test_sphere_without_upper_bound_ranked_by_lower(self, tmp_path):
+        """Сфера, где ВСЕ вакансии «от N», не должна падать в конец списка.
+
+        Сортировка только по median_to отправляла бы её вниз (верхней медианы
+        нет → 0), даже если её нижние границы выше чужих верхних. Это инверсия
+        ровно того сравнения, ради которого #66 считается: «от 400 000» — более
+        выгодная сфера, чем «до 200 000», а не менее.
+        """
+        h = History(tmp_path / "h.db")
+        for i, lo in enumerate([400000, 410000, 420000, 430000, 440000]):
+            _seen(h, f"a{i}", "rich-from-only", lo, None)
+        for i in range(6):
+            _seen(h, f"b{i}", "normal", 100000, 200000)
+
+        rows = h.market_salary_by_query()
+        assert rows[0]["search_query"] == "rich-from-only"
+        assert rows[0]["median_from"] == 420000
+        assert rows[0]["median_to"] == 0
+
+    def test_upper_median_still_preferred_when_both_present(self, tmp_path):
+        """Когда верхняя медиана есть у обеих сфер — ранжирует именно она
+        (прежнее поведение #66: потолок предложения)."""
+        h = History(tmp_path / "h.db")
+        # Нижняя граница выше, но потолок ниже — решает потолок.
+        for i in range(6):
+            _seen(h, f"a{i}", "flat", 190000, 200000)
+        for i in range(6):
+            _seen(h, f"b{i}", "wide", 100000, 400000)
+
+        rows = h.market_salary_by_query()
+        assert rows[0]["search_query"] == "wide"
+
+    def test_low_sample_threshold_is_exactly_five(self, tmp_path):
+        """Порог прибит тестом: n=4 ненадёжна, n=5 надёжна.
+
+        Без этого теста _LOW_SAMPLE_N можно поменять на 3 или 7, и ничего не
+        покраснеет — а порог определяет, какие строки уезжают вниз таблицы.
+        """
+        h = History(tmp_path / "h.db")
+        for i in range(4):
+            _seen(h, f"a{i}", "four", 100000, 200000)
+        for i in range(5):
+            _seen(h, f"b{i}", "five", 100000, 200000)
+
+        by_q = {r["search_query"]: r for r in h.market_salary_by_query()}
+        assert by_q["four"]["low_sample"] is True
+        assert by_q["five"]["low_sample"] is False
+
+    def test_equal_medians_broken_by_vacancy_count(self, tmp_path):
+        """При равных медианах выше та сфера, где вакансий больше — на равных
+        цифрах доверия больше к более широкой выборке."""
+        h = History(tmp_path / "h.db")
+        for i in range(6):
+            _seen(h, f"s{i}", "smaller", 100000, 200000)
+        for i in range(9):
+            _seen(h, f"b{i}", "bigger", 100000, 200000)
+
+        rows = h.market_salary_by_query()
+        assert [r["search_query"] for r in rows] == ["bigger", "smaller"]
+
     def test_row_exposes_reliability_flag(self, tmp_path):
         """Отчёту нужен явный признак малой выборки, а не догадка по n."""
         h = History(tmp_path / "h.db")
@@ -362,6 +422,52 @@ class TestEstimatesDocumentedAsUpperBound:
         # Медиана «от» — только реальные пять значений по 50, без оценок.
         assert row["median_from"] == 50
         assert row["with_from"] == 5
+
+    def test_from_only_vacancy_gets_no_invented_upper_bound(self, tmp_path):
+        """Вакансия «от N» — это ДАННЫЕ, а не пропуск: достраивать ей верхнюю
+        границу нельзя.
+
+        ``_augment_with_estimates`` отбирал кандидатов по ``salary_to IS NULL``,
+        поэтому реальная вакансия «от 900 000» считалась «без ЗП» и получала
+        выдуманный потолок. Это ровно то достраивание вилки, которое запрещено
+        дизайн-решением #125 — и оно порождало бессмыслицу, где нижняя медиана
+        коридора оказывалась ВЫШЕ верхней.
+        """
+        h = History(tmp_path / "h.db")
+        for i, hi in enumerate([100000, 200000, 300000, 400000, 500000]):
+            _seen(h, f"t{i}", "python", 50000, hi, tier="mid")
+        for i in range(5):
+            _seen(h, f"f{i}", "python", 900000, None, tier="mid")
+
+        row = h.market_salary_by_query(include_estimates=True)[0]
+        # Оценивать нечего: вакансий вообще без ЗП нет, «от 900 000» — это данные.
+        assert row["estimated"] is False
+        # Верхняя медиана — по пяти РЕАЛЬНЫМ потолкам, без пяти выдуманных.
+        assert row["with_to"] == 5
+        assert row["median_to"] == 300000
+        # Нижняя медиана — по всем десяти реальным нижним границам.
+        assert row["with_from"] == 10
+        assert row["median_from"] == 475000
+
+    def test_estimates_respect_dominant_currency_of_no_salary_rows(self, tmp_path):
+        """#122 на пути оценок: вакансия в ДРУГОЙ валюте не может вернуться в
+        медиану через оценку.
+
+        Она исключена из медианы и учтена в other_currency — отчёт печатает
+        «не вошли в медиану». Если оценка её всё же добавит, сноска станет ложью.
+        """
+        h = History(tmp_path / "h.db")
+        for i, hi in enumerate([100000, 200000, 300000, 400000, 500000]):
+            _seen(h, f"r{i}", "python", 50000, hi, currency="RUB", tier="mid")
+        # Валютная вакансия без верхней границы — вне рублёвой медианы.
+        _seen(h, "u1", "python", 6000, None, currency="USD", tier="mid")
+
+        row = h.market_salary_by_query(include_estimates=True)[0]
+        assert row["currency"] == "RUB"
+        assert row["other_currency"] == 1
+        # USD-вакансия не участвует ни как значение, ни как повод для оценки.
+        assert row["estimated"] is False
+        assert row["median_to"] == 300000
 
     def test_estimates_do_not_break_from_only_sphere(self, tmp_path):
         """Сфера только с «от»: оценивать верх не из чего — median_to остаётся
