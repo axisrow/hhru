@@ -20,8 +20,24 @@ def _has_emoji(text: str) -> bool:
 
 def test_market_summary_renders_table_with_rows():
     rows = [
-        {"search_query": "python", "median_to": 300000, "count": 12, "with_salary": 10},
-        {"search_query": "performance", "median_to": 150000, "count": 8, "with_salary": 6},
+        {
+            "search_query": "python",
+            "median_from": 200000,
+            "median_to": 300000,
+            "with_from": 10,
+            "with_to": 10,
+            "count": 12,
+            "with_salary": 10,
+        },
+        {
+            "search_query": "performance",
+            "median_from": 100000,
+            "median_to": 150000,
+            "with_from": 6,
+            "with_to": 6,
+            "count": 8,
+            "with_salary": 6,
+        },
     ]
     out = market_summary(rows)
     # выгодная сфера наверху (уже отсортировано history, summary не пересортирует)
@@ -62,11 +78,23 @@ def test_market_summary_shows_coverage():
     """Доля вакансий с зарплатой — для понимания, насколько медиана доверительна
     (мало данных с ЗП → оценка шаткая)."""
     rows = [
-        {"search_query": "python", "median_to": 300000, "count": 12, "with_salary": 10},
+        {
+            "search_query": "python",
+            "median_from": 200000,
+            "median_to": 300000,
+            "with_from": 10,
+            "with_to": 10,
+            "count": 12,
+            "with_salary": 10,
+        },
     ]
     out = market_summary(rows)
-    # with_salary/count видны — coverage сигнала
-    assert "10" in out and "12" in out
+    # with_salary/count видны — coverage сигнала. Ищем колонки строки целиком,
+    # а не подстроки «10»/«12»: после #125 в ячейках медиан есть свои n, и
+    # голая подстрока прошла бы и без колонок покрытия.
+    cells = [c.strip() for c in out.splitlines()[3].strip("|").split("|")]
+    assert cells[-2] == "12"  # Вакансий
+    assert cells[-1] == "10"  # С ЗП
 
 
 # --- #93: пометка ~оценка для эвристических ЗП --------------------------------
@@ -78,7 +106,10 @@ def test_market_summary_marks_estimated_sphere():
     rows = [
         {
             "search_query": "python",
+            "median_from": 0,
             "median_to": 300000,
+            "with_from": 0,
+            "with_to": 2,
             "count": 12,
             "with_salary": 2,
             "estimated": True,
@@ -94,7 +125,10 @@ def test_market_summary_does_not_mark_real_salary():
     rows = [
         {
             "search_query": "python",
+            "median_from": 200000,
             "median_to": 300000,
+            "with_from": 12,
+            "with_to": 12,
             "count": 12,
             "with_salary": 12,
             "estimated": False,
