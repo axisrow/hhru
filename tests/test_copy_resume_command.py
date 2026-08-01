@@ -175,3 +175,28 @@ def test_run_repeat_today_warns(env, capsys, tmp_path):
     cmd.run(_args(tmp_path, force=True))
     out = capsys.readouterr().out
     assert "[INFO] Уже копировали backend сегодня" in out
+
+
+def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, monkeypatch):
+    # Клик по «Дублировать» уже мог уйти на hh.ru раньше, чем упало исключение
+    # (например, goto_hh при diff-fallback исчерпал ретраи) — не должны молчать
+    # локально о попытке: пишем failed в actions ДО того, как исключение улетит
+    # дальше (#132 review: без этого возможна копия на hh.ru без локальной записи).
+    def raising_copy(page, resume, dry_run):
+        env.calls.append((resume.id, dry_run))
+        raise RuntimeError("goto_hh исчерпал ретраи")
+
+    monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", raising_copy)
+
+    with pytest.raises(RuntimeError):
+        cmd.run(_args(tmp_path, force=True))
+
+    h = History(tmp_path / "h.db")
+    assert h.count_today(OLD_ID, "copy_resume") == 0  # status='failed', не success
+    with h._connect() as conn:
+        row = conn.execute(
+            "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
+            (OLD_ID,),
+        ).fetchone()
+    assert row["status"] == "failed"
+    assert "исключение в браузерном шаге" in row["reason"]

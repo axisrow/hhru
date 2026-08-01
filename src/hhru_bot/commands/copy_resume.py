@@ -97,11 +97,25 @@ def run(args: argparse.Namespace) -> None:
                 "повторный запуск создаст ещё один дубль на hh.ru."
             )
 
-    with launch_context(
-        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-    ) as context:
-        page = context.new_page()
-        result = copy_resume_on_hh(page, resume, args.dry_run)
+    try:
+        with launch_context(
+            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        ) as context:
+            page = context.new_page()
+            result = copy_resume_on_hh(page, resume, args.dry_run)
+    except Exception as e:
+        # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
+        # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
+        # ретраи) — копия на hh.ru могла создаться, а локальной записи не будет.
+        # Пишем неуспех в аудит перед прокидыванием исключения дальше, а не молчим.
+        history.record_action(
+            resume.resume_id,
+            resume.resume_id,
+            "copy_resume",
+            "failed",
+            f"исключение в браузерном шаге: {e}",
+        )
+        raise
 
     # Fail-closed (#116): success без нового id или с id, совпавшим с исходным,
     # успехом не считается — копия не подтверждена.

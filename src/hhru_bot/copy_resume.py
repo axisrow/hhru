@@ -62,20 +62,30 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     goto_hh(page, RESUMES_LIST_URL)
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
-    card = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
-    try:
-        card.wait_for(timeout=COPY_TIMEOUT_MS)
-    except PlaywrightTimeoutError:
-        return CopyResumeResult(
-            resume.id, False, reason=f"резюме {resume.resume_id} не найдено в списке резюме"
-        )
-    if card.count() != 1:
+    card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
+    # count() ДО wait_for/click намеренно: Playwright-локаторы строгие — wait_for()
+    # на локаторе с >1 совпадением кидает playwright.sync_api.Error ("strict mode
+    # violation"), НЕ TimeoutError. Ветка card_locator.count() != 1 ниже проверяет
+    # это первой, чтобы неоднозначность ловилась предсказуемо (fail-closed), а не
+    # улетала необработанным исключением мимо cli.main (там ловится только
+    # KeyboardInterrupt).
+    match_count = card_locator.count()
+    if match_count == 0:
+        try:
+            card_locator.wait_for(timeout=COPY_TIMEOUT_MS)
+            match_count = card_locator.count()
+        except PlaywrightTimeoutError:
+            return CopyResumeResult(
+                resume.id, False, reason=f"резюме {resume.resume_id} не найдено в списке резюме"
+            )
+    if match_count != 1:
         return CopyResumeResult(
             resume.id,
             False,
             reason=f"карточка резюме {resume.resume_id} определяется неоднозначно "
-            f"({card.count()} совпадений) — останавливаюсь (fail-closed)",
+            f"({match_count} совпадений) — останавливаюсь (fail-closed)",
         )
+    card = card_locator.first
 
     if dry_run:
         logger.info("[DRY-RUN] Скопировал бы резюме '%s' (кнопка меню не нажимается)", resume.id)
@@ -86,17 +96,31 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     # Открытие меню «...» ничего не отправляет — WRITE происходит только на
     # клике по «Дублировать» ниже.
     card.locator(RESUME_LIST_ACTION_MORE).click()
-    duplicate = page.locator(f"{RESUME_DUPLICATE_MENU_ITEM}, {RESUME_DUPLICATE_INLINE}").first
-    try:
-        duplicate.wait_for(timeout=COPY_TIMEOUT_MS)
-    except PlaywrightTimeoutError:
+    # Скоупим ПОД card, не под page: RESUME_DUPLICATE_INLINE — инлайн-кнопка на
+    # каждой карточке, и при нескольких резюме на странице page.locator(...).first
+    # взял бы первую в DOM-порядке, а не кнопку открытой карточки — риск скопировать
+    # чужое резюме. То же строгое count()-до-wait_for, что и для card_locator выше.
+    duplicate_locator = card.locator(f"{RESUME_DUPLICATE_MENU_ITEM}, {RESUME_DUPLICATE_INLINE}")
+    dup_count = duplicate_locator.count()
+    if dup_count == 0:
+        try:
+            duplicate_locator.wait_for(timeout=COPY_TIMEOUT_MS)
+            dup_count = duplicate_locator.count()
+        except PlaywrightTimeoutError:
+            return CopyResumeResult(
+                resume.id,
+                False,
+                reason="кнопка «Дублировать» не найдена: либо достигнут лимит резюме hh.ru "
+                "(кнопка при этом не рендерится), либо селектор устарел",
+            )
+    if dup_count != 1:
         return CopyResumeResult(
             resume.id,
             False,
-            reason="кнопка «Дублировать» не найдена: либо достигнут лимит резюме hh.ru "
-            "(кнопка при этом не рендерится), либо селектор устарел",
+            reason=f"кнопка «Дублировать» определяется неоднозначно ({dup_count} совпадений "
+            "внутри карточки резюме) — останавливаюсь (fail-closed)",
         )
-
+    duplicate = duplicate_locator.first
     duplicate.click()
     logger.info("Клик по «Дублировать» — жду страницу нового резюме")
 
