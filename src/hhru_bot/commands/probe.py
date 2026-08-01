@@ -22,11 +22,14 @@ pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import sys
 from dataclasses import dataclass, field
 
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
+
+logger = logging.getLogger("hhru_bot.cli")
 
 # ``[data-qa='name']`` → name. Селекторы hh.ru в этом проекте — только этот вид
 # (см. selector_groups/). Нужен, чтобы перечислить ключевые селекторы healthcheck
@@ -75,6 +78,8 @@ def register(subparsers) -> None:
 STATUS_OK = "OK"
 STATUS_NOT_FOUND = "NOT_FOUND"
 STATUS_OPTIONAL_ABSENT = "OPTIONAL_ABSENT"
+# #120: страница не открылась (таймаут/сеть) — селекторы не проверялись.
+STATUS_UNREACHABLE = "UNREACHABLE"
 
 
 @dataclass
@@ -114,6 +119,9 @@ class PageCheck:
     name: str
     url: str
     results: list[SelectorCheck] = field(default_factory=list)
+    # #120: страница не открылась (таймаут/сетевая ошибка). Селекторы не
+    # проверялись — это не «все NOT_FOUND», а «проверка не состоялась».
+    unreachable: bool = False
 
 
 def check_selectors(page, spec, page_loader=None):
@@ -131,7 +139,16 @@ def check_selectors(page, spec, page_loader=None):
     """
     pages: list[PageCheck] = []
     for name, url, selectors in spec:
-        page.goto(url, wait_until="domcontentloaded")
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+        except Exception as exc:
+            # #120: недоступность страницы — это РЕЗУЛЬТАТ проверки, а не авария.
+            # Раньше таймаут goto ронял всю команду трейсбеком Playwright, и
+            # статусы остальных страниц не проверялись вовсе. Отмечаем страницу
+            # как недоступную и идём дальше — таблица печатается всегда.
+            logger.warning("healthcheck: страница '%s' недоступна (%s): %s", name, url, exc)
+            pages.append(PageCheck(name=name, url=url, results=[], unreachable=True))
+            continue
         if page_loader is not None:
             page_loader(page, url, name)
         results = [
@@ -169,6 +186,11 @@ def format_healthcheck_table(pages: list[PageCheck]) -> str:
 
     rows: list[list[str]] = []
     for pg in pages:
+        if pg.unreachable:
+            # #120: страница не открылась — одна строка вместо списка селекторов,
+            # чтобы не выдавать «не проверено» за «не найдено».
+            rows.append([pg.name, "-", STATUS_UNREACHABLE, "-"])
+            continue
         for r in pg.results:
             rows.append([pg.name, r.name, r.status, str(r.found)])
     return _ascii_table(["page", "selector", "status", "count"], rows)
@@ -196,13 +218,17 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
     spec: list[tuple[str, str, list[tuple[str, str, bool]]]] = [
         (
             "search",
-            "https://hh.ru/search/vacancy",
+            _search_healthcheck_url(config),
             [
                 ("VACANCY_CARD", search_page.VACANCY_CARD, True),
                 ("VACANCY_CARD_TITLE_LINK", search_page.VACANCY_CARD_TITLE_LINK, True),
                 ("VACANCY_CARD_COMPANY", search_page.VACANCY_CARD_COMPANY, True),
                 ("VACANCY_CARD_COMPENSATION", search_page.VACANCY_CARD_COMPENSATION, False),
+                # Пагинация: hh.ru отдаёт две вёрстки (#123) — с pager-next и без
+                # него (только номера). Обе optional: их легитимно нет, когда
+                # выдача умещается на одну страницу.
                 ("PAGINATION_NEXT", search_page.PAGINATION_NEXT, False),
+                ("PAGINATION_PAGE", search_page.PAGINATION_PAGE, False),
             ],
         ),
         (
@@ -231,6 +257,24 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
             )
         )
     return spec
+
+
+def _search_healthcheck_url(config) -> str:
+    """URL страницы поиска для healthcheck (issue #120).
+
+    Голый ``/search/vacancy`` без параметров на живом hh.ru не доходит до
+    ``domcontentloaded`` (таймаут 60 сек) — healthcheck падал на первом же шаге
+    и не проверял остальные страницы. Берём URL, который реально использует
+    ``search`` — через ``build_search_url`` по фильтрам первого резюме, чтобы
+    проверять ту же разметку, что видит боевой сбор.
+    """
+    from ..search import HH_BASE_URL, build_search_url
+
+    resumes = getattr(config, "resumes", None)
+    if resumes:
+        return build_search_url(resumes[0].search, 0)
+    # Конфиг без резюме — минимальный осмысленный запрос вместо голого URL.
+    return f"{HH_BASE_URL}/search/vacancy?text=python"
 
 
 def _first_resume_url(config) -> str | None:
@@ -270,11 +314,19 @@ def run_healthcheck(args: argparse.Namespace) -> None:
     optional_absent = sum(
         1 for pg in pages for r in pg.results if r.status == STATUS_OPTIONAL_ABSENT
     )
-    if required_missing:
+    unreachable = sum(1 for pg in pages if pg.unreachable)
+    if required_missing or unreachable:
+        parts = []
+        if required_missing:
+            parts.append(f"НЕ найдено {required_missing} обязательных (см. NOT_FOUND выше)")
+        if unreachable:
+            # #120: недоступная страница — тоже провал: её селекторы не проверены,
+            # и молча рапортовать [OK] по остальным было бы враньём.
+            parts.append(f"недоступно страниц: {unreachable} (см. UNREACHABLE выше)")
         print(
-            f"[FAIL] обязательных найдено {required_ok}, НЕ найдено {required_missing} "
-            "(см. NOT_FOUND выше); опциональных отсутствует "
-            f"{optional_absent} (норма)"
+            f"[FAIL] обязательных найдено {required_ok}; "
+            + "; ".join(parts)
+            + f"; опциональных отсутствует {optional_absent} (норма)"
         )
     else:
         print(

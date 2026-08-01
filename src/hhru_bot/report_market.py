@@ -46,19 +46,35 @@ def market_summary(rows: list[dict]) -> str:
     if not rows:
         return "Нет данных о рынке. Запустите search, чтобы собрать вакансии."
 
-    header = ["Сфера", "Медиана", "Вакансий", "С ЗП"]
+    header = ["Сфера", "Медиана", "Валюта", "Вакансий", "С ЗП"]
     body: list[list[str]] = []
+    other_currency_total = 0
     for r in rows:
         amount = _format_amount(int(r.get("median_to", 0)))
         if r.get("estimated"):
             # ~ — ASCII-тильда, пометка эвристической оценки (НЕ эмодзи).
             amount = f"~{amount}" if amount != "—" else amount
+        # #122: сколько вакансий сферы имеют ЗП в другой валюте — они НЕ в медиане.
+        other = int(r.get("other_currency", 0) or 0)
+        other_currency_total += other
+        with_salary = str(r.get("with_salary", 0))
+        if other:
+            with_salary = f"{with_salary} (+{other} др. вал.)"
         body.append(
             [
                 str(r.get("search_query", "")),
                 amount,
+                str(r.get("currency") or "—"),
                 str(r.get("count", 0)),
-                str(r.get("with_salary", 0)),
+                with_salary,
             ]
         )
-    return _ascii_table(header, body)
+    table = _ascii_table(header, body)
+    if other_currency_total:
+        # Сноска, а не молчание: медиана считается по доминирующей валюте сферы
+        # (#122), и пользователь должен видеть, что часть данных осталась вне неё.
+        table += (
+            f"\n[INFO] {other_currency_total} вакансий с ЗП в другой валюте не вошли "
+            "в медиану (курсы не нормализуются)."
+        )
+    return table

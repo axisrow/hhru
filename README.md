@@ -151,6 +151,10 @@ cp config/config.example.yaml config/config.yaml
 - `--vacancy` — ID вакансии (число из URL https://hh.ru/vacancy/<id>)
 - `--status` — Статус для пометки (по умолчанию offer) (по умолчанию: 'offer')
 
+### `market`
+
+- `--estimates` — Достроить медиану эвристическими оценками ЗП для вакансий без указанной (помечаются ~). По умолчанию только реальные ЗП
+
 ### `probe`
 
 - `--resume` — ID резюме из конфига (по умолчанию — все)
