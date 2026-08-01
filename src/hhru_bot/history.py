@@ -1004,14 +1004,26 @@ class History:
         # доступную tier-информацию (медиана по tier, иначе вся сфера), т.к. оценки
         # взвешиваются количеством и сходятся к реальной медиане. estimate_salary —
         # точечная оценка одной вакансии, там порог n>=5 отсекает шумный tier.
+        # #122: оценки — тоже ТОЛЬКО в доминирующей валюте сферы. Фильтр по
+        # валюте нужен на обоих входах (tier-медиана и fallback на всю сферу):
+        # без него рублёвая вилка попадала в медиану, помеченную как USD, и
+        # смешение валют возвращалось через путь оценок — ровно тот перекос,
+        # ради которого заведён #122. Валюта та же, что в market_salary_by_query.
+        currency = entry.get("currency")
         tier_estimate: dict[str, int] = {}
         for tier in set(t for t in no_salary_tiers if t):
             med, _ = self._median_salary_to(
-                conn, "search_query = ? AND employer_tier = ?", [query, tier]
+                conn,
+                "search_query = ? AND employer_tier = ? AND salary_currency IS ?",
+                [query, tier, currency],
             )
             if med is None:
-                # fallback на всю сферу.
-                med, _ = self._median_salary_to(conn, "search_query = ?", [query])
+                # fallback на всю сферу (в той же валюте).
+                med, _ = self._median_salary_to(
+                    conn,
+                    "search_query = ? AND salary_currency IS ?",
+                    [query, currency],
+                )
             if med is not None:
                 tier_estimate[tier] = med
 
