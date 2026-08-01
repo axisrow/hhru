@@ -474,6 +474,48 @@ class TestEstimatesDocumentedAsUpperBound:
         assert row["estimated"] is False
         assert row["median_to"] == 300000
 
+    def test_estimate_tier_median_does_not_leak_other_currency(self, tmp_path):
+        """#122, вход 1: tier-медиана оценки берётся только в доминирующей валюте.
+
+        У tier'а `mid` есть и рублёвые вилки, и долларовые. Оценка для вакансии
+        без ЗП этого же tier'а обязана считаться по RUB: пусти в неё USD-значения
+        (6000-7000) — рублёвая медиана рухнула бы на три порядка.
+        """
+        h = History(tmp_path / "h.db")
+        for i, hi in enumerate([100000, 200000, 300000]):
+            _seen(h, f"r{i}", "python", 50000, hi, currency="RUB", tier="mid")
+        for i, hi in enumerate([6000, 7000]):
+            _seen(h, f"u{i}", "python", 5000, hi, currency="USD", tier="mid")
+        _seen(h, "n1", "python", None, None, currency=None, tier="mid")
+
+        row = h.market_salary_by_query(include_estimates=True)[0]
+        assert row["currency"] == "RUB"
+        assert row["estimated"] is True
+        # Реальные RUB [100k, 200k, 300k] + оценка по tier RUB (200k)
+        # → [100k, 200k, 200k, 300k] → медиана 200k. С USD внутри было бы ~7k.
+        assert row["median_to"] == 200000
+
+    def test_estimate_sphere_fallback_does_not_leak_other_currency(self, tmp_path):
+        """#122, вход 2: fallback «нет данных по tier → медиана по сфере» тоже
+        только в доминирующей валюте.
+
+        У tier'а `top_tech` ЗП есть ТОЛЬКО в USD, поэтому его tier-медиана в RUB
+        пуста и срабатывает fallback на всю сферу. Он обязан вернуть рублёвую
+        медиану, а не подобрать USD-значение «хоть какое-то».
+        """
+        h = History(tmp_path / "h.db")
+        for i, hi in enumerate([100000, 200000, 300000]):
+            _seen(h, f"r{i}", "python", 50000, hi, currency="RUB", tier="mid")
+        _seen(h, "u1", "python", 6000, 7000, currency="USD", tier="top_tech")
+        # Без ЗП, tier top_tech — в RUB по этому tier'у данных нет.
+        _seen(h, "n1", "python", None, None, currency=None, tier="top_tech")
+
+        row = h.market_salary_by_query(include_estimates=True)[0]
+        assert row["currency"] == "RUB"
+        assert row["estimated"] is True
+        # fallback на рублёвую медиану сферы (200k), НЕ на USD 7000.
+        assert row["median_to"] == 200000
+
     def test_estimates_do_not_break_from_only_sphere(self, tmp_path):
         """Сфера только с «от»: оценивать верх не из чего — median_to остаётся
         пустым, median_from не портится."""
