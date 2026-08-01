@@ -293,15 +293,20 @@ class TestSortingWithSmallSample:
 
     def test_equal_medians_broken_by_vacancy_count(self, tmp_path):
         """При равных медианах выше та сфера, где вакансий больше — на равных
-        цифрах доверия больше к более широкой выборке."""
+        цифрах доверия больше к более широкой выборке.
+
+        Имена подобраны так, чтобы алфавитный тай-брейк по search_query давал
+        ОБРАТНЫЙ порядок: иначе тест прошёл бы и без сортировки по count.
+        """
         h = History(tmp_path / "h.db")
+        # «aaa» алфавитно раньше «zzz», но вакансий у неё меньше.
         for i in range(6):
-            _seen(h, f"s{i}", "smaller", 100000, 200000)
+            _seen(h, f"s{i}", "aaa", 100000, 200000)
         for i in range(9):
-            _seen(h, f"b{i}", "bigger", 100000, 200000)
+            _seen(h, f"b{i}", "zzz", 100000, 200000)
 
         rows = h.market_salary_by_query()
-        assert [r["search_query"] for r in rows] == ["bigger", "smaller"]
+        assert [r["search_query"] for r in rows] == ["zzz", "aaa"]
 
     def test_row_exposes_reliability_flag(self, tmp_path):
         """Отчёту нужен явный признак малой выборки, а не догадка по n."""
