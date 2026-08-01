@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from hhru_bot import logging_setup
 from hhru_bot.commands import log_cmd
 from hhru_bot.commands.log_cmd import follow, tail_lines
 
@@ -303,8 +304,22 @@ def test_log_command_does_not_create_log(tmp_path, monkeypatch):
     до run(), из-за чего missing-file-ветка была недостижима и команда «писала»
     локально. Теперь для log setup_logging не вызывается — файл не создаётся,
     и `log` честно рапортует об отсутствии лога.
+
+    Изоляция от реального лога (#129): `LOG_DIR`/`DEFAULT_LOG_PATH` абсолютны и
+    вычисляются НА ИМПОРТЕ модуля (`Path.cwd() / "logs"`), поэтому одного
+    `chdir(tmp_path)` мало — на машине разработчика, где `logs/hhru_bot.log`
+    существует, `main(["log"])` читал настоящий лог, печатал его хвост и не
+    бросал SystemExit. Подменяем оба пути на tmp_path: `DEFAULT_LOG_PATH` —
+    его `register()` кладёт в `set_defaults(log_path=...)` при каждом
+    `build_parser()`, то есть внутри `main`; `logging_setup.LOG_DIR` — на случай,
+    если setup_logging всё-таки вызовется (регрессия READ-контракта: тогда
+    файл создастся в tmp_path и ассерты это увидят, а не молча промахнутся
+    мимо реального каталога). Тест по-прежнему проверяет поведение ДЕФОЛТНОГО
+    пути — `--log-path` не передаётся.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(log_cmd, "DEFAULT_LOG_PATH", tmp_path / "logs" / "hhru_bot.log")
+    monkeypatch.setattr(logging_setup, "LOG_DIR", tmp_path / "logs")
     from hhru_bot.cli import main
 
     # лога нет и быть не должно после запуска
