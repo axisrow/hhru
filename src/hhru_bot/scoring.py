@@ -3,7 +3,8 @@
 Расширение #15 (эвристика по title/ключевым словам) поверх двух новых факторов:
   1. **classify_employer** — «известная/неизвестная компания» как фактор скоринга
      (буст за Яндекс/Сбер/FAANG и пр.). БЕЗ ML: O(1) lookup по встроенному списку
-     гигантов + эвристики по trusted/reviews_count из карточки поиска hh.ru.
+     гигантов + эвристика по reviews_count из карточки поиска hh.ru (#118: поле
+     trusted для этого непригодно — им помечено ~98% карточек).
   2. **ScoringProvider / LLMScoringProvider** — «ML простым путём»: LLM (#16
      LLMClient) оценивает релевантность карточки профилю кандидата, возвращая
      score 0-100 + rationale. Любой сбой (None-контент, плохой JSON, исключение,
@@ -40,8 +41,8 @@ logger = logging.getLogger("hhru_bot.scoring")
 #   1. O(1) lookup по встроенному списку гигантов (RU big tech + банки + global
 #      FAANG/BigTech). Список намеренно короткий и правится руками — никаких
 #      парсингов википедии/новостей (принцип простоты).
-#   2. Эвристики по данным карточки hh.ru: trusted=True → известная;
-#      reviews_count >= порога → известная (много отзывов = крупная компания).
+#   2. Эвристика по данным карточки hh.ru: reviews_count >= порога → известная
+#      (много отзывов = крупная компания). Поле trusted НЕ используется (#118).
 
 
 class KnownCompanyTier:
@@ -195,10 +196,14 @@ def classify_employer(name: str | None, info: EmployerInfo | None = None) -> str
     Логика (по убыванию приоритета):
       1. Имя бренда в списке RU top tech ИЛИ глобальных гигантов → ``top_tech``.
       2. Имя бренда в списке RU big corp → ``big_corp``.
-      3. ``info.trusted`` (надёжный работодатель по hh.ru) → ``big_corp``:
-         hh.ru присваивает бейдж крупным/проверенным, это надёжный сигнал.
-      4. ``info.reviews_count`` >= порога → ``mid`` (много отзывов, но не гигант).
-      5. Иначе → ``unknown``.
+      3. ``info.reviews_count`` >= порога → ``mid`` (много отзывов, но не гигант).
+      4. Иначе → ``unknown``.
+
+    ``info.trusted`` (бейдж «надёжный работодатель» hh.ru) НЕ используется:
+    залогиненный дамп (#118) показал, что hh.ru проставляет его 98% карточек
+    поиска — сигнал с таким покрытием не различает известные и неизвестные
+    компании (раньше он ложно поднимал их до ``big_corp`` и тем же путём
+    сводил на нет pre-LLM фильтр #85, см. ``employer_passes_prefilter``).
 
     ``info`` опционален: без него работает только lookup по имени. Регистр
     игнорируется; матчится СТРОГИЙ токен-матч (бренд как отдельный токен имени
@@ -215,10 +220,8 @@ def classify_employer(name: str | None, info: EmployerInfo | None = None) -> str
     if name_lower and _name_matches(name_lower, _KNOWN_BIG_CORP_RU):
         return KnownCompanyTier.BIG_CORP
 
-    if info is not None:
-        if info.trusted:
-            return KnownCompanyTier.BIG_CORP
-        if info.reviews_count is not None and info.reviews_count >= _REVIEWS_COUNT_MID_THRESHOLD:
+    if info is not None and info.reviews_count is not None:
+        if info.reviews_count >= _REVIEWS_COUNT_MID_THRESHOLD:
             return KnownCompanyTier.MID
 
     return KnownCompanyTier.UNKNOWN
@@ -243,6 +246,12 @@ class EmployerInfo:
     Все поля опциональны — hh.ru показывает рейтинг/trusted не для всех карточек
     (напр. у нового работодателя без отзывов). rating — средняя оценка 0-5;
     reviews_count — число отзывов; trusted — бейдж «надёжный работодатель».
+
+    trusted на живой выдаче есть у ~98% карточек (#118, залогиненный дамп
+    50 карточек: 49/50) — как сильный сигнал качества непригоден, поэтому
+    prefilter (employer_passes_prefilter) его не использует. Поле оставлено:
+    classify_employer всё ещё учитывает его как слабый tier-буст, и он может
+    пригодиться будущим сигналам с малым весом.
     """
 
     rating: float | None = None
@@ -342,15 +351,19 @@ def employer_passes_prefilter(card, history, resume_id, thresholds) -> tuple[boo
          взаимодействии — не можем его учесть, безопасно пропустить).
       2. classify_employer (#74) → top_tech/big_corp: известная компания → проходит.
          (mid/unknown — НЕ достаточно: mid это слабый буст в скоринге, не «имя».)
-      3. info.trusted (бейдж «надёжный работодатель» hh.ru) → проходит.
-      4. info.rating >= thresholds.rating_min → проходит.
-      5. info.reviews_count >= thresholds.reviews_min → проходит.
-      6. history.employer_interacted(vacancy_id, employer, resume_id) → проходит
+      3. info.rating >= thresholds.rating_min → проходит.
+      4. info.reviews_count >= thresholds.reviews_min → проходит.
+      5. history.employer_interacted(vacancy_id, employer, resume_id) → проходит
          (работодатель раньше приглашал/смотрел — сильнейший позитивный сигнал).
-      7. Иначе → отсев (PREFILTER_SKIP_REASON).
+      6. Иначе → отсев (PREFILTER_SKIP_REASON).
+
+    ``info.trusted`` (бейдж «надёжный работодатель» hh.ru) НЕ используется как
+    сигнал: залогиненный дамп (#118) показал, что hh.ru проставляет его 98%
+    карточек, поэтому он не различает хороших и плохих работодателей и раньше
+    сводил весь фильтр к no-op.
 
     ``card.employer_info`` может быть None (hh.ru не отдал блоков) — тогда пункты
-    3-5 пропускаются, и решение опирается на tier по имени + взаимодействие.
+    3-4 пропускаются, и решение опирается на tier по имени + взаимодействие.
     """
     # Фильтр отключен (нет конфига / enabled=False) или нет history — не отсекаем.
     if thresholds is None or not getattr(thresholds, "enabled", False):
@@ -366,17 +379,14 @@ def employer_passes_prefilter(card, history, resume_id, thresholds) -> tuple[boo
         return True, ""
 
     if info is not None:
-        # 3. Бейдж «надёжный работодатель».
-        if info.trusted:
-            return True, ""
-        # 4. Рейтинг выше порога.
+        # 3. Рейтинг выше порога.
         if info.rating is not None and info.rating >= thresholds.rating_min:
             return True, ""
-        # 5. Отзывов выше порога (заметный работодатель).
+        # 4. Отзывов выше порога (заметный работодатель).
         if info.reviews_count is not None and info.reviews_count >= thresholds.reviews_min:
             return True, ""
 
-    # 6. Работодатель раньше приглашал/смотрел резюме (account-scope #12).
+    # 5. Работодатель раньше приглашал/смотрел резюме (account-scope #12).
     if history.employer_interacted(
         vacancy_id=getattr(card, "vacancy_id", None),
         employer=card.company or None,
@@ -384,7 +394,7 @@ def employer_passes_prefilter(card, history, resume_id, thresholds) -> tuple[boo
     ):
         return True, ""
 
-    # 7. Никакого сигнала — отсев.
+    # 6. Никакого сигнала — отсев.
     return False, PREFILTER_SKIP_REASON
 
 

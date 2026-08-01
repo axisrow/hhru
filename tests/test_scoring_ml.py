@@ -2,8 +2,9 @@
 
 Чистая логика без браузера. Существующий test_scoring.py покрывает эвристику
 #15 (факторы по title/ключевым словам); здесь — новые компоненты #74:
-  - classify_employer: гиганты (RU top tech/big corp/global), эвристики
-    trusted/reviews_count, unknown для мелких.
+  - classify_employer: гиганты (RU top tech/big corp/global), эвристика
+    reviews_count, unknown для мелких. trusted-бейдж НЕ используется (#118:
+    им помечено ~98% карточек поиска, сигнал бесполезен).
   - _parse_llm_score: валидный JSON (с/без markdown-обёртки), None/пусто/
     плохой JSON/score вне [0,100] → None.
   - LLMScoringProvider: успех (score 0-100 + rationale), None-контент →
@@ -171,10 +172,12 @@ def test_adversarial_brand_spoof_with_suffix_not_matched():
 # --- classify_employer: эвристики по info из карточки (Этап 1 + 2) ----------
 
 
-def test_classify_trusted_employer_is_big_corp():
-    # Бейдж «надёжный работодатель» от hh.ru — сильный сигнал известности.
+def test_classify_trusted_alone_is_unknown():
+    # trusted-бейдж от hh.ru проставлен ~98% карточек (#118, залогиненный
+    # дамп) — сигнал бесполезен и НЕ используется. reviews_count=10 тоже
+    # ниже порога MID, поэтому неизвестное имя остаётся unknown.
     info = EmployerInfo(rating=4.5, reviews_count=10, trusted=True)
-    assert classify_employer("Неизвестная Контора", info) == KnownCompanyTier.BIG_CORP
+    assert classify_employer("Неизвестная Контора", info) == KnownCompanyTier.UNKNOWN
 
 
 def test_classify_many_reviews_is_mid():

@@ -120,9 +120,25 @@ def test_prefilter_big_corp_passes():
     assert reason == ""
 
 
-def test_prefilter_trusted_passes():
-    """trusted-бейдж hh.ru проходит даже без rating."""
+def test_prefilter_trusted_alone_skips():
+    """trusted-бейдж БЕЗ rating/reviews/tier/interaction → отсев (issue #118).
+
+    Залогиненный дамп (50 карточек поиска) показал, что hh.ru проставляет
+    trusted-бейдж 49/50 карточкам (98%) — признак с таким покрытием не несёт
+    информации и не может считаться сильным сигналом качества (в отличие от
+    rating/reviews, которые есть непустыми лишь у 43/50 и коррелируют с
+    реальным качеством работодателя). До фикса это давало pass — весь
+    prefilter вырождался в no-op.
+    """
     c = card(company="Новая Компания", employer_info=EmployerInfo(trusted=True))
+    passes, reason = employer_passes_prefilter(c, FakeHistory(), "r1", THRESHOLDS)
+    assert passes is False
+    assert reason == PREFILTER_SKIP_REASON
+
+
+def test_prefilter_trusted_with_rating_passes():
+    """trusted + rating >= порога — проходит по rating, не по trusted."""
+    c = card(employer_info=EmployerInfo(trusted=True, rating=4.0))
     passes, reason = employer_passes_prefilter(c, FakeHistory(), "r1", THRESHOLDS)
     assert passes is True
     assert reason == ""
