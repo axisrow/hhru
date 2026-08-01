@@ -149,12 +149,9 @@ class VacancyCard:
     title: str
     company: str
     url: str
-    # Зарплата/дата (issue #14). None — если hh.ru не отдал блок или парсер
-    # не смог разобрать (т.е. «з/п не указана»). raw_date — оригинальный текст
-    # блока даты, как есть; парсинг конкретной даты в этом ишью не делается
-    # (форматы hh.ru зависят от локали и не нужны для вывода поиска).
+    # Зарплата (issue #14). None — если hh.ru не отдал блок или парсер
+    # не смог разобрать (т.е. «з/п не указана»).
     salary: SalaryInfo | None = None
-    raw_date: str | None = None
     # Инфо о работодателе из карточки поиска (issue #74, Этап 1): рейтинг,
     # число отзывов, бейдж «надёжный работодатель». hh.ru показывает эти блоки
     # не для всех карточек → None/False по умолчанию. Источник факторов для
@@ -243,10 +240,8 @@ def search_vacancies(
             company_locator = card.locator(sel.VACANCY_CARD_COMPANY).first
             company = company_locator.inner_text().strip() if company_locator.count() else ""
 
-            # Зарплата и дата публикации (issue #14). Блоки опциональны: hh.ru
-            # не рендерит compensation, если з/п не указана; date всегда есть,
-            # но на ошибку селектора реагируем мягко (raw_date=None), чтобы
-            # сбор карточек не падал целиком из-за одной страницы.
+            # Зарплата (issue #14). Блок опционален: hh.ru не рендерит
+            # compensation, если з/п не указана.
             # ЗП: сначала пробуем data-qa селектор, потом regex-fallback
             # по HTML карточки (hh.ru перешёл на magritte, #73).
             salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
@@ -262,7 +257,6 @@ def search_vacancies(
                 except Exception:
                     logger.warning("Не удалось получить inner_text для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
-            raw_date = _optional_text(card, sel.VACANCY_CARD_DATE)
 
             # Инфо о работодателе (issue #74, Этап 1): рейтинг/отзывы/trusted.
             # Блоки опциональны (не у всех работодателей). Парсим мягко — ни одно
@@ -286,7 +280,6 @@ def search_vacancies(
                         else f"{HH_BASE_URL}{href.split('?')[0]}"
                     ),
                     salary=salary,
-                    raw_date=raw_date,
                     employer_info=employer_info,
                 )
             )

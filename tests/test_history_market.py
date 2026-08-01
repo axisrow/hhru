@@ -3,7 +3,7 @@
 search СОБИРАЕТ карточки с зарплатой (#34), но раньше НЕ писал их в БД — рынок
 был не из чего анализировать. vacancies_seen = побочный эффект сбора: одна
 строка на (vacancy_id, search_query), upsert по свежему scrape (обновляет
-зарплату/дату, двигает last_seen_at). Без браузера — только SQLite.
+зарплату, двигает last_seen_at). Без браузера — только SQLite.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ def test_upsert_inserts_new_vacancy(tmp_path):
         salary_from=300000,
         salary_to=400000,
         salary_currency="RUB",
-        raw_date="30 июля",
         search_query="python backend",
     )
     rows = h.list_vacancies_seen()
@@ -36,7 +35,6 @@ def test_upsert_inserts_new_vacancy(tmp_path):
     assert row["salary_from"] == 300000
     assert row["salary_to"] == 400000
     assert row["salary_currency"] == "RUB"
-    assert row["raw_date"] == "30 июля"
     assert row["search_query"] == "python backend"
     assert row["first_seen_at"] is not None
     assert row["last_seen_at"] is not None
@@ -88,7 +86,6 @@ def test_upsert_accepts_null_salary(tmp_path):
         salary_from=None,
         salary_to=None,
         salary_currency=None,
-        raw_date=None,
         search_query="python",
     )
     row = h.list_vacancies_seen()[0]
@@ -144,7 +141,7 @@ def test_employer_tier_column_added_to_existing_db(tmp_path):
         "CREATE TABLE vacancies_seen ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, vacancy_id TEXT, title TEXT, "
         "company TEXT, salary_from INTEGER, salary_to INTEGER, "
-        "salary_currency TEXT, raw_date TEXT, search_query TEXT, "
+        "salary_currency TEXT, search_query TEXT, "
         "first_seen_at TEXT, last_seen_at TEXT, "
         "UNIQUE (vacancy_id, search_query))"
     )

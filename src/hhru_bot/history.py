@@ -94,7 +94,6 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     salary_from INTEGER,
     salary_to INTEGER,
     salary_currency TEXT,
-    raw_date TEXT,
     search_query TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -723,7 +722,6 @@ class History:
         salary_from: int | None = None,
         salary_to: int | None = None,
         salary_currency: str | None = None,
-        raw_date: str | None = None,
         employer_tier: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
@@ -731,7 +729,7 @@ class History:
         Ключ UNIQUE(vacancy_id, search_query): одна вакансия по разным поисковым
         запросам — отдельные строки (рынок хочет видеть, по каким запросам что
         находится и за сколько). При повторном scrape та же пара обновляет
-        title/company/salary/raw_date (hh.ru мог поменять вилку) и двигает
+        title/company/salary (hh.ru мог поменять вилку) и двигает
         ``last_seen_at``; ``first_seen_at`` хранит ПЕРВОЕ появление и не трогается.
 
         Зарплата приходит из ``SalaryInfo`` (#34): ``salary_from``/``salary_to``
@@ -756,16 +754,15 @@ class History:
                 """
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
-                     salary_currency, raw_date, search_query, first_seen_at,
+                     salary_currency, search_query, first_seen_at,
                      last_seen_at, employer_tier)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
                     salary_from = excluded.salary_from,
                     salary_to = excluded.salary_to,
                     salary_currency = excluded.salary_currency,
-                    raw_date = excluded.raw_date,
                     employer_tier = excluded.employer_tier,
                     last_seen_at = excluded.last_seen_at
                 """,
@@ -776,7 +773,6 @@ class History:
                     salary_from,
                     salary_to,
                     salary_currency,
-                    raw_date,
                     search_query,
                     now,
                     now,
@@ -793,7 +789,7 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "raw_date, search_query, first_seen_at, last_seen_at, employer_tier "
+                "search_query, first_seen_at, last_seen_at, employer_tier "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]

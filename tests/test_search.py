@@ -198,28 +198,25 @@ def test_filter_candidates_skips_cached_skipped_vacancy():
     assert history.recorded_skips == []  # кэш-срабатывание не пишет дубль
 
 
-# --- VacancyCard: поля salary/raw_date (issue #14) --------------------------
+# --- VacancyCard: поле salary (issue #14) ------------------------------------
 
 
-def test_vacancy_card_salary_and_date_default_none():
+def test_vacancy_card_salary_default_none():
     c = card("1")
     assert c.salary is None
-    assert c.raw_date is None
 
 
-def test_vacancy_card_accepts_salary_and_date():
+def test_vacancy_card_accepts_salary():
     c = VacancyCard(
         vacancy_id="1",
         title="T",
         company="C",
         url="https://hh.ru/vacancy/1",
         salary=SalaryInfo(150000, 200000, "RUB", "150 000–200 000 руб."),
-        raw_date="сегодня",
     )
     assert c.salary is not None
     assert c.salary.salary_from == 150000
     assert c.salary.salary_to == 200000
-    assert c.raw_date == "сегодня"
 
 
 # --- VacancyCard: employer_info + парсинг рейтинга (issue #74) --------------

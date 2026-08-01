@@ -38,17 +38,15 @@ def _format_salary(salary: SalaryInfo | None) -> str:
 
 
 def _format_card_line(card: VacancyCard) -> str:
-    """Дополняет базовую строку карточки зарплатой и датой, если они есть.
+    """Дополняет базовую строку карточки зарплатой, если она есть.
 
-    Оба поля опциональны — вакансия без зарплаты/даты выводится как раньше,
-    без «з/п не указана» и пустых скобок.
+    Поле опционально — вакансия без зарплаты выводится как раньше, без
+    «з/п не указана» и пустых скобок.
     """
     extras: list[str] = []
     salary = _format_salary(card.salary)
     if salary:
         extras.append(salary)
-    if card.raw_date:
-        extras.append(card.raw_date)
     suffix = f" | {' / '.join(extras)}" if extras else ""
     return f"{card.title} — {card.company} ({card.url}){suffix}"
 
@@ -82,7 +80,6 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 salary_from=salary.salary_from if salary else None,
                 salary_to=salary.salary_to if salary else None,
                 salary_currency=salary.currency if salary else None,
-                raw_date=card.raw_date,
                 employer_tier=tier,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
