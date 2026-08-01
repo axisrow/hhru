@@ -54,10 +54,10 @@ def market_summary(rows: list[dict]) -> str:
         if r.get("estimated"):
             # ~ — ASCII-тильда, пометка эвристической оценки (НЕ эмодзи).
             amount = f"~{amount}" if amount != "—" else amount
-        other_currency_total += int(r.get("other_currency", 0) or 0)
-        with_salary = str(r.get("with_salary", 0))
         # #122: сколько вакансий сферы имеют ЗП в другой валюте — они НЕ в медиане.
         other = int(r.get("other_currency", 0) or 0)
+        other_currency_total += other
+        with_salary = str(r.get("with_salary", 0))
         if other:
             with_salary = f"{with_salary} (+{other} др. вал.)"
         body.append(
