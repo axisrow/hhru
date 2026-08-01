@@ -46,9 +46,10 @@ class PrefilterConfig:
     совместимость). ``rating_min`` — минимальный рейтинг (0-5) работодателя,
     чтобы пройти фильтр «по рейтингу». ``reviews_min`` — минимальное число
     отзывов. Карточка проходит pre-фильтр, если выполняется ЛЮБОЕ из: известная
-    компания (top_tech/big_corp), trusted-бейдж, rating>=rating_min,
-    reviews_count>=reviews_min, работодатель раньше приглашал/смотрел
-    (history.employer_interacted). Иначе отсекается как «low employer signal».
+    компания (top_tech/big_corp), rating>=rating_min, reviews_count>=reviews_min,
+    работодатель раньше приглашал/смотрел (history.employer_interacted). Иначе
+    отсекается как «low employer signal». trusted-бейдж hh.ru НЕ учитывается —
+    им помечено ~98% карточек поиска (#118), сигнал бесполезен.
     """
 
     enabled: bool = False

@@ -2,8 +2,9 @@
 
 Чистая логика без браузера. Существующий test_scoring.py покрывает эвристику
 #15 (факторы по title/ключевым словам); здесь — новые компоненты #74:
-  - classify_employer: гиганты (RU top tech/big corp/global), эвристики
-    trusted/reviews_count, unknown для мелких.
+  - classify_employer: гиганты (RU top tech/big corp/global), эвристика
+    reviews_count, unknown для мелких. trusted-бейдж НЕ используется (#118:
+    им помечено ~98% карточек поиска, сигнал бесполезен).
   - _parse_llm_score: валидный JSON (с/без markdown-обёртки), None/пусто/
     плохой JSON/score вне [0,100] → None.
   - LLMScoringProvider: успех (score 0-100 + rationale), None-контент →
@@ -171,10 +172,13 @@ def test_adversarial_brand_spoof_with_suffix_not_matched():
 # --- classify_employer: эвристики по info из карточки (Этап 1 + 2) ----------
 
 
-def test_classify_trusted_employer_is_big_corp():
-    # Бейдж «надёжный работодатель» от hh.ru — сильный сигнал известности.
-    info = EmployerInfo(rating=4.5, reviews_count=10, trusted=True)
-    assert classify_employer("Неизвестная Контора", info) == KnownCompanyTier.BIG_CORP
+def test_classify_trusted_alone_is_unknown():
+    # trusted-бейдж от hh.ru проставлен ~98% карточек (#118, залогиненный
+    # дамп) — сигнал бесполезен и НЕ используется (rating tier не учитывает
+    # вовсе). reviews_count=10 тоже ниже порога MID, поэтому неизвестное
+    # имя остаётся unknown.
+    info = EmployerInfo(reviews_count=10, trusted=True)
+    assert classify_employer("Неизвестная Контора", info) == KnownCompanyTier.UNKNOWN
 
 
 def test_classify_many_reviews_is_mid():
@@ -191,6 +195,23 @@ def test_classify_top_tech_wins_over_heuristics():
     # Даже без отзывов и без trusted — Яндекс остаётся top_tech.
     info = EmployerInfo(reviews_count=0, trusted=False)
     assert classify_employer("Яндекс", info) == KnownCompanyTier.TOP_TECH
+
+
+# --- _build_scoring_prompt: trusted не должен попадать в LLM-промпт (#118) --
+
+
+def test_build_scoring_prompt_omits_trusted_badge():
+    # Тот же дефект, что #118 чинит в prefilter: ~98% карточек несут
+    # trusted-бейдж, поэтому «надёжный работодатель» в промпте не различал
+    # бы вакансии, а только тратил токены на бесполезную похвалу.
+    from hhru_bot.scoring import _build_scoring_prompt
+
+    c = card(employer_info=EmployerInfo(trusted=True, rating=4.0, reviews_count=10))
+    messages = _build_scoring_prompt(c, None)
+    text = " ".join(m["content"] for m in messages)
+    assert "надёжный работодатель" not in text
+    assert "рейтинг: 4.0" in text
+    assert "отзывов: 10" in text
 
 
 # --- _parse_llm_score: разбор JSON-ответа LLM -------------------------------
