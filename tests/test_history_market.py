@@ -173,9 +173,12 @@ def test_employer_tier_column_added_to_existing_db(tmp_path):
 
 
 def test_market_salary_by_query_returns_median(tmp_path):
-    """Главная цель #66: сравнение сфер по медианной ЗП. Медиана берётся по
-    salary_to (верхняя граница диапазона / фикс. значение) — отражает потолок
-    предложения, а не заниженную нижнюю границу «от N»."""
+    """Главная цель #66: сравнение сфер по медианной ЗП.
+
+    ``median_to`` — медиана верхних границ (потолок предложения). #125 добавил
+    рядом ``median_from`` (медиана нижних границ), см. test_market_bounds.py:
+    здесь у всех вакансий from == to, поэтому обе медианы совпадают.
+    """
     h = History(tmp_path / "h.db")
     # python: 100, 200, 300, 400, 500 → медиана 300
     for i, s in enumerate([100, 200, 300, 400, 500]):
@@ -210,7 +213,12 @@ def test_market_salary_by_query_returns_median(tmp_path):
 
 
 def test_market_salary_ignores_null_salary_in_median(tmp_path):
-    """Вакансии без указанной ЗП учитываются в count, но в медиану не идут."""
+    """Вакансии без указанной ЗП учитываются в count, но в медиану не идут.
+
+    #125: «без ЗП» здесь означает БЕЗ ОБЕИХ границ — вакансия с одной только
+    нижней («от N») теперь считается данными и попадает в with_salary и в
+    медиану «от» (см. test_market_bounds.py).
+    """
     h = History(tmp_path / "h.db")
     h.upsert_vacancy_seen(vacancy_id="1", title="T", company="C", search_query="python")
     h.upsert_vacancy_seen(

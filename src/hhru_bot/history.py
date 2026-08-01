@@ -866,69 +866,97 @@ class History:
             ).fetchone()
             return row is not None
 
+    # Минимум вакансий с указанной ЗП, чтобы считать медиану сферы устойчивой.
+    # Ниже порога сфера уходит вниз таблицы и помечается low_sample: на прогоне
+    # #67 сфера с n=2 встала НАВЕРХУ как «лидер рынка» — сортировка по одной
+    # медиане без учёта размера выборки вводит в заблуждение.
+    _LOW_SAMPLE_N = 5
+
     def market_salary_by_query(self, include_estimates: bool = False) -> list[dict]:
-        """Медиана зарплаты по поисковому запросу — сравнение сфер по доходу.
+        """Медианы зарплаты по поисковому запросу — сравнение сфер по доходу.
 
-        Главная цель #66: ранжировать сферы по медианной ``salary_to``
-        (верхняя граница диапазона или фикс. значение — отражает потолок
-        предложения, а не заниженную «от N»). Сортировка по убыванию медианы —
-        выгодные направления наверху (максимизация дохода).
+        Главная цель #66: ранжировать сферы по медианной ЗП. #125: считаются ДВЕ
+        независимые медианы, потому что вилка на hh.ru часто односторонняя:
 
-        ``count`` = все собранные вакансии сферы (включая без зарплаты),
-        ``with_salary`` = сколько с указанной зарплатой (поле данных для оценки
-        полноты картины). Вакансии без ``salary_to`` в медиану не идут.
-        Возвращает список словарей: search_query/median_to/count/with_salary.
-        Пусто → [].
+        * ``median_from`` / ``with_from`` — медиана нижних границ («от N»);
+        * ``median_to`` / ``with_to`` — медиана верхних границ («до N» / фикс.).
+
+        Раньше считалась только вторая, поэтому вакансии «от 350 000» не попадали
+        в расчёт ВООБЩЕ (до 28% выборки, смещение до 20% — #125). Границы НЕ
+        сливаются в один ряд (``COALESCE``): «от 300» и «до 300» — разные
+        величины, их медиана не имеет смысла. Середина вилки не достраивается:
+        у односторонних вакансий второй границы не существует, и подставлять её
+        значило бы выдумывать данные.
+
+        Медиана отсутствует (ни одной границы такого типа в доминирующей валюте)
+        → 0; отчёт рисует «—».
+
+        ``median_from`` может оказаться ВЫШЕ ``median_to`` — это не баг. Медианы
+        считаются по разным подмножествам вакансий: если работодатели с высокими
+        зарплатами публикуют «от 900 000» без потолка, а вилку целиком указывают
+        те, кто платит меньше, нижняя медиана честно окажется выше верхней. Две
+        цифры — это два независимых среза рынка, а не границы одного интервала.
+
+        ``count`` = все собранные вакансии сферы, ``with_salary`` = сколько с
+        ЛЮБОЙ указанной границей (покрытие: вакансия «от N» — это данные, а не
+        пропуск). ``low_sample`` = True, если реальных ЗП меньше
+        ``_LOW_SAMPLE_N`` — такие сферы сортируются ниже надёжных.
+
+        Сортировка: сначала надёжные сферы по убыванию медианы, затем ненадёжные
+        (тоже по убыванию) — выгодные направления наверху, но не ценой того, что
+        лидером станет строка на двух вакансиях. Ранжирует ``median_to``, а при
+        её отсутствии — ``median_from`` (см. :meth:`_rank_median`).
 
         ``include_estimates`` (#93): если True — вакансии без указанной ЗП
         получают эвристическую оценку ``estimate_salary(search_query, tier)``
         (медиана по (query, tier) из данных) и включаются в медиану сферы. Так
         сферы, где большинство без ЗП, получают осмысленную медиану, а не 0/None.
-        Сфера, в медиану которой вошли оценки, помечается ``estimated=True`` —
-        ``market_summary`` рисует перед её медианой ``~`` (derived-view, честно
-        отличать реальную медиану от оценки). ``with_salary`` остаётся числом
-        РЕАЛЬНЫХ ЗП (coverage доверия), независимо от оценок.
+        ВАЖНО (#125): оценка строится на ``salary_to``, т.е. это оценка ВЕРХНЕЙ
+        границы — она достраивает только ``median_to``. В ``median_from`` оценки
+        не подмешиваются, иначе верхняя граница выдавалась бы за нижнюю — ровно
+        то смешение шкал, против которого заведён #125. Сфера, в медиану которой
+        вошли оценки, помечается ``estimated=True`` — ``market_summary`` рисует
+        перед её медианой ``~``. ``with_salary``/``with_from``/``with_to``
+        остаются числами РЕАЛЬНЫХ ЗП (coverage доверия), независимо от оценок.
+
+        Возвращает список словарей. Пусто → [].
         """
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT
                     v.search_query AS search_query,
-                    -- #122: медиана считается ТОЛЬКО по доминирующей валюте сферы.
+                    -- #122: медианы считаются ТОЛЬКО по доминирующей валюте сферы.
                     -- salary_currency не нормализована: «от 6000 USD» рядом с
                     -- рублёвыми вилками занижало бы медиану, причём незаметно.
+                    -- #125: доминирующая валюта — ОДНА на сферу, считается по
+                    -- вакансиям с ЛЮБОЙ границей. Считать её отдельно для каждой
+                    -- медианы нельзя: в отчёте одна колонка «Валюта», и медианы
+                    -- в разных валютах под общей пометкой врали бы читателю.
                     (
                         SELECT salary_currency FROM vacancies_seen
-                        WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                        WHERE search_query = v.search_query
+                          AND (salary_from IS NOT NULL OR salary_to IS NOT NULL)
                         GROUP BY salary_currency
                         ORDER BY COUNT(*) DESC, salary_currency
                         LIMIT 1
                     ) AS currency,
-                    COALESCE((
-                        SELECT AVG(salary_to)
-                        FROM (
-                            SELECT salary_to, ROW_NUMBER() OVER (ORDER BY salary_to) AS rn,
-                                   COUNT(*) OVER () AS total
-                            FROM vacancies_seen
-                            WHERE search_query = v.search_query AND salary_to IS NOT NULL
-                              AND salary_currency IS (
-                                SELECT salary_currency FROM vacancies_seen
-                                WHERE search_query = v.search_query AND salary_to IS NOT NULL
-                                GROUP BY salary_currency
-                                ORDER BY COUNT(*) DESC, salary_currency
-                                LIMIT 1
-                              )
-                        )
-                        WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
-                    ), 0) AS median_to,
                     COUNT(*) AS count,
-                    COUNT(salary_to) AS with_salary,
-                    -- Сколько вакансий сферы имеют ЗП в ДРУГОЙ валюте (не вошли
-                    -- в медиану) — чтобы отчёт мог честно об этом сказать.
+                    -- Покрытие: вакансия с ЛЮБОЙ границей — это данные. До #125
+                    -- здесь был COUNT(salary_to), и «от 350 000» считалась
+                    -- вакансией без ЗП.
                     SUM(
-                        CASE WHEN v.salary_to IS NOT NULL AND v.salary_currency IS NOT (
+                        CASE WHEN v.salary_from IS NOT NULL OR v.salary_to IS NOT NULL
+                        THEN 1 ELSE 0 END
+                    ) AS with_salary,
+                    -- Сколько вакансий сферы имеют ЗП в ДРУГОЙ валюте (не вошли
+                    -- ни в одну медиану) — чтобы отчёт мог честно об этом сказать.
+                    SUM(
+                        CASE WHEN (v.salary_from IS NOT NULL OR v.salary_to IS NOT NULL)
+                          AND v.salary_currency IS NOT (
                             SELECT salary_currency FROM vacancies_seen
-                            WHERE search_query = v.search_query AND salary_to IS NOT NULL
+                            WHERE search_query = v.search_query
+                              AND (salary_from IS NOT NULL OR salary_to IS NOT NULL)
                             GROUP BY salary_currency
                             ORDER BY COUNT(*) DESC, salary_currency
                             LIMIT 1
@@ -936,34 +964,79 @@ class History:
                     ) AS other_currency
                 FROM vacancies_seen AS v
                 GROUP BY v.search_query
-                ORDER BY median_to DESC, count DESC, v.search_query
                 """
             ).fetchall()
             out: list[dict] = []
             for row in rows:
+                query = row["search_query"]
+                currency = row["currency"]
+                # Обе медианы — одним и тем же хелпером по своей колонке, оба раза
+                # с фильтром доминирующей валюты (#122 применяется к ОБЕИМ).
+                median_from, with_from = self._median_bound(
+                    conn,
+                    "salary_from",
+                    "search_query = ? AND salary_currency IS ?",
+                    [query, currency],
+                )
+                median_to, with_to = self._median_bound(
+                    conn,
+                    "salary_to",
+                    "search_query = ? AND salary_currency IS ?",
+                    [query, currency],
+                )
                 entry = {
-                    "search_query": row["search_query"],
-                    "median_to": int(row["median_to"]) if row["median_to"] else 0,
+                    "search_query": query,
+                    "median_from": median_from or 0,
+                    "median_to": median_to or 0,
+                    "with_from": with_from,
+                    "with_to": with_to,
                     "count": row["count"],
-                    "with_salary": row["with_salary"],
-                    "currency": row["currency"],
+                    "with_salary": row["with_salary"] or 0,
+                    "currency": currency,
                     "other_currency": row["other_currency"] or 0,
                     "estimated": False,
                 }
                 if include_estimates:
                     self._augment_with_estimates(conn, entry)
+                # low_sample — про сферу целиком (есть ли вообще на что смотреть),
+                # поэтому считается по with_salary (покрытие по любой границе).
+                # Надёжность КАЖДОЙ из двух медиан по отдельности этим флагом не
+                # передать: у них независимые выборки, и бывает with_from=10 при
+                # with_to=1. Для этого случая guard — n прямо в ячейке
+                # (report_market._format_median), а не флаг строки.
+                entry["low_sample"] = (entry["with_salary"] or 0) < self._LOW_SAMPLE_N
                 out.append(entry)
-            # #93 cleanup: при include_estimates _augment_with_estimates меняет
-            # median_to в Python — SQL-сортировка (по реальной медиане) уже не
-            # соответствует показанным оценочным значениям. Пересортируем по
-            # итоговой median_to убыванием (выгодные-наверху), стабильный тай-брейк
-            # по search_query — как в SQL (ORDER BY ... , v.search_query).
-            if include_estimates:
-                out.sort(key=lambda e: (-e["median_to"], e["search_query"]))
+            # Сортировка в Python (а не в SQL): при include_estimates медиана
+            # меняется уже после SELECT, а low_sample — производное поле. Ключ:
+            # надёжные сферы выше ненадёжных, внутри группы — по убыванию
+            # ранжирующей медианы, тай-брейк по count и search_query.
+            out.sort(
+                key=lambda e: (
+                    e["low_sample"],
+                    -self._rank_median(e),
+                    -e["count"],
+                    e["search_query"],
+                )
+            )
             return out
 
+    @staticmethod
+    def _rank_median(entry: dict) -> int:
+        """По какой медиане ранжировать сферу: верхняя, иначе нижняя.
+
+        Цель #66 — потолок предложения, поэтому основной ключ ``median_to``. Но
+        у сферы, где ВСЕ вакансии «от N», верхней медианы не существует, и голый
+        ``median_to`` дал бы ей 0 — она упала бы в конец списка, даже если её
+        нижние границы выше чужих верхних. Это инверсия ровно того сравнения,
+        ради которого отчёт и считается, поэтому при отсутствии верхней медианы
+        ранжируем по нижней. Сравнение «нижняя против верхней» неточное, но
+        честнее, чем считать отсутствие данных нулевым доходом.
+        """
+        return entry["median_to"] or entry["median_from"] or 0
+
     def _augment_with_estimates(self, conn, entry: dict) -> None:
-        """#93: если в сфере есть вакансии БЕЗ ЗП — дополняет медиану их оценками.
+        """#93: если в сфере есть вакансии БЕЗ верхней границы — достраивает
+        ``median_to`` их оценками.
 
         Берёт все вакансии сферы без salary_to, для каждой считает
         ``estimate_salary``-медиану по её tier (через ``_median_salary_to`` на
@@ -972,8 +1045,18 @@ class History:
         ``estimated=True``. Чистая медиана реальных ЗП (без вакансий без ЗП)
         остаётся ``with_salary``-покрытием; оценка НЕ подменяет реальную, а
         достраивает картину для сфер, где реальных ЗП мало/нет.
+
+        #125: оценка построена на ``salary_to``, т.е. это оценка ВЕРХНЕЙ границы —
+        она трогает ТОЛЬКО ``median_to``. ``median_from`` остаётся медианой
+        реальных нижних границ: подмешать в неё оценку верхней значило бы
+        смешать две разные шкалы, против чего и заведён #125. Следствие: у
+        сферы, где есть только вакансии «от N», оценивать верх не из чего, и
+        ``median_to`` честно остаётся пустым.
         """
         query = entry["search_query"]
+        # Доминирующая валюта сферы (#122) — фильтр для ВСЕХ выборок ниже:
+        # и реальных ЗП, и кандидатов на оценку, и самих tier-медиан.
+        currency = entry.get("currency")
         # Реальные salary_to сферы (уже есть) + оценки для вакансий без ЗП.
         # #122: только доминирующая валюта — та же, по которой посчитана медиана
         # в market_salary_by_query, иначе оценки вернули бы смешение валют назад.
@@ -983,15 +1066,29 @@ class History:
                 "SELECT salary_to FROM vacancies_seen "
                 "WHERE search_query = ? AND salary_to IS NOT NULL "
                 "AND salary_currency IS ?",
-                [query, entry.get("currency")],
+                [query, currency],
             ).fetchall()
         ]
-        # Вакансии без ЗП — их tier'ы (для оценки).
+        # Кандидаты на оценку — вакансии БЕЗ ОБЕИХ границ (#125). Раньше отбор шёл
+        # по `salary_to IS NULL`, из-за чего реальная вакансия «от 900 000»
+        # считалась «без ЗП» и получала выдуманный потолок — то самое
+        # достраивание вилки, которое запрещено дизайн-решением #125. Побочный
+        # эффект был нагляден: нижняя медиана коридора могла оказаться ВЫШЕ
+        # верхней. Теперь «от N» — это данные, и оценивать там нечего.
+        #
+        # #122: вакансия с ЗП в НЕдоминирующей валюте тоже не кандидат. Она уже
+        # исключена из медианы и посчитана в other_currency, о чём отчёт прямо
+        # пишет «не вошли в медиану»; вернуть её через оценку — сделать сноску
+        # ложью. А вот у вакансии совсем без ЗП валюты нет по определению
+        # (salary_currency IS NULL), и фильтровать её по валюте нельзя — иначе
+        # оценивать будет вообще нечего, ради чего #93 и заводился. Поэтому
+        # условие на валюту здесь не нужно: строки без обеих границ по
+        # построению вне валютного разделения.
         no_salary_tiers = [
             r["employer_tier"]
             for r in conn.execute(
                 "SELECT employer_tier FROM vacancies_seen "
-                "WHERE search_query = ? AND salary_to IS NULL",
+                "WHERE search_query = ? AND salary_to IS NULL AND salary_from IS NULL",
                 [query],
             ).fetchall()
         ]
@@ -1009,7 +1106,6 @@ class History:
         # без него рублёвая вилка попадала в медиану, помеченную как USD, и
         # смешение валют возвращалось через путь оценок — ровно тот перекос,
         # ради которого заведён #122. Валюта та же, что в market_salary_by_query.
-        currency = entry.get("currency")
         tier_estimate: dict[str, int] = {}
         for tier in set(t for t in no_salary_tiers if t):
             med, _ = self._median_salary_to(
@@ -1071,25 +1167,38 @@ class History:
     # падать на сферу. Мало данных → медиана по tier шумная → честнее сфера.
     _ESTIMATE_TIER_MIN_N = 5
 
-    def _median_salary_to(self, conn, where_clause: str, params: list) -> tuple[int | None, int]:
-        """Медиана salary_to по произвольному условию + число строк с ЗП.
+    # Колонки-границы, по которым разрешено считать медиану. Список закрытый:
+    # имя колонки подставляется в SQL текстом (параметром колонку не задать), и
+    # белый список — граница между «внутренний хелпер» и SQL-инъекцией.
+    _BOUND_COLUMNS = ("salary_from", "salary_to")
 
-        Возвращает (median, count_with_salary). median=None, count=0 — нет строк
-        с указанной ЗП. Переиспользует percentile-через-AVG-двух-центральных из
-        market_salary_by_query (тот же приём для той же шкалы salary_to).
+    def _median_bound(
+        self, conn, column: str, where_clause: str, params: list
+    ) -> tuple[int | None, int]:
+        """Медиана одной границы вилки (``salary_from``/``salary_to``) + её n.
+
+        Возвращает (median, count) — count это число строк, где ЭТА граница
+        указана, а не число вакансий: у медиан «от» и «до» выборки разные (#125).
+        Нет ни одного значения → (None, 0).
+
+        Медиана — percentile через AVG двух центральных строк (тот же приём, что
+        был в market_salary_by_query, вынесенный сюда, чтобы обе границы считались
+        одинаково и без дублирования SQL).
 
         ВАЖНО: count берём из ``COUNT(*) OVER ()`` окна (число строк с ЗП в группе),
         а НЕ внешним ``COUNT(*)`` — внешний работает уже после ``WHERE rn IN (...)``
         (1-2 центральные строки) и давал бы 1/2, а не реальное число значений.
         """
+        if column not in self._BOUND_COLUMNS:
+            raise ValueError(f"недопустимая колонка границы: {column!r}")
         row = conn.execute(
             f"""
-            SELECT AVG(salary_to) AS median, MAX(total) AS cnt
+            SELECT AVG({column}) AS median, MAX(total) AS cnt
             FROM (
-                SELECT salary_to, ROW_NUMBER() OVER (ORDER BY salary_to) AS rn,
+                SELECT {column}, ROW_NUMBER() OVER (ORDER BY {column}) AS rn,
                        COUNT(*) OVER () AS total
                 FROM vacancies_seen
-                WHERE salary_to IS NOT NULL AND {where_clause}
+                WHERE {column} IS NOT NULL AND {where_clause}
             )
             WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
             """,
@@ -1099,6 +1208,14 @@ class History:
             return None, 0
         median = row["median"]
         return (int(median) if median else None, row["cnt"])
+
+    def _median_salary_to(self, conn, where_clause: str, params: list) -> tuple[int | None, int]:
+        """Медиана salary_to по произвольному условию + число строк с ЗП.
+
+        Тонкая обёртка над :meth:`_median_bound` — оставлена как точка входа
+        эвристических оценок (#93), которые строятся именно на верхней границе.
+        """
+        return self._median_bound(conn, "salary_to", where_clause, params)
 
     def estimate_salary(self, search_query: str, employer_tier: str) -> SalaryInfo | None:
         """Эвристическая оценка ЗП для вакансии БЕЗ указанной (#93, часть B).
