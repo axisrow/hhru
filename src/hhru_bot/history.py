@@ -743,8 +743,8 @@ class History:
         ``employer_tier`` (#93) — уровень известности работодателя
         (``classify_employer``: top_tech/big_corp/mid/unknown). Записывается при
         сборе для группировки медианы в ``estimate_salary``. При обновлении
-        существующей строки tier тоже освежается (компания могла получить бейдж
-        trusted / накопить отзывы между scrape'ами).
+        существующей строки tier тоже освежается (компания могла накопить
+        отзывов между scrape'ами; trusted-бейдж hh.ru на tier не влияет — #118).
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:

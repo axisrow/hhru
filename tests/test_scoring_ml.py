@@ -197,6 +197,23 @@ def test_classify_top_tech_wins_over_heuristics():
     assert classify_employer("Яндекс", info) == KnownCompanyTier.TOP_TECH
 
 
+# --- _build_scoring_prompt: trusted не должен попадать в LLM-промпт (#118) --
+
+
+def test_build_scoring_prompt_omits_trusted_badge():
+    # Тот же дефект, что #118 чинит в prefilter: ~98% карточек несут
+    # trusted-бейдж, поэтому «надёжный работодатель» в промпте не различал
+    # бы вакансии, а только тратил токены на бесполезную похвалу.
+    from hhru_bot.scoring import _build_scoring_prompt
+
+    c = card(employer_info=EmployerInfo(trusted=True, rating=4.0, reviews_count=10))
+    messages = _build_scoring_prompt(c, None)
+    text = " ".join(m["content"] for m in messages)
+    assert "надёжный работодатель" not in text
+    assert "рейтинг: 4.0" in text
+    assert "отзывов: 10" in text
+
+
 # --- _parse_llm_score: разбор JSON-ответа LLM -------------------------------
 
 

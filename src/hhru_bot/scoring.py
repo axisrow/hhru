@@ -625,8 +625,13 @@ def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[
     """Собирает chat-completion сообщения для скоринга вакансии под кандидата.
 
     Контекст — карточка поиска (title/company/salary + employer_info: рейтинг/
-    trusted/tier) и профиль кандидата (skills/role/исключения). Просим вернуть
-    СТРОГО JSON без markdown/пояснений, чтобы ``_parse_llm_score`` отработал.
+    tier) и профиль кандидата (skills/role/исключения). Просим вернуть СТРОГО
+    JSON без markdown/пояснений, чтобы ``_parse_llm_score`` отработал.
+
+    ``info.trusted`` в промпт НЕ попадает: тот же дефект, что #118 чинит в
+    prefilter (~98% карточек несут этот бейдж, LLM видел бы одинаковую
+    «похвалу» почти на каждой вакансии и смещал бы score без реальной
+    информации — только за токены).
     """
     system = (
         "Ты оцениваешь релевантность вакансии кандидату. Оценивай только по "
@@ -649,8 +654,6 @@ def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[
             parts.append(f"рейтинг: {info.rating}")
         if info.reviews_count is not None:
             parts.append(f"отзывов: {info.reviews_count}")
-        if info.trusted:
-            parts.append("надёжный работодатель")
         lines.append("Работодатель: " + ", ".join(parts) + ".")
 
     if profile is not None:
