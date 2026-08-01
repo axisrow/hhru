@@ -1,0 +1,177 @@
+"""Тесты команды copy-resume (#116): контракт подтверждения, вывод, аудит.
+
+WRITE-hh-ru команда: боевой режим требует --force или интерактивного prompt
+в TTY; в неинтерактивном запуске без --force — отказ с exit 1 (единый контракт
+§1 cli-spec). Браузер здесь не запускается: launch_context и copy_resume_on_hh
+подменяются, история — реальная SQLite во временном файле.
+"""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import pytest
+
+import hhru_bot.browser
+import hhru_bot.commands.copy_resume as cmd
+import hhru_bot.copy_resume
+from hhru_bot.copy_resume import CopyResumeResult
+from hhru_bot.history import History
+
+OLD_ID = "a" * 38
+NEW_ID = "b" * 38
+
+
+# --- Чистая логика: контракт подтверждения ---
+
+
+def test_confirm_force_bypasses_prompt():
+    assert cmd.confirm_write(True, prompt="?", isatty_fn=lambda: False) is True
+
+
+def test_confirm_non_tty_refuses():
+    assert (
+        cmd.confirm_write(
+            False,
+            prompt="?",
+            isatty_fn=lambda: False,
+            input_fn=lambda _: pytest.fail("prompt в неинтерактивном режиме"),
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("answer,expected", [("y", True), ("yes", True), ("", False), ("n", False)])
+def test_confirm_tty_prompt(answer, expected):
+    assert (
+        cmd.confirm_write(False, prompt="?", isatty_fn=lambda: True, input_fn=lambda _: answer)
+        is expected
+    )
+
+
+# --- run(): оркестрация с подменёнными браузером и конфигом ---
+
+
+def _fake_config(tmp_path):
+    resume = SimpleNamespace(id="backend", resume_id=OLD_ID)
+
+    def get_resume(rid):
+        if rid != "backend":
+            from hhru_bot.config import ConfigError
+
+            raise ConfigError(f"Резюме '{rid}' не найдено в конфиге.")
+        return resume
+
+    return SimpleNamespace(
+        get_resume=get_resume,
+        storage_state_file=tmp_path / "session.json",
+        user_agent=None,
+    )
+
+
+def _args(tmp_path, **overrides):
+    base = {
+        "config": "unused.yaml",
+        "history": str(tmp_path / "h.db"),
+        "headless": True,
+        "resume": "backend",
+        "dry_run": False,
+        "force": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path):
+    """Подменяет config/браузер; result задаёт исход браузерного шага."""
+    state = SimpleNamespace(result=CopyResumeResult("backend", True, NEW_ID), calls=[])
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: _fake_config(tmp_path))
+
+    @contextmanager
+    def fake_launch(*a, **kw):
+        yield SimpleNamespace(new_page=lambda: SimpleNamespace())
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
+
+    def fake_copy(page, resume, dry_run):
+        state.calls.append((resume.id, dry_run))
+        return state.result
+
+    monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", fake_copy)
+    return state
+
+
+def test_run_success_prints_ok_and_yaml_snippet(env, capsys, tmp_path):
+    cmd.run(_args(tmp_path, force=True))
+    out = capsys.readouterr().out
+    assert f"[OK] Резюме backend скопировано. Новый resume_id: {NEW_ID}" in out
+    assert "config.yaml" in out
+    assert f"https://hh.ru/resume/{NEW_ID}" in out
+    # Аудит в actions.
+    h = History(tmp_path / "h.db")
+    assert h.count_today(OLD_ID, "copy_resume") == 1
+
+
+def test_run_without_force_non_tty_exits_1(env, capsys, tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert env.calls == []  # до браузера не дошли
+
+
+def test_run_dry_run_needs_no_confirmation(env, capsys, tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
+    env.result = CopyResumeResult("backend", True, "", reason="dry-run")
+    cmd.run(_args(tmp_path, dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN] Копирование резюме backend" in out
+    assert OLD_ID in out
+    assert "[INFO] Ничего не отправлено." in out
+    assert env.calls == [("backend", True)]
+    # dry_run не считается успехом в count_today (только status='success').
+    h = History(tmp_path / "h.db")
+    assert h.count_today(OLD_ID, "copy_resume") == 0
+
+
+def test_run_browser_failure_exits_1(env, capsys, tmp_path):
+    env.result = CopyResumeResult("backend", False, reason="кнопка не найдена")
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "кнопка не найдена" in out
+    h = History(tmp_path / "h.db")
+    assert h.count_today(OLD_ID, "copy_resume") == 0  # failed != success
+
+
+def test_run_same_resume_id_fails_closed(env, capsys, tmp_path):
+    # Страховка fail-closed в команде: браузерный шаг вернул success с исходным id.
+    env.result = CopyResumeResult("backend", True, OLD_ID)
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True))
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_run_unknown_resume_exits_1(env, capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, resume="nope", force=True))
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().out
+    assert env.calls == []
+
+
+def test_run_repeat_today_warns(env, capsys, tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action(OLD_ID, OLD_ID, "copy_resume", "success", "new_resume_id=x")
+    cmd.run(_args(tmp_path, force=True))
+    out = capsys.readouterr().out
+    assert "[INFO] Уже копировали backend сегодня" in out

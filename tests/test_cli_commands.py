@@ -45,6 +45,7 @@ def test_all_commands_registered():
         "log",
         "clear-skipped",
         "market",
+        "copy-resume",
     }
 
 
@@ -75,6 +76,7 @@ def test_register_commands_returns_names():
         "log_cmd",
         "clear_skipped",
         "market",
+        "copy_resume",
     }
 
 
