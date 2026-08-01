@@ -30,7 +30,6 @@ def _seen(
         salary_from=None,
         salary_to=salary_to,
         salary_currency=currency,
-        raw_date=None,
         search_query=query,
         employer_tier=tier,
     )

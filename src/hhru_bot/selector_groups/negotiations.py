@@ -30,7 +30,7 @@ NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
 # и т.д.). Опциональный: для свежего отклика без ответа статуса-бейджа может не быть.
 NEGOTIATION_STATUS = "[data-qa='negotiations-item__state']"
 # Дата ответа/последнего сообщения в карточке (как текст; парсинг конкретной
-# даты не делается — форматы hh.ru зависят от локали, как raw_date в VacancyCard).
+# даты не делается — форматы hh.ru зависят от локали).
 # Опциональна: hh.ru не всегда рендерит блок даты.
 NEGOTIATION_DATE = "[data-qa='negotiations-item__date']"
 # Ссылка «перейти в чат» с работодателем — chat_url (опциональна: у части статусов
