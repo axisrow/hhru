@@ -3,8 +3,9 @@
 Чистая логика без браузера/LLM. Фильтр отсекает «слепые отклики в пустоту»
 ДО LLM-скоринга (#74) — 0 токенов. Покрывает:
   - employer_passes_prefilter: disabled→pass (обратная совместимость),
-    top_tech/big_corp→pass, trusted→pass, rating/reviews≥порога→pass,
-    employer_interacted→pass, unknown+ничего→skip.
+    top_tech/big_corp→pass, rating/reviews≥порога→pass, employer_interacted→pass,
+    trusted БЕЗ иных сигналов→skip (issue #118, trusted не используется),
+    unknown+ничего→skip.
   - history.employer_interacted: account-scope JOIN responses/manual_offers по
     vacancy_id и employer.
   - parse_scoring: prefilter отсутствует→None (откл.), enabled+пороги, не-число.
@@ -138,7 +139,15 @@ def test_prefilter_trusted_alone_skips():
 
 def test_prefilter_trusted_with_rating_passes():
     """trusted + rating >= порога — проходит по rating, не по trusted."""
-    c = card(employer_info=EmployerInfo(trusted=True, rating=4.0))
+    c = card(company="Новая Компания", employer_info=EmployerInfo(trusted=True, rating=4.0))
+    passes, reason = employer_passes_prefilter(c, FakeHistory(), "r1", THRESHOLDS)
+    assert passes is True
+    assert reason == ""
+
+
+def test_prefilter_trusted_with_reviews_passes():
+    """trusted + reviews_count >= порога — проходит по reviews, не по trusted."""
+    c = card(company="Новая Компания", employer_info=EmployerInfo(trusted=True, reviews_count=10))
     passes, reason = employer_passes_prefilter(c, FakeHistory(), "r1", THRESHOLDS)
     assert passes is True
     assert reason == ""

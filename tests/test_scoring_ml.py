@@ -174,9 +174,10 @@ def test_adversarial_brand_spoof_with_suffix_not_matched():
 
 def test_classify_trusted_alone_is_unknown():
     # trusted-бейдж от hh.ru проставлен ~98% карточек (#118, залогиненный
-    # дамп) — сигнал бесполезен и НЕ используется. reviews_count=10 тоже
-    # ниже порога MID, поэтому неизвестное имя остаётся unknown.
-    info = EmployerInfo(rating=4.5, reviews_count=10, trusted=True)
+    # дамп) — сигнал бесполезен и НЕ используется (rating tier не учитывает
+    # вовсе). reviews_count=10 тоже ниже порога MID, поэтому неизвестное
+    # имя остаётся unknown.
+    info = EmployerInfo(reviews_count=10, trusted=True)
     assert classify_employer("Неизвестная Контора", info) == KnownCompanyTier.UNKNOWN
 
 

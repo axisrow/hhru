@@ -220,9 +220,12 @@ def classify_employer(name: str | None, info: EmployerInfo | None = None) -> str
     if name_lower and _name_matches(name_lower, _KNOWN_BIG_CORP_RU):
         return KnownCompanyTier.BIG_CORP
 
-    if info is not None and info.reviews_count is not None:
-        if info.reviews_count >= _REVIEWS_COUNT_MID_THRESHOLD:
-            return KnownCompanyTier.MID
+    if (
+        info is not None
+        and info.reviews_count is not None
+        and info.reviews_count >= _REVIEWS_COUNT_MID_THRESHOLD
+    ):
+        return KnownCompanyTier.MID
 
     return KnownCompanyTier.UNKNOWN
 
