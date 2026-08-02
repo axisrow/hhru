@@ -31,7 +31,7 @@ READ-only анализ рынка с целью **максимизация до�
 ```
 
 `--config`/`--history` — глобальные флаги (до подкоманды), по умолчанию
-`config/config.yaml` и `data/history.db`:
+`data/config.yaml` и `data/history.db`:
 
 ```
 ./scripts/run.sh --history data/history.db query "<SQL>"

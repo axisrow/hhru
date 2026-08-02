@@ -34,10 +34,10 @@ python3 -m playwright install chromium
 ## Настройка
 
 ```bash
-cp config/config.example.yaml config/config.yaml
+mkdir -p data && cp config/config.example.yaml data/config.yaml
 ```
 
-Отредактируй `config/config.yaml`:
+Отредактируй `data/config.yaml`:
 - `resumes` — список твоих резюме на hh.ru, у каждого свои фильтры поиска
   (`text`, `area`, `salary_from`, `experience`, `schedule`,
   `exclude_employers`, `exclude_keywords`) и опционально своё сопроводительное
@@ -46,8 +46,37 @@ cp config/config.example.yaml config/config.yaml
 - В сопроводительном письме доступны плейсхолдеры `{vacancy_title}` и
   `{company_name}`.
 
-`config/config.yaml` в `.gitignore` — туда попадают реальные ссылки на
-резюме, коммитить его не нужно.
+## Структура каталогов
+
+Всё, что меняется в процессе работы — личный конфиг, база, сессия hh.ru,
+логи — живёт в `data/`. Эта папка целиком в `.gitignore` **одной строкой**,
+поэтому приватные данные не могут случайно уехать в коммит, и новый
+изменяемый артефакт не требует правки `.gitignore`.
+
+```
+data/                      # всё изменяемое, целиком в .gitignore
+  config.yaml              # твои настройки (шаблон — config/config.example.yaml)
+  history.db               # SQLite: история откликов, вакансии, ответы
+  storage_state/
+    hh_session.json        # сессия hh.ru — секрет, никогда не коммитить
+  logs/
+    hhru_bot.log           # лог CLI (дублируется в консоль)
+    probe_*.html / .png    # дампы probe: HTML/скриншот формы отклика
+    scheduled.log          # вывод запусков по расписанию
+
+config/
+  config.example.yaml      # версионируемый шаблон формата — лежит в репозитории
+```
+
+Пути резолвятся **относительно текущей директории**, поэтому команды
+запускают из корня проекта (или указывают `--config` / `--history` явно).
+Исключение — `account.storage_state_file`: он резолвится относительно
+директории самого конфига, поэтому в `data/config.yaml` его значение —
+`storage_state/hh_session.json` (то есть `data/storage_state/…`). Не уводи
+его за пределы `data/` через `../`: там правило `data/` уже не действует.
+
+Дампы `probe` содержат HTML и скриншот формы отклика залогиненного
+пользователя — это такие же приватные данные, как сессия.
 
 ## Первый запуск: вход в аккаунт
 
@@ -97,7 +126,7 @@ cp config/config.example.yaml config/config.yaml
 
 **Глобальные флаги** (до имени команды):
 
-- `--config` — Путь к config.yaml (по умолчанию: 'config/config.yaml')
+- `--config` — Путь к config.yaml (по умолчанию: 'data/config.yaml')
 - `--history` — Путь к файлу истории (SQLite) (по умолчанию: 'data/history.db')
 - `--headless` — Запустить браузер в headless-режиме
 - `--verbose` — Подробное логирование
@@ -222,7 +251,7 @@ cp config/config.example.yaml config/config.yaml
 
 ## Как это устроено
 
-- `src/hhru_bot/config.py` — загрузка `config.yaml`.
+- `src/hhru_bot/config.py` — загрузка `data/config.yaml`.
 - `src/hhru_bot/history.py` — локальная SQLite-история (`data/history.db`):
   какие вакансии уже обработаны, сколько действий сделано сегодня.
 - `src/hhru_bot/throttle.py` — случайные паузы и дневные лимиты.
@@ -237,7 +266,7 @@ cp config/config.example.yaml config/config.yaml
 
 ## Логи
 
-Пишутся в `logs/hhru_bot.log` и одновременно в консоль. Используй
+Пишутся в `data/logs/hhru_bot.log` и одновременно в консоль. Используй
 `--verbose` для более подробного вывода.
 
 ## Похожие проекты (для идей)

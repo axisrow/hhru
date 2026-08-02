@@ -2,7 +2,7 @@
 
 Без браузера — через FakePage, имитирующий минимальный Playwright API.
 Главный инвариант: probe ДОХОДИТ до формы, заполняет письмо, дампит
-screenshot + HTML в logs/, но submit_button.click() НИКОГДА не вызывается
+screenshot + HTML в data/logs/, но submit_button.click() НИКОГДА не вызывается
 (атомарность «дойти до формы и не отправить»).
 """
 
@@ -142,7 +142,7 @@ def _vacancy() -> VacancyCard:
     return VacancyCard(vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42")
 
 
-# --- dump_probe_snapshot: пишет файлы в logs/ ---
+# --- dump_probe_snapshot: пишет файлы в data/logs/ ---
 
 
 def test_dump_probe_snapshot_writes_screenshot_and_html(tmp_path: Path):

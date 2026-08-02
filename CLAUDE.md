@@ -24,8 +24,8 @@ ASCII-таблицы через `report._ascii_table`).
 pip3 install -r requirements.txt
 python3 -m playwright install chromium
 
-# Настройка (config.yaml в .gitignore — коммитить не нужно)
-cp config/config.example.yaml config/config.yaml
+# Настройка (вся папка data/ в .gitignore — коммитить не нужно)
+mkdir -p data && cp config/config.example.yaml data/config.yaml
 
 # Все команды запускаются через обёртку run.sh (ставит PYTHONPATH=src и вызывает hhru_bot.cli)
 ./scripts/run.sh login                                    # ручной вход, сохраняет сессию
@@ -159,9 +159,35 @@ cp config/config.example.yaml config/config.yaml
   и делает `sys.exit(1)`.
 - Сопроводительное письмо: `cover_letter` резюме, иначе `cover_letter_default`. Плейсхолдеры
   `{vacancy_title}` и `{company_name}` подставляются в `render_cover_letter()` (apply.py).
-- Пути (все относительно `PROJECT_ROOT`, определённого в `config.py`):
-  - Сессия браузера: `data/storage_state/hh_session.json` (из `account.storage_state_file`)
-  - История: `data/history.db` (SQLite)
-  - Логи: `logs/hhru_bot.log` (+ дублируются в консоль)
-- В `.gitignore`: `config/config.yaml`, `data/storage_state/*.json`, `data/*.db`, `logs/*.log`
-  — реальные ссылки на резюме, сессия и история наружу не попадают.
+- **Все изменяемые данные живут в `data/`, вся папка целиком в `.gitignore` одной строкой**
+  (#133). Новый изменяемый артефакт кладётся туда же и правки `.gitignore` не требует —
+  точечные правила («забыли строку → секрет в коммите») сознательно убраны.
+
+```
+data/                      # всё изменяемое, целиком в .gitignore
+  config.yaml              # личные настройки (шаблон — config/config.example.yaml)
+  history.db               # SQLite: история откликов, вакансии, ответы
+  storage_state/
+    hh_session.json        # сессия hh.ru (секрет)
+  logs/
+    hhru_bot.log           # лог CLI (+ дублируется в консоль)
+    probe_*.html / .png    # дампы probe (#8)
+    scheduled.log          # вывод scripts/scheduled_run.sh
+
+config/
+  config.example.yaml      # версионируемый шаблон формата, НЕ в игноре
+```
+
+- Пути **относительно cwd** (точки запуска), а не пакета: после `pip install` пакет уезжает
+  в site-packages, и привязка к расположению кода ломала бы поиск конфига. Дефолты —
+  `cli.DEFAULT_CONFIG_PATH` (`data/config.yaml`), `cli.DEFAULT_HISTORY_PATH`
+  (`data/history.db`), `logging_setup.LOG_DIR` (`data/logs`, оттуда же наследует
+  `apply/probe.PROBE_LOG_DIR`).
+- **Исключение — `account.storage_state_file`:** резолвится относительно **директории файла
+  конфига** (`parse_account`), а не cwd, чтобы `--config /abs/.../config.yaml` из чужой
+  директории писал сессию рядом с конфигом. Shipped-значение `storage_state/hh_session.json`
+  → `data/storage_state/` → покрыто `data/`. Значение подконтрольно пользователю и может
+  увести секрет за пределы `data/` (`../…`), поэтому в `.gitignore` сохранён defence-in-depth
+  catch-all `**/storage_state/*.json`; инвариант закреплён тестами в `tests/test_config.py`.
+- Обратной совместимости со старой раскладкой (`config/config.yaml`, `logs/`) нет намеренно:
+  #133 — breaking change, детекта старых путей и fallback'ов в коде быть не должно.

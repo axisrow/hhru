@@ -6,16 +6,16 @@ dist/
 *.egg-info/
 *.egg
 
-config/config.yaml
-data/storage_state/*.json
-data/*.db
+# ВСЕ изменяемые данные проекта живут в data/ (конфиг, БД, сессия, логи, дампы
+# probe) — одна строка вместо шести точечных правил (#133). Версионируемый
+# шаблон формата конфига лежит отдельно в config/config.example.yaml и НЕ
+# игнорируется. Новый изменяемый артефакт кладите в data/ — правку .gitignore
+# он не требует.
+data/
 # Defence-in-depth: session-секреты hh.ru (cookies/localStorage) игнорируются в
 # ЛЮБОЙ директории, не только в data/. Catch-all покрывает legacy user-конфиги,
-# где старое значение 'data/...' при relative-to-config резолве попадает в
-# config/data/... (не покрыто точечным 'data/storage_state/*.json' выше).
+# где storage_state_file при relative-to-config резолве уезжает за пределы data/
+# (напр. старый config/config.yaml со значением 'data/...' → config/data/...).
 **/storage_state/*.json
-logs/*.log
-logs/probe_*.png
-logs/probe_*.html
 
 .env

@@ -100,7 +100,7 @@ def load_config(path: str | Path) -> AppConfig:
     if not path.exists():
         raise ConfigError(
             f"Файл конфига не найден: {path}\n"
-            f"Скопируйте config/config.example.yaml в config/config.yaml и заполните его."
+            f"Скопируйте config/config.example.yaml в data/config.yaml и заполните его."
         )
 
     with path.open("r", encoding="utf-8") as f:
@@ -111,8 +111,9 @@ def load_config(path: str | Path) -> AppConfig:
 
     # storage_state_file резолвится относительно директории файла конфига —
     # стабильно, не зависит от cwd (даже при --config с абсолютным путём из
-    # чужой директории). Shipped-путь ../data/... (от config/) → корень репо →
-    # покрыт .gitignore. См. regression-тест test_session_secret_path_is_gitignored.
+    # чужой директории). Shipped-путь storage_state/... (от data/, где теперь
+    # живёт конфиг — #133) → data/storage_state/ → покрыт .gitignore правилом
+    # 'data/'. См. regression-тест test_session_secret_is_gitignored_when_config_in_repo.
     account = parse_account(raw.get("account"), path.parent)
     storage_state_file = account.storage_state_file
     user_agent = account.user_agent

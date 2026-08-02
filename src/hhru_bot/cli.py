@@ -19,11 +19,14 @@ from .logging_setup import setup_logging
 # Дефолтные пути — ОТНОСИТЕЛЬНЫЕ (relative-to-cwd), а не привязанные к пакету.
 # После `pip install` пакет уезжает в site-packages, и привязка путей к
 # расположению кода (как раньше через PROJECT_ROOT = parents[2]) ломала бы поиск
-# config/config.yaml. Относительные пути Python резолвит от cwd в рантайме —
-# пользователь запускает `hhru-bot` из директории проекта, где рядом лежат
-# config/ и data/. Относительные строки также стабильно смотрятся в --help и в
+# data/config.yaml. Относительные пути Python резолвит от cwd в рантайме —
+# пользователь запускает `hhru-bot` из директории проекта, где рядом лежит
+# data/. Относительные строки также стабильно смотрятся в --help и в
 # автоген-справочнике README (gen_cli_docs.py), не завися от машины.
-DEFAULT_CONFIG_PATH = Path("config") / "config.yaml"
+#
+# Все изменяемые данные — под data/ (#133): конфиг, БД, сессия, логи. Вся папка
+# целиком в .gitignore одной строкой.
+DEFAULT_CONFIG_PATH = Path("data") / "config.yaml"
 DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 
 
@@ -66,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     # READ-команда `log` намеренно минует setup_logging: FileHandler создал бы
-    # logs/hhru_bot.log на запись до run(), что нарушает READ-контракт «не меняет
+    # data/logs/hhru_bot.log на запись до run(), что нарушает READ-контракт «не меняет
     # локально» (#21), делает ветку «файл не найден» недостижимой (setup_logging
     # создаёт пустой лог) и падает PermissionError в read-only-директории.
     # log сам ничего не логирует — ему не нужны handlers (цикл ревью #61, #58).
