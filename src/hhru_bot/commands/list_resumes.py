@@ -23,10 +23,13 @@ READ-команда: по умолчанию читает ``config.resumes`` л�
 ``whoami._check_session`` проверяет только формат файла сессии (валидный JSON
 с cookies), НЕ факт актуальной авторизации на hh.ru — истёкшие cookies его
 пройдут. Поэтому после открытия страницы ``--remote`` дополнительно зовёт
-``browser.is_logged_in(page)`` (редирект на /account/login — сигнал истёкшей
-сессии); без этой проверки истёкшая сессия и вправду пустой аккаунт неотличимы
-(оба дают 0 карточек), и команда напечатала бы обманчивое «резюме не найдено»
-вместо «сессия недействительна».
+``browser.has_auth_cookie(page)`` (наличие cookie ``hhtoken``); без этой
+проверки истёкшая сессия и вправду пустой аккаунт неотличимы (оба дают
+0 карточек), и команда напечатала бы обманчивое «резюме не найдено» вместо
+«сессия недействительна». Именно cookie, не ``browser.is_logged_in()``
+(проверка URL на /account/login) — та ненадёжна для этой цели (см.
+auth.py:59-61: hh.ru может оставить account/login в редиректе даже при
+успешном входе).
 
 Заголовок резюме (``RESUME_LIST_CARD_TITLE``) — селектор НЕ подтверждён живым
 дампом (см. selector_groups/resume_list.py). Если он не совпал ни для одной
@@ -138,7 +141,7 @@ def run(args: argparse.Namespace) -> None:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
 
-    from ..browser import is_logged_in, launch_context
+    from ..browser import has_auth_cookie, launch_context
     from ..copy_resume import ResumeListIndeterminate, list_resume_cards
 
     with launch_context(
@@ -147,12 +150,13 @@ def run(args: argparse.Namespace) -> None:
         page = context.new_page()
         # _check_session выше проверил только формат файла — не факт актуальной
         # авторизации на hh.ru. Без этой проверки истёкшая сессия неотличима от
-        # пустого аккаунта резюме (обе дают 0 карточек ниже).
-        if not is_logged_in(page):
-            print(
-                "[FAIL] Сессия недействительна (hh.ru перенаправил на страницу входа). "
-                "Выполните login."
-            )
+        # пустого аккаунта резюме (обе дают 0 карточек ниже). Проверяем через
+        # cookie hhtoken (Codex review), НЕ через browser.is_logged_in() — та
+        # смотрит на "account/login" в page.url, а этот приём auth.py уже
+        # отверг: hh.ru может оставить account/login в редиректе даже при
+        # успешном входе, что дало бы ложный [FAIL] для валидной сессии.
+        if not has_auth_cookie(page):
+            print("[FAIL] Сессия недействительна (cookie hhtoken не найден). Выполните login.")
             return
         try:
             cards = list_resume_cards(page)

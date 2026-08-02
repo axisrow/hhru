@@ -133,3 +133,30 @@ def test_goto_hh_uses_domcontentloaded(monkeypatch):
     goto_hh(page, "https://hh.ru/search/vacancy")
 
     page.goto.assert_called_once_with("https://hh.ru/search/vacancy", wait_until="domcontentloaded")
+
+
+# --- has_auth_cookie (Codex review, #135) ------------------------------------
+
+
+def test_has_auth_cookie_true_when_hhtoken_present():
+    page = MagicMock(name="Page")
+    page.context.cookies.return_value = [
+        {"name": "unrelated", "value": "x"},
+        {"name": "hhtoken", "value": "abc"},
+    ]
+
+    assert browser.has_auth_cookie(page) is True
+
+
+def test_has_auth_cookie_false_when_hhtoken_absent():
+    page = MagicMock(name="Page")
+    page.context.cookies.return_value = [{"name": "unrelated", "value": "x"}]
+
+    assert browser.has_auth_cookie(page) is False
+
+
+def test_has_auth_cookie_false_on_empty_cookies():
+    page = MagicMock(name="Page")
+    page.context.cookies.return_value = []
+
+    assert browser.has_auth_cookie(page) is False
