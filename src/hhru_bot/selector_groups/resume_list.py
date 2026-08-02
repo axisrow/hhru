@@ -1,4 +1,5 @@
-"""Список резюме (/applicant/resumes) — селекторы для copy-resume (#116).
+"""Список резюме (/applicant/resumes) — селекторы для copy-resume (#116)
+и list-resumes --remote (#135).
 
 Статус проверки (live-дамп под залогиненной сессией, 2026-08-01):
 
@@ -12,6 +13,11 @@
   POST /applicant/resumes/clone?resume=<hash>; при лимите резюме
   (resumeLimits.remaining == 0, «Более 20 резюме создать нельзя») кнопки
   НЕ рендерятся вовсе.
+- RESUME_LIST_CARD_TITLE — НЕ ПОДТВЕРЖДЕНО: значение по аналогии с
+  ``resume-topic-title`` (селект формы отклика, apply_form.py) на живом
+  дампе /applicant/resumes не проверялся. list_resume_cards() поэтому
+  трактует его отсутствие как «заголовок неизвестен» (title=""), а не
+  как ошибку — падать из-за непроверенного селектора недопустимо.
 
 «dublicate» в RESUME_DUPLICATE_INLINE — опечатка самого hh.ru, не наша.
 """
@@ -33,3 +39,6 @@ RESUME_DUPLICATE_MENU_ITEM = "[data-qa='operations-list-duplicate-resume']"
 
 # Инлайн-кнопка «Дублировать» (второй вариант рендера того же действия).
 RESUME_DUPLICATE_INLINE = "[data-qa='resume-dublicate']"
+
+# Заголовок (название) резюме внутри карточки — НЕ ПОДТВЕРЖДЕНО (см. докстринг).
+RESUME_LIST_CARD_TITLE = "[data-qa='resume-title']"

@@ -28,6 +28,7 @@ from .selector_groups.resume_list import (
     RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
+    RESUME_LIST_CARD_TITLE,
 )
 
 logger = logging.getLogger("hhru_bot.copy_resume")
@@ -47,6 +48,13 @@ class CopyResumeResult:
     reason: str = ""
 
 
+@dataclass
+class ResumeCard:
+    resume_id: str
+    title: str
+    url: str
+
+
 def _card_hashes(page: Page) -> set[str]:
     """Хэши всех резюме в списке /applicant/resumes (для diff до/после)."""
     hashes: set[str] = set()
@@ -55,6 +63,40 @@ def _card_hashes(page: Page) -> set[str]:
         if qa.startswith(_CARD_LINK_PREFIX):
             hashes.add(qa[len(_CARD_LINK_PREFIX) :])
     return hashes
+
+
+def list_resume_cards(page: Page) -> list[ResumeCard]:
+    """Список резюме аккаунта с /applicant/resumes: хэш + название + URL (#135).
+
+    READ-only: только goto + чтение DOM, ничего не кликается и не отправляется.
+    Заголовок читается ПОД каждой карточкой (RESUME_LIST_CARD), не под page —
+    тот же принцип, что и для кнопки «Дублировать» (см. copy_resume_on_hh:
+    page.locator(...).first взял бы первую в DOM-порядке при нескольких резюме).
+    RESUME_LIST_CARD_TITLE не подтверждён живым дампом — его отсутствие даёт
+    title="", а не исключение.
+    """
+    logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
+    goto_hh(page, RESUMES_LIST_URL)
+
+    cards: list[ResumeCard] = []
+    for card in page.locator(RESUME_LIST_CARD).all():
+        resume_id = ""
+        for link in card.locator(f"[data-qa^='{_CARD_LINK_PREFIX}']").all():
+            qa = link.get_attribute("data-qa") or ""
+            if qa.startswith(_CARD_LINK_PREFIX):
+                resume_id = qa[len(_CARD_LINK_PREFIX) :]
+                break
+        if not resume_id:
+            continue
+
+        title = ""
+        title_locator = card.locator(RESUME_LIST_CARD_TITLE)
+        if title_locator.count() == 1:
+            title = (title_locator.first.inner_text() or "").strip()
+
+        url = f"{HH_BASE_URL}/resume/{resume_id}"
+        cards.append(ResumeCard(resume_id=resume_id, title=title, url=url))
+    return cards
 
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
