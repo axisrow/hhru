@@ -20,6 +20,19 @@ READ-команда: по умолчанию читает ``config.resumes`` л�
 подтверждение WRITE (``--force``) не требуется. Совместим с ``--status``
 (тот читает локальную историю — конфликта источников данных нет).
 
+``whoami._check_session`` проверяет только формат файла сессии (валидный JSON
+с cookies), НЕ факт актуальной авторизации на hh.ru — истёкшие cookies его
+пройдут. Поэтому после открытия страницы ``--remote`` дополнительно зовёт
+``browser.is_logged_in(page)`` (редирект на /account/login — сигнал истёкшей
+сессии); без этой проверки истёкшая сессия и вправду пустой аккаунт неотличимы
+(оба дают 0 карточек), и команда напечатала бы обманчивое «резюме не найдено»
+вместо «сессия недействительна».
+
+Заголовок резюме (``RESUME_LIST_CARD_TITLE``) — селектор НЕ подтверждён живым
+дампом (см. selector_groups/resume_list.py). Если он не совпал ни для одной
+карточки, при этом карточки есть, — печатается предупреждение о ненадёжности
+колонки «название», а не молчаливый прочерк, выдаваемый за подтверждённые данные.
+
 Контракт вывода — docs/cli-spec.md §list-resumes: базовые колонки
 ``id | resume_id | можно bump | последний bump`` (последние две — только с
 ``--status``); ``--remote`` печатает отдельную таблицу
@@ -125,18 +138,33 @@ def run(args: argparse.Namespace) -> None:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
 
-    from ..browser import launch_context
+    from ..browser import is_logged_in, launch_context
     from ..copy_resume import list_resume_cards
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
+        # _check_session выше проверил только формат файла — не факт актуальной
+        # авторизации на hh.ru. Без этой проверки истёкшая сессия неотличима от
+        # пустого аккаунта резюме (обе дают 0 карточек ниже).
+        if not is_logged_in(page):
+            print(
+                "[FAIL] Сессия недействительна (hh.ru перенаправил на страницу входа). "
+                "Выполните login."
+            )
+            return
         cards = list_resume_cards(page)
 
     if not cards:
         print("[INFO] На hh.ru не найдено ни одного резюме.")
         return
+
+    if not any(c.title for c in cards):
+        print(
+            "[INFO] Название резюме не удалось прочитать (селектор заголовка "
+            "не подтверждён) — колонка «название» может быть неточной."
+        )
 
     configured_ids = {r.resume_id for r in config.resumes}
     print()
