@@ -185,13 +185,6 @@ def test_ambiguous_title_selector_does_not_fail(monkeypatch):
     assert cards[0].title == ""
 
 
-def test_empty_list_returns_empty(monkeypatch):
-    page = StubPage([])
-    _patch_goto(monkeypatch, page)
-
-    assert cr.list_resume_cards(page) == []
-
-
 def test_race_waits_for_card_before_declaring_empty(monkeypatch):
     """Codex adversarial review (PR #136): Locator.all() резолвит немедленно, не
     ждёт. Если карточки ещё не отрендерились в момент первого count()==0 (медленный
@@ -206,10 +199,16 @@ def test_race_waits_for_card_before_declaring_empty(monkeypatch):
     assert cards[0].resume_id == ID_A
 
 
-def test_genuinely_empty_account_after_wait_returns_empty(monkeypatch):
-    """Если карточка так и не появилась за время ожидания — аккаунт действительно
-    пуст (или страница не прогрузилась), список пуст без исключения."""
+def test_timeout_raises_indeterminate_not_empty_list(monkeypatch):
+    """Codex adversarial review (PR #136, round 2): без карточки, появившейся за
+    время ожидания, состояние страницы НЕ подтверждено (timeout, анти-бот/
+    интерстишл-страница, дрейф селектора — неотличимы от честно пустого
+    аккаунта). list_resume_cards не должна молча возвращать [] — это выдало бы
+    неопределённость за факт "резюме нет"."""
     page = StubPage([])  # без delayed_cards: wait_for кидает TimeoutError
     _patch_goto(monkeypatch, page)
 
-    assert cr.list_resume_cards(page) == []
+    import pytest
+
+    with pytest.raises(cr.ResumeListIndeterminate):
+        cr.list_resume_cards(page)

@@ -339,6 +339,34 @@ def test_remote_unconfirmed_title_selector_warns_when_all_titles_empty(
     assert "не подтверждён" in out
 
 
+def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monkeypatch):
+    """Codex adversarial review (PR #136, round 2): list_resume_cards может поднять
+    ResumeListIndeterminate (timeout/интерстишл/дрейф селектора — состояние страницы
+    не подтверждено). Команда обязана сообщить [FAIL], а не «резюме не найдено»."""
+    from hhru_bot.copy_resume import ResumeListIndeterminate
+
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    def _raise_indeterminate(page):
+        raise ResumeListIndeterminate("карточки резюме не появились за отведённое время")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.is_logged_in", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_indeterminate)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "не найдено" not in out
+
+
 def _config_with_storage_state(config_path, storage_state_path):
     from hhru_bot.config import load_config
 

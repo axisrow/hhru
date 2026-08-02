@@ -139,7 +139,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     from ..browser import is_logged_in, launch_context
-    from ..copy_resume import list_resume_cards
+    from ..copy_resume import ResumeListIndeterminate, list_resume_cards
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -154,7 +154,13 @@ def run(args: argparse.Namespace) -> None:
                 "Выполните login."
             )
             return
-        cards = list_resume_cards(page)
+        try:
+            cards = list_resume_cards(page)
+        except ResumeListIndeterminate as e:
+            # Timeout/интерстишл/дрейф селектора — не подтверждённо пустой
+            # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py).
+            print(f"[FAIL] {e}")
+            return
 
     if not cards:
         print("[INFO] На hh.ru не найдено ни одного резюме.")

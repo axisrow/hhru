@@ -55,6 +55,18 @@ class ResumeCard:
     url: str
 
 
+class ResumeListIndeterminate(Exception):
+    """Не удалось подтвердить состояние /applicant/resumes (#135, Codex review).
+
+    Ни одна карточка не появилась за COPY_TIMEOUT_MS после навигации. Без
+    подтверждённого маркера «список действительно пуст» это неотличимо от
+    честно пустого аккаунта, анти-бот/интерстишл-страницы, деградировавшей
+    загрузки или дрейфа RESUME_LIST_CARD. list_resume_cards поэтому не молчит
+    и не выдаёт пустой список за подтверждённый факт — поднимает это
+    исключение, чтобы вызывающий код (list_resumes.py --remote) сообщил
+    «состояние не подтверждено», а не соврал «резюме не найдено»."""
+
+
 def _card_hashes(page: Page) -> set[str]:
     """Хэши всех резюме в списке /applicant/resumes (для diff до/после)."""
     hashes: set[str] = set()
@@ -81,10 +93,13 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
     медленный рендер /applicant/resumes (или анти-бот/интерстишл-страница)
     даёт 0 карточек «прямо сейчас», что неотличимо от честно пустого
     аккаунта — команда солгала бы «резюме не найдено». Поэтому при первом
-    count()==0 ждём появления хотя бы одной карточки коротким wait_for; если
-    её так и не появилось за это время — аккаунт действительно пуст (или
-    страница не прогрузилась за разумный срок, что при READ-only диагностике
-    трактуем так же, как и copy_resume_on_hh трактует отсутствие карточки).
+    count()==0 ждём появления хотя бы одной карточки коротким wait_for.
+
+    Если карточка так и не появилась за это время — состояние страницы НЕ
+    подтверждено (см. ResumeListIndeterminate): нет надёжного маркера «список
+    действительно пуст», отличить честно пустой аккаунт от timeout/интерстишла/
+    дрейфа селектора здесь нельзя, поэтому функция не молчит и не выдаёт
+    пустой список за факт — поднимает исключение.
     """
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
     goto_hh(page, RESUMES_LIST_URL)
@@ -94,7 +109,11 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
         try:
             cards_locator.first.wait_for(timeout=COPY_TIMEOUT_MS)
         except PlaywrightTimeoutError:
-            pass
+            raise ResumeListIndeterminate(
+                "карточки резюме не появились за отведённое время — состояние "
+                "/applicant/resumes не подтверждено (timeout, анти-бот/"
+                "интерстишл-страница или дрейф селектора RESUME_LIST_CARD)"
+            ) from None
 
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
