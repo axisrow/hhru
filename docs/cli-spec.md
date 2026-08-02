@@ -220,11 +220,11 @@
 - **Референс:** `s3rgeym log -f`.
 - **Сигнатура:**
   ```
-  hhru_bot log                          # последние N строк logs/hhru_bot.log
+  hhru_bot log                          # последние N строк data/logs/hhru_bot.log
   hhru_bot log -f                       | follow (tail -f), прерывается по Ctrl-C
   hhru_bot log -n <count>               # количество строк (по умолчанию 50)
   ```
-- **Вывод:** поток текста (`logs/hhru_bot.log`). Чувствительные ID (resume_id,
+- **Вывод:** поток текста (`data/logs/hhru_bot.log`). Чувствительные ID (resume_id,
   сессия) в логе уже редacted уровнями логирования — команда ничего не фильтрует.
 - **Заметка:** `follow` реализуется через чтение с polling (стандартный tail-loop),
   НЕ через фоновый демон. Прерывание по `KeyboardInterrupt` — exit 130 (как `main`).

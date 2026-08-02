@@ -35,8 +35,9 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
     зависит от того, откуда запущен CLI — даже ``hhru-bot --config /abs/.../config.yaml login``
     из чужой директории пишет сессию рядом с конфигом, куда указал пользователь.
 
-    SECURITY: shipped-путь в config.example.yaml — ``../data/storage_state/...``
-    (от ``config/`` → корень репо → покрыто ``.gitignore``). Относительно config
+    SECURITY: shipped-путь в config.example.yaml — ``storage_state/...``
+    (от ``data/``, где живёт конфиг после #133 → ``data/storage_state/`` →
+    покрыто ``.gitignore`` правилом ``data/``). Относительно config
     резолвится безопасно; что бы ни было в ``base_dir``, итоговый путь — под
     контролем файла конфига, а не CWD процесса. См. regression-тест в test_config.py.
     """

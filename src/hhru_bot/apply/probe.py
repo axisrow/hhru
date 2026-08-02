@@ -5,7 +5,7 @@
 Зачем: непроверенные селекторы формы отклика (`/applicant/vacancy_response`,
 рендерится только залогиненному через JS) нельзя сверить вслепую. Probe безопасно
 доходит до формы, заполняет письмо и сдампит `page.screenshot()` + `page.content()`
-в `logs/`, после чего останавливается — `submit_button.click()` НИКОГДА не
+в `data/logs/`, после чего останавливается — `submit_button.click()` НИКОГДА не
 вызывается. По дампу #10 сверяет селекторы на живой сессии.
 
 Атомарность «дойти до формы и не отправить» — главный инвариант этого модуля.
@@ -40,7 +40,8 @@ from .questions import detect_questions
 logger = logging.getLogger("hhru_bot.apply.probe")
 
 # Дампы probe пишем туда же, куда и остальные логи — relative-to-cwd (см.
-# logging_setup.LOG_DIR). Раньше было PROJECT_ROOT / "logs", но PROJECT_ROOT
+# logging_setup.LOG_DIR — data/logs, #133). Раньше было PROJECT_ROOT / "logs",
+# но PROJECT_ROOT
 # убран из config.py (ломался после pip install).
 PROBE_LOG_DIR = LOG_DIR
 
@@ -74,7 +75,7 @@ class ProbeResult:
 
 
 def dump_probe_snapshot(page: Page, ctx: ProbeContext) -> dict[str, Path]:
-    """Снимает screenshot + HTML текущего состояния страницы в logs/.
+    """Снимает screenshot + HTML текущего состояния страницы в data/logs/.
 
     Идемпотентно по имени (vacancy_id + stage): повторный вызов перезаписывает
     файлы той же вакансии. Возвращает пути к записанным файлам.

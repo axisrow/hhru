@@ -4,7 +4,7 @@
 # нужное время. CLAUDE.md запрещает фоновые демоны внутри проекта.
 #
 # По образцу scripts/run.sh: ставит PYTHONPATH=src и вызывает hhru_bot.cli.
-# Дополнительно: пишет свой вывод в logs/scheduled.log и вызывает bump + apply.
+# Дополнительно: пишет свой вывод в data/logs/scheduled.log и вызывает bump + apply.
 # Предохранители (дневные лимиты, кулдаун бампа 4ч) живут в коде — throttle.py.
 #
 # Аргументы передаются дальше CLI как есть, например:
@@ -18,14 +18,14 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${PROJECT_ROOT}/src"
 
-# CLI резолвит config/config.yaml, data/history.db и logs/ ОТНОСИТЕЛЬНО cwd
-# (см. cli.py: DEFAULT_CONFIG_PATH = Path("config")/"config.yaml"). launchd и
+# CLI резолвит data/config.yaml, data/history.db и data/logs/ ОТНОСИТЕЛЬНО cwd
+# (см. cli.py: DEFAULT_CONFIG_PATH = Path("data")/"config.yaml"). launchd и
 # cron НЕ гарантируют cwd = корень репо (часто это / или $HOME) — без этого cd
 # плановый джоб не найдёт конфиг или создаст data/ в системном cwd, ломая
 # дедупликацию и throttle. Явно переходим в корень репозитория.
 cd "${PROJECT_ROOT}"
 
-LOG_DIR="${PROJECT_ROOT}/logs"
+LOG_DIR="${PROJECT_ROOT}/data/logs"
 mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/scheduled.log"
 

@@ -12,7 +12,7 @@ can_bump_now — кулдаун поднятия 4 часа) не дадут п�
 поднять резюме раньше срока, даже если планировщик «нажмёт кнопку» дважды.
 Планировщик лишь вызывает scripts/scheduled_run.sh в нужное время.
 
-Конфиги — ШАБЛОНЫ: реальные пути (к репозиторию, к logs/) пользователь
+Конфиги — ШАБЛОНЫ: реальные пути (к репозиторию, к data/logs/) пользователь
 подставляет сам под свою машину. В .plist используются плейсхолдеры вида
 __REPO_ROOT__/scripts/scheduled_run.sh, которые нужно заменить перед
 установкой агента.
@@ -239,7 +239,7 @@ def _instructions(cfg: ScheduleConfig) -> str:
             "launchd LaunchAgent (macOS) — ШАБЛОН. Скопируйте stdout в файл.\n"
             "Замените плейсхолдеры под свою машину:\n"
             f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория (напр. /Users/me/hhru)\n"
-            f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+            f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/data/logs)\n"
             f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
             f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python; узнать: `which python`"
             " в активированном venv). launchd НЕ активирует venv — без этого\n"
@@ -253,12 +253,12 @@ def _instructions(cfg: ScheduleConfig) -> str:
         "crontab (Linux/macOS) — ШАБЛОН. Скопируйте строку из stdout.\n"
         "Замените плейсхолдеры под свою машину:\n"
         f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория\n"
-        f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/logs)\n"
+        f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/data/logs)\n"
         f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
         f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python). cron НЕ активирует\n"
         "    venv — без этого джоб упадёт на ModuleNotFoundError: playwright.\n"
         "Установка: crontab -e и вставьте строку.\n"
-        "Лог: обёртка scheduled_run.sh уже пишет в logs/scheduled.log.\n"
+        "Лог: обёртка scheduled_run.sh уже пишет в data/logs/scheduled.log.\n"
         "Предохранители в коде (throttle.py) не дадут сработать раньше срока.\n"
     )
 

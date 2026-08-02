@@ -5,7 +5,9 @@ from pathlib import Path
 
 # Логи — относительно cwd (точки запуска), не относительно пакета: после
 # `pip install` пакет в site-packages, писать логи туда нельзя. См. cli.py.
-LOG_DIR = Path.cwd() / "logs"
+# Внутри data/ (#133): все изменяемые данные проекта в одной папке, покрытой
+# .gitignore одной строкой. Единая точка — probe.PROBE_LOG_DIR наследует её.
+LOG_DIR = Path.cwd() / "data" / "logs"
 
 
 def setup_logging(verbose: bool = False) -> None:

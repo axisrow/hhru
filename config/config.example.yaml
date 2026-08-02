@@ -1,12 +1,16 @@
-# Скопируйте этот файл в config.yaml и заполните своими данными.
-# cp config/config.example.yaml config/config.yaml
+# Скопируйте этот файл в data/config.yaml и заполните своими данными.
+# mkdir -p data && cp config/config.example.yaml data/config.yaml
+#
+# Этот файл — версионируемый шаблон формата, он лежит в config/ и в git.
+# Реальный конфиг (как БД, сессия и логи) — изменяемые данные, они живут в
+# data/, которая целиком в .gitignore одной строкой (#133).
 
 account:
-  # Путь резолвится ОТНОСИТЕЛЬНО ЭТОГО файла конфига (config/config.yaml), не от
-  # cwd. ../data/ → корень репо → покрыто .gitignore (data/storage_state/*.json).
-  # НЕ меняйте на data/... без ../ — иначе сессия запишется в config/data/ и
-  # сможет попасть в git-коммит (секрет hh.ru).
-  storage_state_file: ../data/storage_state/hh_session.json
+  # Путь резолвится ОТНОСИТЕЛЬНО ЭТОГО файла конфига (data/config.yaml), не от
+  # cwd. storage_state/ → data/storage_state/ → покрыто .gitignore (data/).
+  # НЕ выносите сессию за пределы data/ (напр. через ../) — иначе секрет hh.ru
+  # (cookies/localStorage) окажется вне игнора и сможет попасть в git-коммит.
+  storage_state_file: storage_state/hh_session.json
   # user_agent опционален. Закомментирован/отсутствует — Playwright ставит свой
   # родной User-Agent. Раскомментируйте и впишите строку, только если hh.ru
   # требует конкретный UA. Хардкода Chrome/xxx в коде нет (см. #9).

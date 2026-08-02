@@ -15,7 +15,7 @@
 
   ПЕРЕД УСТАНОВКОЙ замените плейсхолдеры:
     __REPO_ROOT__   — абсолютный путь к клону репозитория (напр. /Users/me/hhru)
-    __LOG_DIR__     — каталог логов (напр. __REPO_ROOT__/logs)
+    __LOG_DIR__     — каталог логов (напр. __REPO_ROOT__/data/logs)
     __PYTHON_BIN__  — абсолютный путь к python из venv проекта
                       (напр. __REPO_ROOT__/.venv/bin/python; узнать: `which python`
                       в активированном venv). launchd НЕ активирует venv и имеет

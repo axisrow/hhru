@@ -1,4 +1,4 @@
-"""Тесты команды log (#58): хвост logs/hhru_bot.log (READ, #21).
+"""Тесты команды log (#58): хвост data/logs/hhru_bot.log (READ, #21).
 
 Без браузера. Тестируется чистая логика чтения/слежения на tmp-файле:
 последние N строк, -n <count>, отсутствие файла -> nonzero exit, -f прерывается
@@ -298,7 +298,7 @@ def test_register_lines_type_rejects_zero():
 
 
 def test_log_command_does_not_create_log(tmp_path, monkeypatch):
-    """cli.main('log ...') НЕ создаёт logs/hhru_bot.log (READ-контракт #21).
+    """cli.main('log ...') НЕ создаёт data/logs/hhru_bot.log (READ-контракт #21).
 
     Цикл ревью #61, находка Codex: setup_logging открывал FileHandler на запись
     до run(), из-за чего missing-file-ветка была недостижима и команда «писала»
@@ -306,8 +306,8 @@ def test_log_command_does_not_create_log(tmp_path, monkeypatch):
     и `log` честно рапортует об отсутствии лога.
 
     Изоляция от реального лога (#129): `LOG_DIR`/`DEFAULT_LOG_PATH` абсолютны и
-    вычисляются НА ИМПОРТЕ модуля (`Path.cwd() / "logs"`), поэтому одного
-    `chdir(tmp_path)` мало — на машине разработчика, где `logs/hhru_bot.log`
+    вычисляются НА ИМПОРТЕ модуля (`Path.cwd() / "data" / "logs"`), поэтому одного
+    `chdir(tmp_path)` мало — на машине разработчика, где `data/logs/hhru_bot.log`
     существует, `main(["log"])` читал настоящий лог, печатал его хвост и не
     бросал SystemExit. Подменяем оба пути на tmp_path: `DEFAULT_LOG_PATH` —
     его `register()` кладёт в `set_defaults(log_path=...)` при каждом

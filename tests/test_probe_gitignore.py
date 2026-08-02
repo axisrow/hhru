@@ -1,6 +1,6 @@
 """Privacy-инвариант probe (#8): дампы формы отклика НЕ попадают в git.
 
-Дамп probe (logs/probe_*.{png,html}) содержит HTML/скриншот формы отклика
+Дамп probe (data/logs/probe_*.{png,html}) содержит HTML/скриншот формы отклика
 залогиненного пользователя — имя, резюме, контакты. Это тот же класс
 чувствительных данных, что storage_state/history (CLAUDE.md: «реальные ссылки
 на резюме, сессия и история наружу не попадают»). Тест страхует, что .gitignore
@@ -20,8 +20,8 @@ def _repo_root() -> Path:
 def test_probe_dumps_are_gitignored():
     root = _repo_root()
     candidates = [
-        "logs/probe_42_form.png",
-        "logs/probe_42_form.html",
+        "data/logs/probe_42_form.png",
+        "data/logs/probe_42_form.html",
     ]
     result = subprocess.run(
         ["git", "check-ignore", *candidates],

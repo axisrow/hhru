@@ -226,78 +226,66 @@ def _is_gitignored_repo(path: Path, repo: Path) -> bool:
     )
 
 
+def _repo_copy_with_real_gitignore(tmp_path: Path) -> Path:
+    """Пустой git-репо с РЕАЛЬНЫМ .gitignore проекта (не выдуманный mock).
+
+    Инварианты безопасности проверяем против того файла, который реально лежит в
+    репозитории — иначе тест зелёный, а секрет коммитится.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_copy = tmp_path / "repo"
+    repo_copy.mkdir()
+    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
+    shutil.copyfile(repo_root / ".gitignore", repo_copy / ".gitignore")
+    return repo_copy
+
+
+def _write_config_in_data(repo_copy: Path, storage_state: str, resume_id: str) -> Path:
+    cfg = repo_copy / "data" / "config.yaml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        textwrap.dedent(
+            f"""
+            account:
+              storage_state_file: {storage_state}
+            resumes:
+              - id: r1
+                resume_url: "https://hh.ru/resume/{resume_id}"
+                search:
+                  text: x
+            """
+        ),
+        encoding="utf-8",
+    )
+    return cfg
+
+
 def test_session_secret_is_gitignored_when_config_in_repo(tmp_path):
     # Инвариант безопасности (#23 review): shipped storage_state_file из
     # config.example.yaml должен резолвиться (относительно директории конфига)
     # в путь, покрытый .gitignore. Иначе login (auth.py) запишет cookies/
     # localStorage сессии hh.ru в НЕ-ignored файл → account takeover при коммите.
     #
-    # Конфиг лежит в config/config.yaml (как shipped example), запуск из корня.
-    shipped = _shipped_storage_state_path()
-    config_in_subdir = tmp_path / "config" / "config.yaml"
-    config_in_subdir.parent.mkdir(parents=True)
-    config_in_subdir.write_text(
-        textwrap.dedent(
-            f"""
-            account:
-              storage_state_file: {shipped}
-            resumes:
-              - id: r1
-                resume_url: "https://hh.ru/resume/SEC1"
-                search:
-                  text: x
-            """
-        ),
-        encoding="utf-8",
-    )
-    # Имитируем реальный layout: конфиг в <repo>/config/, data/ в <repo>/data/.
-    # load_config резолвит storage_state_file относительно директории конфига.
-    repo_copy = tmp_path / "repo"
-    repo_copy.mkdir()
-    (repo_copy / "config").mkdir()
-    (repo_copy / "data" / "storage_state").mkdir(parents=True)
-    # Инициализируем git + копируем .gitignore, чтобы check-ignore был валиден.
-    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
-    (repo_copy / ".gitignore").write_text(
-        "config/config.yaml\ndata/storage_state/*.json\ndata/*.db\n", encoding="utf-8"
-    )
-    cfg = repo_copy / "config" / "config.yaml"
-    cfg.write_text(config_in_subdir.read_text(encoding="utf-8"), encoding="utf-8")
+    # После #133 конфиг живёт в data/config.yaml, а shipped-значение —
+    # storage_state/hh_session.json → data/storage_state/ → покрыто 'data/'.
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    cfg = _write_config_in_data(repo_copy, _shipped_storage_state_path(), "SEC1")
 
     config = load_config(cfg)
     assert _is_gitignored_repo(config.storage_state_file, repo_copy), (
         f"storage_state_file резолвится в НЕ-ignored путь: {config.storage_state_file}. "
         "Секрет сессии hh.ru может попасть в git-коммит."
     )
+    # Сессия остаётся ВНУТРИ data/ — не уезжает за пределы игнорируемой папки.
+    assert (repo_copy / "data") in config.storage_state_file.parents
 
 
 def test_session_secret_independent_of_cwd(tmp_path, monkeypatch):
     # Codex round-2: при запуске из ЧУЖОЙ директории с абсолютным --config путь
     # всё равно должен указывать на gitignored место (рядом с конфигом), а не
     # в CWD вызывающего. Регрессия: relative-to-cwd ломал это.
-    shipped = _shipped_storage_state_path()
-    repo_copy = tmp_path / "repo"
-    (repo_copy / "config").mkdir(parents=True)
-    (repo_copy / "data" / "storage_state").mkdir(parents=True)
-    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
-    (repo_copy / ".gitignore").write_text(
-        "config/config.yaml\ndata/storage_state/*.json\ndata/*.db\n", encoding="utf-8"
-    )
-    cfg = repo_copy / "config" / "config.yaml"
-    cfg.write_text(
-        textwrap.dedent(
-            f"""
-            account:
-              storage_state_file: {shipped}
-            resumes:
-              - id: r1
-                resume_url: "https://hh.ru/resume/SEC2"
-                search:
-                  text: x
-            """
-        ),
-        encoding="utf-8",
-    )
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    cfg = _write_config_in_data(repo_copy, _shipped_storage_state_path(), "SEC2")
 
     # Запуск из /tmp (чужой CWD) с абсолютным путём к конфигу.
     monkeypatch.chdir(tmp_path)
@@ -309,41 +297,66 @@ def test_session_secret_independent_of_cwd(tmp_path, monkeypatch):
     assert repo_copy in config.storage_state_file.parents
 
 
-def test_session_secret_gitignored_for_legacy_config_value(tmp_path):
-    # Codex round-4: существующие user-конфиги (созданные до этого PR) всё ещё
-    # содержат СТАРОЕ shipped значение 'data/storage_state/hh_session.json'
-    # (без ../). С relative-to-config резолвом при конфиге в config/ это даёт
-    # config/data/storage_state/... — НЕ покрыто точечным правилом
-    # 'data/storage_state/*.json'. Defence-in-depth: РЕАЛЬНЫЙ .gitignore репо
-    # должен покрывать session-файлы в ЛЮБОЙ директории ('**/storage_state/*.json'),
-    # иначе legacy конфиг публикует секрет сессии при git add.
-    repo_root = Path(__file__).resolve().parents[1]
-    repo_copy = tmp_path / "repo"
-    (repo_copy / "config").mkdir(parents=True)
-    subprocess.run(["git", "-C", str(repo_copy), "init", "-q"], check=True)
-    # Копируем РЕАЛЬНЫЙ .gitignore репозитория — не выдуманный mock.
-    shutil.copyfile(repo_root / ".gitignore", repo_copy / ".gitignore")
-    cfg = repo_copy / "config" / "config.yaml"
-    cfg.write_text(
-        textwrap.dedent(
-            """
-            account:
-              storage_state_file: data/storage_state/hh_session.json
-            resumes:
-              - id: r1
-                resume_url: "https://hh.ru/resume/LEG1"
-                search:
-                  text: x
-            """
-        ),
-        encoding="utf-8",
-    )
+def test_session_secret_gitignored_outside_data_dir(tmp_path):
+    # Defence-in-depth (#23 round-4, сохранено в #133): значение
+    # storage_state_file подконтрольно ПОЛЬЗОВАТЕЛЮ и может увести сессию за
+    # пределы data/ — например '../config/data/storage_state/hh_session.json'
+    # (ровно то, что давал legacy-конфиг из config/ со значением 'data/...').
+    # Правила 'data/' там уже недостаточно, поэтому РЕАЛЬНЫЙ .gitignore обязан
+    # покрывать session-файлы в ЛЮБОЙ директории ('**/storage_state/*.json'),
+    # иначе секрет hh.ru публикуется при `git add .`.
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    cfg = _write_config_in_data(repo_copy, "../config/data/storage_state/hh_session.json", "LEG1")
+
     config = load_config(cfg)
-    # Legacy значение резолвится в config/data/... — должно быть gitignored.
     assert _is_gitignored_repo(config.storage_state_file, repo_copy), (
-        f"legacy storage_state_file резолвится в НЕ-ignored путь: "
+        f"storage_state_file вне data/ резолвится в НЕ-ignored путь: "
         f"{config.storage_state_file}. Defence-in-depth .gitignore нужен "
         "(**/storage_state/*.json)."
+    )
+
+
+def test_repo_gitignore_covers_all_mutable_data(tmp_path):
+    # #133: ВСЕ изменяемые данные под data/ и покрыты одной строкой 'data/'.
+    # Регрессия: точечные правила ('data/*.db', 'logs/*.log' ...) не покрывали
+    # новые артефакты, и каждый новый файл был шансом закоммитить приватное.
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    mutable = [
+        "data/config.yaml",
+        "data/history.db",
+        "data/storage_state/hh_session.json",
+        "data/logs/hhru_bot.log",
+        "data/logs/scheduled.log",
+        "data/logs/probe_42_form.html",
+        "data/logs/probe_42_form.png",
+        # Артефакт, которого сегодня нет — правило 'data/' покрывает и его.
+        "data/whatever_new_artifact.json",
+    ]
+    result = subprocess.run(
+        ["git", "-C", str(repo_copy), "check-ignore", *mutable],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ignored = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    assert not [m for m in mutable if m not in ignored], (
+        f"не покрыты .gitignore: {[m for m in mutable if m not in ignored]}"
+    )
+
+
+def test_repo_gitignore_keeps_config_example_tracked():
+    # config/config.example.yaml — версионируемый шаблон формата, НЕ данные.
+    # Он обязан оставаться под контролем git: без него нечего копировать в
+    # data/config.yaml, а тесты (_shipped_storage_state_path) читают его из репо.
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "check-ignore", "config/config.example.yaml"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, (
+        "config/config.example.yaml попал в .gitignore — шаблон конфига должен версионироваться."
     )
 
 
