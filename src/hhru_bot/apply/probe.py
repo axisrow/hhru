@@ -41,8 +41,7 @@ logger = logging.getLogger("hhru_bot.apply.probe")
 
 # Дампы probe пишем туда же, куда и остальные логи — relative-to-cwd (см.
 # logging_setup.LOG_DIR — data/logs, #133). Раньше было PROJECT_ROOT / "logs",
-# но PROJECT_ROOT
-# убран из config.py (ломался после pip install).
+# но PROJECT_ROOT убран из config.py (ломался после pip install).
 PROBE_LOG_DIR = LOG_DIR
 
 

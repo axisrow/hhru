@@ -300,13 +300,15 @@ def test_session_secret_independent_of_cwd(tmp_path, monkeypatch):
 def test_session_secret_gitignored_outside_data_dir(tmp_path):
     # Defence-in-depth (#23 round-4, сохранено в #133): значение
     # storage_state_file подконтрольно ПОЛЬЗОВАТЕЛЮ и может увести сессию за
-    # пределы data/ — например '../config/data/storage_state/hh_session.json'
-    # (ровно то, что давал legacy-конфиг из config/ со значением 'data/...').
-    # Правила 'data/' там уже недостаточно, поэтому РЕАЛЬНЫЙ .gitignore обязан
+    # пределы data/ — например '../secrets/storage_state/hh_session.json'.
+    # Путь НЕ должен проходить ни через одну директорию 'data' (иначе его
+    # покрыло бы уже само правило 'data/' без leading slash, и тест не
+    # отличал бы наличие catch-all от его отсутствия — см. review PR #134).
+    # Правило 'data/' здесь недостаточно, поэтому РЕАЛЬНЫЙ .gitignore обязан
     # покрывать session-файлы в ЛЮБОЙ директории ('**/storage_state/*.json'),
     # иначе секрет hh.ru публикуется при `git add .`.
     repo_copy = _repo_copy_with_real_gitignore(tmp_path)
-    cfg = _write_config_in_data(repo_copy, "../config/data/storage_state/hh_session.json", "LEG1")
+    cfg = _write_config_in_data(repo_copy, "../secrets/storage_state/hh_session.json", "LEG1")
 
     config = load_config(cfg)
     assert _is_gitignored_repo(config.storage_state_file, repo_copy), (

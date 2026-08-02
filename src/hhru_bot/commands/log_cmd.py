@@ -15,9 +15,8 @@ setup_logging; см. комментарий в cli.py про отказ от PRO
 тестируемости путь хранится в args.log_path, а не берётся из глобали в run().
 
 READ-контракт и setup_logging: cli.main ПРОПУСКАЕТ setup_logging для команды log
-(см. cli.main) — иначе FileHandler создал бы data/logs/hhru_bot.log на запись
-до run(),
-что (а) нарушает READ-контракт «команда ничего не меняет локально», (б) делает
+(см. cli.main) — иначе FileHandler создал бы data/logs/hhru_bot.log на запись до
+run(), что (а) нарушает READ-контракт «команда ничего не меняет локально», (б) делает
 ветку «файл не найден» недостижимой (setup_logging создаёт пустой лог), (в) падает
 с PermissionError в read-only-директории. Поэтому для log файл НЕ создаётся и
 missing-file-ветка достижима (цикл ревью #61, находка Codex).
