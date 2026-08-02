@@ -74,12 +74,30 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
     page.locator(...).first взял бы первую в DOM-порядке при нескольких резюме).
     RESUME_LIST_CARD_TITLE не подтверждён живым дампом — его отсутствие даёт
     title="", а не исключение.
+
+    Playwright ``Locator.all()`` резолвит элементы, присутствующие ПРЯМО СЕЙЧАС,
+    и не ждёт их появления — в отличие от copy_resume_on_hh, которая после
+    goto_hh делает явный wait_for на карточке. Без такого ожидания здесь
+    медленный рендер /applicant/resumes (или анти-бот/интерстишл-страница)
+    даёт 0 карточек «прямо сейчас», что неотличимо от честно пустого
+    аккаунта — команда солгала бы «резюме не найдено». Поэтому при первом
+    count()==0 ждём появления хотя бы одной карточки коротким wait_for; если
+    её так и не появилось за это время — аккаунт действительно пуст (или
+    страница не прогрузилась за разумный срок, что при READ-only диагностике
+    трактуем так же, как и copy_resume_on_hh трактует отсутствие карточки).
     """
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
     goto_hh(page, RESUMES_LIST_URL)
 
+    cards_locator = page.locator(RESUME_LIST_CARD)
+    if cards_locator.count() == 0:
+        try:
+            cards_locator.first.wait_for(timeout=COPY_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            pass
+
     cards: list[ResumeCard] = []
-    for card in page.locator(RESUME_LIST_CARD).all():
+    for card in cards_locator.all():
         resume_id = ""
         for link in card.locator(f"[data-qa^='{_CARD_LINK_PREFIX}']").all():
             qa = link.get_attribute("data-qa") or ""

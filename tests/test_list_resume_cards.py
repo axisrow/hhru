@@ -72,21 +72,53 @@ class StubLink:
 
 
 class StubCardsLocator:
-    def __init__(self, cards: list[StubCard]):
-        self._cards = cards
+    """Моделирует Playwright: count() читает состояние ПРЯМО СЕЙЧАС (без
+    ожидания), а .first.wait_for() ждёт появления элемента. ``cards_ref`` —
+    мутируемый список-ссылка на StubPage._cards, чтобы wait_for мог "дорендерить"
+    карточки, воспроизводя гонку из test_race_waits_for_card_before_declaring_empty.
+    """
+
+    def __init__(self, cards_ref: list, delayed_cards: list | None = None):
+        self._cards_ref = cards_ref
+        self._delayed_cards = delayed_cards
+
+    def count(self):
+        return len(self._cards_ref)
+
+    @property
+    def first(self):
+        return StubFirstCard(self._cards_ref, self._delayed_cards)
 
     def all(self):
-        return self._cards
+        return list(self._cards_ref)
+
+
+class StubFirstCard:
+    def __init__(self, cards_ref: list, delayed_cards: list | None):
+        self._cards_ref = cards_ref
+        self._delayed_cards = delayed_cards
+
+    def wait_for(self, timeout=None):
+        if self._cards_ref:
+            return
+        if self._delayed_cards:
+            # Карточки "дорендерились" к моменту wait_for — гонка устранена.
+            self._cards_ref.extend(self._delayed_cards)
+            return
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        raise PlaywrightTimeoutError("timeout: no resume cards rendered")
 
 
 class StubPage:
-    def __init__(self, cards: list[StubCard]):
-        self._cards = cards
+    def __init__(self, cards: list[StubCard], delayed_cards: list[StubCard] | None = None):
+        self._cards = list(cards)
+        self._delayed_cards = delayed_cards
         self.gotos: list[str] = []
 
     def locator(self, selector):
         if selector == RESUME_LIST_CARD:
-            return StubCardsLocator(self._cards)
+            return StubCardsLocator(self._cards, self._delayed_cards)
         raise AssertionError(f"неожиданный page.locator: {selector}")
 
 
@@ -155,6 +187,29 @@ def test_ambiguous_title_selector_does_not_fail(monkeypatch):
 
 def test_empty_list_returns_empty(monkeypatch):
     page = StubPage([])
+    _patch_goto(monkeypatch, page)
+
+    assert cr.list_resume_cards(page) == []
+
+
+def test_race_waits_for_card_before_declaring_empty(monkeypatch):
+    """Codex adversarial review (PR #136): Locator.all() резолвит немедленно, не
+    ждёт. Если карточки ещё не отрендерились в момент первого count()==0 (медленный
+    рендер /applicant/resumes), list_resume_cards должна дождаться их появления
+    через wait_for, а не молча отчитаться о пустом аккаунте."""
+    page = StubPage([], delayed_cards=[StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 1
+    assert cards[0].resume_id == ID_A
+
+
+def test_genuinely_empty_account_after_wait_returns_empty(monkeypatch):
+    """Если карточка так и не появилась за время ожидания — аккаунт действительно
+    пуст (или страница не прогрузилась), список пуст без исключения."""
+    page = StubPage([])  # без delayed_cards: wait_for кидает TimeoutError
     _patch_goto(monkeypatch, page)
 
     assert cr.list_resume_cards(page) == []
