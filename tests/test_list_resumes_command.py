@@ -48,6 +48,8 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
         "config": str(config_path),
         "history": str(history_path),
         "status": False,
+        "remote": False,
+        "headless": True,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -206,6 +208,169 @@ def test_registers_list_resumes_subparser():
 
     assert "list-resumes" in sub.choices
     subparser = sub.choices["list-resumes"]
-    # --status — единственный специфичный флаг
     flags = {a.option_strings[0] for a in subparser._actions if a.option_strings}
     assert "--status" in flags
+    assert "--remote" in flags
+
+
+# --- --remote (#135) ---------------------------------------------------------
+
+
+class _FakeCard:
+    def __init__(self, resume_id, title):
+        self.resume_id = resume_id
+        self.title = title
+
+
+def test_remote_rows_marks_configured_and_unconfigured():
+    cards = [_FakeCard("11111111", "Backend developer"), _FakeCard("99999999", "")]
+    rows = list_resumes_cmd._remote_rows(cards, configured_ids={"11111111"})
+
+    assert rows == [
+        ["11111111", "Backend developer", "да"],
+        ["99999999", "—", "—"],
+    ]
+
+
+def test_remote_invalid_session_prints_fail_and_does_not_launch_browser(
+    capsys, tmp_path, monkeypatch
+):
+    config = _write_config(tmp_path, _two_resumes_config())
+
+    def _boom(*a, **kw):
+        raise AssertionError("не должен открывать браузер без валидной сессии")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "login" in out
+
+
+class _FakeContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def new_page(self):
+        return object()
+
+
+def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch):
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    fake_cards = [_FakeCard("11111111", "Backend developer"), _FakeCard("99999999", "Analyst")]
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "resume_id" in out
+    assert "название" in out
+    assert "в конфиге" in out
+    assert "11111111" in out and "Backend developer" in out
+    assert "99999999" in out and "Analyst" in out
+    # 99999999 не в конфиге -> готовый YAML-фрагмент для вставки
+    assert "resume_url" in out
+    assert "99999999" in out
+
+
+def test_remote_expired_session_detected_via_auth_cookie(capsys, tmp_path, monkeypatch):
+    """_check_session проверяет только формат файла — реальную авторизацию на
+    hh.ru подтверждает cookie hhtoken (has_auth_cookie), НЕ browser.is_logged_in()
+    (та проверяет "account/login" в URL — приём, отвергнутый в auth.py как
+    ненадёжный). Истёкшие cookies не должны маскироваться под «резюме не найдено»."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    def _boom_list_cards(page):
+        raise AssertionError("list_resume_cards не должен вызываться после провала has_auth_cookie")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: False)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "login" in out
+    assert "не найдено" not in out
+
+
+def test_remote_unconfirmed_title_selector_warns_when_all_titles_empty(
+    capsys, tmp_path, monkeypatch
+):
+    """Если RESUME_LIST_CARD_TITLE не совпал ни для одной карточки — предупредить,
+    а не молча выдать прочерки за подтверждённые данные."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    fake_cards = [_FakeCard("11111111", ""), _FakeCard("99999999", "")]
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "не подтверждён" in out
+
+
+def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monkeypatch):
+    """Codex adversarial review (PR #136, round 2): list_resume_cards может поднять
+    ResumeListIndeterminate (timeout/интерстишл/дрейф селектора — состояние страницы
+    не подтверждено). Команда обязана сообщить [FAIL], а не «резюме не найдено»."""
+    from hhru_bot.copy_resume import ResumeListIndeterminate
+
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    def _raise_indeterminate(page):
+        raise ResumeListIndeterminate("карточки резюме не появились за отведённое время")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_indeterminate)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "не найдено" not in out
+
+
+def _config_with_storage_state(config_path, storage_state_path):
+    from hhru_bot.config import load_config
+
+    config = load_config(config_path)
+    config.storage_state_file = storage_state_path
+    return config

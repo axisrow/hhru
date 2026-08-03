@@ -1,0 +1,214 @@
+"""Тесты copy_resume.list_resume_cards (#135) — стабы Page, без браузера.
+
+Сценарии: карточки без ссылки-хэша пропускаются; заголовок читается СКОУПЛЕННЫМ
+под карточку локатором (не под page — иначе при нескольких резюме взялось бы
+первое совпадение на всей странице); отсутствие/неоднозначность заголовка не
+роняет функцию (title="" — RESUME_LIST_CARD_TITLE НЕ ПОДТВЕРЖДЁН дампом).
+
+Стабы моделируют strict-mode Playwright (см. грабли PR #132, test_copy_resume_browser.py):
+``.first`` возвращает самостоятельный однозначный локатор, а не self.
+"""
+
+from __future__ import annotations
+
+import hhru_bot.copy_resume as cr
+from hhru_bot.selector_groups.resume_list import (
+    RESUME_LIST_CARD,
+    RESUME_LIST_CARD_TITLE,
+)
+
+ID_A = "a" * 38
+ID_B = "b" * 38
+
+
+class StubTitleLocator:
+    def __init__(self, count=1, text=""):
+        self._count = count
+        self._text = text
+
+    def count(self):
+        return self._count
+
+    @property
+    def first(self):
+        return StubTitleLocator(count=1, text=self._text)
+
+    def inner_text(self):
+        return self._text
+
+
+class StubCard:
+    def __init__(self, resume_id: str | None, title_count=1, title_text=""):
+        self._resume_id = resume_id
+        self._title_count = title_count
+        self._title_text = title_text
+
+    def locator(self, selector):
+        if selector.startswith("[data-qa^='resume-card-link-'"):
+            return StubHashLinks(self._resume_id)
+        if selector == RESUME_LIST_CARD_TITLE:
+            return StubTitleLocator(count=self._title_count, text=self._title_text)
+        raise AssertionError(f"неожиданный card.locator: {selector}")
+
+
+class StubHashLinks:
+    """Локатор ссылки-хэша внутри карточки (data-qa='resume-card-link-<hash>')."""
+
+    def __init__(self, resume_id: str | None):
+        self._resume_id = resume_id
+
+    def all(self):
+        if self._resume_id is None:
+            return []
+        return [StubLink(self._resume_id)]
+
+
+class StubLink:
+    def __init__(self, resume_id: str):
+        self._resume_id = resume_id
+
+    def get_attribute(self, name):
+        return f"resume-card-link-{self._resume_id}"
+
+
+class StubCardsLocator:
+    """Моделирует Playwright: count() читает состояние ПРЯМО СЕЙЧАС (без
+    ожидания), а .first.wait_for() ждёт появления элемента. ``cards_ref`` —
+    мутируемый список-ссылка на StubPage._cards, чтобы wait_for мог "дорендерить"
+    карточки, воспроизводя гонку из test_race_waits_for_card_before_declaring_empty.
+    """
+
+    def __init__(self, cards_ref: list, delayed_cards: list | None = None):
+        self._cards_ref = cards_ref
+        self._delayed_cards = delayed_cards
+
+    def count(self):
+        return len(self._cards_ref)
+
+    @property
+    def first(self):
+        return StubFirstCard(self._cards_ref, self._delayed_cards)
+
+    def all(self):
+        return list(self._cards_ref)
+
+
+class StubFirstCard:
+    def __init__(self, cards_ref: list, delayed_cards: list | None):
+        self._cards_ref = cards_ref
+        self._delayed_cards = delayed_cards
+
+    def wait_for(self, timeout=None):
+        if self._cards_ref:
+            return
+        if self._delayed_cards:
+            # Карточки "дорендерились" к моменту wait_for — гонка устранена.
+            self._cards_ref.extend(self._delayed_cards)
+            return
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        raise PlaywrightTimeoutError("timeout: no resume cards rendered")
+
+
+class StubPage:
+    def __init__(self, cards: list[StubCard], delayed_cards: list[StubCard] | None = None):
+        self._cards = list(cards)
+        self._delayed_cards = delayed_cards
+        self.gotos: list[str] = []
+
+    def locator(self, selector):
+        if selector == RESUME_LIST_CARD:
+            return StubCardsLocator(self._cards, self._delayed_cards)
+        raise AssertionError(f"неожиданный page.locator: {selector}")
+
+
+def _patch_goto(monkeypatch, page):
+    monkeypatch.setattr(cr, "goto_hh", lambda p, url, **kw: page.gotos.append(url))
+
+
+def test_lists_cards_with_hash_and_title(monkeypatch):
+    page = StubPage([StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 1
+    assert cards[0].resume_id == ID_A
+    assert cards[0].title == "Backend developer"
+    assert cards[0].url == f"https://hh.ru/resume/{ID_A}"
+    assert page.gotos == [cr.RESUMES_LIST_URL]
+
+
+def test_multiple_cards_each_title_scoped_to_own_card(monkeypatch):
+    # Регрессия: заголовок должен браться из СВОЕЙ карточки, не первой на странице.
+    page = StubPage(
+        [
+            StubCard(ID_A, title_text="Backend developer"),
+            StubCard(ID_B, title_text="Data analyst"),
+        ]
+    )
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert [c.resume_id for c in cards] == [ID_A, ID_B]
+    assert [c.title for c in cards] == ["Backend developer", "Data analyst"]
+
+
+def test_card_without_hash_link_is_skipped(monkeypatch):
+    page = StubPage([StubCard(None), StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 1
+    assert cards[0].resume_id == ID_A
+
+
+def test_missing_title_selector_does_not_fail(monkeypatch):
+    # RESUME_LIST_CARD_TITLE не подтверждён дампом: 0 совпадений -> title="".
+    page = StubPage([StubCard(ID_A, title_count=0)])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert cards[0].title == ""
+
+
+def test_ambiguous_title_selector_does_not_fail(monkeypatch):
+    # >1 совпадения внутри карточки — тоже не падаем (count() проверяется ДО .first).
+    page = StubPage([StubCard(ID_A, title_count=2, title_text="ignored")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert cards[0].title == ""
+
+
+def test_race_waits_for_card_before_declaring_empty(monkeypatch):
+    """Codex adversarial review (PR #136): Locator.all() резолвит немедленно, не
+    ждёт. Если карточки ещё не отрендерились в момент первого count()==0 (медленный
+    рендер /applicant/resumes), list_resume_cards должна дождаться их появления
+    через wait_for, а не молча отчитаться о пустом аккаунте."""
+    page = StubPage([], delayed_cards=[StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 1
+    assert cards[0].resume_id == ID_A
+
+
+def test_timeout_raises_indeterminate_not_empty_list(monkeypatch):
+    """Codex adversarial review (PR #136, round 2): без карточки, появившейся за
+    время ожидания, состояние страницы НЕ подтверждено (timeout, анти-бот/
+    интерстишл-страница, дрейф селектора — неотличимы от честно пустого
+    аккаунта). list_resume_cards не должна молча возвращать [] — это выдало бы
+    неопределённость за факт "резюме нет"."""
+    page = StubPage([])  # без delayed_cards: wait_for кидает TimeoutError
+    _patch_goto(monkeypatch, page)
+
+    import pytest
+
+    with pytest.raises(cr.ResumeListIndeterminate):
+        cr.list_resume_cards(page)

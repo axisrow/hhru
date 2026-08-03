@@ -28,6 +28,7 @@ from .selector_groups.resume_list import (
     RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
+    RESUME_LIST_CARD_TITLE,
 )
 
 logger = logging.getLogger("hhru_bot.copy_resume")
@@ -47,6 +48,25 @@ class CopyResumeResult:
     reason: str = ""
 
 
+@dataclass
+class ResumeCard:
+    resume_id: str
+    title: str
+    url: str
+
+
+class ResumeListIndeterminate(Exception):
+    """Не удалось подтвердить состояние /applicant/resumes (#135, Codex review).
+
+    Ни одна карточка не появилась за COPY_TIMEOUT_MS после навигации. Без
+    подтверждённого маркера «список действительно пуст» это неотличимо от
+    честно пустого аккаунта, анти-бот/интерстишл-страницы, деградировавшей
+    загрузки или дрейфа RESUME_LIST_CARD. list_resume_cards поэтому не молчит
+    и не выдаёт пустой список за подтверждённый факт — поднимает это
+    исключение, чтобы вызывающий код (list_resumes.py --remote) сообщил
+    «состояние не подтверждено», а не соврал «резюме не найдено»."""
+
+
 def _card_hashes(page: Page) -> set[str]:
     """Хэши всех резюме в списке /applicant/resumes (для diff до/после)."""
     hashes: set[str] = set()
@@ -55,6 +75,65 @@ def _card_hashes(page: Page) -> set[str]:
         if qa.startswith(_CARD_LINK_PREFIX):
             hashes.add(qa[len(_CARD_LINK_PREFIX) :])
     return hashes
+
+
+def list_resume_cards(page: Page) -> list[ResumeCard]:
+    """Список резюме аккаунта с /applicant/resumes: хэш + название + URL (#135).
+
+    READ-only: только goto + чтение DOM, ничего не кликается и не отправляется.
+    Заголовок читается ПОД каждой карточкой (RESUME_LIST_CARD), не под page —
+    тот же принцип, что и для кнопки «Дублировать» (см. copy_resume_on_hh:
+    page.locator(...).first взял бы первую в DOM-порядке при нескольких резюме).
+    RESUME_LIST_CARD_TITLE не подтверждён живым дампом — его отсутствие даёт
+    title="", а не исключение.
+
+    Playwright ``Locator.all()`` резолвит элементы, присутствующие ПРЯМО СЕЙЧАС,
+    и не ждёт их появления — в отличие от copy_resume_on_hh, которая после
+    goto_hh делает явный wait_for на карточке. Без такого ожидания здесь
+    медленный рендер /applicant/resumes (или анти-бот/интерстишл-страница)
+    даёт 0 карточек «прямо сейчас», что неотличимо от честно пустого
+    аккаунта — команда солгала бы «резюме не найдено». Поэтому при первом
+    count()==0 ждём появления хотя бы одной карточки коротким wait_for.
+
+    Если карточка так и не появилась за это время — состояние страницы НЕ
+    подтверждено (см. ResumeListIndeterminate): нет надёжного маркера «список
+    действительно пуст», отличить честно пустой аккаунт от timeout/интерстишла/
+    дрейфа селектора здесь нельзя, поэтому функция не молчит и не выдаёт
+    пустой список за факт — поднимает исключение.
+    """
+    logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
+    goto_hh(page, RESUMES_LIST_URL)
+
+    cards_locator = page.locator(RESUME_LIST_CARD)
+    if cards_locator.count() == 0:
+        try:
+            cards_locator.first.wait_for(timeout=COPY_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            raise ResumeListIndeterminate(
+                "карточки резюме не появились за отведённое время — состояние "
+                "/applicant/resumes не подтверждено (timeout, анти-бот/"
+                "интерстишл-страница или дрейф селектора RESUME_LIST_CARD)"
+            ) from None
+
+    cards: list[ResumeCard] = []
+    for card in cards_locator.all():
+        resume_id = ""
+        for link in card.locator(f"[data-qa^='{_CARD_LINK_PREFIX}']").all():
+            qa = link.get_attribute("data-qa") or ""
+            if qa.startswith(_CARD_LINK_PREFIX):
+                resume_id = qa[len(_CARD_LINK_PREFIX) :]
+                break
+        if not resume_id:
+            continue
+
+        title = ""
+        title_locator = card.locator(RESUME_LIST_CARD_TITLE)
+        if title_locator.count() == 1:
+            title = (title_locator.first.inner_text() or "").strip()
+
+        url = f"{HH_BASE_URL}/resume/{resume_id}"
+        cards.append(ResumeCard(resume_id=resume_id, title=title, url=url))
+    return cards
 
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
