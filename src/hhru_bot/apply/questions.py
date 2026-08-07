@@ -31,7 +31,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..selector_groups import apply_form
 
@@ -48,6 +50,13 @@ _COVER_LETTER_TEXTAREAS = (
     apply_form.APPLY_COVER_LETTER_TEXTAREA,  # popup-форма
     apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM,  # full-page форма (konard)
 )
+
+# #139: bounded-ожидание перед первым чтением DOM формы отклика (не сразу после
+# навигации — see навигация в navigate_to_response_form уже ждёт APPLY_SUBMIT_BUTTON,
+# но task-body/radio/checkbox/textarea рендерятся отдельным JS-проходом и могут
+# появиться позже). Короткий таймаут — как OPTIONAL_FIELD_TIMEOUT_MS в apply/steps.py:
+# элемент либо появится быстро, либо детерминированно отсутствует.
+_QUESTION_WAIT_TIMEOUT_MS = 1_500
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,29 @@ class QuestionDetection:
 
 
 _SCOPE_NOT_FOUND_REASON = "не удалось определить границы формы отклика (нет <form>-предка у submit)"
+_RUNTIME_ERROR_REASON = (
+    "ошибка при проверке анкеты формы отклика — отправка отменена (нестабильная страница)"
+)
+
+
+def _wait_present(locator: Locator, *, timeout_ms: int) -> bool | None:
+    """Bounded-ожидание присутствия элемента в DOM (#139: замена голого count()).
+
+    True — элемент появился (не факт видимости — используется state='attached',
+    т.к. для heuristic/scope важно наличие в DOM, не видимость). False —
+    детерминированно отсутствует (PlaywrightTimeoutError после полного
+    таймаута — легитимный «элемента нет»). None — аномалия (strict-mode
+    violation и подобные PlaywrightError, НЕ таймаут) — состояние не
+    подтверждено, вызывающий обязан трактовать это fail-closed, но не как
+    подтверждённое «вопрос есть» для persistent-skip.
+    """
+    try:
+        locator.first.wait_for(state="attached", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        return False
+    except PlaywrightError:
+        return None
+    return True
 
 
 def _form_scope(page: Page) -> Locator | None:
@@ -88,9 +120,14 @@ def _form_scope(page: Page) -> Locator | None:
     не найден — НЕТ fallback на весь page (round-2 fix): без надёжной границы
     heuristic не выполняется вовсе, чтобы посторонний page-level
     radio/checkbox/textarea не порождал ложный persistent skip.
+
+    #139: раньше наличие проверялось голым ``count() > 0`` сразу после
+    навигации — гонка рендера (форма ещё не отрисовалась) давала 0 и ложный
+    None, хотя <form>-предок в итоге появлялся. Теперь ждём bounded таймаутом.
     """
     scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
-    return scope if scope.count() > 0 else None
+    present = _wait_present(scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    return scope if present else None
 
 
 def detect_questions(page: Page) -> QuestionDetection:
@@ -101,15 +138,28 @@ def detect_questions(page: Page) -> QuestionDetection:
     «отправка отменена, вакансия требует ручного ответа».
 
     Порядок проверок (fail-closed — при сомнении склоняемся к «вопрос есть»):
-      1. data-qa task-body (подтверждено konard): count() > 0 → yes.
+      1. data-qa task-body (подтверждено konard): дожидаемся bounded-таймаутом,
+         затем count() > 0 → yes.
       2. Heuristic (НЕ подтверждено), скоуплено внутрь <form>: radio/checkbox в
          любом количестве → yes; либо textarea, не входящая в известные
          cover-letter textareas → yes. Если границы формы не резолвятся —
          indeterminate (round-2 fix): блокируем отправку, но БЕЗ persistent skip.
-    Никаких кликов, заполнений, навигаций — только count() поверх локаторов.
+    Никаких кликов, заполнений, навигаций — только локаторы (ожидание + count()).
+
+    #139: раньше task-body/radio/checkbox/textarea читались голым count() сразу
+    после навигации на форму — не успевшая отрисоваться анкета давала 0 вопросов
+    → pipeline шёл в fill_response_form → submit с пропущенной анкетой.
+    Отсутствие после bounded-ожидания ≠ отсутствие сразу: первое — «анкеты нет»,
+    второе — «не подтвердили» (не различалось раньше, различается теперь).
+    Любая иная (не-timeout) ошибка при ожидании — тоже не подтверждённое
+    состояние, fail-closed → indeterminate, а не молчаливое «вопросов нет».
     """
     # (1) Подтверждённый data-qa путь — task-body специфичен, скоупинг не нужен.
-    if page.locator(apply_form.APPLY_QUESTION_BODY).count() > 0:
+    task_body = page.locator(apply_form.APPLY_QUESTION_BODY)
+    task_body_present = _wait_present(task_body, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    if task_body_present is None:
+        return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+    if task_body_present:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (task-body)")
 
     # (2) Heuristic fallback, скоуплено внутрь формы отклика. Без формы-границы
@@ -118,16 +168,31 @@ def detect_questions(page: Page) -> QuestionDetection:
     if scope is None:
         return QuestionDetection.indeterminate_scope(_SCOPE_NOT_FOUND_REASON)
 
-    if scope.locator(_RADIO).count() > 0 or scope.locator(_CHECKBOX).count() > 0:
+    radio_present = _wait_present(scope.locator(_RADIO), timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    if radio_present is None:
+        return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+    checkbox_present = (
+        False
+        if radio_present
+        else _wait_present(scope.locator(_CHECKBOX), timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    )
+    if checkbox_present is None:
+        return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+    if radio_present or checkbox_present:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (radio/checkbox)")
 
-    # textarea: все минус cover-letter, в пределах формы. Если осталась хоть
-    # одна — это вопрос-ответ.
-    total_textareas = scope.locator(_TEXTAREA).count()
-    cover_letter_count = sum(scope.locator(sel).count() for sel in _COVER_LETTER_TEXTAREAS)
-    if total_textareas > cover_letter_count:
-        return QuestionDetection.yes(
-            "вакансия требует заполнения анкеты (textarea вне cover-letter)"
-        )
+    # textarea: все минус cover-letter, в пределах формы. Ждём появление хотя бы
+    # одной textarea перед подсчётом (та же гонка рендера, что у radio/checkbox);
+    # детерминированное отсутствие после ожидания — 0 без ожидания смысла не имеет.
+    textarea_present = _wait_present(scope.locator(_TEXTAREA), timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    if textarea_present is None:
+        return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+    if textarea_present:
+        total_textareas = scope.locator(_TEXTAREA).count()
+        cover_letter_count = sum(scope.locator(sel).count() for sel in _COVER_LETTER_TEXTAREAS)
+        if total_textareas > cover_letter_count:
+            return QuestionDetection.yes(
+                "вакансия требует заполнения анкеты (textarea вне cover-letter)"
+            )
 
     return QuestionDetection.no()

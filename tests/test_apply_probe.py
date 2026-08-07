@@ -15,22 +15,39 @@ from hhru_bot.search import VacancyCard
 
 
 class _FakeLocator:
-    """Локатор с отслеживанием click() — критично для проверки атомарности."""
+    """Локатор с отслеживанием click() — критично для проверки атомарности.
+
+    ``render_delayed`` (#139): элемент присутствует, но ``count()`` БЕЗ
+    предварительного ``wait_for`` видит пустой DOM (моделирует гонку рендера —
+    поле ещё не отрисовалось в момент немедленного чтения). ``wait_for``
+    всегда моделирует итоговое, дождавшееся состояние.
+    """
 
     @property
     def first(self):
         return self
 
-    def __init__(self, present: bool = False, attrs: dict[str, str] | None = None):
+    def __init__(
+        self,
+        present: bool = False,
+        attrs: dict[str, str] | None = None,
+        *,
+        render_delayed: bool = False,
+    ):
         self._present = present
         self._attrs = attrs or {}
         self.click_calls = 0
         self.fill_calls: list[str] = []
+        self._render_delayed = render_delayed
+        self._waited = False
 
     def count(self) -> int:
+        if self._render_delayed and not self._waited:
+            return 0
         return 1 if self._present else 0
 
     def wait_for(self, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
+        self._waited = True
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -77,6 +94,7 @@ class FakeProbePage:
         apply_button: bool = True,
         textarea: bool = True,
         submit: bool = True,
+        textarea_render_delayed: bool = False,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
@@ -85,6 +103,7 @@ class FakeProbePage:
         self._apply_button = apply_button
         self._textarea = textarea
         self._submit = submit
+        self._textarea_render_delayed = textarea_render_delayed
         # Список как мьютабельный счётчик: каждый click submit-локатора добавляет 1.
         self.submit_clicks: list[int] = []
         self._textarea_locator: _FakeLocator | None = None
@@ -111,7 +130,9 @@ class FakeProbePage:
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=self._apply_button)
         if selector == apply_form.APPLY_COVER_LETTER_TEXTAREA:
-            self._textarea_locator = _FakeLocator(present=self._textarea)
+            self._textarea_locator = _FakeLocator(
+                present=self._textarea, render_delayed=self._textarea_render_delayed
+            )
             return self._textarea_locator
         if selector == apply_form.APPLY_COVER_LETTER_TOGGLE:
             return _FakeLocator(present=False)
@@ -288,6 +309,28 @@ def test_probe_provider_does_not_click_submit(tmp_path: Path):
     )
 
     assert page.submit_clicks == []
+
+
+# --- #139: гонка рендера — письмо заполняется через bounded wait, не голый count() ---
+
+
+def test_probe_delayed_textarea_still_gets_filled(tmp_path: Path):
+    """РЕГРЕССИЯ #139: textarea письма рендерится не мгновенно (гонка рендера).
+    Немедленный ``count()`` без ожидания видит 0 — старый код молча пропускал
+    заполнение, дамп выглядел валидным при незаполненном письме. probe обязан
+    дождаться (bounded wait_for), а не читать count() сразу."""
+    page = FakeProbePage(textarea=True, textarea_render_delayed=True)
+
+    probe_vacancy(
+        page,
+        _vacancy(),
+        resume_id="RID",
+        cover_letter_template="Здравствуйте, {company_name}",
+        logs_dir=tmp_path,
+    )
+
+    assert page._textarea_locator is not None
+    assert page._textarea_locator.fill_calls == ["Здравствуйте, Acme"]
 
 
 def test_probe_without_provider_uses_template(tmp_path: Path):
