@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -47,6 +48,14 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         disabled_hint.wait_for(state="visible", timeout=BUMP_HINT_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         pass
+    except PlaywrightError:
+        # cycle-review #139: не-timeout ошибка (strict-mode violation и т.п.) —
+        # аномалия, а не легитимное «hint нет». Раньше пробрасывалась наружу
+        # необработанным traceback вместо fail-closed BumpResult; steps.py
+        # (эталон) в этой же ситуации явно возвращает отказ, а не падает.
+        return BumpResult(
+            resume.id, False, "ошибка при проверке подсказки кулдауна — поднятие отменено"
+        )
     else:
         return BumpResult(resume.id, False, "hh.ru сообщает, что поднимать ещё рано")
 

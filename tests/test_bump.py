@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.bump import bump_resume
@@ -36,6 +37,7 @@ class _FakeLocator:
         name: str = "",
         *,
         render_delayed: bool = False,
+        wait_error: bool = False,
     ):
         self._present = present
         self._click_log = click_log
@@ -43,6 +45,9 @@ class _FakeLocator:
         # render_delayed=True: count() сразу после goto (без ожидания) лжёт — 0,
         # хотя элемент в итоге появится. wait_for обязан дождаться и увидеть True.
         self._render_delayed = render_delayed
+        # wait_error=True: cycle-review #139 — не-timeout PlaywrightError
+        # (strict-mode violation и т.п.), аномалия, а не легитимное отсутствие.
+        self._wait_error = wait_error
 
     def count(self) -> int:
         if self._render_delayed:
@@ -53,6 +58,8 @@ class _FakeLocator:
     def wait_for(self, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
         # wait_for моделирует реальный рендер: дожидается финального состояния,
         # а не снимка на момент вызова.
+        if self._wait_error:
+            raise PlaywrightError(f"runtime error waiting for {self._name}")
         if not self._present:
             raise PlaywrightTimeoutError(f"{self._name} not visible")
 
@@ -70,12 +77,14 @@ class FakeBumpPage:
         hint_present: bool,
         button_present: bool = True,
         hint_render_delayed: bool = False,
+        hint_wait_error: bool = False,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
         self._hint_present = hint_present
         self._button_present = button_present
         self._hint_render_delayed = hint_render_delayed
+        self._hint_wait_error = hint_wait_error
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -87,6 +96,7 @@ class FakeBumpPage:
                 self.click_log,
                 "hint",
                 render_delayed=self._hint_render_delayed,
+                wait_error=self._hint_wait_error,
             )
         if selector == resume_page.RESUME_BUMP_BUTTON:
             return _FakeLocator(self._button_present, self.click_log, "button")
@@ -148,6 +158,18 @@ def test_bump_dry_run_does_not_click_even_without_hint():
 
     assert result.success is True
     assert page.click_log == []
+
+
+def test_bump_hint_wait_error_is_fail_closed_not_traceback():
+    """cycle-review #139: не-timeout ошибка при ожидании hint (аномалия
+    страницы, не легитимное отсутствие) — fail-closed BumpResult, а не
+    непойманный traceback и не тихий переход к клику по кнопке."""
+    page = FakeBumpPage(hint_present=True, button_present=True, hint_wait_error=True)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "button" not in page.click_log
 
 
 def test_bump_no_button_found_fails():

@@ -52,8 +52,8 @@ _COVER_LETTER_TEXTAREAS = (
 )
 
 # #139: bounded-ожидание перед первым чтением DOM формы отклика (не сразу после
-# навигации — see навигация в navigate_to_response_form уже ждёт APPLY_SUBMIT_BUTTON,
-# но task-body/radio/checkbox/textarea рендерятся отдельным JS-проходом и могут
+# навигации: navigate_to_response_form уже ждёт APPLY_SUBMIT_BUTTON, но
+# task-body/radio/checkbox/textarea рендерятся отдельным JS-проходом и могут
 # появиться позже). Короткий таймаут — как OPTIONAL_FIELD_TIMEOUT_MS в apply/steps.py:
 # элемент либо появится быстро, либо детерминированно отсутствует.
 _QUESTION_WAIT_TIMEOUT_MS = 1_500
@@ -124,6 +124,11 @@ def _form_scope(page: Page) -> Locator | None:
     #139: раньше наличие проверялось голым ``count() > 0`` сразу после
     навигации — гонка рендера (форма ещё не отрисовалась) давала 0 и ложный
     None, хотя <form>-предок в итоге появлялся. Теперь ждём bounded таймаутом.
+
+    cycle-review #139: этот wait_for подтверждает только, что <form>-предок
+    существовал НА МОМЕНТ ожидания — возвращаемый ``scope`` сам по себе не несёт
+    гарантию для дочерних локаторов (``scope.locator(...)`` ниже в
+    detect_questions), каждый из них дожидается своего состояния независимо.
     """
     scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
     present = _wait_present(scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
@@ -182,14 +187,40 @@ def detect_questions(page: Page) -> QuestionDetection:
         return QuestionDetection.yes("вакансия требует заполнения анкеты (radio/checkbox)")
 
     # textarea: все минус cover-letter, в пределах формы. Ждём появление хотя бы
-    # одной textarea перед подсчётом (та же гонка рендера, что у radio/checkbox);
-    # детерминированное отсутствие после ожидания — 0 без ожидания смысла не имеет.
-    textarea_present = _wait_present(scope.locator(_TEXTAREA), timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+    # одной textarea перед подсчётом (та же гонка рендера, что у radio/checkbox).
+    #
+    # cycle-review #139: раньше _wait_present() ждал на ОДНОРАЗОВОМ локаторе, а
+    # решающий count() брался на свежесозданном (тот же селектор, но новый вызов
+    # scope.locator(...)) — то есть count() снова читался БЕЗ собственного
+    # ожидания, ровно та гонка, которую фикс должен был убрать. Опаснее всего
+    # было для cover_letter_count: он вообще не ждался, только count(). Если
+    # cover-letter textarea рендерится позже вопрос-textarea, cover_letter_count
+    # читает 0, total_textareas — 1, и ЧИСТАЯ форма ложно детектится как анкета
+    # → persistent skip (#87) навсегда хоронит нормальную вакансию — тот же
+    # класс бага, что round-1/round-2 fix уже закрывали для form-scope.
+    # Фикс: переиспользуем ОДИН дождавшийся локатор для total_textareas и ждём
+    # (bounded) каждый cover-letter локатор отдельно перед его count().
+    textarea_loc = scope.locator(_TEXTAREA)
+    textarea_present = _wait_present(textarea_loc, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
     if textarea_present is None:
         return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
     if textarea_present:
-        total_textareas = scope.locator(_TEXTAREA).count()
-        cover_letter_count = sum(scope.locator(sel).count() for sel in _COVER_LETTER_TEXTAREAS)
+        total_textareas = textarea_loc.count()
+        if total_textareas == 0:
+            # TOCTOU: attached при wait_for, исчезла к count() — нестабильная
+            # форма, а не «textarea нет» (та ветка уже отработала через False
+            # выше). Fail-closed: не молчаливое no(), а indeterminate.
+            return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+        cover_letter_count = 0
+        for cover_letter_sel in _COVER_LETTER_TEXTAREAS:
+            cover_letter_loc = scope.locator(cover_letter_sel)
+            cover_letter_present = _wait_present(
+                cover_letter_loc, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS
+            )
+            if cover_letter_present is None:
+                return QuestionDetection.indeterminate_scope(_RUNTIME_ERROR_REASON)
+            if cover_letter_present:
+                cover_letter_count += cover_letter_loc.count()
         if total_textareas > cover_letter_count:
             return QuestionDetection.yes(
                 "вакансия требует заполнения анкеты (textarea вне cover-letter)"

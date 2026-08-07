@@ -104,73 +104,90 @@ class _Loc:
     ``count()`` (без предварительного wait_for) видит пустой DOM — моделирует
     гонку рендера. ``wait_error`` — генерирует не-timeout PlaywrightError
     (аномалия, НЕ легитимное отсутствие) для indeterminate-веток.
+
+    cycle-review #139 (finding #1): режим render_delayed/wait_error раньше
+    наследовался от РОДИТЕЛЬСКОГО локатора при вложенном ``scope.locator(sel)``,
+    а не смотрел на сам ``sel`` — из-за чего пометка селектора вида
+    ``input[type='radio']`` (вложенный внутрь form-scope) никогда не срабатывала,
+    и соответствующие regression-тесты проходили даже на не пофикшенном коде
+    (тавтология). Теперь ``_Loc`` хранит ссылку на владеющую ``_Page`` и любой
+    ``locator(sel)`` — что page-level, что вложенный — определяет режим ИМЕННО
+    по ``sel`` через ``_Page``, единообразно.
+
+    ``_waited`` хранится в общем мьютабельном ``_state`` (не поле экземпляра):
+    ``.first`` возвращает НОВЫЙ объект ``_Loc`` (как в реальном Playwright —
+    каждый вызов ``.first``/``.locator`` даёт новый handle), но production-код
+    вызывает ``wait_for`` на ``.first``, а решающий ``count()`` — на исходном
+    локаторе (см. questions.py ``_wait_present`` + повторное использование
+    ``textarea_loc``). Если бы «дождались» отслеживалось per-instance, а не
+    per-selector-состояние, тест не отличил бы «дождались через .first» от
+    «не дождались вовсе» — тот же класс ошибки, что и сам finding #1.
     """
 
-    def __init__(self, nodes, *, render_delayed=False, wait_error=False):
+    def __init__(self, page: _Page, nodes, state: dict | None = None):
+        self._page = page
         self._n = nodes
-        self._render_delayed = render_delayed
-        self._wait_error = wait_error
-        self._waited = False
+        self._render_delayed = False
+        self._wait_error = False
+        # Разделяемое состояние «дождались ли уже этот селектор» — общее для
+        # локатора и всех его .first-производных.
+        self._state = state if state is not None else {"waited": False}
 
     @property
     def first(self):
-        loc = _Loc(self._n[:1], render_delayed=self._render_delayed, wait_error=self._wait_error)
-        loc._waited = self._waited
+        loc = _Loc(self._page, self._n[:1], state=self._state)
+        loc._render_delayed = self._render_delayed
+        loc._wait_error = self._wait_error
         return loc
 
     def wait_for(self, state="visible", timeout=0):  # noqa: ARG002
         if self._wait_error:
             raise PlaywrightError("runtime error waiting for locator")
-        self._waited = True
+        self._state["waited"] = True
         if not self._n:
             raise PlaywrightTimeoutError("not attached")
 
     def count(self):
-        if self._render_delayed and not self._waited:
+        if self._render_delayed and not self._state["waited"]:
             # Немедленное чтение без ожидания — застаёт непрогрузившийся DOM.
             return 0
         return len(self._n)
 
-    def locator(self, sel, *, render_delayed=None, wait_error=None):
-        # Вложенный locator() внутри scope (напр. scope.locator(_RADIO)) по
-        # умолчанию наследует режим родителя — так regression-тест может
-        # пометить именно heuristic-селектор внутри уже найденного <form>.
-        rd = self._render_delayed if render_delayed is None else render_delayed
-        we = self._wait_error if wait_error is None else wait_error
+    def locator(self, sel):
+        # Вложенный locator() внутри scope (напр. scope.locator(_RADIO)) решает
+        # режим по СВОЕМУ ``sel``, спрашивая владеющую _Page — а не наследует
+        # режим родителя (cycle-review #139 finding #1: наследование маскировало
+        # гонку рендера в heuristic-путях под тавтологичным тестом).
         scope = self._n[0] if self._n else None
-        if scope is None:
-            return _Loc([], render_delayed=rd, wait_error=we)
-        return _Loc([n for n in _all(scope) if _match(n, sel)], render_delayed=rd, wait_error=we)
+        nodes = [] if scope is None else [n for n in _all(scope) if _match(n, sel)]
+        return self._page._make_locator(sel, nodes)
 
 
 class _Page:
     def __init__(self, html, *, render_delayed_selectors=(), wait_error_selectors=()):
         self._root = _Builder()
         self._tree = self._root.feed(html)
-        # Множество селекторов (как переданы в page.locator(...)), для которых
-        # эмулируем гонку рендера/ошибку ожидания — используется regression-тестами #139.
+        # Множество селекторов (как переданы в .locator(...), page-level ИЛИ
+        # вложенный) для которых эмулируем гонку рендера/ошибку ожидания —
+        # используется regression-тестами #139.
         self._render_delayed_selectors = set(render_delayed_selectors)
         self._wait_error_selectors = set(wait_error_selectors)
 
+    def _make_locator(self, sel, nodes) -> _Loc:
+        loc = _Loc(self, nodes)
+        loc._render_delayed = sel in self._render_delayed_selectors
+        loc._wait_error = sel in self._wait_error_selectors
+        return loc
+
     def locator(self, sel):
-        render_delayed = sel in self._render_delayed_selectors
-        wait_error = sel in self._wait_error_selectors
         if ">> xpath=ancestor::form" in sel:
             base_sel = sel.split(" >> xpath=ancestor::form")[0]
             submit = next((n for n in _all(self._tree) if _match(n, base_sel)), None)
             if submit is None:
-                return _Loc([], render_delayed=render_delayed, wait_error=wait_error)
+                return self._make_locator(sel, [])
             form = _ancestor_form(self._tree, submit)
-            return _Loc(
-                [form] if form is not None else [],
-                render_delayed=render_delayed,
-                wait_error=wait_error,
-            )
-        return _Loc(
-            [n for n in _all(self._tree) if _match(n, sel)],
-            render_delayed=render_delayed,
-            wait_error=wait_error,
-        )
+            return self._make_locator(sel, [form] if form is not None else [])
+        return self._make_locator(sel, [n for n in _all(self._tree) if _match(n, sel)])
 
 
 def test_detect_no_questions_clean_form():
