@@ -244,8 +244,8 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
-    по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп на первой
-    пустой/без «далее». Если DOM списка или пагинации не подтвердился за
+    по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп только на
+    подтверждённой последней странице. Если DOM списка или пагинации не подтвердился за
     bounded timeout, поднимает :class:`ResponsesIndeterminate`, а не выдаёт
     неопределённость за пустой inbox/последнюю страницу.
 
