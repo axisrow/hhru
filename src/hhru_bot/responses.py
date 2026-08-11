@@ -11,7 +11,7 @@
 Read-only по отношению к hh.ru: страница откликов только читается, никаких
 кликов «ответить»/навигации в чат. Как и search.search_vacancies, перебор
 страниц списка идёт без throttle-пауз (паузы применяются к ДЕЙСТВИЯМ apply/
-bump, не к чтению списка); истёкшая сессия (редирект на /account/login)
+bump, не к чтению списка); истёкшая сессия (редирект на страницу входа)
 поднимает NotAuthenticated, чтобы команда не выдала пустой результат за «чисто».
 """
 
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, goto_hh, has_auth_cookie
 from .selector_groups import negotiations as ns
 
 logger = logging.getLogger("hhru_bot.responses")
@@ -38,7 +38,7 @@ RENDER_TIMEOUT_MS = 10_000
 
 
 class NotAuthenticated(RuntimeError):
-    """Сессия hh.ru истекла: /applicant/negotiations редиректит на /account/login.
+    """Сессия hh.ru истекла: страница переговоров не подтверждает auth-cookie.
 
     fetch_responses поднимает это, чтобы команда responses НЕ трактовала пустой
     результат выгруженной сессии как «нет новых ответов» и НЕ затирала историю.
@@ -244,7 +244,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     Защита от ложного «пустого inbox»: страница рендерится JS, поэтому после
     DOMContentLoaded ждём bounded таймаут появления карточки (RENDER_TIMEOUT_MS),
     а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
-    /account/login — если это обнаружено, поднимается NotAuthenticated (команда НЕ
+    отсутствие auth-cookie — если это обнаружено, поднимается NotAuthenticated (команда НЕ
     должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
     затирать историю). Таймаут рендера логируется warning'ом — без верифицирован-
     ного empty-state-селектора отличить genuine-empty от устаревшего селектора
@@ -257,14 +257,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         logger.info("Загрузка страницы откликов: %s", url)
         goto_hh(page, url)
 
-        # Истёкшая сессия: hh.ru редиректит /applicant/negotiations на /account/
-        # login. Это надёжный сигнал (не зависит от непроверенных селекторов
-        # negotiations): страница гарантированно НЕ отдаёт карточки переписки
-        # незалогиненному. Поднимаемся — команда не будет выдавать это за «пусто».
-        if "/account/login" in page.url:
+        # Проверяем единый auth-маркер до чтения DOM: пустая страница без cookie
+        # не должна маскироваться под пустой inbox.
+        if not has_auth_cookie(page):
             raise NotAuthenticated(
-                "страница откликов редиректит на /account/login — сессия истекла "
-                "(запустите `login`, затем повторите)"
+                "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
             )
 
         # Страница рендерится JS: DOMContentLoaded приходит раньше карточек. Ждём

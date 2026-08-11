@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from hhru_bot import selectors as sel
-from hhru_bot.selector_groups import apply_form, login, resume_page, search_page, vacancy_page
+from hhru_bot.selector_groups import apply_form, resume_page, search_page, vacancy_page
 
 
 def test_shim_reexports_all_old_names():
@@ -31,8 +31,6 @@ def test_shim_reexports_all_old_names():
         # resume_page
         "RESUME_BUMP_BUTTON",
         "RESUME_BUMP_DISABLED_HINT",
-        # login
-        "LOGIN_URL_MARKER",
     }
     for name in expected:
         assert hasattr(sel, name), f"selectors.shim потерял имя {name}"
@@ -55,4 +53,3 @@ def test_shim_values_match_groups():
     assert sel.VACANCY_APPLY_BUTTON == vacancy_page.VACANCY_APPLY_BUTTON
     assert sel.APPLY_SUBMIT_BUTTON == apply_form.APPLY_SUBMIT_BUTTON
     assert sel.RESUME_BUMP_BUTTON == resume_page.RESUME_BUMP_BUTTON
-    assert sel.LOGIN_URL_MARKER == login.LOGIN_URL_MARKER

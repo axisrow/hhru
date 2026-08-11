@@ -122,18 +122,7 @@ def launch_context(
             browser.close()
 
 
-def is_logged_in(page: Page) -> bool:
-    goto_hh(page, f"{HH_BASE_URL}/account/login")
-    return "account/login" not in page.url
-
-
 def has_auth_cookie(page: Page) -> bool:
-    """Проверка авторизации по cookie ``hhtoken`` (Codex review, #135), а не по
-    URL. ``is_logged_in`` выше проверяет присутствие ``account/login`` в
-    ``page.url`` — тот же приём, что auth.py:login() намеренно НЕ использует:
-    hh.ru после успешного входа иногда оставляет ``account/login`` в
-    реферере/redirect, из-за чего URL-проверка даёт ложный отрицательный
-    результат для валидной сессии (см. auth.py:59-61). ``hhtoken`` cookie —
-    единственный надёжный маркер, который там уже применяется."""
+    """Проверка авторизации по единственному надёжному маркеру: ``hhtoken``."""
     cookies = page.context.cookies()
     return any(c.get("name") == "hhtoken" for c in cookies)

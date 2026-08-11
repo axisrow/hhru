@@ -20,15 +20,15 @@ READ-команда: по умолчанию читает ``config.resumes`` л�
 подтверждение WRITE (``--force``) не требуется. Совместим с ``--status``
 (тот читает локальную историю — конфликта источников данных нет).
 
-``whoami._check_session`` проверяет только формат файла сессии (валидный JSON
-с cookies), НЕ факт актуальной авторизации на hh.ru — истёкшие cookies его
+``whoami._check_storage_state`` проверяет только формат файла сессии (валидный
+JSON с cookies), НЕ факт актуальной авторизации на hh.ru — истёкшие cookies его
 пройдут. Поэтому после открытия страницы ``--remote`` дополнительно зовёт
 ``browser.has_auth_cookie(page)`` (наличие cookie ``hhtoken``); без этой
 проверки истёкшая сессия и вправду пустой аккаунт неотличимы (оба дают
 0 карточек), и команда напечатала бы обманчивое «резюме не найдено» вместо
-«сессия недействительна». Именно cookie, не ``browser.is_logged_in()``
-(проверка URL на /account/login) — та ненадёжна для этой цели (см.
-auth.py:59-61: hh.ru может оставить account/login в редиректе даже при
+«сессия недействительна». Именно cookie hhtoken, не URL-проверка — та
+ненадёжна для этой цели (см.
+auth.py:59-61: hh.ru может оставить путь входа в редиректе даже при
 успешном входе).
 
 Заголовок резюме (``RESUME_LIST_CARD_TITLE``) — селектор НЕ подтверждён живым
@@ -110,7 +110,7 @@ def run(args: argparse.Namespace) -> None:
     from ..config import load_config_or_exit
     from ..history import History
     from ..throttle import Throttle
-    from .whoami import _check_session
+    from .whoami import _check_storage_state
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -136,7 +136,7 @@ def run(args: argparse.Namespace) -> None:
     if not args.remote:
         return
 
-    ok, detail = _check_session(Path(config.storage_state_file))
+    ok, detail, _ = _check_storage_state(Path(config.storage_state_file))
     if not ok:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
@@ -148,12 +148,11 @@ def run(args: argparse.Namespace) -> None:
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
-        # _check_session выше проверил только формат файла — не факт актуальной
+        # _check_storage_state выше проверил только формат файла — не факт актуальной
         # авторизации на hh.ru. Без этой проверки истёкшая сессия неотличима от
         # пустого аккаунта резюме (обе дают 0 карточек ниже). Проверяем через
-        # cookie hhtoken (Codex review), НЕ через browser.is_logged_in() — та
-        # смотрит на "account/login" в page.url, а этот приём auth.py уже
-        # отверг: hh.ru может оставить account/login в редиректе даже при
+        # cookie hhtoken (Codex review), НЕ через URL — hh.ru может оставить
+        # путь входа в редиректе даже при
         # успешном входе, что дало бы ложный [FAIL] для валидной сессии.
         if not has_auth_cookie(page):
             print("[FAIL] Сессия недействительна (cookie hhtoken не найден). Выполните login.")

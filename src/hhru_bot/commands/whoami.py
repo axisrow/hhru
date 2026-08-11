@@ -31,27 +31,35 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def _check_session(storage_state_file: Path) -> tuple[bool, str]:
-    """Действительна ли сохранённая сессия — без браузера.
-
-    Проверяем существование файла и что это валидный Playwright storage_state
-    (JSON со словарём, содержащим ``cookies``). НЕ открываем браузер и НЕ
-    тыкаем hh.ru: whoami должен быть мгновенным и read-only. Тонкую проверку
-    (истёкшая кука) делает первая же браузерная команда (apply/bump/responses)
-    — здесь достаточно «файл есть и читается».
-
-    Возвращает (ok, detail): detail — человекочитаемая причина для строки [FAIL].
-    """
+def _check_storage_state(storage_state_file: Path) -> tuple[bool, str, dict | None]:
+    """Проверяет формат storage_state и возвращает разобранный JSON."""
     if not storage_state_file.exists():
-        return False, f"файл сессии не найден: {storage_state_file}"
+        return False, f"файл сессии не найден: {storage_state_file}", None
     try:
         raw = json.loads(storage_state_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        return False, f"файл сессии нечитаем: {e}"
-    # Playwright storage_state — словарь с cookies (список) и origins (список).
-    # Голый JSON без cookies сессией не является.
+        return False, f"файл сессии нечитаем: {e}", None
     if not isinstance(raw, dict) or not isinstance(raw.get("cookies"), list):
-        return False, "файл сессии некорректен (нет cookies)"
+        return False, "файл сессии некорректен (нет cookies)", None
+    return True, "", raw
+
+
+def _check_session(storage_state_file: Path) -> tuple[bool, str]:
+    """Действительна ли сохранённая сессия — без браузера.
+
+    Проверяем существование файла и наличие cookie ``hhtoken`` в валидном
+    Playwright storage_state. НЕ открываем браузер и НЕ тыкаем hh.ru: whoami
+    должен быть мгновенным и read-only. Истёкшую куку без браузера определить
+    нельзя, поэтому это локальная проверка сохранённого auth-маркера.
+
+    Возвращает (ok, detail): detail — человекочитаемая причина для строки [FAIL].
+    """
+    ok, detail, raw = _check_storage_state(storage_state_file)
+    if not ok:
+        return False, detail
+    assert raw is not None
+    if not any(c.get("name") == "hhtoken" for c in raw["cookies"] if isinstance(c, dict)):
+        return False, "в файле сессии отсутствует cookie hhtoken"
     return True, ""
 
 

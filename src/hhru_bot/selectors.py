@@ -19,7 +19,6 @@ from .selector_groups.apply_form import (
     APPLY_RESUME_SELECT,
     APPLY_SUBMIT_BUTTON,
 )
-from .selector_groups.login import LOGIN_URL_MARKER
 from .selector_groups.resume_page import RESUME_BUMP_BUTTON, RESUME_BUMP_DISABLED_HINT
 from .selector_groups.search_page import (
     COMPANY_RATING_REVIEWS_COUNT,
@@ -47,7 +46,6 @@ __all__ = [
     "APPLY_SUBMIT_BUTTON",
     "COMPANY_RATING_REVIEWS_COUNT",
     "COMPANY_RATING_VALUE",
-    "LOGIN_URL_MARKER",
     "PAGINATION_NEXT",
     "PAGINATION_PAGE",
     "RESUME_BUMP_BUTTON",

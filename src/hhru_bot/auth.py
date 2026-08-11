@@ -4,7 +4,7 @@ import logging
 
 from playwright.sync_api import sync_playwright
 
-from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh
+from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh, has_auth_cookie
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
@@ -57,15 +57,16 @@ def login(config: AppConfig) -> None:
         input("Нажмите Enter после успешного входа... ")
 
         # Реальный маркер залогиненности — cookie hhtoken, а не URL (hh.ru после
-        # входа иногда оставляет account/login в реферере/redirect — URL-проверка
+        # входа иногда оставляет путь входа в реферере/redirect — URL-проверка
         # давала ложный warning при успешном входе).
-        cookies = context.cookies()
-        has_auth_token = any(c.get("name") == "hhtoken" for c in cookies)
-        if not has_auth_token:
+        if not has_auth_cookie(page):
             logger.warning(
                 "Cookie hhtoken отсутствует — вход, похоже, не завершён. "
-                "Сессия всё равно будет сохранена, но отклик/bump могут не сработать.",
+                "Сессия не будет сохранена.",
             )
+            context.close()
+            browser.close()
+            raise RuntimeError("Cookie hhtoken отсутствует — сессия не сохранена")
 
         context.storage_state(path=str(storage_state_file))
         logger.info("Сессия сохранена: %s", storage_state_file)

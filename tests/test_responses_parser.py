@@ -8,6 +8,9 @@ Playwright используется только для импорта типо�
 
 from __future__ import annotations
 
+import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from _fakes import NegotiationsPage
 from hhru_bot.responses import (
     ResponseItem,
@@ -17,6 +20,37 @@ from hhru_bot.responses import (
     normalize_status,
     parse_response_card,
 )
+
+
+def test_fetch_responses_uses_auth_cookie_not_login_url(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from hhru_bot import responses
+
+    page = MagicMock()
+    page.url = "https://hh.ru/account/login?successful_redirect=1"
+    page.context.cookies.return_value = [{"name": "hhtoken", "value": "abc"}]
+    monkeypatch.setattr(responses, "goto_hh", MagicMock())
+    page.locator.return_value.count.return_value = 0
+    page.locator.return_value.first.wait_for.side_effect = PlaywrightTimeoutError("empty")
+
+    # A valid cookie must not be rejected solely because the URL contains the marker.
+    assert responses.fetch_responses(page, max_pages=1) == []
+
+
+def test_fetch_responses_rejects_missing_auth_cookie_without_url_check(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from hhru_bot import responses
+
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/negotiations"
+    page.context.cookies.return_value = []
+    monkeypatch.setattr(responses, "goto_hh", MagicMock())
+
+    with pytest.raises(responses.NotAuthenticated):
+        responses.fetch_responses(page, max_pages=1)
+
 
 # --- normalize_status (чистая функция) --------------------------------------
 
