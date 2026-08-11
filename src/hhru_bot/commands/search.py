@@ -89,7 +89,12 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..search import filter_candidates, rank_candidates, search_vacancies
+    from ..search import (
+        VacancySearchIndeterminate,
+        filter_candidates,
+        rank_candidates,
+        search_vacancies,
+    )
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -101,7 +106,14 @@ def run(args: argparse.Namespace) -> None:
         page = context.new_page()
         for resume in resumes:
             print(f"\n=== Поиск вакансий для резюме: {resume.id} ===")
-            cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+            try:
+                cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+            except VacancySearchIndeterminate as e:
+                # Не выдаём непроверенную выдачу за «вакансий нет» и не прячем
+                # диагностический отказ за traceback. Следующее резюме можно
+                # обработать независимо.
+                print(f"[FAIL] {e}")
+                continue
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
             _record_seen(cards, resume.search.text, history)

@@ -20,6 +20,7 @@ from ..history import SKIP_REASONS, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     VacancyCard,
+    VacancySearchIndeterminate,
     filter_candidates,
     rank_candidates,
     search_vacancies,
@@ -248,7 +249,13 @@ def run_apply_for_resume(
         print(f"Пропуск: {e}")
         return
 
-    cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+    try:
+        cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+    except VacancySearchIndeterminate as e:
+        # Один сбой рендера не должен скрыться как пустой apply-план или
+        # остановить обработку остальных резюме в команде apply/run.
+        print(f"[FAIL] {e}")
+        return
     scoring_provider = _build_scoring_provider(config, resume)
     plan = build_apply_plan(
         cards,
