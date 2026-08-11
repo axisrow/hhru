@@ -148,7 +148,7 @@ def run(args: argparse.Namespace) -> None:
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
-        # _check_session выше проверил только формат файла — не факт актуальной
+        # _check_storage_state выше проверил только формат файла — не факт актуальной
         # авторизации на hh.ru. Без этой проверки истёкшая сессия неотличима от
         # пустого аккаунта резюме (обе дают 0 карточек ниже). Проверяем через
         # cookie hhtoken (Codex review), НЕ через URL — hh.ru может оставить
