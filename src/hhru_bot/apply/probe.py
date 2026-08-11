@@ -21,7 +21,6 @@ dedup не трогаются — probe живёт отдельным оркес
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +35,7 @@ from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import CoverLetterProvider, render_cover_letter
 from .questions import detect_questions
+from .steps import OPTIONAL_FIELD_TIMEOUT_MS, _is_visible
 
 logger = logging.getLogger("hhru_bot.apply.probe")
 
@@ -98,20 +98,29 @@ def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> None:
     Аналог блока заполнения `apply/steps.fill_response_form`, но намеренно без
     блока `submit_button.click()` — атомарность probe. Селекторы те же (shared,
     владеет apply_form), логика выбора резюме делегирована steps._select_resume_in_form.
+
+    #139: раньше опциональные поля определялись голым ``count() > 0`` сразу
+    после навигации плюс фиксированная пауза-заглушка (полсекунды сна между
+    полями) — гонка рендера (поле ещё не отрисовалось) молча пропускала
+    заполнение письма, и дамп выглядел валидным, хотя письмо не заполнено
+    (ложная уверенность перед боевым запуском). Переиспользуем
+    ``steps._is_visible`` — тот же приём (bounded wait_for + fail-closed на
+    «поля нет»), что и в fill_response_form. Фиксированных пауз-заглушек
+    (запрещены докстрингом steps.py) здесь больше нет.
     """
-    resume_select = page.locator(apply_form.APPLY_RESUME_SELECT)
-    if resume_select.count() > 0:
+    if _is_visible(page, apply_form.APPLY_RESUME_SELECT, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS):
         apply_steps._select_resume_in_form(page, resume_id)
 
-    letter_toggle = page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE)
-    if letter_toggle.count() > 0:
-        letter_toggle.click()
-        time.sleep(0.5)
+    if _is_visible(
+        page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
+    ):
+        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).click()
+        # Клик раскрывает textarea — её готовность ждёт следующий _is_visible ниже.
 
-    textarea = page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA)
-    if textarea.count() > 0:
-        textarea.fill(letter)
-        time.sleep(0.5)
+    if _is_visible(
+        page, apply_form.APPLY_COVER_LETTER_TEXTAREA, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
+    ):
+        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).fill(letter)
 
 
 def probe_vacancy(

@@ -10,6 +10,9 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from hhru_bot.apply.questions import QuestionDetection, detect_questions
 
 _VOID = {"input", "br", "hr", "img", "meta", "link", "area", "col", "embed", "source"}
@@ -96,33 +99,95 @@ def _ancestor_form(root, node):
 
 
 class _Loc:
-    def __init__(self, nodes):
+    """Локатор фейка. ``wait_for`` — bounded-ожидание (#139): при
+    ``render_delayed`` элемент «появляется» только у wait_for, а немедленный
+    ``count()`` (без предварительного wait_for) видит пустой DOM — моделирует
+    гонку рендера. ``wait_error`` — генерирует не-timeout PlaywrightError
+    (аномалия, НЕ легитимное отсутствие) для indeterminate-веток.
+
+    cycle-review #139 (finding #1): режим render_delayed/wait_error раньше
+    наследовался от РОДИТЕЛЬСКОГО локатора при вложенном ``scope.locator(sel)``,
+    а не смотрел на сам ``sel`` — из-за чего пометка селектора вида
+    ``input[type='radio']`` (вложенный внутрь form-scope) никогда не срабатывала,
+    и соответствующие regression-тесты проходили даже на не пофикшенном коде
+    (тавтология). Теперь ``_Loc`` хранит ссылку на владеющую ``_Page`` и любой
+    ``locator(sel)`` — что page-level, что вложенный — определяет режим ИМЕННО
+    по ``sel`` через ``_Page``, единообразно.
+
+    ``_waited`` хранится в общем мьютабельном ``_state`` (не поле экземпляра):
+    ``.first`` возвращает НОВЫЙ объект ``_Loc`` (как в реальном Playwright —
+    каждый вызов ``.first``/``.locator`` даёт новый handle), но production-код
+    вызывает ``wait_for`` на ``.first``, а решающий ``count()`` — на исходном
+    локаторе (см. questions.py ``_wait_present`` + повторное использование
+    ``textarea_loc``). Если бы «дождались» отслеживалось per-instance, а не
+    per-selector-состояние, тест не отличил бы «дождались через .first» от
+    «не дождались вовсе» — тот же класс ошибки, что и сам finding #1.
+    """
+
+    def __init__(self, page: _Page, nodes, state: dict | None = None):
+        self._page = page
         self._n = nodes
+        self._render_delayed = False
+        self._wait_error = False
+        # Разделяемое состояние «дождались ли уже этот селектор» — общее для
+        # локатора и всех его .first-производных.
+        self._state = state if state is not None else {"waited": False}
+
+    @property
+    def first(self):
+        loc = _Loc(self._page, self._n[:1], state=self._state)
+        loc._render_delayed = self._render_delayed
+        loc._wait_error = self._wait_error
+        return loc
+
+    def wait_for(self, state="visible", timeout=0):  # noqa: ARG002
+        if self._wait_error:
+            raise PlaywrightError("runtime error waiting for locator")
+        self._state["waited"] = True
+        if not self._n:
+            raise PlaywrightTimeoutError("not attached")
 
     def count(self):
+        if self._render_delayed and not self._state["waited"]:
+            # Немедленное чтение без ожидания — застаёт непрогрузившийся DOM.
+            return 0
         return len(self._n)
 
     def locator(self, sel):
+        # Вложенный locator() внутри scope (напр. scope.locator(_RADIO)) решает
+        # режим по СВОЕМУ ``sel``, спрашивая владеющую _Page — а не наследует
+        # режим родителя (cycle-review #139 finding #1: наследование маскировало
+        # гонку рендера в heuristic-путях под тавтологичным тестом).
         scope = self._n[0] if self._n else None
-        if scope is None:
-            return _Loc([])
-        return _Loc([n for n in _all(scope) if _match(n, sel)])
+        nodes = [] if scope is None else [n for n in _all(scope) if _match(n, sel)]
+        return self._page._make_locator(sel, nodes)
 
 
 class _Page:
-    def __init__(self, html):
+    def __init__(self, html, *, render_delayed_selectors=(), wait_error_selectors=()):
         self._root = _Builder()
         self._tree = self._root.feed(html)
+        # Множество селекторов (как переданы в .locator(...), page-level ИЛИ
+        # вложенный) для которых эмулируем гонку рендера/ошибку ожидания —
+        # используется regression-тестами #139.
+        self._render_delayed_selectors = set(render_delayed_selectors)
+        self._wait_error_selectors = set(wait_error_selectors)
+
+    def _make_locator(self, sel, nodes) -> _Loc:
+        loc = _Loc(self, nodes)
+        loc._render_delayed = sel in self._render_delayed_selectors
+        loc._wait_error = sel in self._wait_error_selectors
+        return loc
 
     def locator(self, sel):
         if ">> xpath=ancestor::form" in sel:
             base_sel = sel.split(" >> xpath=ancestor::form")[0]
             submit = next((n for n in _all(self._tree) if _match(n, base_sel)), None)
             if submit is None:
-                return _Loc([])
+                return self._make_locator(sel, [])
             form = _ancestor_form(self._tree, submit)
-            return _Loc([form] if form is not None else [])
-        return _Loc([n for n in _all(self._tree) if _match(n, sel)])
+            return self._make_locator(sel, [form] if form is not None else [])
+        return self._make_locator(sel, [n for n in _all(self._tree) if _match(n, sel)])
 
 
 def test_detect_no_questions_clean_form():
@@ -343,3 +408,108 @@ def test_detect_not_indeterminate_for_confirmed_and_normal_paths():
     result = detect_questions(scoped_radio)
     assert result.has_questions is True
     assert result.indeterminate is False
+
+
+# --- #139: гонка рендера — анкета отрисовывается с задержкой ---
+
+
+def test_detect_delayed_task_body_still_blocks_submit():
+    """РЕГРЕССИЯ #139: task-body появляется в DOM не мгновенно (гонка рендера).
+    Немедленный ``count()`` без ожидания видит 0 — старый код шёл дальше и
+    submit уходил с пропущенной анкетой. detect_questions обязан ЖДАТЬ и
+    увидеть task-body."""
+    html = """
+        <div data-qa='task-body'>Вопрос теста</div>
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    from hhru_bot.selector_groups import apply_form
+
+    page = _Page(html, render_delayed_selectors={apply_form.APPLY_QUESTION_BODY})
+
+    result = detect_questions(page)
+
+    assert result.has_questions is True
+    assert result.indeterminate is False
+    assert "task-body" in result.reason
+
+
+def test_detect_delayed_radio_still_blocks_submit():
+    """РЕГРЕССИЯ #139: radio-вопрос внутри формы рендерится с задержкой —
+    heuristic обязан дождаться, а не читать count() сразу."""
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html, render_delayed_selectors={"input[type='radio']"})
+
+    result = detect_questions(page)
+
+    assert result.has_questions is True
+    assert result.indeterminate is False
+    assert "radio/checkbox" in result.reason
+
+
+def test_detect_delayed_textarea_still_blocks_submit():
+    """РЕГРЕССИЯ #139: textarea-вопрос вне cover-letter рендерится с задержкой."""
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <textarea></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html, render_delayed_selectors={"textarea"})
+
+    result = detect_questions(page)
+
+    assert result.has_questions is True
+    assert result.indeterminate is False
+    assert "textarea вне cover-letter" in result.reason
+
+
+def test_detect_delayed_form_scope_still_resolves():
+    """РЕГРЕССИЯ #139: <form>-предок submit'а появляется с задержкой (сама
+    форма ещё дорисовывается) — _form_scope обязан дождаться, а не сразу
+    решить, что form-scope не найден (что дало бы ложный indeterminate)."""
+    from hhru_bot.selector_groups import apply_form
+
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    scope_sel = f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]"
+    page = _Page(html, render_delayed_selectors={scope_sel})
+
+    result = detect_questions(page)
+
+    assert result.has_questions is True
+    assert result.indeterminate is False
+    assert "radio/checkbox" in result.reason
+
+
+def test_detect_runtime_error_is_indeterminate_not_no_questions():
+    """Не-timeout PlaywrightError при ожидании task-body (аномалия страницы) —
+    fail-closed indeterminate, а НЕ молчаливое «вопросов нет»."""
+    from hhru_bot.selector_groups import apply_form
+
+    html = """
+        <form>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <button data-qa='vacancy-response-submit-popup'>Откликнуться</button>
+        </form>
+    """
+    page = _Page(html, wait_error_selectors={apply_form.APPLY_QUESTION_BODY})
+
+    result = detect_questions(page)
+
+    assert result.has_questions is True
+    assert result.indeterminate is True
