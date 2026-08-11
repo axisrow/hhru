@@ -121,6 +121,7 @@ def test_fetch_responses_waits_for_delayed_cards(monkeypatch):
     page = _ResponsesPage([], delayed_cards=[object()])
     expected = responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ)
     monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
     monkeypatch.setattr(responses, "parse_response_card", lambda card: expected)
     monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
@@ -130,5 +131,6 @@ def test_fetch_responses_waits_for_delayed_cards(monkeypatch):
 def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):
     page = _ResponsesPage([])
     monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
 
     assert responses.fetch_responses(page, max_pages=1) == []

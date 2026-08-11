@@ -46,10 +46,11 @@ class NotAuthenticated(RuntimeError):
 
 
 class ResponsesIndeterminate(RuntimeError):
-    """Список или пагинация responses не успели подтвердить свой DOM.
+    """Пагинация responses не успела подтвердить свой DOM.
 
-    У negotiations нет проверенного empty-state-селектора: timeout нельзя
-    выдавать за чистый inbox или последнюю страницу.
+    У negotiations нет проверенного empty-state-селектора: timeout карточек
+    сохраняет исторический контракт пустого inbox, но неподтверждённый конец
+    пагинации нельзя выдавать за последнюю страницу.
     """
 
 
