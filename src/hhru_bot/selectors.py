@@ -32,6 +32,7 @@ from .selector_groups.search_page import (
     VACANCY_CARD_RESPONSE_BUTTON,
     VACANCY_CARD_RESPONSE_STATUS,
     VACANCY_CARD_TITLE_LINK,
+    VACANCY_SEARCH_EMPTY,
 )
 from .selector_groups.vacancy_page import (
     VACANCY_APPLY_BUTTON,
@@ -58,6 +59,7 @@ __all__ = [
     "VACANCY_CARD_RESPONSE_BUTTON",
     "VACANCY_CARD_RESPONSE_STATUS",
     "VACANCY_CARD_TITLE_LINK",
+    "VACANCY_SEARCH_EMPTY",
     "VACANCY_COMPANY_NAME",
     "VACANCY_TITLE",
 ]

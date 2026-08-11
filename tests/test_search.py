@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+import hhru_bot.search as search
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.search import (
     SalaryInfo,
@@ -15,6 +18,123 @@ from hhru_bot.search import (
     filter_candidates,
     rank_candidates,
 )
+
+
+class _DelayedCardsLocator:
+    """count() видит DOM сейчас, .first.wait_for() — после JS-рендера."""
+
+    def __init__(self, cards: list[object], delayed_cards: list[object] | None = None):
+        self.cards = cards
+        self.delayed_cards = delayed_cards
+        self.wait_calls: list[tuple[str, int]] = []
+
+    def count(self):
+        return len(self.cards)
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state: str, timeout: int):
+        self.wait_calls.append((state, timeout))
+        if self.cards:
+            return
+        if self.delayed_cards:
+            self.cards.extend(self.delayed_cards)
+            return
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        raise PlaywrightTimeoutError("vacancy cards did not render")
+
+    def nth(self, index: int):
+        return self.cards[index]
+
+
+class _TextLocator:
+    def __init__(self, text: str = "", href: str | None = None, count: int = 1):
+        self.text = text
+        self.href = href
+        self._count = count
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return self._count
+
+    def inner_text(self):
+        return self.text
+
+    def get_attribute(self, name: str):
+        assert name == "href"
+        return self.href
+
+
+class _VacancyCard:
+    def locator(self, selector: str):
+        if selector == search.sel.VACANCY_CARD_TITLE_LINK:
+            return _TextLocator("Python developer", "/vacancy/42")
+        if selector == search.sel.VACANCY_CARD_COMPANY:
+            return _TextLocator(count=0)
+        raise AssertionError(f"unexpected card selector: {selector}")
+
+    def inner_text(self):
+        return "Python developer"
+
+
+class _SearchPage:
+    def __init__(
+        self,
+        cards: list[object],
+        delayed_cards: list[object] | None = None,
+        empty: bool = False,
+    ):
+        self.cards_locator = _DelayedCardsLocator(cards, delayed_cards)
+        self.empty_locator = _DelayedCardsLocator([object()] if empty else [])
+
+    def locator(self, selector: str):
+        if selector == search.sel.VACANCY_CARD:
+            return self.cards_locator
+        if selector == search.sel.VACANCY_SEARCH_EMPTY:
+            return self.empty_locator
+        if selector == f"{search.sel.VACANCY_CARD}, {search.sel.VACANCY_SEARCH_EMPTY}":
+            return self.empty_locator if self.empty_locator.count() else self.cards_locator
+        raise AssertionError(f"unexpected selector: {selector}")
+
+
+def _search_filters():
+    return SearchFilters(text="python")
+
+
+def test_search_waits_for_delayed_cards_before_declaring_empty(monkeypatch):
+    """Регрессия #141: JS-карточки могут появиться после goto_hh()."""
+    page = _SearchPage([], delayed_cards=[_VacancyCard()])
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search, "_has_next_page", lambda *args: False)
+    monkeypatch.setattr(search, "_optional_text", lambda *args: None)
+    monkeypatch.setattr(search, "_parse_employer_info", lambda *args: None)
+
+    cards = search.search_vacancies(page, _search_filters(), max_pages=1)
+
+    assert [card.vacancy_id for card in cards] == ["42"]
+    assert page.cards_locator.wait_calls == [("attached", search.RENDER_TIMEOUT_MS)]
+
+
+def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):
+    """Нулевой count без подтверждённого empty-state не должен обрывать обход."""
+    page = _SearchPage([])
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+
+    with pytest.raises(search.VacancySearchIndeterminate, match="не подтвержден"):
+        search.search_vacancies(page, _search_filters(), max_pages=1)
+
+
+def test_search_returns_empty_only_after_confirmed_empty_state(monkeypatch):
+    page = _SearchPage([], empty=True)
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+
+    assert search.search_vacancies(page, _search_filters(), max_pages=1) == []
 
 
 class FakeHistory:

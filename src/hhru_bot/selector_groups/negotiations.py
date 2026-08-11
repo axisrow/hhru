@@ -39,3 +39,5 @@ NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"
 # Кнопка «следующая страница» пагинации списка (та же data-qa, что и в поиске,
 # но вынесена сюда, чтобы responses.py не зависел от search_page).
 NEGOTIATIONS_PAGINATION_NEXT = "[data-qa='pager-next']"
+# Номера страниц — fallback для A/B-варианта hh.ru без pager-next.
+NEGOTIATIONS_PAGINATION_PAGE = "[data-qa='pager-page']"

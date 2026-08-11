@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 VACANCY_CARD = "[data-qa='vacancy-serp__vacancy']"
+# Подтверждён curl-дампом пустого запроса (2026-08-11). Это единственный
+# достоверный случай, в котором отсутствие VACANCY_CARD означает пустую выдачу,
+# а не медленный JS-рендер или дрейф карточного селектора.
+VACANCY_SEARCH_EMPTY = "[data-qa='empty-vacancy-search-block']"
 VACANCY_CARD_TITLE_LINK = "[data-qa='serp-item__title']"
 VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
 # Зарплата в карточке списка (issue #14).

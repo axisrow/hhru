@@ -132,6 +132,13 @@ class FakeLocator:
             return None
         return matches[0].attrs.get(name)
 
+    def wait_for(self, *, state: str = "attached", timeout: int = 0) -> None:  # noqa: ARG002
+        if self._resolved():
+            return
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        raise PlaywrightTimeoutError("fake locator did not attach")
+
 
 class _CardLocator(FakeLocator):
     """Локатор карточки: ``.locator(selector)`` ищет ВНУТРИ этой карточки.

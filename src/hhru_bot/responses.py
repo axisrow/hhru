@@ -45,6 +45,14 @@ class NotAuthenticated(RuntimeError):
     """
 
 
+class ResponsesIndeterminate(RuntimeError):
+    """Список или пагинация responses не успели подтвердить свой DOM.
+
+    У negotiations нет проверенного empty-state-селектора: timeout нельзя
+    выдавать за чистый inbox или последнюю страницу.
+    """
+
+
 # --- статусы ответов работодателя -------------------------------------------
 # Нормализуем текст бейджа hh.ru в стабильный маркер. Это источник правды для
 # storage (history.responses.status) и вывода команды. Чистая функция — ради
@@ -237,7 +245,9 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
     по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп на первой
-    пустой/без «далее».
+    пустой/без «далее». Если DOM списка или пагинации не подтвердился за
+    bounded timeout, поднимает :class:`ResponsesIndeterminate`, а не выдаёт
+    неопределённость за пустой inbox/последнюю страницу.
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
@@ -246,9 +256,9 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
     отсутствие auth-cookie — если это обнаружено, поднимается NotAuthenticated (команда НЕ
     должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
-    затирать историю). Таймаут рендера логируется warning'ом — без верифицирован-
-    ного empty-state-селектора отличить genuine-empty от устаревшего селектора
-    нельзя, но ложный empty из-за медленного рендера устранён.
+    затирать историю). Без верифицированного empty-state-селектора timeout не
+    отличим от устаревшего селектора, поэтому он поднимает
+    ResponsesIndeterminate, а не возвращает пустой результат.
     """
     results: list[ResponseItem] = []
 
@@ -264,30 +274,26 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
             )
 
-        # Страница рендерится JS: DOMContentLoaded приходит раньше карточек. Ждём
-        # bounded таймаут появления хотя бы одной карточки, иначе count() считал бы
-        # «пусто» на ещё не отрисовавшейся странице (ложный empty inbox). Ловим
-        # базовый Playwright Error (в т.ч. TimeoutError и strict-mode множественность):
-        # карточка не появилась за таймаут — не можем отличить genuine-empty от
-        # устаревшего селектора, логируем предупреждение и трактуем как пустую
-        # страницу (селекторы negotiations непроверены — первый подозреваемый).
+        # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём
+        # attached ограниченное время; timeout неотличим от устаревшего селектора
+        # или интерстишл-страницы и потому должен fail-closed.
         try:
             page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
                 state="attached", timeout=RENDER_TIMEOUT_MS
             )
         except PlaywrightError:
-            logger.warning(
-                "Страница %d: карточки переписки не появились за %d мс — "
-                "возможно, список пуст, либо устарел селектор negotiations-item",
-                page_num,
-                RENDER_TIMEOUT_MS,
-            )
+            raise ResponsesIndeterminate(
+                f"список ответов на странице {page_num} не подтверждён: "
+                f"карточки не появились за {RENDER_TIMEOUT_MS} мс"
+            ) from None
 
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()
         if count == 0:
-            logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
-            break
+            raise ResponsesIndeterminate(
+                f"список ответов на странице {page_num} не подтверждён: "
+                "после ожидания контейнер карточек пуст"
+            )
 
         for i in range(count):
             item = parse_response_card(cards.nth(i))
@@ -298,9 +304,38 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 continue
             results.append(item)
 
-        if page.locator(ns.NEGOTIATIONS_PAGINATION_NEXT).count() == 0:
+        if not _has_next_page(page, page_num):
             logger.info("Достигнута последняя страница откликов (%d)", page_num)
             break
 
     logger.info("Собрано ответов работодателей всего: %d", len(results))
     return results
+
+
+def _has_next_page(page: Page, page_num: int) -> bool:
+    """Подтверждённо ли существует следующая страница negotiations.
+
+    ``pager-next`` достаточен. Если его нет, проверяем нумерованные страницы;
+    отсутствие обоих маркеров ждём bounded-временем и fail-closed, а не
+    превращаем в ложную «последнюю страницу».
+    """
+    if page.locator(ns.NEGOTIATIONS_PAGINATION_NEXT).count() > 0:
+        return True
+
+    pages = page.locator(ns.NEGOTIATIONS_PAGINATION_PAGE)
+    if pages.count() == 0:
+        try:
+            pages.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+        except PlaywrightError:
+            raise ResponsesIndeterminate(
+                f"пагинация ответов на странице {page_num} не подтверждена: "
+                f"маркер pager-page не появился за {RENDER_TIMEOUT_MS} мс"
+            ) from None
+
+    for i in range(pages.count()):
+        try:
+            if int(pages.nth(i).inner_text().strip()) > page_num + 1:
+                return True
+        except ValueError:
+            continue
+    return False

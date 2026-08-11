@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from . import selectors as sel
@@ -21,6 +22,19 @@ if TYPE_CHECKING:
     from .scoring import EmployerInfo
 
 logger = logging.getLogger("hhru_bot.search")
+
+# JS-страница поиска может отдать DOMContentLoaded до списка карточек. Ждём
+# ограниченно: это снимает гонку, не превращая обход в бесконечное ожидание.
+RENDER_TIMEOUT_MS = 10_000
+
+
+class VacancySearchIndeterminate(RuntimeError):
+    """Состояние выдачи или пагинации поиска не удалось подтвердить.
+
+    Пустая выдача подтверждается отдельным empty-state-селектором. Timeout
+    карточек/пагинации без него неотличим от устаревшего селектора или
+    интерстишл-страницы и не должен молча выдаваться за «вакансий нет».
+    """
 
 
 @dataclass
@@ -188,13 +202,24 @@ def _has_next_page(page: Page, page_num: int) -> bool:
     достаточен, но не необходим.
 
     Нераспарсенные подписи (``...`` между номерами) игнорируются: они не несут
-    номера страницы. Если пагинации нет вовсе (единственная страница выдачи),
-    возвращается False — прежнее поведение.
+    номера страницы. Если ни один маркер пагинации не появился за bounded
+    timeout, поднимается :class:`VacancySearchIndeterminate`: отсутствие DOM
+    нельзя честно назвать последней страницей, пока его отрисовка не
+    подтверждена.
     """
     if page.locator(sel.PAGINATION_NEXT).count() > 0:
         return True
 
     pages = page.locator(sel.PAGINATION_PAGE)
+    if pages.count() == 0:
+        try:
+            pages.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+        except PlaywrightError:
+            raise VacancySearchIndeterminate(
+                f"пагинация страницы поиска {page_num} не подтверждена: "
+                f"маркер pager-page не появился за {RENDER_TIMEOUT_MS} мс"
+            ) from None
+
     for i in range(pages.count()):
         label = pages.nth(i).inner_text().strip()
         try:
@@ -225,10 +250,30 @@ def search_vacancies(
         goto_hh(page, url)
 
         cards = page.locator(sel.VACANCY_CARD)
+        # ``count()`` читает DOM немедленно, а выдача hh.ru появляется после
+        # JS-рендера. Ждём карточку ИЛИ подтверждённый empty-state: только эти
+        # два исхода различают непустую и честно пустую выдачу. Timeout
+        # fail-closed (устаревший selector/интерстишл не должны стать «пусто»).
+        ready = page.locator(f"{sel.VACANCY_CARD}, {sel.VACANCY_SEARCH_EMPTY}")
+        try:
+            ready.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+        except PlaywrightError:
+            raise VacancySearchIndeterminate(
+                f"выдача поиска на странице {page_num} не подтверждена: "
+                f"карточка или empty-state не появились за {RENDER_TIMEOUT_MS} мс"
+            ) from None
+
         count = cards.count()
         if count == 0:
-            logger.info("Страница %d: вакансий не найдено, останавливаюсь", page_num)
-            break
+            if page.locator(sel.VACANCY_SEARCH_EMPTY).count() > 0:
+                logger.info("Страница %d: вакансий не найдено", page_num)
+                break
+            # Защита выше должна исключить этот путь для настоящего Locator;
+            # сохраняем fail-closed для нестабильных/тестовых DOM-адаптеров.
+            raise VacancySearchIndeterminate(
+                f"выдача поиска на странице {page_num} не подтверждена: "
+                "после ожидания контейнер карточек пуст"
+            )
 
         for i in range(count):
             card = cards.nth(i)
@@ -237,6 +282,9 @@ def search_vacancies(
             href = title_link.get_attribute("href") or ""
             vacancy_id = _extract_vacancy_id(href)
 
+            # Контейнер карточки уже дождался рендера выше. Поля ниже опциональны,
+            # поэтому отдельный wait_for на каждое из них избыточен: их отсутствие
+            # не обрывает выдачу, а только оставляет конкретный атрибут пустым.
             company_locator = card.locator(sel.VACANCY_CARD_COMPANY).first
             company = company_locator.inner_text().strip() if company_locator.count() else ""
 
