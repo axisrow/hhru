@@ -36,6 +36,9 @@ VACANCY_CARD_RESPONSE_BUTTON = "[data-qa='vacancy-serp__vacancy_response']"
 # что опираться на один только PAGINATION_NEXT нельзя.
 PAGINATION_NEXT = "[data-qa='pager-next']"
 PAGINATION_PAGE = "[data-qa='pager-page']"
+# pager-block присутствует только когда hh.ru действительно рисует пагинацию.
+# Его отсутствие после готовой выдачи означает нормальную единственную страницу.
+PAGINATION_BLOCK = "[data-qa='pager-block']"
 
 # Анонимному curl-запросу hh.ru не показывает маркер "уже откликались" в
 # разметке — этот статус виден только залогиненному пользователю. Дедупликация

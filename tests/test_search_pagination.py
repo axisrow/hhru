@@ -14,10 +14,8 @@ tests/test_probe_healthcheck.py).
 
 from __future__ import annotations
 
-import pytest
-
 from _fakes import FakeLocator, _parse_root, _parse_selector
-from hhru_bot.search import VacancySearchIndeterminate, _has_next_page
+from hhru_bot.search import _has_next_page
 
 
 class _FakePage:
@@ -80,12 +78,11 @@ class TestWithoutNavigationButtonsVariant:
 
 
 class TestNoPagination:
-    """Без маркера pager нельзя подтверждённо назвать страницу последней (#141)."""
+    """После готовой выдачи отсутствие pager-block — честная единственная страница."""
 
     def test_no_pager_block_at_all(self):
         page = _FakePage("<div data-qa='vacancy-serp__vacancy'>карточка</div>")
-        with pytest.raises(VacancySearchIndeterminate):
-            _has_next_page(page, 0)
+        assert _has_next_page(page, 0) is False
 
     def test_single_page_number(self):
         page = _FakePage(_pager(["1"], with_next=False))

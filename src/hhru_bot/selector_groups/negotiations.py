@@ -41,3 +41,5 @@ NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"
 NEGOTIATIONS_PAGINATION_NEXT = "[data-qa='pager-next']"
 # Номера страниц — fallback для A/B-варианта hh.ru без pager-next.
 NEGOTIATIONS_PAGINATION_PAGE = "[data-qa='pager-page']"
+# Контейнер пагинации общего компонента hh.ru; нет на честной единственной странице.
+NEGOTIATIONS_PAGINATION_BLOCK = "[data-qa='pager-block']"

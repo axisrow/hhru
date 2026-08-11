@@ -43,13 +43,21 @@ class _Text:
 
 
 class _Page:
-    def __init__(self, labels: list[str], delayed_labels: list[str] | None = None):
+    def __init__(
+        self,
+        labels: list[str],
+        delayed_labels: list[str] | None = None,
+        has_pagination_block: bool = True,
+    ):
         self.next = _Locator([])
+        self.block = _Locator(["block"] if has_pagination_block else [])
         self.pages = _Locator(labels, delayed_labels)
 
     def locator(self, selector: str):
         if selector == ns.NEGOTIATIONS_PAGINATION_NEXT:
             return self.next
+        if selector == ns.NEGOTIATIONS_PAGINATION_BLOCK:
+            return self.block
         if selector == ns.NEGOTIATIONS_PAGINATION_PAGE:
             return self.pages
         raise AssertionError(f"unexpected selector: {selector}")
@@ -101,6 +109,12 @@ def test_responses_pagination_timeout_is_not_last_page():
 
     with pytest.raises(responses.ResponsesIndeterminate, match="не подтверждена"):
         responses._has_next_page(page, 0)
+
+
+def test_responses_without_pagination_block_is_confirmed_single_page():
+    page = _Page([], has_pagination_block=False)
+
+    assert responses._has_next_page(page, 0) is False
 
 
 def test_fetch_responses_waits_for_delayed_cards(monkeypatch):

@@ -202,13 +202,18 @@ def _has_next_page(page: Page, page_num: int) -> bool:
     достаточен, но не необходим.
 
     Нераспарсенные подписи (``...`` между номерами) игнорируются: они не несут
-    номера страницы. Если ни один маркер пагинации не появился за bounded
-    timeout, поднимается :class:`VacancySearchIndeterminate`: отсутствие DOM
-    нельзя честно назвать последней страницей, пока его отрисовка не
-    подтверждена.
+    номера страницы. Отсутствующий ``pager-block`` после готовой выдачи —
+    подтверждённая единственная страница. Но если контейнер пагинации уже есть,
+    а его страницы не появились за bounded timeout, поднимается
+    :class:`VacancySearchIndeterminate`: такой DOM нельзя назвать последней
+    страницей.
     """
     if page.locator(sel.PAGINATION_NEXT).count() > 0:
         return True
+
+    pagination = page.locator(sel.PAGINATION_BLOCK)
+    if pagination.count() == 0:
+        return False
 
     pages = page.locator(sel.PAGINATION_PAGE)
     if pages.count() == 0:

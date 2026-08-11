@@ -315,12 +315,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 def _has_next_page(page: Page, page_num: int) -> bool:
     """Подтверждённо ли существует следующая страница negotiations.
 
-    ``pager-next`` достаточен. Если его нет, проверяем нумерованные страницы;
-    отсутствие обоих маркеров ждём bounded-временем и fail-closed, а не
-    превращаем в ложную «последнюю страницу».
+    Отсутствующий ``pager-block`` после готовых карточек означает единственную
+    страницу. Если контейнер есть, ``pager-next`` достаточен; иначе проверяем
+    нумерованные страницы и ждём их bounded-временем fail-closed.
     """
     if page.locator(ns.NEGOTIATIONS_PAGINATION_NEXT).count() > 0:
         return True
+
+    pagination = page.locator(ns.NEGOTIATIONS_PAGINATION_BLOCK)
+    if pagination.count() == 0:
+        return False
 
     pages = page.locator(ns.NEGOTIATIONS_PAGINATION_PAGE)
     if pages.count() == 0:
