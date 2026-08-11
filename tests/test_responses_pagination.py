@@ -9,9 +9,15 @@ from hhru_bot.selector_groups import negotiations as ns
 
 
 class _Locator:
-    def __init__(self, labels: list[str], delayed_labels: list[str] | None = None):
+    def __init__(
+        self,
+        labels: list[str],
+        delayed_labels: list[str] | None = None,
+        disappears_after_wait: bool = False,
+    ):
         self.labels = labels
         self.delayed_labels = delayed_labels
+        self.disappears_after_wait = disappears_after_wait
         self.wait_calls: list[tuple[str, int]] = []
 
     def count(self):
@@ -23,6 +29,8 @@ class _Locator:
 
     def wait_for(self, *, state: str, timeout: int):
         self.wait_calls.append((state, timeout))
+        if self.disappears_after_wait:
+            return
         if self.delayed_labels:
             self.labels.extend(self.delayed_labels)
             return
@@ -48,10 +56,11 @@ class _Page:
         labels: list[str],
         delayed_labels: list[str] | None = None,
         has_pagination_block: bool = True,
+        disappears_after_wait: bool = False,
     ):
         self.next = _Locator([])
         self.block = _Locator(["block"] if has_pagination_block else [])
-        self.pages = _Locator(labels, delayed_labels)
+        self.pages = _Locator(labels, delayed_labels, disappears_after_wait)
 
     def locator(self, selector: str):
         if selector == ns.NEGOTIATIONS_PAGINATION_NEXT:
@@ -108,6 +117,13 @@ def test_responses_pagination_timeout_is_not_last_page():
     page = _Page([])
 
     with pytest.raises(responses.ResponsesIndeterminate, match="не подтверждена"):
+        responses._has_next_page(page, 0)
+
+
+def test_responses_pagination_marker_disappearing_after_wait_is_not_last_page():
+    page = _Page([], disappears_after_wait=True)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="исчез после ожидания"):
         responses._has_next_page(page, 0)
 
 

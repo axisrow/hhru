@@ -338,6 +338,11 @@ def _has_next_page(page: Page, page_num: int) -> bool:
                 f"пагинация ответов на странице {page_num} не подтверждена: "
                 f"маркер pager-page не появился за {RENDER_TIMEOUT_MS} мс"
             ) from None
+        if pages.count() == 0:
+            raise ResponsesIndeterminate(
+                f"пагинация ответов на странице {page_num} не подтверждена: "
+                "pager-page исчез после ожидания"
+            )
 
     for i in range(pages.count()):
         try:
