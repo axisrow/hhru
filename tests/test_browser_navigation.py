@@ -160,3 +160,7 @@ def test_has_auth_cookie_false_on_empty_cookies():
     page.context.cookies.return_value = []
 
     assert browser.has_auth_cookie(page) is False
+
+
+def test_browser_has_no_legacy_url_auth_checker():
+    assert not hasattr(browser, "is_logged_in")

@@ -57,7 +57,7 @@ def _valid_session(tmp_path):
     """Файл storage_state с куками — whoami считает сессию действительной."""
     p = tmp_path / "session.json"
     p.write_text(
-        json.dumps({"cookies": [{"name": "hhhrtoken", "value": "abc"}], "origins": []}),
+        json.dumps({"cookies": [{"name": "hhtoken", "value": "abc"}], "origins": []}),
         encoding="utf-8",
     )
     return p
@@ -97,6 +97,19 @@ def test_valid_session_prints_info_line(tmp_path, capsys):
 
 def test_missing_session_prints_fail_line(tmp_path, capsys):
     cfg = _write_config(tmp_path, _config_body(str(tmp_path / "nope.json")))
+    out = _run(_args(cfg, tmp_path / "h.db"), capsys)
+
+    assert "[FAIL]" in out
+    assert "Сессия действительна" not in out
+
+
+def test_session_without_hhtoken_prints_fail_line(tmp_path, capsys):
+    session = tmp_path / "session.json"
+    session.write_text(
+        json.dumps({"cookies": [{"name": "other", "value": "abc"}], "origins": []}),
+        encoding="utf-8",
+    )
+    cfg = _write_config(tmp_path, _config_body(str(session)))
     out = _run(_args(cfg, tmp_path / "h.db"), capsys)
 
     assert "[FAIL]" in out
