@@ -127,9 +127,8 @@ def test_fetch_responses_waits_for_delayed_cards(monkeypatch):
     assert responses.fetch_responses(page, max_pages=1) == [expected]
 
 
-def test_fetch_responses_timeout_is_not_empty(monkeypatch):
+def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):
     page = _ResponsesPage([])
     monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
 
-    with pytest.raises(responses.ResponsesIndeterminate, match="не подтверждён"):
-        responses.fetch_responses(page, max_pages=1)
+    assert responses.fetch_responses(page, max_pages=1) == []

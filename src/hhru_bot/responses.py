@@ -245,9 +245,9 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
     по UNIQUE (vacancy_id, topic)). Пагинация: до ``max_pages``, стоп только на
-    подтверждённой последней странице. Если DOM списка или пагинации не подтвердился за
-    bounded timeout, поднимает :class:`ResponsesIndeterminate`, а не выдаёт
-    неопределённость за пустой inbox/последнюю страницу.
+    подтверждённой последней странице. Неподтверждённая пагинация поднимает
+    :class:`ResponsesIndeterminate`, а не выдаёт неопределённость за последнюю
+    страницу.
 
     Read-only по hh.ru: только goto + чтение, никаких кликов действий.
 
@@ -256,9 +256,10 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
     а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
     отсутствие auth-cookie — если это обнаружено, поднимается NotAuthenticated (команда НЕ
     должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
-    затирать историю). Без верифицированного empty-state-селектора timeout не
-    отличим от устаревшего селектора, поэтому он поднимает
-    ResponsesIndeterminate, а не возвращает пустой результат.
+    затирать историю). Для списка negotiations пока нет проверенного
+    empty-state-селектора: timeout логируется и сохраняет исторический контракт
+    пустого inbox; fail-closed применяется к пагинации, где ложный конец теряет
+    уже прочитанные карточки.
     """
     results: list[ResponseItem] = []
 
@@ -275,25 +276,26 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             )
 
         # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём
-        # attached ограниченное время; timeout неотличим от устаревшего селектора
-        # или интерстишл-страницы и потому должен fail-closed.
+        # attached ограниченное время: так delayed-render карточки попадают в
+        # обход. У negotiations нет проверенного empty-state, поэтому timeout
+        # сохраняет совместимый контракт честно пустого inbox и логируется.
         try:
             page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
                 state="attached", timeout=RENDER_TIMEOUT_MS
             )
         except PlaywrightError:
-            raise ResponsesIndeterminate(
-                f"список ответов на странице {page_num} не подтверждён: "
-                f"карточки не появились за {RENDER_TIMEOUT_MS} мс"
-            ) from None
+            logger.warning(
+                "Страница %d: карточки переписки не появились за %d мс — "
+                "список пуст либо устарел селектор negotiations-item",
+                page_num,
+                RENDER_TIMEOUT_MS,
+            )
 
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()
         if count == 0:
-            raise ResponsesIndeterminate(
-                f"список ответов на странице {page_num} не подтверждён: "
-                "после ожидания контейнер карточек пуст"
-            )
+            logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
+            break
 
         for i in range(count):
             item = parse_response_card(cards.nth(i))
