@@ -13,8 +13,26 @@ format_healthcheck_table прогоняются на FakePage поверх HTML-
 
 from __future__ import annotations
 
+import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from _fakes import FakeLocator, _parse_root
 from hhru_bot.commands import probe as probe_cmd
+
+
+def _stub_goto_hh(monkeypatch, page):
+    """Подменяет probe_cmd.goto_hh на вызов page.goto (без retry/backoff).
+
+    check_selectors (#142) ходит через goto_hh, а не через сырой page.goto. В
+    тестах goto_hh не нужен (retry/backoff покрыты отдельным test_browser_navigation),
+    поэтому редиректим его обратно на _FakePage.goto, переключающий DOM.
+    """
+
+    def _goto(p, url, **kwargs):  # noqa: ANN001
+        p.goto(url, wait_until="domcontentloaded")
+
+    monkeypatch.setattr(probe_cmd, "goto_hh", _goto)
+    return page
 
 
 class _FakePage:
@@ -43,8 +61,8 @@ class _FakePage:
 # --- check_selectors: статус по count() ------------------------------------
 
 
-def test_check_selectors_ok_when_found():
-    page = _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>")
+def test_check_selectors_ok_when_found(monkeypatch):
+    page = _stub_goto_hh(monkeypatch, _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>"))
     spec = [
         ("search", "https://hh.ru/search/vacancy", [("CARD", "[data-qa='vacancy-serp__vacancy']")])
     ]
@@ -54,22 +72,22 @@ def test_check_selectors_ok_when_found():
     assert pages[0].results[0].status == "OK"
 
 
-def test_check_selectors_not_found_when_zero():
-    page = _FakePage("<div>нет нужного</div>")
+def test_check_selectors_not_found_when_zero(monkeypatch):
+    page = _stub_goto_hh(monkeypatch, _FakePage("<div>нет нужного</div>"))
     spec = [("search", "https://hh.ru/search/vacancy", [("MISS", "[data-qa='no-such-thing']")])]
     pages = probe_cmd.check_selectors(page, spec)
     assert pages[0].results[0].found == 0
     assert pages[0].results[0].status == "NOT_FOUND"
 
 
-def test_check_selectors_counts_multiple_matches():
+def test_check_selectors_counts_multiple_matches(monkeypatch):
     # Несколько карточек на странице поиска — found == числу, статус OK.
     html = (
         "<div data-qa='vacancy-serp__vacancy'>a</div>"
         "<div data-qa='vacancy-serp__vacancy'>b</div>"
         "<div data-qa='vacancy-serp__vacancy'>c</div>"
     )
-    page = _FakePage(html)
+    page = _stub_goto_hh(monkeypatch, _FakePage(html))
     spec = [
         ("search", "https://hh.ru/search/vacancy", [("CARD", "[data-qa='vacancy-serp__vacancy']")])
     ]
@@ -78,9 +96,9 @@ def test_check_selectors_counts_multiple_matches():
     assert pages[0].results[0].status == "OK"
 
 
-def test_check_selectors_visits_each_page_url():
+def test_check_selectors_visits_each_page_url(monkeypatch):
     # read-only прогон: каждая страница открывается goto, ДО проверки селекторов.
-    page = _FakePage("<div data-qa='vacancy-title'>t</div>")
+    page = _stub_goto_hh(monkeypatch, _FakePage("<div data-qa='vacancy-title'>t</div>"))
     spec = [
         ("search", "https://hh.ru/search/vacancy", [("CARD", "[data-qa='vacancy-serp__vacancy']")]),
         ("vacancy", "https://hh.ru/vacancy/1", [("TITLE", "[data-qa='vacancy-title']")]),
@@ -90,7 +108,7 @@ def test_check_selectors_visits_each_page_url():
     assert page.last_goto == "https://hh.ru/vacancy/1"
 
 
-def test_check_selectors_switches_dom_per_page_via_callback():
+def test_check_selectors_switches_dom_per_page_via_callback(monkeypatch):
     """В боевом прогоне DOM меняется после goto (живой hh.ru). Моделируем через
     page_loader: на каждую страницу подставляем её HTML, как сделал бы браузер."""
     html_by_page = {
@@ -101,7 +119,7 @@ def test_check_selectors_switches_dom_per_page_via_callback():
     def _load(p, url, name):  # noqa: ANN001
         p.set_content(html_by_page[name])
 
-    page = _FakePage()
+    page = _stub_goto_hh(monkeypatch, _FakePage())
     spec = [
         ("search", "https://hh.ru/search/vacancy", [("CARD", "[data-qa='vacancy-serp__vacancy']")]),
         (
@@ -118,13 +136,63 @@ def test_check_selectors_switches_dom_per_page_via_callback():
 def test_check_selectors_readonly_does_not_click_apply(monkeypatch):
     """Инвариант #88: никаких write-действий. Page не имеет click/fill/submit —
     если check_selectors попытается их вызвать, упадёт AttributeError."""
-    page = _FakePage("<div data-qa='vacancy-title'>t</div>")
+    page = _stub_goto_hh(monkeypatch, _FakePage("<div data-qa='vacancy-title'>t</div>"))
     spec = [("vacancy", "https://hh.ru/vacancy/1", [("TITLE", "[data-qa='vacancy-title']")])]
     # Если бы код кликал apply — потребовался бы click(). Его нет → чисто read-only.
     assert not hasattr(page, "click")
     assert not hasattr(page, "fill")
     pages = probe_cmd.check_selectors(page, spec)
     assert pages[0].results[0].status == "OK"
+
+
+def test_check_selectors_unreachable_page_not_treated_as_all_not_found(monkeypatch):
+    """#120/#142: goto_hh исчерпал retry и пробросил PlaywrightTimeoutError —
+    страница помечается unreachable, а НЕ «все селекторы NOT_FOUND».
+
+    Регрессионный тест из issue #142: при непрогрузившемся JS healthcheck должен
+    рапортовать «не проверено» (UNREACHABLE), а не честный, но вводящий в
+    заблуждение NOT_FOUND по всем селекторам — иначе провал выглядит как
+    «сломанные селекторы», хотя причина в сети/DDoS-Guard.
+    """
+    # goto_hh падает (имитация: hh.ru не отвечает даже после 3 попыток).
+    monkeypatch.setattr(
+        probe_cmd,
+        "goto_hh",
+        lambda p, url, **kw: (_ for _ in ()).throw(PlaywrightTimeoutError("network timeout")),
+    )
+    page = _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>")
+    spec = [
+        (
+            "search",
+            "https://hh.ru/search/vacancy",
+            [
+                ("CARD", "[data-qa='vacancy-serp__vacancy']", True),
+                ("TITLE", "[data-qa='vacancy-serp__vacancy-title']", True),
+            ],
+        )
+    ]
+    pages = probe_cmd.check_selectors(page, spec)
+    assert pages[0].unreachable is True
+    assert pages[0].results == []  # селекторы НЕ проверялись
+    # таблица рисует UNREACHABLE, а не NOT_FOUND по каждому селектору
+    out = probe_cmd.format_healthcheck_table(pages)
+    assert probe_cmd.STATUS_UNREACHABLE in out
+    assert "NOT_FOUND" not in out
+
+
+def test_check_selectors_unreachable_does_not_swallow_unrelated_exception(monkeypatch):
+    """#142: except сужен до (PlaywrightTimeoutError, PlaywrightError) — только то,
+    что рейзит goto_hh. Баг в коде (KeyError/AttributeError/...) НЕ должен
+    маскироваться под unreachable — он должен падать открыто (fail-loud)."""
+    monkeypatch.setattr(
+        probe_cmd,
+        "goto_hh",
+        lambda p, url, **kw: (_ for _ in ()).throw(RuntimeError("bug in code, not network")),
+    )
+    page = _FakePage()
+    spec = [("search", "https://hh.ru/search/vacancy", [("CARD", "[data-qa='x']")])]
+    with pytest.raises(RuntimeError, match="bug in code"):
+        probe_cmd.check_selectors(page, spec)
 
 
 # --- format_healthcheck_table ---------------------------------------------
@@ -196,11 +264,13 @@ def test_optional_selector_present_is_ok():
     assert sel.fails is False
 
 
-def test_check_selectors_marks_optional_via_spec_tuple():
+def test_check_selectors_marks_optional_via_spec_tuple(monkeypatch):
     """3-tuple в spec: (name, selector, required). required по умолчанию True
     (обратная совместимость с 2-tuple). Опциональный селектор с 0 совпадений не
     роняет страницу."""
-    page = _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>")  # нет compensation, нет pager
+    page = _stub_goto_hh(
+        monkeypatch, _FakePage("<div data-qa='vacancy-serp__vacancy'>x</div>")
+    )  # нет compensation, нет pager
     spec = [
         (
             "search",
