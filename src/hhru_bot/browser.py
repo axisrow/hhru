@@ -1,3 +1,10 @@
+"""Общие браузерные примитивы и инвариант подтверждённого состояния.
+
+Пустой результат браузерного пути нельзя выдавать за достоверный, если
+состояние страницы не удалось подтвердить: timeout, сетевой сбой, анти-бот или
+дрейф селектора требуют ошибки либо явной пометки неопределённости.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +19,22 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 logger = logging.getLogger("hhru_bot.browser")
 
 HH_BASE_URL = "https://hh.ru"
+
+# Общий словарь состояний браузерной страницы. Эти значения описывают
+# подтверждённость результата, а DTO сохраняют исторические bool-поля.
+PAGE_STATE = {
+    "confirmed": "confirmed",
+    "indeterminate": "indeterminate",
+    "unreachable": "unreachable",
+}
+
+
+class PageStateIndeterminate(RuntimeError):
+    """Состояние страницы не подтверждено.
+
+    Пустой результат нельзя выдавать за достоверный, если DOM не подтверждён
+    из-за timeout, сетевой ошибки, анти-бота или дрейфа селектора.
+    """
 
 # Потолок ожидания навигации по hh.ru. Дефолт Playwright 30с — hh.ru под
 # DDoS-Guard/нагрузкой грузится 33с+ (см. #80), и goto падает. Ставим

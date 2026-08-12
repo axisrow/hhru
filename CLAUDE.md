@@ -82,6 +82,14 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
    странице. `apply.py` кликает и ждёт `page.expect_navigation(...)`, и только потом ищет
    поля формы. Не переписывай на «клик → искать модалку сразу».
 
+5. **Пустой результат требует подтверждения состояния страницы.** Если браузерный
+   путь не смог подтвердить DOM из-за timeout, сетевой ошибки, анти-бота или дрейфа
+   селектора, он не должен выдавать пустой список за достоверный. Для общего
+   инварианта используется `browser.PageStateIndeterminate`; частные исключения
+   (`NotAuthenticated`, `ResumeListIndeterminate`) сохраняют свои имена и сообщения,
+   а флаговые результаты (`questions.indeterminate`, `probe.unreachable`) используют
+   тот же словарь состояний `browser.PAGE_STATE`.
+
 ### `selectors.py` — статус проверки селекторов (критично)
 
 Все CSS/`data-qa` селекторы hh.ru собраны в одном файле `selectors.py`; остальной код их
