@@ -153,7 +153,15 @@ class StubPage:
 
 
 def _patch_env(monkeypatch, page):
-    monkeypatch.setattr(cr, "goto_hh", lambda p, url, **kw: page.gotos.append(url))
+    # Захватываем kwargs (ready_selector), чтобы тест мог проверить, что goto_hh
+    # вызывается с ready_selector=RESUME_LIST_CARD (#142).
+    page.goto_kwargs = []
+
+    def _goto(p, url, **kw):
+        page.gotos.append(url)
+        page.goto_kwargs.append(kw)
+
+    monkeypatch.setattr(cr, "goto_hh", _goto)
     monkeypatch.setattr(
         cr, "_card_hashes", lambda p: page._card_hashes.pop(0) if page._card_hashes else set()
     )
@@ -166,6 +174,21 @@ def test_dry_run_does_not_click(monkeypatch):
     assert result.success
     assert page.clicks == []
     assert page.gotos == [cr.RESUMES_LIST_URL]
+
+
+def test_goto_hh_called_with_ready_selector(monkeypatch):
+    """#142: goto_hh открывает список резюме с ready_selector=RESUME_LIST_CARD —
+    готовность страницы проверяется в goto_hh, а не отдельным wait_for после.
+    Оба вызова (первичное открытие + fallback) должны передавать ready_selector."""
+    page = StubPage(
+        url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
+    )
+    _patch_env(monkeypatch, page)
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+    assert result.success
+    # fallback-путь: goto_hh вызван дважды — обе с ready_selector
+    assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
+    assert all(kw.get("ready_selector") == RESUME_LIST_CARD for kw in page.goto_kwargs)
 
 
 def test_card_not_found_fails_closed(monkeypatch):

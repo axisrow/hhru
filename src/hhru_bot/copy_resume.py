@@ -136,27 +136,47 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
     return cards
 
 
+def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
+    """Идиома ``count → wait_for → count`` для строгого (strict-mode) Playwright.
+
+    Возвращает итоговое число совпадений, либо ``-1`` (элемент не появился за
+    ``timeout_ms`` — PlaywrightTimeoutError). Контракт callsite: ``1`` — ок,
+    ``0``-после-wait или ``-1`` — не найдено, ``>1`` — неоднозначно (fail-closed).
+
+    Зачем ``count()`` ДО ``wait_for``: Playwright-локаторы строгие — ``wait_for()``
+    на локаторе с >1 совпадением кидает ``playwright.sync_api.Error`` ("strict mode
+    violation"), НЕ ``TimeoutError``. Проверка ``count() != 1`` первой ловит
+    неоднозначность предсказуемо (fail-closed), а не улетает необработанным
+    исключением мимо ``cli.main`` (там ловится только ``KeyboardInterrupt``).
+
+    #142: идиома повторялась дважды (карточка резюме + кнопка «Дублировать»),
+    вынесена сюда, чтобы правки strict-mode-логики были в одном месте.
+    """
+    match_count = locator.count()
+    if match_count == 0:
+        try:
+            locator.wait_for(timeout=timeout_ms)
+            match_count = locator.count()
+        except PlaywrightTimeoutError:
+            return -1
+    return match_count
+
+
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-    goto_hh(page, RESUMES_LIST_URL)
+    # ready_selector=RESUME_LIST_CARD: ждём появления хотя бы одной карточки резюме
+    # (#142 — раньше готовность проверялась неявно, через wait_for конкретной
+    # карточки ниже). Это не заменяет ожидание конкретного resume_id ниже — там
+    # нужна именно карточка нужного резюме, а тут сигнал «список отрендерен».
+    goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
     card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
-    # count() ДО wait_for/click намеренно: Playwright-локаторы строгие — wait_for()
-    # на локаторе с >1 совпадением кидает playwright.sync_api.Error ("strict mode
-    # violation"), НЕ TimeoutError. Ветка card_locator.count() != 1 ниже проверяет
-    # это первой, чтобы неоднозначность ловилась предсказуемо (fail-closed), а не
-    # улетала необработанным исключением мимо cli.main (там ловится только
-    # KeyboardInterrupt).
-    match_count = card_locator.count()
-    if match_count == 0:
-        try:
-            card_locator.wait_for(timeout=COPY_TIMEOUT_MS)
-            match_count = card_locator.count()
-        except PlaywrightTimeoutError:
-            return CopyResumeResult(
-                resume.id, False, reason=f"резюме {resume.resume_id} не найдено в списке резюме"
-            )
+    match_count = _wait_single_match_count(card_locator, timeout_ms=COPY_TIMEOUT_MS)
+    if match_count == -1:
+        return CopyResumeResult(
+            resume.id, False, reason=f"резюме {resume.resume_id} не найдено в списке резюме"
+        )
     if match_count != 1:
         return CopyResumeResult(
             resume.id,
@@ -178,20 +198,16 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     # Скоупим ПОД card, не под page: RESUME_DUPLICATE_INLINE — инлайн-кнопка на
     # каждой карточке, и при нескольких резюме на странице page.locator(...).first
     # взял бы первую в DOM-порядке, а не кнопку открытой карточки — риск скопировать
-    # чужое резюме. То же строгое count()-до-wait_for, что и для card_locator выше.
+    # чужое резюме. То же строгое count()-до-wait_for через _wait_single_match_count.
     duplicate_locator = card.locator(f"{RESUME_DUPLICATE_MENU_ITEM}, {RESUME_DUPLICATE_INLINE}")
-    dup_count = duplicate_locator.count()
-    if dup_count == 0:
-        try:
-            duplicate_locator.wait_for(timeout=COPY_TIMEOUT_MS)
-            dup_count = duplicate_locator.count()
-        except PlaywrightTimeoutError:
-            return CopyResumeResult(
-                resume.id,
-                False,
-                reason="кнопка «Дублировать» не найдена: либо достигнут лимит резюме hh.ru "
-                "(кнопка при этом не рендерится), либо селектор устарел",
-            )
+    dup_count = _wait_single_match_count(duplicate_locator, timeout_ms=COPY_TIMEOUT_MS)
+    if dup_count == -1:
+        return CopyResumeResult(
+            resume.id,
+            False,
+            reason="кнопка «Дублировать» не найдена: либо достигнут лимит резюме hh.ru "
+            "(кнопка при этом не рендерится), либо селектор устарел",
+        )
     if dup_count != 1:
         return CopyResumeResult(
             resume.id,
@@ -214,7 +230,9 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        goto_hh(page, RESUMES_LIST_URL)
+        # Тот же ready_selector, что при первом открытии (#142): симметрия — список
+        # гарантированно отрендерен до _card_hashes ниже.
+        goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
         created = _card_hashes(page) - before
         if len(created) != 1:
             return CopyResumeResult(

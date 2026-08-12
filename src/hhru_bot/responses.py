@@ -276,10 +276,18 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
             )
 
-        # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём
-        # attached ограниченное время: так delayed-render карточки попадают в
-        # обход. У negotiations нет проверенного empty-state, поэтому timeout
-        # сохраняет совместимый контракт честно пустого inbox и логируется.
+        # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём attached
+        # ограниченное время: так delayed-render карточки попадают в обход. У
+        # negotiations нет проверенного empty-state, поэтому timeout сохраняет
+        # совместимый контракт честно пустого inbox и логируется.
+        #
+        # #142: почему НЕ ready_selector в goto_hh выше — тут нужна ДРУГАЯ семантика,
+        # чем у goto_hh(ready_selector=...): (1) state="attached" (наличие в DOM, а не
+        # visible — карточка может быть ниже сгиба); (2) короткий RENDER_TIMEOUT_MS
+        # (10с, не 90с GOTO_TIMEOUT_MS — пустой inbox должен детектиться быстро);
+        # (3) таймаут НЕ фатален — warning + трактуем как empty, тогда как goto_hh
+        # с ready_selector рейзит (что для healthcheck/apply верно, а для read-only
+        # сбора ответов уронило бы всю команду на genuinely-пустом ящике).
         try:
             page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
                 state="attached", timeout=RENDER_TIMEOUT_MS

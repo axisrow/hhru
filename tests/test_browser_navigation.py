@@ -164,3 +164,41 @@ def test_has_auth_cookie_false_on_empty_cookies():
 
 def test_browser_has_no_legacy_url_auth_checker():
     assert not hasattr(browser, "is_logged_in")
+
+
+def test_goto_hh_waits_for_ready_selector(monkeypatch):
+    """#142: ready_selector — после удачного goto ждём data-qa маркер страницы.
+
+    Параметр существовал с #80, но ни один caller его не передавал (мёртвый).
+    Гарантируем, что goto_hh(url, ready_selector=sel) вызывает
+    page.locator(sel).wait_for(timeout=GOTO_TIMEOUT_MS) после goto.
+    """
+    monkeypatch.setattr(browser.time, "sleep", lambda _: None)
+    page = MagicMock(name="Page")
+    page.goto.return_value = None
+
+    goto_hh(page, "https://hh.ru/applicant/resumes", ready_selector="[data-qa='resume']")
+
+    page.locator.assert_called_once_with("[data-qa='resume']")
+    page.locator.return_value.wait_for.assert_called_once_with(timeout=GOTO_TIMEOUT_MS)
+
+
+def test_goto_hh_ready_selector_absent_retries_then_raises(monkeypatch):
+    """#142: ready_selector не появился → wait_for кидает TimeoutError → retry+raise.
+
+    goto_hh должен трактовать таймаут ready_selector так же, как таймаут самого
+    goto: retry до _GOTO_MAX_ATTEMPTS, на последней — проброс. Иначе caller,
+    передавший ready_selector, получил бы «успешный» goto на непрогрузившейся
+    странице.
+    """
+    monkeypatch.setattr(browser.time, "sleep", lambda _: None)
+    page = MagicMock(name="Page")
+    page.goto.return_value = None
+    # ready_selector не появляется ни на одной попытке
+    page.locator.return_value.wait_for.side_effect = PlaywrightTimeoutError("no marker")
+
+    with pytest.raises(PlaywrightTimeoutError):
+        goto_hh(page, "https://hh.ru/applicant/resumes", ready_selector="[data-qa='resume']")
+
+    # retry сработал: 3 goto-попытки (ready_selector проверяется после каждой)
+    assert page.goto.call_count == 3

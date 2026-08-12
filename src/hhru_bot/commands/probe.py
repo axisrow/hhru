@@ -27,6 +27,10 @@ import re
 import sys
 from dataclasses import dataclass, field
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+from ..browser import goto_hh
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -129,23 +133,26 @@ def check_selectors(page, spec, page_loader=None):
 
     ``spec`` — список ``(page_name, url, [(name, selector, required?), ...])``.
     ``required`` опционален (по умолчанию True — обратная совместимость с 2-tuple
-    ``(name, selector)``). Для каждой страницы: открыть (``page.goto``) и для
-    каждого селектора взять ``page.locator(selector).count()`` → SelectorCheck.
-    Ничего не кликает и не отправляет — это главный инвариант #88 (read-only).
+    ``(name, selector)``). Для каждой страницы: открыть через ``goto_hh`` (с retry
+    и backoff, как у всех путей hh.ru) и для каждого селектора взять
+    ``page.locator(selector).count()`` → SelectorCheck. Ничего не кликает и не
+    отправляет — это главный инвариант #88 (read-only).
 
     ``page_loader(page, url, name)`` — опциональный хук, вызываемый ПОСЛЕ goto:
     в боевом прогоне не нужен (DOM рендерит живой hh.ru), а в тестах через него
     подменяют HTML фикстурой (имитация «браузер загрузил страницу»).
+
+    #120: недоступность страницы — это РЕЗУЛЬТАТ проверки, а не авария.
+    ``goto_hh`` исчерпал retry (до 3 попыток) и пробросил PlaywrightTimeoutError/
+    PlaywrightError — отмечаем страницу ``unreachable`` и идём дальше, таблица
+    печатается всегда. Ловим именно эти два класса: ``goto_hh`` рейзит их, а
+    широкий ``except Exception`` прятал бы баги в самом коде.
     """
     pages: list[PageCheck] = []
     for name, url, selectors in spec:
         try:
-            page.goto(url, wait_until="domcontentloaded")
-        except Exception as exc:
-            # #120: недоступность страницы — это РЕЗУЛЬТАТ проверки, а не авария.
-            # Раньше таймаут goto ронял всю команду трейсбеком Playwright, и
-            # статусы остальных страниц не проверялись вовсе. Отмечаем страницу
-            # как недоступную и идём дальше — таблица печатается всегда.
+            goto_hh(page, url)
+        except (PlaywrightTimeoutError, PlaywrightError) as exc:
             logger.warning("healthcheck: страница '%s' недоступна (%s): %s", name, url, exc)
             pages.append(PageCheck(name=name, url=url, results=[], unreachable=True))
             continue
@@ -301,9 +308,11 @@ def run_healthcheck(args: argparse.Namespace) -> None:
     print("[INFO] healthcheck: read-only проверка селекторов hh.ru (без отклика)")
     with launch_context(config.storage_state_file, headless=args.headless) as context:
         page = context.new_page()
-        # #80: страницы hh.ru могут грузиться медленно — поднимаем навигационный
-        # timeout, чтобы healthcheck не падал по таймауту на медленном соединении.
-        page.set_default_navigation_timeout(60000)
+        # Навигационный потолок уже выставлен context-wide в launch_context
+        # (set_default_navigation_timeout(GOTO_TIMEOUT_MS), см. browser.py) — тот же
+        # источник, что у всех путей hh.ru. Раньше тут был хардкод 60000 (меньше
+        # GOTO_TIMEOUT_MS=90_000) — #142: убран, чтобы healthcheck не падал быстрее
+        # остального кода на медленном hh.ru.
         pages = check_selectors(page, spec)
 
     print(format_healthcheck_table(pages))
