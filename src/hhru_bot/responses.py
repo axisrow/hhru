@@ -278,8 +278,9 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
         # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём attached
         # ограниченное время: так delayed-render карточки попадают в обход. У
-        # negotiations нет проверенного empty-state, поэтому timeout сохраняет
-        # совместимый контракт честно пустого inbox и логируется.
+        # negotiations нет проверенного empty-state, поэтому на первой странице
+        # timeout сохраняет совместимый контракт честно пустого inbox; на
+        # подтверждённой последующей странице он означает indeterminate.
         #
         # #142: почему НЕ ready_selector в goto_hh выше — тут нужна ДРУГАЯ семантика,
         # чем у goto_hh(ready_selector=...): (1) state="attached" (наличие в DOM, а не
