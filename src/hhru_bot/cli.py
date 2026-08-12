@@ -77,7 +77,9 @@ def main(argv: list[str] | None = None) -> None:
         setup_logging(verbose=args.verbose)
 
     try:
-        args.func(args)
+        failed = args.func(args)
+        if failed:
+            sys.exit(1)
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(130)

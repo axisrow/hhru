@@ -19,7 +19,7 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> bool:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
@@ -30,9 +30,11 @@ def run(args: argparse.Namespace) -> None:
     resumes = resumes_from_args(config, args)
     throttle = Throttle(config.throttle, history)
 
+    failed = False
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
         for resume in resumes:
-            run_apply_for_resume(page, config, resume, history, throttle, args)
+            failed = run_apply_for_resume(page, config, resume, history, throttle, args) or failed
+    return failed

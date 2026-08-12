@@ -86,7 +86,7 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> bool:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..search import (
@@ -100,6 +100,7 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
     resumes = resumes_from_args(config, args)
 
+    failed = False
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
@@ -113,6 +114,7 @@ def run(args: argparse.Namespace) -> None:
                 # диагностический отказ за traceback. Следующее резюме можно
                 # обработать независимо.
                 print(f"[FAIL] {e}")
+                failed = True
                 continue
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
@@ -136,3 +138,4 @@ def run(args: argparse.Namespace) -> None:
                 print(f"  [candidate] score={score:+.2f} {_format_card_line(c)}{detail}")
             for card, reason in skipped:
                 print(f"  [skip] {_format_card_line(card)} — {reason}")
+    return failed

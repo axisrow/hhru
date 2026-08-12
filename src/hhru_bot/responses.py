@@ -288,11 +288,13 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         # (3) таймаут НЕ фатален — warning + трактуем как empty, тогда как goto_hh
         # с ready_selector рейзит (что для healthcheck/apply верно, а для read-only
         # сбора ответов уронило бы всю команду на genuinely-пустом ящике).
+        cards_rendered = True
         try:
             page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
                 state="attached", timeout=RENDER_TIMEOUT_MS
             )
         except PlaywrightError:
+            cards_rendered = False
             logger.warning(
                 "Страница %d: карточки переписки не появились за %d мс — "
                 "список пуст либо устарел селектор negotiations-item",
@@ -303,6 +305,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()
         if count == 0:
+            if page_num > 0 and not cards_rendered:
+                raise ResponsesIndeterminate(
+                    f"страницы {page_num} не подтверждена: карточки переписки "
+                    f"не появились за {RENDER_TIMEOUT_MS} мс после подтверждённой пагинации"
+                )
             logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
             break
 

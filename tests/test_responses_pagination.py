@@ -150,3 +150,27 @@ def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):
     monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
 
     assert responses.fetch_responses(page, max_pages=1) == []
+
+
+def test_fetch_responses_timeout_on_confirmed_later_page_is_indeterminate(monkeypatch):
+    """A confirmed next page must not be silently treated as an empty page."""
+    page = _ResponsesPage([])
+    visits = 0
+
+    def goto(_page, _url):
+        nonlocal visits
+        visits += 1
+        if visits == 2:
+            page.cards.cards = []
+
+    monkeypatch.setattr(responses, "goto_hh", goto)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "_has_next_page", lambda _page, page_num: page_num == 0)
+
+    # The first page contains a card and confirms that page 1 exists.  The
+    # second page then times out before any card is attached.
+    page.cards.cards = [object()]
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: None)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="страницы 1"):
+        responses.fetch_responses(page, max_pages=2)

@@ -226,7 +226,7 @@ def run_apply_for_resume(
     history: History,
     throttle: Throttle,
     args: argparse.Namespace,
-) -> None:
+) -> bool:
     """Цикл откликов по одному резюме (search → filter → apply с троттлингом).
 
     Перенесено дословно из cli._apply_for_resume. Принципы CLAUDE.md сохранены:
@@ -247,7 +247,7 @@ def run_apply_for_resume(
         throttle.check_apply_limit(resume.resume_id, args.dry_run)
     except LimitReached as e:
         print(f"Пропуск: {e}")
-        return
+        return False
 
     try:
         cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
@@ -255,7 +255,7 @@ def run_apply_for_resume(
         # Один сбой рендера не должен скрыться как пустой apply-план или
         # остановить обработку остальных резюме в команде apply/run.
         print(f"[FAIL] {e}")
-        return
+        return True
     scoring_provider = _build_scoring_provider(config, resume)
     plan = build_apply_plan(
         cards,
@@ -316,3 +316,4 @@ def run_apply_for_resume(
         throttle.wait(f"после отклика на '{card.title}'")
 
     print(f"Итого откликов за этот запуск: {applied_count}")
+    return False
