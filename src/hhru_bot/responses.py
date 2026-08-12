@@ -31,6 +31,14 @@ logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
 
+# Confirmed by an anonymous curl dump of https://hh.ru/account/login on
+# 2026-08-12.  Do not use the URL: a valid session can retain an account/login
+# URL after navigation (the regression covered by #140/#145).  The server-side
+# login page contains this form marker, while an authenticated negotiations page
+# does not.  This is intentionally a positive signal only: its absence does
+# not prove authentication when the page is still rendering or selectors drift.
+LOGIN_FORM = "[data-qa='account-login-form']"
+
 # Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
 # рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
 # устаревшим (см. fetch_responses). Не бесконечно, чтобы обход не зависал.
@@ -254,10 +262,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
     Защита от ложного «пустого inbox»: страница рендерится JS, поэтому после
     DOMContentLoaded ждём bounded таймаут появления карточки (RENDER_TIMEOUT_MS),
-    а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
-    отсутствие auth-cookie — если это обнаружено, поднимается NotAuthenticated (команда НЕ
-    должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
-    затирать историю). Для списка negotiations пока нет проверенного
+    а не считаем count() сразу. Истёкшая сессия hh.ru может оставить hhtoken в
+    cookie jar, поэтому после навигации дополнительно проверяем подтверждённый
+    DOM-маркер серверной формы входа. Если он обнаружен, поднимается
+    NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
+    «нет новых ответов» и НЕ должна затирать историю). Для списка negotiations пока нет проверенного
     empty-state-селектора: timeout логируется и сохраняет исторический контракт
     пустого inbox; fail-closed применяется к пагинации, где ложный конец теряет
     уже прочитанные карточки.
@@ -274,6 +283,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         if not has_auth_cookie(page):
             raise NotAuthenticated(
                 "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
+            )
+
+        # A stale/revoked hhtoken can remain in the jar.  The login form is a
+        # server-rendered positive indication that hh.ru rejected the session;
+        # URL checks are deliberately excluded because they rejected valid
+        # sessions in #140/#145.
+        if page.locator(LOGIN_FORM).count() > 0:
+            raise NotAuthenticated(
+                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
+                "сервером (запустите `login`, затем повторите)"
             )
 
         # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём attached

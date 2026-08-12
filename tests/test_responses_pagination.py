@@ -78,6 +78,8 @@ class _ResponsesPage:
         self.cards = _DelayedCardsLocator(cards, delayed_cards)
 
     def locator(self, selector: str):
+        if selector == responses.LOGIN_FORM:
+            return _Locator([])
         assert selector == ns.NEGOTIATION_ITEM
         return self.cards
 

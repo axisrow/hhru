@@ -52,6 +52,27 @@ def test_fetch_responses_rejects_missing_auth_cookie_without_url_check(monkeypat
         responses.fetch_responses(page, max_pages=1)
 
 
+def test_fetch_responses_rejects_login_form_with_stale_auth_cookie(monkeypatch):
+    """A server-rendered login form beats a cookie left in the browser jar."""
+    from unittest.mock import MagicMock
+
+    from hhru_bot import responses
+
+    page = MagicMock()
+    page.context.cookies.return_value = [{"name": "hhtoken", "value": "stale"}]
+    monkeypatch.setattr(responses, "goto_hh", MagicMock())
+
+    def locator(selector):
+        result = MagicMock()
+        result.count.return_value = int(selector == responses.LOGIN_FORM)
+        return result
+
+    page.locator.side_effect = locator
+
+    with pytest.raises(responses.NotAuthenticated, match="форму входа"):
+        responses.fetch_responses(page, max_pages=1)
+
+
 # --- normalize_status (чистая функция) --------------------------------------
 
 
