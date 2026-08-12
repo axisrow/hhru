@@ -24,20 +24,12 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie
+from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 from .selector_groups import negotiations as ns
 
 logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
-
-# Confirmed by an anonymous curl dump of https://hh.ru/account/login on
-# 2026-08-12.  Do not use the URL: a valid session can retain an account/login
-# URL after navigation (the regression covered by #140/#145).  The server-side
-# login page contains this form marker, while an authenticated negotiations page
-# does not.  This is intentionally a positive signal only: its absence does
-# not prove authentication when the page is still rendering or selectors drift.
-LOGIN_FORM = "[data-qa='account-login-form']"
 
 # Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
 # рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
@@ -289,7 +281,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         # server-rendered positive indication that hh.ru rejected the session;
         # URL checks are deliberately excluded because they rejected valid
         # sessions in #140/#145.
-        if page.locator(LOGIN_FORM).count() > 0:
+        if has_login_form(page):
             raise NotAuthenticated(
                 "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
                 "сервером (запустите `login`, затем повторите)"

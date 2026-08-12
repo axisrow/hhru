@@ -248,6 +248,21 @@ def test_remote_invalid_session_prints_fail_and_does_not_launch_browser(
     assert "login" in out
 
 
+class _FakeLocator:
+    def __init__(self, count: int = 0):
+        self._count = count
+
+    def count(self):
+        return self._count
+
+
+class _FakePage:
+    """Заглушка Page: только .locator(), нужный has_login_form (#147)."""
+
+    def locator(self, selector):
+        return _FakeLocator(0)
+
+
 class _FakeContext:
     def __enter__(self):
         return self
@@ -256,7 +271,7 @@ class _FakeContext:
         return False
 
     def new_page(self):
-        return object()
+        return _FakePage()
 
 
 def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch):
@@ -272,6 +287,7 @@ def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch)
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
 
     list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
@@ -332,6 +348,7 @@ def test_remote_unconfirmed_title_selector_warns_when_all_titles_empty(
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
 
     list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
@@ -359,12 +376,40 @@ def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monk
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_indeterminate)
 
     list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
 
     out = capsys.readouterr().out
     assert "[FAIL]" in out
+    assert "не найдено" not in out
+
+
+def test_remote_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
+    """#147: hhtoken присутствует в jar, но сервер отдал форму входа — сессия
+    отвергнута сервером, а не подтверждена одной лишь cookie."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    def _boom_list_cards(page):
+        raise AssertionError("list_resume_cards не должен вызываться после провала has_login_form")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "форму входа" in out
     assert "не найдено" not in out
 
 

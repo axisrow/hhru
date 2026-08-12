@@ -62,9 +62,11 @@ def test_fetch_responses_rejects_login_form_with_stale_auth_cookie(monkeypatch):
     page.context.cookies.return_value = [{"name": "hhtoken", "value": "stale"}]
     monkeypatch.setattr(responses, "goto_hh", MagicMock())
 
+    from hhru_bot.browser import LOGIN_FORM
+
     def locator(selector):
         result = MagicMock()
-        result.count.return_value = int(selector == responses.LOGIN_FORM)
+        result.count.return_value = int(selector == LOGIN_FORM)
         return result
 
     page.locator.side_effect = locator
