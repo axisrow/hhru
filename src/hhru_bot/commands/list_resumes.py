@@ -31,6 +31,13 @@ JSON с cookies), НЕ факт актуальной авторизации на
 auth.py:59-61: hh.ru может оставить путь входа в редиректе даже при
 успешном входе).
 
+Cookie в jar не гарантирует, что сервер принял её на текущей странице
+(issue #147: истёкший/отозванный ``hhtoken`` может остаться в jar без
+явного ``Set-Cookie`` на очистку) — ``browser.has_login_form(page)``
+дополнительно проверяет подтверждённый DOM-маркер серверной формы входа
+(``[data-qa='account-login-form']``); её наличие при present-cookie тоже
+трактуется как «сессия недействительна», а не как «резюме не найдено».
+
 Заголовок резюме (``RESUME_LIST_CARD_TITLE``) — селектор НЕ подтверждён живым
 дампом (см. selector_groups/resume_list.py). Если он не совпал ни для одной
 карточки, при этом карточки есть, — печатается предупреждение о ненадёжности
@@ -141,8 +148,8 @@ def run(args: argparse.Namespace) -> None:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
 
-    from ..browser import has_auth_cookie, launch_context
-    from ..copy_resume import ResumeListIndeterminate, list_resume_cards
+    from ..browser import goto_hh, has_auth_cookie, has_login_form, launch_context
+    from ..copy_resume import RESUMES_LIST_URL, ResumeListIndeterminate, list_resume_cards
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -157,8 +164,25 @@ def run(args: argparse.Namespace) -> None:
         if not has_auth_cookie(page):
             print("[FAIL] Сессия недействительна (cookie hhtoken не найден). Выполните login.")
             return
+        # #147 (Codex adversarial review, PR #152): has_login_form читает DOM
+        # текущей страницы — на свежей странице context.new_page() (ещё без
+        # навигации) это всегда 0 совпадений, что сделало бы проверку фиктивной
+        # независимо от реального состояния сессии. Поэтому переходим на
+        # RESUMES_LIST_URL здесь, ДО проверки, и list_resume_cards ниже вызывается
+        # с navigate=False, чтобы не переходить туда же повторно.
+        goto_hh(page, RESUMES_LIST_URL)
+        # устаревший/отозванный hhtoken может остаться в jar без явного
+        # Set-Cookie на очистку — cookie сама по себе не подтверждает, что
+        # сервер принял сессию на текущей странице. Форма входа — подтверждённый
+        # позитивный DOM-маркер отказа сервера (см. browser.has_login_form).
+        if has_login_form(page):
+            print(
+                "[FAIL] Сессия недействительна (страница содержит форму входа "
+                "при наличии hhtoken). Выполните login."
+            )
+            return
         try:
-            cards = list_resume_cards(page)
+            cards = list_resume_cards(page, navigate=False)
         except ResumeListIndeterminate as e:
             # Timeout/интерстишл/дрейф селектора — не подтверждённо пустой
             # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py).

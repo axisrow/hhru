@@ -212,3 +212,18 @@ def test_timeout_raises_indeterminate_not_empty_list(monkeypatch):
 
     with pytest.raises(cr.ResumeListIndeterminate):
         cr.list_resume_cards(page)
+
+
+def test_navigate_false_skips_goto(monkeypatch):
+    """#147 (Codex adversarial review, PR #152): list_resumes.py --remote должен
+    сам перейти на RESUMES_LIST_URL ДО browser.has_login_form(page) — иначе эта
+    проверка читает DOM ещё не навигированной страницы и всегда возвращает False
+    независимо от реального состояния сессии. navigate=False позволяет вызывающему
+    коду сделать goto самостоятельно и не переходить туда же повторно здесь."""
+    page = StubPage([StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page, navigate=False)
+
+    assert len(cards) == 1
+    assert page.gotos == []  # goto_hh НЕ вызван — вызывающий уже перешёл сам

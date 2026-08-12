@@ -77,7 +77,7 @@ def _card_hashes(page: Page) -> set[str]:
     return hashes
 
 
-def list_resume_cards(page: Page) -> list[ResumeCard]:
+def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
     """Список резюме аккаунта с /applicant/resumes: хэш + название + URL (#135).
 
     READ-only: только goto + чтение DOM, ничего не кликается и не отправляется.
@@ -86,6 +86,14 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
     page.locator(...).first взял бы первую в DOM-порядке при нескольких резюме).
     RESUME_LIST_CARD_TITLE не подтверждён живым дампом — его отсутствие даёт
     title="", а не исключение.
+
+    ``navigate=False`` (#147, Codex adversarial review PR #152): пропустить
+    собственный goto, если вызывающий код уже перешёл на RESUMES_LIST_URL сам —
+    нужно, когда между открытием страницы и чтением карточек есть DOM-проверка
+    (list_resumes.py --remote зовёт browser.has_login_form(page) до этой функции;
+    на ещё не навигированной странице такая проверка была бы фиктивной — всегда
+    0 совпадений независимо от реального состояния сессии). По умолчанию True —
+    поведение не меняется для остальных вызывающих/тестов.
 
     Playwright ``Locator.all()`` резолвит элементы, присутствующие ПРЯМО СЕЙЧАС,
     и не ждёт их появления — в отличие от copy_resume_on_hh, которая после
@@ -101,8 +109,9 @@ def list_resume_cards(page: Page) -> list[ResumeCard]:
     дрейфа селектора здесь нельзя, поэтому функция не молчит и не выдаёт
     пустой список за факт — поднимает исключение.
     """
-    logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-    goto_hh(page, RESUMES_LIST_URL)
+    if navigate:
+        logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
+        goto_hh(page, RESUMES_LIST_URL)
 
     cards_locator = page.locator(RESUME_LIST_CARD)
     if cards_locator.count() == 0:

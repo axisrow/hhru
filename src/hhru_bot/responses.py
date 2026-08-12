@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie
+from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 from .selector_groups import negotiations as ns
 
 logger = logging.getLogger("hhru_bot.responses")
@@ -254,10 +254,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
     Защита от ложного «пустого inbox»: страница рендерится JS, поэтому после
     DOMContentLoaded ждём bounded таймаут появления карточки (RENDER_TIMEOUT_MS),
-    а не считаем count() сразу. Истёкшая сессия hh.ru молча редиректит на
-    отсутствие auth-cookie — если это обнаружено, поднимается NotAuthenticated (команда НЕ
-    должна трактовать такой пустой результат как «нет новых ответов» и НЕ должна
-    затирать историю). Для списка negotiations пока нет проверенного
+    а не считаем count() сразу. Истёкшая сессия hh.ru может оставить hhtoken в
+    cookie jar, поэтому после навигации дополнительно проверяем подтверждённый
+    DOM-маркер серверной формы входа. Если он обнаружен, поднимается
+    NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
+    «нет новых ответов» и НЕ должна затирать историю). Для списка negotiations пока нет проверенного
     empty-state-селектора: timeout логируется и сохраняет исторический контракт
     пустого inbox; fail-closed применяется к пагинации, где ложный конец теряет
     уже прочитанные карточки.
@@ -274,6 +275,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         if not has_auth_cookie(page):
             raise NotAuthenticated(
                 "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
+            )
+
+        # A stale/revoked hhtoken can remain in the jar.  The login form is a
+        # server-rendered positive indication that hh.ru rejected the session;
+        # URL checks are deliberately excluded because they rejected valid
+        # sessions in #140/#145.
+        if has_login_form(page):
+            raise NotAuthenticated(
+                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
+                "сервером (запустите `login`, затем повторите)"
             )
 
         # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём attached
