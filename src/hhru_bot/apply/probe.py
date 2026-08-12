@@ -27,7 +27,7 @@ from typing import Any
 
 from playwright.sync_api import Page
 
-from ..browser import goto_hh
+from ..browser import PAGE_STATE, goto_hh
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..selector_groups import apply_form
@@ -168,7 +168,7 @@ def probe_vacancy(
     # но помечаем отдельно в логе для диагностики (не подтверждённый has_questions).
     questions = detect_questions(page)
     if questions.has_questions:
-        marker = "[WARN indeterminate]" if questions.indeterminate else "[INFO]"
+        marker = f"[WARN {PAGE_STATE['indeterminate']}]" if questions.indeterminate else "[INFO]"
         logger.info("%s %s — %s", marker, vacancy.title, questions.reason)
         return ProbeResult(vacancy, success=False, reason=questions.reason, skipped=True)
 

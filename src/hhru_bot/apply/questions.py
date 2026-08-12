@@ -35,6 +35,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from ..browser import PAGE_STATE
 from ..selector_groups import apply_form
 
 # Heuristic-селекторы (НЕ data-qa, поэтому живут здесь, а не в selector_groups):
@@ -74,6 +75,11 @@ class QuestionDetection:
     has_questions: bool
     reason: str = ""
     indeterminate: bool = False
+
+    @property
+    def page_state(self) -> str:
+        """Общее состояние страницы без изменения старого bool-контракта."""
+        return PAGE_STATE["indeterminate"] if self.indeterminate else PAGE_STATE["confirmed"]
 
     @classmethod
     def no(cls) -> QuestionDetection:

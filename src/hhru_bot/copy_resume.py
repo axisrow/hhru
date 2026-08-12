@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh
 from .config import ResumeConfig
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
@@ -55,7 +55,7 @@ class ResumeCard:
     url: str
 
 
-class ResumeListIndeterminate(Exception):
+class ResumeListIndeterminate(PageStateIndeterminate):
     """Не удалось подтвердить состояние /applicant/resumes (#135, Codex review).
 
     Ни одна карточка не появилась за COPY_TIMEOUT_MS после навигации. Без

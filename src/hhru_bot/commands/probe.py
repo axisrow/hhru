@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from ..browser import goto_hh
+from ..browser import PAGE_STATE, goto_hh
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -83,7 +83,7 @@ STATUS_OK = "OK"
 STATUS_NOT_FOUND = "NOT_FOUND"
 STATUS_OPTIONAL_ABSENT = "OPTIONAL_ABSENT"
 # #120: страница не открылась (таймаут/сеть) — селекторы не проверялись.
-STATUS_UNREACHABLE = "UNREACHABLE"
+STATUS_UNREACHABLE = PAGE_STATE["unreachable"].upper()
 
 
 @dataclass
@@ -126,6 +126,11 @@ class PageCheck:
     # #120: страница не открылась (таймаут/сетевая ошибка). Селекторы не
     # проверялись — это не «все NOT_FOUND», а «проверка не состоялась».
     unreachable: bool = False
+
+    @property
+    def page_state(self) -> str:
+        """Общее состояние страницы без изменения старого bool-контракта."""
+        return PAGE_STATE["unreachable"] if self.unreachable else PAGE_STATE["confirmed"]
 
 
 def check_selectors(page, spec, page_loader=None):
@@ -193,7 +198,7 @@ def format_healthcheck_table(pages: list[PageCheck]) -> str:
 
     rows: list[list[str]] = []
     for pg in pages:
-        if pg.unreachable:
+        if pg.page_state == PAGE_STATE["unreachable"]:
             # #120: страница не открылась — одна строка вместо списка селекторов,
             # чтобы не выдавать «не проверено» за «не найдено».
             rows.append([pg.name, "-", STATUS_UNREACHABLE, "-"])

@@ -24,7 +24,13 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    PageStateIndeterminate,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+)
 from .selector_groups import negotiations as ns
 
 logger = logging.getLogger("hhru_bot.responses")
@@ -37,7 +43,7 @@ NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
 RENDER_TIMEOUT_MS = 10_000
 
 
-class NotAuthenticated(RuntimeError):
+class NotAuthenticated(PageStateIndeterminate):
     """Сессия hh.ru истекла: страница переговоров не подтверждает auth-cookie.
 
     fetch_responses поднимает это, чтобы команда responses НЕ трактовала пустой
