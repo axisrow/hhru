@@ -257,13 +257,26 @@ class _FakeLocator:
 
 
 class _FakePage:
-    """Заглушка Page: только .locator(), нужный has_login_form (#147)."""
+    """Заглушка Page: только .locator(), нужный has_login_form (#147).
+
+    ``navigated`` фиксирует факт goto (см. test_login_form_check_reads_navigated_page):
+    login-форма «появляется» только после навигации, воспроизводя реальную
+    последовательность DOM hh.ru."""
+
+    def __init__(self, login_form_count_before: int = 0, login_form_count_after: int = 0):
+        self.navigated = False
+        self._login_form_count_before = login_form_count_before
+        self._login_form_count_after = login_form_count_after
 
     def locator(self, selector):
-        return _FakeLocator(0)
+        count = self._login_form_count_after if self.navigated else self._login_form_count_before
+        return _FakeLocator(count)
 
 
 class _FakeContext:
+    def __init__(self, page: object | None = None):
+        self._page = page if page is not None else _FakePage()
+
     def __enter__(self):
         return self
 
@@ -271,7 +284,7 @@ class _FakeContext:
         return False
 
     def new_page(self):
-        return _FakePage()
+        return self._page
 
 
 def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch):
@@ -287,8 +300,11 @@ def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch)
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
-    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
+    monkeypatch.setattr(
+        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
+    )
 
     list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
 
@@ -348,8 +364,11 @@ def test_remote_unconfirmed_title_selector_warns_when_all_titles_empty(
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
-    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: fake_cards)
+    monkeypatch.setattr(
+        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
+    )
 
     list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
 
@@ -371,11 +390,12 @@ def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monk
         lambda path: _config_with_storage_state(path, storage_state),
     )
 
-    def _raise_indeterminate(page):
+    def _raise_indeterminate(page, navigate=True):
         raise ResumeListIndeterminate("карточки резюме не появились за отведённое время")
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_indeterminate)
 
@@ -397,11 +417,12 @@ def test_remote_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
         lambda path: _config_with_storage_state(path, storage_state),
     )
 
-    def _boom_list_cards(page):
+    def _boom_list_cards(page, navigate=True):
         raise AssertionError("list_resume_cards не должен вызываться после провала has_login_form")
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: True)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
 
@@ -411,6 +432,48 @@ def test_remote_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
     assert "[FAIL]" in out
     assert "форму входа" in out
     assert "не найдено" not in out
+
+
+def test_login_form_check_reads_navigated_page(capsys, tmp_path, monkeypatch):
+    """Codex adversarial review (PR #152, cycle 1): has_login_form(page) читает
+    DOM ТЕКУЩЕЙ страницы. context.new_page() создаёт ещё не навигированную
+    страницу — на ней проверка всегда вернула бы 0 совпадений независимо от
+    реального состояния сессии, если бы её позвали ДО goto. Этот тест использует
+    РЕАЛЬНУЮ browser.has_login_form (не замокана) на _FakePage, где форма входа
+    «появляется» только после навигации, — чтобы поймать именно порядок
+    goto/has_login_form, а не просто замоканный результат."""
+    from hhru_bot.browser import has_login_form as real_has_login_form
+
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    # Форма входа отсутствует на бланке страницы (count_before=0) и появляется
+    # после goto (count_after=1) — так реально ведёт себя hh.ru: отозванная
+    # сессия отдаёт форму входа только на РЕАЛЬНО загруженной странице.
+    page = _FakePage(login_form_count_before=0, login_form_count_after=1)
+
+    def _boom_list_cards(p, navigate=True):
+        raise AssertionError("list_resume_cards не должен вызываться после провала has_login_form")
+
+    def _fake_goto(p, url, **kw):
+        p.navigated = True
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext(page))
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda p: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", _fake_goto)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", real_has_login_form)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "форму входа" in out
 
 
 def _config_with_storage_state(config_path, storage_state_path):
