@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import argparse
 
-from hhru_bot.cli import build_parser, register_commands
+import pytest
+
+from hhru_bot.cli import build_parser, main, register_commands
+from hhru_bot.history import SKIP_REASONS, History
 
 
 def _build() -> argparse.ArgumentParser:
@@ -260,3 +263,24 @@ def test_log_default_lines():
     sub = action.choices["log"]
     lines = next(a for a in sub._actions if "--lines" in a.option_strings)
     assert lines.default == 50
+
+
+def test_clear_skipped_success_does_not_exit_nonzero(tmp_path):
+    """cli.main() must not treat clear-skipped's deleted-row count as failure.
+
+    #148 made cli.main() call sys.exit(1) on any truthy command return, to
+    fail closed on VacancySearchIndeterminate from search/apply/run. But
+    clear_skipped.run() returns the number of deleted rows (int), not a bool
+    success flag — a successful deletion of N>0 rows is truthy and must not
+    be mistaken for an indeterminate-search failure.
+    """
+    history_path = tmp_path / "h.db"
+    history = History(history_path)
+    history.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
+
+    # main() doesn't sys.exit on success at all; if clear-skipped's positive
+    # deleted-count is (mis)treated as failure, main() raises SystemExit(1).
+    try:
+        main(["--history", str(history_path), "clear-skipped"])
+    except SystemExit as e:
+        pytest.fail(f"main() exited with {e.code} on a successful deletion")

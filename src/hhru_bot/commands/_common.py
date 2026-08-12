@@ -240,6 +240,11 @@ def run_apply_for_resume(
     #101: план (filter → rank → limit) строится чистой build_apply_plan;
     здесь остаётся только execution-оркестрация (providers, apply_to_vacancy,
     запись истории, throttle).
+
+    #148: возвращает True, если поиск вакансий завершился неопределённо
+    (VacancySearchIndeterminate) — apply.run() агрегирует это по всем
+    резюме и транслирует в ненулевой exit code через cli.main(). False —
+    во всех остальных случаях (включая исчерпанный дневной лимит).
     """
     print(f"\n=== Отклики для резюме: {resume.id} ===")
 
