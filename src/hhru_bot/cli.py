@@ -77,7 +77,13 @@ def main(argv: list[str] | None = None) -> None:
         setup_logging(verbose=args.verbose)
 
     try:
-        args.func(args)
+        failed = args.func(args)
+        # Fail-closed contract (#148) is opt-in: only commands that report a
+        # real bool success flag (search/apply/run) can trip sys.exit(1).
+        # Commands returning other truthy values (e.g. clear-skipped's int
+        # deleted-row count) or None must not be mistaken for a failure.
+        if failed is True:
+            sys.exit(1)
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(130)
