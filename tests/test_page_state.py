@@ -14,9 +14,8 @@ def test_browser_paths_share_indeterminate_exception_base():
 
 def test_flagged_page_states_use_common_vocabulary():
     assert QuestionDetection.no().page_state == PAGE_STATE["confirmed"]
-    assert QuestionDetection.indeterminate_scope("неизвестно").page_state == PAGE_STATE[
-        "indeterminate"
-    ]
-    assert PageCheck("x", "https://hh.ru", unreachable=True).page_state == PAGE_STATE[
-        "unreachable"
-    ]
+    assert (
+        QuestionDetection.indeterminate_scope("неизвестно").page_state
+        == PAGE_STATE["indeterminate"]
+    )
+    assert PageCheck("x", "https://hh.ru", unreachable=True).page_state == PAGE_STATE["unreachable"]

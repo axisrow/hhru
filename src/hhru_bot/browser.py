@@ -36,6 +36,7 @@ class PageStateIndeterminate(RuntimeError):
     из-за timeout, сетевой ошибки, анти-бота или дрейфа селектора.
     """
 
+
 # Потолок ожидания навигации по hh.ru. Дефолт Playwright 30с — hh.ru под
 # DDoS-Guard/нагрузкой грузится 33с+ (см. #80), и goto падает. Ставим
 # context-wide через set_default_navigation_timeout — покрывает ВСЕ goto/
