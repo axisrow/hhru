@@ -146,3 +146,31 @@ def test_responses_run_expired_session_does_not_corrupt_history(capsys, tmp_path
     assert "сессия истекла" in err or "session expired" in err
     # история цела — строка не затёрта и не добавлен «пустой» обход.
     assert h.new_responses_since(__import__("datetime").datetime.min)
+
+
+def test_responses_run_indeterminate_state_is_fail_not_traceback(capsys, tmp_path, monkeypatch):
+    """#141: timeout рендера не маскируется пустым inbox и не даёт traceback."""
+    import contextlib
+
+    from hhru_bot.responses import ResponsesIndeterminate
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    def _raise(*_args, **_kwargs):
+        raise ResponsesIndeterminate("список не подтверждён")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", _raise)
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0))
+    assert exc.value.code == 1
+    assert "список не подтверждён" in capsys.readouterr().err

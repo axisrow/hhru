@@ -92,7 +92,7 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..responses import NotAuthenticated, fetch_responses
+    from ..responses import NotAuthenticated, ResponsesIndeterminate, fetch_responses
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -132,9 +132,9 @@ def run(args: argparse.Namespace) -> None:
             page = context.new_page()
             try:
                 cards = fetch_responses(page, max_pages=args.max_pages)
-            except NotAuthenticated as e:
-                # Истёкшая сессия: НЕ затираем историю и НЕ выдаём пустой
-                # результат за «нет новых ответов» — выходим с диагностикой.
+            except (NotAuthenticated, ResponsesIndeterminate) as e:
+                # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
+                # историю и НЕ выдаём неопределённость за «нет новых ответов».
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
                 return

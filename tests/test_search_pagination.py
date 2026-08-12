@@ -14,8 +14,11 @@ tests/test_probe_healthcheck.py).
 
 from __future__ import annotations
 
+import pytest
+
 from _fakes import FakeLocator, _parse_root, _parse_selector
-from hhru_bot.search import _has_next_page
+from hhru_bot import selectors as sel
+from hhru_bot.search import VacancySearchIndeterminate, _has_next_page
 
 
 class _FakePage:
@@ -78,7 +81,7 @@ class TestWithoutNavigationButtonsVariant:
 
 
 class TestNoPagination:
-    """Единственная страница выдачи — прежнее поведение (стоп)."""
+    """После готовой выдачи отсутствие pager-block — честная единственная страница."""
 
     def test_no_pager_block_at_all(self):
         page = _FakePage("<div data-qa='vacancy-serp__vacancy'>карточка</div>")
@@ -87,3 +90,34 @@ class TestNoPagination:
     def test_single_page_number(self):
         page = _FakePage(_pager(["1"], with_next=False))
         assert _has_next_page(page, 0) is False
+
+
+class _StaticLocator:
+    def __init__(self, count: int):
+        self._count = count
+
+    def count(self):
+        return self._count
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, **_kwargs):
+        return None
+
+
+class _PagerDisappearsPage:
+    def locator(self, selector: str):
+        if selector == sel.PAGINATION_BLOCK:
+            return _StaticLocator(1)
+        if selector == sel.PAGINATION_NEXT:
+            return _StaticLocator(0)
+        if selector == sel.PAGINATION_PAGE:
+            return _StaticLocator(0)
+        raise AssertionError(f"unexpected selector: {selector}")
+
+
+def test_pagination_marker_disappearing_after_wait_is_not_last_page():
+    with pytest.raises(VacancySearchIndeterminate, match="исчез после ожидания"):
+        _has_next_page(_PagerDisappearsPage(), 0)

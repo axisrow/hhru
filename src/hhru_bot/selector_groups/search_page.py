@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 VACANCY_CARD = "[data-qa='vacancy-serp__vacancy']"
+# Подтверждён curl-дампом пустого запроса (2026-08-11). Это единственный
+# достоверный случай, в котором отсутствие VACANCY_CARD означает пустую выдачу,
+# а не медленный JS-рендер или дрейф карточного селектора.
+VACANCY_SEARCH_EMPTY = "[data-qa='empty-vacancy-search-block']"
 VACANCY_CARD_TITLE_LINK = "[data-qa='serp-item__title']"
 VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
 # Зарплата в карточке списка (issue #14).
@@ -32,6 +36,9 @@ VACANCY_CARD_RESPONSE_BUTTON = "[data-qa='vacancy-serp__vacancy_response']"
 # что опираться на один только PAGINATION_NEXT нельзя.
 PAGINATION_NEXT = "[data-qa='pager-next']"
 PAGINATION_PAGE = "[data-qa='pager-page']"
+# pager-block присутствует только когда hh.ru действительно рисует пагинацию.
+# Его отсутствие после готовой выдачи означает нормальную единственную страницу.
+PAGINATION_BLOCK = "[data-qa='pager-block']"
 
 # Анонимному curl-запросу hh.ru не показывает маркер "уже откликались" в
 # разметке — этот статус виден только залогиненному пользователю. Дедупликация
