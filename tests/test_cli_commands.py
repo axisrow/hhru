@@ -240,6 +240,7 @@ def test_mark_status_choices():
 def test_whoami_has_resume_only():
     opts = _opts_for("whoami")
     assert "--resume" in opts
+    assert "--online" in opts
     # READ-команда: ничего не отправляет и не делает действий под лимит —
     # --dry-run/--limit здесь бессмысленны (контракт спеки #21 §whoami).
     assert "--dry-run" not in opts

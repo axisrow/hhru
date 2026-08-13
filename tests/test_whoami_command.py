@@ -48,6 +48,7 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
         "history": str(history_path),
         "resume": None,
         "headless": False,
+        "online": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -79,6 +80,7 @@ def test_register_adds_whoami_subparser():
     p = sub.choices["whoami"]
     opts = {a.option_strings[0] for a in p._actions if a.option_strings}
     assert "--resume" in opts
+    assert "--online" in opts
     # READ-команда: --dry-run/--limit здесь бессмысленны (ничего не делает).
     assert "--dry-run" not in opts
     assert "--limit" not in opts
@@ -92,7 +94,53 @@ def test_valid_session_prints_info_line(tmp_path, capsys):
     cfg = _write_config(tmp_path, _config_body(str(session)))
     out = _run(_args(cfg, tmp_path / "h.db"), capsys)
 
-    assert "[INFO] Сессия действительна" in out
+    assert "Локальный auth-маркер найден" in out
+    assert "Сессия действительна" not in out
+
+
+def test_default_check_does_not_open_browser(tmp_path, capsys, monkeypatch):
+    session = _valid_session(tmp_path)
+    cfg = _write_config(tmp_path, _config_body(str(session)))
+
+    def _browser_must_not_open(*args, **kwargs):
+        raise AssertionError("браузер не должен открываться без --online")
+
+    monkeypatch.setattr(whoami_cmd, "ONLINE_CHECK_URL", "https://hh.ru/applicant/resumes")
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _browser_must_not_open)
+
+    out = _run(_args(cfg, tmp_path / "h.db"), capsys)
+
+    assert "Локальный auth-маркер найден" in out
+
+
+def test_online_check_navigates_before_login_form_check(tmp_path, capsys, monkeypatch):
+    session = _valid_session(tmp_path)
+    cfg = _write_config(tmp_path, _config_body(str(session)))
+    events = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def new_page(self):
+            return object()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: Context())
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url: events.append("goto"))
+    monkeypatch.setattr(
+        "hhru_bot.browser.has_auth_cookie", lambda page: events.append("cookie") or True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.browser.has_login_form", lambda page: events.append("login-form") or False
+    )
+
+    out = _run(_args(cfg, tmp_path / "h.db", online=True), capsys)
+
+    assert "проверено на hh.ru" in out
+    assert events == ["goto", "cookie", "login-form"]
 
 
 def test_missing_session_prints_fail_line(tmp_path, capsys):
