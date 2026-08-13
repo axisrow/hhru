@@ -151,29 +151,30 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
 
 
 def _goto_resumes_list(page: Page) -> None:
-    """Navigate to the list while preserving #142's ready-selector wait.
+    """Navigate without a readiness retry, then fail fast on the login form.
 
-    A revoked session renders the login form instead of a resume card. In that
-    case ``goto_hh`` exhausts its ready-selector retries first; inspect the
-    already navigated page in the timeout handler so the user gets the auth
-    diagnosis rather than a selector timeout. On the normal path the
-    ready-selector still guarantees that the fallback card diff reads a
-    rendered list.
+    ``goto_hh(..., ready_selector=...)`` retries the whole navigation three
+    times, so a revoked session would wait minutes before its already-rendered
+    login form was inspected. The card readiness wait is deliberately split
+    out and called by the fallback immediately before ``_card_hashes``.
     """
-    try:
-        goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
-    except PlaywrightTimeoutError:
-        if has_login_form(page):
-            raise NotAuthenticated(
-                "страница содержит форму входа — сессия отвергнута сервером "
-                "(запустите `login`, затем повторите)"
-            ) from None
-        raise
+    goto_hh(page, RESUMES_LIST_URL)
     if has_login_form(page):
         raise NotAuthenticated(
             "страница содержит форму входа — сессия отвергнута сервером "
             "(запустите `login`, затем повторите)"
         )
+
+
+def _wait_resume_list_ready(page: Page) -> None:
+    """Preserve #142's rendered-list guarantee for the fallback card diff."""
+    try:
+        page.locator(RESUME_LIST_CARD).first.wait_for(timeout=COPY_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        raise ResumeListIndeterminate(
+            "карточки резюме не появились за отведённое время — состояние "
+            "/applicant/resumes не подтверждено"
+        ) from None
 
 
 def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
@@ -267,6 +268,7 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
         _goto_resumes_list(page)
+        _wait_resume_list_ready(page)
         created = _card_hashes(page) - before
         if len(created) != 1:
             return CopyResumeResult(
