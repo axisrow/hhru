@@ -310,7 +310,7 @@ def _first_resume_url(config) -> str | None:
     return getattr(resume, "resume_url", None)
 
 
-def run_healthcheck(args: argparse.Namespace) -> None:
+def run_healthcheck(args: argparse.Namespace) -> bool:
     """Открывает браузер и печатает ASCII-таблицу статусов ключевых селекторов.
 
     Read-only: только ``goto`` + ``locator.count()``. ``set_default_navigation_timeout``
@@ -361,11 +361,13 @@ def run_healthcheck(args: argparse.Namespace) -> None:
             + "; ".join(parts)
             + f"; опциональных отсутствует {optional_absent} (норма)"
         )
+        return True
     else:
         print(
             f"[OK] все {required_ok} обязательных селекторов найдены "
             f"(опциональных отсутствует {optional_absent} — норма)"
         )
+        return False
 
 
 # --- probe-дамп формы (#8) -------------------------------------------------
@@ -394,10 +396,9 @@ def _vacancy_from_url(url: str):
     )
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> bool | None:
     if getattr(args, "healthcheck", False):
-        run_healthcheck(args)
-        return
+        return run_healthcheck(args)
 
     from ..apply.probe import probe_vacancy
     from ..browser import launch_context

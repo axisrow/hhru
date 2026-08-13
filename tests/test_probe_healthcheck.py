@@ -13,6 +13,8 @@ format_healthcheck_table прогоняются на FakePage поверх HTML-
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -423,3 +425,68 @@ def test_run_healthcheck_fail_only_on_required_missing(capsys):
     # required CARD найден, COMP optional отсутствует → НЕ провал
     missing = sum(1 for pg in pages for r in pg.results if r.fails)
     assert missing == 0
+
+
+@pytest.mark.parametrize(
+    ("pages", "expected_exit"),
+    [
+        (
+            [
+                probe_cmd.PageCheck(
+                    "search",
+                    "u",
+                    [probe_cmd.SelectorCheck("CARD", "s", 1)],
+                )
+            ],
+            None,
+        ),
+        (
+            [
+                probe_cmd.PageCheck(
+                    "search",
+                    "u",
+                    [probe_cmd.SelectorCheck("CARD", "s", 0)],
+                )
+            ],
+            1,
+        ),
+        (
+            [probe_cmd.PageCheck("search", "u", [], unreachable=True)],
+            1,
+        ),
+        (
+            [probe_cmd.PageCheck("search", "u", [], unauthenticated=True)],
+            1,
+        ),
+    ],
+)
+def test_healthcheck_cli_exit_code(monkeypatch, pages, expected_exit, capsys):
+    """The healthcheck result reaches CLI's real fail-closed exit contract."""
+    from hhru_bot import cli
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def new_page(self):
+            return object()
+
+    monkeypatch.setattr(cli, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda _path: SimpleNamespace(storage_state_file="session.json"),
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *_a, **_kw: _Context())
+    monkeypatch.setattr(probe_cmd, "_healthcheck_spec", lambda _config: [])
+    monkeypatch.setattr(probe_cmd, "check_selectors", lambda *_a, **_kw: pages)
+
+    if expected_exit is None:
+        cli.main(["probe", "--healthcheck"])
+        assert "[OK]" in capsys.readouterr().out
+    else:
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["probe", "--healthcheck"])
+        assert exc_info.value.code == expected_exit
