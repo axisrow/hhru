@@ -23,8 +23,8 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("Для --request нужен --login, для --submit нужен --code")
     config = load_config_or_exit(args.config)
     if args.request:
-        session_id = request_code(config, args.login)
-        print(f"[OK] Код запрошен; идентификатор сессии: {session_id}")
+        request_code(config, args.login)
+        print("[OK] Код запрошен; выполните --submit --code <код>")
     else:
         submit_code(config, args.code)
         print("[OK] Сессия сохранена")

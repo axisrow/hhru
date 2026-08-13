@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form, launch_context
+from .browser import HH_BASE_URL, goto_hh, launch_context
 from .config import AppConfig
 from .selectors import (
     LOGIN_CODE_REQUEST_BUTTON,
@@ -46,13 +45,12 @@ def _pending_path(config: AppConfig) -> Path:
     return config.storage_state_file.with_name(config.storage_state_file.name + _PENDING_SUFFIX)
 
 
-def request_code(config: AppConfig, login: str) -> str:
+def request_code(config: AppConfig, login: str) -> None:
     """Ask hh.ru to send a code and persist the intermediate browser state."""
     if not login.strip():
         raise ValueError("Логин не должен быть пустым")
     pending = _pending_path(config)
     pending.parent.mkdir(parents=True, exist_ok=True)
-    session_id = uuid.uuid4().hex
     try:
         with launch_context(pending, headless=True, user_agent=config.user_agent) as context:
             page = context.new_page()
@@ -74,7 +72,6 @@ def request_code(config: AppConfig, login: str) -> str:
             "Не удалось запросить код из-за таймаута браузера; повторите --request"
         ) from exc
     logger.info("Запрошен код для %s; промежуточная сессия сохранена", mask_login(login))
-    return session_id
 
 
 def submit_code(config: AppConfig, code: str) -> None:
@@ -101,8 +98,7 @@ def _raise_for_captcha_or_timeout(page) -> None:
         raise RuntimeError("hh.ru требует капчу; выполните ручной login")
 
 
-def _confirm_authenticated(page) -> None:
-    if not (has_auth_cookie(page) and not has_login_form(page)):
-        raise RuntimeError(
-            "Вход не подтверждён: cookie hhtoken отсутствует или осталась форма входа"
-        )
+# NOTE: успех --submit должен подтверждаться ТОЛЬКО позитивно —
+# has_auth_cookie(page) and not has_login_form(page) (см. browser.py) — как
+# только поле кода будет подтверждено живым дампом и submit_code() перестанет
+# быть заглушкой (follow-up к #167).
