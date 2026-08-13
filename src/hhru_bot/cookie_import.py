@@ -121,7 +121,15 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     # active session truncated (Codex review, PR #168) — the backup above
     # already preserves the old session, but only a temp write + atomic
     # os.replace() keeps `destination` itself intact if this step fails.
+    #
+    # The temp file is a NEW inode, so it starts with the process umask
+    # (typically 0644) rather than destination's mode — os.replace() would
+    # otherwise silently widen a restrictive (0600) session file to
+    # group/world-readable (Codex re-review, PR #168). storage_state_file
+    # holds a bearer token (hhtoken); force owner-only permissions on the
+    # temp file explicitly instead of relying on umask.
     tmp = destination.with_name(destination.name + ".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.chmod(0o600)
     os.replace(tmp, destination)
     return backup

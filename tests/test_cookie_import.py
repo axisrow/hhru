@@ -104,3 +104,20 @@ def test_write_failure_does_not_corrupt_existing_session(tmp_path: Path, monkeyp
         write_storage_state({"cookies": [], "origins": []}, destination)
 
     assert json.loads(destination.read_text(encoding="utf-8")) == {"old": 1}
+
+
+def test_write_does_not_widen_session_file_permissions(tmp_path: Path):
+    # Codex re-review (PR #168, post-rebase): the temp-file-then-os.replace()
+    # atomic write (added for the previous finding) creates a NEW inode with
+    # the process umask, discarding the existing session file's restrictive
+    # mode (0600) — silently broadening a bearer-token secret to
+    # group/world-readable. The active session must stay owner-only
+    # regardless of what umask happens to be in effect.
+    destination = tmp_path / "hh_session.json"
+    destination.write_text('{"old": 1}', encoding="utf-8")
+    destination.chmod(0o600)
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    mode = destination.stat().st_mode & 0o777
+    assert mode == 0o600, f"storage_state_file permissions widened to {oct(mode)}"
