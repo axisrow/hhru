@@ -12,6 +12,9 @@ import re
 import uuid
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form, launch_context
 from .config import AppConfig
 from .selectors import LOGIN_CODE_REQUEST_BUTTON, LOGIN_EMAIL_INPUT, LOGIN_PHONE_INPUT
@@ -45,17 +48,22 @@ def request_code(config: AppConfig, login: str) -> str:
     pending = _pending_path(config)
     pending.parent.mkdir(parents=True, exist_ok=True)
     session_id = uuid.uuid4().hex
-    with launch_context(pending, headless=True, user_agent=config.user_agent) as context:
-        page = context.new_page()
-        goto_hh(page, _LOGIN_URL)
-        page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
-        field = page.locator(LOGIN_EMAIL_INPUT if "@" in login else LOGIN_PHONE_INPUT)
-        if field.count() == 0:
-            raise RuntimeError("Не найдено поле логина на странице hh.ru")
-        field.fill(login)
-        page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
-        _raise_for_captcha_or_timeout(page)
-        context.storage_state(path=str(pending))
+    try:
+        with launch_context(pending, headless=True, user_agent=config.user_agent) as context:
+            page = context.new_page()
+            goto_hh(page, _LOGIN_URL)
+            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
+            field = page.locator(LOGIN_EMAIL_INPUT if "@" in login else LOGIN_PHONE_INPUT)
+            if field.count() == 0:
+                raise RuntimeError("Не найдено поле логина на странице hh.ru")
+            field.fill(login)
+            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
+            _raise_for_captcha_or_timeout(page)
+            context.storage_state(path=str(pending))
+    except (PlaywrightError, PlaywrightTimeoutError) as exc:
+        raise RuntimeError(
+            "Не удалось запросить код из-за таймаута браузера; повторите --request"
+        ) from exc
     logger.info("Запрошен код для %s; промежуточная сессия сохранена", mask_login(login))
     return session_id
 
@@ -76,7 +84,10 @@ def submit_code(config: AppConfig, code: str) -> None:
 
 
 def _raise_for_captcha_or_timeout(page) -> None:
-    text = page.locator("body").inner_text().lower()
+    try:
+        text = page.locator("body").inner_text().lower()
+    except (PlaywrightError, PlaywrightTimeoutError) as exc:
+        raise RuntimeError("Не удалось дождаться ответа hh.ru; повторите --request") from exc
     if "captcha" in text or "капч" in text:
         raise RuntimeError("hh.ru требует капчу; выполните ручной login")
 
