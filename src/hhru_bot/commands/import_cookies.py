@@ -32,12 +32,15 @@ def run(args: argparse.Namespace) -> bool:
     try:
         rows = read_chrome_cookies(cookie_file)
         state = build_storage_state(rows)
+        hhtoken = any(cookie["name"] == "hhtoken" for cookie in state["cookies"])
+        if not hhtoken:
+            print("[FAIL] Cookie hhtoken не найден; текущая сессия не изменена.")
+            return True
         backup = write_storage_state(state, config.storage_state_file)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"[FAIL] Не удалось импортировать куки Chrome: {exc}")
         return True
 
-    hhtoken = any(cookie["name"] == "hhtoken" for cookie in state["cookies"])
     print(f"[OK] Импортировано куки hh.ru: {len(state['cookies'])}")
     print(f"[INFO] hhtoken: {'найден' if hhtoken else 'не найден'}")
     print(f"[INFO] Сессия записана: {config.storage_state_file}")
