@@ -20,6 +20,8 @@ def register(subparsers) -> None:
 
 
 def run(args: argparse.Namespace) -> bool:
+    import browser_cookie3
+
     from ..config import load_config_or_exit
     from ..cookie_import import (
         build_storage_state,
@@ -44,7 +46,7 @@ def run(args: argparse.Namespace) -> bool:
             print("[FAIL] Cookie hhtoken не найден; текущая сессия не изменена.")
             return True
         backup = write_storage_state(state, config.storage_state_file)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, browser_cookie3.BrowserCookieError) as exc:
         print(f"[FAIL] Не удалось импортировать куки Chrome: {exc}")
         return True
 
