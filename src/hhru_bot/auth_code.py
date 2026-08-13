@@ -66,6 +66,7 @@ def request_code(config: AppConfig, login: str) -> None:
             field.fill(login)
             page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
             _raise_for_captcha_or_timeout(page)
+            _raise_unless_login_field_gone(field)
             context.storage_state(path=str(pending))
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
         raise RuntimeError(
@@ -96,6 +97,25 @@ def _raise_for_captcha_or_timeout(page) -> None:
         raise RuntimeError("Не удалось дождаться ответа hh.ru; повторите --request") from exc
     if "captcha" in text or "капч" in text:
         raise RuntimeError("hh.ru требует капчу; выполните ручной login")
+
+
+def _raise_unless_login_field_gone(field) -> None:
+    """Позитивно подтвердить, что hh.ru принял отправку формы.
+
+    Поле подтверждения ввода кода не подтверждено живым дампом (см.
+    submit_code), поэтому вместо него используем единственный доступный
+    позитивный сигнал прогресса: поле логина, которое мы только что
+    заполнили, должно исчезнуть с экрана после отправки. Если оно всё ещё
+    там (задержка/ошибка валидации/троттлинг), значит hh.ru не перешёл
+    дальше — ошибка вместо молчаливого "[OK]" без подтверждения (#170 round 2).
+    """
+    try:
+        field.wait_for(state="detached", timeout=10_000)
+    except (PlaywrightError, PlaywrightTimeoutError) as exc:
+        raise RuntimeError(
+            "hh.ru не подтвердил приём запроса кода (поле логина осталось на экране); "
+            "повторите --request"
+        ) from exc
 
 
 # NOTE: успех --submit должен подтверждаться ТОЛЬКО позитивно —
