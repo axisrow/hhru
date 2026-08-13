@@ -348,6 +348,27 @@ def test_session_secret_gitignored_outside_data_dir(tmp_path):
     )
 
 
+def test_session_backup_gitignored_outside_data_dir(tmp_path):
+    # #166 review (Codex): import-cookies (cookie_import.write_storage_state)
+    # кладёт бэкап существующей сессии рядом как '<file>.bak' / '.bak.N'.
+    # Правило '**/storage_state/*.json' покрывает сам storage_state_file, но
+    # НЕ покрывает '<file>.json.bak' — та же утечка hhtoken при
+    # storage_state_file вне data/ (пользовательский конфиг), только через
+    # бэкап, а не через основной файл. Регрессия: 'git add .' публикует
+    # предыдущую сессию hh.ru.
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    cfg = _write_config_in_data(repo_copy, "../secrets/storage_state/hh_session.json", "LEG2")
+
+    config = load_config(cfg)
+    backup = config.storage_state_file.with_name(config.storage_state_file.name + ".bak")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup.touch()
+    assert _is_gitignored_repo(backup, repo_copy), (
+        f"Бэкап storage_state_file вне data/ резолвится в НЕ-ignored путь: {backup}. "
+        "Defence-in-depth .gitignore нужен для '**/storage_state/*.json.bak*'."
+    )
+
+
 def test_repo_gitignore_covers_all_mutable_data(tmp_path):
     # #133: ВСЕ изменяемые данные под data/ и покрыты одной строкой 'data/'.
     # Регрессия: точечные правила ('data/*.db', 'logs/*.log' ...) не покрывали

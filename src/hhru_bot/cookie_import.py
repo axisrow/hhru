@@ -82,9 +82,8 @@ def read_chrome_cookies(cookie_file: Path | str) -> list[dict[str, Any]]:
             """SELECT host_key, path, is_secure, expires_utc, name, value,
                       encrypted_value, is_httponly, samesite
                  FROM cookies
-                WHERE host_key LIKE ?
-                  AND (host_key = ? OR host_key LIKE ?)""",
-            ("%hh.ru", "hh.ru", "%.hh.ru"),
+                WHERE host_key = ? OR host_key LIKE ?""",
+            ("hh.ru", "%.hh.ru"),
         )
         rows = []
         for row in cursor.fetchall():

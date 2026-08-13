@@ -49,7 +49,7 @@ def run(args: argparse.Namespace) -> bool:
         return True
 
     print(f"[OK] Импортировано куки hh.ru: {len(state['cookies'])}")
-    print(f"[INFO] hhtoken: {'найден' if hhtoken else 'не найден'}")
+    print("[INFO] hhtoken: найден")
     print(f"[INFO] Сессия записана: {config.storage_state_file}")
     if backup:
         print(f"[INFO] Предыдущая сессия сохранена: {backup}")

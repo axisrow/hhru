@@ -16,6 +16,11 @@ data/
 # ЛЮБОЙ директории, не только в data/. Catch-all покрывает legacy user-конфиги,
 # где storage_state_file при relative-to-config резолве уезжает за пределы data/
 # (напр. старый config/config.yaml со значением 'data/...' → config/data/...).
+# *.bak* покрывает бэкап предыдущей сессии, который import-cookies (#166)
+# кладёт рядом с storage_state_file (write_storage_state) — тот же секрет
+# (hhtoken), только под другим именем; без этого правила 'git add .' публикует
+# предыдущую сессию, даже когда сам storage_state_file уже проигнорирован.
 **/storage_state/*.json
+**/storage_state/*.json.bak*
 
 .env
