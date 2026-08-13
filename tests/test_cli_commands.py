@@ -50,6 +50,7 @@ def test_all_commands_registered():
         "clear-skipped",
         "market",
         "copy-resume",
+        "import-cookies",
     }
 
 
@@ -82,6 +83,7 @@ def test_register_commands_returns_names():
         "clear_skipped",
         "market",
         "copy_resume",
+        "import_cookies",
     }
 
 

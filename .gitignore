@@ -16,6 +16,13 @@ data/
 # ЛЮБОЙ директории, не только в data/. Catch-all покрывает legacy user-конфиги,
 # где storage_state_file при relative-to-config резолве уезжает за пределы data/
 # (напр. старый config/config.yaml со значением 'data/...' → config/data/...).
+# *.bak*/*.tmp покрывают промежуточные файлы import-cookies (#166):
+# write_storage_state кладёт бэкап предыдущей сессии рядом с
+# storage_state_file (тот же секрет hhtoken под другим именем) и пишет новую
+# сессию через temp-файл + os.replace() (atomic write); оба содержат то же
+# секретное значение, что и storage_state_file, но не покрыты правилом выше.
 **/storage_state/*.json
+**/storage_state/*.json.bak*
+**/storage_state/*.json.tmp
 
 .env
