@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -208,6 +209,51 @@ def test_goto_hh_ready_selector_and_login_check_order(monkeypatch):
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
     assert page.events == ["goto", "auth", "goto", "auth", "ready"]
     assert all("ready_selector" not in kw for kw in page.goto_kwargs)
+
+
+def test_post_click_login_form_reports_unconfirmed_state(monkeypatch):
+    """Codex adversarial review (PR #158): session revoked AFTER the clone
+    click must not be reported with ordinary pre-write wording — the click
+    already fired the clone POST, so the operator needs to know the copy's
+    state is unconfirmed before retrying (regression for the finding)."""
+    page = StubPage(url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}])
+    _patch_env(monkeypatch, page)
+    goto_calls = []
+    original_goto = cr.goto_hh
+
+    def _goto(p, url, **kw):
+        goto_calls.append(url)
+        original_goto(p, url, **kw)
+
+    monkeypatch.setattr(cr, "goto_hh", _goto)
+    # Login form absent on the first (pre-click) navigation, present on the
+    # second (fallback, post-click) navigation.
+    monkeypatch.setattr(cr, "has_login_form", lambda p: len(goto_calls) >= 2)
+
+    with pytest.raises(cr.NotAuthenticated) as exc_info:
+        cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert len(goto_calls) == 2  # pre-click goto + fallback goto after the click
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), (CARD_SEL, DUP_SEL)]
+    message = str(exc_info.value)
+    assert "НЕ подтверждено" in message
+    assert "уже создана" in message
+
+
+def test_pre_click_login_form_reports_ordinary_failure(monkeypatch):
+    """Sanity check: the pre-write call site keeps the plain pre-write wording
+    (no false claim that a copy may already exist)."""
+    page = StubPage()
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "has_login_form", lambda p: True)
+
+    with pytest.raises(cr.NotAuthenticated) as exc_info:
+        cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert page.clicks == []
+    message = str(exc_info.value)
+    assert "НЕ подтверждено" not in message
+    assert "уже создана" not in message
 
 
 def test_card_not_found_fails_closed(monkeypatch):

@@ -150,16 +150,33 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
     return cards
 
 
-def _goto_resumes_list(page: Page) -> None:
+def _goto_resumes_list(page: Page, *, post_write: bool = False) -> None:
     """Navigate without a readiness retry, then fail fast on the login form.
 
     ``goto_hh(..., ready_selector=...)`` retries the whole navigation three
     times, so a revoked session would wait minutes before its already-rendered
     login form was inspected. The card readiness wait is deliberately split
     out and called by the fallback immediately before ``_card_hashes``.
+
+    ``post_write`` (Codex adversarial review, PR #158): this helper is called
+    twice — once before any click (safe to report as an ordinary pre-write
+    auth failure), and once from the fallback diff path AFTER
+    ``duplicate.click()`` has already fired the clone POST. A session revoked
+    server-side in that window must not be reported with pre-write wording —
+    the operator needs to know the clone may already exist before retrying
+    (mirrors the ``except Exception`` handler's caveat in
+    ``commands/copy_resume.py``, and the same "state not confirmed" pattern as
+    ``ResumeListIndeterminate`` above).
     """
     goto_hh(page, RESUMES_LIST_URL)
     if has_login_form(page):
+        if post_write:
+            raise NotAuthenticated(
+                "страница содержит форму входа после отправки запроса на "
+                "дублирование — состояние копии НЕ подтверждено, возможно "
+                "она уже создана (запустите `login`, затем проверьте список "
+                "резюме перед повтором)"
+            )
         raise NotAuthenticated(
             "страница содержит форму входа — сессия отвергнута сервером "
             "(запустите `login`, затем повторите)"
@@ -267,7 +284,10 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        _goto_resumes_list(page)
+        # post_write=True: клик по «Дублировать» уже отправлен выше, поэтому
+        # отзыв сессии здесь — это неподтверждённое состояние копии, а не
+        # обычный pre-write отказ (Codex adversarial review, PR #158).
+        _goto_resumes_list(page, post_write=True)
         _wait_resume_list_ready(page)
         created = _card_hashes(page) - before
         if len(created) != 1:
