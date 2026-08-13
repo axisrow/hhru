@@ -84,18 +84,9 @@ def login(config: AppConfig) -> None:
                 next_progress_at += progress_interval_seconds
             time.sleep(poll_interval_seconds)
 
-        # Реальный маркер залогиненности — cookie hhtoken, а не URL (hh.ru после
-        # входа иногда оставляет путь входа в реферере/redirect — URL-проверка
-        # давала ложный warning при успешном входе).
-        if not has_auth_cookie(page):
-            logger.warning(
-                "Cookie hhtoken отсутствует — вход, похоже, не завершён. "
-                "Сессия не будет сохранена.",
-            )
-            context.close()
-            browser.close()
-            raise RuntimeError("Cookie hhtoken отсутствует — сессия не сохранена")
-
+        # Цикл выше выходит сюда только через `break` на строке успеха
+        # (has_auth_cookie(page) and not has_login_form(page)) — повторная
+        # проверка cookie здесь была бы недостижимым дублированием.
         context.storage_state(path=str(storage_state_file))
         logger.info("Сессия сохранена: %s", storage_state_file)
 
