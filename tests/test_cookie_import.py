@@ -80,3 +80,27 @@ def test_backup_does_not_overwrite_existing_backup(tmp_path: Path):
     assert created_backup == tmp_path / "hh_session.json.bak.1"
     assert backup.read_text(encoding="utf-8") == "keep"
     assert json.loads(destination.read_text(encoding="utf-8")) == {"cookies": [], "origins": []}
+
+
+def test_write_failure_does_not_corrupt_existing_session(tmp_path: Path, monkeypatch):
+    # Codex review (PR #168, cycle 3): write_storage_state писал прямо в
+    # destination.write_text(), которое truncate'ит файл ДО записи нового
+    # содержимого. Обрыв записи (диск заполнен, kill, OSError) на середине
+    # оставлял активную сессию повреждённой/пустой, хотя бэкап уже был
+    # сделан — запись должна быть atomic (temp-файл + os.replace), чтобы
+    # сбой оставлял старую сессию нетронутой. Мокаем os.replace (последний
+    # шаг atomic-записи) исключением — если реализация пишет через temp-файл
+    # и заменяет destination только на успехе, обрыв на этом шаге не должен
+    # тронуть исходный destination.
+    destination = tmp_path / "hh_session.json"
+    destination.write_text('{"old": 1}', encoding="utf-8")
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr("os.replace", _boom)
+
+    with pytest.raises(OSError):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == {"old": 1}

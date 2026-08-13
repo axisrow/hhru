@@ -369,6 +369,25 @@ def test_session_backup_gitignored_outside_data_dir(tmp_path):
     )
 
 
+def test_session_write_temp_file_gitignored_outside_data_dir(tmp_path):
+    # #166 review (Codex, cycle 3): write_storage_state пишет новую сессию
+    # атомарно через temp-файл '<file>.json.tmp' + os.replace() (не корраптит
+    # активную сессию при обрыве записи). Этот temp-файл несёт то же секретное
+    # содержимое (hhtoken), что и storage_state_file/.bak, и должен быть
+    # покрыт тем же defence-in-depth правилом вне data/.
+    repo_copy = _repo_copy_with_real_gitignore(tmp_path)
+    cfg = _write_config_in_data(repo_copy, "../secrets/storage_state/hh_session.json", "LEG3")
+
+    config = load_config(cfg)
+    tmp_file = config.storage_state_file.with_name(config.storage_state_file.name + ".tmp")
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file.touch()
+    assert _is_gitignored_repo(tmp_file, repo_copy), (
+        f"Temp-файл записи storage_state_file вне data/ резолвится в НЕ-ignored путь: {tmp_file}. "
+        "Defence-in-depth .gitignore нужен для '**/storage_state/*.json.tmp'."
+    )
+
+
 def test_repo_gitignore_covers_all_mutable_data(tmp_path):
     # #133: ВСЕ изменяемые данные под data/ и покрыты одной строкой 'data/'.
     # Регрессия: точечные правила ('data/*.db', 'logs/*.log' ...) не покрывали

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
@@ -116,5 +117,11 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
         shutil.copy2(destination, candidate)
         backup = candidate
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # Write-then-rename: an interrupted/failed write must never leave the
+    # active session truncated (Codex review, PR #168) — the backup above
+    # already preserves the old session, but only a temp write + atomic
+    # os.replace() keeps `destination` itself intact if this step fails.
+    tmp = destination.with_name(destination.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, destination)
     return backup
