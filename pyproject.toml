@@ -13,6 +13,7 @@ authors = [{ name = "axisrow" }]
 dependencies = [
     "playwright>=1.59.0",
     "PyYAML>=6.0",
+    "browser-cookie3>=0.20.1",
 ]
 
 [project.scripts]
