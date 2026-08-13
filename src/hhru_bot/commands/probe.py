@@ -31,6 +31,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..browser import PAGE_STATE, goto_hh, has_login_form
+from ..config import is_resume_url_placeholder
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -85,6 +86,8 @@ STATUS_OPTIONAL_ABSENT = "OPTIONAL_ABSENT"
 # #120: страница не открылась (таймаут/сеть) — селекторы не проверялись.
 STATUS_UNREACHABLE = PAGE_STATE["unreachable"].upper()
 STATUS_UNAUTHENTICATED = PAGE_STATE["unauthenticated"].upper()
+# The URL was never opened: it is the placeholder shipped in config.example.yaml.
+STATUS_PLACEHOLDER = "PLACEHOLDER_CONFIG"
 
 
 @dataclass
@@ -128,6 +131,7 @@ class PageCheck:
     # проверялись — это не «все NOT_FOUND», а «проверка не состоялась».
     unreachable: bool = False
     unauthenticated: bool = False
+    placeholder: bool = False
 
     @property
     def page_state(self) -> str:
@@ -136,6 +140,8 @@ class PageCheck:
             return PAGE_STATE["unreachable"]
         if self.unauthenticated:
             return PAGE_STATE["unauthenticated"]
+        if self.placeholder:
+            return PAGE_STATE["placeholder"]
         return PAGE_STATE["confirmed"]
 
 
@@ -161,6 +167,14 @@ def check_selectors(page, spec, page_loader=None):
     """
     pages: list[PageCheck] = []
     for name, url, selectors in spec:
+        if is_resume_url_placeholder(url):
+            logger.warning(
+                "healthcheck: страница '%s' не проверялась: resume_url содержит "
+                "плейсхолдер; укажите реальный URL (получить можно через list-resumes --remote)",
+                name,
+            )
+            pages.append(PageCheck(name=name, url=url, results=[], placeholder=True))
+            continue
         try:
             goto_hh(page, url)
         except (PlaywrightTimeoutError, PlaywrightError) as exc:
@@ -215,6 +229,9 @@ def format_healthcheck_table(pages: list[PageCheck]) -> str:
             continue
         if pg.page_state == PAGE_STATE["unauthenticated"]:
             rows.append([pg.name, "-", STATUS_UNAUTHENTICATED, "-"])
+            continue
+        if pg.page_state == PAGE_STATE["placeholder"]:
+            rows.append([pg.name, "-", STATUS_PLACEHOLDER, "-"])
             continue
         for r in pg.results:
             rows.append([pg.name, r.name, r.status, str(r.found)])
@@ -343,7 +360,8 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     )
     unreachable = sum(1 for pg in pages if pg.unreachable)
     unauthenticated = sum(1 for pg in pages if pg.unauthenticated)
-    if required_missing or unreachable or unauthenticated:
+    placeholders = sum(1 for pg in pages if pg.placeholder)
+    if required_missing or unreachable or unauthenticated or placeholders:
         parts = []
         if required_missing:
             parts.append(f"НЕ найдено {required_missing} обязательных (см. NOT_FOUND выше)")
@@ -355,6 +373,11 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
             parts.append(
                 f"сессия недействительна на страниц: {unauthenticated} "
                 "(выполните login; селекторы не проверялись)"
+            )
+        if placeholders:
+            parts.append(
+                f"плейсхолдеров resume_url: {placeholders} "
+                "(заполните resume_url; получить реальный можно через list-resumes --remote)"
             )
         print(
             f"[FAIL] обязательных найдено {required_ok}; "

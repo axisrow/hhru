@@ -27,6 +27,7 @@ PAGE_STATE = {
     "indeterminate": "indeterminate",
     "unreachable": "unreachable",
     "unauthenticated": "unauthenticated",
+    "placeholder": "placeholder",
 }
 
 

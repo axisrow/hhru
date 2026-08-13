@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,6 +10,17 @@ from typing import TYPE_CHECKING
 import yaml
 
 logger = logging.getLogger("hhru_bot.config")
+
+# The shipped example deliberately uses X/Y runs instead of a real resume id.
+# Keep this recognition narrow: arbitrary resume ids remain valid config values.
+_RESUME_PLACEHOLDER_RE = re.compile(r"^(?:X{8,}|Y{8,})$")
+
+
+def is_resume_url_placeholder(resume_url: str) -> bool:
+    """Return whether ``resume_url`` contains the example-config placeholder."""
+    resume_id = resume_url.rstrip("/").rsplit("/", 1)[-1]
+    return bool(_RESUME_PLACEHOLDER_RE.fullmatch(resume_id))
+
 
 if TYPE_CHECKING:
     # Только для статического анализа; реальный импорт был бы циклическим

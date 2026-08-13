@@ -9,7 +9,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
 from .browser import HH_BASE_URL, goto_hh, has_login_form
-from .config import ResumeConfig
+from .config import ResumeConfig, is_resume_url_placeholder
 
 logger = logging.getLogger("hhru_bot.bump")
 
@@ -29,6 +29,13 @@ class BumpResult:
 
 
 def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
+    if is_resume_url_placeholder(resume.resume_url):
+        return BumpResult(
+            resume.id,
+            False,
+            "В конфиге указан плейсхолдер resume_url; укажите реальный URL "
+            "(получить можно через list-resumes --remote)",
+        )
     url = (
         resume.resume_url
         if resume.resume_url.startswith("http")

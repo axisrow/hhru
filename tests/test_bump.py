@@ -124,6 +124,21 @@ def test_bump_hint_present_blocks_click():
     assert page.click_log == []
 
 
+def test_bump_placeholder_url_does_not_navigate():
+    page = FakeBumpPage(hint_present=False)
+    resume = ResumeConfig(
+        id="r1",
+        resume_url="https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX",
+        search=SearchFilters(text="python", area=1),
+    )
+
+    result = bump_resume(page, resume, dry_run=False)
+
+    assert result.success is False
+    assert "плейсхолдер" in result.reason
+    assert page.goto_calls == []
+
+
 def test_bump_delayed_hint_still_blocks_click():
     """РЕГРЕССИЯ #139: hint появляется не мгновенно (гонка рендера) — на момент
     немедленного ``count()`` его в DOM ещё нет, но он в итоге отрисуется.

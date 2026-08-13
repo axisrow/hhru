@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_config
+from hhru_bot.config import (
+    ConfigError,
+    ResumeConfig,
+    SearchFilters,
+    is_resume_url_placeholder,
+    load_config,
+)
 from hhru_bot.config_sections.ai_profile import AIProfile
 
 
@@ -46,6 +52,30 @@ def test_load_config_minimal(tmp_path):
     # дефолты throttle
     assert config.throttle.daily_apply_limit == 40
     assert config.throttle.min_delay_seconds == 8
+
+
+@pytest.mark.parametrize(
+    "resume_url",
+    [
+        "https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX",
+        "https://hh.ru/resume/YYYYYYYYYYYYYYYYYYYYYYYY",
+        "/resume/XXXXXXXXXXXXXXXXXXXXXXXX/",
+    ],
+)
+def test_is_resume_url_placeholder(resume_url):
+    assert is_resume_url_placeholder(resume_url)
+
+
+@pytest.mark.parametrize(
+    "resume_url",
+    [
+        "https://hh.ru/resume/12345678",
+        "https://hh.ru/resume/ABC123",
+        "https://hh.ru/resume/XYXYXYXY",
+    ],
+)
+def test_real_resume_url_is_not_placeholder(resume_url):
+    assert not is_resume_url_placeholder(resume_url)
 
 
 def test_load_config_full_search_filters(tmp_path):

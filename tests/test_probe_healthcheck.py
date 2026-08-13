@@ -395,6 +395,31 @@ def test_healthcheck_spec_marks_obsolete_and_conditional_optional():
     assert sel_required["PAGINATION_NEXT"] is False
 
 
+def test_check_selectors_skips_placeholder_url_without_goto(monkeypatch):
+    """A config placeholder is a config problem, not selector drift."""
+    page = _FakePage()
+    monkeypatch.setattr(
+        probe_cmd,
+        "goto_hh",
+        lambda *_args, **_kwargs: pytest.fail("placeholder URL must not be opened"),
+    )
+    spec = [
+        (
+            "resume",
+            "https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX",
+            [("RESUME_BUMP_BUTTON", "[data-qa='resume-edit-actions']", True)],
+        )
+    ]
+
+    pages = probe_cmd.check_selectors(page, spec)
+
+    assert pages[0].page_state == probe_cmd.PAGE_STATE["placeholder"]
+    assert pages[0].results == []
+    out = probe_cmd.format_healthcheck_table(pages)
+    assert probe_cmd.STATUS_PLACEHOLDER in out
+    assert "NOT_FOUND" not in out
+
+
 class _StubConfig:
     """Минимальный конфиг для _healthcheck_spec: только resumes (остальное не нужно)."""
 
