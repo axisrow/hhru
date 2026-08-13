@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,6 +23,8 @@ def test_login_does_not_save_session_without_hhtoken(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, "sync_playwright", lambda: manager)
     monkeypatch.setattr(auth, "goto_hh", MagicMock())
     monkeypatch.setattr("builtins.input", lambda _: "")
+    monkeypatch.setattr(time, "monotonic", iter([0, 301, 301]).__next__)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
     context.cookies.return_value = [{"name": "other", "value": "abc"}]
 
     config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)

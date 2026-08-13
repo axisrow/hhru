@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from playwright.sync_api import sync_playwright
 
-from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh, has_auth_cookie
+from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
@@ -14,10 +15,14 @@ def login(config: AppConfig) -> None:
     """
     Открывает hh.ru в headed-браузере и ждёт, пока пользователь вручную войдёт
     в аккаунт (логин/пароль, СМС-код, капча — всё, что попросит hh.ru).
-    После подтверждения в терминале сохраняет сессию (cookies + localStorage)
-    в файл, указанный в config.storage_state_file, чтобы остальные команды
-    могли переиспользовать вход без повторной авторизации.
+    После подтверждения по состоянию страницы сохраняет сессию
+    (cookies + localStorage) в файл, указанный в config.storage_state_file,
+    чтобы остальные команды могли переиспользовать вход без повторной
+    авторизации.
     """
+    poll_interval_seconds = 2
+    timeout_seconds = 300
+    progress_interval_seconds = 15
     storage_state_file = config.storage_state_file
     storage_state_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -51,10 +56,33 @@ def login(config: AppConfig) -> None:
         print()
         print("=" * 70)
         print("Откройте вкладку браузера и войдите в свой аккаунт на hh.ru.")
-        print("Когда окажетесь на главной странице (или в личном кабинете),")
-        print("вернитесь сюда и нажмите Enter, чтобы сохранить сессию.")
+        print("Вход будет подтверждён автоматически после проверки страницы.")
         print("=" * 70)
-        input("Нажмите Enter после успешного входа... ")
+        started_at = time.monotonic()
+        next_progress_at = progress_interval_seconds
+        while True:
+            elapsed = time.monotonic() - started_at
+            if has_auth_cookie(page) and not has_login_form(page):
+                break
+            if elapsed >= timeout_seconds:
+                if not has_auth_cookie(page):
+                    logger.warning(
+                        "Cookie hhtoken отсутствует — вход, похоже, не завершён. "
+                        "Сессия не будет сохранена.",
+                    )
+                    context.close()
+                    browser.close()
+                    raise RuntimeError("Cookie hhtoken отсутствует — сессия не сохранена")
+                context.close()
+                browser.close()
+                raise RuntimeError(
+                    f"Вход не завершён за {timeout_seconds} секунд, сессия не сохранена",
+                )
+            if elapsed >= next_progress_at:
+                remaining = max(0, timeout_seconds - int(elapsed))
+                print(f"[INFO] Ожидание входа... осталось около {remaining} с")
+                next_progress_at += progress_interval_seconds
+            time.sleep(poll_interval_seconds)
 
         # Реальный маркер залогиненности — cookie hhtoken, а не URL (hh.ru после
         # входа иногда оставляет путь входа в реферере/redirect — URL-проверка
