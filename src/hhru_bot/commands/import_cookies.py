@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 
@@ -32,7 +33,13 @@ def run(args: argparse.Namespace) -> bool:
     try:
         rows = read_chrome_cookies(cookie_file)
         state = build_storage_state(rows)
-        hhtoken = any(cookie["name"] == "hhtoken" for cookie in state["cookies"])
+        now = time.time()
+        hhtoken = any(
+            cookie["name"] == "hhtoken"
+            and cookie["value"]
+            and (cookie["expires"] == -1 or cookie["expires"] > now)
+            for cookie in state["cookies"]
+        )
         if not hhtoken:
             print("[FAIL] Cookie hhtoken не найден; текущая сессия не изменена.")
             return True
