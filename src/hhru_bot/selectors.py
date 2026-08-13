@@ -41,7 +41,16 @@ from .selector_groups.vacancy_page import (
     VACANCY_TITLE,
 )
 
+# Подтверждено headless-дампом https://hh.ru/account/login от 2026-08-13.
+LOGIN_CODE_REQUEST_BUTTON = "[data-qa='submit-button']"
+LOGIN_EMAIL_INPUT = "input[type='email']"
+LOGIN_PHONE_INPUT = "[data-qa='magritte-phone-input-national-number-input']"
+# Поле одноразового кода не видно в анонимном состоянии страницы — НЕ подтверждено.
+
 __all__ = [
+    "LOGIN_CODE_REQUEST_BUTTON",
+    "LOGIN_EMAIL_INPUT",
+    "LOGIN_PHONE_INPUT",
     "APPLY_COVER_LETTER_TEXTAREA",
     "APPLY_COVER_LETTER_TOGGLE",
     "APPLY_RESUME_SELECT",
