@@ -26,6 +26,7 @@ PAGE_STATE = {
     "confirmed": "confirmed",
     "indeterminate": "indeterminate",
     "unreachable": "unreachable",
+    "unauthenticated": "unauthenticated",
 }
 
 
