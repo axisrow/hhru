@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import itertools
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hhru_bot import auth
 
 
-def test_login_does_not_save_session_without_hhtoken(monkeypatch, tmp_path):
+def _make_playwright(monkeypatch):
+    """Собирает моки sync_playwright()/browser/context/page для login(); возвращает context."""
     context = MagicMock()
-    page = MagicMock()
-    context.new_page.return_value = page
+    context.new_page.return_value = MagicMock()
     browser = MagicMock()
     browser.new_context.return_value = context
 
@@ -22,10 +23,15 @@ def test_login_does_not_save_session_without_hhtoken(monkeypatch, tmp_path):
     manager.__exit__.return_value = None
     monkeypatch.setattr(auth, "sync_playwright", lambda: manager)
     monkeypatch.setattr(auth, "goto_hh", MagicMock())
-    monkeypatch.setattr("builtins.input", lambda _: "")
-    monkeypatch.setattr(time, "monotonic", iter([0, 301, 301]).__next__)
     monkeypatch.setattr(time, "sleep", lambda _: None)
-    context.cookies.return_value = [{"name": "other", "value": "abc"}]
+    return context
+
+
+def test_login_does_not_save_session_without_hhtoken(monkeypatch, tmp_path):
+    context = _make_playwright(monkeypatch)
+    monkeypatch.setattr(auth, "has_auth_cookie", lambda p: False)
+    monkeypatch.setattr(auth, "has_login_form", lambda p: True)
+    monkeypatch.setattr(time, "monotonic", iter([0, 301, 301]).__next__)
 
     config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)
 
@@ -33,3 +39,52 @@ def test_login_does_not_save_session_without_hhtoken(monkeypatch, tmp_path):
         auth.login(config)
 
     context.storage_state.assert_not_called()
+
+
+def test_login_succeeds_when_auth_confirmed_on_third_poll(monkeypatch, tmp_path):
+    """Вход появился на 3-й итерации опроса -> storage_state сохранён, без исключений."""
+    context = _make_playwright(monkeypatch)
+    # Первые 2 опроса — форма ещё видна/куки нет, на 3-й — has_auth_cookie=True и
+    # has_login_form=False (позитивный маркер входа).
+    auth_cookie_results = itertools.chain([False, False, True], itertools.repeat(True))
+    login_form_results = itertools.chain([True, True, False], itertools.repeat(False))
+    monkeypatch.setattr(auth, "has_auth_cookie", lambda p: next(auth_cookie_results))
+    monkeypatch.setattr(auth, "has_login_form", lambda p: next(login_form_results))
+    monkeypatch.setattr(time, "monotonic", itertools.chain([0, 2, 4], itertools.repeat(4)).__next__)
+
+    config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)
+
+    auth.login(config)
+
+    context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
+
+
+def test_login_times_out_when_login_form_never_disappears(monkeypatch, tmp_path):
+    """Кука есть, но форма входа осталась (отозванная сессия) -> НЕ успех, RuntimeError."""
+    context = _make_playwright(monkeypatch)
+    monkeypatch.setattr(auth, "has_auth_cookie", lambda p: True)
+    monkeypatch.setattr(auth, "has_login_form", lambda p: True)
+    monkeypatch.setattr(time, "monotonic", iter([0, 301, 301]).__next__)
+
+    config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)
+
+    with pytest.raises(RuntimeError, match="не завершён"):
+        auth.login(config)
+
+    context.storage_state.assert_not_called()
+
+
+def test_login_never_calls_input_in_non_tty(monkeypatch, tmp_path):
+    """Охранный тест против регресса #164: login() не должен звать input() вообще."""
+    context = _make_playwright(monkeypatch)
+    monkeypatch.setattr(auth, "has_auth_cookie", lambda p: True)
+    monkeypatch.setattr(auth, "has_login_form", lambda p: False)
+    monkeypatch.setattr(time, "monotonic", iter([0, 0]).__next__)
+
+    config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)
+
+    with patch("builtins.input", side_effect=EOFError("EOF when reading a line")) as mocked_input:
+        auth.login(config)
+
+    mocked_input.assert_not_called()
+    context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
