@@ -80,6 +80,62 @@ def test_check_selectors_not_found_when_zero(monkeypatch):
     assert pages[0].results[0].status == "NOT_FOUND"
 
 
+def test_check_selectors_marks_login_page_without_reporting_selector_drift(monkeypatch):
+    """A rejected session is a page state, not a zero-count selector result."""
+    page = _stub_goto_hh(
+        monkeypatch,
+        _FakePage("<div data-qa='account-login-form'>login</div>"),
+    )
+    spec = [
+        (
+            "negotiations",
+            "https://hh.ru/applicant/negotiations",
+            [("ITEM", "[data-qa='negotiation-item']")],
+        )
+    ]
+
+    pages = probe_cmd.check_selectors(page, spec)
+
+    assert pages[0].page_state == probe_cmd.PAGE_STATE["unauthenticated"]
+    assert pages[0].results == []
+    out = probe_cmd.format_healthcheck_table(pages)
+    assert probe_cmd.STATUS_UNAUTHENTICATED in out
+    assert "NOT_FOUND" not in out
+
+
+def test_check_selectors_still_checks_anonymous_search_when_private_page_is_logged_out(
+    monkeypatch,
+):
+    """The login state of one page must not suppress useful search results."""
+    page = _stub_goto_hh(monkeypatch, _FakePage())
+    html_by_page = {
+        "search": "<div data-qa='vacancy-serp__vacancy'>x</div>",
+        "negotiations": "<div data-qa='account-login-form'>login</div>",
+    }
+
+    def _load(p, url, name):  # noqa: ANN001
+        p.set_content(html_by_page[name])
+
+    spec = [
+        (
+            "search",
+            "https://hh.ru/search/vacancy",
+            [("CARD", "[data-qa='vacancy-serp__vacancy']")],
+        ),
+        (
+            "negotiations",
+            "https://hh.ru/applicant/negotiations",
+            [("ITEM", "[data-qa='negotiation-item']")],
+        ),
+    ]
+
+    pages = probe_cmd.check_selectors(page, spec, page_loader=_load)
+
+    assert pages[0].results[0].status == probe_cmd.STATUS_OK
+    assert pages[1].unauthenticated is True
+    assert pages[1].results == []
+
+
 def test_check_selectors_counts_multiple_matches(monkeypatch):
     # Несколько карточек на странице поиска — found == числу, статус OK.
     html = (
