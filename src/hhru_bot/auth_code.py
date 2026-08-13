@@ -17,7 +17,12 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form, launch_context
 from .config import AppConfig
-from .selectors import LOGIN_CODE_REQUEST_BUTTON, LOGIN_EMAIL_INPUT, LOGIN_PHONE_INPUT
+from .selectors import (
+    LOGIN_CODE_REQUEST_BUTTON,
+    LOGIN_EMAIL_INPUT,
+    LOGIN_EMAIL_TYPE,
+    LOGIN_PHONE_INPUT,
+)
 
 logger = logging.getLogger("hhru_bot.auth_code")
 
@@ -53,7 +58,11 @@ def request_code(config: AppConfig, login: str) -> str:
             page = context.new_page()
             goto_hh(page, _LOGIN_URL)
             page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
-            field = page.locator(LOGIN_EMAIL_INPUT if "@" in login else LOGIN_PHONE_INPUT)
+            if "@" in login:
+                page.locator(LOGIN_EMAIL_TYPE).check(force=True)
+                field = page.locator(LOGIN_EMAIL_INPUT)
+            else:
+                field = page.locator(LOGIN_PHONE_INPUT)
             if field.count() == 0:
                 raise RuntimeError("Не найдено поле логина на странице hh.ru")
             field.fill(login)
