@@ -125,11 +125,18 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     # The temp file is a NEW inode, so it starts with the process umask
     # (typically 0644) rather than destination's mode — os.replace() would
     # otherwise silently widen a restrictive (0600) session file to
-    # group/world-readable (Codex re-review, PR #168). storage_state_file
-    # holds a bearer token (hhtoken); force owner-only permissions on the
-    # temp file explicitly instead of relying on umask.
+    # group/world-readable. storage_state_file holds a bearer token
+    # (hhtoken); create the temp file with 0o600 from the very first byte
+    # written via os.open(O_CREAT|O_EXCL, 0o600) — chmod()'ing *after*
+    # write_text() would still leave a race window where the plaintext
+    # secret sits at the umask-derived mode (Codex re-review, PR #168).
     tmp = destination.with_name(destination.name + ".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.chmod(0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     os.replace(tmp, destination)
     return backup

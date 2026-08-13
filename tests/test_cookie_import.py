@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,37 @@ def test_write_does_not_widen_session_file_permissions(tmp_path: Path):
 
     mode = destination.stat().st_mode & 0o777
     assert mode == 0o600, f"storage_state_file permissions widened to {oct(mode)}"
+
+
+def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
+    # Codex + /review re-review (PR #168): a previous fix called
+    # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file
+    # (and written the hhtoken plaintext) under the process umask — a race
+    # window where a world-readable umask (022) leaves the secret briefly
+    # group/world-readable before chmod locks it down. The temp file must be
+    # created with 0600 from the moment the inode exists (os.open with the
+    # mode argument), not hardened afterward with a separate chmod() call.
+    # Spy on os.open to capture the mode the fd was actually created with.
+    destination = tmp_path / "hh_session.json"
+    old_umask = os.umask(0o022)
+    try:
+        real_open = os.open
+        observed_modes: list[int] = []
+
+        def _spy_open(path, flags, mode=0o777, *args, **kwargs):
+            fd = real_open(path, flags, mode, *args, **kwargs)
+            if str(path).endswith(".tmp"):
+                observed_modes.append(os.fstat(fd).st_mode & 0o777)
+            return fd
+
+        monkeypatch.setattr(os, "open", _spy_open)
+
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+        assert observed_modes, "expected write_storage_state to create the temp file via os.open"
+        assert observed_modes[0] == 0o600, (
+            f"temp file's fd was created with mode {oct(observed_modes[0])}, not 0o600 — "
+            "secret was briefly world/group-readable before any later chmod"
+        )
+    finally:
+        os.umask(old_umask)
