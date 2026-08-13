@@ -7,7 +7,7 @@
 read-only дашборд без браузера и риска анти-фрода.
 
 Вывод — ASCII-таблица через ``report._ascii_table`` (НЕ дублируется) + строка
-``[INFO] Сессия действительна`` / ``[FAIL] ...``. Только текст — НИКАКИХ эмодзи
+``[INFO]`` / ``[FAIL] ...``. Только текст — НИКАКИХ эмодзи
 (правило проекта: CLI-вывод чистый). Эмодзи-строка референса s3rgeym (иконка +
 счётчики в скобках) здесь намеренно заменена таблицей (контракт docs/cli-spec.md
 §whoami).
@@ -21,6 +21,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+ONLINE_CHECK_URL = "https://hh.ru/applicant/resumes"
+
 
 def register(subparsers) -> None:
     p = subparsers.add_parser(
@@ -28,6 +30,11 @@ def register(subparsers) -> None:
         help="Проверить сессию и показать сводку аккаунта (из локальной истории)",
     )
     p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
+    p.add_argument(
+        "--online",
+        action="store_true",
+        help="Проверить сессию на hh.ru (открывает браузер)",
+    )
     p.set_defaults(func=run)
 
 
@@ -87,10 +94,34 @@ def run(args: argparse.Namespace) -> None:
 
     # 1) Сессия.
     ok, detail = _check_session(Path(config.storage_state_file))
-    if ok:
-        print("[INFO] Сессия действительна")
-    else:
+    if not ok:
         print(f"[FAIL] Сессия недействительна: {detail}")
+    elif getattr(args, "online", False):
+        from playwright.sync_api import Error as PlaywrightError
+
+        from ..browser import goto_hh, has_auth_cookie, has_login_form, launch_context
+
+        with launch_context(
+            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        ) as context:
+            page = context.new_page()
+            try:
+                goto_hh(page, ONLINE_CHECK_URL)
+            except PlaywrightError as e:
+                # Недостижимость страницы (сеть/DDoS-Guard/таймаут после retries
+                # в goto_hh) — неподтверждённое состояние, а не доказанный отказ
+                # сервера. Не выдаём это ни за валидную, ни молча за невалидную
+                # сессию (принцип browser.PageStateIndeterminate, CLAUDE.md #5).
+                print(f"[FAIL] Не удалось проверить сессию на hh.ru: {e}")
+            else:
+                if not has_auth_cookie(page) or has_login_form(page):
+                    print("[FAIL] Сессия недействительна на hh.ru. Выполните login.")
+                else:
+                    print("[INFO] Сессия действительна (проверено на hh.ru)")
+    else:
+        print(
+            "[INFO] Локальный auth-маркер найден; для проверки сессии на hh.ru используйте --online"
+        )
 
     # 2) Счётчики из локальной истории (НЕ с hh.ru).
     # Откликов сегодня — сумма по выбранным резюме, под resume.resume_id
