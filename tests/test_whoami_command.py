@@ -143,6 +143,40 @@ def test_online_check_navigates_before_login_form_check(tmp_path, capsys, monkey
     assert events == ["goto", "cookie", "login-form"]
 
 
+def test_online_check_navigation_failure_prints_fail_not_traceback(tmp_path, capsys, monkeypatch):
+    """goto_hh пробрасывает PlaywrightError после исчерпания retries (#80) —
+    --online не должен падать необработанным traceback (нарушение
+    PageStateIndeterminate-принципа, CLAUDE.md #5): недостижимость страницы
+    неопределённость, а не подтверждённый отказ, но и не молчаливый успех."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    session = _valid_session(tmp_path)
+    cfg = _write_config(tmp_path, _config_body(str(session)))
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def new_page(self):
+            return object()
+
+    def _goto_fails(page, url):
+        raise PlaywrightError("net::ERR_CONNECTION_RESET")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: Context())
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", _goto_fails)
+
+    out = _run(_args(cfg, tmp_path / "h.db", online=True), capsys)
+
+    assert "[FAIL]" in out
+    assert "Сессия действительна" not in out
+    # Сводка из локальной истории должна напечататься несмотря на сбой сети.
+    assert "Резюме" in out
+
+
 def test_missing_session_prints_fail_line(tmp_path, capsys):
     cfg = _write_config(tmp_path, _config_body(str(tmp_path / "nope.json")))
     out = _run(_args(cfg, tmp_path / "h.db"), capsys)

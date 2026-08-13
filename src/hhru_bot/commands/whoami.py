@@ -97,17 +97,27 @@ def run(args: argparse.Namespace) -> None:
     if not ok:
         print(f"[FAIL] Сессия недействительна: {detail}")
     elif getattr(args, "online", False):
+        from playwright.sync_api import Error as PlaywrightError
+
         from ..browser import goto_hh, has_auth_cookie, has_login_form, launch_context
 
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            goto_hh(page, ONLINE_CHECK_URL)
-            if not has_auth_cookie(page) or has_login_form(page):
-                print("[FAIL] Сессия недействительна на hh.ru. Выполните login.")
+            try:
+                goto_hh(page, ONLINE_CHECK_URL)
+            except PlaywrightError as e:
+                # Недостижимость страницы (сеть/DDoS-Guard/таймаут после retries
+                # в goto_hh) — неподтверждённое состояние, а не доказанный отказ
+                # сервера. Не выдаём это ни за валидную, ни молча за невалидную
+                # сессию (принцип browser.PageStateIndeterminate, CLAUDE.md #5).
+                print(f"[FAIL] Не удалось проверить сессию на hh.ru: {e}")
             else:
-                print("[INFO] Сессия действительна (проверено на hh.ru)")
+                if not has_auth_cookie(page) or has_login_form(page):
+                    print("[FAIL] Сессия недействительна на hh.ru. Выполните login.")
+                else:
+                    print("[INFO] Сессия действительна (проверено на hh.ru)")
     else:
         print(
             "[INFO] Локальный auth-маркер найден; для проверки сессии на hh.ru используйте --online"
