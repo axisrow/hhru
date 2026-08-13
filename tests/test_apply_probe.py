@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import hhru_bot.apply.probe as probe_module
 from hhru_bot.apply.probe import ProbeContext, dump_probe_snapshot, probe_vacancy
 from hhru_bot.search import VacancyCard
 
@@ -239,6 +240,29 @@ def test_probe_no_apply_button_fails(tmp_path: Path):
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
     assert page.screenshot_calls == 0
+
+
+def test_probe_login_form_is_checked_after_navigation(tmp_path: Path, monkeypatch):
+    page = FakeProbePage()
+    events: list[str] = []
+
+    def fake_goto(p, url, **_kwargs):
+        events.append("goto")
+        p.goto(url)
+
+    def fake_has_login_form(_page):
+        events.append("auth")
+        assert events == ["goto", "auth"]
+        return True
+
+    monkeypatch.setattr(probe_module, "goto_hh", fake_goto)
+    monkeypatch.setattr(probe_module, "has_login_form", fake_has_login_form)
+
+    result = probe_vacancy(page, _vacancy(), "RID", "x", tmp_path)
+
+    assert result.success is False
+    assert "Сессия недействительна" in result.reason
+    assert events == ["goto", "auth"]
 
 
 def test_probe_dedup_step_is_passthrough(tmp_path: Path):

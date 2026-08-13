@@ -179,17 +179,27 @@ def test_dry_run_does_not_click(monkeypatch):
     assert page.gotos == [cr.RESUMES_LIST_URL]
 
 
-def test_goto_hh_does_not_wait_for_card_before_login_check(monkeypatch):
-    """Форма входа должна проверяться до ожидания карточки и её ретраев."""
+def test_goto_hh_ready_selector_and_login_check_order(monkeypatch):
+    """#153: auth probe runs after navigation, while #142 wait remains intact."""
     page = StubPage(
         url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
     )
     _patch_env(monkeypatch, page)
+    page.events = []
+    original_goto = cr.goto_hh
+
+    def _goto(p, url, **kw):
+        page.events.append("goto")
+        original_goto(p, url, **kw)
+
+    monkeypatch.setattr(cr, "goto_hh", _goto)
+    monkeypatch.setattr(cr, "has_login_form", lambda p: page.events.append("auth") or False)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert result.success
-    # fallback-путь: goto_hh вызван дважды — обе с ready_selector
+    # fallback-путь: goto_hh вызван дважды — auth probe follows each navigation.
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
-    assert all("ready_selector" not in kw for kw in page.goto_kwargs)
+    assert page.events == ["goto", "auth", "goto", "auth"]
+    assert all(kw.get("ready_selector") == RESUME_LIST_CARD for kw in page.goto_kwargs)
 
 
 def test_card_not_found_fails_closed(monkeypatch):

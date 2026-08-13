@@ -22,6 +22,10 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_login_form
 from .config import ResumeConfig
+
+# Reuse the established auth-state exception rather than defining a second
+# copy-resume-only variant; the command layer already treats this shared
+# PageStateIndeterminate subtype as an expired-session failure.
 from .responses import NotAuthenticated
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
@@ -146,6 +150,32 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
     return cards
 
 
+def _goto_resumes_list(page: Page) -> None:
+    """Navigate to the list while preserving #142's ready-selector wait.
+
+    A revoked session renders the login form instead of a resume card. In that
+    case ``goto_hh`` exhausts its ready-selector retries first; inspect the
+    already navigated page in the timeout handler so the user gets the auth
+    diagnosis rather than a selector timeout. On the normal path the
+    ready-selector still guarantees that the fallback card diff reads a
+    rendered list.
+    """
+    try:
+        goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
+    except PlaywrightTimeoutError:
+        if has_login_form(page):
+            raise NotAuthenticated(
+                "страница содержит форму входа — сессия отвергнута сервером "
+                "(запустите `login`, затем повторите)"
+            ) from None
+        raise
+    if has_login_form(page):
+        raise NotAuthenticated(
+            "страница содержит форму входа — сессия отвергнута сервером "
+            "(запустите `login`, затем повторите)"
+        )
+
+
 def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
     """Идиома ``count → wait_for → count`` для строгого (strict-mode) Playwright.
 
@@ -174,15 +204,7 @@ def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-    # Не передаём ready_selector: при отозванной сессии форма входа не содержит
-    # карточку и goto_hh сначала потратит все ретраи на её ожидание. После
-    # навигации проверяем серверный auth-маркер, а затем отдельно ждём карточку.
-    goto_hh(page, RESUMES_LIST_URL)
-    if has_login_form(page):
-        raise NotAuthenticated(
-            "страница содержит форму входа — сессия отвергнута сервером "
-            "(запустите `login`, затем повторите)"
-        )
+    _goto_resumes_list(page)
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
     card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
@@ -244,13 +266,7 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        # Сначала снова проверяем форму входа, затем читаем diff списка.
-        goto_hh(page, RESUMES_LIST_URL)
-        if has_login_form(page):
-            raise NotAuthenticated(
-                "страница содержит форму входа — сессия отвергнута сервером "
-                "(запустите `login`, затем повторите)"
-            )
+        _goto_resumes_list(page)
         created = _card_hashes(page) - before
         if len(created) != 1:
             return CopyResumeResult(

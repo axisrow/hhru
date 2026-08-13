@@ -13,6 +13,7 @@ from __future__ import annotations
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+import hhru_bot.bump as bump_module
 from hhru_bot.bump import bump_resume
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.selector_groups import resume_page
@@ -179,3 +180,26 @@ def test_bump_no_button_found_fails():
 
     assert result.success is False
     assert "не найдена" in result.reason
+
+
+def test_bump_login_form_is_checked_after_navigation(monkeypatch):
+    page = FakeBumpPage(hint_present=False)
+    events: list[str] = []
+
+    def fake_goto(p, url, **_kwargs):
+        events.append("goto")
+        p.goto(url)
+
+    def fake_has_login_form(_page):
+        events.append("auth")
+        assert events == ["goto", "auth"]
+        return True
+
+    monkeypatch.setattr(bump_module, "goto_hh", fake_goto)
+    monkeypatch.setattr(bump_module, "has_login_form", fake_has_login_form)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "Сессия недействительна" in result.reason
+    assert events == ["goto", "auth"]
