@@ -20,8 +20,13 @@ from dataclasses import dataclass
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh
+from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_login_form
 from .config import ResumeConfig
+
+# Reuse the established auth-state exception rather than defining a second
+# copy-resume-only variant; the command layer already treats this shared
+# PageStateIndeterminate subtype as an expired-session failure.
+from .responses import NotAuthenticated
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -145,6 +150,50 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
     return cards
 
 
+def _goto_resumes_list(page: Page, *, post_write: bool = False) -> None:
+    """Navigate without a readiness retry, then fail fast on the login form.
+
+    ``goto_hh(..., ready_selector=...)`` retries the whole navigation three
+    times, so a revoked session would wait minutes before its already-rendered
+    login form was inspected. The card readiness wait is deliberately split
+    out and called by the fallback immediately before ``_card_hashes``.
+
+    ``post_write`` (Codex adversarial review, PR #158): this helper is called
+    twice — once before any click (safe to report as an ordinary pre-write
+    auth failure), and once from the fallback diff path AFTER
+    ``duplicate.click()`` has already fired the clone POST. A session revoked
+    server-side in that window must not be reported with pre-write wording —
+    the operator needs to know the clone may already exist before retrying
+    (mirrors the ``except Exception`` handler's caveat in
+    ``commands/copy_resume.py``, and the same "state not confirmed" pattern as
+    ``ResumeListIndeterminate`` above).
+    """
+    goto_hh(page, RESUMES_LIST_URL)
+    if has_login_form(page):
+        if post_write:
+            raise NotAuthenticated(
+                "страница содержит форму входа после отправки запроса на "
+                "дублирование — состояние копии НЕ подтверждено, возможно "
+                "она уже создана (запустите `login`, затем проверьте список "
+                "резюме перед повтором)"
+            )
+        raise NotAuthenticated(
+            "страница содержит форму входа — сессия отвергнута сервером "
+            "(запустите `login`, затем повторите)"
+        )
+
+
+def _wait_resume_list_ready(page: Page) -> None:
+    """Preserve #142's rendered-list guarantee for the fallback card diff."""
+    try:
+        page.locator(RESUME_LIST_CARD).first.wait_for(timeout=COPY_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        raise ResumeListIndeterminate(
+            "карточки резюме не появились за отведённое время — состояние "
+            "/applicant/resumes не подтверждено"
+        ) from None
+
+
 def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
     """Идиома ``count → wait_for → count`` для строгого (strict-mode) Playwright.
 
@@ -173,11 +222,7 @@ def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-    # ready_selector=RESUME_LIST_CARD: ждём появления хотя бы одной карточки резюме
-    # (#142 — раньше готовность проверялась неявно, через wait_for конкретной
-    # карточки ниже). Это не заменяет ожидание конкретного resume_id ниже — там
-    # нужна именно карточка нужного резюме, а тут сигнал «список отрендерен».
-    goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
+    _goto_resumes_list(page)
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
     card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
@@ -239,9 +284,11 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        # Тот же ready_selector, что при первом открытии (#142): симметрия — список
-        # гарантированно отрендерен до _card_hashes ниже.
-        goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
+        # post_write=True: клик по «Дублировать» уже отправлен выше, поэтому
+        # отзыв сессии здесь — это неподтверждённое состояние копии, а не
+        # обычный pre-write отказ (Codex adversarial review, PR #158).
+        _goto_resumes_list(page, post_write=True)
+        _wait_resume_list_ready(page)
         created = _card_hashes(page) - before
         if len(created) != 1:
             return CopyResumeResult(

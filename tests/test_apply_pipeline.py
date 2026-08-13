@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
 from hhru_bot.search import VacancyCard
 
@@ -111,6 +112,29 @@ def test_apply_dry_run_success():
     assert result.success is True
     assert result.reason == "dry-run"
     assert page.goto_calls == ["https://hh.ru/vacancy/1"]
+
+
+def test_apply_login_form_is_checked_after_navigation(monkeypatch):
+    page = FakePage()
+    events: list[str] = []
+
+    def fake_goto(p, url, **_kwargs):
+        events.append("goto")
+        p.goto(url)
+
+    def fake_has_login_form(_page):
+        events.append("auth")
+        assert events == ["goto", "auth"]
+        return True
+
+    monkeypatch.setattr(pipeline_module, "goto_hh", fake_goto)
+    monkeypatch.setattr(pipeline_module, "has_login_form", fake_has_login_form)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.success is False
+    assert "Сессия недействительна" in result.reason
+    assert events == ["goto", "auth"]
 
 
 def test_apply_already_responded_not_deduped_by_dom():
