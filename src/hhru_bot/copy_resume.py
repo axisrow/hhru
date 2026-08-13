@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh
+from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_login_form
 from .config import ResumeConfig
+from .responses import NotAuthenticated
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -173,11 +174,15 @@ def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-    # ready_selector=RESUME_LIST_CARD: ждём появления хотя бы одной карточки резюме
-    # (#142 — раньше готовность проверялась неявно, через wait_for конкретной
-    # карточки ниже). Это не заменяет ожидание конкретного resume_id ниже — там
-    # нужна именно карточка нужного резюме, а тут сигнал «список отрендерен».
-    goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
+    # Не передаём ready_selector: при отозванной сессии форма входа не содержит
+    # карточку и goto_hh сначала потратит все ретраи на её ожидание. После
+    # навигации проверяем серверный auth-маркер, а затем отдельно ждём карточку.
+    goto_hh(page, RESUMES_LIST_URL)
+    if has_login_form(page):
+        raise NotAuthenticated(
+            "страница содержит форму входа — сессия отвергнута сервером "
+            "(запустите `login`, затем повторите)"
+        )
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
     card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
@@ -239,9 +244,13 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     if not new_id or new_id == resume.resume_id:
         # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        # Тот же ready_selector, что при первом открытии (#142): симметрия — список
-        # гарантированно отрендерен до _card_hashes ниже.
-        goto_hh(page, RESUMES_LIST_URL, ready_selector=RESUME_LIST_CARD)
+        # Сначала снова проверяем форму входа, затем читаем diff списка.
+        goto_hh(page, RESUMES_LIST_URL)
+        if has_login_form(page):
+            raise NotAuthenticated(
+                "страница содержит форму входа — сессия отвергнута сервером "
+                "(запустите `login`, затем повторите)"
+            )
         created = _card_hashes(page) - before
         if len(created) != 1:
             return CopyResumeResult(

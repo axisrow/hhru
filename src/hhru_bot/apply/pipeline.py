@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from playwright.sync_api import Page
 
-from ..browser import goto_hh
+from ..browser import goto_hh, has_login_form
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .dedup import check_already_responded
@@ -101,6 +101,8 @@ def apply_to_vacancy(
 def _run(ctx: ApplyContext) -> ApplyResult:
     logger.info("Открываю вакансию: %s (%s)", ctx.vacancy.title, ctx.vacancy.url)
     goto_hh(ctx.page, ctx.vacancy.url)
+    if has_login_form(ctx.page):
+        return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
     if reason := check_already_responded(ctx.page, ctx.vacancy):

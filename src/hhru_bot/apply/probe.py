@@ -27,7 +27,7 @@ from typing import Any
 
 from playwright.sync_api import Page
 
-from ..browser import PAGE_STATE, goto_hh
+from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
 from ..selector_groups import apply_form
@@ -151,6 +151,12 @@ def probe_vacancy(
 
     logger.info("[PROBE] Открываю вакансию: %s (%s)", vacancy.title, vacancy.url)
     goto_hh(page, vacancy.url)
+    if has_login_form(page):
+        return ProbeResult(
+            vacancy,
+            False,
+            "Сессия недействительна: страница содержит форму входа. Выполните login.",
+        )
 
     if reason := check_already_responded(page, vacancy):
         logger.info("[PROBE] Вакансия '%s' уже откликнута — пропускаю без дампа", vacancy.title)

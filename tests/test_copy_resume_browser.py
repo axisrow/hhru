@@ -19,6 +19,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 import hhru_bot.copy_resume as cr
+from hhru_bot.browser import LOGIN_FORM
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
@@ -126,6 +127,8 @@ class StubPage:
         self.gotos = []
 
     def locator(self, selector):
+        if selector == LOGIN_FORM:
+            return StubLocator(self, selector, count=0)
         if selector == CARD_SEL:
             return self._card_locator or StubLocator(self, selector)
         if selector.startswith("[data-qa^='resume-card-link-'"):
@@ -176,10 +179,8 @@ def test_dry_run_does_not_click(monkeypatch):
     assert page.gotos == [cr.RESUMES_LIST_URL]
 
 
-def test_goto_hh_called_with_ready_selector(monkeypatch):
-    """#142: goto_hh открывает список резюме с ready_selector=RESUME_LIST_CARD —
-    готовность страницы проверяется в goto_hh, а не отдельным wait_for после.
-    Оба вызова (первичное открытие + fallback) должны передавать ready_selector."""
+def test_goto_hh_does_not_wait_for_card_before_login_check(monkeypatch):
+    """Форма входа должна проверяться до ожидания карточки и её ретраев."""
     page = StubPage(
         url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
     )
@@ -188,7 +189,7 @@ def test_goto_hh_called_with_ready_selector(monkeypatch):
     assert result.success
     # fallback-путь: goto_hh вызван дважды — обе с ready_selector
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
-    assert all(kw.get("ready_selector") == RESUME_LIST_CARD for kw in page.goto_kwargs)
+    assert all("ready_selector" not in kw for kw in page.goto_kwargs)
 
 
 def test_card_not_found_fails_closed(monkeypatch):

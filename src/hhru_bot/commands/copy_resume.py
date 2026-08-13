@@ -73,6 +73,7 @@ def run(args: argparse.Namespace) -> None:
     from ..config import ConfigError, load_config_or_exit
     from ..copy_resume import copy_resume_on_hh
     from ..history import History
+    from ..responses import NotAuthenticated
 
     config = load_config_or_exit(args.config)
     try:
@@ -103,6 +104,16 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             page = context.new_page()
             result = copy_resume_on_hh(page, resume, args.dry_run)
+    except NotAuthenticated as e:
+        history.record_action(
+            resume.resume_id,
+            resume.resume_id,
+            "copy_resume",
+            "failed",
+            str(e),
+        )
+        print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
+        sys.exit(1)
     except Exception as e:
         # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
         # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
