@@ -2,7 +2,7 @@
 
 Сценарии: dry-run не кликает; карточка не найдена/неоднозначна — fail-closed;
 кнопка «Дублировать» не отрендерилась (лимит резюме hh.ru) — fail; кнопка
-неоднозначна внутри карточки — fail-closed; успех через смену URL; fallback
+неоднозначна в portal-меню — fail-closed; успех через смену URL; fallback
 через diff списка резюме; hh.ru не создал копию — fail.
 
 Стабы моделируют строгую (strict-mode) семантику настоящего Playwright:
@@ -28,6 +28,7 @@ from hhru_bot.selector_groups.resume_list import (
     RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
+    RESUME_PROFILE_READY,
 )
 
 OLD_ID = "a" * 38
@@ -63,6 +64,8 @@ class StubLocator:
         self._scope = scope  # непусто у локаторов, полученных через card.locator(...)
 
     def count(self):
+        if self.selector == RESUME_PROFILE_READY and self._page is not None:
+            return self._page.ready_count
         return self._count
 
     def _resolve(self):
@@ -76,15 +79,25 @@ class StubLocator:
         self._count = n
 
     def wait_for(self, timeout=None):
+        if self._page is not None:
+            self._page.wait_timeouts.append((self._scope, self.selector, timeout))
         self._resolve()
 
-    def click(self):
+    def click(self, timeout=None):
         self._resolve()
         self._page.clicks.append((self._scope, self.selector))
         self._page.on_click(self._scope, self.selector)
 
     def locator(self, selector):
         return self._page.card_scoped_locator(self._scope or self.selector, selector)
+
+    def or_(self, other):
+        if {self.selector, other.selector} == {
+            RESUME_DUPLICATE_MENU_ITEM,
+            RESUME_DUPLICATE_INLINE,
+        }:
+            return self._page.locator(DUP_SEL)
+        raise AssertionError(f"неожиданный locator.or_: {self.selector}, {other.selector}")
 
     @property
     def first(self):
@@ -126,6 +139,14 @@ class StubPage:
         self.url = cr.RESUMES_LIST_URL
         self.clicks = []
         self.gotos = []
+        self.wait_timeouts = []
+        self.reloads = []
+        self.ready_count = 1
+        self.now = 0.0
+        self.tick_actions = []
+        self.goto_action = None
+        self.reload_action = None
+        self._event_handlers = {}
 
     def locator(self, selector):
         if selector == LOGIN_FORM:
@@ -134,6 +155,17 @@ class StubPage:
             return StubLocator(self, selector, count=1)
         if selector == CARD_SEL:
             return self._card_locator or StubLocator(self, selector)
+        if selector == RESUME_PROFILE_READY:
+            return StubLocator(self, selector, count=self.ready_count)
+        if selector == RESUME_DUPLICATE_MENU_ITEM:
+            return StubLocator(self, selector, count=0)
+        if selector == DUP_SEL:
+            found = self._dup_locators.get(CARD_SEL)
+            if found is not None:
+                found._page = self
+                found._scope = ""
+                return found
+            return StubLocator(self, selector)
         if selector.startswith("[data-qa^='resume-card-link-'"):
             raise AssertionError("сбор хэшей должен идти через _card_hashes")
         raise AssertionError(f"неожиданный page.locator: {selector}")
@@ -141,6 +173,10 @@ class StubPage:
     def card_scoped_locator(self, card_scope, selector):
         if selector == RESUME_LIST_ACTION_MORE:
             return StubLocator(self, selector, scope=card_scope)
+        if selector == RESUME_PROFILE_READY:
+            return StubLocator(self, selector, count=self.ready_count, scope=card_scope)
+        if selector == RESUME_DUPLICATE_INLINE:
+            return StubLocator(self, selector, count=0, scope=card_scope)
         if selector == DUP_SEL:
             found = self._dup_locators.get(card_scope)
             if found is not None:
@@ -157,6 +193,39 @@ class StubPage:
         if not pattern.search(self.url):
             raise PlaywrightTimeoutError("wait_for_url timeout")
 
+    def on(self, event, handler):
+        self._event_handlers.setdefault(event, []).append(handler)
+
+    def emit(self, event, value):
+        for handler in self._event_handlers.get(event, []):
+            handler(value)
+
+    def wait_for_timeout(self, timeout):
+        self.now += timeout / 1000
+        if self.tick_actions:
+            self.tick_actions.pop(0)()
+
+    def reload(self, wait_until=None):
+        self.reloads.append(wait_until)
+        if self.reload_action is not None:
+            self.reload_action()
+
+
+class StubConsoleMessage:
+    def __init__(self, text):
+        self.text = text
+
+
+class StubRequest:
+    def __init__(self, url):
+        self.url = url
+
+
+class StubResponse(StubRequest):
+    def __init__(self, url, status):
+        super().__init__(url)
+        self.status = status
+
 
 def _patch_env(monkeypatch, page):
     # Захватываем kwargs (ready_selector), чтобы тест мог проверить, что goto_hh
@@ -166,11 +235,14 @@ def _patch_env(monkeypatch, page):
     def _goto(p, url, **kw):
         page.gotos.append(url)
         page.goto_kwargs.append(kw)
+        if page.goto_action is not None:
+            page.goto_action()
 
     monkeypatch.setattr(cr, "goto_hh", _goto)
     monkeypatch.setattr(
         cr, "_card_hashes", lambda p: page._card_hashes.pop(0) if page._card_hashes else set()
     )
+    monkeypatch.setattr(cr, "_monotonic", lambda: page.now)
 
 
 def test_dry_run_does_not_click(monkeypatch):
@@ -234,7 +306,8 @@ def test_post_click_login_form_reports_unconfirmed_state(monkeypatch):
         cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert len(goto_calls) == 2  # pre-click goto + fallback goto after the click
-    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), (CARD_SEL, DUP_SEL)]
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
+    assert page.reloads == []  # после WRITE-клика recovery категорически запрещён
     message = str(exc_info.value)
     assert "НЕ подтверждено" in message
     assert "уже создана" in message
@@ -282,12 +355,220 @@ def test_duplicate_button_missing_fails(monkeypatch):
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
     assert "Дублировать" in result.reason
-    # Меню открыли, но само дублирование не кликали.
+    assert result.reason.startswith("duplicate_action_missing:")
+    # Client render подтверждён optional-маркером: отсутствие action — это не
+    # stall и не повод для recovery reload (возможен лимит резюме hh.ru).
+    assert page.reloads == []
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE)]
 
 
-def test_duplicate_button_ambiguous_within_card_fails_closed(monkeypatch):
-    # Внутри карточки нашлось 2 совпадения (баг разметки) — не гадаем, fail-closed.
+def test_duplicate_button_can_appear_after_menu_poll(monkeypatch):
+    """Карточка SSR готова раньше, чем hydration дорисует actions hh.ru."""
+    duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
+    page = StubPage(
+        dup_locators={CARD_SEL: duplicate},
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    page.tick_actions = [lambda: setattr(duplicate, "_count", 1)]
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success
+    assert result.new_resume_id == NEW_ID
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
+
+
+def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
+    duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
+    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page._dup_locators[CARD_SEL] = duplicate
+    page.ready_count = 0
+    page.tick_actions = [
+        lambda: (
+            setattr(page, "ready_count", 1),
+            setattr(duplicate, "_count", 1),
+        )
+    ]
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success
+    assert page.reloads == []
+    # Меню открывается ровно одним кликом за попытку — повторный клик на
+    # каждом progress-тике на реальном toggle-дропдауне hh.ru закрывал бы уже
+    # открытое меню, а не держал его открытым.
+    assert page.clicks == [
+        (CARD_SEL, RESUME_LIST_ACTION_MORE),
+        ("", DUP_SEL),
+    ]
+
+
+def test_hydration_error_reloads_once_then_succeeds(monkeypatch):
+    duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
+    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page._dup_locators[CARD_SEL] = duplicate
+    page.ready_count = 0
+    page.goto_action = lambda: page.emit(
+        "console", StubConsoleMessage("Error: Minified React error #418")
+    )
+    page.reload_action = lambda: (
+        setattr(page, "ready_count", 1),
+        setattr(duplicate, "_count", 1),
+    )
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "PROFILE_STALL_SECONDS", 0.2)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success
+    assert page.reloads == ["domcontentloaded"]
+    assert page.clicks == [
+        (CARD_SEL, RESUME_LIST_ACTION_MORE),
+        (CARD_SEL, RESUME_LIST_ACTION_MORE),
+        ("", DUP_SEL),
+    ]
+
+
+def test_recovered_hydration_error_does_not_poison_later_failure(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0, wait_ok=False)})
+    page.goto_action = lambda: page.emit(
+        "console", StubConsoleMessage("Error: Minified React error #418")
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("duplicate_action_missing:")
+    assert "hydration_error" not in result.reason
+
+
+def test_repeated_hydration_error_fails_without_write(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0)})
+    page.ready_count = 0
+
+    def emit_error():
+        page.emit("pageerror", RuntimeError("Error: Minified React error #423"))
+
+    page.goto_action = emit_error
+    page.reload_action = emit_error
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "PROFILE_STALL_SECONDS", 0.2)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("hydration_error:")
+    assert "react error #423" in result.reason
+    assert page.reloads == ["domcontentloaded"]
+    assert ("", DUP_SEL) not in page.clicks
+
+
+def test_profile_request_failure_is_sanitized_and_never_writes(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0)})
+    page.ready_count = 0
+    failed = StubRequest(
+        "https://resume-profile-front.hh.ru/static/remote.js?token=secret#fragment"
+    )
+    page.goto_action = lambda: page.emit("requestfailed", failed)
+    page.reload_action = lambda: page.emit("requestfailed", failed)
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("profile_front_request_failed:")
+    assert "https://resume-profile-front.hh.ru/static/remote.js" in result.reason
+    assert "secret" not in result.reason
+    assert "#fragment" not in result.reason
+    assert page.reloads == ["domcontentloaded"]
+    assert ("", DUP_SEL) not in page.clicks
+
+
+def test_profile_http_failure_is_sanitized_and_never_writes(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0)})
+    page.ready_count = 0
+    failed = StubResponse(
+        "https://resume-profile-front.hh.ru/api/bootstrap?token=secret#fragment",
+        503,
+    )
+    page.goto_action = lambda: page.emit("response", failed)
+    page.reload_action = lambda: page.emit("response", failed)
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("profile_front_request_failed:")
+    assert "https://resume-profile-front.hh.ru/api/bootstrap (HTTP 503)" in result.reason
+    assert "secret" not in result.reason
+    assert "#fragment" not in result.reason
+    assert page.reloads == ["domcontentloaded"]
+    assert ("", DUP_SEL) not in page.clicks
+
+
+def test_unrelated_background_request_does_not_extend_stall(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0)})
+    page.ready_count = 0
+    background = StubRequest("https://ads.example.test/analytics.js")
+    page.tick_actions = [
+        lambda: page.emit("requestfinished", background),
+        lambda: page.emit("requestfinished", background),
+    ]
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "PROFILE_STALL_SECONDS", 0.2)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("profile_stalled:")
+    assert page.reloads == ["domcontentloaded"]
+    assert ("", DUP_SEL) not in page.clicks
+
+
+def test_profile_resource_progress_extends_watchdog_until_ready(monkeypatch):
+    duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
+    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page._dup_locators[CARD_SEL] = duplicate
+    page.ready_count = 0
+    profile = StubRequest("https://resume-profile-front.hh.ru/static/chunk.js")
+    page.tick_actions = [
+        lambda: page.emit("requestfinished", profile),
+        lambda: (
+            setattr(page, "ready_count", 1),
+            setattr(duplicate, "_count", 1),
+        ),
+    ]
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "PROFILE_STALL_SECONDS", 0.3)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success
+    assert page.reloads == []
+
+
+def test_absolute_cap_stops_endless_profile_progress(monkeypatch):
+    page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=0)})
+    page.ready_count = 0
+    profile = StubRequest("https://resume-profile-front.hh.ru/static/chunk.js")
+    page.tick_actions = [lambda: page.emit("requestfinished", profile) for _ in range(4)]
+    _patch_env(monkeypatch, page)
+    monkeypatch.setattr(cr, "PROFILE_STALL_SECONDS", 1.0)
+    monkeypatch.setattr(cr, "PROFILE_ABSOLUTE_TIMEOUT_SECONDS", 0.5)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.reason.startswith("profile_stalled:")
+    assert page.reloads == ["domcontentloaded"]
+    assert ("", DUP_SEL) not in page.clicks
+
+
+def test_duplicate_button_ambiguous_on_page_fails_closed(monkeypatch):
+    # Portal дал 2 совпадения на странице — не гадаем, fail-closed.
     page = StubPage(dup_locators={CARD_SEL: StubLocator(None, DUP_SEL, count=2)})
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
@@ -302,25 +583,20 @@ def test_success_via_url_navigation(monkeypatch):
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert result.success
     assert result.new_resume_id == NEW_ID
-    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), (CARD_SEL, DUP_SEL)]
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
 
 
-def test_duplicate_click_scoped_to_correct_card_not_first_on_page(monkeypatch):
-    # Регрессия: на странице два резюме, у второй карточки тоже есть инлайн-кнопка
-    # «Дублировать». Клик обязан уйти в кнопку СВОЕЙ карточки (CARD_SEL), а не в
-    # первую попавшуюся на странице — иначе можно скопировать чужое резюме.
-    other_card_sel = "OTHER_CARD_SEL"
+def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
+    # Карточка и её menu button identity-bound; открытый portal после этого
+    # обязан содержать ровно одно глобальное действие.
     page = StubPage(
-        dup_locators={
-            CARD_SEL: StubLocator(None, DUP_SEL, scope=CARD_SEL),
-            other_card_sel: StubLocator(None, DUP_SEL, scope=other_card_sel),
-        },
+        dup_locators={CARD_SEL: StubLocator(None, DUP_SEL)},
         url_after_click=f"https://hh.ru/resume/{NEW_ID}",
     )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert result.success
-    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), (CARD_SEL, DUP_SEL)]
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
 
 
 def test_url_shows_old_id_falls_back_to_list_diff(monkeypatch):

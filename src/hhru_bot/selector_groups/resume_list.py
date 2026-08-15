@@ -34,6 +34,12 @@ RESUME_LIST_CARD_LINK_TPL = "[data-qa='resume-card-link-{resume_id}']"
 # Кнопка «...» (меню действий) на карточке резюме.
 RESUME_LIST_ACTION_MORE = "[data-qa='resume-list-action-more']"
 
+# Дополнительный (не обязательный) маркер завершённого client render. Карточка
+# приходит из SSR раньше, но actions ещё не подключены: на наблюдавшемся живом
+# hh.ru кнопка «...» начинала работать после появления этого текста. Истиной
+# для WRITE всё равно остаётся единственное фактическое «Дублировать».
+RESUME_PROFILE_READY = "button:has-text('подходящие вакансии')"
+
 # Пункт «Дублировать» в открытом меню «...».
 RESUME_DUPLICATE_MENU_ITEM = "[data-qa='operations-list-duplicate-resume']"
 
