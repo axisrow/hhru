@@ -31,15 +31,21 @@ def resolve_chrome_profile(profile: Path | None = None) -> Path:
     profile = profile or Path(DEFAULT_CHROME_PROFILE_NAME)
     if not profile.exists() and not profile.is_absolute():
         candidate = DEFAULT_CHROME_PROFILES_ROOT / profile
-        # `len(profile.parts) == 1` — a bare profile name (e.g. "Default"),
-        # not a multi-segment relative path like "foo/Default" (cycle-review
-        # PR #173 round 2, claude/review): profile.name matches only the
-        # last path segment, so without this guard a relative path the
-        # caller meant literally would be silently redirected under the
+        # `len(profile.parts) == 1` — a bare profile name (e.g. "Default",
+        # "Profile 1"), not a multi-segment relative path like "foo/Default"
+        # (cycle-review PR #173 round 2, claude/review): profile.name matches
+        # only the last path segment, so without this guard a relative path
+        # the caller meant literally would be silently redirected under the
         # Chrome profiles root just because it ends in "Default".
-        if candidate.exists() or (
-            len(profile.parts) == 1 and profile.name == DEFAULT_CHROME_PROFILE_NAME
-        ):
+        #
+        # round 3 (claude/review): the docstring and --profile help text both
+        # advertise arbitrary bare names ("Profile 1") as resolving under the
+        # Chrome root the same way "Default" does. The old check only special-
+        # cased the literal "Default" name, so a not-yet-existing bare name
+        # like "Profile 1" fell through to a plain cwd-relative Path instead —
+        # any single-segment bare name must resolve under the Chrome root,
+        # not just "Default".
+        if candidate.exists() or len(profile.parts) == 1:
             return candidate
     return profile
 
@@ -163,14 +169,29 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
                 continue
             break
         try:
-            source_stat = destination.stat()
+            # round 3 (claude/review): `destination.stat()` runs before `fd`
+            # is handed to os.fdopen(), so a failure here used to skip straight
+            # to `except` with the raw os.open() descriptor never closed —
+            # os.fdopen() is the only thing on this path that owns/closes fd.
+            # Wrap fd in os.fdopen() first so every failure below (including
+            # a failing destination.stat()) closes it via the `with` block.
             with os.fdopen(fd, "wb") as handle:
+                source_stat = destination.stat()
                 handle.write(destination.read_bytes())
                 # fd-relative metadata copy (not shutil.copystat(path)): a
                 # path-based call here would reopen the same TOCTOU window
                 # this fix closes above — os.futimens/os.fchmod act on the
                 # already-open descriptor, no path lookup left to redirect.
                 os.utime(handle.fileno(), ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+                # round 3 (claude/review): intentionally NOT copying
+                # destination's mode bits here (unlike shutil.copy2, which
+                # this replaced). The `.bak` fd was opened with a fixed 0600
+                # above regardless of destination's actual mode, so a backup
+                # of a more permissive destination (e.g. one written by
+                # Playwright's own context.storage_state(), which does not
+                # set 0600) only ever gets *tightened*, never widened — safe
+                # for a file holding a bearer token even though it is not
+                # full metadata parity with copy2.
         except BaseException:
             # round 2 (claude/review): a failed copy must not leave an empty
             # `.bak` file — O_EXCL on the next run would treat that name as

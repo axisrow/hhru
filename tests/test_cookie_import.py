@@ -207,6 +207,27 @@ def test_profile_name_resolves_from_chrome_profiles_root(tmp_path: Path, monkeyp
     assert resolve_chrome_profile(Path("Profile 1")) == profiles_root / "Profile 1"
 
 
+def test_bare_profile_name_resolves_under_chrome_root_even_if_not_yet_created(
+    tmp_path: Path, monkeypatch
+):
+    # cycle-review PR #173 round 3 (claude/review): the docstring and
+    # --profile help text both advertise "Profile 1" as a bare name that
+    # resolves under the Chrome profiles root the same way "Default" does.
+    # The old fallback guard only special-cased the literal string "Default"
+    # (`profile.name == DEFAULT_CHROME_PROFILE_NAME`), so any other bare
+    # profile name that did not already exist under the Chrome root — e.g. a
+    # not-yet-materialized "Profile 1" directory — silently fell through to a
+    # plain cwd-relative Path instead, contradicting the documented contract.
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    profiles_root = tmp_path / "Chrome"
+    profiles_root.mkdir()
+    monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", profiles_root)
+
+    # Nothing exists under profiles_root yet, and no cwd-relative path either.
+    assert resolve_chrome_profile(Path("Profile 1")) == profiles_root / "Profile 1"
+
+
 def test_explicit_profile_path_wins_over_profiles_root(tmp_path: Path, monkeypatch):
     import hhru_bot.cookie_import as cookie_import_mod
 
@@ -219,10 +240,11 @@ def test_explicit_profile_path_wins_over_profiles_root(tmp_path: Path, monkeypat
     assert resolve_chrome_profile(local_profile) == local_profile
     assert resolve_chrome_profile(local_profile.resolve()) == local_profile.resolve()
 
-    # несуществующее имя не подменяется молча на корень Chrome — ошибку
-    # выдаст read_chrome_cookies с исходным путём
-    missing = Path("no-such-profile")
-    assert resolve_chrome_profile(missing) == missing
+    # A path with more than one segment (not a bare profile name) is never
+    # redirected under the Chrome root, existing or not — the caller meant it
+    # literally relative to cwd; read_chrome_cookies gives a clear error.
+    missing_multi_segment = Path("some/dir/no-such-profile")
+    assert resolve_chrome_profile(missing_multi_segment) == missing_multi_segment
 
 
 def test_default_profile_is_chrome_default(monkeypatch, tmp_path: Path):
@@ -279,6 +301,50 @@ def test_backup_does_not_follow_preplanned_dangling_symlink(tmp_path: Path):
     write_storage_state({"cookies": [], "origins": []}, destination)
 
     assert not dangling_target.exists(), "секрет сессии утёк в файл-цель dangling symlink"
+
+
+def test_backup_stat_failure_closes_fd_before_raising(tmp_path: Path, monkeypatch):
+    # cycle-review PR #173 round 3 (claude/review): `fd = os.open(candidate,
+    # ...)` (the exclusively-created `.bak` fd) used to be handed to
+    # os.fdopen() only AFTER `destination.stat()` had already run inside the
+    # same try block. If that stat() call raised, the `except BaseException`
+    # handler unlinked the candidate name but never closed the raw fd from
+    # os.open() — os.fdopen() was the only thing on that path that owned it,
+    # and it was never reached. Fail destination.stat() on its second call
+    # (the first is destination.exists() at function entry) and confirm the
+    # backup fd is actually closed afterwards, not leaked.
+    destination = tmp_path / "hh_session.json"
+    destination.write_text(json.dumps({"cookies": [{"value": "secret"}]}), encoding="utf-8")
+
+    opened_bak_fds: list[int] = []
+    real_open = os.open
+
+    def _spy_open(path, flags, mode=0o777):
+        fd = real_open(path, flags, mode)
+        if str(path).endswith(".bak"):
+            opened_bak_fds.append(fd)
+        return fd
+
+    call_count = {"n": 0}
+    real_stat = Path.stat
+
+    def _selective_failing_stat(self, *args, **kwargs):
+        if self == destination:
+            call_count["n"] += 1
+            if call_count["n"] > 1:
+                raise OSError("simulated stat failure")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", _spy_open)
+    monkeypatch.setattr(Path, "stat", _selective_failing_stat)
+
+    with pytest.raises(OSError, match="simulated stat failure"):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert opened_bak_fds, "test did not exercise the backup os.open() path"
+    for fd in opened_bak_fds:
+        with pytest.raises(OSError):
+            os.fstat(fd)  # closed fd raises EBADF; an open one would succeed
 
 
 def test_relative_multi_segment_profile_path_is_not_redirected(tmp_path: Path, monkeypatch):
