@@ -184,16 +184,12 @@ class ResumeProfileReadinessObserver:
 
     def failure_reason(self, *, stalled: bool = False, absolute: bool = False) -> str:
         if self.request_failure:
-            return (
-                "profile_front_request_failed: "
-                f"{self.request_failure}; копия не создавалась"
-            )
+            return f"profile_front_request_failed: {self.request_failure}; копия не создавалась"
         if self.hydration_error:
             return f"hydration_error: {self.hydration_error}; копия не создавалась"
         if absolute:
             return (
-                "profile_stalled: достигнут аварийный предел ожидания профиля; "
-                "копия не создавалась"
+                "profile_stalled: достигнут аварийный предел ожидания профиля; копия не создавалась"
             )
         if stalled:
             return "profile_stalled: профиль hh.ru перестал прогружаться; копия не создавалась"
@@ -218,9 +214,7 @@ def _wait_duplicate_action(
     обязано дать ровно одно совпадение.
     """
     more = card.locator(RESUME_LIST_ACTION_MORE)
-    duplicate = page.locator(RESUME_DUPLICATE_MENU_ITEM).or_(
-        card.locator(RESUME_DUPLICATE_INLINE)
-    )
+    duplicate = page.locator(RESUME_DUPLICATE_MENU_ITEM).or_(card.locator(RESUME_DUPLICATE_INLINE))
     profile_ready = page.locator(RESUME_PROFILE_READY)
     last_menu_click_progress = -1.0
     ready_seen = False
