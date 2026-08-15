@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
-import shutil
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -14,10 +14,44 @@ CHROME_EPOCH_OFFSET = 11_644_473_600
 MAX_PLAYWRIGHT_EXPIRES = 253_402_300_799  # 9999-12-31T23:59:59Z
 SAMESITE = {-1: "Lax", 0: "None", 1: "Lax", 2: "Strict"}
 
+DEFAULT_CHROME_PROFILES_ROOT = Path.home() / "Library/Application Support/Google/Chrome"
+DEFAULT_CHROME_PROFILE_NAME = "Default"
+
+
+def resolve_chrome_profile(profile: Path | None = None) -> Path:
+    """Resolve the Chrome profile directory.
+
+    Явный существующий путь — как есть (абсолютный или относительный cwd).
+    Имя профиля (`Default`, `Profile 1`) без существующего cwd-пути — от
+    стандартного корня профилей Chrome (macOS). Иначе — как введено:
+    несуществующий путь даст понятную ошибку "No such file or directory"
+    от read_chrome_cookies (find-one-shot-20260815: `--profile Default`
+    резолвился от cwd и падал, хотя профиль есть).
+    """
+    profile = profile or Path(DEFAULT_CHROME_PROFILE_NAME)
+    if not profile.exists() and not profile.is_absolute():
+        candidate = DEFAULT_CHROME_PROFILES_ROOT / profile
+        # `len(profile.parts) == 1` — a bare profile name (e.g. "Default",
+        # "Profile 1"), not a multi-segment relative path like "foo/Default"
+        # (cycle-review PR #173 round 2, claude/review): profile.name matches
+        # only the last path segment, so without this guard a relative path
+        # the caller meant literally would be silently redirected under the
+        # Chrome profiles root just because it ends in "Default".
+        #
+        # round 3 (claude/review): the docstring and --profile help text both
+        # advertise arbitrary bare names ("Profile 1") as resolving under the
+        # Chrome root the same way "Default" does. The old check only special-
+        # cased the literal "Default" name, so a not-yet-existing bare name
+        # like "Profile 1" fell through to a plain cwd-relative Path instead —
+        # any single-segment bare name must resolve under the Chrome root,
+        # not just "Default".
+        if candidate.exists() or len(profile.parts) == 1:
+            return candidate
+    return profile
+
 
 def chrome_cookie_file(profile: Path | None = None) -> Path:
-    profile = profile or Path.home() / "Library/Application Support/Google/Chrome/Default"
-    return profile / "Cookies"
+    return resolve_chrome_profile(profile) / "Cookies"
 
 
 def chrome_expires_to_playwright(expires_utc: int | float) -> float:
@@ -109,12 +143,61 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     destination = Path(destination)
     backup: Path | None = None
     if destination.exists():
+        # Exclusive create (O_CREAT|O_EXCL), not candidate.exists(): a
+        # pre-planted symlink at the guessable `<destination>.bak` name can be
+        # *dangling*, so exists() (which follows symlinks) reports False and
+        # shutil.copy2() would then follow the symlink and write the session
+        # secret into the attacker's target (cycle-review PR #173 round 1,
+        # codex — same attack class #171 closed for the `.tmp` path, left
+        # open here). O_EXCL fails on any existing name, symlink or not, so
+        # the backup inode is always a fresh file this call created.
+        #
+        # Write through the fd without closing it first (round 2, codex —
+        # closing the fd and then calling shutil.copy2(path) reopened a TOCTOU
+        # window: an attacker able to modify the storage directory could
+        # unlink the just-created backup and replace it with a symlink before
+        # copy2() ran). Reading and writing while the exclusively-created fd
+        # stays open means there is no path lookup left to redirect.
         candidate = destination.with_name(destination.name + ".bak")
         index = 1
-        while candidate.exists():
-            candidate = destination.with_name(destination.name + f".bak.{index}")
-            index += 1
-        shutil.copy2(destination, candidate)
+        while True:
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                candidate = destination.with_name(destination.name + f".bak.{index}")
+                index += 1
+                continue
+            break
+        try:
+            # round 3 (claude/review): `destination.stat()` runs before `fd`
+            # is handed to os.fdopen(), so a failure here used to skip straight
+            # to `except` with the raw os.open() descriptor never closed —
+            # os.fdopen() is the only thing on this path that owns/closes fd.
+            # Wrap fd in os.fdopen() first so every failure below (including
+            # a failing destination.stat()) closes it via the `with` block.
+            with os.fdopen(fd, "wb") as handle:
+                source_stat = destination.stat()
+                handle.write(destination.read_bytes())
+                # fd-relative metadata copy (not shutil.copystat(path)): a
+                # path-based call here would reopen the same TOCTOU window
+                # this fix closes above — os.futimens/os.fchmod act on the
+                # already-open descriptor, no path lookup left to redirect.
+                os.utime(handle.fileno(), ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+                # round 3 (claude/review): intentionally NOT copying
+                # destination's mode bits here (unlike shutil.copy2, which
+                # this replaced). The `.bak` fd was opened with a fixed 0600
+                # above regardless of destination's actual mode, so a backup
+                # of a more permissive destination (e.g. one written by
+                # Playwright's own context.storage_state(), which does not
+                # set 0600) only ever gets *tightened*, never widened — safe
+                # for a file holding a bearer token even though it is not
+                # full metadata parity with copy2.
+        except BaseException:
+            # round 2 (claude/review): a failed copy must not leave an empty
+            # `.bak` file — O_EXCL on the next run would treat that name as
+            # permanently taken and the backup numbering would drift forever.
+            candidate.unlink(missing_ok=True)
+            raise
         backup = candidate
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Write-then-rename: an interrupted/failed write must never leave the
@@ -126,13 +209,24 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     # (typically 0644) rather than destination's mode — os.replace() would
     # otherwise silently widen a restrictive (0600) session file to
     # group/world-readable. storage_state_file holds a bearer token
-    # (hhtoken); create the temp file with 0o600 from the very first byte
-    # written via os.open(O_CREAT|O_EXCL, 0o600) — chmod()'ing *after*
-    # write_text() would still leave a race window where the plaintext
-    # secret sits at the umask-derived mode (Codex re-review, PR #168).
-    tmp = destination.with_name(destination.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # (hhtoken); mkstemp() creates it with 0o600 from the very first byte
+    # (O_EXCL built in) AND with an unpredictable name, so a pre-planted
+    # symlink at a guessable `<destination>.tmp` can no longer redirect the
+    # secret into an attacker-controlled file (#171 — Codex review 3 of
+    # PR #168, merged without this fix).
+    fd, tmp_name = tempfile.mkstemp(
+        dir=destination.parent, prefix=destination.name + ".", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
     try:
+        # Defence-in-depth (#171): mkstemp already guarantees O_EXCL|O_CREAT
+        # with 0o600, but a compromised/widened mode here must fail loudly
+        # instead of leaking the bearer token through a group/world-readable
+        # temp file.
+        mode = os.fstat(fd).st_mode & 0o777
+        if mode != 0o600:
+            os.close(fd)
+            raise OSError(f"temp-файл сессии создан с режимом {mode:o} вместо 0600")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
     except BaseException:

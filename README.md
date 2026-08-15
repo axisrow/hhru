@@ -171,7 +171,7 @@ config/
 
 ### `import-cookies`
 
-- `--profile PROFILE` — Путь к профилю Chrome (по умолчанию Default)
+- `--profile PROFILE` — Путь к профилю Chrome или имя профиля (Default, Profile 1) — имя резолвится от стандартного корня профилей Chrome
 
 ### `list-resumes`
 
