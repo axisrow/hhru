@@ -141,15 +141,23 @@ def test_run_dry_run_needs_no_confirmation(env, capsys, tmp_path, monkeypatch):
 
 
 def test_run_browser_failure_exits_1(env, capsys, tmp_path):
-    env.result = CopyResumeResult("backend", False, reason="кнопка не найдена")
+    reason = "profile_stalled: профиль hh.ru перестал прогружаться; копия не создавалась"
+    env.result = CopyResumeResult("backend", False, reason=reason)
     with pytest.raises(SystemExit) as exc:
         cmd.run(_args(tmp_path, force=True))
     assert exc.value.code == 1
     out = capsys.readouterr().out
     assert "[FAIL]" in out
-    assert "кнопка не найдена" in out
+    assert reason in out
     h = History(tmp_path / "h.db")
     assert h.count_today(OLD_ID, "copy_resume") == 0  # failed != success
+    with h._connect() as conn:
+        row = conn.execute(
+            "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
+            (OLD_ID,),
+        ).fetchone()
+    assert row["status"] == "failed"
+    assert row["reason"] == reason
 
 
 def test_run_same_resume_id_fails_closed(env, capsys, tmp_path):

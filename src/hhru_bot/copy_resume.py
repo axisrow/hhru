@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_login_form
@@ -34,15 +37,25 @@ from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
     RESUME_LIST_CARD_TITLE,
+    RESUME_PROFILE_READY,
 )
 
 logger = logging.getLogger("hhru_bot.copy_resume")
 
 RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
 COPY_TIMEOUT_MS = 30_000
+PROFILE_STALL_SECONDS = 15.0
+PROFILE_ABSOLUTE_TIMEOUT_SECONDS = 300.0
+PROFILE_POLL_MS = 250
+MENU_CLICK_TIMEOUT_MS = 1_000
 
 _RESUME_HASH_RE = re.compile(r"/resume/([0-9a-f]{32,40})")
 _CARD_LINK_PREFIX = "resume-card-link-"
+
+
+def _monotonic() -> float:
+    """Тестируемая обёртка над monotonic clock."""
+    return time.monotonic()
 
 
 @dataclass
@@ -70,6 +83,211 @@ class ResumeListIndeterminate(PageStateIndeterminate):
     и не выдаёт пустой список за подтверждённый факт — поднимает это
     исключение, чтобы вызывающий код (list_resumes.py --remote) сообщил
     «состояние не подтверждено», а не соврал «резюме не найдено»."""
+
+
+class ResumeProfileReadinessObserver:
+    """Наблюдает сигналы микрофронтенда профиля только до WRITE-клика.
+
+    SSR-карточка сама по себе не подтверждает готовность: React может упасть на
+    hydration (#418/#423) и дорисовывать профиль на клиенте. Observer отличает
+    восстановившуюся страницу от зависания/сетевого отказа. URL в диагностике
+    всегда очищается от query и fragment.
+    """
+
+    _HYDRATION_MARKERS = (
+        "react error #418",
+        "react error #423",
+        "remoteentryexports is undefined",
+    )
+
+    def __init__(self, page: Page) -> None:
+        self.page = page
+        self.last_progress_at = _monotonic()
+        self.hydration_error = ""
+        self.request_failure = ""
+        self._attached = False
+
+    def attach(self) -> None:
+        if self._attached:
+            return
+        self.page.on("console", self._on_console)
+        self.page.on("pageerror", self._on_page_error)
+        self.page.on("request", self._on_request_progress)
+        self.page.on("response", self._on_response)
+        self.page.on("requestfinished", self._on_request_progress)
+        self.page.on("requestfailed", self._on_request_failed)
+        self._attached = True
+
+    def reset_attempt(self) -> None:
+        self.last_progress_at = _monotonic()
+        self.hydration_error = ""
+        self.request_failure = ""
+
+    def confirm_ready(self) -> None:
+        """Readiness сильнее исторических ошибок: client-render восстановился."""
+        self.hydration_error = ""
+        self.request_failure = ""
+        self._touch()
+
+    @staticmethod
+    def _is_profile_resource(url: str) -> bool:
+        lowered = url.lower()
+        return "resume-profile-front" in lowered or "remote.resume_profile_front" in lowered
+
+    @staticmethod
+    def _safe_url(url: str) -> str:
+        try:
+            parts = urlsplit(url)
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        except ValueError:
+            return "<invalid-url>"
+
+    def _touch(self) -> None:
+        self.last_progress_at = _monotonic()
+
+    def _record_hydration_error(self, value) -> None:
+        text = str(value)
+        lowered = text.lower()
+        for marker in self._HYDRATION_MARKERS:
+            if marker in lowered:
+                # Стабильный код вместо сырого console text: там могут быть URL
+                # с query, cookies и прочая не предназначенная для audit строка.
+                self.hydration_error = marker
+                self._touch()
+                return
+
+    def _on_console(self, message) -> None:
+        self._record_hydration_error(getattr(message, "text", message))
+
+    def _on_page_error(self, error) -> None:
+        self._record_hydration_error(error)
+
+    def _on_request_progress(self, request) -> None:
+        url = str(getattr(request, "url", ""))
+        if self._is_profile_resource(url):
+            self._touch()
+
+    def _on_response(self, response) -> None:
+        url = str(getattr(response, "url", ""))
+        if not self._is_profile_resource(url):
+            return
+        self._touch()
+        status = int(getattr(response, "status", 0) or 0)
+        if status >= 400:
+            self.request_failure = f"{self._safe_url(url)} (HTTP {status})"
+
+    def _on_request_failed(self, request) -> None:
+        url = str(getattr(request, "url", ""))
+        if self._is_profile_resource(url):
+            self.request_failure = self._safe_url(url)
+            self._touch()
+
+    def failure_reason(self, *, stalled: bool = False, absolute: bool = False) -> str:
+        if self.request_failure:
+            return (
+                "profile_front_request_failed: "
+                f"{self.request_failure}; копия не создавалась"
+            )
+        if self.hydration_error:
+            return f"hydration_error: {self.hydration_error}; копия не создавалась"
+        if absolute:
+            return (
+                "profile_stalled: достигнут аварийный предел ожидания профиля; "
+                "копия не создавалась"
+            )
+        if stalled:
+            return "profile_stalled: профиль hh.ru перестал прогружаться; копия не создавалась"
+        return "duplicate_action_missing: действие «Дублировать» не найдено; копия не создавалась"
+
+
+def _wait_duplicate_action(
+    page: Page,
+    card,
+    observer: ResumeProfileReadinessObserver,
+    *,
+    absolute_deadline: float,
+) -> tuple[Locator | None, str]:
+    """Ждёт фактическое действие ``Дублировать`` для целевой карточки.
+
+    Текст «N подходящих вакансий» — лишь дополнительное подтверждение того,
+    что client render завершился. Он не является обязательным условием:
+    единственный разрешающий WRITE маркер — ровно одно действие
+    ``Дублировать`` после безопасного открытия identity-bound меню ``...``.
+    Меню hh.ru рендерится через portal вне карточки, поэтому его действие
+    ищется глобально, а inline-вариант — внутри карточки; их объединение
+    обязано дать ровно одно совпадение.
+    """
+    more = card.locator(RESUME_LIST_ACTION_MORE)
+    duplicate = page.locator(RESUME_DUPLICATE_MENU_ITEM).or_(
+        card.locator(RESUME_DUPLICATE_INLINE)
+    )
+    profile_ready = page.locator(RESUME_PROFILE_READY)
+    last_menu_click_progress = -1.0
+    ready_seen = False
+
+    while True:
+        if observer.request_failure:
+            return None, observer.failure_reason()
+
+        more_count = more.count()
+        if more_count > 1:
+            return None, (
+                "duplicate_action_missing: меню действий определяется неоднозначно; "
+                "копия не создавалась"
+            )
+
+        ready_count = profile_ready.count()
+        # Повторяем безопасный клик только после нового события профильного
+        # микрофронтенда (или появления optional readiness marker). Так мы не
+        # переключаем уже открытое меню каждые 250 ms.
+        progress_key = observer.last_progress_at
+        if ready_count >= 1 and not ready_seen:
+            ready_seen = True
+            # Этот маркер подтверждает, что React сумел завершить client render,
+            # поэтому историческая #418/#423 больше не описывает текущий state.
+            observer.confirm_ready()
+            progress_key = observer.last_progress_at
+        if more_count == 1 and progress_key != last_menu_click_progress:
+            try:
+                more.first.click(timeout=MENU_CLICK_TIMEOUT_MS)
+            except PlaywrightError:
+                # SSR-кнопка может уже быть видна, но ещё не быть кликабельной.
+                # Watchdog ниже отличит восстановление от окончательного stall.
+                pass
+            last_menu_click_progress = progress_key
+
+        duplicate_count = duplicate.count()
+        if duplicate_count == 1:
+            observer.confirm_ready()
+            return duplicate.first, ""
+        if duplicate_count > 1:
+            return None, (
+                f"кнопка «Дублировать» определяется неоднозначно "
+                f"({duplicate_count} совпадений на странице) — "
+                "останавливаюсь (fail-closed)"
+            )
+
+        now = _monotonic()
+        if now >= absolute_deadline:
+            return None, observer.failure_reason(absolute=True)
+        if now - observer.last_progress_at >= PROFILE_STALL_SECONDS:
+            if ready_seen:
+                return None, observer.failure_reason()
+            return None, observer.failure_reason(stalled=True)
+        page.wait_for_timeout(PROFILE_POLL_MS)
+
+
+def _reload_resumes_list(page: Page) -> str:
+    """Единственный разрешённый recovery reload, всегда до WRITE-клика."""
+    try:
+        page.reload(wait_until="domcontentloaded")
+    except (PlaywrightTimeoutError, PlaywrightError):
+        return "profile_stalled: recovery reload hh.ru не завершился; копия не создавалась"
+    if has_login_form(page):
+        raise NotAuthenticated(
+            "страница содержит форму входа после recovery reload — сессия отвергнута"
+        )
+    return ""
 
 
 def _card_hashes(page: Page) -> set[str]:
@@ -221,55 +439,71 @@ def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
 
 
 def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
+    observer = None
+    absolute_deadline = _monotonic() + PROFILE_ABSOLUTE_TIMEOUT_SECONDS
+    if not dry_run:
+        # Подписки обязаны существовать ДО первой навигации: ошибки federation/
+        # hydration часто возникают при старте страницы и позже уже не повторяются.
+        observer = ResumeProfileReadinessObserver(page)
+        observer.attach()
+        observer.reset_attempt()
+
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
     _goto_resumes_list(page)
 
     link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
-    card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
-    match_count = _wait_single_match_count(card_locator, timeout_ms=COPY_TIMEOUT_MS)
-    if match_count == -1:
-        return CopyResumeResult(
-            resume.id, False, reason=f"резюме {resume.resume_id} не найдено в списке резюме"
-        )
-    if match_count != 1:
-        return CopyResumeResult(
-            resume.id,
-            False,
-            reason=f"карточка резюме {resume.resume_id} определяется неоднозначно "
-            f"({match_count} совпадений) — останавливаюсь (fail-closed)",
-        )
-    card = card_locator.first
+    duplicate = None
+    for attempt in range(2):
+        card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
+        match_count = _wait_single_match_count(card_locator, timeout_ms=COPY_TIMEOUT_MS)
+        if match_count == -1:
+            return CopyResumeResult(
+                resume.id,
+                False,
+                reason=f"резюме {resume.resume_id} не найдено в списке резюме",
+            )
+        if match_count != 1:
+            return CopyResumeResult(
+                resume.id,
+                False,
+                reason=f"карточка резюме {resume.resume_id} определяется неоднозначно "
+                f"({match_count} совпадений) — останавливаюсь (fail-closed)",
+            )
+        card = card_locator.first
 
-    if dry_run:
-        logger.info("[DRY-RUN] Скопировал бы резюме '%s' (кнопка меню не нажимается)", resume.id)
-        return CopyResumeResult(resume.id, True, reason="dry-run")
+        if dry_run:
+            logger.info(
+                "[DRY-RUN] Скопировал бы резюме '%s' (кнопка меню не нажимается)", resume.id
+            )
+            return CopyResumeResult(resume.id, True, reason="dry-run")
 
+        assert observer is not None
+        duplicate, failure = _wait_duplicate_action(
+            page,
+            card,
+            observer,
+            absolute_deadline=absolute_deadline,
+        )
+        if duplicate is not None:
+            break
+
+        # Отсутствие действия при уже завершившемся client render — не stall и
+        # не повод перезагружать страницу (например, достигнут лимит резюме).
+        if failure.startswith("duplicate_action_missing:") or "неоднозначно" in failure:
+            return CopyResumeResult(resume.id, False, reason=failure)
+
+        if attempt == 1:
+            return CopyResumeResult(resume.id, False, reason=failure)
+
+        logger.warning("Профиль hh.ru не готов: %s — один recovery reload", failure)
+        observer.reset_attempt()
+        reload_failure = _reload_resumes_list(page)
+        if reload_failure:
+            return CopyResumeResult(resume.id, False, reason=reload_failure)
+
+    assert duplicate is not None
+    # Снимок для post-WRITE diff делаем только после полной pre-write готовности.
     before = _card_hashes(page)
-
-    # Открытие меню «...» ничего не отправляет — WRITE происходит только на
-    # клике по «Дублировать» ниже.
-    card.locator(RESUME_LIST_ACTION_MORE).click()
-    # Скоупим ПОД card, не под page: RESUME_DUPLICATE_INLINE — инлайн-кнопка на
-    # каждой карточке, и при нескольких резюме на странице page.locator(...).first
-    # взял бы первую в DOM-порядке, а не кнопку открытой карточки — риск скопировать
-    # чужое резюме. То же строгое count()-до-wait_for через _wait_single_match_count.
-    duplicate_locator = card.locator(f"{RESUME_DUPLICATE_MENU_ITEM}, {RESUME_DUPLICATE_INLINE}")
-    dup_count = _wait_single_match_count(duplicate_locator, timeout_ms=COPY_TIMEOUT_MS)
-    if dup_count == -1:
-        return CopyResumeResult(
-            resume.id,
-            False,
-            reason="кнопка «Дублировать» не найдена: либо достигнут лимит резюме hh.ru "
-            "(кнопка при этом не рендерится), либо селектор устарел",
-        )
-    if dup_count != 1:
-        return CopyResumeResult(
-            resume.id,
-            False,
-            reason=f"кнопка «Дублировать» определяется неоднозначно ({dup_count} совпадений "
-            "внутри карточки резюме) — останавливаюсь (fail-closed)",
-        )
-    duplicate = duplicate_locator.first
     duplicate.click()
     logger.info("Клик по «Дублировать» — жду страницу нового резюме")
 
