@@ -122,6 +122,7 @@ def test_bump_hint_present_blocks_click():
     assert result.success is False
     assert "рано" in result.reason
     assert page.click_log == []
+    assert result.acted is False  # #163: клика не было — без паузы и записи
 
 
 def test_bump_placeholder_url_does_not_navigate():
@@ -137,6 +138,7 @@ def test_bump_placeholder_url_does_not_navigate():
     assert result.success is False
     assert "плейсхолдер" in result.reason
     assert page.goto_calls == []
+    assert result.acted is False  # #163: отсев до навигации — hh.ru не тронут
 
 
 def test_bump_delayed_hint_still_blocks_click():
@@ -165,6 +167,7 @@ def test_bump_no_hint_clicks_button():
 
     assert result.success is True
     assert page.click_log == ["button"]
+    assert result.acted is True  # #163: реальный клик — пауза обязательна
 
 
 def test_bump_dry_run_does_not_click_even_without_hint():
@@ -174,6 +177,7 @@ def test_bump_dry_run_does_not_click_even_without_hint():
 
     assert result.success is True
     assert page.click_log == []
+    assert result.acted is False  # #163: симуляция без клика — без паузы
 
 
 def test_bump_hint_wait_error_is_fail_closed_not_traceback():

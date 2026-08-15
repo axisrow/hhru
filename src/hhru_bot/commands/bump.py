@@ -44,15 +44,30 @@ def run(args: argparse.Namespace) -> None:
                 continue
 
             result = bump_resume(page, resume, args.dry_run)
-            status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
-            # Для action='bump' нет естественного vacancy_id (поднятие резюме, не отклик).
-            # actions.vacancy_id NOT NULL — заполняем resume.resume_id как sentinel; UNIQUE-индекс
-            # idx_resume_vacancy_apply существует только WHERE action='apply', так что коллизий нет.
-            history.record_action(resume.resume_id, resume.resume_id, "bump", status, result.reason)
+
+            # #163: actions — журнал реальных взаимодействий с hh.ru. Запись
+            # только после реального клика по кнопке поднятия либо для успешной
+            # dry_run-симуляции; провалы до действия (плейсхолдер в конфиге,
+            # форма входа, hint «рано») не результат взаимодействия с hh.ru —
+            # они остаются в консоли/логе, но не засоряют статистику.
+            if result.acted or (args.dry_run and result.success):
+                status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+                # Для action='bump' нет естественного vacancy_id (поднятие резюме,
+                # не отклик). actions.vacancy_id NOT NULL — заполняем resume.resume_id
+                # как sentinel; UNIQUE-индекс idx_resume_vacancy_apply существует
+                # только WHERE action='apply', так что коллизий нет.
+                history.record_action(
+                    resume.resume_id, resume.resume_id, "bump", status, result.reason
+                )
 
             if result.success:
                 print(f"  [OK] {resume.id} поднято")
             else:
                 print(f"  [FAIL] {resume.id} — {result.reason}")
 
-            throttle.wait(f"после поднятия резюме '{resume.id}'")
+            # #163: анти-бан-пауза — только после реального действия на hh.ru
+            # (клика по кнопке). Ранние выходы не оставляют на сайте следа,
+            # пауза там не от чего не защищает; после реального поднятия
+            # троттлинг обязателен (CLAUDE.md: «не убирай троттлинг/лимиты»).
+            if result.acted:
+                throttle.wait(f"после поднятия резюме '{resume.id}'")

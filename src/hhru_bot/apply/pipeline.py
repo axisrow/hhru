@@ -40,6 +40,12 @@ class ApplyResult:
     # submit НЕ выполнялся. В отличие от fail, skip не пишет status='failed' в actions
     # и не расходует дневной лимит/троттл (см. commands/_common.run_apply_for_resume).
     skipped: bool = False
+    # #163: реальное действие на hh.ru выполнено (submit формы отклика).
+    # False у всех выходов до submit (форма входа, «уже откликались», кнопка
+    # не найдена, dry-run) — цикл откликов не пишет их в actions и не ждёт
+    # throttle.wait. True после submit-клика: даже провал подтверждения
+    # успеха (wait_success_confirmation) — отправка была, пауза обязательна.
+    acted: bool = False
 
 
 @dataclass
@@ -57,17 +63,34 @@ class ApplyContext:
     letter_provider: CoverLetterProvider | None = None
     # Заполняется в _run после рендера письма — итоговый variant для ApplyResult.
     letter_variant: str = VARIANT_TEMPLATE
+    # #163: submit выполнен. Выставляется в _run после успешного fill_response_form
+    # (клик по кнопке отправки — его последний шаг); все ПОСЛЕДУЮЩИЕ исходы
+    # (успех, провал подтверждения) несут acted=True через fail()/ok().
+    acted: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
-        return ApplyResult(self.vacancy, False, reason, letter_variant=self.letter_variant)
+        return ApplyResult(
+            self.vacancy,
+            False,
+            reason,
+            letter_variant=self.letter_variant,
+            acted=self.acted,
+        )
 
     def ok(self, reason: str) -> ApplyResult:
-        return ApplyResult(self.vacancy, True, reason, letter_variant=self.letter_variant)
+        return ApplyResult(
+            self.vacancy,
+            True,
+            reason,
+            letter_variant=self.letter_variant,
+            acted=self.acted,
+        )
 
     def skip(self, reason: str) -> ApplyResult:
         # #95: skip отличён от fail — отправки не было, но и ошибки нет. success=False,
         # skipped=True: цикл откликов пишет record_skip (НЕ record_action failed) и
         # не ждёт throttle. mirror of fail()/ok() — несёт letter_variant для консистентности.
+        # #163: acted всегда False — skip по определению до submit.
         return ApplyResult(
             self.vacancy,
             success=False,
@@ -144,6 +167,10 @@ def _run(ctx: ApplyContext) -> ApplyResult:
 
     if reason := apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter):
         return ctx.fail(reason)
+
+    # #163: fill_response_form без причины = submit-клик выполнен (последний шаг
+    # заполнения). Дальнейшие исходы — «после действия»: пауза и запись в actions.
+    ctx.acted = True
 
     ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
