@@ -6,6 +6,7 @@ import json
 import math
 import os
 import shutil
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,30 @@ CHROME_EPOCH_OFFSET = 11_644_473_600
 MAX_PLAYWRIGHT_EXPIRES = 253_402_300_799  # 9999-12-31T23:59:59Z
 SAMESITE = {-1: "Lax", 0: "None", 1: "Lax", 2: "Strict"}
 
+DEFAULT_CHROME_PROFILES_ROOT = Path.home() / "Library/Application Support/Google/Chrome"
+DEFAULT_CHROME_PROFILE_NAME = "Default"
+
+
+def resolve_chrome_profile(profile: Path | None = None) -> Path:
+    """Resolve the Chrome profile directory.
+
+    Явный существующий путь — как есть (абсолютный или относительный cwd).
+    Имя профиля (`Default`, `Profile 1`) без существующего cwd-пути — от
+    стандартного корня профилей Chrome (macOS). Иначе — как введено:
+    несуществующий путь даст понятную ошибку "No such file or directory"
+    от read_chrome_cookies (find-one-shot-20260815: `--profile Default`
+    резолвился от cwd и падал, хотя профиль есть).
+    """
+    profile = profile or Path(DEFAULT_CHROME_PROFILE_NAME)
+    if not profile.exists() and not profile.is_absolute():
+        candidate = DEFAULT_CHROME_PROFILES_ROOT / profile
+        if candidate.exists() or profile.name == DEFAULT_CHROME_PROFILE_NAME:
+            return candidate
+    return profile
+
 
 def chrome_cookie_file(profile: Path | None = None) -> Path:
-    profile = profile or Path.home() / "Library/Application Support/Google/Chrome/Default"
-    return profile / "Cookies"
+    return resolve_chrome_profile(profile) / "Cookies"
 
 
 def chrome_expires_to_playwright(expires_utc: int | float) -> float:
@@ -126,13 +147,23 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     # (typically 0644) rather than destination's mode — os.replace() would
     # otherwise silently widen a restrictive (0600) session file to
     # group/world-readable. storage_state_file holds a bearer token
-    # (hhtoken); create the temp file with 0o600 from the very first byte
-    # written via os.open(O_CREAT|O_EXCL, 0o600) — chmod()'ing *after*
-    # write_text() would still leave a race window where the plaintext
-    # secret sits at the umask-derived mode (Codex re-review, PR #168).
-    tmp = destination.with_name(destination.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # (hhtoken); mkstemp() creates it with 0o600 from the very first byte
+    # (O_EXCL built in) AND with an unpredictable name, so a pre-planted
+    # symlink at a guessable `<destination>.tmp` can no longer redirect the
+    # secret into an attacker-controlled file (#171 — Codex review 3 of
+    # PR #168, merged without this fix).
+    fd, tmp_name = tempfile.mkstemp(
+        dir=destination.parent, prefix=destination.name + ".", suffix=".tmp"
+    )
+    tmp = Path(tmp_name)
     try:
+        # Defence-in-depth (#171): mkstemp already guarantees O_EXCL|O_CREAT
+        # with 0o600, but a compromised/widened mode here must fail loudly
+        # instead of leaking the bearer token through a group/world-readable
+        # temp file.
+        mode = os.fstat(fd).st_mode & 0o777
+        if mode != 0o600:
+            raise OSError(f"temp-файл сессии создан с режимом {mode:o} вместо 0600")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
     except BaseException:

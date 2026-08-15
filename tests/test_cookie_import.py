@@ -10,6 +10,7 @@ from hhru_bot.cookie_import import (
     build_storage_state,
     chrome_expires_to_playwright,
     chrome_samesite_to_playwright,
+    resolve_chrome_profile,
     write_storage_state,
 )
 
@@ -156,3 +157,76 @@ def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeyp
         )
     finally:
         os.umask(old_umask)
+
+
+def test_write_does_not_follow_preplanned_symlink_on_tmp_name(tmp_path: Path):
+    # #171: temp-файл создавался по предсказуемому фиксированному имени
+    # `<destination>.tmp` через os.open(O_CREAT|O_TRUNC) без O_EXCL — на
+    # multi-user хосте атакующий мог заранее положить симлинк с этим именем
+    # и получить секрет сессии (hhtoken) в свой файл с правами атакующего.
+    # mkstemp() создаёт файл с непредсказуемым именем и O_EXCL — симлинк
+    # по угаданному имени больше не преследуется.
+    destination = tmp_path / "storage" / "hh_session.json"
+    destination.parent.mkdir()
+    attacker_target = tmp_path / "attacker_readable.json"
+    attacker_target.write_text("junk", encoding="utf-8")
+    attacker_target.chmod(0o666)
+    os.symlink(attacker_target, destination.with_name(destination.name + ".tmp"))
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == {"cookies": [], "origins": []}
+    assert attacker_target.read_text(encoding="utf-8") == "junk", (
+        "секрет сессии утёк в файл-цель симлинка"
+    )
+    assert (destination.stat().st_mode & 0o777) == 0o600
+
+
+def test_no_leftover_tmp_files_after_write(tmp_path: Path):
+    destination = tmp_path / "hh_session.json"
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == []
+
+
+def test_profile_name_resolves_from_chrome_profiles_root(tmp_path: Path, monkeypatch):
+    # find-one-shot-20260815: `--profile Default` резолвился от cwd и падал
+    # "No such file or directory: 'Default/Cookies'", хотя профиль есть в
+    # стандартном корне Chrome. Имя профиля без cwd-пути должно резолвиться
+    # от ~/Library/Application Support/Google/Chrome.
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    profiles_root = tmp_path / "Chrome"
+    (profiles_root / "Default").mkdir(parents=True)
+    (profiles_root / "Profile 1").mkdir(parents=True)
+    monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", profiles_root)
+
+    assert resolve_chrome_profile(Path("Default")) == profiles_root / "Default"
+    assert resolve_chrome_profile(Path("Profile 1")) == profiles_root / "Profile 1"
+
+
+def test_explicit_profile_path_wins_over_profiles_root(tmp_path: Path, monkeypatch):
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    profiles_root = tmp_path / "Chrome"
+    profiles_root.mkdir()
+    monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", profiles_root)
+
+    local_profile = tmp_path / "custom-profile"
+    local_profile.mkdir()
+    assert resolve_chrome_profile(local_profile) == local_profile
+    assert resolve_chrome_profile(local_profile.resolve()) == local_profile.resolve()
+
+    # несуществующее имя не подменяется молча на корень Chrome — ошибку
+    # выдаст read_chrome_cookies с исходным путём
+    missing = Path("no-such-profile")
+    assert resolve_chrome_profile(missing) == missing
+
+
+def test_default_profile_is_chrome_default(monkeypatch, tmp_path: Path):
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", tmp_path)
+    assert resolve_chrome_profile(None) == tmp_path / "Default"

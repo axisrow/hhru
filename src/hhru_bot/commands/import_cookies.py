@@ -14,7 +14,8 @@ def register(subparsers) -> None:
     parser.add_argument(
         "--profile",
         type=Path,
-        help="Путь к профилю Chrome (по умолчанию Default)",
+        help="Путь к профилю Chrome или имя профиля (Default, Profile 1) — "
+        "имя резолвится от стандартного корня профилей Chrome",
     )
     parser.set_defaults(func=run)
 
