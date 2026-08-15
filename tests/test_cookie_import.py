@@ -279,3 +279,88 @@ def test_backup_does_not_follow_preplanned_dangling_symlink(tmp_path: Path):
     write_storage_state({"cookies": [], "origins": []}, destination)
 
     assert not dangling_target.exists(), "секрет сессии утёк в файл-цель dangling symlink"
+
+
+def test_relative_multi_segment_profile_path_is_not_redirected(tmp_path: Path, monkeypatch):
+    # cycle-review PR #173 round 2 (claude/review): the fallback condition
+    # `profile.name == DEFAULT_CHROME_PROFILE_NAME` matches only the last
+    # path segment (Path.name), so a relative path like `foo/Default` (not
+    # just the bare name `Default`) was silently rewritten to
+    # `DEFAULT_CHROME_PROFILES_ROOT / "foo/Default"`, discarding the
+    # caller's relative-to-cwd path.
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    profiles_root = tmp_path / "Chrome"
+    profiles_root.mkdir()
+    monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", profiles_root)
+
+    multi_segment = Path("foo/Default")
+    assert resolve_chrome_profile(multi_segment) == multi_segment
+
+
+def test_backup_copy_failure_leaves_no_empty_bak_file(tmp_path: Path, monkeypatch):
+    # cycle-review PR #173 round 2 (claude/review): the O_EXCL backup-name
+    # loop created the `.bak` inode BEFORE shutil.copy2() actually wrote
+    # content into it. If copy2() failed partway, the empty `.bak` file was
+    # left on disk with no cleanup — the next run's O_EXCL check would then
+    # treat that name as permanently taken, drifting backup numbering
+    # forever on every retried failure.
+    import hhru_bot.cookie_import as cookie_import_mod
+
+    destination = tmp_path / "hh_session.json"
+    destination.write_text('{"old": 1}', encoding="utf-8")
+
+    def _broken_read_bytes(self, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cookie_import_mod.Path, "read_bytes", _broken_read_bytes)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    backup_candidate = destination.with_name(destination.name + ".bak")
+    assert not backup_candidate.exists(), "failed backup copy left an empty .bak file behind"
+
+
+def test_backup_write_survives_symlink_swap_after_exclusive_create(tmp_path: Path, monkeypatch):
+    # cycle-review PR #173 round 2 (codex, high/0.98): the backup inode was
+    # created exclusively (O_CREAT|O_EXCL) and its fd closed, THEN
+    # shutil.copy2(path) wrote through the (now closed) path — reopening a
+    # TOCTOU window. A local attacker able to modify the storage directory
+    # could unlink the freshly created backup file and replace it with a
+    # symlink in the window between close() and copy2(); copy2() would
+    # follow the symlink and leak the session secret into the attacker's
+    # target. The fix writes through the already-open fd instead of a path
+    # lookup, so there is no window left to race. Simulate an attacker
+    # racing the exclusive-create step: swap the backup name for a symlink
+    # right after os.open() returns, before any write happens.
+    destination = tmp_path / "hh_session.json"
+    destination.write_text(json.dumps({"cookies": [{"value": "secret-hhtoken"}]}), encoding="utf-8")
+    backup_path = destination.with_name(destination.name + ".bak")
+    attacker_target = tmp_path / "attacker_owned.json"
+
+    real_open = os.open
+    swapped = False
+
+    def _racing_open(path, flags, mode=0o777, *args, **kwargs):
+        nonlocal swapped
+        fd = real_open(path, flags, mode, *args, **kwargs)
+        if not swapped and str(path) == str(backup_path) and (flags & os.O_EXCL):
+            # Simulate an attacker winning the race right after the
+            # exclusive create: unlink the just-created inode and replace
+            # the name with a symlink to an attacker-owned file. If the
+            # implementation still writes by reopening `path` (as the old
+            # shutil.copy2(path) call did), it would now follow this symlink.
+            swapped = True
+            os.unlink(path)
+            os.symlink(attacker_target, path)
+        return fd
+
+    monkeypatch.setattr(os, "open", _racing_open)
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert not attacker_target.exists(), "секрет сессии утёк в файл-цель symlink через TOCTOU-гонку"
+    assert backup_path.is_symlink(), (
+        "sanity: the race actually replaced the backup path with a symlink"
+    )

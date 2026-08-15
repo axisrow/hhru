@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import shutil
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -32,7 +31,15 @@ def resolve_chrome_profile(profile: Path | None = None) -> Path:
     profile = profile or Path(DEFAULT_CHROME_PROFILE_NAME)
     if not profile.exists() and not profile.is_absolute():
         candidate = DEFAULT_CHROME_PROFILES_ROOT / profile
-        if candidate.exists() or profile.name == DEFAULT_CHROME_PROFILE_NAME:
+        # `len(profile.parts) == 1` — a bare profile name (e.g. "Default"),
+        # not a multi-segment relative path like "foo/Default" (cycle-review
+        # PR #173 round 2, claude/review): profile.name matches only the
+        # last path segment, so without this guard a relative path the
+        # caller meant literally would be silently redirected under the
+        # Chrome profiles root just because it ends in "Default".
+        if candidate.exists() or (
+            len(profile.parts) == 1 and profile.name == DEFAULT_CHROME_PROFILE_NAME
+        ):
             return candidate
     return profile
 
@@ -138,6 +145,13 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
         # codex — same attack class #171 closed for the `.tmp` path, left
         # open here). O_EXCL fails on any existing name, symlink or not, so
         # the backup inode is always a fresh file this call created.
+        #
+        # Write through the fd without closing it first (round 2, codex —
+        # closing the fd and then calling shutil.copy2(path) reopened a TOCTOU
+        # window: an attacker able to modify the storage directory could
+        # unlink the just-created backup and replace it with a symlink before
+        # copy2() ran). Reading and writing while the exclusively-created fd
+        # stays open means there is no path lookup left to redirect.
         candidate = destination.with_name(destination.name + ".bak")
         index = 1
         while True:
@@ -147,9 +161,22 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
                 candidate = destination.with_name(destination.name + f".bak.{index}")
                 index += 1
                 continue
-            os.close(fd)
             break
-        shutil.copy2(destination, candidate)
+        try:
+            source_stat = destination.stat()
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(destination.read_bytes())
+                # fd-relative metadata copy (not shutil.copystat(path)): a
+                # path-based call here would reopen the same TOCTOU window
+                # this fix closes above — os.futimens/os.fchmod act on the
+                # already-open descriptor, no path lookup left to redirect.
+                os.utime(handle.fileno(), ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+        except BaseException:
+            # round 2 (claude/review): a failed copy must not leave an empty
+            # `.bak` file — O_EXCL on the next run would treat that name as
+            # permanently taken and the backup numbering would drift forever.
+            candidate.unlink(missing_ok=True)
+            raise
         backup = candidate
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Write-then-rename: an interrupted/failed write must never leave the
