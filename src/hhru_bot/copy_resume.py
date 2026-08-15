@@ -216,7 +216,7 @@ def _wait_duplicate_action(
     more = card.locator(RESUME_LIST_ACTION_MORE)
     duplicate = page.locator(RESUME_DUPLICATE_MENU_ITEM).or_(card.locator(RESUME_DUPLICATE_INLINE))
     profile_ready = page.locator(RESUME_PROFILE_READY)
-    last_menu_click_progress = -1.0
+    menu_opened = False
     ready_seen = False
 
     while True:
@@ -231,24 +231,24 @@ def _wait_duplicate_action(
             )
 
         ready_count = profile_ready.count()
-        # Повторяем безопасный клик только после нового события профильного
-        # микрофронтенда (или появления optional readiness marker). Так мы не
-        # переключаем уже открытое меню каждые 250 ms.
-        progress_key = observer.last_progress_at
         if ready_count >= 1 and not ready_seen:
             ready_seen = True
             # Этот маркер подтверждает, что React сумел завершить client render,
             # поэтому историческая #418/#423 больше не описывает текущий state.
             observer.confirm_ready()
-            progress_key = observer.last_progress_at
-        if more_count == 1 and progress_key != last_menu_click_progress:
+        # Кликаем по «...» ровно один раз за попытку, как только кнопка стала
+        # однозначной. Привязка повтора к сетевому progress-тику (как было
+        # раньше) кликала снова при КАЖДОМ фоновом запросе профиля — а не
+        # только при событиях, относящихся к рендеру самого меню — и на
+        # реальном toggle-дропдауне hh.ru закрывала уже открытое меню.
+        if more_count == 1 and not menu_opened:
             try:
                 more.first.click(timeout=MENU_CLICK_TIMEOUT_MS)
+                menu_opened = True
             except PlaywrightError:
                 # SSR-кнопка может уже быть видна, но ещё не быть кликабельной.
                 # Watchdog ниже отличит восстановление от окончательного stall.
                 pass
-            last_menu_click_progress = progress_key
 
         duplicate_count = duplicate.count()
         if duplicate_count == 1:

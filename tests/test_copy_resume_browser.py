@@ -396,8 +396,10 @@ def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
 
     assert result.success
     assert page.reloads == []
+    # Меню открывается ровно одним кликом за попытку — повторный клик на
+    # каждом progress-тике на реальном toggle-дропдауне hh.ru закрывал бы уже
+    # открытое меню, а не держал его открытым.
     assert page.clicks == [
-        (CARD_SEL, RESUME_LIST_ACTION_MORE),
         (CARD_SEL, RESUME_LIST_ACTION_MORE),
         ("", DUP_SEL),
     ]
