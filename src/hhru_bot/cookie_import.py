@@ -130,11 +130,25 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
     destination = Path(destination)
     backup: Path | None = None
     if destination.exists():
+        # Exclusive create (O_CREAT|O_EXCL), not candidate.exists(): a
+        # pre-planted symlink at the guessable `<destination>.bak` name can be
+        # *dangling*, so exists() (which follows symlinks) reports False and
+        # shutil.copy2() would then follow the symlink and write the session
+        # secret into the attacker's target (cycle-review PR #173 round 1,
+        # codex — same attack class #171 closed for the `.tmp` path, left
+        # open here). O_EXCL fails on any existing name, symlink or not, so
+        # the backup inode is always a fresh file this call created.
         candidate = destination.with_name(destination.name + ".bak")
         index = 1
-        while candidate.exists():
-            candidate = destination.with_name(destination.name + f".bak.{index}")
-            index += 1
+        while True:
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                candidate = destination.with_name(destination.name + f".bak.{index}")
+                index += 1
+                continue
+            os.close(fd)
+            break
         shutil.copy2(destination, candidate)
         backup = candidate
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +177,7 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
         # temp file.
         mode = os.fstat(fd).st_mode & 0o777
         if mode != 0o600:
+            os.close(fd)
             raise OSError(f"temp-файл сессии создан с режимом {mode:o} вместо 0600")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(state, ensure_ascii=False, indent=2) + "\n")

@@ -230,3 +230,52 @@ def test_default_profile_is_chrome_default(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(cookie_import_mod, "DEFAULT_CHROME_PROFILES_ROOT", tmp_path)
     assert resolve_chrome_profile(None) == tmp_path / "Default"
+
+
+def test_mode_check_failure_closes_fd_before_raising(tmp_path: Path, monkeypatch):
+    # cycle-review PR #173 round 1 (claude/review): when the defence-in-depth
+    # mode check (#171) finds mkstemp() returned an fd with the wrong mode,
+    # it raises OSError before os.fdopen(fd, ...) ever runs — so nothing
+    # takes ownership of the raw fd. The `except BaseException` handler only
+    # unlinked the temp file, never os.close()d the fd, leaking a descriptor
+    # on every trip through this branch. Spy on os.close to confirm the fd
+    # from mkstemp() is actually closed once the mode check trips.
+    destination = tmp_path / "hh_session.json"
+    real_fstat = os.fstat
+    closed_fds: list[int] = []
+    real_close = os.close
+
+    def _fake_fstat(fd, *args, **kwargs):
+        result = real_fstat(fd, *args, **kwargs)
+        # Report a widened mode so the defence-in-depth check trips.
+        return os.stat_result((0o100644,) + tuple(result)[1:])
+
+    def _spy_close(fd, *args, **kwargs):
+        closed_fds.append(fd)
+        return real_close(fd, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fstat", _fake_fstat)
+    monkeypatch.setattr(os, "close", _spy_close)
+
+    with pytest.raises(OSError, match="0600"):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert closed_fds, "mkstemp() fd was never closed after the mode check raised"
+
+
+def test_backup_does_not_follow_preplanned_dangling_symlink(tmp_path: Path):
+    # cycle-review PR #173 round 1 (codex, high/0.98): the backup-name loop
+    # picked a candidate with `candidate.exists()`, which returns False for a
+    # dangling symlink — so a pre-planted `<destination>.bak -> /attacker`
+    # symlink was accepted as the backup name and shutil.copy2() followed it,
+    # writing the session content (including hhtoken) into the attacker's
+    # target file. This is the same symlink-attack class #171 closed for the
+    # `.tmp` path, left open here for `.bak`.
+    destination = tmp_path / "hh_session.json"
+    destination.write_text(json.dumps({"cookies": [{"value": "secret-hhtoken"}]}), encoding="utf-8")
+    dangling_target = tmp_path / "attacker_readable.json"
+    os.symlink(dangling_target, destination.with_name(destination.name + ".bak"))
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert not dangling_target.exists(), "секрет сессии утёк в файл-цель dangling symlink"
