@@ -1,4 +1,25 @@
-from hhru_bot.negotiations_chat import extract_external_test_link
+from hhru_bot.negotiations_chat import ChatMessage, extract_external_test_link, needs_reply
+
+
+def test_needs_reply_when_last_message_is_from_employer():
+    decision = needs_reply(ChatMessage("employer", "message-1"))
+    assert decision.should_reply is True
+    assert decision.reason == "last_message_from_employer"
+
+
+def test_needs_reply_skips_our_last_message():
+    decision = needs_reply(ChatMessage("me", "message-1"))
+    assert decision.should_reply is False
+    assert decision.reason == "last_message_from_us"
+
+
+def test_needs_reply_is_fail_closed_for_empty_chat():
+    assert needs_reply(None).reason == "empty_chat"
+
+
+def test_needs_reply_is_fail_closed_for_unknown_author_or_marker():
+    assert needs_reply(ChatMessage(None, "message-1")).should_reply is False
+    assert needs_reply(ChatMessage("employer", None)).reason == "inbound_marker_unknown"
 
 
 def test_extracts_external_link_from_message():
