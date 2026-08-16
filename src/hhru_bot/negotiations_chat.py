@@ -8,6 +8,7 @@ not perform any navigation (in particular, it never follows the external URL).
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from .selector_groups.negotiations import (
     CHAT_MESSAGE_OTHER_MARKER,
     CHAT_MESSAGE_TEXT,
 )
+
+logger = logging.getLogger("hhru_bot.negotiations_chat")
 
 # A URL is deliberately restricted to HTTP(S).  This avoids treating email
 # addresses, javascript: values, and arbitrary punctuation as test links.
@@ -97,9 +100,17 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
 
 
 def read_chat(page: Page, topic: str, topic_to_chat_id: Mapping[str, str]) -> ChatMessage | None:
-    """Resolve a topic from the #107 SSR mapping and read its latest message."""
+    """Resolve a topic from the #107 SSR mapping and read its latest message.
+
+    A topic missing from ``topic_to_chat_id`` is a mapping problem (possible
+    #107 SSR drift), not a chat that legitimately has no messages. Both cases
+    fail-closed to ``None`` (``needs_reply`` reports them identically as
+    ``empty_chat``, per #109), but the mapping miss is logged so it is
+    diagnosable instead of silently masquerading as a normal empty chat.
+    """
     chat_id = topic_to_chat_id.get(str(topic))
     if not chat_id:
+        logger.warning("negotiations: topic %s not found in SSR chat mapping", topic)
         return None
     return read_last_message(page, str(chat_id))
 
