@@ -273,7 +273,9 @@ class StubResumesPage:
 
 def _resumes_ssr_html(resumes: list[dict]) -> str:
     state = json.dumps({"applicantResumes": resumes}, ensure_ascii=False)
-    return f"<html><body><template id='HH-Lux-InitialState'>{escape(state)}</template></body></html>"
+    return (
+        f"<html><body><template id='HH-Lux-InitialState'>{escape(state)}</template></body></html>"
+    )
 
 
 def _resume_attrs(hash_: str, numeric_id: str, status: str = "modified") -> dict:
@@ -287,7 +289,10 @@ _HASH_MK = "6b85a1" * 5 + "6e370"
 def test_resolve_numeric_resume_ids_maps_hash_to_id():
     page = StubResumesPage(
         _resumes_ssr_html(
-            [_resume_attrs(_HASH_PY, "284561395", "not_finished"), _resume_attrs(_HASH_MK, "96223331")]
+            [
+                _resume_attrs(_HASH_PY, "284561395", "not_finished"),
+                _resume_attrs(_HASH_MK, "96223331"),
+            ]
         )
     )
     mapping = cr.resolve_numeric_resume_ids(page)
@@ -298,7 +303,9 @@ def test_resolve_numeric_resume_ids_maps_hash_to_id():
 def test_resolve_numeric_resume_ids_warns_on_not_finished(caplog):
     # not_finished-резюме форма отклика не предлагает: отклики уходят с другого
     # резюме аккаунта — это обязано попасть в логи, а не пройти молча.
-    page = StubResumesPage(_resumes_ssr_html([_resume_attrs(_HASH_PY, "284561395", "not_finished")]))
+    page = StubResumesPage(
+        _resumes_ssr_html([_resume_attrs(_HASH_PY, "284561395", "not_finished")])
+    )
     with caplog.at_level("WARNING", logger="hhru_bot.copy_resume"):
         mapping = cr.resolve_numeric_resume_ids(page)
     assert mapping == {_HASH_PY: "284561395"}
@@ -332,5 +339,7 @@ def test_resolve_numeric_resume_ids_none_without_ssr_state():
 
 
 def test_resolve_numeric_resume_ids_none_without_section():
-    page = StubResumesPage("<html><template id='HH-Lux-InitialState'>{\"other\":1}</template></html>")
+    page = StubResumesPage(
+        "<html><template id='HH-Lux-InitialState'>{\"other\":1}</template></html>"
+    )
     assert cr.resolve_numeric_resume_ids(page) is None

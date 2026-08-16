@@ -660,9 +660,7 @@ def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch)
         return NegotiationsVerifyResult("found", "topic=1")
 
     monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
-    monkeypatch.setattr(
-        "hhru_bot.commands._common.resolve_numeric_resume_ids", lambda page: None
-    )
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_numeric_resume_ids", lambda page: None)
 
     resume = ResumeConfig(
         id="python",
