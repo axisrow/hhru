@@ -1,7 +1,10 @@
+import pytest
+
 import hhru_bot.publish_resume as publish
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.publish_resume import parse_resume_state
 
+pytestmark = pytest.mark.integration
 RESUME_ID = "a" * 38
 
 
@@ -71,8 +74,9 @@ def _markup(**overrides):
     return f'{{"status":"{values["status"]}","isSearchable":{searchable},"canPublishOrUpdate":{can_publish}}}'
 
 
-def _run(page, monkeypatch):
-    monkeypatch.setattr(publish, "goto_hh", lambda page, url: setattr(page, "url", url))
+def _run(page, monkeypatch, *, preserve_url=False):
+    goto = (lambda page, url: None) if preserve_url else lambda page, url: setattr(page, "url", url)
+    monkeypatch.setattr(publish, "goto_hh", goto)
     monkeypatch.setattr(publish, "has_login_form", lambda page: False)
     return publish.publish_resume_on_hh(page, _resume(), dry_run=False)
 
@@ -96,7 +100,7 @@ def test_parse_resume_state_does_not_guess_missing_values():
 def test_publish_rejects_identity_mismatch_before_button_lookup(monkeypatch):
     page = _Page(_markup())
     page.url = "https://hh.ru/resume/" + "b" * 38
-    result = _run(page, monkeypatch)
+    result = _run(page, monkeypatch, preserve_url=True)
     assert not result.success
     assert "identity" in result.reason
     assert page.clicked == 0
