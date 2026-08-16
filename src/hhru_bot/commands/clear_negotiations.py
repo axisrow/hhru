@@ -55,6 +55,15 @@ def _validate(args: argparse.Namespace) -> None:
     # a write merely because the current list happens to contain one item.
     if args.vacancy and args.force:
         _fail("Боевой отзыв по --vacancy запрещён; используйте уникальный --topic.")
+    # Codex review round 3 (PR #196): range(max_pages) silently yields zero
+    # iterations for max_pages<=0, so fetch_responses() would collect zero
+    # pages without ever checking auth or raising an indeterminate-state
+    # error — an account-wide destructive run that inspected nothing would
+    # report success. Fail closed before load_config_or_exit()/opening a
+    # browser is even attempted; unrelated to the discovery-ambiguity
+    # trade-off (this is pure input validation, no false-refusal risk).
+    if args.max_pages < 1:
+        _fail(f"--max-pages должен быть >= 1 (получено {args.max_pages}).")
 
 
 def _withdraw_topic(page, topic: str) -> tuple[bool, str]:

@@ -43,6 +43,44 @@ def test_topic_without_force_is_rejected_noninteractive(monkeypatch):
     assert exc.value.code == 1
 
 
+@pytest.mark.parametrize("bad_max_pages", [0, -1, -5])
+def test_max_pages_validation_rejects_non_positive_before_config(bad_max_pages):
+    """Codex review round 3 (PR #196): --max-pages <= 0 must not be a silent no-op.
+
+    range(max_pages) yields zero iterations for max_pages<=0, so
+    fetch_responses() would collect zero pages without ever checking auth or
+    raising an indeterminate-state error. clear_negotiations then sees
+    cards=[], prints only a [WARN], and returns success — a destructive
+    account-wide run that inspected nothing reports exit 0. This is pure
+    input validation, unrelated to the discovery-ambiguity trade-off; it
+    must fail closed in _validate(), before load_config_or_exit()/opening a
+    browser is even attempted (otherwise the exit 1 the previous version of
+    this test observed came from a missing config file, not the guard).
+    """
+    with pytest.raises(SystemExit) as exc:
+        command._validate(_args(account_wide=True, force=True, max_pages=bad_max_pages))
+    assert exc.value.code == 1
+
+
+@pytest.mark.parametrize("bad_max_pages", [0, -1, -5])
+def test_account_wide_rejects_non_positive_max_pages(bad_max_pages, tmp_path):
+    """End-to-end: run() must fail before any config/browser access is attempted."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("load_config_or_exit must not be reached for invalid --max-pages")
+
+    import hhru_bot.config
+
+    original = hhru_bot.config.load_config_or_exit
+    hhru_bot.config.load_config_or_exit = _boom
+    try:
+        with pytest.raises(SystemExit) as exc:
+            command.run(_args(account_wide=True, force=True, max_pages=bad_max_pages))
+        assert exc.value.code == 1
+    finally:
+        hhru_bot.config.load_config_or_exit = original
+
+
 def test_successful_withdraw_is_audited(tmp_path, monkeypatch):
     class Response:
         ok = True
