@@ -472,3 +472,21 @@ def test_apply_verifier_crash_is_uncertain_acted(monkeypatch):
     assert result.acted is True
     assert result.uncertain is True
     assert "упала" in result.reason
+
+
+def test_apply_verifier_non_playwright_crash_is_uncertain_acted(monkeypatch):
+    """#207: не-Playwright ошибка верификатора (ValueError из парсинга чужого
+    SSR/DOM) — тот же класс неопределённости, что и упавшая страница: apply не
+    должен оборваться до записи uncertain+acted (иначе дубликат на следующем
+    запуске). Граница fail-closed ловит Exception, а не только PlaywrightError."""
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+
+    def _crash(page, vacancy_id, resume_id=None):  # noqa: ANN001
+        raise ValueError("malformed href in topicList")
+
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=_crash)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "упала" in result.reason

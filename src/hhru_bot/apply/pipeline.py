@@ -161,11 +161,16 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
         return ctx.fail(reason)
     try:
         verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
-    except PlaywrightError as exc:
-        # #207: сбой самой внешней проверки (страница упала/закрылась посреди
-        # опроса) не должен обрывать apply до записи в history и паузы
-        # троттлинга — иначе следующий запуск не увидит запись и отправит
-        # дубликат. Fail-closed: uncertain + acted, как у #176.
+    except Exception as exc:  # noqa: BLE001
+        # #207: сбой самой внешней проверки не должен обрывать apply до записи
+        # в history и паузы троттлинга — иначе следующий запуск не увидит запись
+        # и отправит дубликат. Fail-closed: uncertain + acted, как у #176.
+        # Ловим Exception, а не только PlaywrightError: верификатор читает
+        # чужой SSR/DOM, и не-Playwright ошибка парсинга (ValueError/TypeError
+        # из parse_response_card/_ssr_topic_list) — тот же класс неопределённости
+        # «не смогли проверить», что и упавшая страница. Граница fail-closed —
+        # единственное место, где широкий except оправдан: цена ложного
+        # uncertain (лишняя пауза) ниже цены пропущенной записи (дубликат).
         ctx.acted = True
         ctx.uncertain = True
         logger.warning("%s — внешняя проверка упала: %s", ctx.vacancy.title, exc)
