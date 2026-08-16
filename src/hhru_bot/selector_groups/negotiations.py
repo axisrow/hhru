@@ -46,6 +46,14 @@ NEGOTIATIONS_PAGINATION_PAGE = "[data-qa='pager-page']"
 # Контейнер пагинации общего компонента hh.ru; нет на честной единственной странице.
 NEGOTIATIONS_PAGINATION_BLOCK = "[data-qa='pager-block']"
 
+# Write controls are intentionally kept separate from the read selectors above.
+# The exact data-qa names below must be rechecked against a logged-in DOM before
+# the first real withdrawal; an unknown or changed selector is a refusal, never
+# a reason to fall back to a guessed button or a direct HTTP request.
+NEGOTIATION_WITHDRAW = "[data-qa='negotiations-item-withdraw']"
+NEGOTIATION_WITHDRAW_CONFIRM = "[data-qa='negotiations-withdraw-confirm']"
+NEGOTIATION_WITHDRAW_SUCCESS = "[data-qa='negotiations-item-withdrawn']"
+
 # Compatibility with old saved markup fixtures during selector migration.
 LEGACY_NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item__vacancy-link']"
 LEGACY_NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
