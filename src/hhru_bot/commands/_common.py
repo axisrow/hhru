@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
-from ..config import AppConfig, ResumeConfig, SearchFilters
+from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..history import SKIP_REASONS, History
 from ..search import (
@@ -245,9 +245,22 @@ def run_apply_for_resume(
     (VacancySearchIndeterminate) — apply.run() агрегирует это по всем
     резюме и транслирует в ненулевой exit code через cli.main(). False —
     во всех остальных случаях (включая исчерпанный дневной лимит).
+
+    #165: True также при плейсхолдере resume_url в конфиге — конфиг с
+    плейсхолдером фейлится явно и рано (до search/истории/отправки формы),
+    а не молча откликается default-резюме аккаунта.
     """
     print(f"\n=== Отклики для резюме: {resume.id} ===")
 
+    if is_resume_url_placeholder(resume.resume_url):
+        # Fail closed до любого write-действия: на форме с единственным
+        # резюме hh.ru не валидирует resume_id (#165), и отклик уходит
+        # default-резюме, а история пишется под фейковым id.
+        print(
+            f"[FAIL] {resume.id} — в конфиге указан плейсхолдер resume_url; "
+            "укажите реальный URL (получить можно через list-resumes --remote)"
+        )
+        return True
     try:
         throttle.check_apply_limit(resume.resume_id, args.dry_run)
     except LimitReached as e:
