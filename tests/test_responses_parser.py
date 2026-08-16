@@ -289,6 +289,69 @@ def test_parse_response_card_reads_live_viewed_status_without_legacy_markup():
     assert item.raw_status == "Прочитано"
 
 
+def test_parse_response_card_prefers_live_fields_when_both_markups_exist():
+    """Confirmed selectors win consistently over compatibility selectors."""
+    page = NegotiationsPage(
+        """
+        <div data-qa="negotiations-item">
+          <a data-qa="negotiations-item-vacancy" href="/vacancy/666666">Live</a>
+          <a data-qa="negotiations-item__vacancy-link" href="/vacancy/777777">Legacy</a>
+          <span data-qa="negotiations-tag">Новое сообщение</span>
+          <span data-qa="negotiations-item__state">Отказ</span>
+          <span data-qa="negotiations-item-company">Live Corp</span>
+          <span data-qa="negotiations-item__employer">Legacy Corp</span>
+          <span data-qa="negotiations-item-date">сегодня</span>
+          <span data-qa="negotiations-item__date">вчера</span>
+        </div>
+        """
+    )
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.vacancy_id == "666666"
+    assert item.status == ResponseStatus.RESPONSE
+    assert item.employer == "Live Corp"
+    assert item.date == "сегодня"
+
+
+def test_parse_response_card_uses_legacy_text_when_live_fields_are_empty():
+    page = NegotiationsPage(
+        """
+        <div data-qa="negotiations-item">
+          <a data-qa="negotiations-item-vacancy" href="/vacancy/888888">Live</a>
+          <span data-qa="negotiations-item__state">Приглашение</span>
+          <span data-qa="negotiations-item-company"></span>
+          <span data-qa="negotiations-item__employer">Legacy Corp</span>
+          <span data-qa="negotiations-item-date"> </span>
+          <span data-qa="negotiations-item__date">вчера</span>
+        </div>
+        """
+    )
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.INVITATION
+    assert item.raw_status == "Приглашение"
+    assert item.employer == "Legacy Corp"
+    assert item.date == "вчера"
+
+
+def test_parse_response_card_keeps_unrecognized_live_status_over_recognized_legacy():
+    """Присутствующий live-статус авторитетен даже если normalize_status его не знает —
+    легаси-статус не должен маскировать реальный (пусть и нераспознанный) live-статус."""
+    page = NegotiationsPage(
+        """
+        <div data-qa="negotiations-item">
+          <a data-qa="negotiations-item-vacancy" href="/vacancy/888888">Live</a>
+          <span data-qa="negotiations-tag">Unknown live status</span>
+          <span data-qa="negotiations-item__state">Приглашение</span>
+        </div>
+        """
+    )
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.UNKNOWN
+    assert item.raw_status == "Unknown live status"
+
+
 def test_response_item_dataclass_fields():
     """Контракт dataclass: status обязателен, остальное имеет дефолты."""
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)

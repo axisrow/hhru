@@ -207,17 +207,36 @@ def _absolute_url(href: str, *, keep_query: bool = False) -> str:
     return f"{HH_BASE_URL}{href.split('?')[0]}"
 
 
-def _optional_text(item, selector: str) -> str:
-    """Текст первого элемента карточки по selector, либо пустая строка.
+def _optional_text(item, *selectors: str) -> str:
+    """Текст первого найденного элемента карточки, либо пустая строка.
 
     Опциональные поля (работодатель, статус). Как search._optional_text, но без
     None → пустая строка (для responses пустота нормальна и удобнее в dataclass).
+    Selectors are ordered live-first, with legacy markup as a fallback.
     """
-    loc = item.locator(selector).first
-    if not loc.count():
-        return ""
-    text = loc.inner_text().strip()
-    return text or ""
+    for selector in selectors:
+        loc = item.locator(selector).first
+        if loc.count():
+            text = loc.inner_text().strip()
+            if text:
+                return text
+    return ""
+
+
+def _status_text(item, *selectors: str) -> str:
+    """Return the first non-empty status from ordered selectors.
+
+    A present live status is authoritative even when unrecognized by
+    normalize_status() — only an EMPTY selector falls through to the next
+    one. Falling through on "unrecognized" instead of "empty" would let a
+    stale legacy status silently override a real (if unmapped) live status
+    whenever both markup variants happen to be present in the same card.
+    """
+    for selector in selectors:
+        text = _optional_text(item, selector)
+        if text:
+            return text
+    return ""
 
 
 def _first_locator(item, *selectors):
@@ -241,24 +260,11 @@ def parse_response_card(item) -> ResponseItem | None:
     if not vacancy_id:
         return None
 
-    # Prefer the legacy exact selector first: it also keeps old saved fixtures
-    # deterministic while the live selector is verified on the real DOM. Fall
-    # through to the confirmed selector whenever the legacy one is empty OR
-    # unrecognized — normalize_status("") is READ (not UNKNOWN) by design, so
-    # "empty" and "unrecognized" are checked separately; an unrecognized
-    # legacy match must not shadow a live selector that could still resolve
-    # to a known status.
-    raw_status = _optional_text(item, ns.LEGACY_NEGOTIATION_STATUS)
-    if not raw_status or normalize_status(raw_status) == ResponseStatus.UNKNOWN:
-        raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
-    if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
-        raw_status = ""
-    employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER)
-    if not employer:
-        employer = _optional_text(item, ns.LEGACY_NEGOTIATION_EMPLOYER)
-    date = _optional_text(item, ns.NEGOTIATION_DATE)
-    if not date:
-        date = _optional_text(item, ns.LEGACY_NEGOTIATION_DATE)
+    # Prefer confirmed live selectors consistently; old saved markup remains a
+    # fallback for fixtures and previously captured pages.
+    raw_status = _status_text(item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS)
+    employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER, ns.LEGACY_NEGOTIATION_EMPLOYER)
+    date = _optional_text(item, ns.NEGOTIATION_DATE, ns.LEGACY_NEGOTIATION_DATE)
 
     chat_link = _first_locator(item, ns.NEGOTIATION_CHAT_LINK, ns.LEGACY_NEGOTIATION_CHAT_LINK)
     chat_href = chat_link.get_attribute("href") or "" if chat_link.count() else ""
