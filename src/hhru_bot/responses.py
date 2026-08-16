@@ -207,23 +207,47 @@ def _optional_text(item, selector: str) -> str:
     return text or ""
 
 
+def _first_locator(item, *selectors):
+    """Return the first matching locator, allowing old cached markup fixtures."""
+    for selector in selectors:
+        loc = item.locator(selector).first
+        if loc.count():
+            return loc
+    return item.locator(selectors[0]).first
+
+
 def parse_response_card(item) -> ResponseItem | None:
     """Парсит один locator карточки переписки в ResponseItem, либо None.
 
     None — если из ссылки не удалось достать vacancy_id (битая/пустая карточка).
     Чистая относительно Playwright-locator'а: импортирует только типы селекторов.
     """
-    link = item.locator(ns.NEGOTIATION_VACANCY_LINK).first
+    link = _first_locator(item, ns.NEGOTIATION_VACANCY_LINK, ns.LEGACY_NEGOTIATION_VACANCY_LINK)
     vacancy_href = link.get_attribute("href") or "" if link.count() else ""
     vacancy_id = _extract_vacancy_id(vacancy_href)
     if not vacancy_id:
         return None
 
-    raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
+    # Prefer the legacy exact selector first: it also keeps old saved fixtures
+    # deterministic while the live selector is verified on the real DOM. Fall
+    # through to the confirmed selector whenever the legacy one is empty OR
+    # unrecognized — normalize_status("") is READ (not UNKNOWN) by design, so
+    # "empty" and "unrecognized" are checked separately; an unrecognized
+    # legacy match must not shadow a live selector that could still resolve
+    # to a known status.
+    raw_status = _optional_text(item, ns.LEGACY_NEGOTIATION_STATUS)
+    if not raw_status or normalize_status(raw_status) == ResponseStatus.UNKNOWN:
+        raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
+    if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
+        raw_status = ""
     employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER)
+    if not employer:
+        employer = _optional_text(item, ns.LEGACY_NEGOTIATION_EMPLOYER)
     date = _optional_text(item, ns.NEGOTIATION_DATE)
+    if not date:
+        date = _optional_text(item, ns.LEGACY_NEGOTIATION_DATE)
 
-    chat_link = item.locator(ns.NEGOTIATION_CHAT_LINK).first
+    chat_link = _first_locator(item, ns.NEGOTIATION_CHAT_LINK, ns.LEGACY_NEGOTIATION_CHAT_LINK)
     chat_href = chat_link.get_attribute("href") or "" if chat_link.count() else ""
     # chat_url — на страницу чата; keep_query=True: topic определяет конкретную
     # переписку, без него ссылка ведёт в общий список. Если отдельной чат-ссылки

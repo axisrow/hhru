@@ -20,6 +20,10 @@ from html.parser import HTMLParser
 
 # ``[data-qa='name']`` → name. Селекторы hh.ru в этом проекте — только этот вид.
 _QA_RE = re.compile(r"^\[data-qa=(?:['\"])([A-Za-z0-9_\-]+)(?:['\"])\]$")
+# ``[data-qa^='prefix']`` → prefix (префиксное совпадение, напр. NEGOTIATION_STATUS
+# = "[data-qa^='negotiations-tag']" — без этой ветки _parse_selector вернул бы None,
+# и find_all(qa=None) молча матчил бы ЛЮБОЙ узел вместо ничего).
+_QA_PREFIX_RE = re.compile(r"^\[data-qa\^=(?:['\"])([A-Za-z0-9_\-]+)(?:['\"])\]$")
 
 # void-теги без закрывающего.
 _VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
@@ -36,14 +40,12 @@ class _DOMNode:
         self.children: list[_DOMNode] = []
         self.text = ""
 
-    def find_all(self, tag: str | None, qa: str | None) -> list[_DOMNode]:
+    def find_all(self, tag: str | None, qa_match) -> list[_DOMNode]:  # noqa: ANN001
         out: list[_DOMNode] = []
         for child in self.children:
-            if (tag is None or child.tag == tag) and (
-                qa is None or child.attrs.get("data-qa") == qa
-            ):
+            if (tag is None or child.tag == tag) and qa_match(child.attrs.get("data-qa")):
                 out.append(child)
-            out.extend(child.find_all(tag, qa))
+            out.extend(child.find_all(tag, qa_match))
         return out
 
     def inner_text(self) -> str:
@@ -96,25 +98,25 @@ class FakeLocator:
     на списке совпадений (до выбора first/nth).
     """
 
-    def __init__(self, root: _DOMNode, qa: str | None, *, matches: list[_DOMNode] | None = None):
+    def __init__(self, root: _DOMNode, qa_match, *, matches: list[_DOMNode] | None = None):  # noqa: ANN001
         self._root = root
-        self._qa = qa
+        self._qa_match = qa_match
         # matches кешируется лениво: до first/nth локатор — «коллекция».
         self._matches = matches
 
     def _resolved(self) -> list[_DOMNode]:
         if self._matches is None:
-            self._matches = self._root.find_all(tag=None, qa=self._qa)
+            self._matches = self._root.find_all(tag=None, qa_match=self._qa_match)
         return self._matches
 
     @property
     def first(self) -> FakeLocator:
         matches = self._resolved()
-        return FakeLocator(self._root, self._qa, matches=[matches[0]] if matches else [])
+        return FakeLocator(self._root, self._qa_match, matches=[matches[0]] if matches else [])
 
     def nth(self, i: int) -> FakeLocator:
         matches = self._resolved()
-        return FakeLocator(self._root, self._qa, matches=[matches[i]])
+        return FakeLocator(self._root, self._qa_match, matches=[matches[i]])
 
     def count(self) -> int:
         return len(self._resolved())
@@ -148,14 +150,30 @@ class _CardLocator(FakeLocator):
     """
 
     def locator(self, selector: str) -> FakeLocator:
-        qa = _parse_selector(selector)
+        qa_match = _parse_selector(selector)
         node = self._resolved()[0] if self._resolved() else _DOMNode("#empty", {})
-        return FakeLocator(node, qa)
+        return FakeLocator(node, qa_match)
 
 
-def _parse_selector(selector: str) -> str | None:
-    m = _QA_RE.match(selector.strip())
-    return m.group(1) if m else None
+def _parse_selector(selector: str):  # noqa: ANN201
+    """``[data-qa='name']`` / ``[data-qa^='prefix']`` → предикат по data-qa.
+
+    Ровно два вида, используемых парсерами, тестируемыми через эти фейки
+    (``responses.parse_response_card``): точное совпадение и префиксное
+    (``NEGOTIATION_STATUS``). Незнакомая форма — предикат ``value is not None``,
+    НЕ ``True`` безусловно: пустой data-qa/чужой узел не должен молча матчиться
+    (это и был баг: до этой правки find_all(qa=None) матчил вообще любой узел).
+    """
+    selector = selector.strip()
+    exact = _QA_RE.match(selector)
+    if exact:
+        qa = exact.group(1)
+        return lambda value: value == qa
+    prefix = _QA_PREFIX_RE.match(selector)
+    if prefix:
+        pre = prefix.group(1)
+        return lambda value: value is not None and value.startswith(pre)
+    return lambda value: value is not None
 
 
 class _ItemsContainer:
@@ -163,11 +181,11 @@ class _ItemsContainer:
 
     def __init__(self, html: str, item_qa: str):
         root = _parse_root(html)
-        self._nodes = root.find_all(tag=None, qa=item_qa)
+        self._nodes = root.find_all(tag=None, qa_match=lambda value: value == item_qa)
 
     @property
     def items(self) -> list[_CardLocator]:
-        return [_CardLocator(n, None, matches=[n]) for n in self._nodes]
+        return [_CardLocator(n, lambda _v: True, matches=[n]) for n in self._nodes]
 
 
 class NegotiationsPage(_ItemsContainer):

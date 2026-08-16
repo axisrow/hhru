@@ -37,6 +37,11 @@ def register(subparsers) -> None:
         help="Показать ответы, сменившие статус за последние N часов (по умолчанию 24). "
         "0 — показать все известные ответы из истории без нового обхода hh.ru.",
     )
+    p.add_argument(
+        "--detect-external-tests",
+        action="store_true",
+        help="Прочитать последние сообщения работодателей и записать внешние тесты (#180)",
+    )
     p.set_defaults(func=run)
 
 
@@ -138,6 +143,42 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
                 return
+
+            if args.detect_external_tests:
+                # fetch_responses performs its own navigation. Re-open the
+                # list read-only so SSR topicList is captured from the actual
+                # negotiations page, then use the confirmed chatId route.
+                from ..browser import goto_hh
+                from ..negotiations_chat import (
+                    extract_external_test_link,
+                    read_employer_messages,
+                )
+                from ..negotiations_probe import topic_refs
+
+                goto_hh(page, "https://hh.ru/applicant/negotiations")
+                list_html = page.content()
+                refs = {ref.topic_id: ref.chat_id for ref in topic_refs(list_html)}
+                detected = 0
+                for card in cards:
+                    if not card.topic or card.topic not in refs:
+                        continue
+                    for message_text in read_employer_messages(page, refs[card.topic]):
+                        test_url = extract_external_test_link(message_text)
+                        if test_url is None:
+                            continue
+                        # resume_id=None: как и responses (см. warn выше),
+                        # /applicant/negotiations не даёт достоверной привязки
+                        # чата к резюме — args.resume здесь ничем не подтверждён.
+                        history.record_test_assigned(
+                            None,
+                            card.vacancy_id,
+                            card.topic,
+                            card.employer,
+                            test_url,
+                            message_text,
+                        )
+                        detected += 1
+                print(f"Назначений внешнего теста обнаружено: {detected}")
 
         print(f"Собрано карточек переписки: {len(cards)}")
 

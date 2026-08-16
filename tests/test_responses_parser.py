@@ -221,6 +221,41 @@ def test_parse_response_card_missing_vacancy_link_returns_none():
     assert parse_response_card(page.items[3]) is None
 
 
+_LIVE_STATUS_ONLY_HTML = """
+<div data-qa="negotiations-item">
+  <a data-qa="negotiations-item-vacancy" href="/vacancy/444444">Data Engineer</a>
+  <span data-qa="negotiations-tag negotiations-item-not-viewed">Приглашение</span>
+</div>
+"""
+
+
+def test_parse_response_card_falls_back_to_live_status_selector():
+    """Нет legacy-разметки (только текущий data-qa) — NEGOTIATION_STATUS (prefix
+    selector) должен подхватить бейдж, а не оставить статус пустым."""
+    page = NegotiationsPage(_LIVE_STATUS_ONLY_HTML)
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.INVITATION
+
+
+_UNRECOGNIZED_LEGACY_STATUS_HTML = """
+<div data-qa="negotiations-item">
+  <a data-qa="negotiations-item__vacancy-link" href="/vacancy/555555">QA Engineer</a>
+  <span data-qa="negotiations-item__state">Незнакомый статус</span>
+  <span data-qa="negotiations-tag negotiations-item-not-viewed">Приглашение</span>
+</div>
+"""
+
+
+def test_parse_response_card_unrecognized_legacy_status_falls_through_to_live_selector():
+    """Legacy-селектор нашёл непустой, но нераспознанный текст — статус не должен
+    молча обнуляться: живой (prefix) селектор всё ещё может дать известный статус."""
+    page = NegotiationsPage(_UNRECOGNIZED_LEGACY_STATUS_HTML)
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.INVITATION
+
+
 def test_response_item_dataclass_fields():
     """Контракт dataclass: status обязателен, остальное имеет дефолты."""
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)

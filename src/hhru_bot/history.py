@@ -171,6 +171,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
     WHERE status = 'success';
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
+
+-- test_assignments — факт назначения внешнего теста работодателем (#180).
+-- Отдельно от responses/actions: это событие чата, а не статус отклика и не
+-- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
+-- topic — идентификатор конкретной переписки (см. responses.ResponseItem.topic):
+-- одна вакансия может дать несколько чатов (повторный отклик тем же резюме
+-- на ту же вакансию через разные топики), поэтому topic обязателен в ключе
+-- дедупликации ниже — без него совпадающий текст сообщения из ДВУХ разных
+-- чатов схлопнулся бы в одну запись и второе реальное событие терялось бы
+-- безвозвратно под INSERT OR IGNORE.
+CREATE TABLE IF NOT EXISTS test_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT,
+    vacancy_id TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    employer TEXT NOT NULL,
+    test_url TEXT NOT NULL,
+    message_text TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_assignments_detected_at
+    ON test_assignments(detected_at);
+
+-- Дедупликация: повторный обход responses --detect-external-tests читает то же
+-- сообщение чата снова (детект read-only, без курсора по message_id) и без
+-- этого индекса вставлял бы дубль строки при каждом запуске. Ключ включает
+-- topic (не только vacancy_id), чтобы не схлопывать совпадающий текст из
+-- разных переписок по одной вакансии; INSERT OR IGNORE делает повтор no-op.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_test_assignments_dedup
+    ON test_assignments(topic, message_text);
 """
 
 
@@ -290,7 +321,7 @@ class History:
 
     def record_action(
         self,
-        resume_id: str,
+        resume_id: str | None,
         vacancy_id: str,
         action: str,
         status: str,
@@ -1479,6 +1510,62 @@ class History:
                 FROM replies
                 WHERE created_at > ?
                 ORDER BY created_at DESC, id DESC
+                """,
+                (since.isoformat(),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # --- Назначения внешних тестов (#180) -----------------------------------
+
+    def record_test_assigned(
+        self,
+        resume_id: str | None,
+        vacancy_id: str,
+        topic: str,
+        employer: str,
+        test_url: str,
+        message_text: str,
+        *,
+        detected_at: datetime | None = None,
+    ) -> None:
+        """Append a read-only fact discovered in an employer chat.
+
+        resume_id is account-scope metadata, not a verified attribution
+        (/applicant/negotiations does not expose which resume a chat belongs
+        to) — callers must pass None unless a real mapping exists.
+
+        OR IGNORE: a re-run of ``responses --detect-external-tests`` re-reads
+        the same chat message (no message_id cursor), so without dedup it
+        would insert a duplicate row every time — see
+        ``idx_test_assignments_dedup``.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO test_assignments
+                    (resume_id, vacancy_id, topic, employer, test_url, message_text, detected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resume_id,
+                    vacancy_id,
+                    topic,
+                    employer,
+                    test_url,
+                    message_text,
+                    (detected_at or datetime.now()).isoformat(),
+                ),
+            )
+
+    def test_assignments_since(self, since: datetime) -> list[dict]:
+        """Return detected test assignments newer than ``since``, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT resume_id, vacancy_id, topic, employer, test_url, message_text, detected_at
+                FROM test_assignments
+                WHERE detected_at > ?
+                ORDER BY detected_at DESC, id DESC
                 """,
                 (since.isoformat(),),
             ).fetchall()
