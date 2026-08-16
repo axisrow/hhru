@@ -54,6 +54,7 @@ def test_all_commands_registered():
         "import-cookies",
         "clear-negotiations",
         "reply-employers",
+        "calendar",
     }
 
 
@@ -89,6 +90,7 @@ def test_register_commands_returns_names():
         "import_cookies",
         "clear_negotiations",
         "reply_employers",
+        "calendar",
     }
 
 
