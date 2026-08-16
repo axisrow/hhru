@@ -72,11 +72,7 @@ def test_paginated_topic_refs_collects_all_pages(monkeypatch):
                     ]
                 }
             }
-            return (
-                '<template id="HH-Lux-InitialState">'
-                + json.dumps(state)
-                + "</template>"
-            )
+            return '<template id="HH-Lux-InitialState">' + json.dumps(state) + "</template>"
 
     page = Page()
     urls = []

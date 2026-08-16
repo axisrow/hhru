@@ -327,7 +327,9 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
 # --- Codex review (PR #198): click confirmed but delivery unverified -------
 
 
-def test_click_without_delivery_confirmation_is_recorded_as_uncertain(tmp_path, monkeypatch, capsys):
+def test_click_without_delivery_confirmation_is_recorded_as_uncertain(
+    tmp_path, monkeypatch, capsys
+):
     """send_reply_current only clicks; a click with no delivery signal must
     not be journaled as success.  The click may have reached hh.ru even when
     the positive DOM signal was not observed, so the outcome is uncertain.
