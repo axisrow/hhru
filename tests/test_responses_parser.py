@@ -256,6 +256,39 @@ def test_parse_response_card_unrecognized_legacy_status_falls_through_to_live_se
     assert item.status == ResponseStatus.INVITATION
 
 
+_LIVE_STATUS_HTML = """
+<div data-qa="negotiations-item">
+  <a data-qa="negotiations-item-vacancy" href="/vacancy/444444">Data Engineer</a>
+  <span data-qa="negotiations-tag_negotiations-item-not-viewed">Новое сообщение</span>
+</div>
+<div data-qa="negotiations-item">
+  <a data-qa="negotiations-item-vacancy" href="/vacancy/555555">ML Engineer</a>
+  <span data-qa="negotiations-tag_negotiations-item-viewed">Прочитано</span>
+</div>
+"""
+
+
+def test_parse_response_card_reads_live_not_viewed_status_without_legacy_markup():
+    """Регрессия #186: NEGOTIATION_STATUS был exact-match и НИКОГДА не совпадал
+    с реальной разметкой hh.ru (см. selector_groups/negotiations.py) — карточка
+    без legacy data-qa молча теряла статус (падала в UNKNOWN/READ). Живая
+    разметка (не legacy __state) должна распознаваться prefix-селектором.
+    """
+    page = NegotiationsPage(_LIVE_STATUS_HTML)
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.RESPONSE
+    assert item.raw_status == "Новое сообщение"
+
+
+def test_parse_response_card_reads_live_viewed_status_without_legacy_markup():
+    page = NegotiationsPage(_LIVE_STATUS_HTML)
+    item = parse_response_card(page.items[1])
+    assert item is not None
+    assert item.status == ResponseStatus.READ
+    assert item.raw_status == "Прочитано"
+
+
 def test_response_item_dataclass_fields():
     """Контракт dataclass: status обязателен, остальное имеет дефолты."""
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)

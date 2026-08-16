@@ -356,6 +356,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
             break
 
+        page_start = len(results)
         for i in range(count):
             item = parse_response_card(cards.nth(i))
             if item is None:
@@ -367,7 +368,12 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
         # The live open_chat control is a button without href.  Recover the
         # stable topic from the same page's SSR state, preserving distinct
-        # negotiations for one vacancy.
+        # negotiations for one vacancy. Slice by page_start (count of items
+        # actually appended this page), NOT by the DOM card count `count` —
+        # parse_response_card can skip cards (missing vacancy_id), so `count`
+        # overcounts and a `-count:` slice would reach into the previous
+        # page's already-resolved results and risk assigning them this
+        # page's SSR topics.
         try:
             from .negotiations_probe import chat_url, topic_refs
 
@@ -377,13 +383,20 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             refs_by_vacancy: dict[str, list] = {}
             for ref in refs:
                 refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
-            for result in results[-count:]:
+            # NOT verified on a live multi-topic-per-vacancy dump: when one employer
+            # has several negotiations (several topics for the same vacancy_id), this
+            # assumes DOM card order matches SSR topicList order and pairs them
+            # positionally (FIFO pop). If hh.ru ever orders them differently, a topic
+            # can attach to the wrong card. No live fixture with >1 topic per vacancy
+            # exists yet to confirm/refute this — treat as an open assumption, same
+            # category as the _form_scope() DOM-structure assumption in apply/questions.py.
+            for result in results[page_start:]:
                 candidates = refs_by_vacancy.get(result.vacancy_id, [])
                 if result.topic is None and candidates:
                     ref = candidates.pop(0)
                     result.topic = ref.topic_id
                     result.chat_url = chat_url(ref.chat_id)
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
             logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 
         if not _has_next_page(page, page_num):
