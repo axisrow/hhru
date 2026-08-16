@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 import pkgutil
 import sys
 from pathlib import Path
@@ -73,7 +74,10 @@ def main(argv: list[str] | None = None) -> None:
     # локально» (#21), делает ветку «файл не найден» недостижимой (setup_logging
     # создаёт пустой лог) и падает PermissionError в read-only-директории.
     # log сам ничего не логирует — ему не нужны handlers (цикл ревью #61, #58).
-    if args.command != "log":
+    # #179: то же условие решает, есть ли у логгера hhru_bot FileHandler — нужно
+    # ниже ещё раз (except Exception), считаем один раз, не дублируем условие.
+    logging_enabled = args.command != "log"
+    if logging_enabled:
         setup_logging(verbose=args.verbose)
 
     try:
@@ -87,6 +91,34 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(130)
+    except Exception:
+        # #179: раньше необработанное исключение из args.func (напр. Playwright
+        # TimeoutError, не пойманный внутри pipeline) печаталось Python'ом только
+        # в stderr — traceback не попадал в data/logs/hhru_bot.log, хотя
+        # setup_logging() уже успел настроить FileHandler на этот момент.
+        # SystemExit НЕ попадает сюда — он подкласс BaseException, не Exception
+        # (sys.exit() из самой команды, напр. load_config_or_exit, пробрасывается
+        # мимо этого except как раньше, не логируется как крах).
+        if logging_enabled:
+            # #179 code-review round 2: logger.exception() пишет в ОБА handler'а
+            # (console + file, оба на "hhru_bot" — logging_setup.py), а следующий
+            # bare raise даёт Python допечатать тот же traceback в stderr ещё раз
+            # через excepthook — пользователь видел бы его дважды. Пишем запись
+            # только в FileHandler напрямую, консоль получает traceback один раз
+            # от самого Python (стандартное поведение необработанного исключения).
+            record = logging.getLogger("hhru_bot").makeRecord(
+                "hhru_bot",
+                logging.ERROR,
+                __file__,
+                0,
+                "Необработанное исключение в команде '%s'",
+                (args.command,),
+                sys.exc_info(),
+            )
+            for handler in logging.getLogger("hhru_bot").handlers:
+                if isinstance(handler, logging.FileHandler):
+                    handler.handle(record)
+        raise
 
 
 if __name__ == "__main__":

@@ -73,29 +73,75 @@ def navigate_to_response_form(page: Page) -> None:
 
     Фиксированный sleep после навигации заменён на явное ожидание готовности DOM:
     ждём любого индикатора формы (кнопка отправки), максимум APPLY_TIMEOUT_MS.
+
+    #179: раньше ожидание было ``page.expect_navigation(wait_until="domcontentloaded")``.
+    Живая диагностика (боевой аккаунт, vacancy_id 136221532) показала: кнопка
+    отклика сменилась на "уже откликнулись" (submit реально ушёл на hh.ru), но
+    ``expect_navigation`` всё равно упал по TimeoutError 90с — гипотеза: переход
+    на ``/applicant/vacancy_response`` у залогиненного пользователя рендерится
+    как SPA same-document навигация (``history.pushState``), а не полноценная
+    перезагрузка документа, и ``domcontentloaded`` в этом случае не наступает,
+    хотя ``page.url`` меняется.
+
+    ``page.wait_for_url()`` реализован через тот же ``expect_navigation`` внутри
+    (``playwright._impl._frame.Frame.wait_for_url``) и БЕЗ явного ``wait_until``
+    дефолтится на ``"load"`` — это строже, а не мягче ``domcontentloaded``, и не
+    решило бы проблему. ``wait_until="commit"`` — единственное значение, которое
+    не ждёт lifecycle-событие документа вообще (срабатывает по первому байту
+    ответа/навигационному событию), поэтому здесь передан явно.
+
+    #179 (code-review): и клик, и ожидание URL оборачиваются в try/except
+    ``PlaywrightError`` (не только ``PlaywrightTimeoutError`` — non-timeout
+    ошибки вроде «page/context closed» тоже возможны и раньше пробрасывались
+    бы наверх необработанными). Это НЕ то же самое, что #176
+    ``SubmitClickUncertain``: там ошибка происходит вокруг submit-клика,
+    последнего необратимого шага формы, и pipeline обязан трактовать её как
+    «действие могло уйти» (``acted=True``). Здесь клик по кнопке ОТКЛИКА
+    (переход на форму) — до заполнения и до submit; аналогично прочим ранним
+    отказам (#163) он не означает следа на hh.ru, поэтому исключение просто
+    логируется и разбор продолжается через return, а не пробрасывается —
+    fill_response_form (через отсутствие APPLY_SUBMIT_BUTTON) и
+    detect_questions сами вернут корректный fail/skip для этой вакансии, не
+    обрывая цикл apply по остальным вакансиям/резюме (иначе один сбойный клик
+    на первой же вакансии останавливает весь прогон — регрессия #163/#176).
     """
     from ..selector_groups import apply_form
 
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
-    # #80: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех goto).
-    # Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru, который под
-    # DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал, context-wide
-    # set_default_navigation_timeout перебивается явным timeout.
-    with page.expect_navigation(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS):
-        # no_wait_after=True: клик НЕ ждёт навигацию своим внутренним action-timeout
-        # шагом (дефолт set_default_timeout 30с, а не navigation-timeout) — иначе на
-        # навигации 33с+ он упал бы через 30с раньше 90с expect_navigation. Ожидание
-        # навигации полностью владеет внешний 90с waiter expect_navigation.
+    # #80/#179: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех
+    # goto). Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru,
+    # который под DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал.
+    try:
         apply_button.click(no_wait_after=True)
+    except PlaywrightError as exc:
+        # Клик по apply-кнопке — до submit, ранний отказ (#163): на hh.ru следа
+        # нет, не крашим цикл откликов необработанным исключением.
+        logger.warning("Клик по кнопке отклика упал с ошибкой (%s) — вакансия пропущена", exc)
+        return
+    # #179: таймаут/ошибка ожидания URL сама по себе не означает, что клик не
+    # сработал — не крашим весь pipeline необработанным исключением, а
+    # логируем и отдаём управление дальше. fill_response_form (через
+    # отсутствие APPLY_SUBMIT_BUTTON) и detect_questions сами вернут
+    # корректный fail/skip, если форма реально не загрузилась.
+    try:
+        page.wait_for_url(
+            "**/applicant/vacancy_response**", wait_until="commit", timeout=GOTO_TIMEOUT_MS
+        )
+    except PlaywrightError as exc:
+        logger.warning(
+            "Навигация на форму отклика не подтвердилась (%s) — "
+            "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
+            exc,
+        )
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(
             state="visible", timeout=APPLY_TIMEOUT_MS
         )
-    except PlaywrightTimeoutError:
+    except PlaywrightError as exc:
         # Форма не загрузилась — fill_response_form всё равно вернёт причину отказа
         # (submit не найден), логируем для диагностики устаревшего селектора.
-        logger.warning("Форма отклика не отрисовалась за %d мс", APPLY_TIMEOUT_MS)
+        logger.warning("Форма отклика не отрисовалась (%s)", exc)
 
 
 def _is_visible(page: Page, selector: str, *, timeout_ms: int) -> bool:

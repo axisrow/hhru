@@ -67,14 +67,11 @@ class _ApplyFakePage:
             return _FakeLocator(present=True)
         return _FakeLocator(present=False)
 
-    def expect_navigation(self, **_kwargs):  # noqa: ARG002
-        import contextlib
-
-        @contextlib.contextmanager
-        def _cm():
-            yield
-
-        return _cm()
+    def wait_for_url(self, _url_pattern, **_kwargs):  # noqa: ARG002
+        # #179: navigate_to_response_form больше не использует expect_navigation.
+        # Этот путь — dry-run, до формы не доходим (см. докстринг класса), метод
+        # не должен вызываться, но определён для консистентности с реальным Page.
+        return None
 
 
 def _resume_with_profile() -> ResumeConfig:

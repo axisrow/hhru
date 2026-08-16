@@ -42,10 +42,10 @@ class PageStateIndeterminate(RuntimeError):
 # Потолок ожидания навигации по hh.ru. Дефолт Playwright 30с — hh.ru под
 # DDoS-Guard/нагрузкой грузится 33с+ (см. #80), и goto падает. Ставим
 # context-wide через set_default_navigation_timeout — покрывает ВСЕ goto/
-# expect_navigation одним источником (включая двухшаговую навигацию формы
-# отклика, CLAUDE.md п.4), без явного timeout в каждом вызове. 90с (не 120с
-# как в auth.py раньше): достаточно для медленного hh.ru, но не слепое
-# зависание на 1.5 мин при реально упавшем запросе.
+# wait_for_url одним источником (включая двухшаговую навигацию формы отклика,
+# CLAUDE.md п.4, #179), без явного timeout в каждом вызове. 90с (не 120с как в
+# auth.py раньше): достаточно для медленного hh.ru, но не слепое зависание на
+# 1.5 мин при реально упавшем запросе.
 GOTO_TIMEOUT_MS = 90_000
 
 # Retry goto: DDoS-Guard регулярно пропускает запрос со 2-й попытки. 3 попытки,
@@ -131,8 +131,8 @@ def launch_context(
             )
 
         context: BrowserContext = browser.new_context(**context_kwargs)
-        # #80: потолок навигации context-wide — покрывает ВСЕ goto/expect_navigation
-        # единым источником (включая двухшаговую навигацию формы отклика).
+        # #80: потолок навигации context-wide — покрывает ВСЕ goto/wait_for_url
+        # единым источником (включая двухшаговую навигацию формы отклика, #179).
         context.set_default_navigation_timeout(GOTO_TIMEOUT_MS)
         # Убираем navigator.webdriver и подделываем window.chrome — без этого
         # hh.ru детектит Playwright и не активирует кнопку входа. Приём из

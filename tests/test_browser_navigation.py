@@ -43,8 +43,8 @@ def _fake_playwright(monkeypatch, *, calls):
 def test_launch_context_sets_default_navigation_timeout(monkeypatch, tmp_path):
     """#80 минимум: после new_context — set_default_navigation_timeout(GOTO_TIMEOUT_MS).
 
-    Покрывает ВСЕ goto/expect_navigation единым источником (включая двухшаговую
-    навигацию формы отклика, CLAUDE.md п.4) — без явного timeout в каждом вызове.
+    Покрывает ВСЕ goto/wait_for_url единым источником (включая двухшаговую
+    навигацию формы отклика, CLAUDE.md п.4, #179) — без явного timeout в каждом вызове.
     """
     calls: dict = {}
     _fake_playwright(monkeypatch, calls=calls)

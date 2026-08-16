@@ -101,14 +101,9 @@ class FakePage:
             return _FakeLocator(present=self._success, click_error=self._submit_click_error)
         return _FakeLocator(present=False)
 
-    def expect_navigation(self, **_kwargs):
-        import contextlib
-
-        @contextlib.contextmanager
-        def _cm():
-            yield
-
-        return _cm()
+    def wait_for_url(self, _url_pattern, **_kwargs):
+        # #179: navigate_to_response_form больше не использует expect_navigation.
+        return None
 
 
 def _vacancy() -> VacancyCard:
