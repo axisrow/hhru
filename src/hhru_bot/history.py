@@ -460,9 +460,9 @@ class History:
         total_filters = [*filters, "status = 'success'"]
         total_clause = " WHERE " + " AND ".join(total_filters)
         with self._connect() as conn:
-            total = conn.execute(
-                f"SELECT COUNT(*) FROM replies{total_clause}", params
-            ).fetchone()[0]
+            total = conn.execute(f"SELECT COUNT(*) FROM replies{total_clause}", params).fetchone()[
+                0
+            ]
             rows = conn.execute(
                 f"SELECT status, letter_variant, COUNT(*) AS cnt FROM replies{period_clause} "
                 "GROUP BY status, letter_variant",
