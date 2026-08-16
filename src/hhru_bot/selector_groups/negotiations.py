@@ -63,3 +63,4 @@ CHAT_MESSAGE_TEXT = (
     ':not([data-qa="chatik-chat-message-applicant-action-text"])'
 )
 CHAT_MESSAGE_MY_MARKER = "message_my"
+CHAT_MESSAGE_OTHER_MARKER = "message_other"
