@@ -11,8 +11,16 @@ B. ссылка на `launch_context`, импортированная в шап�
 C. `auth.login` вызывает `sync_playwright()` напрямую, минуя `launch_context`,
    то есть заявленный в #217 инвариант «единственная дверь наружу» не держался.
 
-Все три закрыты переносом перехвата на `sync_playwright`. Эти тесты фиксируют
-инвариант: до реального движка не доходит ни один путь.
+Ревью PR #224 нашло, что переноса перехвата на имя `sync_playwright` мало:
+
+D. фабрику можно импортировать под ДРУГИМ именем в шапке модуля теста
+   (`from playwright.sync_api import sync_playwright as factory`) — патч по
+   имени такую ссылку не догоняет, и она возвращала живой
+   `PlaywrightContextManager`.
+
+Итоговый инвариант держит патч `PlaywrightContextManager.__enter__` — самой
+точки старта движка. Класс один на все ссылки, поэтому алиас, замыкание и
+default-аргумент закрываются одинаково.
 
 Сам файл маркера live_* НЕ несёт — в этом суть проверки.
 """
@@ -22,6 +30,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+# Путь D: фабрика движка захвачена под другим именем ДО старта фикстуры.
+from playwright.sync_api import sync_playwright as _factory_captured_at_import
 
 # Путь B: ссылка захватывается на импорте модуля, ДО запуска autouse-фикстуры.
 from hhru_bot.browser import launch_context as _captured_at_import
@@ -113,6 +124,32 @@ def test_patching_sync_playwright_does_not_unlock_real_engine(
             pass
 
     assert calls == ["entered"]
+
+
+def test_aliased_factory_captured_at_import_is_blocked() -> None:
+    """Дыра D: фабрика под другим именем, захваченная до фикстуры.
+
+    Патч по имени `sync_playwright` такую ссылку не догонял — она возвращала
+    живой PlaywrightContextManager, и вход в него поднял бы Chromium с
+    сохранённой сессией hh.ru. Теперь блокирует патч `__enter__` на классе.
+
+    Вход в контекст-менеджер здесь безопасен именно потому, что заглушка
+    срабатывает до старта движка; если тест когда-нибудь начнёт падать не
+    RuntimeError'ом, а зависать или поднимать браузер — защита сломана.
+    """
+    factory = _factory_captured_at_import()
+
+    with pytest.raises(RuntimeError, match="Playwright заблокирован"):
+        with factory:
+            pass
+
+
+def test_aliased_factory_start_is_blocked() -> None:
+    """Тот же обход через .start() — второй вход в движок помимо `with`."""
+    factory = _factory_captured_at_import()
+
+    with pytest.raises(RuntimeError, match="Playwright заблокирован"):
+        factory.start()
 
 
 def test_guard_covers_every_sync_playwright_caller_in_src() -> None:

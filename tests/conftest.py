@@ -11,6 +11,7 @@ from pathlib import Path
 
 import playwright.sync_api
 import pytest
+from playwright.sync_api._context_manager import PlaywrightContextManager
 
 from hhru_bot import logging_setup
 from hhru_bot.apply import probe
@@ -29,23 +30,35 @@ _BLOCKED_MESSAGE = (
 def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Не позволяет обычным тестам случайно выйти в браузер и сеть.
 
-    Перехват стоит на `sync_playwright` — единственной фактической двери к движку
-    Playwright, а не на обёртке `launch_context`. Это принципиально: обёрток
-    несколько (`browser.launch_context` и прямой `sync_playwright()` в `auth.login`),
-    и патч по обёрткам оставлял `auth` полностью открытым. Кроме того, ссылку на
-    саму `launch_context`, захваченную на импорте модуля теста
-    (`from hhru_bot.browser import launch_context` в шапке файла), autouse-фикстура
-    догнать не может — она выполняется позже импорта. Ссылку на `sync_playwright`
-    захватывать бессмысленно: тело обёртки всё равно читает атрибут модуля в
-    момент вызова.
+    Защита стоит на `PlaywrightContextManager.__enter__` — это фактическая точка
+    старта движка: `sync_playwright()` лишь конструирует объект, а процесс
+    Playwright поднимается только при входе в контекст-менеджер (`start()`
+    внутри тоже вызывает `__enter__`). Патч метода НА КЛАССЕ перекрывает сразу
+    все ссылки на фабрику, потому что объект создаётся позже, а метод ищется на
+    классе в момент входа.
+
+    Почему именно так, а не патчем имени `sync_playwright` по модулям: любая
+    ссылка, захваченная до старта autouse-фикстуры, патч по имени переживает.
+    Достаточно импорта под другим именем в шапке модуля теста
+    (`from playwright.sync_api import sync_playwright as factory`), замыкания
+    или default-аргумента — и заглушка обходится. Класс же один на всех.
+
+    Дополнительно оставлен патч имени `sync_playwright` в загруженных модулях:
+    он даёт раннюю и более внятную ошибку в обычном случае (`browser`, `auth`),
+    не дожидаясь входа в контекст-менеджер. Это удобство, а не сама защита —
+    инвариант держит `__enter__`.
 
     Тесту, подменившему `sync_playwright` своим моком (см. test_browser_navigation),
-    фикстура не мешает: его monkeypatch накладывается поверх заглушки и настоящий
-    движок остаётся недостижим в любом случае. Раньше такая подмена, наоборот,
-    ОТКРЫВАЛА проход к настоящему `launch_context`.
+    фикстура не мешает: мок не является `PlaywrightContextManager`, поэтому
+    исполняется только он сам.
     """
     if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
         return
+
+    def _blocked_enter(self: PlaywrightContextManager) -> None:
+        raise RuntimeError(_BLOCKED_MESSAGE)
+
+    monkeypatch.setattr(PlaywrightContextManager, "__enter__", _blocked_enter)
 
     real_sync_playwright = playwright.sync_api.sync_playwright
 
