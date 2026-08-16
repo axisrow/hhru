@@ -4,7 +4,7 @@ from hhru_bot.negotiations_probe import chat_url, parse_initial_state, topic_ref
 def test_topic_refs_read_ssr_state_without_page_actions():
     html = """
     <template id="HH-Lux-InitialState">
-      {"applicantNegotiations":{"topicList":[{"id":123,"chatId":456}]}}
+      {"applicantNegotiations":{"topicList":[{"id":123,"chatId":456,"vacancyId":789}]}}
     </template>
     """
     assert topic_refs(html)[0].topic_id == "123"
