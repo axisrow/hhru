@@ -264,3 +264,68 @@ def test_apply_dry_run_records_for_dedup_without_wait(tmp_path, monkeypatch, wai
     assert _read_actions(tmp_path / "history.db") == [("apply", "dry_run")]
     # дедупликация видит симуляцию — повторный прогон отсечёт эту вакансию
     assert History(tmp_path / "history.db").has_applied("AAA111", "42") is True
+
+
+# --- #176: uncertain — клик мог уйти, запись/пауза/лимиты обязательны ---------
+
+
+def test_bump_uncertain_waits_and_records_uncertain(tmp_path, monkeypatch, wait_calls, capsys):
+    """#176: Playwright упал в момент клика поднятия — действие могло уйти на
+    hh.ru. Командный цикл обязан писать action (статус 'uncertain', НЕ 'failed'
+    — его не видят кулдаун/лимит) и выдерживать анти-бан-паузу."""
+    from hhru_bot.bump import BumpResult
+
+    resume = _resume()
+    monkeypatch.setattr(
+        "hhru_bot.bump.bump_resume",
+        lambda page, r, dry_run: BumpResult(  # noqa: ARG005
+            r.id,
+            False,
+            "клик поднятия выполнен, исход неопределён",
+            acted=True,
+            uncertain=True,
+        ),
+    )
+    _run_bump(monkeypatch, tmp_path, _config(tmp_path, resume))
+
+    assert wait_calls == [f"после поднятия резюме '{resume.id}'"]
+    assert _read_actions(tmp_path / "history.db") == [("bump", "uncertain")]
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_apply_uncertain_waits_and_records_uncertain(tmp_path, monkeypatch, wait_calls):
+    """#176: submit-клик упал с исключением — отклик мог уйти. Запись
+    'uncertain' (дедупликация has_applied его видит) + пауза, как минимум
+    требование ишью: «гарантированно писать запись и выдерживать паузу»."""
+    from hhru_bot.apply import ApplyResult
+    from hhru_bot.history import History
+
+    result = ApplyResult(
+        _vacancy(), False, "submit-клик упал с исключением", acted=True, uncertain=True
+    )
+    _run_apply(monkeypatch, tmp_path, dry_run=False, result=result)
+
+    assert wait_calls == [f"после отклика на '{_vacancy().title}'"]
+    assert _read_actions(tmp_path / "history.db") == [("apply", "uncertain")]
+    # дедупликация отсечёт вакансию при повторном запуске — второго письма
+    # работодателю не будет, даже если первый отклик действительно ушёл
+    assert History(tmp_path / "history.db").has_applied("AAA111", "42") is True
+
+
+def test_uncertain_rows_affect_limits_cooldown_and_dedup(tmp_path):
+    """#176, антитеза test_non_success_rows_do_not_affect_limits: uncertain-строки
+    fail-closed — расходуют дневной лимит (count_today), запускают кулдаун 4ч
+    (can_bump_now через last_action_at) и дедуплицируют отклик. Действие могло
+    выполниться на hh.ru — локальная история обязана считать его состоявшимся."""
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "history.db")
+    history.record_action("AAA111", "AAA111", "bump", "uncertain", "исход неопределён")
+    history.record_action("AAA111", "42", "apply", "uncertain", "submit упал после клика")
+
+    throttle = Throttle(ThrottleConfig(), history)
+    assert history.count_today("AAA111", "bump") == 1
+    can_bump, wait_left = throttle.can_bump_now("AAA111")
+    assert can_bump is False
+    assert wait_left is not None
+    assert history.has_applied("AAA111", "42") is True

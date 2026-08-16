@@ -17,9 +17,16 @@ class _FakeLocator:
     def first(self):
         return self
 
-    def __init__(self, present: bool = False, attrs: dict[str, str] | None = None):
+    def __init__(
+        self,
+        present: bool = False,
+        attrs: dict[str, str] | None = None,
+        click_error: Exception | None = None,
+    ):
         self._present = present
         self._attrs = attrs or {}
+        # #176: PlaywrightError в момент click() (клик мог уйти на hh.ru).
+        self._click_error = click_error
 
     def count(self) -> int:
         return 1 if self._present else 0
@@ -31,6 +38,8 @@ class _FakeLocator:
             raise PlaywrightTimeoutError("not present")
 
     def click(self, **_kwargs) -> None:
+        if self._click_error is not None:
+            raise self._click_error
         return None
 
     def fill(self, _value: str) -> None:
@@ -59,6 +68,7 @@ class FakePage:
         apply_button: bool = True,
         success: bool = True,
         submit_in_form: bool = False,
+        submit_click_error: Exception | None = None,
     ):
         self.url = ""
         self.goto_calls: list[str] = []
@@ -68,6 +78,8 @@ class FakePage:
         # в apply/questions.py::_form_scope) — по умолчанию False, чтобы явно
         # моделировать indeterminate-путь там, где тест его не настраивает.
         self._submit_in_form = submit_in_form
+        # #176: PlaywrightError в момент submit-клика (клик мог уйти).
+        self._submit_click_error = submit_click_error
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -86,7 +98,7 @@ class FakePage:
         # Прочие селекторы формы — считаем отсутствующими (форма не заполнена,
         # но submit присутствует в фейковом успехе через success-путь ниже).
         if selector == apply_form.APPLY_SUBMIT_BUTTON:
-            return _FakeLocator(present=self._success)
+            return _FakeLocator(present=self._success, click_error=self._submit_click_error)
         return _FakeLocator(present=False)
 
     def expect_navigation(self, **_kwargs):
@@ -259,3 +271,70 @@ def test_apply_non_dry_run_indeterminate_is_fail_not_skip():
     assert result.skipped is False
     assert "границы формы" in result.reason
     assert result.acted is False  # #163: indeterminate — до submit, без паузы
+
+
+# --- #176: окно действия — исключение Playwright не теряет acted/запись --------
+
+
+def test_apply_submit_click_error_is_uncertain_acted():
+    """#176: Playwright упал в момент submit-клика — POST отклика мог уйти.
+    Раньше исключение пробрасывалось из apply_to_vacancy: run_apply_for_resume
+    не перехватывал его, цикл валился трейсбеком ДО record_action/throttle.wait,
+    и отправленный (возможно) отклик выпадал из дедупликации has_applied.
+    Fail-closed: результат с acted+uncertain — команда пишет 'uncertain' и
+    ждёт паузу."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError("Target page, context or browser has been closed"),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "неопределён" in result.reason
+
+
+def test_apply_confirmation_error_after_submit_keeps_acted(monkeypatch):
+    """#177 round 3 (Codex): submit-клик прошёл, но wait_success_confirmation
+    упал с PlaywrightError (не вернул False, а бросил). Это НЕ то же самое,
+    что честный union-poll до таймаута без сигнала (result.uncertain=False,
+    см. test_apply_submit_unconfirmed_is_acted — там мы ДОСТОВЕРНО проверили
+    и не нашли успеха, осознанный fail-closed #163). Exception означает, что
+    мы вообще не смогли проверить (browser/page упал посреди опроса) — тот же
+    класс неопределённости, что и SubmitClickUncertain при самом клике.
+    Поэтому acted=True И uncertain=True: дедупликация обязана отсечь
+    вакансию, а не оставить её доступной для повторного отклика."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _raise(_page):
+        raise PlaywrightError("Page closed while polling success markers")
+
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "не подтверждён" in result.reason
+
+
+def test_apply_prefill_playwright_error_is_clean_fail(monkeypatch):
+    """#176: PlaywrightError из заполнения формы ДО submit (toggle/fill упали) —
+    отправки не было, acted=False (без записи и паузы, как у ранних выходов
+    #163), но traceback больше не рвёт цикл откликов: чистый fail-результат."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _raise(*_a, **_kw):
+        raise PlaywrightError("Element is not attached to the DOM")
+
+    monkeypatch.setattr(pipeline_module.apply_steps, "fill_response_form", _raise)
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is False
+    assert result.acted is False
+    assert result.uncertain is False
+    assert "ошибка Playwright" in result.reason

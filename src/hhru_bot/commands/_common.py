@@ -322,7 +322,17 @@ def run_apply_for_resume(
         # Провалы до submit (форма входа, «уже откликались», кнопка не найдена)
         # на hh.ru не отправлялись — остаются в консоли/логе, не в статистике.
         if result.acted or (args.dry_run and result.success):
-            status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+            # #176: uncertain — submit мог уйти, но результат неизвестен. Такой
+            # статус видит дедупликация has_applied (повторный запуск не
+            # откликнется на ту же вакансию вторым письмом) — «просто failed»
+            # не годится. dry_run по определению без клика — uncertain там
+            # невозможен.
+            if args.dry_run:
+                status = "dry_run"
+            elif result.uncertain:
+                status = "uncertain"
+            else:
+                status = "success" if result.success else "failed"
             history.record_action(
                 resume.resume_id,
                 card.vacancy_id,

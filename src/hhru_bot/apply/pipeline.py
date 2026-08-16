@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_login_form
@@ -23,6 +24,7 @@ from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
 from .questions import detect_questions
+from .steps import SubmitClickUncertain
 from .success import wait_success_confirmation
 
 logger = logging.getLogger("hhru_bot.apply")
@@ -46,6 +48,12 @@ class ApplyResult:
     # throttle.wait. True после submit-клика: даже провал подтверждения
     # успеха (wait_success_confirmation) — отправка была, пауза обязательна.
     acted: bool = False
+    # #176: отправка могла уйти, но результат неизвестен — Playwright бросил
+    # исключение во время/сразу после submit-клика. fail-closed: acted=True +
+    # uncertain=True, чтобы цикл откликов писал action со статусом 'uncertain'
+    # (дедупликация has_applied его видит — без этого возможен повторный
+    # отклик на ту же вакансию) и выдерживал троттл-паузу.
+    uncertain: bool = False
 
 
 @dataclass
@@ -67,6 +75,8 @@ class ApplyContext:
     # (клик по кнопке отправки — его последний шаг); все ПОСЛЕДУЮЩИЕ исходы
     # (успех, провал подтверждения) несут acted=True через fail()/ok().
     acted: bool = False
+    # #176: как в ApplyResult — выставляется в _run при SubmitClickUncertain.
+    uncertain: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -75,6 +85,7 @@ class ApplyContext:
             reason,
             letter_variant=self.letter_variant,
             acted=self.acted,
+            uncertain=self.uncertain,
         )
 
     def ok(self, reason: str) -> ApplyResult:
@@ -165,17 +176,60 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
         return ctx.skip(questions.reason)
 
-    if reason := apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter):
+    # #176: окно действия. Submit-клик — единственный необратимый шаг формы;
+    # исключение в момент/сразу после него (navigation timeout после POST,
+    # target closed) не означает, что отклик НЕ ушёл. Трактовка fail-closed:
+    #   * SubmitClickUncertain (клик мог уйти) — acted+uncertain: запись
+    #     'uncertain' в actions (дедупликация его видит) + троттл-пауза;
+    #   * прочий PlaywrightError из заполнения (до submit: toggle/fill) —
+    #     чистый fail с acted=False: на hh.ru следа нет, как у остальных
+    #     ранних выходов #163, но traceback больше не рвёт цикл откликов.
+    try:
+        reason = apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter)
+    except SubmitClickUncertain:
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning(
+            "[FAIL] %s — submit-клик упал с исключением, отправка могла уйти",
+            ctx.vacancy.title,
+        )
+        return ctx.fail("submit-клик упал с исключением — отправка могла уйти, исход неопределён")
+    except PlaywrightError as exc:
+        logger.warning(
+            "[FAIL] %s — ошибка Playwright при заполнении формы (%s)", ctx.vacancy.title, exc
+        )
+        return ctx.fail(f"ошибка Playwright при заполнении формы отклика: {exc}")
+    if reason:
         return ctx.fail(reason)
 
     # #163: fill_response_form без причины = submit-клик выполнен (последний шаг
     # заполнения). Дальнейшие исходы — «после действия»: пауза и запись в actions.
     ctx.acted = True
 
-    ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
+    # #176: подтверждение успеха — тоже «после действия»: исключение здесь
+    # (а не только False) обязано вернуться fail-результатом с acted=True,
+    # иначе цикл упадёт трейсбеком и отправка не попадёт в history/троттл.
+    try:
+        ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
-    if not wait_success_confirmation(ctx.page):
-        return ctx.fail("не удалось подтвердить успешную отправку отклика")
+        if not wait_success_confirmation(ctx.page):
+            # Честный union-poll до таймаута БЕЗ сигнала — достоверно
+            # проверили и не нашли успеха, осознанный fail-closed #163
+            # (wait_success_confirmation docstring): uncertain НЕ ставим.
+            return ctx.fail("не удалось подтвердить успешную отправку отклика")
+    except PlaywrightError as exc:
+        # #177 round 3 (Codex): исключение — НЕ то же самое, что False выше.
+        # Мы не смогли даже проверить (browser/page упал посреди опроса),
+        # а не «проверили и не нашли» — тот же класс неопределённости, что
+        # и SubmitClickUncertain при самом клике. uncertain=True обязателен,
+        # иначе has_applied() не отсечёт вакансию и уйдёт второй отклик.
+        ctx.uncertain = True
+        logger.warning(
+            "[FAIL] %s — ошибка Playwright после отправки (%s), успех не подтверждён",
+            ctx.vacancy.title,
+            exc,
+        )
+        return ctx.fail(f"ошибка Playwright после отправки отклика ({exc}) — успех не подтверждён")
 
     logger.info("Отклик отправлен: %s", ctx.vacancy.title)
     return ctx.ok("success")

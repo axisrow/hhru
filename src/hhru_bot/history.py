@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
     # импорт внутри метода разрывает цикл history <-> search (search тянет history
     # на верхнем уровне через SKIP_REASONS), здесь — только для type-checking.
     from .search import SalaryInfo
+
+logger = logging.getLogger("hhru_bot.history")
 
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
 # Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
@@ -29,9 +32,12 @@ CREATE TABLE IF NOT EXISTS actions (
     created_at TEXT NOT NULL
 );
 
+-- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
+-- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
+-- иначе гонка/повтор вставит несколько uncertain-строк для одной пары.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
     ON actions(resume_id, vacancy_id)
-    WHERE action = 'apply' AND status IN ('success', 'dry_run');
+    WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain');
 
 -- responses — мониторинг ответов работодателей (#12, account-scope).
 -- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
@@ -255,14 +261,27 @@ class History:
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
+            # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
+            # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
+            # колонок) — старые базы содержат idx_resume_vacancy_apply без
+            # 'uncertain' в условии. Доводим его по аналогии с _ensure_column:
+            # сначала читаем текущее DDL из sqlite_master, DROP+CREATE только
+            # если оно отличается от желаемого (иначе КАЖДЫЙ CLI-вызов делал бы
+            # лишнюю write-миграцию с захватом schema-lock — cycle-review #177).
+            _ensure_apply_index(conn)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
+        # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)
+        # тоже дедуплицируется: неопределённый отклик обязан отсекать вакансию
+        # от повторного отклика — это дешевле, чем второе письмо работодателю.
+        # Обычный 'failed' (клик был, успеха не подтвердили) дедупликацией
+        # остаётся НЕ виден — как раньше.
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1 FROM actions
                 WHERE resume_id = ? AND vacancy_id = ? AND action = 'apply'
-                  AND status IN ('success', 'dry_run')
+                  AND status IN ('success', 'dry_run', 'uncertain')
                 LIMIT 1
                 """,
                 (resume_id, vacancy_id),
@@ -297,12 +316,14 @@ class History:
             )
 
     def count_today(self, resume_id: str, action: str) -> int:
+        # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
+        # на hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
         today = datetime.now().date().isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS cnt FROM actions
-                WHERE resume_id = ? AND action = ? AND status = 'success'
+                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
                   AND created_at >= ?
                 """,
                 (resume_id, action, today),
@@ -310,11 +331,13 @@ class History:
             return row["cnt"] if row else 0
 
     def last_action_at(self, resume_id: str, action: str) -> datetime | None:
+        # #176: 'uncertain' запускает кулдаун (can_bump_now 4ч) — поднятие могло
+        # выполниться; 'dry_run'/'failed' кулдаун не запускают, как раньше.
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT created_at FROM actions
-                WHERE resume_id = ? AND action = ? AND status = 'success'
+                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -350,12 +373,13 @@ class History:
     def summary(self, resume_id: str | None, period: str) -> dict:
         """Срез счётчиков action × status за период.
 
-        Возвращает {"apply": {"success","dry_run","failed"}, "bump": {...}, "total"}.
-        Пустой период → все нули. resume_id=None означает «по всем резюме».
+        Возвращает {"apply": {"success","dry_run","failed","uncertain"},
+        "bump": {...}, "total"}. Пустой период → все нули. resume_id=None
+        означает «по всем резюме».
         """
         result: dict = {
-            "apply": {"success": 0, "dry_run": 0, "failed": 0},
-            "bump": {"success": 0, "dry_run": 0, "failed": 0},
+            "apply": {"success": 0, "dry_run": 0, "failed": 0, "uncertain": 0},
+            "bump": {"success": 0, "dry_run": 0, "failed": 0, "uncertain": 0},
             "total": 0,
         }
         where = []
@@ -1485,3 +1509,60 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
+_APPLY_INDEX_SQL = (
+    "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
+    "ON actions(resume_id, vacancy_id) "
+    "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
+)
+
+
+def _ensure_apply_index(conn: sqlite3.Connection) -> None:
+    """Идемпотентно доводит idx_resume_vacancy_apply до актуального условия (#177).
+
+    CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым WHERE на
+    уже существующей БД (тот же caveat #51, что и у _ensure_column) — старые
+    базы содержат индекс без 'uncertain' в условии. Как и _ensure_column,
+    сначала читаем текущее определение из sqlite_master и трогаем индекс
+    ТОЛЬКО если оно отличается — иначе каждый CLI-вызов делал бы лишний
+    DROP+CREATE под write/schema-lock (cycle-review #177, round 2).
+
+    'uncertain' появился в PR #176 (уже в main) ДО этого индекс-фикса, поэтому
+    на реальных установках уже могли накопиться дубли (resume_id, vacancy_id)
+    со статусом 'uncertain' под старым (более узким) индексом — CREATE UNIQUE
+    INDEX на них упадёт IntegrityError и History() будет ронять вообще все
+    команды бота. Явно проверяем дубли ПЕРЕД пересозданием: если они есть —
+    не создаём индекс и логируем warning, оставляя дедупликацию на чистой
+    Python-логике has_applied() (SELECT, не зависит от индекса) до ручной
+    чистки БД администратором — это безопаснее, чем падать намертво.
+    """
+    current = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_resume_vacancy_apply'"
+    ).fetchone()
+    if current is not None and current[0] == _APPLY_INDEX_SQL:
+        return
+
+    dupes = conn.execute(
+        "SELECT resume_id, vacancy_id, COUNT(*) c FROM actions "
+        "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain') "
+        "GROUP BY resume_id, vacancy_id HAVING c > 1"
+    ).fetchall()
+    if dupes:
+        # #177 round 3 (Codex): старый индекс НЕ трогаем, если пересборку
+        # выполнить нельзя — раньше DROP выполнялся безусловно ДО этой
+        # проверки, снимая DB-уровня UNIQUE-защиту целиком (включая для
+        # success/dry_run пар, которые старый индекс ещё покрывал), даже
+        # если дубли есть только среди новых 'uncertain' записей.
+        logger.warning(
+            "idx_resume_vacancy_apply не пересоздан: найдено %d пар "
+            "(resume_id, vacancy_id) с дублирующимися apply-записями "
+            "(success/dry_run/uncertain). UNIQUE constraint на них упал бы "
+            "с IntegrityError. Дедупликация продолжает работать через "
+            "has_applied(), но без обновлённой DB-уровня защиты для "
+            "'uncertain' — почистите дубли в actions вручную.",
+            len(dupes),
+        )
+        return
+    conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
+    conn.execute(_APPLY_INDEX_SQL)

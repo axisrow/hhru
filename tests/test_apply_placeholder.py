@@ -66,6 +66,9 @@ class _StubResult:
     reason = None
     letter_variant = None
     skipped = False
+    # #163/#176: командный цикл читает acted/uncertain у любого результата
+    acted = False
+    uncertain = False
 
 
 def test_placeholder_url_fails_closed_before_any_action(tmp_path, monkeypatch):

@@ -39,6 +39,7 @@ class _FakeLocator:
         *,
         render_delayed: bool = False,
         wait_error: bool = False,
+        click_error: bool = False,
     ):
         self._present = present
         self._click_log = click_log
@@ -49,6 +50,9 @@ class _FakeLocator:
         # wait_error=True: cycle-review #139 — не-timeout PlaywrightError
         # (strict-mode violation и т.п.), аномалия, а не легитимное отсутствие.
         self._wait_error = wait_error
+        # click_error=True: #176 — PlaywrightError в момент click() (клик мог
+        # уйти на hh.ru, но ожидание после клика упало).
+        self._click_error = click_error
 
     def count(self) -> int:
         if self._render_delayed:
@@ -65,6 +69,10 @@ class _FakeLocator:
             raise PlaywrightTimeoutError(f"{self._name} not visible")
 
     def click(self, **_kwargs) -> None:
+        if self._click_error:
+            # #176: клик «выполняется», но Playwright падает — как navigation
+            # timeout/target closed уже после отправки действия на hh.ru.
+            raise PlaywrightError(f"click on {self._name} failed after dispatch")
         if self._click_log is not None:
             self._click_log.append(self._name)
 
@@ -79,6 +87,7 @@ class FakeBumpPage:
         button_present: bool = True,
         hint_render_delayed: bool = False,
         hint_wait_error: bool = False,
+        button_click_error: bool = False,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
@@ -86,6 +95,7 @@ class FakeBumpPage:
         self._button_present = button_present
         self._hint_render_delayed = hint_render_delayed
         self._hint_wait_error = hint_wait_error
+        self._button_click_error = button_click_error
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -100,7 +110,12 @@ class FakeBumpPage:
                 wait_error=self._hint_wait_error,
             )
         if selector == resume_page.RESUME_BUMP_BUTTON:
-            return _FakeLocator(self._button_present, self.click_log, "button")
+            return _FakeLocator(
+                self._button_present,
+                self.click_log,
+                "button",
+                click_error=self._button_click_error,
+            )
         return _FakeLocator(False)
 
 
@@ -222,3 +237,19 @@ def test_bump_login_form_is_checked_after_navigation(monkeypatch):
     assert result.success is False
     assert "Сессия недействительна" in result.reason
     assert events == ["goto", "auth"]
+
+
+def test_bump_click_error_is_uncertain_acted_not_traceback():
+    """#176: Playwright упал в момент клика поднятия (клик мог уйти на hh.ru).
+    Раньше исключение пробрасывалось наружу: bump_resume не возвращал BumpResult,
+    командный цикл валился трейсбеком ДО record_action/throttle.wait — поднятие
+    происходило, но история/кулдаун 4ч о нём не узнали бы. Fail-closed: возвращаем
+    acted+uncertain, команда по ним пишет action 'uncertain' и ждёт паузу."""
+    page = FakeBumpPage(hint_present=False, button_present=True, button_click_error=True)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "неопределён" in result.reason

@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import re
 
+import pytest
 from playwright.sync_api import Error
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -91,6 +92,10 @@ class _FakeLocator:
         # навигацию, должен идти с no_wait_after=True (ожидание навигации владеет
         # внешний 90с expect_navigation, а не внутренний 30с action-timeout клика).
         self._state.click_kwargs.append(kwargs)
+        # #176: имитация Playwright-исключения в момент клика (navigation timeout
+        # после POST, target closed) — действие могло уйти на hh.ru.
+        if self._state.click_error is not None:
+            raise self._state.click_error
         if self._href_filter is not None:
             # Strict href-локатор: ровно одна живая опция с этим href, иначе Error
             # (как реальный Playwright strict mode при != 1 совпадении).
@@ -158,6 +163,9 @@ class _SelectorState:
         # Имитация не-timeout PlaywrightError в wait_for (cycle-5): runtime/selector
         # failure, который НЕ должен маскироваться под «выбора нет».
         self.wait_error = False
+        # #176: PlaywrightError в момент click() — клик мог уйти (POST отправлен,
+        # но ожидание после клика упало). None = обычный успешный клик.
+        self.click_error: Exception | None = None
 
 
 class FakeStepsPage:
@@ -302,6 +310,21 @@ def test_fill_form_missing_submit_returns_reason_no_click():
 
     assert result is not None
     assert "кнопка отправки отклика не найдена" in result
+
+
+def test_fill_form_submit_click_error_raises_uncertain_marker():
+    """#176: Playwright упал в момент submit-клика (navigation timeout после
+    POST, target closed) — POST отклика МОГ уйти. Это принципиально не обычный
+    отказ строкой (тот означает «отправки не было»): steps маркирует исход
+    SubmitClickUncertain, а решение acted/uncertain/запись оставляет pipeline.
+    Раньше исключение пробрасывалось сырым и валило цикл откликов до
+    record_action/throttle.wait."""
+    page = FakeStepsPage()
+    submit = page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    submit.click_error = Error("Target page, context or browser has been closed")
+
+    with pytest.raises(steps.SubmitClickUncertain):
+        steps.fill_response_form(page, "RID", "письмо")
 
 
 # --- fill_response_form: опциональные поля ---

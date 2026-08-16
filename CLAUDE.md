@@ -67,7 +67,9 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
    `(resume_id, vacancy_id)` для `action='apply'` со статусом `success`/`dry_run` —
    `has_applied()` опирается на него. **Важно:** `dry_run`-отклики тоже пишутся в историю
    и считаются «уже откликались», поэтому повторный `--dry-run` по той же вакансии её
-   отсеет. `count_today()`/`last_action_at()` для лимитов считают только `status='success'`.
+   отсеет. `count_today()`/`last_action_at()` для лимитов считают `status='success'` и
+   `status='uncertain'` (#176: действие могло выполниться при упавшем посреди клика
+   Playwright — fail-closed, `uncertain` тоже дедуплицируется `has_applied()`).
 
 3. **Двухуровневый троттлинг** в `throttle.py`:
    - Дневные лимиты (`daily_apply_limit`, `daily_bump_limit`) — проверяются перед каждым
@@ -78,7 +80,9 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
      РЕАЛЬНОГО действия на hh.ru — клика поднятия/submit отклика (`BumpResult.acted`/
      `ApplyResult.acted`, #163). Ранние выходы до действия (плейсхолдер в конфиге,
      форма входа, hint «рано», dry-run) не ждут паузу и не пишут `failed` в actions:
-     на hh.ru не осталось следа, пауза не от чего не защищает.
+     на hh.ru не осталось следа, пауза не от чего не защищает. Исключение Playwright
+     в момент самого клика — это НЕ ранний выход: клик мог уйти, поэтому такой исход
+     несёт `acted=True` + `uncertain=True` (статус `uncertain` в actions, #176).
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же

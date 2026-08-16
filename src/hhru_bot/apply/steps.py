@@ -39,6 +39,22 @@ OPTIONAL_FIELD_TIMEOUT_MS = 1_500
 RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
 
 
+class SubmitClickUncertain(Exception):
+    """Submit-клик отправлен/отправляется, но Playwright бросил исключение (#176).
+
+    Кнопка отправки — последний шаг fill_response_form; исключение в момент
+    клика (navigation timeout после POST, target closed при редиректе) не
+    означает, что отклик НЕ ушёл. steps сознательно НЕ решает, выполнено ли
+    действие (это ответственность pipeline: acted/uncertain/запись в history) —
+    он лишь честно маркирует точку «клик мог уйти», отличая её от обычных
+    отказов до submit (те возвращаются причиной, не исключением).
+    """
+
+    def __init__(self, cause: PlaywrightError):
+        super().__init__(f"submit-клик упал с исключением ({cause})")
+        self.playwright_error = cause
+
+
 def wait_apply_button(page: Page) -> bool:
     """Ждёт появления кнопки отклика на странице вакансии. False — не дождались."""
     try:
@@ -170,7 +186,17 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     if not _is_visible(page, apply_form.APPLY_SUBMIT_BUTTON, timeout_ms=APPLY_TIMEOUT_MS):
         return "кнопка отправки отклика не найдена в форме"
 
-    page.locator(apply_form.APPLY_SUBMIT_BUTTON).click()
+    # #176: submit — единственное необратимое действие формы. Playwright может
+    # бросить исключение уже после того, как POST отклика ушёл (navigation
+    # timeout, target closed при редиректе) — глотать его как обычный отказ
+    # нельзя (это «отправки не было», а мы не знаем), пробрасывать сырым тоже
+    # (pipeline упадёт до записи в history). Маркируем SubmitClickUncertain —
+    # pipeline трактует его fail-closed как acted+uncertain.
+    try:
+        page.locator(apply_form.APPLY_SUBMIT_BUTTON).click()
+    except PlaywrightError as exc:
+        logger.warning("Submit-клик упал с исключением (%s) — отправка могла уйти", exc)
+        raise SubmitClickUncertain(exc) from exc
     return None
 
 
