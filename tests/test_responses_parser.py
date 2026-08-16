@@ -238,6 +238,32 @@ def test_parse_response_card_falls_back_to_live_status_selector():
     assert item.status == ResponseStatus.INVITATION
 
 
+# #44 (2026-08-16): живая сверка /applicant/negotiations показала, что
+# ``negotiations-item-vacancy`` — это <span> БЕЗ href, вложенный в <div> внутри
+# <a href="/vacancy/...">. До фикса это молча ронялось в
+# "vacancy_id не извлечён" на ВСЕХ карточках (headless-прогон дал 0 из 7 живых
+# ответов работодателей). _href_or_ancestor_href должен подняться до ближайшего
+# предка <a>.
+_LIVE_VACANCY_SPAN_HTML = """
+<div data-qa="negotiations-item">
+  <a href="/vacancy/135481754?hhtmFrom=negotiation_list">
+    <div><span data-qa="negotiations-item-vacancy">Senior Python Backend Developer</span></div>
+  </a>
+  <div data-qa="negotiations-item-company">"МТС", Работа в IT</div>
+  <span data-qa="negotiations-tag negotiations-item-not-viewed">Прочитано</span>
+</div>
+"""
+
+
+def test_parse_response_card_reads_vacancy_href_from_ancestor_anchor():
+    """Реальная разметка hh.ru: data-qa на <span> внутри <a>, а не на самом <a>."""
+    page = NegotiationsPage(_LIVE_VACANCY_SPAN_HTML)
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.vacancy_id == "135481754"
+    assert item.employer == '"МТС", Работа в IT'
+
+
 _UNRECOGNIZED_LEGACY_STATUS_HTML = """
 <div data-qa="negotiations-item">
   <a data-qa="negotiations-item__vacancy-link" href="/vacancy/555555">QA Engineer</a>

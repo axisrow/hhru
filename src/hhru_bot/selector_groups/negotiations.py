@@ -15,7 +15,9 @@ from __future__ import annotations
 
 # Карточка одной переписки в списке откликов/приглашений.
 NEGOTIATION_ITEM = "[data-qa='negotiations-item']"
-# Ссылка на вакансию внутри карточки — из её href достаём vacancy_id и chat_url.
+# Вакансия внутри карточки. Живая разметка (#44) — <span> без href, вложенный
+# в <a href="/vacancy/...">; vacancy_id/chat_url достаёт _href_or_ancestor_href()
+# в responses.py, поднимаясь до предка <a>, если у самого узла href нет.
 NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item-vacancy']"
 # Название компании-работодода. Опционально (hh.ru иногда прячет для анонимных
 # вакансий) — пустая строка, если элемента нет.

@@ -248,6 +248,30 @@ def _first_locator(item, *selectors):
     return item.locator(selectors[0]).first
 
 
+def _href_or_ancestor_href(link) -> str:
+    """Read ``href`` off ``link``, falling back to its nearest ``<a>`` ancestor.
+
+    #44 live check (2026-08-16): ``negotiations-item-vacancy`` is a ``<span>``
+    with no href of its own; the vacancy link lives on the wrapping ``<a>``.
+    Reading href directly on the data-qa node silently returned "" for every
+    card, so ``parse_response_card`` dropped the whole page ("vacancy_id не
+    извлечён"). Prefer the element's own href when present (covers markup
+    where data-qa IS the anchor, e.g. LEGACY_* fixtures), else walk up to the
+    closest anchor ancestor — same category of DOM-structure assumption as
+    ``_form_scope()`` in apply/questions.py, not yet independently reconfirmed
+    beyond this one live check.
+    """
+    if not link.count():
+        return ""
+    href = link.get_attribute("href")
+    if href:
+        return href
+    ancestor = link.locator("xpath=ancestor::a[1]")
+    if ancestor.count():
+        return ancestor.get_attribute("href") or ""
+    return ""
+
+
 def parse_response_card(item) -> ResponseItem | None:
     """Парсит один locator карточки переписки в ResponseItem, либо None.
 
@@ -255,7 +279,7 @@ def parse_response_card(item) -> ResponseItem | None:
     Чистая относительно Playwright-locator'а: импортирует только типы селекторов.
     """
     link = _first_locator(item, ns.NEGOTIATION_VACANCY_LINK, ns.LEGACY_NEGOTIATION_VACANCY_LINK)
-    vacancy_href = link.get_attribute("href") or "" if link.count() else ""
+    vacancy_href = _href_or_ancestor_href(link)
     vacancy_id = _extract_vacancy_id(vacancy_href)
     if not vacancy_id:
         return None

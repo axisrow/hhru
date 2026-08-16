@@ -24,6 +24,10 @@ _QA_RE = re.compile(r"^\[data-qa=(?:['\"])([A-Za-z0-9_\-]+)(?:['\"])\]$")
 # = "[data-qa^='negotiations-tag']" — без этой ветки _parse_selector вернул бы None,
 # и find_all(qa=None) молча матчил бы ЛЮБОЙ узел вместо ничего).
 _QA_PREFIX_RE = re.compile(r"^\[data-qa\^=(?:['\"])([A-Za-z0-9_\-]+)(?:['\"])\]$")
+# ``xpath=ancestor::a[1]`` → nearest <a> ancestor (used by responses.py's
+# _href_or_ancestor_href, #44 live fix: negotiations-item-vacancy is a <span>
+# wrapped by the actual <a href=...>).
+_XPATH_ANCESTOR_RE = re.compile(r"^xpath=ancestor::([a-z]+)\[1\]$")
 
 # void-теги без закрывающего.
 _VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
@@ -32,13 +36,14 @@ _VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "so
 class _DOMNode:
     """Минимальный узел DOM: tag, attrs, дочерние узлы, накопленный текст."""
 
-    __slots__ = ("tag", "attrs", "children", "text")
+    __slots__ = ("tag", "attrs", "children", "text", "parent")
 
     def __init__(self, tag: str, attrs: dict[str, str]):
         self.tag = tag
         self.attrs = attrs
         self.children: list[_DOMNode] = []
         self.text = ""
+        self.parent: _DOMNode | None = None
 
     def find_all(self, tag: str | None, qa_match) -> list[_DOMNode]:  # noqa: ANN001
         out: list[_DOMNode] = []
@@ -68,6 +73,7 @@ class _DOMBuilder(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         node = _DOMNode(tag, {k: (v or "") for k, v in attrs})
+        node.parent = self._stack[-1]
         self._stack[-1].children.append(node)
         if tag not in _VOID:
             self._stack.append(node)
@@ -88,6 +94,15 @@ def _parse_root(html: str) -> _DOMNode:
     b = _DOMBuilder()
     b.feed(html)
     return b.root
+
+
+def _nearest_ancestor(node: _DOMNode, tag: str) -> _DOMNode | None:
+    current = node.parent
+    while current is not None:
+        if current.tag == tag:
+            return current
+        current = current.parent
+    return None
 
 
 class FakeLocator:
@@ -141,6 +156,15 @@ class FakeLocator:
 
         raise PlaywrightTimeoutError("fake locator did not attach")
 
+    def locator(self, selector: str) -> FakeLocator:
+        """Only supports ``xpath=ancestor::<tag>[1]`` (see #44 live fix)."""
+        node = self._resolved()[0] if self._resolved() else _DOMNode("#empty", {})
+        ancestor_match = _XPATH_ANCESTOR_RE.match(selector.strip())
+        if ancestor_match:
+            found = _nearest_ancestor(node, ancestor_match.group(1))
+            return FakeLocator(node, lambda _v: False, matches=[found] if found else [])
+        raise AssertionError(f"FakeLocator.locator unsupported selector: {selector}")
+
 
 class _CardLocator(FakeLocator):
     """Локатор карточки: ``.locator(selector)`` ищет ВНУТРИ этой карточки.
@@ -150,8 +174,13 @@ class _CardLocator(FakeLocator):
     """
 
     def locator(self, selector: str) -> FakeLocator:
-        qa_match = _parse_selector(selector)
         node = self._resolved()[0] if self._resolved() else _DOMNode("#empty", {})
+        ancestor_match = _XPATH_ANCESTOR_RE.match(selector.strip())
+        if ancestor_match:
+            tag = ancestor_match.group(1)
+            found = _nearest_ancestor(node, tag)
+            return FakeLocator(node, lambda _v: False, matches=[found] if found else [])
+        qa_match = _parse_selector(selector)
         return FakeLocator(node, qa_match)
 
 
