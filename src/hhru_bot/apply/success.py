@@ -94,9 +94,15 @@ def _sleep(page: Page, ms: float) -> None:
 # Шаг poll-loop между переодпросами сигналов (мс). Меньше — быстрее ловит
 # async-рендер, больше — меньше накладных. 80 мс — баланс для ручного CLI.
 _POLL_INTERVAL_MS = 80
+# Success UI is rendered asynchronously after the submit/navigation completes.
+# Keep this bounded, but allow the same slow hh.ru/DDoS-Guard responses that
+# motivated the 90-second navigation timeout to finish rendering their signal.
+SUCCESS_CONFIRMATION_TIMEOUT_MS = 30_000
 
 
-def wait_success_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
+def wait_success_confirmation(
+    page: Page, timeout_ms: int = SUCCESS_CONFIRMATION_TIMEOUT_MS
+) -> bool:
     """Подтверждает успех отклика по позитивным сигналам.
 
     Возвращает True, если в пределах timeout_ms появился любой позитивный
@@ -108,8 +114,8 @@ def wait_success_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
 
     Таймаут намеренно даёт false-negative: неудачно подтверждённый отклик
     записывается как status='failed', чтобы не считать его достоверным успехом.
-    Это осознанный выбор проекта: permanent-дедупликация по success важнее
-    риска повторного отклика, поэтому ждём именно union, а не один маркер.
+    Окно подтверждения — 30 секунд: это снижает false-negative на медленном
+    hh.ru, оставаясь ограниченным и не меняя fail-closed правило для сигналов.
     """
     deadline = time.monotonic() + timeout_ms / 1000
     while True:

@@ -9,10 +9,20 @@
 
 from __future__ import annotations
 
+import inspect
+
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import success
 from hhru_bot.apply.locators import first_locator
+
+
+def test_default_confirmation_timeout_is_bounded_and_explicit():
+    """Медленный UI получает больше времени, но не неограниченное ожидание."""
+    default = inspect.signature(success.wait_success_confirmation).parameters[
+        "timeout_ms"
+    ].default
+    assert default == success.SUCCESS_CONFIRMATION_TIMEOUT_MS == 30_000
 
 
 class _FakeLocator:
