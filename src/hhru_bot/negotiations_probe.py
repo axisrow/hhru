@@ -71,6 +71,52 @@ def topic_refs(html: str) -> list[TopicRef]:
     return refs
 
 
+def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
+    """Read SSR topic mappings from every available negotiations page.
+
+    ``topicList`` is paginated with the cards, so reading only page zero makes
+    chats on later pages look unavailable. Navigation is GET-only and uses the
+    same confirmed pager contract as ``fetch_responses``.
+    """
+    if max_pages < 1:
+        raise ValueError("max_pages must be >= 1")
+
+    # Lazy imports avoid a module cycle while responses.py recovers topics.
+    from .browser import goto_hh, has_auth_cookie, has_login_form
+    from .responses import NEGOTIATIONS_URL, NotAuthenticated, _has_next_page
+
+    refs: list[TopicRef] = []
+    for page_num in range(max_pages):
+        url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
+        goto_hh(page, url)
+        # Codex-ревью (#201, по аналогии с fetch_responses в responses.py):
+        # проверяем auth-маркер ДО чтения SSR-состояния. Без этой проверки
+        # рендер login-страницы вместо negotiations (истёкшая сессия) даёт
+        # topic_refs() ValueError («HH-Lux-InitialState not found») вместо
+        # диагностируемого NotAuthenticated — тот же класс ошибки, что и
+        # пустой inbox, но с другой причиной, которую вызывающий код не
+        # должен путать с завершённой пагинацией.
+        if not has_auth_cookie(page):
+            raise NotAuthenticated(
+                "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
+            )
+        if has_login_form(page):
+            raise NotAuthenticated(
+                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
+                "сервером (запустите `login`, затем повторите)"
+            )
+        refs.extend(topic_refs(page.content()))
+        try:
+            has_next = _has_next_page(page, page_num)
+        except AttributeError:
+            # Lightweight read-only fakes may expose content() but not the
+            # pagination locators; they represent a single page.
+            has_next = False
+        if not has_next:
+            break
+    return refs
+
+
 def chat_url(chat_id: str, chatik_origin: str = "https://chatik.hh.ru") -> str:
     """Build the route used by hh.ru's ``open_chat`` button."""
     return f"{chatik_origin.rstrip('/')}/chat/{chat_id}"

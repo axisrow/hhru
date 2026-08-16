@@ -148,16 +148,16 @@ def run(args: argparse.Namespace) -> None:
                 # fetch_responses performs its own navigation. Re-open the
                 # list read-only so SSR topicList is captured from the actual
                 # negotiations page, then use the confirmed chatId route.
-                from ..browser import goto_hh
                 from ..negotiations_chat import (
                     extract_external_test_link,
                     read_employer_messages,
                 )
-                from ..negotiations_probe import topic_refs
+                from ..negotiations_probe import paginated_topic_refs
 
-                goto_hh(page, "https://hh.ru/applicant/negotiations")
-                list_html = page.content()
-                refs = {ref.topic_id: ref.chat_id for ref in topic_refs(list_html)}
+                refs = {
+                    ref.topic_id: ref.chat_id
+                    for ref in paginated_topic_refs(page, max_pages=args.max_pages)
+                }
                 detected = 0
                 for card in cards:
                     if not card.topic or card.topic not in refs:

@@ -275,6 +275,13 @@ def test_has_replied_true_only_for_successful_send(tmp_path):
     assert h.has_replied("t3", "m3")
 
 
+def test_uncertain_reply_is_recorded_but_does_not_deduplicate(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="uncertain", note="таймаут подтверждения")
+    assert not h.has_replied("t1", "m1")
+    assert h.replies_since(datetime(2000, 1, 1))[0]["status"] == "uncertain"
+
+
 def test_replies_are_recorded_for_all_statuses(tmp_path):
     # Append-only журнал: dry_run/failed пишутся (нужны для аналитики),
     # просто не считаются отправкой в has_replied.
@@ -329,7 +336,7 @@ def test_reply_summary_excludes_dry_run_and_groups_variants(tmp_path):
 
     summary = h.reply_summary(None, "all")
     assert summary["total"] == 2
-    assert summary["period"] == {"success": 2, "failed": 1}
+    assert summary["period"] == {"success": 2, "failed": 1, "uncertain": 0}
     assert summary["letter_variants"] == {"ai": 1, "template": 1}
 
 
@@ -355,8 +362,7 @@ def test_reply_summary_total_respects_period_like_summary_does(tmp_path):
 
 
 def test_reply_status_values_match_actions_vocabulary():
-    # Словарь тот же, что у actions (#55): без новых состояний.
-    assert set(REPLY_STATUS_VALUES) == {"success", "failed", "dry_run"}
+    assert set(REPLY_STATUS_VALUES) == {"success", "failed", "dry_run", "uncertain"}
 
 
 # --- replies_since ---------------------------------------------------------

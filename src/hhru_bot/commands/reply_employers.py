@@ -20,6 +20,12 @@ def register(subparsers) -> None:
     parser.add_argument("--dry-run", action="store_true", help="Показать план без отправки")
     parser.add_argument("--limit", type=int, default=0, help="Максимум чатов за запуск (0 = все)")
     parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=5,
+        help="Максимум страниц negotiations для SSR mapping (по умолчанию 5)",
+    )
+    parser.add_argument(
         "--template", type=str, help="Текст ответа (по умолчанию cover_letter_default)"
     )
     parser.add_argument("--force", action="store_true", help="Подтвердить боевой запуск")
@@ -40,20 +46,26 @@ def _letter(template: str, candidate: dict) -> str:
 
 
 def run(args: argparse.Namespace) -> None:
-    from ..browser import goto_hh, launch_context
+    from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
     from ..negotiations_chat import (
+        NoReplyForm,
         needs_reply,
         read_chat,
         send_reply_current,
         wait_reply_confirmation,
     )
-    from ..negotiations_probe import topic_refs
+    from ..negotiations_probe import paginated_topic_refs
+    from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
     if args.limit < 0:
         print("[FAIL] --limit не может быть отрицательным", file=sys.stderr)
+        sys.exit(1)
+    max_pages = getattr(args, "max_pages", 5)
+    if max_pages < 1:
+        print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
         sys.exit(1)
     if not args.dry_run and not confirm_write(
         args.force,
@@ -80,8 +92,17 @@ def run(args: argparse.Namespace) -> None:
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         page = context.new_page()
-        goto_hh(page, "https://hh.ru/applicant/negotiations")
-        topic_list = topic_refs(page.content())
+        # #201: пагинируем SSR chat mapping по всем страницам negotiations
+        # (аналогично --max-pages в других командах), иначе чат, ушедший за
+        # пределы первой страницы, тихо выглядит как empty_chat. Та же пара
+        # исключений, что и у fetch_responses (её собственный вызывающий код
+        # в responses.py ловит их так же): истёкшая сессия или не
+        # подтверждённая пагинация не должны крашить команду с traceback.
+        try:
+            topic_list = paginated_topic_refs(page, max_pages=max_pages)
+        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
+            sys.exit(1)
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
         # #200: SSR отдаёт resumeId для каждой переписки (проверено на живой
         # сессии 2026-08-16, 7/7). Отдельный словарь, а не расширение refs:
@@ -142,22 +163,33 @@ def run(args: argparse.Namespace) -> None:
                 inbound_marker = live_chat.inbound_marker or ""
                 try:
                     send_reply_current(page, letter)
+                except NoReplyForm as exc:
+                    # Форма не найдена ДО какого-либо взаимодействия с DOM —
+                    # чистый pre-action early-exit, на hh.ru следа нет. Как и
+                    # другие ранние выходы до действия (#163), throttle.wait()
+                    # здесь не нужен: не от чего защищать паузой.
+                    reason = f"отправка не выполнена: {exc}"
+                    status = "failed"
+                    print(f"[FAIL] {label} — {reason}")
+                except Exception as exc:
+                    # Исключение уже ПОСЛЕ начала клика (Codex #201, по
+                    # аналогии с #176 в apply/bump): fill()/click() могли
+                    # частично выполниться и сообщение — уйти на hh.ru,
+                    # несмотря на исключение. fail-closed в сторону «действие
+                    # могло случиться»: status='uncertain' (не дедуплицирует
+                    # has_replied), а не 'failed' (который бы разрешил тихий
+                    # повторный retry поверх реально ушедшего сообщения).
+                    reason = f"клик выполнен, исход неопределён: {exc}"
+                    status = "uncertain"
+                    print(f"[FAIL] {label} — {reason}")
+                    throttle.wait(f"после ответа в чате {topic}")
+                else:
                     # Клик мог не дойти (отклонение сервером, сетевой сбой) —
                     # success пишем только по позитивному подтверждению
                     # (последнее сообщение в чате стало нашим), как в
-                    # apply/success.py (#7): таймаут даёт false-negative
-                    # (status='failed'), не false-positive success.
-                    #
-                    # Codex-ревью round 2 (#198) отметил, что неподтверждённый
-                    # клик мог реально дойти (DOM просто не успел отрендерить
-                    # сигнал) — тогда 'failed' разрешает retry и риск
-                    # дубликата. #176 в apply/bump решает это статусом
-                    # 'uncertain'; для replies такое расширение НЕ вводим —
-                    # REPLY_STATUS_VALUES сознательно заморожен решением #55
-                    # («без машины состояний»), а issue #110 явно требует
-                    # fail-closed в сторону «лучше пропустить чат, чем
-                    # ответить повторно» — 'uncertain' с недедуплицирующей
-                    # семантикой этому противоречил бы. Follow-up: #201.
+                    # apply/success.py (#7): таймаут не даёт false-positive
+                    # success, но после состоявшегося клика фиксируется как
+                    # uncertain, а не как безопасный для retry failed.
                     if wait_reply_confirmation(page):
                         status = "success"
                         reason = None
@@ -165,11 +197,13 @@ def run(args: argparse.Namespace) -> None:
                         print(f"[OK] {label}")
                     else:
                         reason = "отправка не подтверждена: нет сигнала доставки"
+                        # The click completed, but the positive DOM signal may
+                        # have rendered late. Keep this auditable without
+                        # making has_replied deduplicate it.
+                        status = "uncertain"
                         print(f"[FAIL] {label} — {reason}")
-                except Exception as exc:
-                    reason = f"отправка не подтверждена: {exc}"
-                    print(f"[FAIL] {label} — {reason}")
-                finally:
+                    # Клик состоялся (успешно или uncertain) — реальное
+                    # действие на hh.ru, пауза нужна (#163).
                     throttle.wait(f"после ответа в чате {topic}")
             history.record_reply_and_action(
                 topic,

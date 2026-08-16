@@ -6,7 +6,7 @@ import pytest
 
 from hhru_bot.commands import reply_employers as command
 from hhru_bot.history import History
-from hhru_bot.negotiations_chat import ChatMessage
+from hhru_bot.negotiations_chat import ChatMessage, NoReplyForm
 from hhru_bot.negotiations_probe import TopicRef
 
 
@@ -78,6 +78,10 @@ def _patch_common(
         "hhru_bot.browser.launch_context", lambda *a, **k: _Context(page or _Page())
     )
     monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *a, **k: None)
+    # #201: paginated_topic_refs() checks the auth marker before reading SSR
+    # state (same pattern fetch_responses uses, see test_responses_*.py).
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda *a, **k: _Cfg())
     monkeypatch.setattr("hhru_bot.history.History", lambda *a, **k: history)
     monkeypatch.setattr("hhru_bot.negotiations_probe.topic_refs", lambda html: refs or [])
@@ -160,6 +164,32 @@ def test_no_candidates_prints_info_and_returns(tmp_path, monkeypatch, capsys):
     _patch_common(monkeypatch, history, refs=[])
     command.run(_args(dry_run=True))
     assert "[INFO]" in capsys.readouterr().out
+
+
+# --- /review (#201): indeterminate SSR pagination is fail-closed, not a crash
+
+
+def test_indeterminate_pagination_exits_cleanly(tmp_path, monkeypatch, capsys):
+    """paginated_topic_refs() can raise the same exceptions as fetch_responses
+    (expired session, unconfirmed pager DOM) — reply-employers must handle
+    them the same way responses.py does: a clean [FAIL] + exit, not an
+    uncaught traceback.
+    """
+    from hhru_bot.responses import ResponsesIndeterminate
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    _patch_common(monkeypatch, history)
+
+    def _boom(page, max_pages=5):
+        raise ResponsesIndeterminate("пагинация не подтверждена")
+
+    monkeypatch.setattr("hhru_bot.negotiations_probe.paginated_topic_refs", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(force=True))
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
 
 
 # --- --limit is respected ----------------------------------------------
@@ -297,6 +327,9 @@ def test_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys)
 
 
 def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
+    """NoReplyForm is a pre-action guard — send_reply_current raises it before
+    any DOM interaction (fill/click), so hh.ru sees no trace and retry is safe.
+    """
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
@@ -305,7 +338,7 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
     chat = ChatMessage(author="employer", inbound_marker="m1")
 
     def _send(page, text):
-        raise RuntimeError("не удалось однозначно найти форму ответа в чате")
+        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
 
     _patch_common(
         monkeypatch,
@@ -324,13 +357,126 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
     assert history.has_replied("tp1", "m1") is False
 
 
+# --- /review (#201): NoReplyForm is pre-action, must not pay the throttle --
+
+
+def test_no_reply_form_does_not_wait_throttle(tmp_path, monkeypatch, capsys):
+    """NoReplyForm fires before fill()/click() — no trace was left on hh.ru,
+    so per #163 (early exits before an action skip the pause) throttle.wait()
+    must not run. A click that begins (uncertain or success) is a real action
+    and must still pay the pause.
+    """
+    from hhru_bot import throttle as throttle_module
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
+
+    waited = []
+    monkeypatch.setattr(
+        throttle_module.Throttle, "wait", lambda self, reason="": waited.append(reason)
+    )
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    assert "[FAIL]" in capsys.readouterr().out
+    assert waited == []
+
+
+def test_click_exception_waits_throttle(tmp_path, monkeypatch, capsys):
+    """An exception after the click begins is a real action attempt — the
+    throttle pause must still run, same as a confirmed success (#163)."""
+    from hhru_bot import throttle as throttle_module
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise TimeoutError("network hiccup after click().click()")
+
+    waited = []
+    monkeypatch.setattr(
+        throttle_module.Throttle, "wait", lambda self, reason="": waited.append(reason)
+    )
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    assert "[FAIL]" in capsys.readouterr().out
+    assert len(waited) == 1
+
+
+# --- Codex review (#201): exception after click begins is uncertain --------
+
+
+def test_send_exception_after_click_is_recorded_as_uncertain(tmp_path, monkeypatch, capsys):
+    """Any exception other than NoReplyForm means fill()/click() may already
+    have run — the message could have reached hh.ru despite the exception.
+    fail-closed: status='uncertain' (not deduplicating), never 'failed'
+    (which would let a later run silently resend on top of a delivered
+    message), by analogy with apply/bump (#176).
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise TimeoutError("network hiccup after click().click()")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
+    with history._connect() as conn:
+        row = conn.execute("SELECT status FROM replies").fetchone()
+        assert row[0] == "uncertain"
+    # Not journaled as replied — retry must remain possible.
+    assert history.has_replied("tp1", "m1") is False
+
+
 # --- Codex review (PR #198): click confirmed but delivery unverified -------
 
 
-def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
+def test_click_without_delivery_confirmation_is_recorded_as_uncertain(
+    tmp_path, monkeypatch, capsys
+):
     """send_reply_current only clicks; a click with no delivery signal must
-    not be journaled as success — otherwise has_replied() would permanently
-    suppress a retry for a reply that never actually reached the employer.
+    not be journaled as success.  The click may have reached hh.ru even when
+    the positive DOM signal was not observed, so the outcome is uncertain.
     """
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
@@ -359,7 +505,7 @@ def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, mon
     assert "[OK]" not in out
     with history._connect() as conn:
         row = conn.execute("SELECT status FROM replies").fetchone()
-        assert row[0] == "failed"
+        assert row[0] == "uncertain"
     # Not journaled as replied — retry must remain possible.
     assert history.has_replied("tp1", "m1") is False
 

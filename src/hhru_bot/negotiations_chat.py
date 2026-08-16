@@ -29,6 +29,17 @@ from .selector_groups.negotiations import (
 
 logger = logging.getLogger("hhru_bot.negotiations_chat")
 
+
+class NoReplyForm(RuntimeError):
+    """Форма ответа не найдена (#201): чистый pre-action early-exit.
+
+    Бросается ДО какого-либо взаимодействия с DOM формы (до ``fill``/``click``),
+    поэтому вызывающий код может отличить его от исключения, случившегося уже
+    после начала клика (см. ``send_reply_current``) — на hh.ru в этом случае
+    следа нет, повторная попытка безопасна как ``status='failed'``.
+    """
+
+
 # A URL is deliberately restricted to HTTP(S).  This avoids treating email
 # addresses, javascript: values, and arbitrary punctuation as test links.
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -178,7 +189,7 @@ def send_reply_current(page: Page, text: str) -> None:
     input_loc = page.locator(CHAT_MESSAGE_INPUT)
     send_loc = page.locator(CHAT_MESSAGE_SEND)
     if input_loc.count() != 1 or send_loc.count() != 1:
-        raise RuntimeError("не удалось однозначно найти форму ответа в чате")
+        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
     input_loc.fill(text)
     send_loc.click()
 

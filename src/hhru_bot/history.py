@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS skipped (
 -- источник правды об отправке. Перед боевой отправкой pipeline обязан свериться
 -- с ЖИВЫМ чатом: пользователь мог ответить вручную с телефона, и БД об этом не
 -- знает. has_replied отсекает заведомо отвеченные, живой чат подтверждает финально.
--- status — те же значения, что в actions (success/failed/dry_run), НЕ новый
--- словарь состояний: машины состояний (pending/in_flight/sent) по решению #55 нет.
+-- status — success/failed/dry_run/uncertain (#201); uncertain означает клик без
+-- пойманного позитивного сигнала за таймаут и не дедуплицирует чат.
 -- resume_id опционален и НЕ в ключе. ВАЖНО (#200): это НЕ значит «привязки к
 -- резюме не существует» — прежняя формулировка («/applicant/negotiations не даёт
 -- достоверной привязки чата к резюме») опровергнута живой проверкой 2026-08-16:
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS replies (
 
 -- Ключ PARTIAL-UNIQUE только по успешным ответам (тот же приём, что
 -- idx_resume_vacancy_apply у actions). Так одно входящее не может получить два
--- успешных ответа, а dry_run/failed ключ НЕ занимают. Table-level
+-- успешных ответа, а dry_run/failed/uncertain ключ НЕ занимают. Table-level
 -- UNIQUE(topic, inbound_marker) здесь был бы багом: штатный сценарий «сначала
 -- --dry-run, потом боевая отправка» (и ретрай после failed) молча терял бы
 -- success под INSERT OR IGNORE — has_replied навсегда остался бы False, а
@@ -254,15 +254,15 @@ SKIP_REASON_VALUES = (
 )
 
 
-#: Допустимые значения ``replies.status`` (#108). Тот же словарь, что у actions
-#: — новых состояний не вводим (решение #55: без машины состояний). Кортеж, не
+#: Допустимые значения ``replies.status`` (#108, #201). ``uncertain`` означает,
+#: что клик состоялся, но позитивный сигнал не был пойман за таймаут. Кортеж, не
 #: set: порядок стабилен для сообщений об ошибке.
 #:
 #: Валидируется в record_reply намеренно (в отличие от record_action): опечатка
 #: или синоним (``"SUCCESS"``, ``"sent"``) прошли бы в БД молча, has_replied
 #: навсегда вернул бы False, и бот отправил бы работодателю ВТОРОЕ сообщение.
 #: В actions такая же ошибка лишь искажает статистику, здесь — видна человеку.
-REPLY_STATUS_VALUES = ("success", "failed", "dry_run")
+REPLY_STATUS_VALUES = ("success", "failed", "dry_run", "uncertain")
 
 
 class History:
@@ -476,7 +476,11 @@ class History:
                 "GROUP BY status, letter_variant",
                 period_params,
             ).fetchall()
-        result = {"total": total, "period": {"success": 0, "failed": 0}, "letter_variants": {}}
+        result = {
+            "total": total,
+            "period": {"success": 0, "failed": 0, "uncertain": 0},
+            "letter_variants": {},
+        }
         for row in rows:
             if row["status"] == "success":
                 result["period"]["success"] += row["cnt"]
@@ -486,6 +490,8 @@ class History:
                 )
             elif row["status"] == "failed":
                 result["period"]["failed"] += row["cnt"]
+            elif row["status"] == "uncertain":
+                result["period"]["uncertain"] += row["cnt"]
         return result
 
     def list_actions(self, resume_id: str | None, period: str, limit: int = 50) -> list[dict]:
@@ -1476,7 +1482,7 @@ class History:
     # negotiations, отдельно от перезаписываемой responses (#12). Ключ —
     # partial-UNIQUE(topic, inbound_marker) WHERE status='success': одно входящее
     # не получит двух успешных ответов, повторный success — no-op (INSERT OR
-    # IGNORE), а dry_run/failed ключ не занимают и копятся для аналитики.
+    # IGNORE), а dry_run/failed/uncertain ключ не занимают и копятся для аналитики.
     # Account-scope: resume_id опционален и не в ключе.
     #
     # ГРАНИЦА ОТВЕТСТВЕННОСТИ (#55): этот слой отвечает «мы уже писали ответ на
@@ -1500,13 +1506,13 @@ class History:
 
         ``inbound_marker`` — непрозрачный признак входящего: реальный message_id
         либо суррогат (дата + хеш текста), см. комментарий к таблице. ``status``
-        — из словаря actions (``success``/``failed``/``dry_run``), новых состояний
-        не вводим (#55).
+        — из :data:`REPLY_STATUS_VALUES`; ``uncertain`` означает, что клик был
+        выполнен, но подтверждение не поймано за таймаут.
 
         Идемпотентность — по partial-UNIQUE, то есть только по УСПЕШНЫМ ответам:
         повторный ``success`` на ту же (topic, inbound_marker) — no-op (INSERT OR
         IGNORE), первая успешная запись не перезаписывается. Неуспешные попытки
-        (``dry_run``/``failed``) ключ не занимают: они копятся строками для
+        (``dry_run``/``failed``/``uncertain``) ключ не занимают: они копятся строками для
         аналитики и НЕ блокируют последующий ``success`` — иначе штатный сценарий
         «сначала --dry-run, потом боевая отправка» терял бы факт отправки. Разные
         входящие в одном чате — разные строки (диалог продолжается).
@@ -1541,7 +1547,7 @@ class History:
     def has_replied(self, topic: str, inbound_marker: str) -> bool:
         """True, если мы УСПЕШНО ответили на это входящее (для планирования).
 
-        Только ``status='success'``: ``dry_run`` и ``failed`` отправкой не
+        Только ``status='success'``: ``dry_run``, ``failed`` и ``uncertain`` отправкой не
         считаются. Это намеренно ИНАЧЕ, чем в :meth:`has_applied` (#3), где
         dry_run дедуплицирует отклик: там повторный отклик безвреден, а здесь
         холостой прогон навсегда заблокировал бы боевой ответ на живое входящее.
@@ -1631,7 +1637,8 @@ class History:
     def replies_since(self, since: datetime) -> list[dict]:
         """Наши ответы, записанные после ``since`` — для аналитики и отчётов.
 
-        Свежие первыми. Возвращает ВСЕ статусы (включая ``dry_run``/``failed``):
+        Свежие первыми. Возвращает ВСЕ статусы (включая ``dry_run``/``failed``/
+        ``uncertain``):
         журнал полный, фильтр «успешных» — задача вызывающего. Ключи словарей:
         topic/inbound_marker/vacancy_id/resume_id/status/letter_variant/note/
         created_at.

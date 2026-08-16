@@ -503,8 +503,9 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     """Dump negotiations/chat DOM using only GET navigation and reads."""
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..negotiations_probe import chat_url, topic_refs
+    from ..negotiations_probe import chat_url, paginated_topic_refs
     from ..report import _ascii_table
+    from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..selector_groups import negotiations
 
     config = load_config_or_exit(args.config)
@@ -514,16 +515,24 @@ def run_negotiations(args: argparse.Namespace) -> bool:
         page = context.new_page()
         goto_hh(page, list_url)
         items = page.locator(negotiations.NEGOTIATION_ITEM)
+        # /review (#201): paginated_topic_refs() re-navigates internally (and,
+        # with max_pages>1, may leave `page` on the LAST visited page, not
+        # this first one) — waiting for cards here before that re-navigation
+        # was pointless dead work for the RAW HTML dump below, which reads
+        # `items` only after pagination finishes. Wait AFTER pagination so the
+        # 10s bounded wait covers the page actually rendered at dump time.
+        try:
+            refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"[FAIL] не удалось прочитать SSR state: {exc}")
+            return True
+        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}")
+            return True
         try:
             items.first.wait_for(state="attached", timeout=10_000)
         except PlaywrightError:
             logger.warning("negotiations: cards did not attach within 10 seconds")
-        list_html = page.content()
-        try:
-            refs = topic_refs(list_html)
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-            print(f"[FAIL] не удалось прочитать SSR state: {exc}")
-            return True
 
         rows = []
         for name, selector in (
