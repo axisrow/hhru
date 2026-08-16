@@ -83,6 +83,16 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
      на hh.ru не осталось следа, пауза не от чего не защищает. Исключение Playwright
      в момент самого клика — это НЕ ранний выход: клик мог уйти, поэтому такой исход
      несёт `acted=True` + `uncertain=True` (статус `uncertain` в actions, #176).
+   - **«Серая зона» после клика по кнопке отклика** (#207): клик по
+     `VACANCY_APPLY_BUTTON` — начало зоны, где локальные таймауты (навигация на
+     форму, отрисовка, success-сигнал) НЕ доказывают отсутствие отклика (боевые
+     кейсы #199/МТС и #207/YADRO: отклик ушёл при `[FAIL]` в CLI). Все fail-исходы
+     этой зоны финализируются через `pipeline._finalize_post_click_failure`:
+     внешний источник истины — `/applicant/negotiations` (SSR `topicList[].vacancyId`
+     + DOM-fallback, `apply/verify.py`, read-only). Вердикты: found → `success`
+     (acted=True); not_found — вердикт сайта без изменений; список не прочитан →
+     `uncertain` + `acted=True` (fail-closed, как #176). До клика по кнопке отклика
+     проверка не применяется — там отклик физически невозможен.
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
