@@ -11,6 +11,11 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Page
+
+from .browser import goto_hh
+from .selector_groups.negotiations import CHAT_MESSAGE_MY_MARKER, CHAT_MESSAGE_TEXT
+
 # A URL is deliberately restricted to HTTP(S).  This avoids treating email
 # addresses, javascript: values, and arbitrary punctuation as test links.
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -40,4 +45,30 @@ def extract_external_test_link(message_text: str) -> str | None:
             continue
         if parsed.scheme.lower() in {"http", "https"} and not _is_hh_domain(parsed.hostname):
             return url
+    return None
+
+
+def read_latest_employer_message(page: Page, chat_id: str) -> str | None:
+    """Read the newest employer message through the confirmed chat route.
+
+    This performs only GET navigation and DOM reads. Messages are inspected in
+    reverse DOM order; ``message_my`` is skipped, so a user's own latest reply
+    cannot hide the last employer message that contains a test URL.
+    """
+    goto_hh(page, f"https://chatik.hh.ru/chat/{chat_id}")
+    messages = page.locator(CHAT_MESSAGE_TEXT)
+    for index in range(messages.count() - 1, -1, -1):
+        message = messages.nth(index)
+        is_own = message.evaluate(
+            """el => {
+                for (let node = el; node; node = node.parentElement) {
+                    if (String(node.className).split(/\\s+/).includes(arguments[0])) return true;
+                }
+                return false;
+            }""",
+            CHAT_MESSAGE_MY_MARKER,
+        )
+        if not is_own:
+            text = message.inner_text().strip()
+            return text or None
     return None

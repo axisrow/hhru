@@ -45,3 +45,10 @@ LEGACY_NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
 LEGACY_NEGOTIATION_STATUS = "[data-qa='negotiations-item__state']"
 LEGACY_NEGOTIATION_DATE = "[data-qa='negotiations-item__date']"
 LEGACY_NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"
+
+# Chat route (chatik.hh.ru/chat/<chatId>), confirmed by probe --negotiations
+# --topic (#107). The text node is message-specific; its ancestor carries
+# message_my/message_other, so callers can distinguish our own messages from
+# employer messages without clicking or posting anything.
+CHAT_MESSAGE_TEXT = '[data-qa^="chatik-chat-message-"][data-qa$="-text"]'
+CHAT_MESSAGE_MY_MARKER = "message_my"

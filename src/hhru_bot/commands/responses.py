@@ -37,6 +37,11 @@ def register(subparsers) -> None:
         help="Показать ответы, сменившие статус за последние N часов (по умолчанию 24). "
         "0 — показать все известные ответы из истории без нового обхода hh.ru.",
     )
+    p.add_argument(
+        "--detect-external-tests",
+        action="store_true",
+        help="Прочитать последние сообщения работодателей и записать внешние тесты (#180)",
+    )
     p.set_defaults(func=run)
 
 
@@ -138,6 +143,40 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
                 return
+
+            if args.detect_external_tests:
+                # fetch_responses performs its own navigation. Re-open the
+                # list read-only so SSR topicList is captured from the actual
+                # negotiations page, then use the confirmed chatId route.
+                from ..browser import goto_hh
+                from ..negotiations_chat import (
+                    extract_external_test_link,
+                    read_latest_employer_message,
+                )
+                from ..negotiations_probe import topic_refs
+
+                goto_hh(page, "https://hh.ru/applicant/negotiations")
+                list_html = page.content()
+                refs = {ref.topic_id: ref.chat_id for ref in topic_refs(list_html)}
+                detected = 0
+                for card in cards:
+                    if not card.topic or card.topic not in refs:
+                        continue
+                    message_text = read_latest_employer_message(page, refs[card.topic])
+                    if not message_text:
+                        continue
+                    test_url = extract_external_test_link(message_text)
+                    if test_url is None:
+                        continue
+                    history.record_test_assigned(
+                        args.resume,
+                        card.vacancy_id,
+                        card.employer,
+                        test_url,
+                        message_text,
+                    )
+                    detected += 1
+                print(f"Назначений внешнего теста обнаружено: {detected}")
 
         print(f"Собрано карточек переписки: {len(cards)}")
 

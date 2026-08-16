@@ -177,7 +177,7 @@ CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 -- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
 CREATE TABLE IF NOT EXISTS test_assignments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    resume_id TEXT NOT NULL,
+    resume_id TEXT,
     vacancy_id TEXT NOT NULL,
     employer TEXT NOT NULL,
     test_url TEXT NOT NULL,
@@ -306,7 +306,7 @@ class History:
 
     def record_action(
         self,
-        resume_id: str,
+        resume_id: str | None,
         vacancy_id: str,
         action: str,
         status: str,
