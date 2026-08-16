@@ -558,6 +558,20 @@ def test_incomparable_second_attempt_not_masked_by_clean_first():
     assert "атрибуция" in result.detail
 
 
+def test_dom_unattributeable_second_attempt_not_masked_by_clean_first():
+    # Попытка 1: чистое чтение SSR без целевой вакансии. Попытка 2: SSR
+    # недоступен, DOM-карточка с целевой вакансией, но атрибуция резюме
+    # невозможна (DOM не несёт resumeId). Чистое чтение попытки 1 не должно
+    # замаскировать неатрибутируемую находку попытки 2: иначе ложный not_found
+    # (вакансия есть, но отклик не атрибутируется) — тот же класс false
+    # negative, что #212 устраняет (Codex-ревью цикла 2).
+    page0_clean = _ssr_html([_topic(7, "999999")])
+    page = _IncomparableSecondAttemptPage(page0_clean, _DOM_HTML)
+    result = verify_response_in_negotiations(page, _V1, resume_id="R2")
+    assert result.indeterminate
+    assert "атрибуци" in result.detail
+
+
 def test_topic_without_resume_id_does_not_claim_other_resume():
     # Тема с совпадающей вакансией, но БЕЗ resumeId — matched (атрибутировать
     # нечем, ронять подтверждение нельзя, #210 напряжение 2). Деталь не должна

@@ -335,7 +335,10 @@ def _scan_single_page(
             # DOM-карточка не несёт resumeId — не можем атрибутировать отклик
             # к текущему резюме: он мог уйти с ДРУГОГО. Fail-closed
             # indeterminate, а не ложный success (как SSR-путь, #207).
-            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён", False
+            # attribution_incomparable=True: находка вакансии без атрибуции
+            # обязана перевесить чистое чтение ДРУГОЙ попытки (иначе ложный
+            # not_found — тот же false negative, что #212 устраняет).
+            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён", True
         return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False
     if cards_seen:
         return None, True, None, False
