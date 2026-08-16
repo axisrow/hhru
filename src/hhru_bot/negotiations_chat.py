@@ -60,9 +60,9 @@ def read_latest_employer_message(page: Page, chat_id: str) -> str | None:
     for index in range(messages.count() - 1, -1, -1):
         message = messages.nth(index)
         is_own = message.evaluate(
-            """el => {
+            """(el, marker) => {
                 for (let node = el; node; node = node.parentElement) {
-                    if (String(node.className).split(/\\s+/).includes(arguments[0])) return true;
+                    if (String(node.className).split(/\\s+/).includes(marker)) return true;
                 }
                 return false;
             }""",
