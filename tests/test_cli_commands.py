@@ -313,13 +313,17 @@ def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch):
 
     monkeypatch.setattr(whoami_module, "run", _boom)
 
-    with pytest.raises(RuntimeError, match="simulated navigate_to_response_form crash"):
-        main(["whoami"])
+    try:
+        with pytest.raises(RuntimeError, match="simulated navigate_to_response_form crash"):
+            main(["whoami"])
 
-    log_file = LOG_DIR / "hhru_bot.log"
-    assert log_file.exists()
-    content = log_file.read_text(encoding="utf-8")
-    assert "Необработанное исключение в команде 'whoami'" in content
-    assert "RuntimeError: simulated navigate_to_response_form crash (#179)" in content
-
-    logging.getLogger("hhru_bot").handlers.clear()
+        log_file = LOG_DIR / "hhru_bot.log"
+        assert log_file.exists()
+        content = log_file.read_text(encoding="utf-8")
+        assert "Необработанное исключение в команде 'whoami'" in content
+        assert "RuntimeError: simulated navigate_to_response_form crash (#179)" in content
+    finally:
+        # main() настраивает FileHandler на hhru_bot заново при каждом вызове
+        # (root.handlers.clear() внутри setup_logging), но если assert выше упадёт,
+        # handler останется висеть на последующие тесты — чистим в любом случае.
+        logging.getLogger("hhru_bot").handlers.clear()
