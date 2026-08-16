@@ -358,13 +358,32 @@ def test_navigate_wait_for_url_timeout_saves_diagnostics(tmp_path: Path, monkeyp
     assert (tmp_path / "apply_navigation_timeout.png").exists()
     assert (tmp_path / "apply_navigation_timeout.html").exists()
 
-    # Повторный таймаут перезаписывает те же файлы (идемпотентно по stage,
-    # как probe.dump_probe_snapshot), а не копит файл на каждый retry.
+    # Повторный таймаут БЕЗ vacancy_id перезаписывает те же файлы (идемпотентно
+    # по stage, как probe.dump_probe_snapshot), а не копит файл на каждый retry.
     steps.navigate_to_response_form(page)
 
     assert page.screenshot_calls == 2
     assert len(list(tmp_path.glob("apply_navigation_timeout*.png"))) == 1
     assert len(list(tmp_path.glob("apply_navigation_timeout*.html"))) == 1
+
+
+def test_navigate_wait_for_url_timeout_keeps_diagnostics_per_vacancy(tmp_path: Path, monkeypatch):
+    # cycle-review round 2: round-1 fix сделал имя чисто по stage и потерял
+    # контекст вакансии — при массовом apply-прогоне дамп одной вакансии
+    # затирался следующей, что противоречит цели #192 (сравнить артефакты
+    # разных вакансий). vacancy_id в имени разделяет их, оставаясь idempotent
+    # per-vacancy.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    page.wait_for_url_error = PlaywrightTimeoutError("navigation timeout")
+    monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
+
+    steps.navigate_to_response_form(page, "111")
+    steps.navigate_to_response_form(page, "222")
+
+    assert (tmp_path / "apply_111_navigation_timeout.png").exists()
+    assert (tmp_path / "apply_222_navigation_timeout.png").exists()
 
 
 def test_navigate_wait_for_url_non_timeout_error_does_not_raise():
