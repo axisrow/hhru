@@ -1,16 +1,10 @@
-"""Страница откликов и переписки (/applicant/negotiations) — НЕ подтверждено.
+"""Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
 
 Владелец: #12 (мониторинг ответов работодателей).
 
-Статус проверки: НЕ подтверждено. В отличие от страниц поиска/вакансии
-(подтверждённых curl-дампом без логина), /applicant/negotiations рендерится
-ТОЛЬКО залогиненному пользователю через JS — анонимный curl её не отдаёт.
-Селекторы ниже построены по общему паттерну hh.ru data-qa (страница откликов
-оформлена тем же компонентным стилем, что serp: ``negotiations-item__...``) и
-ОБЯЗАТЕЛЬНО сверяются вручную перед первым боевым запуском (F12 → Elements на
-живой залогиненной сессии), как и непроверенные селекторы apply_form/resume_page.
-Первый подозреваемый при пустом/кривом сборе responses — устаревший селектор
-здесь, а не логика responses.py.
+Список переговоров подтверждён на живой залогиненной сессии. Сообщения доступны
+отдельно через read-only маршрут ``https://chatik.hh.ru/chat/<chatId>``; SSR
+``topicList`` связывает ``topic id`` с ``chatId``.
 
 Маркер статуса (invitation/discard/response/read) на этой странице hh.ru
 представляет собой бейдж в шапке карточки переписки; ``NEGOTIATION_STATUS``
@@ -22,20 +16,21 @@ from __future__ import annotations
 # Карточка одной переписки в списке откликов/приглашений.
 NEGOTIATION_ITEM = "[data-qa='negotiations-item']"
 # Ссылка на вакансию внутри карточки — из её href достаём vacancy_id и chat_url.
-NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item__vacancy-link']"
+NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item-vacancy']"
 # Название компании-работодода. Опционально (hh.ru иногда прячет для анонимных
 # вакансий) — пустая строка, если элемента нет.
-NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
+NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item-company']"
 # Бейдж текущего статуса переписки (текст нормализуется: Приглашение→invitation
 # и т.д.). Опциональный: для свежего отклика без ответа статуса-бейджа может не быть.
-NEGOTIATION_STATUS = "[data-qa='negotiations-item__state']"
+NEGOTIATION_STATUS = "[data-qa='negotiations-tag negotiations-item-not-viewed']"
+NEGOTIATION_STATUS_VIEWED = "[data-qa='negotiations-tag negotiations-item-viewed']"
 # Дата ответа/последнего сообщения в карточке (как текст; парсинг конкретной
 # даты не делается — форматы hh.ru зависят от локали).
 # Опциональна: hh.ru не всегда рендерит блок даты.
-NEGOTIATION_DATE = "[data-qa='negotiations-item__date']"
+NEGOTIATION_DATE = "[data-qa='negotiations-item-date']"
 # Ссылка «перейти в чат» с работодателем — chat_url (опциональна: у части статусов
 # чата нет, напр. discard). Берётся из href, как fallback — href ссылки вакансии.
-NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"
+NEGOTIATION_CHAT_LINK = "[data-qa='open_chat']"
 # Кнопка «следующая страница» пагинации списка (та же data-qa, что и в поиске,
 # но вынесена сюда, чтобы responses.py не зависел от search_page).
 NEGOTIATIONS_PAGINATION_NEXT = "[data-qa='pager-next']"
@@ -43,3 +38,10 @@ NEGOTIATIONS_PAGINATION_NEXT = "[data-qa='pager-next']"
 NEGOTIATIONS_PAGINATION_PAGE = "[data-qa='pager-page']"
 # Контейнер пагинации общего компонента hh.ru; нет на честной единственной странице.
 NEGOTIATIONS_PAGINATION_BLOCK = "[data-qa='pager-block']"
+
+# Compatibility with old saved markup fixtures during selector migration.
+LEGACY_NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item__vacancy-link']"
+LEGACY_NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item__employer']"
+LEGACY_NEGOTIATION_STATUS = "[data-qa='negotiations-item__state']"
+LEGACY_NEGOTIATION_DATE = "[data-qa='negotiations-item__date']"
+LEGACY_NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"

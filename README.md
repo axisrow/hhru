@@ -212,6 +212,8 @@ config/
 - `--vacancy-id` — ID целевой вакансии (число из URL https://hh.ru/vacancy/<id>)
 - `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
 - `--healthcheck` — Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)
+- `--negotiations` — Read-only дамп списка переговоров или чата без отправки (#107)
+- `--topic` — ID topic из SSR-дампа negotiations для открытия чата (только чтение)
 
 ### `query`
 

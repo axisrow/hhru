@@ -22,6 +22,7 @@ pkgutil.iter_modules в cli.register_commands (cli.py не трогается).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import sys
@@ -71,6 +72,15 @@ def register(subparsers) -> None:
         "--healthcheck",
         action="store_true",
         help="Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)",
+    )
+    p.add_argument(
+        "--negotiations",
+        action="store_true",
+        help="Read-only дамп списка переговоров или чата без отправки (#107)",
+    )
+    p.add_argument(
+        "--topic",
+        help="ID topic из SSR-дампа negotiations для открытия чата (только чтение)",
     )
     p.set_defaults(func=run)
 
@@ -422,6 +432,8 @@ def _vacancy_from_url(url: str):
 def run(args: argparse.Namespace) -> bool | None:
     if getattr(args, "healthcheck", False):
         return run_healthcheck(args)
+    if getattr(args, "negotiations", False):
+        return run_negotiations(args)
 
     from ..apply.probe import probe_vacancy
     from ..browser import launch_context
@@ -485,3 +497,78 @@ def _resolve_vacancy_url(args: argparse.Namespace) -> str:
         file=sys.stderr,
     )
     sys.exit(1)
+
+
+def run_negotiations(args: argparse.Namespace) -> bool:
+    """Dump negotiations/chat DOM using only GET navigation and reads."""
+    from ..browser import launch_context
+    from ..config import load_config_or_exit
+    from ..negotiations_probe import chat_url, topic_refs
+    from ..report import _ascii_table
+    from ..selector_groups import negotiations
+
+    config = load_config_or_exit(args.config)
+    list_url = "https://hh.ru/applicant/negotiations"
+    print("[INFO] negotiations: read-only probe (goto + чтение, без кликов)")
+    with launch_context(config.storage_state_file, headless=args.headless) as context:
+        page = context.new_page()
+        goto_hh(page, list_url)
+        list_html = page.content()
+        try:
+            refs = topic_refs(list_html)
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"[FAIL] не удалось прочитать SSR state: {exc}")
+            return True
+
+        rows = []
+        for name, selector in (
+            ("ITEM", negotiations.NEGOTIATION_ITEM),
+            ("VACANCY", negotiations.NEGOTIATION_VACANCY_LINK),
+            ("EMPLOYER", negotiations.NEGOTIATION_EMPLOYER),
+            ("STATUS", "[data-qa^='negotiations-tag']"),
+            ("DATE", negotiations.NEGOTIATION_DATE),
+            ("OPEN_CHAT", negotiations.NEGOTIATION_CHAT_LINK),
+        ):
+            rows.append([name, selector, str(page.locator(selector).count())])
+        print(_ascii_table(["selector", "css", "count"], rows))
+        print(_ascii_table(
+            ["topic_id", "chat_id", "direct_route"],
+            [[r.topic_id, r.chat_id, chat_url(r.chat_id)] for r in refs],
+        ))
+        print("RAW HTML fragment (first card):")
+        items = page.locator(negotiations.NEGOTIATION_ITEM)
+        if items.count():
+            print(items.first.evaluate("el => el.outerHTML")[:4000])
+
+        if args.topic:
+            ref = next((r for r in refs if r.topic_id == str(args.topic)), None)
+            if ref is None:
+                print(f"[FAIL] topic не найден в SSR state: {args.topic}")
+                return True
+            goto_hh(page, chat_url(ref.chat_id))
+            print(f"[INFO] chat route: {page.url}")
+            message_selector = (
+                '[data-qa^="chatik-chat-message-"][data-qa$="-text"]'
+                ':not([data-qa="chatik-chat-message-applicant-action-text"])'
+            )
+            messages = page.locator(message_selector)
+            message_rows = []
+            for i in range(messages.count()):
+                loc = messages.nth(i)
+                parent_class = loc.evaluate(
+                    "el => { for (let n = el; n; n = n.parentElement) "
+                    "if (String(n.className).includes('message_my')) return n.className; "
+                    "return ''; }"
+                )
+                message_rows.append([
+                    str(i + 1),
+                    loc.get_attribute("data-qa") or "-",
+                    "own" if "message_my" in parent_class else "other",
+                    loc.inner_text().replace("\n", " ")[:160],
+                ])
+            print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
+            print("RAW HTML fragment (messages):")
+            message_roots = page.locator("[data-qa^='chatik-chat-message-']")
+            if message_roots.count():
+                print(message_roots.first.evaluate("el => el.outerHTML")[:4000])
+    return False
