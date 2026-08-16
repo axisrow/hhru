@@ -35,9 +35,17 @@ def test_every_test_file_has_exactly_one_category_marker() -> None:
                 and isinstance(node.targets[0], ast.Name)
                 and node.targets[0].id == "pytestmark"
             ):
-                expression = ast.unparse(node.value)
                 markers.extend(
-                    marker for marker in _ALLOWED if f"pytest.mark.{marker}" in expression
+                    candidate.attr
+                    for candidate in ast.walk(node.value)
+                    if (
+                        isinstance(candidate, ast.Attribute)
+                        and candidate.attr in _ALLOWED
+                        and isinstance(candidate.value, ast.Attribute)
+                        and candidate.value.attr == "mark"
+                        and isinstance(candidate.value.value, ast.Name)
+                        and candidate.value.value.id == "pytest"
+                    )
                 )
         if len(markers) != 1 or markers[0] not in _ALLOWED:
             missing_or_multiple.append(f"{path.name}: {markers}")
