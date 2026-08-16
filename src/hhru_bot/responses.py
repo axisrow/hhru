@@ -214,11 +214,22 @@ def _optional_text(item, *selectors: str) -> str:
     None → пустая строка (для responses пустота нормальна и удобнее в dataclass).
     Selectors are ordered live-first, with legacy markup as a fallback.
     """
-    loc = _first_locator(item, *selectors)
-    if not loc.count():
-        return ""
-    text = loc.inner_text().strip()
-    return text or ""
+    for selector in selectors:
+        loc = item.locator(selector).first
+        if loc.count():
+            text = loc.inner_text().strip()
+            if text:
+                return text
+    return ""
+
+
+def _status_text(item, *selectors: str) -> str:
+    """Return the first non-empty, recognized status from ordered selectors."""
+    for selector in selectors:
+        text = _optional_text(item, selector)
+        if text and normalize_status(text) != ResponseStatus.UNKNOWN:
+            return text
+    return ""
 
 
 def _first_locator(item, *selectors):
@@ -244,9 +255,7 @@ def parse_response_card(item) -> ResponseItem | None:
 
     # Prefer confirmed live selectors consistently; old saved markup remains a
     # fallback for fixtures and previously captured pages.
-    raw_status = _optional_text(item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS)
-    if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
-        raw_status = ""
+    raw_status = _status_text(item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS)
     employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER, ns.LEGACY_NEGOTIATION_EMPLOYER)
     date = _optional_text(item, ns.NEGOTIATION_DATE, ns.LEGACY_NEGOTIATION_DATE)
 

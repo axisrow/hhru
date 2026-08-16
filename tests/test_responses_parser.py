@@ -313,6 +313,28 @@ def test_parse_response_card_prefers_live_fields_when_both_markups_exist():
     assert item.date == "сегодня"
 
 
+def test_parse_response_card_uses_legacy_text_when_live_fields_are_empty_or_unknown():
+    page = NegotiationsPage(
+        """
+        <div data-qa="negotiations-item">
+          <a data-qa="negotiations-item-vacancy" href="/vacancy/888888">Live</a>
+          <span data-qa="negotiations-tag">Unknown live status</span>
+          <span data-qa="negotiations-item__state">Приглашение</span>
+          <span data-qa="negotiations-item-company"></span>
+          <span data-qa="negotiations-item__employer">Legacy Corp</span>
+          <span data-qa="negotiations-item-date"> </span>
+          <span data-qa="negotiations-item__date">вчера</span>
+        </div>
+        """
+    )
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.status == ResponseStatus.INVITATION
+    assert item.raw_status == "Приглашение"
+    assert item.employer == "Legacy Corp"
+    assert item.date == "вчера"
+
+
 def test_response_item_dataclass_fields():
     """Контракт dataclass: status обязателен, остальное имеет дефолты."""
     item = ResponseItem(vacancy_id="42", status=ResponseStatus.READ)
