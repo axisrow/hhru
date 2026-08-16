@@ -140,11 +140,95 @@ def test_found_via_ssr_topic():
     assert page.goto_calls == [NEGOTIATIONS_URL]  # found — без второй попытки
 
 
-def test_foreign_resume_topic_does_not_confirm_apply():
-    # Отклик с ДРУГОГО резюме (R1) на ту же вакансию — НЕ подтверждение apply
-    # с текущего (R2): иначе ложный success для операции, которая не ушла.
+def test_incomparable_resume_topic_without_account_ids():
+    # #212: тема с ДРУГИМ resumeId при неизвестном перечне резюме аккаунта —
+    # НЕ not_found (как было до #212 — «чужое» доказывалось сравнением строк
+    # из несовместимых доменов id). Доказать нельзя ни matched, ни foreign →
+    # fail-closed indeterminate: вердикт за uncertain-логикой pipeline.
     page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, "R1")])})
     result = verify_response_in_negotiations(page, _V2, resume_id="R2")
+    assert result.status == "indeterminate"
+    assert "атрибуция" in result.detail
+
+
+def test_foreign_resume_topic_with_account_ids_does_not_confirm_apply():
+    # Перечень резюме аккаунта известен: id темы вне перечня — доказуемо
+    # чужое → скан продолжается → чистый not_found (исходная семантика
+    # #207 сохранена для доказуемого случая).
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, "R1")])})
+    result = verify_response_in_negotiations(
+        page, _V2, resume_id="R2", account_resume_ids={"R2", "R3"}
+    )
+    assert result.status == "not_found"
+
+
+# --- #212: реальные домены id (хэш конфига vs числовой SSR) ------------------
+#
+# Урок #212: тесты с «R1» против «R1» не ловят прод-баг — обе стороны в одном
+# домене. Дальше — формы живого аккаунта 2026-08-16 (probe212): хэш конфига,
+# числовой id конфиг-резюме и числовой id default-резюме (форма отклика не
+# предлагает not_finished-резюме, и тема подписывается default-резюме).
+_HASH = "b3236ebbff10f60ff30039ed1f6d5876645331"
+_NUM_CONFIG = "284561395"  # python (not_finished)
+_NUM_DEFAULT = "96223331"  # marketing — резюме по умолчанию формы отклика
+_ACCOUNT = {_NUM_CONFIG, _NUM_DEFAULT}
+
+
+def test_regression_212_config_hash_vs_numeric_topic_is_indeterminate():
+    """Регрессия #212 ровно как в проде: верификатору передали хэш конфига
+    (резолвер не отработал), SSR-тема несёт числовой resumeId. До фикса —
+    «чужое» → чистый not_found → false negative (135170581); после —
+    fail-closed indeterminate."""
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, 96223331)])})
+    result = verify_response_in_negotiations(page, _V2, resume_id=_HASH)
+    assert result.status == "indeterminate"
+    assert "несовместимые домены id" in result.detail
+    assert "96223331" in result.detail and _HASH in result.detail
+
+
+def test_other_own_resume_topic_is_indeterminate():
+    """Тема с ДРУГИМ собственным резюме аккаунта (форма приложила default
+    marketing 96223331, конфиг — python 284561395) НЕ подтверждает текущий
+    apply: тема могла быть создана ПРЕДЫДУЩИМ откликом, а не этим кликом
+    (Codex-ревью цикла 2). Подтверждать по ней нельзя — иначе ложный success
+    под конфиг-резюме и перманентная дедупликация подавят повторную попытку.
+    Fail-closed indeterminate (как incomparable), а не found."""
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, 96223331)])})
+    result = verify_response_in_negotiations(
+        page, _V2, resume_id=_NUM_CONFIG, account_resume_ids=_ACCOUNT
+    )
+    assert result.status == "indeterminate"
+    assert "ДРУГИМ собственным резюме" in result.detail
+    assert "96223331" in result.detail and _NUM_CONFIG in result.detail
+
+
+def test_exact_match_wins_over_other_own_resume_topic():
+    # Среди тем вакансии есть и с конфиг-резюме (exact match) — подтверждение,
+    # даже если рядом тема с другим собственным резюме (не атрибутируемая).
+    page = FakeNegotiationsPage(
+        {NEGOTIATIONS_URL: _ssr_html([_topic(7, _V2, 96223331), _topic(8, _V2, _NUM_CONFIG)])}
+    )
+    result = verify_response_in_negotiations(
+        page, _V2, resume_id=_NUM_CONFIG, account_resume_ids=_ACCOUNT
+    )
+    assert result.found
+    assert f"resumeId={_NUM_CONFIG}" in result.detail
+
+
+def test_found_by_direct_numeric_match_without_account_ids():
+    # Равенство строк надёжно в любом домене: числовой против числового.
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, 96223331)])})
+    result = verify_response_in_negotiations(page, _V2, resume_id=_NUM_DEFAULT)
+    assert result.found
+    assert "другое резюме" not in result.detail
+
+
+def test_not_found_when_topic_resume_outside_account():
+    # id темы вне перечня аккаунта (аномалия данных) — доказуемо чужое.
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, 999999999)])})
+    result = verify_response_in_negotiations(
+        page, _V2, resume_id=_NUM_CONFIG, account_resume_ids=_ACCOUNT
+    )
     assert result.status == "not_found"
 
 
@@ -259,6 +343,18 @@ def test_indeterminate_when_ssr_lacks_negotiations_section():
     page = FakeNegotiationsPage({NEGOTIATIONS_URL: html})
     result = verify_response_in_negotiations(page, _V2)
     assert result.indeterminate
+
+
+def test_indeterminate_when_ssr_state_is_non_dict():
+    # parse_initial_state возвращает любой валидный JSON, не только объект:
+    # null/массив/строка (schema-drift) не должны ронять верификатор
+    # AttributeError'ом вне try — нормализуются как «состояние недоступно»
+    # (fail-closed indeterminate, а не ложный not_found).
+    for raw in ("null", "[1,2]", '"строка"'):
+        html = f"<html><body><template id='HH-Lux-InitialState'>{raw}</template></body></html>"
+        page = FakeNegotiationsPage({NEGOTIATIONS_URL: html})
+        result = verify_response_in_negotiations(page, _V2)
+        assert result.indeterminate
 
 
 def test_indeterminate_when_vacancy_id_unknown():
@@ -438,6 +534,67 @@ def test_confirmed_incomplete_attempt_not_masked_by_clean_retry():
     assert result.indeterminate
 
 
+class _IncomparableSecondAttemptPage(FakeNegotiationsPage):
+    """Попытка 1: чистое чтение без целевой вакансии (отклик ещё не долетел).
+    Попытка 2: целевая вакансия появилась, но атрибуция incomparable (хэш
+    конфига vs числовой SSR id, маппинга нет). OR-агрегация clean из попытки 1
+    не должна замаскировать incomparable из попытки 2 (иначе ложный not_found —
+    ровно тот false-negative, что #212 призван устранить)."""
+
+    def __init__(self, page0_clean: str, page0_incomparable: str):
+        super().__init__({NEGOTIATIONS_URL: page0_clean})
+        self._clean = page0_clean
+        self._incomparable = page0_incomparable
+        self._page0_gotos = 0
+
+    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+        self.goto_calls.append(url)
+        if url == NEGOTIATIONS_URL:
+            self._page0_gotos += 1
+            self._html = self._clean if self._page0_gotos == 1 else self._incomparable
+        else:
+            self._html = self._pages.get(url, "")
+
+
+def test_incomparable_second_attempt_not_masked_by_clean_first():
+    # Попытка 1: чистое чтение, целевой вакансии ещё нет. Попытка 2: целевая
+    # вакансия найдена, но атрибуция incomparable (хэш конфига vs числовой SSR
+    # id, маппинга нет). Чистое чтение попытки 1 не должно замаскировать
+    # incomparable из попытки 2: иначе ложный not_found вместо fail-closed
+    # indeterminate (#212).
+    page0_clean = _ssr_html([_topic(7, "999999")])
+    page0_incomparable = _ssr_html([_topic(8, _V2, 96223331)])
+    page = _IncomparableSecondAttemptPage(page0_clean, page0_incomparable)
+    result = verify_response_in_negotiations(page, _V2, resume_id=_HASH)
+    assert result.indeterminate
+    assert "атрибуция" in result.detail
+
+
+def test_dom_unattributeable_second_attempt_not_masked_by_clean_first():
+    # Попытка 1: чистое чтение SSR без целевой вакансии. Попытка 2: SSR
+    # недоступен, DOM-карточка с целевой вакансией, но атрибуция резюме
+    # невозможна (DOM не несёт resumeId). Чистое чтение попытки 1 не должно
+    # замаскировать неатрибутируемую находку попытки 2: иначе ложный not_found
+    # (вакансия есть, но отклик не атрибутируется) — тот же класс false
+    # negative, что #212 устраняет (Codex-ревью цикла 2).
+    page0_clean = _ssr_html([_topic(7, "999999")])
+    page = _IncomparableSecondAttemptPage(page0_clean, _DOM_HTML)
+    result = verify_response_in_negotiations(page, _V1, resume_id="R2")
+    assert result.indeterminate
+    assert "атрибуци" in result.detail
+
+
+def test_topic_without_resume_id_does_not_claim_other_resume():
+    # Тема с совпадающей вакансией, но БЕЗ resumeId — matched (атрибутировать
+    # нечем, ронять подтверждение нельзя, #210 напряжение 2). Деталь не должна
+    # утверждать «другое резюме аккаунта» — у темы вообще нет resumeId, и
+    # str(None)="None" ≠ resume_id лгал бы в логах аудита #212.
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2)])})
+    result = verify_response_in_negotiations(page, _V2, resume_id="R2")
+    assert result.found
+    assert "другое резюме" not in result.detail
+
+
 # --- проводка: run_apply_for_resume передаёт реальный верификатор ------------
 
 
@@ -496,9 +653,11 @@ class _ApplyPipelineFakePage:
 
 
 def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
-    """#207: продакшн-проводка — run_apply_for_resume передаёт реальный
-    верификатор в pipeline; подтверждённый внешним источником отклик
-    доходит до history как status='success' (не failed/без записи)."""
+    """#207/#212: продакшн-проводка — run_apply_for_resume передаёт реальный
+    верификатор в pipeline; подтверждённый внешним источником отклик доходит
+    до history как status='success' (не failed/без записи). Верификатор
+    получает ЧИСЛОВОЙ id резюме из маппинга (#212: SSR несёт числовой
+    resumeId, а не хэш конфига), запись в history остаётся под хэшем."""
     import argparse
     import sqlite3
 
@@ -519,11 +678,17 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     )
     seen: list[tuple] = []
 
-    def _fake_verify(page, vacancy_id, resume_id=None):  # noqa: ANN001
-        seen.append((vacancy_id, resume_id))
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+        seen.append((vacancy_id, resume_id, sorted(account_resume_ids or ())))
         return NegotiationsVerifyResult("found", "topic=1")
 
     monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
+    # #212: маппинг «хэш → числовой id» — как от /applicant/resumes (два резюме
+    # аккаунта; конфиг — первое). Без подмены резолвер ходил бы в сеть.
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        lambda page: {"AAA111": "284561395", "BBB222": "96223331"},
+    )
 
     resume = ResumeConfig(
         id="python",
@@ -543,11 +708,120 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
 
     _common.run_apply_for_resume(_ApplyPipelineFakePage(), config, resume, history, throttle, args)
 
-    assert seen == [("42", "AAA111")]
+    # Верификатор — в числовом домене с перечнем резюме аккаунта (#212)…
+    assert seen == [("42", "284561395", ["284561395", "96223331"])]
     conn = sqlite3.connect(history_db)
     try:
-        rows = conn.execute("SELECT status, reason FROM actions").fetchall()
+        rows = conn.execute("SELECT resume_id, status, reason FROM actions").fetchall()
     finally:
         conn.close()
-    assert rows == [("success", rows[0][1])]
-    assert "negotiations" in rows[0][1]
+    # …а history — по-прежнему под хэшем конфига: домены не смешиваются.
+    assert rows == [("AAA111", "success", rows[0][2])]
+    assert "negotiations" in rows[0][2]
+
+
+def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch):
+    """#212: сбой маппинга (None) не роняет apply — верификатор получает хэш
+    конфига без перечня резюме; атрибуция деградирует до fail-closed
+    indeterminate в самом верификаторе, а не молчаливого not_found."""
+    import argparse
+
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+    from hhru_bot.commands import _common
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.history import History
+    from hhru_bot.search import VacancyCard
+    from hhru_bot.throttle import Throttle
+
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.search_vacancies",
+        lambda page, search, max_pages=5: [  # noqa: ARG005
+            VacancyCard(
+                vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
+            )
+        ],
+    )
+    seen: list[tuple] = []
+
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+        seen.append((vacancy_id, resume_id, account_resume_ids))
+        return NegotiationsVerifyResult("found", "topic=1")
+
+    monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_numeric_resume_ids", lambda page: None)
+
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python developer"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="Здравствуйте!",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(dry_run=False, limit=1, max_pages=5, headless=True)
+
+    _common.run_apply_for_resume(_ApplyPipelineFakePage(), config, resume, history, throttle, args)
+
+    assert seen == [("42", "AAA111", None)]
+
+
+def test_run_apply_for_resume_fail_closed_when_config_resume_not_in_mapping(tmp_path, monkeypatch):
+    """#212: маппинг получен, но конфиг-резюме в нём ОТСУТСТВУЕТ (устаревший/
+    неверный хэш). Перечень резюме аккаунта НЕ должен заполняться — иначе любая
+    тема с id резюме аккаунта подтвердила бы отклик (success под хэшем, которого
+    нет в аккаунте), вопреки предупреждению о fail-closed. Без перечня
+    атрибуция уходит в incomparable → indeterminate в самом верификаторе."""
+    import argparse
+
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+    from hhru_bot.commands import _common
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.history import History
+    from hhru_bot.search import VacancyCard
+    from hhru_bot.throttle import Throttle
+
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.search_vacancies",
+        lambda page, search, max_pages=5: [  # noqa: ARG005
+            VacancyCard(
+                vacancy_id="42", title="Dev", company="Acme", url="https://hh.ru/vacancy/42"
+            )
+        ],
+    )
+    seen: list[tuple] = []
+
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+        seen.append((vacancy_id, resume_id, account_resume_ids))
+        return NegotiationsVerifyResult("found", "topic=1")
+
+    monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
+    # Маппинг есть, но конфиг-резюме AAA111 в нём отсутствует.
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        lambda page: {"BBB222": "96223331"},
+    )
+
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python developer"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="Здравствуйте!",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(dry_run=False, limit=1, max_pages=5, headless=True)
+
+    _common.run_apply_for_resume(_ApplyPipelineFakePage(), config, resume, history, throttle, args)
+
+    # account_resume_ids=None → атрибуция fail-closed (incomparable), не matched.
+    assert seen == [("42", "AAA111", None)]
