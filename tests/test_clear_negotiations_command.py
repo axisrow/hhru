@@ -65,7 +65,5 @@ def test_successful_withdraw_is_audited(tmp_path, monkeypatch):
         _args(force=True), ["77"], page=Page(), history=history, throttle=Throttle()
     )
     with history._connect() as conn:
-        row = conn.execute(
-            "SELECT resume_id, vacancy_id, action, status FROM actions"
-        ).fetchone()
+        row = conn.execute("SELECT resume_id, vacancy_id, action, status FROM actions").fetchone()
     assert tuple(row) == (command.ACCOUNT_SCOPE, "77", "withdraw", "success")
