@@ -154,9 +154,7 @@ def _form_scope(page: Page) -> Locator | None:
         return None
     linked_scope = page.locator(f"form#{form_id}")
     return (
-        linked_scope
-        if _wait_present(linked_scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
-        else None
+        linked_scope if _wait_present(linked_scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS) else None
     )
 
 
