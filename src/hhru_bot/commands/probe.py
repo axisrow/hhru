@@ -515,15 +515,12 @@ def run_negotiations(args: argparse.Namespace) -> bool:
         page = context.new_page()
         goto_hh(page, list_url)
         items = page.locator(negotiations.NEGOTIATION_ITEM)
-        try:
-            items.first.wait_for(state="attached", timeout=10_000)
-        except PlaywrightError:
-            logger.warning("negotiations: cards did not attach within 10 seconds")
-        # /review (#201): paginated_topic_refs() re-navigates page 0 with its
-        # own goto_hh() call, so the DOM state just waited on above is
-        # discarded and re-fetched. Both requests hit the same GET URL and
-        # probe is read-only, so this is a harmless extra round-trip, not a
-        # correctness issue — left as-is rather than special-casing page 0.
+        # /review (#201): paginated_topic_refs() re-navigates internally (and,
+        # with max_pages>1, may leave `page` on the LAST visited page, not
+        # this first one) — waiting for cards here before that re-navigation
+        # was pointless dead work for the RAW HTML dump below, which reads
+        # `items` only after pagination finishes. Wait AFTER pagination so the
+        # 10s bounded wait covers the page actually rendered at dump time.
         try:
             refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -532,6 +529,10 @@ def run_negotiations(args: argparse.Namespace) -> bool:
         except (NotAuthenticated, ResponsesIndeterminate) as exc:
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}")
             return True
+        try:
+            items.first.wait_for(state="attached", timeout=10_000)
+        except PlaywrightError:
+            logger.warning("negotiations: cards did not attach within 10 seconds")
 
         rows = []
         for name, selector in (

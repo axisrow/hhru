@@ -78,6 +78,10 @@ def _patch_common(
         "hhru_bot.browser.launch_context", lambda *a, **k: _Context(page or _Page())
     )
     monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *a, **k: None)
+    # #201: paginated_topic_refs() checks the auth marker before reading SSR
+    # state (same pattern fetch_responses uses, see test_responses_*.py).
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda *a, **k: _Cfg())
     monkeypatch.setattr("hhru_bot.history.History", lambda *a, **k: history)
     monkeypatch.setattr("hhru_bot.negotiations_probe.topic_refs", lambda html: refs or [])

@@ -82,13 +82,29 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         raise ValueError("max_pages must be >= 1")
 
     # Lazy imports avoid a module cycle while responses.py recovers topics.
-    from .browser import goto_hh
-    from .responses import NEGOTIATIONS_URL, _has_next_page
+    from .browser import goto_hh, has_auth_cookie, has_login_form
+    from .responses import NEGOTIATIONS_URL, NotAuthenticated, _has_next_page
 
     refs: list[TopicRef] = []
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
+        # Codex-ревью (#201, по аналогии с fetch_responses в responses.py):
+        # проверяем auth-маркер ДО чтения SSR-состояния. Без этой проверки
+        # рендер login-страницы вместо negotiations (истёкшая сессия) даёт
+        # topic_refs() ValueError («HH-Lux-InitialState not found») вместо
+        # диагностируемого NotAuthenticated — тот же класс ошибки, что и
+        # пустой inbox, но с другой причиной, которую вызывающий код не
+        # должен путать с завершённой пагинацией.
+        if not has_auth_cookie(page):
+            raise NotAuthenticated(
+                "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
+            )
+        if has_login_form(page):
+            raise NotAuthenticated(
+                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
+                "сервером (запустите `login`, затем повторите)"
+            )
         refs.extend(topic_refs(page.content()))
         try:
             has_next = _has_next_page(page, page_num)
