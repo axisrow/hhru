@@ -97,6 +97,7 @@ def verify_response_in_negotiations(
         return NegotiationsVerifyResult(INDETERMINATE, "vacancy_id карточки неизвестен")
     wanted = str(vacancy_id)
     clean_read = False
+    confirmed_incomplete = False
     problem = "список откликов не прочитан"
     for attempt in range(1, NEGOTIATIONS_VERIFY_ATTEMPTS + 1):
         logger.info(
@@ -117,15 +118,28 @@ def verify_response_in_negotiations(
                 return _indeterminate(
                     page, wanted, "сессия не авторизована — список откликов недоступен"
                 )
-            found_detail, clean, page_problem = _scan_negotiations(page, wanted, resume_id)
+            found_detail, clean, page_problem, incomplete = _scan_negotiations(
+                page, wanted, resume_id
+            )
             if found_detail is not None:
                 logger.info("[VERIFY] отклик подтверждён: %s", found_detail)
                 return NegotiationsVerifyResult(FOUND, found_detail)
             clean_read = clean_read or clean
+            confirmed_incomplete = confirmed_incomplete or incomplete
             if page_problem:
                 problem = page_problem
         if attempt < NEGOTIATIONS_VERIFY_ATTEMPTS:
             page.wait_for_timeout(NEGOTIATIONS_VERIFY_POLL_INTERVAL_MS)
+    if confirmed_incomplete:
+        # #207: хотя бы одна попытка подтвердила пагинацию, но не дочитала
+        # страницу — целевая вакансия могла быть на непрочитанной странице.
+        # Fail-closed: indeterminate, а не ложный not_found. Отдельный флаг
+        # (не только clean): confirmed-incomplete из одной попытки перевешивает
+        # чистое чтение другой (иначе OR-агрегация clean замаскировала бы
+        # неполный скан, #207).
+        return _indeterminate(
+            page, wanted, problem or "подтверждённая пагинация, но не все страницы прочитаны"
+        )
     if clean_read:
         logger.info("[VERIFY] список прочитан, vacancy_id=%s отсутствует", wanted)
         return NegotiationsVerifyResult(NOT_FOUND, "список откликов прочитан, вакансии нет")
@@ -141,29 +155,37 @@ def _indeterminate(page: Page, vacancy_id: str, detail: str) -> NegotiationsVeri
 
 def _scan_negotiations(
     page: Page, wanted: str, resume_id: str | None
-) -> tuple[str | None, bool, str | None]:
+) -> tuple[str | None, bool, str | None, bool]:
     """Сканирует страницу 0 (+ следующую при подтверждённой пагинации).
 
     Возвращает (detail найденной темы | None, было ли чистое чтение,
-    описание проблемы чтения | None). Чистое чтение — только когда НИ ОДНА
-    страница не дала проблему: если какая-то страница не загрузилась или
-    карточка не прочиталась, отсутствие целевой вакансии не подтверждаем
-    (она могла быть на непрочитанной странице) — иначе ложный not_found.
+    описание проблемы чтения | None, подтверждена ли пагинация, но не дочитана
+    страница). Чистое чтение — только когда НИ ОДНА страница не дала проблему:
+    если какая-то страница не загрузилась или карточка не прочиталась, отсутствие
+    целевой вакансии не подтверждаем (она могла быть на непрочитанной странице) —
+    иначе ложный not_found. confirmed_incomplete отдельно от clean: попытка, где
+    пагинатор подтвердил продолжение, но страница не дочиталась, обязана
+    перевесить чистые чтения ДРУГИХ попыток (иначе OR-агрегация в
+    verify_response_in_negotiations замаскировала бы неполный скан, #207).
     """
     clean = False
     problem: str | None = None
+    confirmed_incomplete = False
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
                 goto_hh(page, f"{NEGOTIATIONS_URL}?page={page_num}")
             except PlaywrightError as exc:
+                # Пагинация была подтверждена на странице 0 (мы сюда дошли) —
+                # страница 1 не дочитана: целевая вакансия могла быть на ней.
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
+                confirmed_incomplete = True
                 break
         found_detail, page_clean, page_problem = _scan_single_page(page, wanted, resume_id)
         if page_problem:
             problem = page_problem
         if found_detail is not None:
-            return found_detail, True, None
+            return found_detail, True, None, False
         clean = clean or page_clean
         if not _has_next_page_confirmed(page, page_num):
             break
@@ -172,8 +194,9 @@ def _scan_negotiations(
             # целевая вакансия могла быть на непросканированной странице 2+.
             # Fail-closed: indeterminate, а не ложный not_found (#207).
             problem = "достигнут потолок скана при подтверждённой пагинации"
+            confirmed_incomplete = True
             break
-    return None, clean and not problem, problem
+    return None, clean and not problem, problem, confirmed_incomplete
 
 
 def _scan_single_page(
@@ -259,42 +282,59 @@ def _read_dom_vacancy_ids(page: Page) -> tuple[set[str], bool]:
     bool=True только при ПОЛНОМ чтении всех карточек. Непрочитавшаяся карточка
     (parse_response_card → None) или PlaywrightError посреди итерации — скан
     неполный: целевая вакансия могла быть в непрочитанной карточке, поэтому
-    отсутствие не подтверждаем (иначе ложный not_found, #207).
+    отсутствие не подтверждаем (иначе ложный not_found, #207). Список также
+    должен быть стабилен после короткой паузы (см. _dom_list_stable): догрузка
+    или подмена карточек в процессе чтения — тот же класс неполноты.
     """
     cards = page.locator(ns.NEGOTIATION_ITEM)
     try:
         cards.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
     except PlaywrightError:
         return set(), False
-    ids: set[str] = set()
-    clean = True
+    initial = _read_dom_ids(page)
+    if initial is None:
+        return set(), False
+    if not _dom_list_stable(page, initial):
+        return initial, False
+    return initial, True
+
+
+def _read_dom_ids(page: Page) -> set[str] | None:
+    """Текущий набор vacancy_id DOM-карточек; None — скан неполный.
+
+    None при непрочитавшейся карточке (parse_response_card → None) или
+    PlaywrightError посреди итерации: целевая вакансия могла быть в
+    непрочитанной карточке, поэтому отсутствие не подтверждаем (#207).
+    """
+    cards = page.locator(ns.NEGOTIATION_ITEM)
     try:
-        initial_count = cards.count()
-        for i in range(initial_count):
+        count = cards.count()
+        ids: set[str] = set()
+        for i in range(count):
             item = parse_response_card(cards.nth(i))
             if item is None:
-                clean = False
-                continue
+                return None
             ids.add(item.vacancy_id)
-        if not _dom_list_stable(page, initial_count):
-            clean = False
+        return ids
     except PlaywrightError:
-        return ids, False
-    return ids, clean
+        return None
 
 
-def _dom_list_stable(page: Page, initial_count: int) -> bool:
-    """True, если count карточек стабилен после короткой паузы (список догрузился).
+def _dom_list_stable(page: Page, initial_ids: set[str]) -> bool:
+    """True, если набор карточек стабилен после короткой паузы (список догрузился).
 
     DOM-fallback не имеет подтверждённого empty-state-сигнала, поэтому
     завершённость списка проверяем эвристикой: карточки могут догружаться
-    (отложенный/виртуализированный рендер), и чтение текущего count до
-    стабилизации дало бы ложный not_found (#207). Перечитываем count свежим
-    locator'ом — кэш первого чтения не должен маскировать догрузку.
+    (отложенный/виртуализированный рендер), и чтение текущего набора до
+    стабилизации дало бы ложный not_found (#207). Сравниваем НАБОР vacancy_id
+    свежим locator'ом, а не только count: подмена/переупорядочивание карточек
+    при том же count (виртуализация) тоже означает нестабильность — иначе
+    прочитанный набор мог быть устаревшим.
     """
     try:
         page.wait_for_timeout(DOM_STABILITY_MS)
-        return page.locator(ns.NEGOTIATION_ITEM).count() == initial_count
+        fresh = _read_dom_ids(page)
+        return fresh is not None and fresh == initial_ids
     except PlaywrightError:
         return False
 

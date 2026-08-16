@@ -362,6 +362,82 @@ def test_indeterminate_when_dom_list_still_loading():
     assert result.indeterminate
 
 
+class _ReplacingCardsPage(FakeNegotiationsPage):
+    """DOM-список, который на КАЖДОЙ паузе ПОДМЕНЯЕТ карточки при том же count
+    (виртуализация/перерисовка): набор vacancy_id меняется, count — нет. Сравнение
+    только count (старая эвристика) не поймало бы подмену и дало бы ложный
+    not_found; сравнение набора — indeterminate (#207)."""
+
+    def __init__(self, html: str):
+        super().__init__({NEGOTIATIONS_URL: html})
+        self._replacements = 0
+
+    def wait_for_timeout(self, ms: int) -> None:
+        self.wait_for_timeout_calls.append(ms)
+        self._replacements += 1
+
+    def locator(self, selector: str) -> _PageLocator:
+        html = self._html
+        if selector == ns.NEGOTIATION_ITEM and self._replacements:
+            # Тот же count (2 карточки), но vacancy_id меняются на каждой паузе.
+            base = 500000 + self._replacements * 100
+            html = (
+                f"<div data-qa='negotiations-item'>"
+                f"<a href='/vacancy/{base + 1}'>"
+                f"<span data-qa='negotiations-item-vacancy'>R{self._replacements}</span></a></div>"
+                f"<div data-qa='negotiations-item'>"
+                f"<a href='/vacancy/{base + 2}'>"
+                f"<span data-qa='negotiations-item-vacancy'>R{self._replacements}b</span></a></div>"
+            )
+        return _PageLocator(_parse_root(html), _parse_selector(selector))
+
+
+def test_indeterminate_when_dom_cards_replaced_same_count():
+    # DOM-fallback: карточки ПОДМЕНЕНЫ при том же count (виртуализация) —
+    # сравнение только count не поймало бы подмену и дало бы ложный not_found;
+    # сравнение набора vacancy_id — indeterminate (#207).
+    page = _ReplacingCardsPage(_DOM_HTML)
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
+
+
+class _AlternatingPaginationPage(FakeNegotiationsPage):
+    """Попытка 1: пагинация подтверждена (pager-next), страница 1 не грузится.
+    Попытка 2: пагинация не подтверждена (pager-block без pager-next) — страница
+    0 чистая. Проверяет, что confirmed-incomplete из попытки 1 перевешивает
+    чистое чтение попытки 2 (иначе OR-агрегация clean дала бы ложный not_found,
+    #207)."""
+
+    def __init__(self, page0_confirmed: str, page0_unconfirmed: str):
+        super().__init__({NEGOTIATIONS_URL: page0_confirmed})
+        self._confirmed = page0_confirmed
+        self._unconfirmed = page0_unconfirmed
+        self._page0_gotos = 0
+
+    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+        self.goto_calls.append(url)
+        if "?page=1" in url:
+            raise PlaywrightError("net::ERR_TIMED_OUT")
+        if url == NEGOTIATIONS_URL:
+            self._page0_gotos += 1
+            self._html = self._confirmed if self._page0_gotos == 1 else self._unconfirmed
+        else:
+            self._html = self._pages.get(url, "")
+
+
+def test_confirmed_incomplete_attempt_not_masked_by_clean_retry():
+    # Попытка 1 подтвердила пагинацию, но страница 1 не загрузилась; попытка 2
+    # прочитала страницу 0 чисто, но пагинация не подтвердилась. OR-агрегация
+    # clean не должна замаскировать confirmed-incomplete из попытки 1: целевая
+    # вакансия могла быть на непрочитанной странице 1 (иначе ложный not_found,
+    # #207).
+    page0_confirmed = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
+    page0_unconfirmed = _ssr_html([_topic(7, "999999")], extra="<div data-qa='pager-block'></div>")
+    page = _AlternatingPaginationPage(page0_confirmed, page0_unconfirmed)
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
+
+
 # --- проводка: run_apply_for_resume передаёт реальный верификатор ------------
 
 
