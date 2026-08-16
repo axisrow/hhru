@@ -141,6 +141,24 @@ def test_funnel_offer_counted_from_mark(tmp_path):
     # кумулятивно: offer → и viewed, и invited тоже
     assert row["viewed"] == 1
     assert row["invited"] == 1
+    # РЕГРЕССИЯ (#112 review, cycle 3): offer ⊆ replied тоже, даже когда оффер
+    # пришёл через ручную пометку mark_offer без залогированного replies-ответа.
+    assert row["replied"] == 1
+
+
+def test_funnel_offer_via_responses_counts_as_replied_without_logged_reply(tmp_path):
+    """РЕГРЕССИЯ (#112 review, cycle 3): responses.status='offer' без replies-строки.
+
+    Оффер физически невозможен без нашего ответа работодателю, даже если сам
+    факт ответа не попал в локальный журнал replies (сбой логирования,
+    ответили не через бота). offer=1 должен подразумевать replied=1."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.upsert_response("v1", "Acme", "offer", "/chat/1", topic="t1")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["offer"] == 1
+    assert row["replied"] == 1
 
 
 def test_funnel_multi_topic_vacancy_no_inflation(tmp_path):

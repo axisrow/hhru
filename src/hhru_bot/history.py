@@ -675,23 +675,30 @@ class History:
     ) -> list[dict]:
         """Воронка отправлено → просмотрено → приглашение → оффер по резюме.
 
-        Этапы КУМУЛЯТИВНЫЕ (sent ⊇ viewed ⊇ invited ⊇ offer): вакансия, до которой
-        дошло приглашение, считается и просмотренной; оффер — и просмотренным, и
-        приглашённым. Это необходимо, т.к. #12 хранит в responses только ТЕКУЩИЙ
-        статус переписки (после read→invitation прежний read уже не виден) —
-        некумулятивный подсчёт давал бы viewed=0 после перехода. «Просмотрено» =
-        любой ответ работодателя (#12: read/response/invitation/discard/offer) —
-        отказ или письмо тоже означают, что резюме видели.
+        Этапы КУМУЛЯТИВНЫЕ (sent ⊇ viewed ⊇ invited ⊇ replied ⊇ offer): вакансия,
+        до которой дошло приглашение, считается и просмотренной; оффер — и
+        просмотренным, и приглашённым, и отвеченным нами. Это необходимо, т.к.
+        #12 хранит в responses только ТЕКУЩИЙ статус переписки (после
+        read→invitation прежний read уже не виден) — некумулятивный подсчёт
+        давал бы viewed=0 после перехода. «Просмотрено» = любой ответ
+        работодателя (#12: read/response/invitation/discard/offer) — отказ или
+        письмо тоже означают, что резюме видели. «Наш ответ» (replied, #112) =
+        залогированный успешный ``replies``-ответ на invitation/offer, ИЛИ сам
+        факт оффера (responses status='offer' или ручная пометка manual_offers)
+        — оффер невозможен без нашего ответа, даже если сам факт ответа не
+        попал в локальный журнал (ручной оффер, сбой логирования).
 
-        Ответы берутся из responses (#12, account-scope по vacancy_id) плюс липкие
-        ручные пометки из manual_offers (per-resume). Группировка по actions.resume_id.
-        Пер-резюме точность ограничена account-scope responses (ответ одной вакансии
-        зачтётся всем резюме, откликнувшимся в неё) — это ограничение источника
-        данных #12 (нет достоверного связывания ответ→резюме).
+        Ответы берутся из responses (#12, account-scope по vacancy_id) и
+        replies (#108, account-scope по topic) плюс липкие ручные пометки из
+        manual_offers (per-resume). Группировка по actions.resume_id. Пер-резюме
+        точность ограничена account-scope responses/replies (ответ одной
+        вакансии зачтётся всем резюме, откликнувшимся в неё) — это ограничение
+        источника данных #12/#108 (нет достоверного связывания ответ→резюме).
 
-        Конверсии: view_rate=viewed/sent, invite_rate=invited/viewed, offer_rate=
-        offer/invited; 0% при пустом знаменателе. Возвращает список словарей (по
-        строке на resume_id, отсортированных по убыванию отправленных). Пусто → [].
+        Конверсии: view_rate=viewed/sent, invite_rate=invited/viewed, reply_rate=
+        replied/invited, offer_rate=offer/invited; 0% при пустом знаменателе.
+        Возвращает список словарей (по строке на resume_id, отсортированных по
+        убыванию отправленных). Пусто → [].
         """
         where = ["a.action = 'apply'", "a.status = 'success'"]
         params: list = []
@@ -740,6 +747,12 @@ class History:
                         JOIN replies p ON p.topic = r.topic AND p.status = 'success'
                         WHERE r.vacancy_id = a.vacancy_id
                           AND r.status IN ('invitation', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
                     ) THEN a.vacancy_id END) AS replied
                 FROM actions AS a
                 {clause}
