@@ -57,7 +57,8 @@ class _FakePage:
         self.last_goto = url
 
     def locator(self, selector: str) -> FakeLocator:
-        return FakeLocator(self._root, probe_cmd._parse_qa_selector(selector))
+        qa = probe_cmd._parse_qa_selector(selector)
+        return FakeLocator(self._root, lambda value: value == qa)
 
 
 # --- check_selectors: статус по count() ------------------------------------

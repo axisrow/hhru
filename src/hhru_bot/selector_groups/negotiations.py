@@ -54,6 +54,12 @@ LEGACY_NEGOTIATION_CHAT_LINK = "[data-qa='negotiations-item__messages-link']"
 # Chat route (chatik.hh.ru/chat/<chatId>), confirmed by probe --negotiations
 # --topic (#107). The text node is message-specific; its ancestor carries
 # message_my/message_other, so callers can distinguish our own messages from
-# employer messages without clicking or posting anything.
-CHAT_MESSAGE_TEXT = '[data-qa^="chatik-chat-message-"][data-qa$="-text"]'
+# employer messages without clicking or posting anything. The applicant-action
+# system message (e.g. "отклик отправлен") is excluded — it carries no
+# message_my/message_other marker, so without this exclusion it would be
+# treated as an employer message by any :not(message_my) check.
+CHAT_MESSAGE_TEXT = (
+    '[data-qa^="chatik-chat-message-"][data-qa$="-text"]'
+    ':not([data-qa="chatik-chat-message-applicant-action-text"])'
+)
 CHAT_MESSAGE_MY_MARKER = "message_my"

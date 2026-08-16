@@ -229,9 +229,14 @@ def parse_response_card(item) -> ResponseItem | None:
         return None
 
     # Prefer the legacy exact selector first: it also keeps old saved fixtures
-    # deterministic while the live selector is verified on the real DOM.
+    # deterministic while the live selector is verified on the real DOM. Fall
+    # through to the confirmed selector whenever the legacy one is empty OR
+    # unrecognized — normalize_status("") is READ (not UNKNOWN) by design, so
+    # "empty" and "unrecognized" are checked separately; an unrecognized
+    # legacy match must not shadow a live selector that could still resolve
+    # to a known status.
     raw_status = _optional_text(item, ns.LEGACY_NEGOTIATION_STATUS)
-    if not raw_status:
+    if not raw_status or normalize_status(raw_status) == ResponseStatus.UNKNOWN:
         raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
     if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
         raw_status = ""
