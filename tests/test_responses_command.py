@@ -46,6 +46,7 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
         "max_pages": 5,
         "since_hours": 0.0,
         "headless": False,
+        "detect_external_tests": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
