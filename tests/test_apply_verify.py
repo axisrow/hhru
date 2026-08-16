@@ -17,6 +17,7 @@ from playwright.sync_api import Error as PlaywrightError
 from _fakes import FakeLocator, _CardLocator, _parse_root, _parse_selector
 from hhru_bot.apply.verify import verify_response_in_negotiations
 from hhru_bot.responses import NEGOTIATIONS_URL
+from hhru_bot.selector_groups import negotiations as ns
 
 _V1, _V2 = "111111", "222222"
 
@@ -313,6 +314,52 @@ def test_indeterminate_when_page1_goto_fails():
     result = verify_response_in_negotiations(page, _V2)
     assert result.indeterminate
     assert "goto" in result.detail
+
+
+def test_indeterminate_when_pagination_cap_reached_with_next_page():
+    # Страницы 0 и 1 прочитаны чисто (вакансии нет), но страница 1 подтверждает
+    # продолжение — целевая вакансия могла быть на странице 2+. Fail-closed:
+    # indeterminate, а не ложный not_found (#207).
+    page0 = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
+    page1 = _ssr_html([_topic(8, "888888")], extra="<a data-qa='pager-next'>далее</a>")
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": page1})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
+    assert "потолок" in result.detail
+
+
+class _GrowingCardsPage(FakeNegotiationsPage):
+    """DOM-список, который догружается на КАЖДОЙ попытке: после каждого
+    wait_for_timeout появляется ещё одна карточка (отложенный/виртуализированный
+    рендер не стабилизируется)."""
+
+    def __init__(self, html: str):
+        super().__init__({NEGOTIATIONS_URL: html})
+        self._extra_cards = 0
+
+    def wait_for_timeout(self, ms: int) -> None:
+        self.wait_for_timeout_calls.append(ms)
+        self._extra_cards += 1
+
+    def locator(self, selector: str) -> _PageLocator:
+        html = self._html
+        if selector == ns.NEGOTIATION_ITEM:
+            for i in range(self._extra_cards):
+                html += (
+                    f"<div data-qa='negotiations-item'>"
+                    f"<a href='/vacancy/{700000 + i}'>"
+                    f"<span data-qa='negotiations-item-vacancy'>Late{i}</span></a></div>"
+                )
+        return _PageLocator(_parse_root(html), _parse_selector(selector))
+
+
+def test_indeterminate_when_dom_list_still_loading():
+    # DOM-fallback: карточки догружаются на каждой попытке — список не
+    # завершён, отсутствие целевой вакансии не подтверждаем (иначе ложный
+    # not_found, #207).
+    page = _GrowingCardsPage(_DOM_HTML)
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
 
 
 # --- проводка: run_apply_for_resume передаёт реальный верификатор ------------

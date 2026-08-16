@@ -52,8 +52,13 @@ NEGOTIATIONS_VERIFY_ATTEMPTS = 2
 NEGOTIATIONS_VERIFY_POLL_INTERVAL_MS = 10_000
 #: Сканируем страницу 0 и, если пагинатор подтверждает продолжение, страницу 1:
 #: список отсортирован по свежести, только что отправленный отклик был бы на
-#: странице 0 — глубокий скан не нужен.
+#: странице 0 — глубокий скан не нужен. Достижение потолка при подтверждённой
+#: пагинации — indeterminate, а не not_found (см. _scan_negotiations).
 NEGOTIATIONS_VERIFY_MAX_PAGES = 2
+#: Окно стабилизации DOM-списка в fallback-пути: карточки могут догружаться
+#: (отложенный/виртуализированный рендер), и чтение count до стабилизации
+#: дало бы ложный not_found. Ждём и перечитываем count (см. _dom_list_stable).
+DOM_STABILITY_MS = 1_000
 
 #: Тип инъекции в pipeline (как probe/letter_provider): page, vacancy_id,
 #: resume_id → вердикт. None у контекста = проверка выключена (юнит-тесты).
@@ -162,6 +167,12 @@ def _scan_negotiations(
         clean = clean or page_clean
         if not _has_next_page_confirmed(page, page_num):
             break
+        if page_num == NEGOTIATIONS_VERIFY_MAX_PAGES - 1:
+            # Достигли потолка скана, но пагинатор подтверждает продолжение —
+            # целевая вакансия могла быть на непросканированной странице 2+.
+            # Fail-closed: indeterminate, а не ложный not_found (#207).
+            problem = "достигнут потолок скана при подтверждённой пагинации"
+            break
     return None, clean and not problem, problem
 
 
@@ -258,15 +269,34 @@ def _read_dom_vacancy_ids(page: Page) -> tuple[set[str], bool]:
     ids: set[str] = set()
     clean = True
     try:
-        for i in range(cards.count()):
+        initial_count = cards.count()
+        for i in range(initial_count):
             item = parse_response_card(cards.nth(i))
             if item is None:
                 clean = False
                 continue
             ids.add(item.vacancy_id)
+        if not _dom_list_stable(page, initial_count):
+            clean = False
     except PlaywrightError:
         return ids, False
     return ids, clean
+
+
+def _dom_list_stable(page: Page, initial_count: int) -> bool:
+    """True, если count карточек стабилен после короткой паузы (список догрузился).
+
+    DOM-fallback не имеет подтверждённого empty-state-сигнала, поэтому
+    завершённость списка проверяем эвристикой: карточки могут догружаться
+    (отложенный/виртуализированный рендер), и чтение текущего count до
+    стабилизации дало бы ложный not_found (#207). Перечитываем count свежим
+    locator'ом — кэш первого чтения не должен маскировать догрузку.
+    """
+    try:
+        page.wait_for_timeout(DOM_STABILITY_MS)
+        return page.locator(ns.NEGOTIATION_ITEM).count() == initial_count
+    except PlaywrightError:
+        return False
 
 
 def _has_next_page_confirmed(page: Page, page_num: int) -> bool:
