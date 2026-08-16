@@ -213,8 +213,17 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
         if not wait_success_confirmation(ctx.page):
+            # Честный union-poll до таймаута БЕЗ сигнала — достоверно
+            # проверили и не нашли успеха, осознанный fail-closed #163
+            # (wait_success_confirmation docstring): uncertain НЕ ставим.
             return ctx.fail("не удалось подтвердить успешную отправку отклика")
     except PlaywrightError as exc:
+        # #177 round 3 (Codex): исключение — НЕ то же самое, что False выше.
+        # Мы не смогли даже проверить (browser/page упал посреди опроса),
+        # а не «проверили и не нашли» — тот же класс неопределённости, что
+        # и SubmitClickUncertain при самом клике. uncertain=True обязателен,
+        # иначе has_applied() не отсечёт вакансию и уйдёт второй отклик.
+        ctx.uncertain = True
         logger.warning(
             "[FAIL] %s — ошибка Playwright после отправки (%s), успех не подтверждён",
             ctx.vacancy.title,

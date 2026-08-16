@@ -299,10 +299,15 @@ def test_apply_submit_click_error_is_uncertain_acted():
 
 
 def test_apply_confirmation_error_after_submit_keeps_acted(monkeypatch):
-    """#176: submit-клик прошёл, но wait_success_confirmation упал с PlaywrightError
-    (не вернул False, а бросил). Отправка БЫЛА — исключение не должно выносить
-    её из-под записи: возвращаем fail с acted=True (uncertain=False — сам клик
-    завершился успешно, неизвестен только финальный статус)."""
+    """#177 round 3 (Codex): submit-клик прошёл, но wait_success_confirmation
+    упал с PlaywrightError (не вернул False, а бросил). Это НЕ то же самое,
+    что честный union-poll до таймаута без сигнала (result.uncertain=False,
+    см. test_apply_submit_unconfirmed_is_acted — там мы ДОСТОВЕРНО проверили
+    и не нашли успеха, осознанный fail-closed #163). Exception означает, что
+    мы вообще не смогли проверить (browser/page упал посреди опроса) — тот же
+    класс неопределённости, что и SubmitClickUncertain при самом клике.
+    Поэтому acted=True И uncertain=True: дедупликация обязана отсечь
+    вакансию, а не оставить её доступной для повторного отклика."""
     from playwright.sync_api import Error as PlaywrightError
 
     def _raise(_page):
@@ -313,7 +318,7 @@ def test_apply_confirmation_error_after_submit_keeps_acted(monkeypatch):
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
     assert result.success is False
     assert result.acted is True
-    assert result.uncertain is False
+    assert result.uncertain is True
     assert "не подтверждён" in result.reason
 
 

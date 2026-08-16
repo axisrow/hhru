@@ -1548,16 +1548,21 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
         "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain') "
         "GROUP BY resume_id, vacancy_id HAVING c > 1"
     ).fetchall()
-    conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
     if dupes:
+        # #177 round 3 (Codex): старый индекс НЕ трогаем, если пересборку
+        # выполнить нельзя — раньше DROP выполнялся безусловно ДО этой
+        # проверки, снимая DB-уровня UNIQUE-защиту целиком (включая для
+        # success/dry_run пар, которые старый индекс ещё покрывал), даже
+        # если дубли есть только среди новых 'uncertain' записей.
         logger.warning(
             "idx_resume_vacancy_apply не пересоздан: найдено %d пар "
             "(resume_id, vacancy_id) с дублирующимися apply-записями "
             "(success/dry_run/uncertain). UNIQUE constraint на них упал бы "
             "с IntegrityError. Дедупликация продолжает работать через "
-            "has_applied(), но без DB-уровня защиты — почистите дубли в "
-            "actions вручную.",
+            "has_applied(), но без обновлённой DB-уровня защиты для "
+            "'uncertain' — почистите дубли в actions вручную.",
             len(dupes),
         )
         return
+    conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
     conn.execute(_APPLY_INDEX_SQL)

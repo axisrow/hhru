@@ -260,3 +260,68 @@ def test_index_not_rebuilt_when_already_current(tmp_path):
     assert not any("CREATE UNIQUE INDEX idx_resume_vacancy_apply" in sql for sql in executed_sql), (
         executed_sql
     )
+
+
+def test_ensure_apply_index_keeps_old_index_when_duplicates_found(tmp_path):
+    # #177 round 3 (Codex): при обнаружении дублей функция раньше БЕЗУСЛОВНО
+    # дропала старый индекс (DROP INDEX IF EXISTS) ДО проверки, а после —
+    # не восстанавливала ничего, если дубли найдены. Это снимало DB-уровня
+    # UNIQUE-защиту ПОЛНОСТЬЮ, включая для success/dry_run пар, которые
+    # раньше были защищены старым (более узким) индексом. Правильно: если
+    # пересборку выполнить нельзя (есть дубли), старый индекс не трогать —
+    # degraded (без 'uncertain' в условии), но не нулевая защита.
+    from hhru_bot.history import _ensure_apply_index
+
+    db_path = tmp_path / "h.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resume_id TEXT NOT NULL,
+                vacancy_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_resume_vacancy_apply
+                ON actions(resume_id, vacancy_id)
+                WHERE action = 'apply' AND status IN ('success', 'dry_run');
+            """
+        )
+        # дубль uncertain — новый статус, старым индексом не покрывается
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-02')"
+        )
+        conn.commit()
+
+        _ensure_apply_index(conn)
+
+        index_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_resume_vacancy_apply'"
+        ).fetchone()
+        assert index_row is not None, "старый индекс должен остаться, а не исчезнуть полностью"
+
+        # старая (degraded) защита всё ещё работает для success/dry_run
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r2','v2','apply','success','','2026-01-01')"
+        )
+        try:
+            conn.execute(
+                "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+                "VALUES ('r2','v2','apply','success','','2026-01-02')"
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("старый индекс должен был отсечь дубль success")
+    finally:
+        conn.close()
