@@ -246,6 +246,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 - `--dry-run` — Показать план без отправки
 - `--limit LIMIT` — Максимум чатов за запуск (0 = все)
+- `--max-pages MAX_PAGES` — Максимум страниц negotiations для SSR mapping (по умолчанию 5) (по умолчанию: 5)
 - `--template TEMPLATE` — Текст ответа (по умолчанию cover_letter_default)
 - `--force` — Подтвердить боевой запуск
 
