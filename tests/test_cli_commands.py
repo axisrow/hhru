@@ -292,13 +292,13 @@ def test_clear_skipped_success_does_not_exit_nonzero(tmp_path):
         pytest.fail(f"main() exited with {e.code} on a successful deletion")
 
 
-def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch):
+def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch, capsys):
     """#179: необработанное исключение из args.func (напр. непойманный внутри
     apply-пайплайна Playwright TimeoutError) раньше уходило только в stderr
     Python'а — traceback не попадал в data/logs/hhru_bot.log, хотя setup_logging()
-    к этому моменту уже настроил FileHandler. main() обязан залогировать полный
-    traceback (logger.exception) перед тем, как перевыбросить исключение дальше
-    (поведение для пользователя — тот же traceback + ненулевой exit — не меняется).
+    к этому моменту уже настроил FileHandler. main() обязан записать полный
+    traceback в файл перед тем, как перевыбросить исключение дальше (поведение
+    для пользователя — тот же traceback в консоли + ненулевой exit — не меняется).
 
     LOG_DIR — module-level константа (см. logging_setup.py), вычисленная от cwd
     на момент импорта, поэтому тест не гоняет cwd, а читает файл там, где
@@ -322,6 +322,13 @@ def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch):
         content = log_file.read_text(encoding="utf-8")
         assert "Необработанное исключение в команде 'whoami'" in content
         assert "RuntimeError: simulated navigate_to_response_form crash (#179)" in content
+
+        # #179 code-review round 2: логирование должно писать ТОЛЬКО в файл —
+        # console_handler на "hhru_bot" (StreamHandler, stderr) не должен получить
+        # эту запись, иначе Python допечатает тот же traceback после raise ещё
+        # раз через excepthook, и пользователь увидит его дважды.
+        stderr = capsys.readouterr().err
+        assert "Необработанное исключение в команде 'whoami'" not in stderr
     finally:
         # main() настраивает FileHandler на hhru_bot заново при каждом вызове
         # (root.handlers.clear() внутри setup_logging), но если assert выше упадёт,
