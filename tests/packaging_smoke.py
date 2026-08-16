@@ -16,9 +16,12 @@ import os
 import sys
 import tempfile
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:  # packaging smoke runs without dev dependencies
+    pytest = None
 
-pytestmark = pytest.mark.smoke
+pytestmark = pytest.mark.smoke if pytest is not None else ()
 
 
 def main() -> None:
