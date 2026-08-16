@@ -287,6 +287,8 @@ def test_parse_response_card_reads_live_viewed_status_without_legacy_markup():
     assert item is not None
     assert item.status == ResponseStatus.READ
     assert item.raw_status == "Прочитано"
+
+
 def test_parse_response_card_prefers_live_fields_when_both_markups_exist():
     """Confirmed selectors win consistently over compatibility selectors."""
     page = NegotiationsPage(
