@@ -20,6 +20,7 @@ def test_schema_creates_actions_table():
         conn.executescript(SCHEMA)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "actions" in tables
+        assert "test_assignments" in tables
     finally:
         conn.close()
 
@@ -112,6 +113,33 @@ def test_history_works_after_schema_creation(tmp_path):
     # повторное открытие того же файла не падает и данные на месте
     h2 = History(tmp_path / "h.db")
     assert h2.has_applied("r1", "v1")
+
+
+def test_record_test_assignment_persists_and_reads_history(tmp_path):
+    from datetime import datetime
+
+    h = History(tmp_path / "h.db")
+    detected_at = datetime(2026, 8, 16, 10, 0)
+    h.record_test_assigned(
+        "resume-1",
+        "vacancy-2",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Необходимо пройти небольшой тест: yay-tech.ru",
+        detected_at=detected_at,
+    )
+
+    rows = h.test_assignments_since(datetime(2026, 8, 16, 9, 59))
+    assert rows == [
+        {
+            "resume_id": "resume-1",
+            "vacancy_id": "vacancy-2",
+            "employer": "ЯМКЕТ",
+            "test_url": "https://yay-tech.ru",
+            "message_text": "Необходимо пройти небольшой тест: yay-tech.ru",
+            "detected_at": "2026-08-16T10:00:00",
+        }
+    ]
 
 
 def test_unique_index_prevents_duplicate_uncertain_apply():

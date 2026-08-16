@@ -171,6 +171,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
     WHERE status = 'success';
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
+
+-- test_assignments — факт назначения внешнего теста работодателем (#180).
+-- Отдельно от responses/actions: это событие чата, а не статус отклика и не
+-- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
+CREATE TABLE IF NOT EXISTS test_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    employer TEXT NOT NULL,
+    test_url TEXT NOT NULL,
+    message_text TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_assignments_detected_at
+    ON test_assignments(detected_at);
 """
 
 
@@ -1479,6 +1495,50 @@ class History:
                 FROM replies
                 WHERE created_at > ?
                 ORDER BY created_at DESC, id DESC
+                """,
+                (since.isoformat(),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # --- Назначения внешних тестов (#180) -----------------------------------
+
+    def record_test_assigned(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        employer: str,
+        test_url: str,
+        message_text: str,
+        *,
+        detected_at: datetime | None = None,
+    ) -> None:
+        """Append a read-only fact discovered in an employer chat."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO test_assignments
+                    (resume_id, vacancy_id, employer, test_url, message_text, detected_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resume_id,
+                    vacancy_id,
+                    employer,
+                    test_url,
+                    message_text,
+                    (detected_at or datetime.now()).isoformat(),
+                ),
+            )
+
+    def test_assignments_since(self, since: datetime) -> list[dict]:
+        """Return detected test assignments newer than ``since``, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT resume_id, vacancy_id, employer, test_url, message_text, detected_at
+                FROM test_assignments
+                WHERE detected_at > ?
+                ORDER BY detected_at DESC, id DESC
                 """,
                 (since.isoformat(),),
             ).fetchall()
