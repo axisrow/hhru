@@ -159,7 +159,17 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     """
     if ctx.verifier is None:
         return ctx.fail(reason)
-    verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    try:
+        verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    except PlaywrightError as exc:
+        # #207: сбой самой внешней проверки (страница упала/закрылась посреди
+        # опроса) не должен обрывать apply до записи в history и паузы
+        # троттлинга — иначе следующий запуск не увидит запись и отправит
+        # дубликат. Fail-closed: uncertain + acted, как у #176.
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка упала: %s", ctx.vacancy.title, exc)
+        return ctx.fail(f"{reason}; внешняя проверка упала ({exc}) — исход неопределён")
     if verdict.found:
         ctx.acted = True
         ctx.uncertain = False

@@ -139,11 +139,12 @@ def test_found_via_ssr_topic():
     assert page.goto_calls == [NEGOTIATIONS_URL]  # found — без второй попытки
 
 
-def test_found_via_ssr_notes_foreign_resume():
+def test_foreign_resume_topic_does_not_confirm_apply():
+    # Отклик с ДРУГОГО резюме (R1) на ту же вакансию — НЕ подтверждение apply
+    # с текущего (R2): иначе ложный success для операции, которая не ушла.
     page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, "R1")])})
     result = verify_response_in_negotiations(page, _V2, resume_id="R2")
-    assert result.found
-    assert "ДРУГОГО резюме" in result.detail
+    assert result.status == "not_found"
 
 
 def test_found_matching_resume_has_no_mismatch_note():
@@ -151,6 +152,16 @@ def test_found_matching_resume_has_no_mismatch_note():
     result = verify_response_in_negotiations(page, _V2, resume_id="R1")
     assert result.found
     assert "ДРУГОГО" not in result.detail
+
+
+def test_found_when_matching_resume_among_foreign():
+    # Среди откликов на вакансию есть и с текущего резюме (R2) — подтверждение.
+    page = FakeNegotiationsPage(
+        {NEGOTIATIONS_URL: _ssr_html([_topic(7, _V2, "R1"), _topic(8, _V2, "R2")])}
+    )
+    result = verify_response_in_negotiations(page, _V2, resume_id="R2")
+    assert result.found
+    assert "resumeId=R2" in result.detail
 
 
 def test_found_via_dom_fallback_without_ssr():
@@ -234,6 +245,19 @@ def test_indeterminate_when_neither_ssr_nor_cards_rendered():
     result = verify_response_in_negotiations(page, _V2)
     assert result.indeterminate
     assert "не отрендерился" in result.detail
+
+
+def test_indeterminate_when_ssr_lacks_negotiations_section():
+    # SSR-состояние распарсилось, но секции applicantNegotiations нет — это
+    # «не отрендерилось», а не «пустой список»: иначе ложный not_found
+    # (false negative, который #207 и предотвращает).
+    state = json.dumps({"someOtherSection": {}}, ensure_ascii=False)
+    html = (
+        f"<html><body><template id='HH-Lux-InitialState'>{escape(state)}</template></body></html>"
+    )
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: html})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
 
 
 def test_indeterminate_when_vacancy_id_unknown():

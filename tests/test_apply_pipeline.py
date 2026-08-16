@@ -452,3 +452,23 @@ def test_apply_confirmation_error_external_found_upgrades_to_success(monkeypatch
     assert result.success is True
     assert result.acted is True
     assert result.uncertain is False
+
+
+def test_apply_verifier_crash_is_uncertain_acted(monkeypatch):
+    """#207: сбой самой внешней проверки (страница упала посреди опроса) не
+    должен обрывать apply до записи в history и паузы троттлинга — иначе
+    следующий запуск не увидит запись и отправит дубликат. Fail-closed:
+    uncertain + acted, как у #176."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+
+    def _crash(page, vacancy_id, resume_id=None):  # noqa: ANN001
+        raise PlaywrightError("Page closed while polling negotiations")
+
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=_crash)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "упала" in result.reason

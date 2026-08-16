@@ -174,6 +174,11 @@ def _scan_single_page(
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.
         for topic in topics:
             if str(topic.get("vacancyId", "")) == wanted:
+                if _is_foreign_resume(topic, resume_id):
+                    # Отклик с ДРУГОГО резюме на ту же вакансию — не
+                    # подтверждение apply с текущего: продолжаем искать тему
+                    # с совпадающим resumeId (иначе ложный success, #207).
+                    continue
                 return _describe_topic(topic, resume_id), True, None
         return None, True, None
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
@@ -182,6 +187,21 @@ def _scan_single_page(
     if cards_seen:
         return None, True, None
     return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)"
+
+
+def _is_foreign_resume(topic: dict[str, Any], resume_id: str | None) -> bool:
+    """Отклик с другого резюме — не подтверждение apply с текущего.
+
+    resume_id не задан — атрибутировать нечем, считаем совпадением (resumeId
+    присутствует у всех тем в практике, #200). Поле отсутствует у темы — тоже
+    не можем отличить, не роняем подтверждение (fail-open, как topic_refs).
+    """
+    if resume_id is None:
+        return False
+    topic_resume = topic.get("resumeId")
+    if topic_resume is None:
+        return False
+    return str(topic_resume) != str(resume_id)
 
 
 def _describe_topic(topic: dict[str, Any], resume_id: str | None) -> str:
@@ -200,13 +220,20 @@ def _ssr_topic_list(html: str) -> list[dict[str, Any]] | None:
     Сканирует сырые темы, а не topic_refs(): для проверки достаточно
     vacancyId, и политика дропа записей без id/chatId (для маппинга чатов)
     не должна превращать существующий отклик в «не найден».
+
+    None возвращается и когда секция applicantNegotiations отсутствует или
+    topicList не список: это «не отрендерилось», а не «пустой список» — иначе
+    ложный not_found (false negative, который #207 и предотвращает).
     """
     try:
         state = parse_initial_state(html)
     except (ValueError, AttributeError):
         return None
-    topics = state.get("applicantNegotiations", {}).get("topicList")
-    return topics if isinstance(topics, list) else []
+    neg = state.get("applicantNegotiations")
+    if not isinstance(neg, dict):
+        return None
+    topics = neg.get("topicList")
+    return topics if isinstance(topics, list) else None
 
 
 def _read_dom_vacancy_ids(page: Page) -> tuple[set[str], bool]:
