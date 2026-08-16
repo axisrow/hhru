@@ -440,10 +440,12 @@ class History:
         return result
 
     def reply_summary(self, resume_id: str | None, period: str) -> dict:
-        """Сводка наших ответов из локальной таблицы ``replies``.
+        """Сводка наших ответов из локальной таблицы ``replies`` за период.
 
         Успешные ответы считаются отправленными; ``dry_run`` в отправки не
-        входит. Счётчики вариантов относятся к выбранному периоду.
+        входит. ``total`` и ``period``/``letter_variants`` уважают один и тот
+        же ``period`` (как ``summary().total`` — #112 review), а не только
+        ``resume_id``.
         """
         filters: list[str] = []
         params: list = []
@@ -457,12 +459,12 @@ class History:
             period_filters.append("created_at >= ?")
             period_params.append(since)
         period_clause = " WHERE " + " AND ".join(period_filters) if period_filters else ""
-        total_filters = [*filters, "status = 'success'"]
+        total_filters = [*period_filters, "status = 'success'"]
         total_clause = " WHERE " + " AND ".join(total_filters)
         with self._connect() as conn:
-            total = conn.execute(f"SELECT COUNT(*) FROM replies{total_clause}", params).fetchone()[
-                0
-            ]
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM replies{total_clause}", period_params
+            ).fetchone()[0]
             rows = conn.execute(
                 f"SELECT status, letter_variant, COUNT(*) AS cnt FROM replies{period_clause} "
                 "GROUP BY status, letter_variant",

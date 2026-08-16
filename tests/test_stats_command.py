@@ -8,6 +8,7 @@ run() — с минимальным конфигом и seeded SQLite-истор
 from __future__ import annotations
 
 import argparse
+import io
 import textwrap
 
 from hhru_bot.commands import stats as stats_cmd
@@ -93,6 +94,32 @@ def test_stats_run_csv_export_machine_readable(capsys, tmp_path):
     # машиночитаемые имена колонок сводки (#176: добавлена колонка uncertain —
     # действие могло выполниться при упавшем посреди клика Playwright)
     assert out.splitlines()[0] == "action,success,dry_run,failed,uncertain"
+
+
+def test_stats_run_csv_export_is_single_valid_csv_document(capsys, tmp_path):
+    """CSV-режим — экспорт для машин: один документ, одна схема колонок.
+
+    Регрессия #112 (reply-аналитика в stats): второй печатаемый блок
+    (format_replies) не должен начинать в том же stdout-потоке новый
+    CSV-документ с другим набором колонок (metric,value) — консьюмер,
+    парсящий stdout одним csv.reader, увидит смешение схем и упадёт/
+    получит битые данные."""
+    import csv as csv_module
+
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+
+    stats_cmd.run(_args(config, tmp_path / "h.db", format="csv"))
+    out = capsys.readouterr().out
+
+    rows = list(csv_module.reader(io.StringIO(out)))
+    header = rows[0]
+    for row in rows[1:]:
+        assert len(row) == len(header), (
+            f"CSV-строка {row!r} не соответствует схеме заголовка {header!r} — "
+            "второй документ (reply-сводка) не должен ломать единую CSV-схему"
+        )
 
 
 def test_stats_run_resume_filter(capsys, tmp_path):

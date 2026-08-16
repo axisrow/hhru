@@ -70,8 +70,14 @@ def run(args: argparse.Namespace) -> None:
     else:
         summary = history.summary(resume_id=resume_id, period=args.period)
         print(format_summary(summary, args.format))
-        print(
-            format_replies(
-                history.reply_summary(resume_id=resume_id, period=args.period), args.format
+        # CSV — экспорт для машин: один документ, одна схема колонок (см. #112
+        # ревью). Reply-сводка имеет другую схему (metric,value), поэтому в csv
+        # её печатать вторым документом в тот же stdout-поток нельзя — консьюмер,
+        # парсящий вывод одним csv.reader, получит смешение схем. Показываем её
+        # только в человекочитаемых форматах.
+        if args.format != "csv":
+            print(
+                format_replies(
+                    history.reply_summary(resume_id=resume_id, period=args.period), args.format
+                )
             )
-        )
