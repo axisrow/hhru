@@ -189,7 +189,11 @@ class _Page:
         if m := _FORM_ID_RE.match(sel):
             return self._make_locator(
                 sel,
-                [n for n in _all(self._tree) if n.tag == "form" and n.attrs.get("id") == m.group(1)],
+                [
+                    n
+                    for n in _all(self._tree)
+                    if n.tag == "form" and n.attrs.get("id") == m.group(1)
+                ],
             )
         if ">> xpath=ancestor::form" in sel:
             base_sel = sel.split(" >> xpath=ancestor::form")[0]
