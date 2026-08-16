@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
     # импорт внутри метода разрывает цикл history <-> search (search тянет history
     # на верхнем уровне через SKIP_REASONS), здесь — только для type-checking.
     from .search import SalaryInfo
+
+logger = logging.getLogger("hhru_bot.history")
 
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
 # Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
@@ -261,14 +264,11 @@ class History:
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
-            # 'uncertain' в условии. Пересоздаём индекс явно на каждом открытии;
-            # DROP+CREATE идемпотентны и дешёвы (индекс маленький).
-            conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
-            conn.execute(
-                "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
-                "ON actions(resume_id, vacancy_id) "
-                "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
-            )
+            # 'uncertain' в условии. Доводим его по аналогии с _ensure_column:
+            # сначала читаем текущее DDL из sqlite_master, DROP+CREATE только
+            # если оно отличается от желаемого (иначе КАЖДЫЙ CLI-вызов делал бы
+            # лишнюю write-миграцию с захватом schema-lock — cycle-review #177).
+            _ensure_apply_index(conn)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)
@@ -1509,3 +1509,55 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
+_APPLY_INDEX_SQL = (
+    "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
+    "ON actions(resume_id, vacancy_id) "
+    "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
+)
+
+
+def _ensure_apply_index(conn: sqlite3.Connection) -> None:
+    """Идемпотентно доводит idx_resume_vacancy_apply до актуального условия (#177).
+
+    CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым WHERE на
+    уже существующей БД (тот же caveat #51, что и у _ensure_column) — старые
+    базы содержат индекс без 'uncertain' в условии. Как и _ensure_column,
+    сначала читаем текущее определение из sqlite_master и трогаем индекс
+    ТОЛЬКО если оно отличается — иначе каждый CLI-вызов делал бы лишний
+    DROP+CREATE под write/schema-lock (cycle-review #177, round 2).
+
+    'uncertain' появился в PR #176 (уже в main) ДО этого индекс-фикса, поэтому
+    на реальных установках уже могли накопиться дубли (resume_id, vacancy_id)
+    со статусом 'uncertain' под старым (более узким) индексом — CREATE UNIQUE
+    INDEX на них упадёт IntegrityError и History() будет ронять вообще все
+    команды бота. Явно проверяем дубли ПЕРЕД пересозданием: если они есть —
+    не создаём индекс и логируем warning, оставляя дедупликацию на чистой
+    Python-логике has_applied() (SELECT, не зависит от индекса) до ручной
+    чистки БД администратором — это безопаснее, чем падать намертво.
+    """
+    current = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_resume_vacancy_apply'"
+    ).fetchone()
+    if current is not None and current[0] == _APPLY_INDEX_SQL:
+        return
+
+    dupes = conn.execute(
+        "SELECT resume_id, vacancy_id, COUNT(*) c FROM actions "
+        "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain') "
+        "GROUP BY resume_id, vacancy_id HAVING c > 1"
+    ).fetchall()
+    conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
+    if dupes:
+        logger.warning(
+            "idx_resume_vacancy_apply не пересоздан: найдено %d пар "
+            "(resume_id, vacancy_id) с дублирующимися apply-записями "
+            "(success/dry_run/uncertain). UNIQUE constraint на них упал бы "
+            "с IntegrityError. Дедупликация продолжает работать через "
+            "has_applied(), но без DB-уровня защиты — почистите дубли в "
+            "actions вручную.",
+            len(dupes),
+        )
+        return
+    conn.execute(_APPLY_INDEX_SQL)

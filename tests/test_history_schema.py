@@ -186,3 +186,77 @@ def test_unique_index_upgraded_on_existing_db_with_old_condition(tmp_path):
             raise AssertionError("ожидалась IntegrityError после доводки индекса на старой БД")
     finally:
         conn.close()
+
+
+def test_history_open_does_not_crash_on_preexisting_uncertain_duplicates(tmp_path, caplog):
+    # #177 round 2 (Codex): 'uncertain' появился в PR #176 (уже в main) ДО того
+    # как индекс стал его покрывать (этот PR). Значит на реальных установках
+    # уже может существовать БД с дублями status='uncertain' для одной пары
+    # (resume_id, vacancy_id), накопленными под старым индексом. Пересоздание
+    # индекса с новым условием не должно ронять History() исключением —
+    # это заблокировало бы вообще все команды бота до ручной починки.
+    db_path = tmp_path / "h.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resume_id TEXT NOT NULL,
+                vacancy_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_resume_vacancy_apply
+                ON actions(resume_id, vacancy_id)
+                WHERE action = 'apply' AND status IN ('success', 'dry_run');
+            """
+        )
+        # два uncertain-дубля для одной пары — легально под старым индексом
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-02')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="hhru_bot.history"):
+        History(db_path)  # не должно бросить IntegrityError
+
+    assert any("idx_resume_vacancy_apply" in r.message for r in caplog.records)
+
+
+def test_index_not_rebuilt_when_already_current(tmp_path):
+    # #177 round 2 (Codex): DROP+CREATE не должен выполняться, если текущее
+    # определение индекса в sqlite_master уже совпадает с желаемым — иначе
+    # каждый CLI-вызов делал бы лишнюю write-миграцию (лишние SQLite
+    # write-locks). sqlite3.Connection — C-тип, execute() нельзя monkeypatch'ить
+    # напрямую (immutable type), поэтому используем conn.set_trace_callback —
+    # официальный API sqlite3 для перехвата исполняемых SQL-инструкций.
+    from hhru_bot.history import _ensure_apply_index
+
+    db_path = tmp_path / "h.db"
+    History(db_path)  # первое открытие — индекс создаётся с нужным условием
+
+    conn = sqlite3.connect(db_path)
+    executed_sql: list[str] = []
+    conn.set_trace_callback(executed_sql.append)
+    try:
+        _ensure_apply_index(conn)  # индекс уже актуален — должно быть no-op
+    finally:
+        conn.set_trace_callback(None)
+        conn.close()
+
+    assert not any("DROP INDEX" in sql for sql in executed_sql), executed_sql
+    assert not any("CREATE UNIQUE INDEX idx_resume_vacancy_apply" in sql for sql in executed_sql), (
+        executed_sql
+    )
