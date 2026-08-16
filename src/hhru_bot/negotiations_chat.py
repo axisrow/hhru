@@ -83,16 +83,15 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     message = messages.nth(messages.count() - 1)
     marker = _message_id(message.get_attribute("data-qa"))
     author = message.evaluate(
-        """(el, ownMarker, otherMarker) => {
+        """(el, markers) => {
             for (let node = el; node; node = node.parentElement) {
                 const classes = String(node.className).split(/\\s+/);
-                if (classes.includes(ownMarker)) return 'me';
-                if (classes.includes(otherMarker)) return 'employer';
+                if (classes.includes(markers.own)) return 'me';
+                if (classes.includes(markers.other)) return 'employer';
             }
             return null;
         }""",
-        CHAT_MESSAGE_MY_MARKER,
-        CHAT_MESSAGE_OTHER_MARKER,
+        {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
     )
     return ChatMessage(author, marker)
 
