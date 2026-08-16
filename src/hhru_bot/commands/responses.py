@@ -167,8 +167,12 @@ def run(args: argparse.Namespace) -> None:
                         if test_url is None:
                             continue
                         # resume_id=None: как и responses (см. warn выше),
-                        # /applicant/negotiations не даёт достоверной привязки
-                        # чата к резюме — args.resume здесь ничем не подтверждён.
+                        # args.resume здесь ничем не подтверждён.
+                        # NB (#200): формулировка «привязки не существует»
+                        # опровергнута — SSR topicList[] отдаёт resumeId, и
+                        # topic_refs() его читает (TopicRef.resume_id). Здесь
+                        # он пока не проброшен: это зона #180 (внешние тесты),
+                        # менять её в рамках #200 не стали.
                         history.record_test_assigned(
                             None,
                             card.vacancy_id,

@@ -7,6 +7,7 @@ import pytest
 from hhru_bot.commands import reply_employers as command
 from hhru_bot.history import History
 from hhru_bot.negotiations_chat import ChatMessage
+from hhru_bot.negotiations_probe import TopicRef
 
 
 def _args(**overrides):
@@ -129,9 +130,7 @@ def test_dry_run_prints_plan_and_sends_nothing(tmp_path, monkeypatch, capsys):
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
 
@@ -141,7 +140,7 @@ def test_dry_run_prints_plan_and_sends_nothing(tmp_path, monkeypatch, capsys):
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_boom_send,
     )
@@ -171,19 +170,15 @@ def test_limit_restricts_number_of_chats_processed(tmp_path, monkeypatch, capsys
     _seed_response(history, vacancy_id="1", topic="tp1")
     _seed_response(history, vacancy_id="2", topic="tp2")
 
-    class Ref1:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref1 = TopicRef("tp1", "c1", None, "96223331")
 
-    class Ref2:
-        topic_id = "tp2"
-        chat_id = "c2"
+    Ref2 = TopicRef("tp2", "c2", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref1(), Ref2()],
+        refs=[Ref1, Ref2],
         reader=lambda page, topic, refs: chat,
     )
 
@@ -199,9 +194,7 @@ def test_last_message_from_us_is_skipped_not_sent(tmp_path, monkeypatch, capsys)
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="me", inbound_marker="m1")
 
@@ -211,7 +204,7 @@ def test_last_message_from_us_is_skipped_not_sent(tmp_path, monkeypatch, capsys)
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_boom_send,
     )
@@ -227,11 +220,9 @@ def test_empty_chat_is_skipped(tmp_path, monkeypatch, capsys):
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
-    _patch_common(monkeypatch, history, refs=[Ref()], reader=lambda page, topic, refs: None)
+    _patch_common(monkeypatch, history, refs=[Ref], reader=lambda page, topic, refs: None)
 
     command.run(_args(dry_run=True))
     assert "[FAIL]" in capsys.readouterr().out
@@ -245,9 +236,7 @@ def test_already_replied_marker_is_skipped(tmp_path, monkeypatch, capsys):
     _seed_response(history, vacancy_id="1", topic="tp1")
     history.record_reply("tp1", "m1", vacancy_id="1", status="success", letter_variant=None)
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
 
@@ -257,7 +246,7 @@ def test_already_replied_marker_is_skipped(tmp_path, monkeypatch, capsys):
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_boom_send,
     )
@@ -273,9 +262,7 @@ def test_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys)
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
     sent = {"called": False}
@@ -286,7 +273,7 @@ def test_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys)
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_send,
     )
@@ -300,7 +287,11 @@ def test_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys)
         action = conn.execute(
             "SELECT resume_id, vacancy_id, action, status FROM actions"
         ).fetchone()
-        assert tuple(action) == ("", "1", "reply", "success")
+        # #200: resume_id больше НЕ пустой сентинел — SSR отдаёт topicList[].resumeId,
+        # и он доезжает до аудита. Пустая строка осталась только для случая, когда
+        # hh.ru поле не отдал (см. test_..._without_resume_id_keeps_..._sentinel).
+        assert tuple(action) == ("96223331", "1", "reply", "success")
+        assert conn.execute("SELECT resume_id FROM replies").fetchone()[0] == "96223331"
     # has_replied now blocks a second send to the same inbound message.
     assert history.has_replied("tp1", "m1") is True
 
@@ -309,9 +300,7 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
 
@@ -321,7 +310,7 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_send,
     )
@@ -346,9 +335,7 @@ def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, mon
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     chat = ChatMessage(author="employer", inbound_marker="m1")
     sent = {"called": False}
@@ -359,7 +346,7 @@ def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, mon
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=lambda page, topic, refs: chat,
         send=_send,
         confirmation=False,
@@ -389,9 +376,7 @@ def test_chat_changed_before_send_aborts_without_sending(tmp_path, monkeypatch, 
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     planning_chat = ChatMessage(author="employer", inbound_marker="m1")
     live_chat = ChatMessage(author="me", inbound_marker="m2")
@@ -409,7 +394,7 @@ def test_chat_changed_before_send_aborts_without_sending(tmp_path, monkeypatch, 
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=_reader,
         send=_boom_send,
     )
@@ -441,9 +426,7 @@ def test_successful_send_journals_the_live_marker_not_the_planning_one(
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
-    class Ref:
-        topic_id = "tp1"
-        chat_id = "c1"
+    Ref = TopicRef("tp1", "c1", None, "96223331")
 
     planning_chat = ChatMessage(author="employer", inbound_marker="m1")
     live_chat = ChatMessage(author="employer", inbound_marker="m2")
@@ -459,7 +442,7 @@ def test_successful_send_journals_the_live_marker_not_the_planning_one(
     _patch_common(
         monkeypatch,
         history,
-        refs=[Ref()],
+        refs=[Ref],
         reader=_reader,
         send=_send,
     )
