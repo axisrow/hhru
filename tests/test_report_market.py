@@ -7,7 +7,11 @@ ASCII-таблицу через переиспользуемый report._ascii_t
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.report_market import market_summary
+
+pytestmark = pytest.mark.unit
 
 _NO_EMOJI = set(chr(c) for c in range(0x1F000, 0x1FAFF + 1)) | set(
     chr(c) for c in range(0x2600, 0x27BF + 1)

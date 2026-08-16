@@ -7,6 +7,8 @@ import pytest
 from hhru_bot.commands import clear_negotiations as command
 from hhru_bot.history import History
 
+pytestmark = pytest.mark.integration
+
 
 def _args(**overrides):
     values = dict(

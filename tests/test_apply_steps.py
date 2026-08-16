@@ -20,6 +20,8 @@ from hhru_bot.apply import steps
 from hhru_bot.browser import GOTO_TIMEOUT_MS
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
+pytestmark = pytest.mark.integration
+
 
 class _FakeLocator:
     """Один «элемент»: visible=True → wait_for проходит, False → PlaywrightTimeoutError.

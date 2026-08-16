@@ -8,6 +8,8 @@ import hhru_bot.responses as responses
 from hhru_bot.browser import LOGIN_FORM
 from hhru_bot.selector_groups import negotiations as ns
 
+pytestmark = pytest.mark.integration
+
 
 class _Locator:
     def __init__(

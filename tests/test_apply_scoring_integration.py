@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from hhru_bot.commands import _common
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.config_sections.ai import AiConfig
 from hhru_bot.config_sections.ai_profile import AIProfile
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.unit
 
 
 def _resume_with_profile() -> ResumeConfig:

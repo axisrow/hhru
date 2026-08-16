@@ -7,8 +7,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.commands.search import _format_card_line, _format_salary
 from hhru_bot.search import SalaryInfo, VacancyCard
+
+pytestmark = pytest.mark.integration
 
 
 def _card(salary=None, title="Dev", company="Acme", url="https://hh.ru/vacancy/1"):

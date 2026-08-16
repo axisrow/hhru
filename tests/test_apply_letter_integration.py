@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
+import pytest
+
 from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.commands import _common
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
@@ -19,6 +21,8 @@ from hhru_bot.config_sections.ai_profile import AIProfile
 from hhru_bot.history import History
 from hhru_bot.search import VacancyCard
 from hhru_bot.throttle import Throttle
+
+pytestmark = pytest.mark.integration
 
 
 class _FakeLocator:

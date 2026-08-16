@@ -9,8 +9,12 @@ from __future__ import annotations
 import argparse
 import textwrap
 
+import pytest
+
 from hhru_bot.commands import funnel as funnel_cmd
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.integration
 
 
 def _write_config(tmp_path, body: str):
@@ -104,7 +108,6 @@ def test_funnel_run_resume_filter(capsys, tmp_path):
 
 
 def test_funnel_run_unknown_resume_exits(capsys, tmp_path):
-    import pytest
 
     config = _write_config(tmp_path, _minimal_config())
     with pytest.raises(SystemExit) as exc:

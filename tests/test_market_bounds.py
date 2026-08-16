@@ -14,8 +14,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.history import History
 from hhru_bot.report_market import market_summary
+
+pytestmark = pytest.mark.unit
 
 
 def _seen(

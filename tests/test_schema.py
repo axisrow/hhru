@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from hhru_bot.history import SCHEMA
+
+pytestmark = pytest.mark.unit
 
 
 def test_schema_creates_all_tables():

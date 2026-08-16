@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.unit
 
 # --- upsert ------------------------------------------------------------------
 

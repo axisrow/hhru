@@ -7,7 +7,11 @@ report_funnel.format_funnel / format_dead — отдельный файл от r
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.report_funnel import format_dead, format_funnel
+
+pytestmark = pytest.mark.unit
 
 _NO_EMOJI = set(chr(c) for c in range(0x1F000, 0x1FAFF + 1)) | set(
     chr(c) for c in range(0x2600, 0x27BF + 1)
@@ -88,7 +92,6 @@ def test_format_funnel_shows_zero_conversions_for_dead_resume():
 
 
 def test_format_funnel_unknown_format_raises():
-    import pytest
 
     with pytest.raises(ValueError):
         format_funnel(_filled_funnel(), "csv")  # воронка — только table/md

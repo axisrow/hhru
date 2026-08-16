@@ -19,6 +19,8 @@ from hhru_bot.search import (
     rank_candidates,
 )
 
+pytestmark = pytest.mark.integration
+
 
 class _DelayedCardsLocator:
     """count() видит DOM сейчас, .first.wait_for() — после JS-рендера."""

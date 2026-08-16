@@ -11,7 +11,11 @@ top_tech платит меньше unknown — оценка для top_tech бу
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.unit
 
 
 def _seen(h, vacancy_id, search_query, tier, salary_to):

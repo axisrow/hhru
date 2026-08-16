@@ -21,6 +21,8 @@ from hhru_bot.responses import (
     parse_response_card,
 )
 
+pytestmark = pytest.mark.integration
+
 
 def test_fetch_responses_uses_auth_cookie_not_login_url(monkeypatch):
     from unittest.mock import MagicMock

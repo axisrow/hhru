@@ -16,6 +16,8 @@ import pytest
 
 from hhru_bot.commands import import_cookies as import_cookies_cmd
 
+pytestmark = pytest.mark.integration
+
 
 def _write_config(tmp_path, storage_state: str = "storage_state/hh_session.json") -> str:
     path = tmp_path / "config.yaml"

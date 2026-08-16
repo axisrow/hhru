@@ -9,7 +9,11 @@ from __future__ import annotations
 import csv
 import io
 
+import pytest
+
 from hhru_bot.report import format_actions, format_summary
+
+pytestmark = pytest.mark.unit
 
 _NO_EMOJI = set(
     chr(c)
@@ -172,7 +176,6 @@ def test_format_actions_csv_quotes_comma_in_reason():
 
 
 def test_unknown_format_raises():
-    import pytest
 
     with pytest.raises(ValueError):
         format_summary(_empty_summary(), "xml")  # type: ignore[arg-type]

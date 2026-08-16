@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import success
 from hhru_bot.apply.locators import first_locator
+
+pytestmark = pytest.mark.integration
 
 
 def test_default_confirmation_timeout_is_bounded_and_explicit():

@@ -12,12 +12,15 @@ import json
 from html import escape
 from types import SimpleNamespace
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from _fakes import FakeLocator, _CardLocator, _parse_root, _parse_selector
 from hhru_bot.apply.verify import verify_response_in_negotiations
 from hhru_bot.responses import NEGOTIATIONS_URL
 from hhru_bot.selector_groups import negotiations as ns
+
+pytestmark = pytest.mark.integration
 
 _V1, _V2 = "111111", "222222"
 

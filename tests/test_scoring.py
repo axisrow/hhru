@@ -16,6 +16,8 @@ from hhru_bot.config import ConfigError, ResumeConfig, SearchFilters, load_confi
 from hhru_bot.config_sections.scoring import ScoringConfig, ScoringWeights
 from hhru_bot.search import VacancyCard, rank_candidates
 
+pytestmark = pytest.mark.unit
+
 
 def card(vacancy_id: str, title: str = "T", company: str = "C"):
     return VacancyCard(

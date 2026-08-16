@@ -9,12 +9,16 @@ hermes-зависимостей — чистая функция, тестиру�
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.ai.runtime_provider import (
     API_KEY_ENV_VAR,
     DEFAULT_API_MODE,
     resolve_runtime_provider,
 )
 from hhru_bot.config_sections.ai import AiConfig
+
+pytestmark = pytest.mark.unit
 
 
 def _cfg():

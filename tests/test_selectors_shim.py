@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot import selectors as sel
 from hhru_bot.selector_groups import apply_form, resume_page, search_page, vacancy_page
+
+pytestmark = pytest.mark.unit
 
 
 def test_shim_reexports_all_old_names():

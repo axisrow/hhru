@@ -21,6 +21,8 @@ from hhru_bot.config import (
 )
 from hhru_bot.config_sections.ai_profile import AIProfile
 
+pytestmark = pytest.mark.unit
+
 
 def _write_config(tmp_path, body: str):
     path = tmp_path / "config.yaml"

@@ -20,6 +20,8 @@ from _fakes import FakeLocator, _parse_root, _parse_selector
 from hhru_bot import selectors as sel
 from hhru_bot.search import VacancySearchIndeterminate, _has_next_page
 
+pytestmark = pytest.mark.integration
+
 
 class _FakePage:
     """Минимальный Playwright-Page: только locator(selector) над статичным DOM."""

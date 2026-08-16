@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import hhru_bot.apply.probe as probe_module
 from hhru_bot.apply.probe import ProbeContext, dump_probe_snapshot, probe_vacancy
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.integration
 
 
 class _FakeLocator:

@@ -10,6 +10,8 @@ from hhru_bot.negotiations_probe import (
 )
 from hhru_bot.responses import NotAuthenticated
 
+pytestmark = pytest.mark.integration
+
 
 def test_topic_refs_read_ssr_state_without_page_actions():
     html = """

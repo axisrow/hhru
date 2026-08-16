@@ -15,11 +15,15 @@ import json
 from html import escape
 from types import SimpleNamespace
 
+import pytest
+
 import hhru_bot.copy_resume as cr
 from hhru_bot.selector_groups.resume_list import (
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_TITLE,
 )
+
+pytestmark = pytest.mark.integration
 
 ID_A = "a" * 38
 ID_B = "b" * 38
@@ -211,8 +215,6 @@ def test_timeout_raises_indeterminate_not_empty_list(monkeypatch):
     неопределённость за факт "резюме нет"."""
     page = StubPage([])  # без delayed_cards: wait_for кидает TimeoutError
     _patch_goto(monkeypatch, page)
-
-    import pytest
 
     with pytest.raises(cr.ResumeListIndeterminate):
         cr.list_resume_cards(page)

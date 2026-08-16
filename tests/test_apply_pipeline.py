@@ -7,9 +7,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.integration
 
 
 class _FakeLocator:

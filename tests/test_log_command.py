@@ -18,6 +18,8 @@ from hhru_bot import logging_setup
 from hhru_bot.commands import log_cmd
 from hhru_bot.commands.log_cmd import follow, tail_lines
 
+pytestmark = pytest.mark.integration
+
 
 def _log_file(tmp_path: Path, lines: list[str]) -> Path:
     path = tmp_path / "hhru_bot.log"

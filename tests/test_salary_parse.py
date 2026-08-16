@@ -15,6 +15,8 @@ import pytest
 
 from hhru_bot.search import SalaryInfo, parse_salary
 
+pytestmark = pytest.mark.unit
+
 # --- отсутствие зарплаты ----------------------------------------------------
 
 

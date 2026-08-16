@@ -29,6 +29,8 @@ from hhru_bot.apply.letter import (
 )
 from hhru_bot.search import VacancyCard
 
+pytestmark = pytest.mark.unit
+
 _GREETINGS = ["Привет", "Здравствуйте", "Добрый день"]
 
 

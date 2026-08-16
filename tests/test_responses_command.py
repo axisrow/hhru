@@ -19,6 +19,8 @@ import pytest
 from hhru_bot.commands import responses as responses_cmd
 from hhru_bot.history import History
 
+pytestmark = pytest.mark.integration
+
 
 def _write_config(tmp_path, body: str):
     path = tmp_path / "config.yaml"
