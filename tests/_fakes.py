@@ -40,16 +40,19 @@ class _DOMNode:
         self.children: list[_DOMNode] = []
         self.text = ""
 
-    def find_all(self, tag: str | None, qa: tuple[str, str] | str | None) -> list[_DOMNode]:
+    def find_all(self, tag: str | None, qa) -> list[_DOMNode]:  # noqa: ANN001
         out: list[_DOMNode] = []
         for child in self.children:
             qa_value = child.attrs.get("data-qa", "")
-            qa_match = qa is None or (
-                qa_value == qa
-                if isinstance(qa, str)
-                else (qa[0] == "=" and qa_value == qa[1])
-                or (qa[0] == "^=" and qa_value.startswith(qa[1]))
-            )
+            if callable(qa):
+                qa_match = qa(qa_value)
+            else:
+                qa_match = qa is None or (
+                    qa_value == qa
+                    if isinstance(qa, str)
+                    else (qa[0] == "=" and qa_value == qa[1])
+                    or (qa[0] == "^=" and qa_value.startswith(qa[1]))
+                )
             if (tag is None or child.tag == tag) and qa_match:
                 out.append(child)
             out.extend(child.find_all(tag, qa))
@@ -119,7 +122,9 @@ class FakeLocator:
 
     def _resolved(self) -> list[_DOMNode]:
         if self._matches is None:
-            if self._qa and len(self._qa) == 3:
+            if callable(self._qa):
+                self._matches = self._root.find_all(tag=None, qa=self._qa)
+            elif self._qa and len(self._qa) == 3:
                 tag, _, needle = self._qa
                 self._matches = [
                     n
