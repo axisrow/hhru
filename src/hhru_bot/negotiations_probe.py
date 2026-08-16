@@ -16,6 +16,7 @@ _STATE_RE = re.compile(
 class TopicRef:
     topic_id: str
     chat_id: str
+    vacancy_id: str | None = None
 
 
 def parse_initial_state(html: str) -> dict:
@@ -30,9 +31,11 @@ def topic_refs(html: str) -> list[TopicRef]:
     """Return the topic/chat mapping rendered in the negotiations SSR state."""
     topics = parse_initial_state(html).get("applicantNegotiations", {}).get("topicList", [])
     return [
-        TopicRef(str(topic["id"]), str(topic["chatId"]))
+        TopicRef(str(topic["id"]), str(topic["chatId"]), str(topic["vacancyId"]))
         for topic in topics
-        if topic.get("id") is not None and topic.get("chatId") is not None
+        if topic.get("id") is not None
+        and topic.get("chatId") is not None
+        and topic.get("vacancyId") is not None
     ]
 
 

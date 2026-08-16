@@ -17,6 +17,7 @@ bump, не к чтению списка); истёкшая сессия (ред�
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -363,6 +364,27 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 )
                 continue
             results.append(item)
+
+        # The live open_chat control is a button without href.  Recover the
+        # stable topic from the same page's SSR state, preserving distinct
+        # negotiations for one vacancy.
+        try:
+            from .negotiations_probe import chat_url, topic_refs
+
+            if not hasattr(page, "content"):
+                raise ValueError("page.content unavailable")
+            refs = topic_refs(page.content())
+            refs_by_vacancy: dict[str, list] = {}
+            for ref in refs:
+                refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
+            for result in results[-count:]:
+                candidates = refs_by_vacancy.get(result.vacancy_id, [])
+                if result.topic is None and candidates:
+                    ref = candidates.pop(0)
+                    result.topic = ref.topic_id
+                    result.chat_url = chat_url(ref.chat_id)
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 
         if not _has_next_page(page, page_num):
             logger.info("Достигнута последняя страница откликов (%d)", page_num)
