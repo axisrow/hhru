@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 import sys
-from contextlib import contextmanager
 from pathlib import Path
 
+import playwright.sync_api
 import pytest
 
 from hhru_bot import logging_setup
@@ -17,40 +17,47 @@ from hhru_bot.apply import probe
 from hhru_bot.apply import steps as apply_steps
 from hhru_bot.commands import log_cmd
 
+_LIVE_MARKERS = ("live_read", "live_write", "live_write_danger")
+
+_BLOCKED_MESSAGE = (
+    "Playwright заблокирован: тест должен использовать моки; "
+    "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
+)
+
 
 @pytest.fixture(autouse=True)
 def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Не позволяет обычным тестам случайно выйти в браузер и сеть."""
-    if any(
-        request.node.get_closest_marker(marker)
-        for marker in ("live_read", "live_write", "live_write_danger")
-    ):
+    """Не позволяет обычным тестам случайно выйти в браузер и сеть.
+
+    Перехват стоит на `sync_playwright` — единственной фактической двери к движку
+    Playwright, а не на обёртке `launch_context`. Это принципиально: обёрток
+    несколько (`browser.launch_context` и прямой `sync_playwright()` в `auth.login`),
+    и патч по обёрткам оставлял `auth` полностью открытым. Кроме того, ссылку на
+    саму `launch_context`, захваченную на импорте модуля теста
+    (`from hhru_bot.browser import launch_context` в шапке файла), autouse-фикстура
+    догнать не может — она выполняется позже импорта. Ссылку на `sync_playwright`
+    захватывать бессмысленно: тело обёртки всё равно читает атрибут модуля в
+    момент вызова.
+
+    Тесту, подменившему `sync_playwright` своим моком (см. test_browser_navigation),
+    фикстура не мешает: его monkeypatch накладывается поверх заглушки и настоящий
+    движок остаётся недостижим в любом случае. Раньше такая подмена, наоборот,
+    ОТКРЫВАЛА проход к настоящему `launch_context`.
+    """
+    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
         return
 
-    import hhru_bot.browser as browser
+    real_sync_playwright = playwright.sync_api.sync_playwright
 
-    real_launch_context = browser.launch_context
-    real_sync_playwright = browser.sync_playwright
-
-    @contextmanager
-    def _blocked_launch_context(*args: object, **kwargs: object):
-        # Разрешаем только тесту, явно подменившему сам Playwright (например,
-        # test_browser_navigation); настоящий движок остаётся закрыт.
-        if browser.sync_playwright is not real_sync_playwright:
-            with real_launch_context(*args, **kwargs) as context:
-                yield context
-            return
-        raise RuntimeError(
-            "launch_context заблокирован: тест должен использовать моки; "
-            "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
-        )
+    def _blocked_sync_playwright(*args: object, **kwargs: object):
+        raise RuntimeError(_BLOCKED_MESSAGE)
 
     for module in tuple(sys.modules.values()):
-        if module is None or module is browser:
+        if module is None:
             continue
-        if getattr(module, "launch_context", None) is real_launch_context:
-            monkeypatch.setattr(module, "launch_context", _blocked_launch_context)
-    monkeypatch.setattr(browser, "launch_context", _blocked_launch_context)
+        if getattr(module, "sync_playwright", None) is real_sync_playwright:
+            monkeypatch.setattr(module, "sync_playwright", _blocked_sync_playwright)
+    monkeypatch.setattr(playwright.sync_api, "sync_playwright", _blocked_sync_playwright)
 
 
 @pytest.fixture(autouse=True)
