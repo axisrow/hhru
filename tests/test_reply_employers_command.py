@@ -6,7 +6,7 @@ import pytest
 
 from hhru_bot.commands import reply_employers as command
 from hhru_bot.history import History
-from hhru_bot.negotiations_chat import ChatMessage
+from hhru_bot.negotiations_chat import ChatMessage, NoReplyForm
 from hhru_bot.negotiations_probe import TopicRef
 
 
@@ -297,6 +297,9 @@ def test_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys)
 
 
 def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
+    """NoReplyForm is a pre-action guard — send_reply_current raises it before
+    any DOM interaction (fill/click), so hh.ru sees no trace and retry is safe.
+    """
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
 
@@ -305,7 +308,7 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
     chat = ChatMessage(author="employer", inbound_marker="m1")
 
     def _send(page, text):
-        raise RuntimeError("не удалось однозначно найти форму ответа в чате")
+        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
 
     _patch_common(
         monkeypatch,
@@ -321,6 +324,45 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
         row = conn.execute("SELECT status FROM replies").fetchone()
         assert row[0] == "failed"
     # A failed send does not count as replied — retry must remain possible.
+    assert history.has_replied("tp1", "m1") is False
+
+
+# --- Codex review (#201): exception after click begins is uncertain --------
+
+
+def test_send_exception_after_click_is_recorded_as_uncertain(tmp_path, monkeypatch, capsys):
+    """Any exception other than NoReplyForm means fill()/click() may already
+    have run — the message could have reached hh.ru despite the exception.
+    fail-closed: status='uncertain' (not deduplicating), never 'failed'
+    (which would let a later run silently resend on top of a delivered
+    message), by analogy with apply/bump (#176).
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise TimeoutError("network hiccup after click().click()")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
+    with history._connect() as conn:
+        row = conn.execute("SELECT status FROM replies").fetchone()
+        assert row[0] == "uncertain"
+    # Not journaled as replied — retry must remain possible.
     assert history.has_replied("tp1", "m1") is False
 
 

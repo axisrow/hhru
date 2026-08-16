@@ -518,6 +518,11 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             items.first.wait_for(state="attached", timeout=10_000)
         except PlaywrightError:
             logger.warning("negotiations: cards did not attach within 10 seconds")
+        # /review (#201): paginated_topic_refs() re-navigates page 0 with its
+        # own goto_hh() call, so the DOM state just waited on above is
+        # discarded and re-fetched. Both requests hit the same GET URL and
+        # probe is read-only, so this is a harmless extra round-trip, not a
+        # correctness issue — left as-is rather than special-casing page 0.
         try:
             refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:

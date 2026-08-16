@@ -50,6 +50,7 @@ def run(args: argparse.Namespace) -> None:
     from ..config import load_config_or_exit
     from ..history import History
     from ..negotiations_chat import (
+        NoReplyForm,
         needs_reply,
         read_chat,
         send_reply_current,
@@ -154,13 +155,30 @@ def run(args: argparse.Namespace) -> None:
                 inbound_marker = live_chat.inbound_marker or ""
                 try:
                     send_reply_current(page, letter)
+                except NoReplyForm as exc:
+                    # Форма не найдена ДО какого-либо взаимодействия с DOM —
+                    # чистый pre-action early-exit, на hh.ru следа нет.
+                    reason = f"отправка не выполнена: {exc}"
+                    status = "failed"
+                    print(f"[FAIL] {label} — {reason}")
+                except Exception as exc:
+                    # Исключение уже ПОСЛЕ начала клика (Codex #201, по
+                    # аналогии с #176 в apply/bump): fill()/click() могли
+                    # частично выполниться и сообщение — уйти на hh.ru,
+                    # несмотря на исключение. fail-closed в сторону «действие
+                    # могло случиться»: status='uncertain' (не дедуплицирует
+                    # has_replied), а не 'failed' (который бы разрешил тихий
+                    # повторный retry поверх реально ушедшего сообщения).
+                    reason = f"клик выполнен, исход неопределён: {exc}"
+                    status = "uncertain"
+                    print(f"[FAIL] {label} — {reason}")
+                else:
                     # Клик мог не дойти (отклонение сервером, сетевой сбой) —
                     # success пишем только по позитивному подтверждению
                     # (последнее сообщение в чате стало нашим), как в
                     # apply/success.py (#7): таймаут не даёт false-positive
                     # success, но после состоявшегося клика фиксируется как
                     # uncertain, а не как безопасный для retry failed.
-                    #
                     if wait_reply_confirmation(page):
                         status = "success"
                         reason = None
@@ -173,9 +191,6 @@ def run(args: argparse.Namespace) -> None:
                         # making has_replied deduplicate it.
                         status = "uncertain"
                         print(f"[FAIL] {label} — {reason}")
-                except Exception as exc:
-                    reason = f"отправка не подтверждена: {exc}"
-                    print(f"[FAIL] {label} — {reason}")
                 finally:
                     throttle.wait(f"после ответа в чате {topic}")
             history.record_reply_and_action(
