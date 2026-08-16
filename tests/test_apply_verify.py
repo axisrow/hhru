@@ -328,8 +328,6 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
         return NegotiationsVerifyResult("found", "topic=1")
 
     monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
-    # Дампы form_timeout не должны писать в реальный data/logs.
-    monkeypatch.setattr("hhru_bot.apply.steps.LOG_DIR", tmp_path)
 
     resume = ResumeConfig(
         id="python",
