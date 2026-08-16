@@ -141,6 +141,24 @@ def test_funnel_offer_counted_from_mark(tmp_path):
     # кумулятивно: offer → и viewed, и invited тоже
     assert row["viewed"] == 1
     assert row["invited"] == 1
+    # РЕГРЕССИЯ (#112 review, cycle 3): offer ⊆ replied тоже, даже когда оффер
+    # пришёл через ручную пометку mark_offer без залогированного replies-ответа.
+    assert row["replied"] == 1
+
+
+def test_funnel_offer_via_responses_counts_as_replied_without_logged_reply(tmp_path):
+    """РЕГРЕССИЯ (#112 review, cycle 3): responses.status='offer' без replies-строки.
+
+    Оффер физически невозможен без нашего ответа работодателю, даже если сам
+    факт ответа не попал в локальный журнал replies (сбой логирования,
+    ответили не через бота). offer=1 должен подразумевать replied=1."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.upsert_response("v1", "Acme", "offer", "/chat/1", topic="t1")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["offer"] == 1
+    assert row["replied"] == 1
 
 
 def test_funnel_multi_topic_vacancy_no_inflation(tmp_path):
@@ -296,3 +314,41 @@ def test_mark_offer_creates_record_even_without_action(tmp_path):
             ("r1", "v1"),
         ).fetchone()
     assert row is not None
+
+
+def test_funnel_counts_successful_reply_by_response_topic(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+    h.upsert_response("v1", "Acme", "invitation", "/chat/1", topic="t1")
+    h.upsert_response("v2", "Acme", "invitation", "/chat/2", topic="t2")
+    h.record_reply("t1", "m1", status="success")
+    h.record_reply("t2", "m2", status="dry_run")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["invited"] == 2
+    assert row["replied"] == 1
+    assert row["reply_rate"] == 50.0
+
+
+def test_funnel_reply_rate_cannot_exceed_invited_count(tmp_path):
+    """reply_rate не должен превышать 100% (#112 review, cycle 2).
+
+    replied должен быть подмножеством invited: успешный ответ на переписку,
+    НЕ дошедшую до приглашения (status='read'/'response'), не должен
+    засчитываться в replied — иначе replied может превысить invited и
+    reply_rate станет невалидным (>100%)."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "vA", "apply", "success")
+    h.record_action("r1", "vB", "apply", "success")
+    h.record_action("r1", "vC", "apply", "success")
+    h.upsert_response("vA", "Acme", "invitation", "/chat/a", topic="tA")
+    h.upsert_response("vB", "Acme", "read", "/chat/b", topic="tB")
+    h.upsert_response("vC", "Acme", "response", "/chat/c", topic="tC")
+    h.record_reply("tB", "m-b", status="success")
+    h.record_reply("tC", "m-c", status="success")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["invited"] == 1
+    assert row["replied"] == 0
+    assert row["reply_rate"] <= 100.0

@@ -47,7 +47,7 @@ def run(args: argparse.Namespace) -> None:
 
     from ..config import ConfigError, load_config_or_exit
     from ..history import History
-    from ..report import format_actions, format_summary
+    from ..report import format_actions, format_replies, format_summary
 
     # --resume получает slug из конфига (resume.id), но история apply/bump
     # хранится под resume.resume_id (стабильный числовой id hh.ru — см. #2).
@@ -70,3 +70,14 @@ def run(args: argparse.Namespace) -> None:
     else:
         summary = history.summary(resume_id=resume_id, period=args.period)
         print(format_summary(summary, args.format))
+        # CSV — экспорт для машин: один документ, одна схема колонок (см. #112
+        # ревью). Reply-сводка имеет другую схему (metric,value), поэтому в csv
+        # её печатать вторым документом в тот же stdout-поток нельзя — консьюмер,
+        # парсящий вывод одним csv.reader, получит смешение схем. Показываем её
+        # только в человекочитаемых форматах.
+        if args.format != "csv":
+            print(
+                format_replies(
+                    history.reply_summary(resume_id=resume_id, period=args.period), args.format
+                )
+            )

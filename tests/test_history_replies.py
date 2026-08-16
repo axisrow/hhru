@@ -316,6 +316,40 @@ def test_record_reply_accepts_known_statuses(tmp_path):
     assert len(h.replies_since(datetime(2000, 1, 1))) == len(REPLY_STATUS_VALUES)
 
 
+def test_reply_summary_excludes_dry_run_and_groups_variants(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_reply("t1", "m1", status="success", letter_variant="template")
+    h.record_reply("t2", "m2", status="success", letter_variant="ai")
+    h.record_reply("t3", "m3", status="dry_run", letter_variant="ai")
+    h.record_reply("t4", "m4", status="failed", letter_variant="template")
+
+    summary = h.reply_summary(None, "all")
+    assert summary["total"] == 2
+    assert summary["period"] == {"success": 2, "failed": 1}
+    assert summary["letter_variants"] == {"ai": 1, "template": 1}
+
+
+def test_reply_summary_total_respects_period_like_summary_does(tmp_path):
+    """total должен уважать --period так же, как соседний summary().total (#112 review).
+
+    Старая (400 дней назад) и свежая успешные записи: period='today' должен
+    видеть только свежую и в total, и в period.success — иначе «Всего
+    отправлено» вводит в заблуждение рядом со «За период» на том же экране."""
+    h = History(tmp_path / "h.db")
+    old_ts = (datetime.now() - timedelta(days=400)).isoformat()
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO replies (topic, inbound_marker, status, created_at) "
+            "VALUES (?, ?, 'success', ?)",
+            ("t-old", "m-old", old_ts),
+        )
+    h.record_reply("t-new", "m-new", status="success")
+
+    summary = h.reply_summary(None, "today")
+    assert summary["total"] == 1
+    assert summary["period"]["success"] == 1
+
+
 def test_reply_status_values_match_actions_vocabulary():
     # Словарь тот же, что у actions (#55): без новых состояний.
     assert set(REPLY_STATUS_VALUES) == {"success", "failed", "dry_run"}
