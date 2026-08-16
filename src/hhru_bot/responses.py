@@ -425,6 +425,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 topic_id, chat_id = refs[ref_index]
                 item.topic = topic_id
                 item.chat_url = f"https://chatik.hh.ru/chat/{chat_id}"
+            elif item.topic is None and has_chat_link:
+                raise ResponsesIndeterminate(
+                    f"карточка вакансии {item.vacancy_id} содержит чат без "
+                    "подтверждённого topic в SSR-состоянии"
+                )
             results.append(item)
 
         if not _has_next_page(page, page_num):
