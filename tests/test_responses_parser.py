@@ -168,6 +168,26 @@ def test_topic_refs_by_vacancy_ignores_malformed_ssr_shapes(state):
     assert _topic_refs_by_vacancy(html) == {}
 
 
+def test_topic_refs_by_vacancy_warns_when_entries_lack_vacancy_id(caplog):
+    """#185 follow-up: negotiations_probe.topic_refs() doesn't require vacancyId.
+
+    If the live topicList ever matches that (older/simpler) shape instead of
+    the one this parser assumes, every entry is silently dropped and every
+    chat-having card fails closed with no diagnostic — this must at least log
+    a distinguishable warning instead of looking identical to "no topics at all".
+    """
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456}
+      ]}}
+    </template>
+    """
+    with caplog.at_level("WARNING"):
+        assert _topic_refs_by_vacancy(html) == {}
+    assert "vacancyId" in caplog.text
+
+
 # --- parse_response_card на HTML-фикстуре -----------------------------------
 #
 # Фикстура повторяет структуру карточки /applicant/negotiations по data-qa из

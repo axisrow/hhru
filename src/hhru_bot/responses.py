@@ -210,6 +210,7 @@ def _topic_refs_by_vacancy(html: str) -> dict[str, list[tuple[str, str]]]:
     if not isinstance(topics, list):
         return {}
     refs: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    dropped_without_vacancy_id = 0
     for topic in topics:
         if not isinstance(topic, Mapping):
             continue
@@ -218,6 +219,19 @@ def _topic_refs_by_vacancy(html: str) -> dict[str, list[tuple[str, str]]]:
         chat_id = topic.get("chatId")
         if vacancy_id is not None and topic_id is not None and chat_id is not None:
             refs[str(vacancy_id)].append((str(topic_id), str(chat_id)))
+        elif vacancy_id is None and topic_id is not None and chat_id is not None:
+            dropped_without_vacancy_id += 1
+    if dropped_without_vacancy_id and not refs:
+        # negotiations_probe.topic_refs() (the project's other SSR topicList
+        # reader) only requires id/chatId, not vacancyId — if the live state
+        # ever omits vacancyId, every entry is silently dropped here and every
+        # chat-having card fails closed with no clue why. This is that signal.
+        logger.warning(
+            "SSR topicList: %d записей без vacancyId — если это не разовая "
+            "аномалия, схема topicList разошлась с ожидаемой (см. "
+            "_topic_refs_by_vacancy vs negotiations_probe.topic_refs)",
+            dropped_without_vacancy_id,
+        )
     return dict(refs)
 
 
@@ -427,6 +441,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 raise ResponsesIndeterminate(
                     f"карточки вакансии {item.vacancy_id} не имеют однозначного "
                     "соответствия topic в SSR-состоянии"
+                )
+            # Equal counts alone don't prove DOM card order matches SSR topicList
+            # order — nothing cross-checks a card against its ref beyond position.
+            # Resolving positionally for >1 chat-having card of the same vacancy
+            # risks silently attaching the wrong topic/chat_url; only the
+            # unambiguous 1-card/1-ref case is safe to pair automatically.
+            if has_chat_link and chat_counts[item.vacancy_id] > 1:
+                raise ResponsesIndeterminate(
+                    f"карточки вакансии {item.vacancy_id} не имеют однозначного "
+                    "позиционного соответствия topic в SSR-состоянии"
                 )
             if item.topic is None and has_chat_link:
                 ref_index = topic_seen[item.vacancy_id]

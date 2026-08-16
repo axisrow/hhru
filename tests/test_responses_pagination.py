@@ -243,6 +243,38 @@ def test_fetch_responses_fails_closed_for_chat_without_ssr_ref(monkeypatch):
         responses.fetch_responses(page, max_pages=1)
 
 
+def test_fetch_responses_fails_closed_for_multi_card_same_vacancy_pairing(monkeypatch):
+    """#185 follow-up: equal counts alone don't prove DOM/SSR order correspondence.
+
+    Two chat-having cards for the same vacancy plus two SSR refs pass the
+    count-equality guard, but nothing verifies the cards are paired to the
+    *right* SSR entries — positional (FIFO) pairing could silently attach the
+    wrong topic/chat_url. Must fail closed instead of guessing.
+    """
+    page = _ResponsesPage([_ResponseCard(has_chat=True), _ResponseCard(has_chat=True)])
+    page.ssr_html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":42},
+        {"id":124,"chatId":457,"vacancyId":42}
+      ]}}
+    </template>
+    """
+    items = iter(
+        [
+            responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ),
+            responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.INVITATION),
+        ]
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: next(items))
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="однозначного"):
+        responses.fetch_responses(page, max_pages=1)
+
+
 def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):
     page = _ResponsesPage([])
     monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
