@@ -140,7 +140,10 @@ def _scan_negotiations(
     """Сканирует страницу 0 (+ следующую при подтверждённой пагинации).
 
     Возвращает (detail найденной темы | None, было ли чистое чтение,
-    описание проблемы чтения | None).
+    описание проблемы чтения | None). Чистое чтение — только когда НИ ОДНА
+    страница не дала проблему: если какая-то страница не загрузилась или
+    карточка не прочиталась, отсутствие целевой вакансии не подтверждаем
+    (она могла быть на непрочитанной странице) — иначе ложный not_found.
     """
     clean = False
     problem: str | None = None
@@ -159,7 +162,7 @@ def _scan_negotiations(
         clean = clean or page_clean
         if not _has_next_page_confirmed(page, page_num):
             break
-    return None, clean, problem
+    return None, clean and not problem, problem
 
 
 def _scan_single_page(
@@ -179,10 +182,15 @@ def _scan_single_page(
                     # подтверждение apply с текущего: продолжаем искать тему
                     # с совпадающим resumeId (иначе ложный success, #207).
                     continue
-                return _describe_topic(topic, resume_id), True, None
+                return _describe_topic(topic), True, None
         return None, True, None
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
     if wanted in dom_ids:
+        if resume_id is not None:
+            # DOM-карточка не несёт resumeId — не можем атрибутировать отклик
+            # к текущему резюме: он мог уйти с ДРУГОГО. Fail-closed
+            # indeterminate, а не ложный success (как SSR-путь, #207).
+            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён"
         return "DOM-карточка списка (SSR-состояние недоступно)", True, None
     if cards_seen:
         return None, True, None
@@ -204,13 +212,11 @@ def _is_foreign_resume(topic: dict[str, Any], resume_id: str | None) -> bool:
     return str(topic_resume) != str(resume_id)
 
 
-def _describe_topic(topic: dict[str, Any], resume_id: str | None) -> str:
+def _describe_topic(topic: dict[str, Any]) -> str:
     detail = f"topic={topic.get('id')}" if topic.get("id") is not None else "topic=?"
     topic_resume = topic.get("resumeId")
     if topic_resume is not None:
         detail += f", resumeId={topic_resume}"
-        if resume_id and str(topic_resume) != str(resume_id):
-            detail += " (отклик ушёл с ДРУГОГО резюме)"
     return detail
 
 
@@ -237,23 +243,30 @@ def _ssr_topic_list(html: str) -> list[dict[str, Any]] | None:
 
 
 def _read_dom_vacancy_ids(page: Page) -> tuple[set[str], bool]:
-    """vacancy_id DOM-карточек; bool — подтверждён ли рендер карточек."""
+    """vacancy_id DOM-карточек; bool — подтверждён ли рендер карточек.
+
+    bool=True только при ПОЛНОМ чтении всех карточек. Непрочитавшаяся карточка
+    (parse_response_card → None) или PlaywrightError посреди итерации — скан
+    неполный: целевая вакансия могла быть в непрочитанной карточке, поэтому
+    отсутствие не подтверждаем (иначе ложный not_found, #207).
+    """
     cards = page.locator(ns.NEGOTIATION_ITEM)
     try:
         cards.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
     except PlaywrightError:
         return set(), False
     ids: set[str] = set()
+    clean = True
     try:
         for i in range(cards.count()):
             item = parse_response_card(cards.nth(i))
-            if item is not None:
-                ids.add(item.vacancy_id)
+            if item is None:
+                clean = False
+                continue
+            ids.add(item.vacancy_id)
     except PlaywrightError:
-        # Карточки есть (рендер подтверждён) — непрочитавшаяся часть не отменяет
-        # чистоту чтения, но и не должна ронять проверку целиком.
-        return ids, True
-    return ids, True
+        return ids, False
+    return ids, clean
 
 
 def _has_next_page_confirmed(page: Page, page_num: int) -> bool:

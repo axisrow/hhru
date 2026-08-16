@@ -266,6 +266,55 @@ def test_indeterminate_when_vacancy_id_unknown():
     assert "vacancy_id" in result.detail
 
 
+def test_dom_fallback_with_resume_id_is_indeterminate():
+    # DOM-карточка не несёт resumeId — при заданном resume_id не можем
+    # атрибутировать отклик к текущему резюме: fail-closed indeterminate,
+    # а не ложный success (как SSR-путь, #207).
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: _DOM_HTML})
+    result = verify_response_in_negotiations(page, _V1, resume_id="R2")
+    assert result.indeterminate
+    assert "атрибуци" in result.detail
+
+
+def test_indeterminate_when_dom_card_unparseable():
+    # Одна карточка не прочиталась (нет vacancy-ссылки) — отсутствие целевой
+    # вакансии не подтверждаем: она могла быть в непрочитанной карточке
+    # (иначе ложный not_found, #207).
+    html = """
+    <div data-qa="negotiations-item">
+      <a href="/vacancy/999999"><span data-qa="negotiations-item-vacancy">Go</span></a>
+    </div>
+    <div data-qa="negotiations-item">
+      <span data-qa="negotiations-item-vacancy">No link</span>
+    </div>
+    """
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: html})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
+
+
+class _Page1FailsPage(FakeNegotiationsPage):
+    """Страница 0 грузится, переход на страницу 1 падает (goto_hh ретраит и
+    пробрасывает PlaywrightError на последней попытке)."""
+
+    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+        self.goto_calls.append(url)
+        if "?page=1" in url:
+            raise PlaywrightError("net::ERR_TIMED_OUT")
+        self._html = self._pages.get(url, "")
+
+
+def test_indeterminate_when_page1_goto_fails():
+    # Страница 0 прочитана чисто (вакансии нет), но переход на страницу 1 упал —
+    # отсутствие не подтверждаем: свежий отклик мог быть на непрочитанной
+    # странице 1 (предположение «свежий отклик на странице 0» не гарантировано).
+    page0 = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
+    page = _Page1FailsPage({NEGOTIATIONS_URL: page0})
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.indeterminate
+    assert "goto" in result.detail
+
+
 # --- проводка: run_apply_for_resume передаёт реальный верификатор ------------
 
 
