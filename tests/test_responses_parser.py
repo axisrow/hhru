@@ -147,28 +147,28 @@ def test_extract_topic_none_when_absent():
 # Фикстура повторяет структуру карточки /applicant/negotiations по data-qa из
 # selector_groups/negotiations.py. Реальный DOM hh.ru сверяется вручную (см.
 # модуль селекторов — НЕ подтверждено), но парсер детерминирован на этой разметке:
-# data-qa вакансия/работодатель/статус/чат-ссылка → ResponseItem.
+# data-qa/href вакансии/работодателя/статуса/чата → ResponseItem.
 
 _NEGOTIATIONS_HTML = """
 <div data-qa="negotiations-item">
-  <a data-qa="negotiations-item__vacancy-link" href="/vacancy/111111?from=responses">Python Developer</a>
-  <span data-qa="negotiations-item__employer">ACME Corp</span>
-  <span data-qa="negotiations-item__state">Приглашение</span>
-  <span data-qa="negotiations-item__date">сегодня, 14:05</span>
-  <a data-qa="negotiations-item__messages-link" href="/applicant/negotiations?topic=1">Чат</a>
+  <a href="/vacancy/111111?from=responses"><span data-qa="negotiations-item-vacancy">Python Developer</span></a>
+  <div data-qa="negotiations-item-company">ACME Corp</div>
+  <span data-qa="negotiations-tag negotiations-item-not-viewed">Приглашение</span>
+  <div data-qa="negotiations-item-date">сегодня, 14:05</div>
+  <button data-qa="open_chat">Чат</button>
 </div>
 <div data-qa="negotiations-item">
-  <a data-qa="negotiations-item__vacancy-link" href="/applicant/vacancy/222222">Backend Engineer</a>
-  <span data-qa="negotiations-item__employer">Beta LLC</span>
-  <span data-qa="negotiations-item__state">Отказ</span>
+  <a href="/applicant/vacancy/222222"><span data-qa="negotiations-item-vacancy">Backend Engineer</span></a>
+  <div data-qa="negotiations-item-company">Beta LLC</div>
+  <span data-qa="negotiations-tag negotiations-item-viewed">Отказ</span>
 </div>
 <div data-qa="negotiations-item">
-  <a data-qa="negotiations-item__vacancy-link" href="/vacancy/333333">Data Analyst</a>
+  <a href="/vacancy/333333"><span data-qa="negotiations-item-vacancy">Data Analyst</span></a>
   <!-- работодатель скрыт hh.ru, статуса-бейджа нет (свежий отклик без ответа) -->
 </div>
 <div data-qa="negotiations-item">
   <!-- битая карточка: нет ссылки вакансии -->
-  <span data-qa="negotiations-item__state">Прочитано</span>
+  <span data-qa="negotiations-tag negotiations-item-viewed">Прочитано</span>
 </div>
 """
 
@@ -182,10 +182,10 @@ def test_parse_response_card_invitation():
     assert item.employer == "ACME Corp"
     assert item.status == ResponseStatus.INVITATION
     assert item.raw_status == "Приглашение"
-    # chat_url СОХРАНЯЕТ query (topic=1): без него ссылка ведёт в общий список,
-    # а не в конкретную переписку (регрессия: раньше _absolute_url срезал query).
-    assert item.chat_url == "https://hh.ru/applicant/negotiations?topic=1"
-    assert item.topic == "1"  # идентификатор переписки извлечён из chat_url
+    # В актуальном DOM open_chat — button без href/topic. Парсер честно
+    # использует fallback на вакансию, не выдумывая идентификатор чата.
+    assert item.chat_url == "https://hh.ru/vacancy/111111"
+    assert item.topic is None
     assert item.date == "сегодня, 14:05"
 
 
