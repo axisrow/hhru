@@ -57,6 +57,7 @@ def run(args: argparse.Namespace) -> None:
         wait_reply_confirmation,
     )
     from ..negotiations_probe import paginated_topic_refs
+    from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
     if args.limit < 0:
@@ -93,8 +94,15 @@ def run(args: argparse.Namespace) -> None:
         page = context.new_page()
         # #201: пагинируем SSR chat mapping по всем страницам negotiations
         # (аналогично --max-pages в других командах), иначе чат, ушедший за
-        # пределы первой страницы, тихо выглядит как empty_chat.
-        topic_list = paginated_topic_refs(page, max_pages=max_pages)
+        # пределы первой страницы, тихо выглядит как empty_chat. Та же пара
+        # исключений, что и у fetch_responses (её собственный вызывающий код
+        # в responses.py ловит их так же): истёкшая сессия или не
+        # подтверждённая пагинация не должны крашить команду с traceback.
+        try:
+            topic_list = paginated_topic_refs(page, max_pages=max_pages)
+        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
+            sys.exit(1)
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
         # #200: SSR отдаёт resumeId для каждой переписки (проверено на живой
         # сессии 2026-08-16, 7/7). Отдельный словарь, а не расширение refs:
@@ -157,7 +165,9 @@ def run(args: argparse.Namespace) -> None:
                     send_reply_current(page, letter)
                 except NoReplyForm as exc:
                     # Форма не найдена ДО какого-либо взаимодействия с DOM —
-                    # чистый pre-action early-exit, на hh.ru следа нет.
+                    # чистый pre-action early-exit, на hh.ru следа нет. Как и
+                    # другие ранние выходы до действия (#163), throttle.wait()
+                    # здесь не нужен: не от чего защищать паузой.
                     reason = f"отправка не выполнена: {exc}"
                     status = "failed"
                     print(f"[FAIL] {label} — {reason}")
@@ -172,6 +182,7 @@ def run(args: argparse.Namespace) -> None:
                     reason = f"клик выполнен, исход неопределён: {exc}"
                     status = "uncertain"
                     print(f"[FAIL] {label} — {reason}")
+                    throttle.wait(f"после ответа в чате {topic}")
                 else:
                     # Клик мог не дойти (отклонение сервером, сетевой сбой) —
                     # success пишем только по позитивному подтверждению
@@ -191,7 +202,8 @@ def run(args: argparse.Namespace) -> None:
                         # making has_replied deduplicate it.
                         status = "uncertain"
                         print(f"[FAIL] {label} — {reason}")
-                finally:
+                    # Клик состоялся (успешно или uncertain) — реальное
+                    # действие на hh.ru, пауза нужна (#163).
                     throttle.wait(f"после ответа в чате {topic}")
             history.record_reply_and_action(
                 topic,

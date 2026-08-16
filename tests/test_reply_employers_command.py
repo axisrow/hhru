@@ -162,6 +162,32 @@ def test_no_candidates_prints_info_and_returns(tmp_path, monkeypatch, capsys):
     assert "[INFO]" in capsys.readouterr().out
 
 
+# --- /review (#201): indeterminate SSR pagination is fail-closed, not a crash
+
+
+def test_indeterminate_pagination_exits_cleanly(tmp_path, monkeypatch, capsys):
+    """paginated_topic_refs() can raise the same exceptions as fetch_responses
+    (expired session, unconfirmed pager DOM) — reply-employers must handle
+    them the same way responses.py does: a clean [FAIL] + exit, not an
+    uncaught traceback.
+    """
+    from hhru_bot.responses import ResponsesIndeterminate
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    _patch_common(monkeypatch, history)
+
+    def _boom(page, max_pages=5):
+        raise ResponsesIndeterminate("пагинация не подтверждена")
+
+    monkeypatch.setattr("hhru_bot.negotiations_probe.paginated_topic_refs", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(force=True))
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
+
+
 # --- --limit is respected ----------------------------------------------
 
 
@@ -325,6 +351,78 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
         assert row[0] == "failed"
     # A failed send does not count as replied — retry must remain possible.
     assert history.has_replied("tp1", "m1") is False
+
+
+# --- /review (#201): NoReplyForm is pre-action, must not pay the throttle --
+
+
+def test_no_reply_form_does_not_wait_throttle(tmp_path, monkeypatch, capsys):
+    """NoReplyForm fires before fill()/click() — no trace was left on hh.ru,
+    so per #163 (early exits before an action skip the pause) throttle.wait()
+    must not run. A click that begins (uncertain or success) is a real action
+    and must still pay the pause.
+    """
+    from hhru_bot import throttle as throttle_module
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise NoReplyForm("не удалось однозначно найти форму ответа в чате")
+
+    waited = []
+    monkeypatch.setattr(
+        throttle_module.Throttle, "wait", lambda self, reason="": waited.append(reason)
+    )
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    assert "[FAIL]" in capsys.readouterr().out
+    assert waited == []
+
+
+def test_click_exception_waits_throttle(tmp_path, monkeypatch, capsys):
+    """An exception after the click begins is a real action attempt — the
+    throttle pause must still run, same as a confirmed success (#163)."""
+    from hhru_bot import throttle as throttle_module
+
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise TimeoutError("network hiccup after click().click()")
+
+    waited = []
+    monkeypatch.setattr(
+        throttle_module.Throttle, "wait", lambda self, reason="": waited.append(reason)
+    )
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    assert "[FAIL]" in capsys.readouterr().out
+    assert len(waited) == 1
 
 
 # --- Codex review (#201): exception after click begins is uncertain --------

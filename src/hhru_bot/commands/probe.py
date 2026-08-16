@@ -505,6 +505,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     from ..config import load_config_or_exit
     from ..negotiations_probe import chat_url, paginated_topic_refs
     from ..report import _ascii_table
+    from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..selector_groups import negotiations
 
     config = load_config_or_exit(args.config)
@@ -527,6 +528,9 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"[FAIL] не удалось прочитать SSR state: {exc}")
+            return True
+        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}")
             return True
 
         rows = []
