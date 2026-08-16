@@ -150,7 +150,7 @@ def run(args: argparse.Namespace) -> None:
                     # («без машины состояний»), а issue #110 явно требует
                     # fail-closed в сторону «лучше пропустить чат, чем
                     # ответить повторно» — 'uncertain' с недедуплицирующей
-                    # семантикой этому противоречил бы. Follow-up: #199.
+                    # семантикой этому противоречил бы. Follow-up: #201.
                     if wait_reply_confirmation(page):
                         status = "success"
                         reason = None
@@ -159,9 +159,6 @@ def run(args: argparse.Namespace) -> None:
                     else:
                         reason = "отправка не подтверждена: нет сигнала доставки"
                         print(f"[FAIL] {label} — {reason}")
-                except LimitReached as exc:
-                    print(f"[FAIL] {label} — {exc}")
-                    break
                 except Exception as exc:
                     reason = f"отправка не подтверждена: {exc}"
                     print(f"[FAIL] {label} — {reason}")
