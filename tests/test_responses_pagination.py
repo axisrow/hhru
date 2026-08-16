@@ -89,6 +89,15 @@ class _ResponsesPage:
         return self.cards
 
 
+class _ResponseCard:
+    def __init__(self, *, has_chat: bool):
+        self.has_chat = has_chat
+
+    def locator(self, selector: str):
+        assert selector == ns.NEGOTIATION_CHAT_LINK
+        return _Locator(["chat"] if self.has_chat else [])
+
+
 class _DelayedCardsLocator:
     def __init__(self, cards: list[object], delayed_cards: list[object] | None = None):
         self.cards = cards
@@ -152,7 +161,7 @@ def test_fetch_responses_waits_for_delayed_cards(monkeypatch):
 
 
 def test_fetch_responses_recovers_topic_from_ssr_state(monkeypatch):
-    page = _ResponsesPage([object()])
+    page = _ResponsesPage([_ResponseCard(has_chat=True)])
     page.ssr_html = """
     <template id="HH-Lux-InitialState">
       {"applicantNegotiations":{"topicList":[
@@ -174,6 +183,33 @@ def test_fetch_responses_recovers_topic_from_ssr_state(monkeypatch):
             chat_url="https://chatik.hh.ru/chat/456",
         )
     ]
+
+
+def test_fetch_responses_does_not_consume_ssr_ref_for_no_chat_card(monkeypatch):
+    cards = [_ResponseCard(has_chat=False), _ResponseCard(has_chat=True)]
+    page = _ResponsesPage(cards)
+    page.ssr_html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":42},
+        {"id":124,"chatId":457,"vacancyId":42}
+      ]}}
+    </template>
+    """
+    items = iter(
+        [
+            responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.DISCARD),
+            responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ),
+        ]
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: next(items))
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    result = responses.fetch_responses(page, max_pages=1)
+    assert result[0].topic is None
+    assert result[1].topic == "123"
 
 
 def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):

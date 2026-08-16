@@ -154,6 +154,20 @@ def test_topic_refs_by_vacancy_reads_ssr_ids_for_open_chat_button():
     assert _topic_refs_by_vacancy(html) == {"789": [("123", "456")]}
 
 
+@pytest.mark.parametrize(
+    "state",
+    [
+        "null",
+        "[]",
+        '{"applicantNegotiations":null}',
+        '{"applicantNegotiations":{"topicList":[null]}}',
+    ],
+)
+def test_topic_refs_by_vacancy_ignores_malformed_ssr_shapes(state):
+    html = f'<template id="HH-Lux-InitialState">{state}</template>'
+    assert _topic_refs_by_vacancy(html) == {}
+
+
 # --- parse_response_card на HTML-фикстуре -----------------------------------
 #
 # Фикстура повторяет структуру карточки /applicant/negotiations по data-qa из

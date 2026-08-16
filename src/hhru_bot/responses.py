@@ -21,6 +21,7 @@ import json
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from html import unescape
 
@@ -200,8 +201,18 @@ def _topic_refs_by_vacancy(html: str) -> dict[str, list[tuple[str, str]]]:
         state = json.loads(unescape(match.group(1)))
     except (json.JSONDecodeError, TypeError):
         return {}
+    if not isinstance(state, Mapping):
+        return {}
+    negotiations = state.get("applicantNegotiations")
+    if not isinstance(negotiations, Mapping):
+        return {}
+    topics = negotiations.get("topicList")
+    if not isinstance(topics, list):
+        return {}
     refs: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for topic in state.get("applicantNegotiations", {}).get("topicList", []):
+    for topic in topics:
+        if not isinstance(topic, Mapping):
+            continue
         vacancy_id = topic.get("vacancyId")
         topic_id = topic.get("id")
         chat_id = topic.get("chatId")
@@ -395,14 +406,17 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             break
 
         for i in range(count):
-            item = parse_response_card(cards.nth(i))
+            card = cards.nth(i)
+            item = parse_response_card(card)
             if item is None:
                 logger.debug(
                     "Страница %d, карточка %d: vacancy_id не извлечён, пропуск", page_num, i
                 )
                 continue
             refs = topic_refs.get(item.vacancy_id, [])
-            if item.topic is None:
+            chat_link = card.locator(ns.NEGOTIATION_CHAT_LINK) if hasattr(card, "locator") else None
+            has_chat_link = bool(chat_link and chat_link.count())
+            if item.topic is None and has_chat_link:
                 ref_index = topic_seen[item.vacancy_id]
                 topic_seen[item.vacancy_id] += 1
             else:
