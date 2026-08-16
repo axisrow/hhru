@@ -73,20 +73,39 @@ def navigate_to_response_form(page: Page) -> None:
 
     Фиксированный sleep после навигации заменён на явное ожидание готовности DOM:
     ждём любого индикатора формы (кнопка отправки), максимум APPLY_TIMEOUT_MS.
+
+    #179: раньше ожидание было ``page.expect_navigation(wait_until="domcontentloaded")``.
+    Живая диагностика (боевой аккаунт, vacancy_id 136221532) показала: кнопка
+    отклика сменилась на "уже откликнулись" (submit реально ушёл на hh.ru), но
+    ``expect_navigation`` всё равно упал по TimeoutError 90с — переход на
+    ``/applicant/vacancy_response`` у залогиненного пользователя рендерится как
+    SPA same-document навигация (``history.pushState``), а не полноценная
+    перезагрузка документа; ``domcontentloaded`` в этом случае не наступает
+    вообще, хотя ``page.url`` меняется. ``page.wait_for_url()`` следит именно
+    за URL, а не за lifecycle-событием документа — работает для обоих случаев
+    (полная перезагрузка и client-side routing).
     """
     from ..selector_groups import apply_form
 
     apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first
-    # #80: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех goto).
-    # Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru, который под
-    # DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал, context-wide
-    # set_default_navigation_timeout перебивается явным timeout.
-    with page.expect_navigation(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS):
-        # no_wait_after=True: клик НЕ ждёт навигацию своим внутренним action-timeout
-        # шагом (дефолт set_default_timeout 30с, а не navigation-timeout) — иначе на
-        # навигации 33с+ он упал бы через 30с раньше 90с expect_navigation. Ожидание
-        # навигации полностью владеет внешний 90с waiter expect_navigation.
-        apply_button.click(no_wait_after=True)
+    # #80/#179: потолок навигации на форму отклика — GOTO_TIMEOUT_MS (как у всех
+    # goto). Двухшаговая навигация (CLAUDE.md п.4) — это сетевой запрос hh.ru,
+    # который под DDoS-Guard грузится 33с+; APPLY_TIMEOUT_MS (10с) тут падал.
+    apply_button.click(no_wait_after=True)
+    # #179: таймаут ожидания URL сам по себе не означает, что клик/отклик не
+    # ушёл (симметрично SubmitClickUncertain #176) — не крашим весь pipeline
+    # необработанным исключением, а логируем и отдаём управление дальше.
+    # fill_response_form (через отсутствие APPLY_SUBMIT_BUTTON) и detect_questions
+    # сами вернут корректный fail/skip, если форма реально не загрузилась.
+    try:
+        page.wait_for_url("**/applicant/vacancy_response**", timeout=GOTO_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        logger.warning(
+            "Навигация на форму отклика не подтвердилась за %d мс "
+            "(URL не сменился на /applicant/vacancy_response) — "
+            "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
+            GOTO_TIMEOUT_MS,
+        )
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(

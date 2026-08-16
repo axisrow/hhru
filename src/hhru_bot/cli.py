@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 import pkgutil
 import sys
 from pathlib import Path
@@ -87,6 +88,21 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(130)
+    except SystemExit:
+        # sys.exit() из самой команды (напр. load_config_or_exit) — не наш случай,
+        # пробрасываем как есть, не логируем как крах.
+        raise
+    except Exception:
+        # #179: раньше необработанное исключение из args.func (напр. Playwright
+        # TimeoutError, не пойманный внутри pipeline) печаталось Python'ом только
+        # в stderr — traceback не попадал в data/logs/hhru_bot.log, хотя
+        # setup_logging() уже успел настроить FileHandler на этот момент.
+        # logger.exception пишет полный traceback туда же, куда обычные логи.
+        if args.command != "log":
+            logging.getLogger("hhru_bot").exception(
+                "Необработанное исключение в команде '%s'", args.command
+            )
+        raise
 
 
 if __name__ == "__main__":

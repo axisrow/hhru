@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
 import pytest
 
@@ -289,3 +290,36 @@ def test_clear_skipped_success_does_not_exit_nonzero(tmp_path):
         main(["--history", str(history_path), "clear-skipped"])
     except SystemExit as e:
         pytest.fail(f"main() exited with {e.code} on a successful deletion")
+
+
+def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch):
+    """#179: необработанное исключение из args.func (напр. непойманный внутри
+    apply-пайплайна Playwright TimeoutError) раньше уходило только в stderr
+    Python'а — traceback не попадал в data/logs/hhru_bot.log, хотя setup_logging()
+    к этому моменту уже настроил FileHandler. main() обязан залогировать полный
+    traceback (logger.exception) перед тем, как перевыбросить исключение дальше
+    (поведение для пользователя — тот же traceback + ненулевой exit — не меняется).
+
+    LOG_DIR — module-level константа (см. logging_setup.py), вычисленная от cwd
+    на момент импорта, поэтому тест не гоняет cwd, а читает файл там, где
+    setup_logging() реально его создал.
+    """
+    from hhru_bot.logging_setup import LOG_DIR
+
+    def _boom(_args: argparse.Namespace) -> bool:
+        raise RuntimeError("simulated navigate_to_response_form crash (#179)")
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _boom)
+
+    with pytest.raises(RuntimeError, match="simulated navigate_to_response_form crash"):
+        main(["whoami"])
+
+    log_file = LOG_DIR / "hhru_bot.log"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Необработанное исключение в команде 'whoami'" in content
+    assert "RuntimeError: simulated navigate_to_response_form crash (#179)" in content
+
+    logging.getLogger("hhru_bot").handlers.clear()

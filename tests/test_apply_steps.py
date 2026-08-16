@@ -2,14 +2,13 @@
 
 Без браузера — через FakePage, имитирующий минимальный Playwright API, который
 использует steps.py: locator(...).wait_for(state='visible', timeout=...),
-click(), fill(), expect_navigation(). Страхуют поведение wait'ов: time.sleep
+click(), fill(), wait_for_url(). Страхуют поведение wait'ов: time.sleep
 убран, опциональные поля определяются ловом PlaywrightTimeoutError, обязательный
 submit даёт отказ при отсутствии.
 """
 
 from __future__ import annotations
 
-import contextlib
 import re
 
 import pytest
@@ -175,6 +174,12 @@ class FakeStepsPage:
         self.states: dict[str, _SelectorState] = {}
         self.navigation_entered = 0
         self.last_navigation_timeout: int | None = None
+        # #179: wait_for_url заменил expect_navigation. wait_for_url_error=None —
+        # успешный кейс (URL сменился); задать PlaywrightTimeoutError — имитация
+        # same-document/SPA-навигации, где URL меняется, но lifecycle-событие
+        # документа не наступает (тест регрессии на этот баг ниже).
+        self.wait_for_url_calls: list[tuple[str, int | None]] = []
+        self.wait_for_url_error: Exception | None = None
 
     def _state(self, selector: str) -> _SelectorState:
         return self.states.setdefault(selector, _SelectorState())
@@ -202,14 +207,15 @@ class FakeStepsPage:
             return _FakeLocator(selector, self._state(base), href_filter=href)
         return _FakeLocator(selector, self._state(selector))
 
-    @contextlib.contextmanager
-    def expect_navigation(self, **kwargs):
+    def wait_for_url(self, url_pattern: str, *, timeout: int | None = None) -> None:
+        # #179: заменяет expect_navigation. Фиксируем timeout — регрессия #80:
+        # двухшаговая навигация на форму отклика должна использовать потолок
+        # GOTO_TIMEOUT_MS (медленный hh.ru), а не дефолт/короткий APPLY_TIMEOUT_MS.
         self.navigation_entered += 1
-        # Фиксируем timeout навигации — регрессия #80: двухшаговая навигация на
-        # форму отклика должна использовать потолок GOTO_TIMEOUT_MS (медленный
-        # hh.ru), а не дефолт/короткий APPLY_TIMEOUT_MS.
-        self.last_navigation_timeout = kwargs.get("timeout")
-        yield
+        self.last_navigation_timeout = timeout
+        self.wait_for_url_calls.append((url_pattern, timeout))
+        if self.wait_for_url_error is not None:
+            raise self.wait_for_url_error
 
 
 # --- wait_apply_button ---
@@ -265,6 +271,42 @@ def test_navigate_uses_goto_timeout_for_form_navigation():
     steps.navigate_to_response_form(page)
 
     assert page.last_navigation_timeout == GOTO_TIMEOUT_MS
+
+
+def test_navigate_uses_wait_for_url_not_expect_navigation():
+    # #179: диагностика на боевом аккаунте показала, что клик по apply-кнопке
+    # реально отправляет отклик (кнопка меняется на "уже откликнулись"), но
+    # expect_navigation(wait_until='domcontentloaded') всё равно падал таймаутом
+    # 90с — переход на /applicant/vacancy_response у залогиненного пользователя
+    # рендерится как same-document/SPA-навигация (history.pushState), и
+    # domcontentloaded не наступает, хотя URL меняется. wait_for_url следит
+    # именно за URL — работает для обоих случаев.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page)
+
+    assert page.wait_for_url_calls == [("**/applicant/vacancy_response**", GOTO_TIMEOUT_MS)]
+
+
+def test_navigate_wait_for_url_timeout_does_not_raise():
+    # #179 регрессия: раньше TimeoutError из ожидания навигации не был перехвачен
+    # steps.navigate_to_response_form — пробрасывался наверх необработанным и
+    # ронял весь apply-цикл traceback'ом (реальный краш на боевом аккаунте,
+    # vacancy_id=136221532). Клик мог реально уйти (симметрично #176
+    # SubmitClickUncertain) — навигация не подтвердилась, но это не повод
+    # крашить процесс: дальнейшие шаги (submit-кнопка/detect_questions) сами
+    # определят, загрузилась ли форма.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    page.wait_for_url_error = PlaywrightTimeoutError("Timeout 90000ms exceeded.")
+
+    steps.navigate_to_response_form(page)  # не должен бросать
+
+    apply_state = page._state(vacancy_page.VACANCY_APPLY_BUTTON)
+    assert apply_state.clicks == 1
 
 
 def test_navigate_clicks_apply_button_with_no_wait_after():

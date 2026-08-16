@@ -86,8 +86,18 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
-   странице. `apply.py` кликает и ждёт `page.expect_navigation(...)`, и только потом ищет
-   поля формы. Не переписывай на «клик → искать модалку сразу».
+   странице. `apply.py`/`apply/steps.py::navigate_to_response_form` кликает и ждёт
+   `page.wait_for_url(...)`, и только потом ищет поля формы. Не переписывай на
+   «клик → искать модалку сразу». **Не `page.expect_navigation()`** (#179): у
+   залогиненного пользователя переход на `/applicant/vacancy_response` рендерится
+   как same-document/SPA-навигация (`history.pushState`) — `domcontentloaded`
+   там не наступает, хотя `page.url` меняется и отклик реально уходит на hh.ru;
+   `expect_navigation(wait_until="domcontentloaded")` в этом случае падает по
+   таймауту даже при успешном клике. `wait_for_url` следит только за URL и
+   работает для обоих случаев (полная перезагрузка и client-side routing).
+   Таймаут `wait_for_url` перехватывается и логируется, не крашит pipeline —
+   дальнейшие шаги (submit-кнопка/detect_questions) сами решают, загрузилась
+   ли форма.
 
 5. **Пустой результат требует подтверждения состояния страницы.** Если браузерный
    путь не смог подтвердить DOM из-за timeout, сетевой ошибки, анти-бота или дрейфа
