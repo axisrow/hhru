@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..browser import PAGE_STATE, goto_hh, has_login_form
@@ -73,7 +74,9 @@ class ProbeResult:
         return ProbeResult(self.vacancy, True, reason, dump_paths)
 
 
-def dump_probe_snapshot(page: Page, ctx: ProbeContext) -> dict[str, Path]:
+def dump_probe_snapshot(
+    page: Page, ctx: ProbeContext, *, best_effort: bool = False
+) -> dict[str, Path]:
     """Снимает screenshot + HTML текущего состояния страницы в data/logs/.
 
     Идемпотентно по имени (vacancy_id + stage): повторный вызов перезаписывает
@@ -85,11 +88,29 @@ def dump_probe_snapshot(page: Page, ctx: ProbeContext) -> dict[str, Path]:
     png_path = ctx.logs_dir / f"probe_{slug}.png"
     html_path = ctx.logs_dir / f"probe_{slug}.html"
 
-    png_path.write_bytes(page.screenshot(full_page=True))
-    html_path.write_text(page.content(), encoding="utf-8")
+    paths: dict[str, Path] = {}
+    try:
+        png_path.write_bytes(page.screenshot(full_page=True))
+        paths["screenshot"] = png_path
+    except PlaywrightError as exc:
+        if not best_effort:
+            raise
+        logger.warning("probe[%s]: screenshot недоступен: %s", ctx.stage, exc)
+    try:
+        html_path.write_text(page.content(), encoding="utf-8")
+        paths["html"] = html_path
+    except PlaywrightError as exc:
+        if not best_effort:
+            raise
+        logger.warning("probe[%s]: HTML недоступен: %s", ctx.stage, exc)
 
-    logger.info("probe[%s]: дамп сохранён — %s, %s", ctx.stage, png_path.name, html_path.name)
-    return {"screenshot": png_path, "html": html_path}
+    if paths:
+        logger.info(
+            "probe[%s]: дамп сохранён — %s",
+            ctx.stage,
+            ", ".join(p.name for p in paths.values()),
+        )
+    return paths
 
 
 def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> None:
@@ -175,6 +196,18 @@ def probe_vacancy(
     questions = detect_questions(page)
     if questions.has_questions:
         marker = f"[WARN {PAGE_STATE['indeterminate']}]" if questions.indeterminate else "[INFO]"
+        if questions.indeterminate:
+            # Keep the DOM that survived a navigation/render timeout.  This is
+            # diagnostic-only: a closed context may yield no artifact, while a
+            # partially rendered page can still provide the evidence needed to
+            # correct selectors without guessing.
+            partial_ctx = ProbeContext(
+                vacancy_id=vacancy.vacancy_id,
+                vacancy_url=vacancy.url,
+                stage="form_indeterminate",
+                logs_dir=ctx_dir.logs_dir,
+            )
+            dump_probe_snapshot(page, partial_ctx, best_effort=True)
         logger.info("%s %s — %s", marker, vacancy.title, questions.reason)
         return ProbeResult(vacancy, success=False, reason=questions.reason, skipped=True)
 
