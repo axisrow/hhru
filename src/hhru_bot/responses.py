@@ -17,9 +17,12 @@ bump, не к чтению списка); истёкшая сессия (ред�
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
+from html import unescape
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -36,6 +39,9 @@ from .selector_groups import negotiations as ns
 logger = logging.getLogger("hhru_bot.responses")
 
 NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
+_INITIAL_STATE_RE = re.compile(
+    r'<template[^>]*id=["\']HH-Lux-InitialState["\'][^>]*>(.*?)</template>', re.DOTALL
+)
 
 # Ждём появления карточек на JS-рендеренной странице. Достаточно для типичного
 # рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
@@ -177,6 +183,33 @@ def _extract_topic(chat_url: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _topic_refs_by_vacancy(html: str) -> dict[str, list[tuple[str, str]]]:
+    """Read topic/chat ids from the SSR state rendered with negotiations.
+
+    ``open_chat`` is a hydrated button and intentionally has no href. The
+    server-rendered ``topicList`` carries the stable ids and the vacancy link
+    needed to associate them with cards. Missing/malformed state is treated as
+    no refs; the caller retains the existing topic=None fallback.
+    """
+    if not isinstance(html, str):
+        return {}
+    match = _INITIAL_STATE_RE.search(html)
+    if not match:
+        return {}
+    try:
+        state = json.loads(unescape(match.group(1)))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    refs: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for topic in state.get("applicantNegotiations", {}).get("topicList", []):
+        vacancy_id = topic.get("vacancyId")
+        topic_id = topic.get("id")
+        chat_id = topic.get("chatId")
+        if vacancy_id is not None and topic_id is not None and chat_id is not None:
+            refs[str(vacancy_id)].append((str(topic_id), str(chat_id)))
+    return dict(refs)
+
+
 def _absolute_url(href: str, *, keep_query: bool = False) -> str:
     """Делает href абсолютным (как в search.py): http... иначе prepend HH_BASE_URL.
 
@@ -300,6 +333,12 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         logger.info("Загрузка страницы откликов: %s", url)
         goto_hh(page, url)
 
+        # The open_chat button has no href in the live DOM. Recover its stable
+        # topic/chat ids from the SSR state before parsing cards.
+        content = page.content() if hasattr(page, "content") else ""
+        topic_refs = _topic_refs_by_vacancy(content)
+        topic_seen: defaultdict[str, int] = defaultdict(int)
+
         # Проверяем единый auth-маркер до чтения DOM: пустая страница без cookie
         # не должна маскироваться под пустой inbox.
         if not has_auth_cookie(page):
@@ -362,6 +401,16 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                     "Страница %d, карточка %d: vacancy_id не извлечён, пропуск", page_num, i
                 )
                 continue
+            refs = topic_refs.get(item.vacancy_id, [])
+            if item.topic is None:
+                ref_index = topic_seen[item.vacancy_id]
+                topic_seen[item.vacancy_id] += 1
+            else:
+                ref_index = -1
+            if ref_index >= 0 and ref_index < len(refs):
+                topic_id, chat_id = refs[ref_index]
+                item.topic = topic_id
+                item.chat_url = f"https://chatik.hh.ru/chat/{chat_id}"
             results.append(item)
 
         if not _has_next_page(page, page_num):

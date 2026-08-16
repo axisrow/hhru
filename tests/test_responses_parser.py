@@ -17,6 +17,7 @@ from hhru_bot.responses import (
     ResponseStatus,
     _extract_topic,
     _extract_vacancy_id,
+    _topic_refs_by_vacancy,
     normalize_status,
     parse_response_card,
 )
@@ -140,6 +141,17 @@ def test_extract_topic_none_when_absent():
     assert _extract_topic("/vacancy/12345") is None
     assert _extract_topic("") is None
     assert _extract_topic(None) is None
+
+
+def test_topic_refs_by_vacancy_reads_ssr_ids_for_open_chat_button():
+    html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":789}
+      ]}}
+    </template>
+    """
+    assert _topic_refs_by_vacancy(html) == {"789": [("123", "456")]}
 
 
 # --- parse_response_card на HTML-фикстуре -----------------------------------

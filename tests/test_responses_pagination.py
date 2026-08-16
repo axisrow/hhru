@@ -76,7 +76,11 @@ class _Page:
 class _ResponsesPage:
     def __init__(self, cards: list[object], delayed_cards: list[object] | None = None):
         self.url = "https://hh.ru/applicant/negotiations"
+        self.ssr_html = ""
         self.cards = _DelayedCardsLocator(cards, delayed_cards)
+
+    def content(self):
+        return self.ssr_html
 
     def locator(self, selector: str):
         if selector == LOGIN_FORM:
@@ -145,6 +149,31 @@ def test_fetch_responses_waits_for_delayed_cards(monkeypatch):
     monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
     assert responses.fetch_responses(page, max_pages=1) == [expected]
+
+
+def test_fetch_responses_recovers_topic_from_ssr_state(monkeypatch):
+    page = _ResponsesPage([object()])
+    page.ssr_html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":42}
+      ]}}
+    </template>
+    """
+    expected = responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ)
+    monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: expected)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    assert responses.fetch_responses(page, max_pages=1) == [
+        responses.ResponseItem(
+            vacancy_id="42",
+            status=responses.ResponseStatus.READ,
+            topic="123",
+            chat_url="https://chatik.hh.ru/chat/456",
+        )
+    ]
 
 
 def test_fetch_responses_timeout_preserves_empty_inbox_contract(monkeypatch):
