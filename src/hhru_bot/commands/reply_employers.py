@@ -95,6 +95,7 @@ def run(args: argparse.Namespace) -> None:
                 print(f"[skip] {label} — уже отвечали на это сообщение")
                 continue
             letter = _letter(template, candidate)
+            inbound_marker = chat.inbound_marker or ""
             status = "dry_run" if args.dry_run else "failed"
             reason = "dry-run" if args.dry_run else None
             if args.dry_run:
@@ -117,19 +118,39 @@ def run(args: argparse.Namespace) -> None:
                     print(f"[FAIL] {label} — {reason}")
                     history.record_reply_and_action(
                         topic,
-                        chat.inbound_marker or "",
+                        inbound_marker,
                         vacancy_id=str(candidate["vacancy_id"]),
                         status="failed",
                         reason=reason,
                     )
                     continue
+                assert live_chat is not None
+                # Codex-ревью round 2 (#198): дедуплицируем и журналируем по
+                # marker'у из ЖИВОГО перечтения, не из исходного планирования.
+                # Если между первым read_chat и live-перечтением пришло НОВОЕ
+                # входящее (а не наш собственный ответ — тот live_decision уже
+                # отсёк выше), отвечаем фактически на него; журналирование
+                # старого marker'а оставило бы новое входящее выглядящим
+                # неотвеченным, и следующий запуск отправил бы дубликат.
+                inbound_marker = live_chat.inbound_marker or ""
                 try:
                     send_reply_current(page, letter)
                     # Клик мог не дойти (отклонение сервером, сетевой сбой) —
                     # success пишем только по позитивному подтверждению
                     # (последнее сообщение в чате стало нашим), как в
                     # apply/success.py (#7): таймаут даёт false-negative
-                    # (failed, разрешает повтор), не false-positive success.
+                    # (status='failed'), не false-positive success.
+                    #
+                    # Codex-ревью round 2 (#198) отметил, что неподтверждённый
+                    # клик мог реально дойти (DOM просто не успел отрендерить
+                    # сигнал) — тогда 'failed' разрешает retry и риск
+                    # дубликата. #176 в apply/bump решает это статусом
+                    # 'uncertain'; для replies такое расширение НЕ вводим —
+                    # REPLY_STATUS_VALUES сознательно заморожен решением #55
+                    # («без машины состояний»), а issue #110 явно требует
+                    # fail-closed в сторону «лучше пропустить чат, чем
+                    # ответить повторно» — 'uncertain' с недедуплицирующей
+                    # семантикой этому противоречил бы. Follow-up: #199.
                     if wait_reply_confirmation(page):
                         status = "success"
                         reason = None
@@ -148,7 +169,7 @@ def run(args: argparse.Namespace) -> None:
                     throttle.wait(f"после ответа в чате {topic}")
             history.record_reply_and_action(
                 topic,
-                chat.inbound_marker or "",
+                inbound_marker,
                 vacancy_id=str(candidate["vacancy_id"]),
                 status=status,
                 reason=reason,

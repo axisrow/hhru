@@ -424,3 +424,53 @@ def test_chat_changed_before_send_aborts_without_sending(tmp_path, monkeypatch, 
         # that is the message we decided to (and failed to) reply to.
         assert tuple(reply) == ("tp1", "m1", "failed")
     assert history.has_replied("tp1", "m1") is False
+
+
+def test_successful_send_journals_the_live_marker_not_the_planning_one(
+    tmp_path, monkeypatch, capsys
+):
+    """Codex review round 2 (PR #198): a NEW employer message arriving between
+    planning and the pre-send re-read must be journaled under its OWN marker.
+
+    If a newer employer message replaces the one seen during planning, the
+    live re-check (needs_reply) still says "reply" (author=employer), so the
+    command sends. Recording the stale planning marker instead of the live
+    one would make the next run see the newer message as unanswered and send
+    a duplicate reply to it.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    class Ref:
+        topic_id = "tp1"
+        chat_id = "c1"
+
+    planning_chat = ChatMessage(author="employer", inbound_marker="m1")
+    live_chat = ChatMessage(author="employer", inbound_marker="m2")
+    calls = {"n": 0}
+
+    def _reader(page, topic, refs):
+        calls["n"] += 1
+        return planning_chat if calls["n"] == 1 else live_chat
+
+    def _send(page, text):
+        pass
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref()],
+        reader=_reader,
+        send=_send,
+    )
+
+    command.run(_args(force=True))
+    assert calls["n"] == 2
+    assert "[OK]" in capsys.readouterr().out
+    with history._connect() as conn:
+        reply = conn.execute("SELECT topic, inbound_marker, status FROM replies").fetchone()
+        assert tuple(reply) == ("tp1", "m2", "success")
+    # The stale planning marker must NOT be journaled as replied — only the
+    # live one that was actually answered.
+    assert history.has_replied("tp1", "m1") is False
+    assert history.has_replied("tp1", "m2") is True
