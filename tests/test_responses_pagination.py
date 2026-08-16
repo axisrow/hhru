@@ -191,8 +191,7 @@ def test_fetch_responses_does_not_consume_ssr_ref_for_no_chat_card(monkeypatch):
     page.ssr_html = """
     <template id="HH-Lux-InitialState">
       {"applicantNegotiations":{"topicList":[
-        {"id":123,"chatId":456,"vacancyId":42},
-        {"id":124,"chatId":457,"vacancyId":42}
+        {"id":123,"chatId":456,"vacancyId":42}
       ]}}
     </template>
     """
@@ -212,6 +211,26 @@ def test_fetch_responses_does_not_consume_ssr_ref_for_no_chat_card(monkeypatch):
     assert result[1].topic == "123"
 
 
+def test_fetch_responses_fails_closed_for_ambiguous_ssr_refs(monkeypatch):
+    page = _ResponsesPage([_ResponseCard(has_chat=True)])
+    page.ssr_html = """
+    <template id="HH-Lux-InitialState">
+      {"applicantNegotiations":{"topicList":[
+        {"id":123,"chatId":456,"vacancyId":42},
+        {"id":124,"chatId":457,"vacancyId":42}
+      ]}}
+    </template>
+    """
+    expected = responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ)
+    monkeypatch.setattr(responses, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: expected)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="однозначного"):
+        responses.fetch_responses(page, max_pages=1)
+
+
 def test_fetch_responses_fails_closed_for_chat_without_ssr_ref(monkeypatch):
     page = _ResponsesPage([_ResponseCard(has_chat=True)])
     expected = responses.ResponseItem(vacancy_id="42", status=responses.ResponseStatus.READ)
@@ -220,7 +239,7 @@ def test_fetch_responses_fails_closed_for_chat_without_ssr_ref(monkeypatch):
     monkeypatch.setattr(responses, "parse_response_card", lambda card: expected)
     monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
-    with pytest.raises(responses.ResponsesIndeterminate, match="без подтверждённого topic"):
+    with pytest.raises(responses.ResponsesIndeterminate, match="однозначного"):
         responses.fetch_responses(page, max_pages=1)
 
 

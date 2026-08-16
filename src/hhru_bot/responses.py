@@ -405,6 +405,8 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
             break
 
+        parsed_cards: list[tuple[ResponseItem, bool]] = []
+        chat_counts: defaultdict[str, int] = defaultdict(int)
         for i in range(count):
             card = cards.nth(i)
             item = parse_response_card(card)
@@ -413,9 +415,19 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                     "Страница %d, карточка %d: vacancy_id не извлечён, пропуск", page_num, i
                 )
                 continue
-            refs = topic_refs.get(item.vacancy_id, [])
             chat_link = card.locator(ns.NEGOTIATION_CHAT_LINK) if hasattr(card, "locator") else None
             has_chat_link = bool(chat_link and chat_link.count())
+            parsed_cards.append((item, has_chat_link))
+            if has_chat_link:
+                chat_counts[item.vacancy_id] += 1
+
+        for item, has_chat_link in parsed_cards:
+            refs = topic_refs.get(item.vacancy_id, [])
+            if has_chat_link and len(refs) != chat_counts[item.vacancy_id]:
+                raise ResponsesIndeterminate(
+                    f"карточки вакансии {item.vacancy_id} не имеют однозначного "
+                    "соответствия topic в SSR-состоянии"
+                )
             if item.topic is None and has_chat_link:
                 ref_index = topic_seen[item.vacancy_id]
                 topic_seen[item.vacancy_id] += 1
