@@ -14,6 +14,8 @@ from hhru_bot.cookie_import import (
     write_storage_state,
 )
 
+pytestmark = pytest.mark.integration
+
 
 def row(**overrides):
     value = {

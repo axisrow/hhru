@@ -57,4 +57,12 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-q"
+addopts = "-q -m 'not live_write and not live_read'"
+markers = [
+    "unit: чистая логика без сети",
+    "integration: связки модулей на моках и фикстурах",
+    "smoke: быстрая проверка сборки или CLI",
+    "e2e: сквозной путь на фикстурах без сети",
+    "live_read: чтение живого hh.ru без мутаций",
+    "live_write: мутация живого аккаунта hh.ru; требует явного подтверждения",
+]

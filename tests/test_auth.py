@@ -8,6 +8,8 @@ import pytest
 
 from hhru_bot import auth
 
+pytestmark = pytest.mark.integration
+
 
 def _make_playwright(monkeypatch):
     """Собирает моки sync_playwright()/browser/context/page для login(); возвращает context."""

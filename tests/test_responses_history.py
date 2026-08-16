@@ -14,7 +14,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
+import pytest
+
 from hhru_bot.history import SCHEMA, History
+
+pytestmark = pytest.mark.integration
 
 # --- таблица responses в history.SCHEMA ------------------------------------
 

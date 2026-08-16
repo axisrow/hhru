@@ -6,6 +6,8 @@ import pytest
 
 from hhru_bot.google_calendar import GoogleCalendarError, event_payload, insert_event
 
+pytestmark = pytest.mark.integration
+
 
 def test_event_payload_requires_explicit_datetime():
     with pytest.raises(GoogleCalendarError, match="явные"):

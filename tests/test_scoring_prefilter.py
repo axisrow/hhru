@@ -28,6 +28,8 @@ from hhru_bot.scoring import (
 )
 from hhru_bot.search import VacancyCard, filter_candidates
 
+pytestmark = pytest.mark.unit
+
 # --- хелперы ----------------------------------------------------------------
 
 

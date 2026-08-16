@@ -18,6 +18,8 @@ import pytest
 
 from hhru_bot.commands.schedule import render_schedule
 
+pytestmark = pytest.mark.integration
+
 
 def test_plist_bump_uses_start_interval():
     out = render_schedule(format="plist", action="bump", interval_hours=4)

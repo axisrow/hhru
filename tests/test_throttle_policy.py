@@ -24,6 +24,8 @@ from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConf
 from hhru_bot.search import VacancyCard
 from hhru_bot.throttle import Throttle
 
+pytestmark = pytest.mark.integration
+
 
 def _resume(**overrides) -> ResumeConfig:
     base = {

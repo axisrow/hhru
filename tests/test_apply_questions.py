@@ -10,10 +10,13 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply.questions import QuestionDetection, detect_questions
+
+pytestmark = pytest.mark.integration
 
 _VOID = {"input", "br", "hr", "img", "meta", "link", "area", "col", "embed", "source"}
 

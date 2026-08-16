@@ -22,6 +22,8 @@ import pytest
 from hhru_bot.commands import query as query_cmd
 from hhru_bot.history import History
 
+pytestmark = pytest.mark.integration
+
 # --- хелперы -----------------------------------------------------------------
 
 

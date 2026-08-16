@@ -16,8 +16,12 @@ from __future__ import annotations
 import argparse
 import textwrap
 
+import pytest
+
 from hhru_bot.commands import list_resumes as list_resumes_cmd
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.integration
 
 
 def _write_config(tmp_path, body: str):

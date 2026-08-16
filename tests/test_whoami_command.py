@@ -12,8 +12,12 @@ import argparse
 import json
 import textwrap
 
+import pytest
+
 from hhru_bot.commands import whoami as whoami_cmd
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.integration
 
 
 def _write_config(tmp_path, body: str):

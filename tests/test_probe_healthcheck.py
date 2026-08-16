@@ -21,6 +21,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from _fakes import FakeLocator, _parse_root
 from hhru_bot.commands import probe as probe_cmd
 
+pytestmark = pytest.mark.integration
+
 
 def _stub_goto_hh(monkeypatch, page):
     """Подменяет probe_cmd.goto_hh на вызов page.goto (без retry/backoff).

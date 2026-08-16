@@ -21,7 +21,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
+import pytest
+
 from hhru_bot.history import REPLY_STATUS_VALUES, SCHEMA, History
+
+pytestmark = pytest.mark.unit
 
 # --- SCHEMA: таблица replies ----------------------------------------------
 

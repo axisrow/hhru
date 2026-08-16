@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from hhru_bot.history import SCHEMA, SKIP_REASONS, History
+
+pytestmark = pytest.mark.unit
 
 # --- SCHEMA: таблица skipped ----------------------------------------------
 

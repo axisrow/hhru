@@ -21,7 +21,11 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+
+pytestmark = pytest.mark.integration
 
 
 def _resume() -> ResumeConfig:

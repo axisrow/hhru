@@ -15,6 +15,8 @@ import pytest
 from hhru_bot.cli import build_parser, main, register_commands
 from hhru_bot.history import SKIP_REASONS, History
 
+pytestmark = pytest.mark.integration
+
 
 def _build() -> argparse.ArgumentParser:
     return build_parser()

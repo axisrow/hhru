@@ -21,6 +21,8 @@ from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConf
 from hhru_bot.config_sections.ai import AiConfig
 from hhru_bot.config_sections.ai_profile import AIProfile
 
+pytestmark = pytest.mark.integration
+
 
 class _CtxStub:
     """Заглушка браузерного контекста: context manager + new_page()->None."""

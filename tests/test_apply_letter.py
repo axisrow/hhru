@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.apply import render_cover_letter
 from hhru_bot.apply.letter import (
@@ -23,6 +25,8 @@ from hhru_bot.apply.letter import (
     TemplateCoverLetterProvider,
 )
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.unit
 
 
 def _card(title: str, company: str) -> VacancyCard:

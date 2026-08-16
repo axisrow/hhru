@@ -1,10 +1,14 @@
 """Общий контракт неопределённого состояния браузерных страниц (#143)."""
 
+import pytest
+
 from hhru_bot.apply.questions import QuestionDetection
 from hhru_bot.browser import PAGE_STATE, PageStateIndeterminate
 from hhru_bot.commands.probe import PageCheck
 from hhru_bot.copy_resume import ResumeListIndeterminate
 from hhru_bot.responses import NotAuthenticated
+
+pytestmark = pytest.mark.unit
 
 
 def test_browser_paths_share_indeterminate_exception_base():

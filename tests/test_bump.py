@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -17,6 +18,8 @@ import hhru_bot.bump as bump_module
 from hhru_bot.bump import bump_resume
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.selector_groups import resume_page
+
+pytestmark = pytest.mark.integration
 
 
 class _FakeLocator:

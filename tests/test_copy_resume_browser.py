@@ -31,6 +31,8 @@ from hhru_bot.selector_groups.resume_list import (
     RESUME_PROFILE_READY,
 )
 
+pytestmark = pytest.mark.integration
+
 OLD_ID = "a" * 38
 NEW_ID = "b" * 38
 

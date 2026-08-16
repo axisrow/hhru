@@ -12,6 +12,8 @@ import pytest
 from hhru_bot.ai import base, registry
 from hhru_bot.ai.chat_completions import ChatCompletionsTransport
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def _reset_registry(monkeypatch):

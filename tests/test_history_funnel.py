@@ -17,7 +17,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from hhru_bot.history import History
+
+pytestmark = pytest.mark.unit
 
 
 def _iso_days_ago(days: int) -> str:

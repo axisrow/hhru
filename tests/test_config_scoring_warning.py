@@ -17,6 +17,8 @@ import pytest
 
 from hhru_bot.config import load_config
 
+pytestmark = pytest.mark.unit
+
 _BASE = """
 account:
   storage_state_file: ../data/storage_state/hh_session.json

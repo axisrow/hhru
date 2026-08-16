@@ -15,9 +15,13 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.config_sections.ai_profile import AIProfile
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.unit
 
 
 def _card(title: str = "Dev", company: str = "Acme") -> VacancyCard:

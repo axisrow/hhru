@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.config import SearchFilters
 from hhru_bot.config_sections.scoring import ScoringWeights
@@ -29,6 +31,8 @@ from hhru_bot.scoring import (
     classify_employer,
 )
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.unit
 
 # --- хелперы ----------------------------------------------------------------
 

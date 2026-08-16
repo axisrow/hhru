@@ -11,6 +11,8 @@ import pytest
 
 from hhru_bot.commands.probe import _vacancy_from_url
 
+pytestmark = pytest.mark.integration
+
 
 def test_vacancy_from_url_plain():
     v = _vacancy_from_url("https://hh.ru/vacancy/12345")

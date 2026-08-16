@@ -12,6 +12,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]

@@ -7,10 +7,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hhru_bot.commands._common import ApplyPlan, build_apply_plan
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.history import History
 from hhru_bot.search import VacancyCard
+
+pytestmark = pytest.mark.unit
 
 
 def _card(vacancy_id: str, title: str = "Python Dev", company: str = "Acme") -> VacancyCard:

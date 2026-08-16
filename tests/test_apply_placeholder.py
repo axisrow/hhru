@@ -24,6 +24,8 @@ from hhru_bot.history import History
 from hhru_bot.search import VacancyCard
 from hhru_bot.throttle import Throttle
 
+pytestmark = pytest.mark.unit
+
 _PLACEHOLDER_URL = "https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX"
 
 

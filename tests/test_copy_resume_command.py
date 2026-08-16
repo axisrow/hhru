@@ -20,6 +20,8 @@ import hhru_bot.copy_resume
 from hhru_bot.copy_resume import CopyResumeResult
 from hhru_bot.history import History
 
+pytestmark = pytest.mark.integration
+
 OLD_ID = "a" * 38
 NEW_ID = "b" * 38
 

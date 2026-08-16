@@ -6,6 +6,8 @@ import pytest
 
 from hhru_bot.auth_code import mask_login, submit_code
 
+pytestmark = pytest.mark.integration
+
 
 def test_mask_login():
     assert mask_login("+79991234567") == "+79***4567"

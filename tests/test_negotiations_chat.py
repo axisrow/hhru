@@ -1,6 +1,7 @@
 import logging
 from typing import cast
 
+import pytest
 from playwright.sync_api import Page
 
 from hhru_bot.negotiations_chat import (
@@ -11,6 +12,8 @@ from hhru_bot.negotiations_chat import (
     read_chat,
     wait_reply_confirmation,
 )
+
+pytestmark = pytest.mark.integration
 
 
 def test_needs_reply_when_last_message_is_from_employer():

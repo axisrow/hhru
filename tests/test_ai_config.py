@@ -15,6 +15,8 @@ import pytest
 from hhru_bot.config import ConfigError, load_config
 from hhru_bot.config_sections.ai import AiConfig
 
+pytestmark = pytest.mark.unit
+
 
 def _write(tmp_path, body: str):
     path = tmp_path / "config.yaml"

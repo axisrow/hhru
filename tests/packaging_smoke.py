@@ -16,6 +16,10 @@ import os
 import sys
 import tempfile
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 
 def main() -> None:
     # History создаёт таблицу actions и пишет/читает запись (схема применилась).

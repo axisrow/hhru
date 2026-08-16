@@ -9,11 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hhru_bot.search import (
     extract_salary_text,
     extract_salary_text_from_html,
     parse_salary,
 )
+
+pytestmark = pytest.mark.unit
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

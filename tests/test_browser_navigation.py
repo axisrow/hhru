@@ -17,6 +17,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from hhru_bot import browser
 from hhru_bot.browser import GOTO_TIMEOUT_MS, goto_hh
 
+pytestmark = pytest.mark.integration
+
 
 def test_goto_timeout_constant_is_90_seconds():
     """Эталон из исследования референсов #80: 90с под DDoS-Guard (Steev193)."""

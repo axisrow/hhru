@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "ask": ["Bash(./scripts/live_test.sh:*)"]
+  }
+}

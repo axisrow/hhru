@@ -9,6 +9,8 @@ from hhru_bot.history import History
 from hhru_bot.negotiations_chat import ChatMessage, NoReplyForm
 from hhru_bot.negotiations_probe import TopicRef
 
+pytestmark = pytest.mark.integration
+
 
 def _args(**overrides):
     values = dict(

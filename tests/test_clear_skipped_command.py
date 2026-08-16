@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from hhru_bot.commands import clear_skipped as clear_cmd
 from hhru_bot.history import SKIP_REASONS, History
+
+pytestmark = pytest.mark.integration
 
 
 def _args(history_path, **overrides) -> argparse.Namespace:

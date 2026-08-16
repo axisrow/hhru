@@ -12,8 +12,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from hhru_bot.ai.chat_completions import DEVELOPER_ROLE_MODELS, ChatCompletionsTransport
 from hhru_bot.ai.types import NormalizedResponse, ToolCall
+
+pytestmark = pytest.mark.unit
 
 # --- helpers: mock-объекты в форме OpenAI SDK -------------------------------
 
