@@ -112,6 +112,7 @@ def test_apply_dry_run_success():
     assert result.success is True
     assert result.reason == "dry-run"
     assert page.goto_calls == ["https://hh.ru/vacancy/1"]
+    assert result.acted is False  # #163: симуляция без submit — без паузы
 
 
 def test_apply_login_form_is_checked_after_navigation(monkeypatch):
@@ -135,6 +136,7 @@ def test_apply_login_form_is_checked_after_navigation(monkeypatch):
     assert result.success is False
     assert "Сессия недействительна" in result.reason
     assert events == ["goto", "auth"]
+    assert result.acted is False  # #163: провал до submit — без паузы и записи
 
 
 def test_apply_already_responded_not_deduped_by_dom():
@@ -155,6 +157,7 @@ def test_apply_no_apply_button():
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
+    assert result.acted is False  # #163: до submit — без паузы и записи
 
 
 def test_apply_probe_hook_invoked_noop_default():
@@ -228,6 +231,19 @@ def test_apply_non_dry_run_success_when_submit_scoped_in_form():
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
     assert result.success is True
     assert result.skipped is False
+    assert result.acted is True  # #163: submit выполнен — пауза обязательна
+
+
+def test_apply_submit_unconfirmed_is_acted(monkeypatch):
+    """#163: submit-клик был, но успех не подтвердился (wait_success_confirmation
+    False) — это провал ПОСЛЕ действия: acted=True, цикл откликов обязан
+    ждать паузу и писать failed. Регрессия против «фикс отключил троттлинг»."""
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+    assert result.success is False
+    assert "не удалось подтвердить" in result.reason
+    assert result.acted is True
 
 
 def test_apply_non_dry_run_indeterminate_is_fail_not_skip():
@@ -242,3 +258,4 @@ def test_apply_non_dry_run_indeterminate_is_fail_not_skip():
     assert result.success is False
     assert result.skipped is False
     assert "границы формы" in result.reason
+    assert result.acted is False  # #163: indeterminate — до submit, без паузы

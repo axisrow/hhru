@@ -231,7 +231,8 @@ def run_apply_for_resume(
 
     Перенесено дословно из cli._apply_for_resume. Принципы CLAUDE.md сохранены:
     дедупликация и стоп-листы через filter_candidates (history-based),
-    дневной лимит проверяется перед каждым откликом, throttle.wait между откликами.
+    дневной лимит проверяется перед каждым откликом, throttle.wait после
+    реальных отправок (#163: исходы до submit — без паузы и записи в actions).
 
     #17: если включён AI (секция ai + ai_profile) — отклик идёт через
     CoverLetterProvider; иначе (провайдер None) — статичный шаблон, поведение
@@ -315,15 +316,21 @@ def run_apply_for_resume(
             print(f"  [skip] {card.title} — {result.reason}")
             continue
 
-        status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
-        history.record_action(
-            resume.resume_id,
-            card.vacancy_id,
-            "apply",
-            status,
-            result.reason,
-            letter_variant=result.letter_variant,
-        )
+        # #163: actions — журнал реальных взаимодействий с hh.ru. Запись только
+        # после реального submit либо для успешной dry_run-симуляции — dry_run-
+        # строки НЕ трогаем: их читает дедупликация has_applied (CLAUDE.md п.2).
+        # Провалы до submit (форма входа, «уже откликались», кнопка не найдена)
+        # на hh.ru не отправлялись — остаются в консоли/логе, не в статистике.
+        if result.acted or (args.dry_run and result.success):
+            status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+            history.record_action(
+                resume.resume_id,
+                card.vacancy_id,
+                "apply",
+                status,
+                result.reason,
+                letter_variant=result.letter_variant,
+            )
 
         if result.success:
             applied_count += 1
@@ -331,7 +338,11 @@ def run_apply_for_resume(
         else:
             print(f"  [FAIL] {card.title} — {result.reason}")
 
-        throttle.wait(f"после отклика на '{card.title}'")
+        # #163: анти-бан-пауза — только после реальной отправки отклика (submit).
+        # Ранние выходы не оставляют на сайте следа, пауза там не от чего не
+        # защищает; после submit (включая неподтверждённый успех) — обязательна.
+        if result.acted:
+            throttle.wait(f"после отклика на '{card.title}'")
 
     print(f"Итого откликов за этот запуск: {applied_count}")
     return False

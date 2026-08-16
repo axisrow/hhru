@@ -26,6 +26,11 @@ class BumpResult:
     resume_id: str
     success: bool
     reason: str = ""
+    # #163: реальное действие на hh.ru выполнено (клик по кнопке поднятия).
+    # False у всех ранних выходов (плейсхолдер, форма входа, hint «рано»,
+    # кнопка не найдена) и у dry-run: на hh.ru не осталось следа, поэтому
+    # команда не пишет такие исходы в actions и не ждёт throttle.wait.
+    acted: bool = False
 
 
 def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
@@ -84,4 +89,4 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
 
     bump_button.click()
     logger.info("Резюме '%s' поднято в поиске", resume.id)
-    return BumpResult(resume.id, True, "success")
+    return BumpResult(resume.id, True, "success", acted=True)

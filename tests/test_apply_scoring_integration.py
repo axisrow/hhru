@@ -99,6 +99,7 @@ class _StubResult:
     reason = "stub"
     letter_variant = None
     skipped = False  # #95: совместимость с result.skipped в _common.run_apply_for_resume
+    acted = False  # #163: совместимость с result.acted в _common.run_apply_for_resume
 
 
 def test_run_apply_passes_llm_provider_when_ai_on(tmp_path, monkeypatch):

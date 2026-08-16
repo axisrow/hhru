@@ -75,7 +75,10 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
    - Кулдаун поднятия резюме: жёстко `BUMP_COOLDOWN = 4 часа` (`can_bump_now()`), сверх
      дневного лимита.
    - `throttle.wait()` — случайная пауза `min_delay..max_delay` секунд после каждого
-     действия.
+     РЕАЛЬНОГО действия на hh.ru — клика поднятия/submit отклика (`BumpResult.acted`/
+     `ApplyResult.acted`, #163). Ранние выходы до действия (плейсхолдер в конфиге,
+     форма входа, hint «рано», dry-run) не ждут паузу и не пишут `failed` в actions:
+     на hh.ru не осталось следа, пауза не от чего не защищает.
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
