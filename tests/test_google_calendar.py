@@ -9,7 +9,9 @@ from hhru_bot.google_calendar import GoogleCalendarError, event_payload, insert_
 
 def test_event_payload_requires_explicit_datetime():
     with pytest.raises(GoogleCalendarError, match="явные"):
-        event_payload(summary="Interview", start="", end="2026-08-20T11:00:00+07:00", timezone="Asia/Bangkok")
+        event_payload(
+            summary="Interview", start="", end="2026-08-20T11:00:00+07:00", timezone="Asia/Bangkok"
+        )
 
 
 def test_event_payload_does_not_use_response_timestamp():
