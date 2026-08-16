@@ -531,10 +531,12 @@ def run_negotiations(args: argparse.Namespace) -> bool:
         ):
             rows.append([name, selector, str(page.locator(selector).count())])
         print(_ascii_table(["selector", "css", "count"], rows))
-        print(_ascii_table(
-            ["topic_id", "chat_id", "direct_route"],
-            [[r.topic_id, r.chat_id, chat_url(r.chat_id)] for r in refs],
-        ))
+        print(
+            _ascii_table(
+                ["topic_id", "chat_id", "direct_route"],
+                [[r.topic_id, r.chat_id, chat_url(r.chat_id)] for r in refs],
+            )
+        )
         print("RAW HTML fragment (first card):")
         items = page.locator(negotiations.NEGOTIATION_ITEM)
         if items.count():
@@ -560,12 +562,14 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                     "if (String(n.className).includes('message_my')) return n.className; "
                     "return ''; }"
                 )
-                message_rows.append([
-                    str(i + 1),
-                    loc.get_attribute("data-qa") or "-",
-                    "own" if "message_my" in parent_class else "other",
-                    loc.inner_text().replace("\n", " ")[:160],
-                ])
+                message_rows.append(
+                    [
+                        str(i + 1),
+                        loc.get_attribute("data-qa") or "-",
+                        "own" if "message_my" in parent_class else "other",
+                        loc.inner_text().replace("\n", " ")[:160],
+                    ]
+                )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
             print("RAW HTML fragment (messages):")
             message_roots = page.locator("[data-qa^='chatik-chat-message-']")
