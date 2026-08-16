@@ -62,6 +62,7 @@ _TAG_RE = re.compile(r"^([a-zA-Z]+)$")
 _TYPE_RE = re.compile(r"^input\[type=[\"'](\w+)[\"']\]$")
 _QA_RE = re.compile(r"^\[data-qa=[\"']([\w\-]+)[\"']\]$")
 _TAG_QA_RE = re.compile(r"^([a-zA-Z]+)\[data-qa=[\"']([\w\-]+)[\"']\]$")
+_FORM_ID_RE = re.compile(r"^form#([\w\-]+)$")
 
 
 def _match(node, sel):
@@ -162,6 +163,11 @@ class _Loc:
         nodes = [] if scope is None else [n for n in _all(scope) if _match(n, sel)]
         return self._page._make_locator(sel, nodes)
 
+    def get_attribute(self, name):
+        if name != "form" or not self._n:
+            return None
+        return self._n[0].attrs.get("form")
+
 
 class _Page:
     def __init__(self, html, *, render_delayed_selectors=(), wait_error_selectors=()):
@@ -180,6 +186,11 @@ class _Page:
         return loc
 
     def locator(self, sel):
+        if m := _FORM_ID_RE.match(sel):
+            return self._make_locator(
+                sel,
+                [n for n in _all(self._tree) if n.tag == "form" and n.attrs.get("id") == m.group(1)],
+            )
         if ">> xpath=ancestor::form" in sel:
             base_sel = sel.split(" >> xpath=ancestor::form")[0]
             submit = next((n for n in _all(self._tree) if _match(n, base_sel)), None)
@@ -188,6 +199,19 @@ class _Page:
             form = _ancestor_form(self._tree, submit)
             return self._make_locator(sel, [form] if form is not None else [])
         return self._make_locator(sel, [n for n in _all(self._tree) if _match(n, sel)])
+
+
+def test_detect_uses_form_attribute_when_submit_is_outside_form():
+    """HH.ru's modal keeps submit outside its form and links it with form=ID."""
+    html = """
+        <form id='RESPONSE_MODAL_FORM_ID'>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+        </form>
+        <div><input type='checkbox'><button form='RESPONSE_MODAL_FORM_ID'
+            data-qa='vacancy-response-submit-popup'>Откликнуться</button></div>
+    """
+    result = detect_questions(_Page(html))
+    assert result == QuestionDetection.no()
 
 
 def test_detect_no_questions_clean_form():

@@ -13,18 +13,10 @@ textarea за вычетом известных cover-letter textareas → True;
 
 Чистая функция поверх page.locator().count() — без браузера тестируется на HTML-фикстуре.
 
-ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ (round 3, НЕ подтверждено на живом hh.ru): heuristic-путь
-(2) скоупится через ближайший <form>-предок APPLY_SUBMIT_BUTTON (см. _form_scope).
-konard-референс подтверждает только наличие data-qa атрибутов, а НЕ то, что кнопка
-submit обёрнута именно в семантический <form>-тег — этот факт нигде не проверен
-живым дампом (форма отклика в CLAUDE.md сама помечена «НЕ подтверждено»). Если
-допущение неверно (SPA без <form>, submit через onClick — обычная практика для
-React), _form_scope() будет систематически возвращать None → detect_questions()
-всегда вернёт indeterminate=True → pipeline будет fail'ить КАЖДЫЙ non-dry-run
-apply ещё до fill_response_form, независимо от наличия вопросов в форме.
-ОБЯЗАТЕЛЬНО перед первым боевым apply/bump: прогнать `probe` на реальной вакансии
-и проверить лог на "[WARN indeterminate]" — если он появляется на форме БЕЗ
-вопросов, admission `<form>`-скоупинга неверно и требует ревизии (см. #95).
+Живой дамп формы отклика (issue #188) показывает, что submit-кнопка может находиться
+вне `<form>`, но иметь атрибут `form="RESPONSE_MODAL_FORM_ID"`. Поэтому
+_form_scope() сначала разрешает связанный по атрибуту `<form>`, а для старой
+разметки сохраняет fallback на ближайшего `<form>`-предка.
 """
 
 from __future__ import annotations
@@ -121,9 +113,12 @@ def _wait_present(locator: Locator, *, timeout_ms: int) -> bool | None:
 
 
 def _form_scope(page: Page) -> Locator | None:
-    """Ищет ближайший предок-<form> кнопки submit — граница heuristic-поиска
-    (#95 round-1 fix). Возвращает Locator при успехе, None если <form>-предок
-    не найден — НЕТ fallback на весь page (round-2 fix): без надёжной границы
+    """Ищет форму, связанную с submit-кнопкой, — границу heuristic-поиска.
+
+    HTML допускает submit-кнопку вне формы, связанную через атрибут ``form``
+    (#188), поэтому сначала используем этот явный идентификатор. Для старой
+    разметки сохраняем fallback на ближайшего ``<form>``-предка. Возвращает
+    None если надёжная граница не найдена — НЕТ fallback на весь page: без надёжной границы
     heuristic не выполняется вовсе, чтобы посторонний page-level
     radio/checkbox/textarea не порождал ложный persistent skip.
 
@@ -136,9 +131,21 @@ def _form_scope(page: Page) -> Locator | None:
     гарантию для дочерних локаторов (``scope.locator(...)`` ниже в
     detect_questions), каждый из них дожидается своего состояния независимо.
     """
+    submit = page.locator(apply_form.APPLY_SUBMIT_BUTTON).first
+    if _wait_present(submit, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS) is not True:
+        return None
+
+    try:
+        form_id = submit.get_attribute("form")
+    except PlaywrightError:
+        form_id = None
+    if form_id:
+        linked_scope = page.locator(f"form#{form_id}")
+        if _wait_present(linked_scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS) is True:
+            return linked_scope
+
     scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
-    present = _wait_present(scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
-    return scope if present else None
+    return scope if _wait_present(scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS) else None
 
 
 def detect_questions(page: Page) -> QuestionDetection:
