@@ -207,13 +207,14 @@ def _absolute_url(href: str, *, keep_query: bool = False) -> str:
     return f"{HH_BASE_URL}{href.split('?')[0]}"
 
 
-def _optional_text(item, selector: str) -> str:
-    """Текст первого элемента карточки по selector, либо пустая строка.
+def _optional_text(item, *selectors: str) -> str:
+    """Текст первого найденного элемента карточки, либо пустая строка.
 
     Опциональные поля (работодатель, статус). Как search._optional_text, но без
     None → пустая строка (для responses пустота нормальна и удобнее в dataclass).
+    Selectors are ordered live-first, with legacy markup as a fallback.
     """
-    loc = item.locator(selector).first
+    loc = _first_locator(item, *selectors)
     if not loc.count():
         return ""
     text = loc.inner_text().strip()
@@ -241,24 +242,17 @@ def parse_response_card(item) -> ResponseItem | None:
     if not vacancy_id:
         return None
 
-    # Prefer the legacy exact selector first: it also keeps old saved fixtures
-    # deterministic while the live selector is verified on the real DOM. Fall
-    # through to the confirmed selector whenever the legacy one is empty OR
-    # unrecognized — normalize_status("") is READ (not UNKNOWN) by design, so
-    # "empty" and "unrecognized" are checked separately; an unrecognized
-    # legacy match must not shadow a live selector that could still resolve
-    # to a known status.
-    raw_status = _optional_text(item, ns.LEGACY_NEGOTIATION_STATUS)
-    if not raw_status or normalize_status(raw_status) == ResponseStatus.UNKNOWN:
-        raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
+    # Prefer confirmed live selectors consistently; old saved markup remains a
+    # fallback for fixtures and previously captured pages.
+    raw_status = _optional_text(
+        item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS
+    )
     if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
         raw_status = ""
-    employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER)
-    if not employer:
-        employer = _optional_text(item, ns.LEGACY_NEGOTIATION_EMPLOYER)
-    date = _optional_text(item, ns.NEGOTIATION_DATE)
-    if not date:
-        date = _optional_text(item, ns.LEGACY_NEGOTIATION_DATE)
+    employer = _optional_text(
+        item, ns.NEGOTIATION_EMPLOYER, ns.LEGACY_NEGOTIATION_EMPLOYER
+    )
+    date = _optional_text(item, ns.NEGOTIATION_DATE, ns.LEGACY_NEGOTIATION_DATE)
 
     chat_link = _first_locator(item, ns.NEGOTIATION_CHAT_LINK, ns.LEGACY_NEGOTIATION_CHAT_LINK)
     chat_href = chat_link.get_attribute("href") or "" if chat_link.count() else ""

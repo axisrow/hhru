@@ -562,15 +562,19 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             for i in range(messages.count()):
                 loc = messages.nth(i)
                 parent_class = loc.evaluate(
-                    "el => { for (let n = el; n; n = n.parentElement) "
-                    "if (String(n.className).includes('message_my')) return n.className; "
-                    "return ''; }"
+                    "(el, marker) => { for (let n = el; n; n = n.parentElement) "
+                    "if (String(n.className).split(/\\s+/).includes(marker)) "
+                    "return n.className; return ''; }",
+                    negotiations.CHAT_MESSAGE_MY_MARKER,
                 )
                 message_rows.append(
                     [
                         str(i + 1),
                         loc.get_attribute("data-qa") or "-",
-                        "own" if "message_my" in parent_class else "other",
+                        "own"
+                        if negotiations.CHAT_MESSAGE_MY_MARKER
+                        in parent_class.split()
+                        else "other",
                         loc.inner_text().replace("\n", " ")[:160],
                     ]
                 )

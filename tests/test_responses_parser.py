@@ -287,6 +287,28 @@ def test_parse_response_card_reads_live_viewed_status_without_legacy_markup():
     assert item is not None
     assert item.status == ResponseStatus.READ
     assert item.raw_status == "Прочитано"
+def test_parse_response_card_prefers_live_fields_when_both_markups_exist():
+    """Confirmed selectors win consistently over compatibility selectors."""
+    page = NegotiationsPage(
+        """
+        <div data-qa="negotiations-item">
+          <a data-qa="negotiations-item-vacancy" href="/vacancy/666666">Live</a>
+          <a data-qa="negotiations-item__vacancy-link" href="/vacancy/777777">Legacy</a>
+          <span data-qa="negotiations-tag">Новое сообщение</span>
+          <span data-qa="negotiations-item__state">Отказ</span>
+          <span data-qa="negotiations-item-company">Live Corp</span>
+          <span data-qa="negotiations-item__employer">Legacy Corp</span>
+          <span data-qa="negotiations-item-date">сегодня</span>
+          <span data-qa="negotiations-item__date">вчера</span>
+        </div>
+        """
+    )
+    item = parse_response_card(page.items[0])
+    assert item is not None
+    assert item.vacancy_id == "666666"
+    assert item.status == ResponseStatus.RESPONSE
+    assert item.employer == "Live Corp"
+    assert item.date == "сегодня"
 
 
 def test_response_item_dataclass_fields():
