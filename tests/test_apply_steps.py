@@ -10,6 +10,7 @@ submit даёт отказ при отсутствии.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Error
@@ -181,6 +182,16 @@ class FakeStepsPage:
         # документа не наступает (тест регрессии на этот баг ниже).
         self.wait_for_url_calls: list[tuple[str, str | None, int | None]] = []
         self.wait_for_url_error: Exception | None = None
+        self.screenshot_calls = 0
+        self.content_calls = 0
+
+    def screenshot(self, **_kwargs) -> bytes:
+        self.screenshot_calls += 1
+        return b"png"
+
+    def content(self) -> str:
+        self.content_calls += 1
+        return "<html>diagnostic</html>"
 
     def _state(self, selector: str) -> _SelectorState:
         return self.states.setdefault(selector, _SelectorState())
@@ -333,6 +344,48 @@ def test_navigate_wait_for_url_timeout_does_not_raise():
     assert apply_state.clicks == 1
 
 
+def test_navigate_wait_for_url_timeout_saves_diagnostics(tmp_path: Path, monkeypatch):
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    page.wait_for_url_error = PlaywrightTimeoutError("navigation timeout")
+    monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
+
+    steps.navigate_to_response_form(page)
+
+    assert page.screenshot_calls == 1
+    assert page.content_calls == 1
+    assert (tmp_path / "apply_navigation_timeout.png").exists()
+    assert (tmp_path / "apply_navigation_timeout.html").exists()
+
+    # Повторный таймаут БЕЗ vacancy_id перезаписывает те же файлы (идемпотентно
+    # по stage, как probe.dump_probe_snapshot), а не копит файл на каждый retry.
+    steps.navigate_to_response_form(page)
+
+    assert page.screenshot_calls == 2
+    assert len(list(tmp_path.glob("apply_navigation_timeout*.png"))) == 1
+    assert len(list(tmp_path.glob("apply_navigation_timeout*.html"))) == 1
+
+
+def test_navigate_wait_for_url_timeout_keeps_diagnostics_per_vacancy(tmp_path: Path, monkeypatch):
+    # cycle-review round 2: round-1 fix сделал имя чисто по stage и потерял
+    # контекст вакансии — при массовом apply-прогоне дамп одной вакансии
+    # затирался следующей, что противоречит цели #192 (сравнить артефакты
+    # разных вакансий). vacancy_id в имени разделяет их, оставаясь idempotent
+    # per-vacancy.
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    page.wait_for_url_error = PlaywrightTimeoutError("navigation timeout")
+    monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
+
+    steps.navigate_to_response_form(page, "111")
+    steps.navigate_to_response_form(page, "222")
+
+    assert (tmp_path / "apply_111_navigation_timeout.png").exists()
+    assert (tmp_path / "apply_222_navigation_timeout.png").exists()
+
+
 def test_navigate_wait_for_url_non_timeout_error_does_not_raise():
     # #179 (code-review): раньше wait_for_url ловил только PlaywrightTimeoutError,
     # хотя non-timeout PlaywrightError (page/context closed, navigation aborted)
@@ -364,6 +417,19 @@ def test_navigate_apply_button_click_error_does_not_raise():
     steps.navigate_to_response_form(page)  # не должен бросать
 
     assert page.navigation_entered == 0  # wait_for_url не вызывался после сбойного клика
+
+
+def test_navigate_missing_submit_saves_diagnostics(tmp_path: Path, monkeypatch):
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
+
+    steps.navigate_to_response_form(page)
+
+    assert page.screenshot_calls == 1
+    assert page.content_calls == 1
+    assert (tmp_path / "apply_form_timeout.png").exists()
+    assert (tmp_path / "apply_form_timeout.html").exists()
 
 
 def test_navigate_clicks_apply_button_with_no_wait_after():

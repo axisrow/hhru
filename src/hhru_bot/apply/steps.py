@@ -20,6 +20,7 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..browser import GOTO_TIMEOUT_MS
+from ..logging_setup import LOG_DIR
 from ..selector_groups import vacancy_page
 
 logger = logging.getLogger("hhru_bot.apply.steps")
@@ -55,6 +56,39 @@ class SubmitClickUncertain(Exception):
         self.playwright_error = cause
 
 
+def _dump_navigation_diagnostics(page: Page, stage: str, vacancy_id: str | None = None) -> None:
+    """Best-effort screenshot and HTML dump after an indeterminate form wait.
+
+    This is deliberately diagnostic-only: a failure to capture either artifact
+    must not change the apply result or interrupt the remaining vacancies.
+    Same idempotent-by-name convention as ``probe.dump_probe_snapshot``:
+    the filename is keyed by ``stage`` (plus ``vacancy_id`` when the caller has
+    one) so a repeated failure on the SAME vacancy overwrites its own previous
+    dump instead of accumulating a new pair of files per retry, while distinct
+    vacancies in one apply run keep separate artifacts (cycle-review round 2:
+    the pure by-stage key from round 1 fixed unbounded growth but lost the
+    per-vacancy context #192 needs to tell a slow DDoS-Guard load apart from a
+    drifted selector on a specific vacancy).
+    """
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        name = f"apply_{stage}" if vacancy_id is None else f"apply_{vacancy_id}_{stage}"
+        prefix = LOG_DIR / name
+        screenshot_path = prefix.with_suffix(".png")
+        html_path = prefix.with_suffix(".html")
+        screenshot_path.write_bytes(page.screenshot(full_page=True))
+        html_path.write_text(page.content(), encoding="utf-8")
+    except (OSError, PlaywrightError) as exc:
+        logger.warning("Диагностический дамп после %s недоступен: %s", stage, exc)
+        return
+    logger.info(
+        "Диагностический дамп после %s сохранён: %s, %s",
+        stage,
+        screenshot_path,
+        html_path,
+    )
+
+
 def wait_apply_button(page: Page) -> bool:
     """Ждёт появления кнопки отклика на странице вакансии. False — не дождались."""
     try:
@@ -64,8 +98,12 @@ def wait_apply_button(page: Page) -> bool:
     return True
 
 
-def navigate_to_response_form(page: Page) -> None:
+def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> None:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
+
+    ``vacancy_id`` (опционален — probe.py его тоже передаёт, но не обязан) даёт
+    диагностическим дампам таймаутов отдельное имя на вакансию, чтобы не терять
+    контекст при массовом apply-прогоне (см. ``_dump_navigation_diagnostics``).
 
     VACANCY_APPLY_BUTTON — это <a href="/applicant/vacancy_response?..."> (подтверждено
     curl-дампом реальной страницы вакансии), а не триггер модалки на этой же странице.
@@ -128,6 +166,7 @@ def navigate_to_response_form(page: Page) -> None:
             "**/applicant/vacancy_response**", wait_until="commit", timeout=GOTO_TIMEOUT_MS
         )
     except PlaywrightError as exc:
+        _dump_navigation_diagnostics(page, "navigation_timeout", vacancy_id)
         logger.warning(
             "Навигация на форму отклика не подтвердилась (%s) — "
             "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
@@ -139,6 +178,7 @@ def navigate_to_response_form(page: Page) -> None:
             state="visible", timeout=APPLY_TIMEOUT_MS
         )
     except PlaywrightError as exc:
+        _dump_navigation_diagnostics(page, "form_timeout", vacancy_id)
         # Форма не загрузилась — fill_response_form всё равно вернёт причину отказа
         # (submit не найден), логируем для диагностики устаревшего селектора.
         logger.warning("Форма отклика не отрисовалась (%s)", exc)

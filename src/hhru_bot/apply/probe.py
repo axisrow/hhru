@@ -186,7 +186,7 @@ def probe_vacancy(
     if not apply_steps.wait_apply_button(page):
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
-    apply_steps.navigate_to_response_form(page)
+    apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
     logger.info("[PROBE] Дошёл до формы отклика, заполняю письмо (без отправки)")
 
     # #95: detect-only. Если форма требует анкеты — НЕ заполняем и НЕ дампим вопросы,

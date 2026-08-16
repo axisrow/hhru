@@ -160,7 +160,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
         return ctx.ok("dry-run")
 
-    apply_steps.navigate_to_response_form(ctx.page)
+    apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
     ctx.probe("form_loaded")
 
     # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
