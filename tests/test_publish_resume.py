@@ -48,6 +48,7 @@ class _Page:
         self.after_markup = markup.replace('"status":"not_finished"', '"status":"finished"')
         self.publish_count = publish_count
         self.clicked = 0
+        self.reloaded = 0
         self.url = f"https://hh.ru/resume/{RESUME_ID}"
 
     def content(self):
@@ -60,6 +61,10 @@ class _Page:
 
     def wait_for_timeout(self, timeout):
         return None
+
+    def reload(self, wait_until=None):
+        self.reloaded += 1
+        self.markup = self.after_markup
 
 
 def _markup(**overrides):

@@ -211,6 +211,20 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                 resume.id, False, f"результат публикации не подтверждён: {exc}"
             )
     if after.status != "finished":
+        # The SPA can keep the original SSR bootstrap snapshot after the write.
+        # One read-only reload revalidates server state before we report failure.
+        try:
+            page.reload(wait_until="domcontentloaded")
+            if not _identity_matches(page, resume.resume_id):
+                return PublishResumeResult(
+                    resume.id, False, "identity резюме после публикации не подтверждён"
+                )
+            after = parse_resume_state(page.content(), resume.resume_id)
+        except PlaywrightError as exc:
+            return PublishResumeResult(
+                resume.id, False, f"результат публикации не подтверждён: {exc}"
+            )
+    if after.status != "finished":
         return PublishResumeResult(
             resume.id,
             False,
