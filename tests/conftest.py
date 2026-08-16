@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -43,6 +44,11 @@ def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
             "для живого hh.ru нужен маркер live_read или live_write"
         )
 
+    for module in tuple(sys.modules.values()):
+        if module is None or module is browser:
+            continue
+        if getattr(module, "launch_context", None) is real_launch_context:
+            monkeypatch.setattr(module, "launch_context", _blocked_launch_context)
     monkeypatch.setattr(browser, "launch_context", _blocked_launch_context)
 
 
