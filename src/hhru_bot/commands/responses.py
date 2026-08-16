@@ -166,9 +166,13 @@ def run(args: argparse.Namespace) -> None:
                         test_url = extract_external_test_link(message_text)
                         if test_url is None:
                             continue
+                        # resume_id=None: как и responses (см. warn выше),
+                        # /applicant/negotiations не даёт достоверной привязки
+                        # чата к резюме — args.resume здесь ничем не подтверждён.
                         history.record_test_assigned(
-                            args.resume,
+                            None,
                             card.vacancy_id,
+                            card.topic,
                             card.employer,
                             test_url,
                             message_text,

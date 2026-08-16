@@ -121,8 +121,9 @@ def test_record_test_assignment_persists_and_reads_history(tmp_path):
     h = History(tmp_path / "h.db")
     detected_at = datetime(2026, 8, 16, 10, 0)
     h.record_test_assigned(
-        "resume-1",
+        None,
         "vacancy-2",
+        "topic-1",
         "ЯМКЕТ",
         "https://yay-tech.ru",
         "Необходимо пройти небольшой тест: yay-tech.ru",
@@ -132,8 +133,9 @@ def test_record_test_assignment_persists_and_reads_history(tmp_path):
     rows = h.test_assignments_since(datetime(2026, 8, 16, 9, 59))
     assert rows == [
         {
-            "resume_id": "resume-1",
+            "resume_id": None,
             "vacancy_id": "vacancy-2",
+            "topic": "topic-1",
             "employer": "ЯМКЕТ",
             "test_url": "https://yay-tech.ru",
             "message_text": "Необходимо пройти небольшой тест: yay-tech.ru",
@@ -150,16 +152,18 @@ def test_record_test_assigned_deduplicates_same_message(tmp_path):
 
     h = History(tmp_path / "h.db")
     h.record_test_assigned(
-        "resume-1",
+        None,
         "vacancy-2",
+        "topic-1",
         "ЯМКЕТ",
         "https://yay-tech.ru",
         "Необходимо пройти небольшой тест: yay-tech.ru",
         detected_at=datetime(2026, 8, 16, 10, 0),
     )
     h.record_test_assigned(
-        "resume-1",
+        None,
         "vacancy-2",
+        "topic-1",
         "ЯМКЕТ",
         "https://yay-tech.ru",
         "Необходимо пройти небольшой тест: yay-tech.ru",
@@ -168,6 +172,36 @@ def test_record_test_assigned_deduplicates_same_message(tmp_path):
 
     rows = h.test_assignments_since(datetime(2026, 8, 16, 9, 59))
     assert len(rows) == 1
+
+
+def test_record_test_assigned_keeps_same_text_from_different_chats(tmp_path):
+    # Одна вакансия может дать несколько переписок (повторный отклик тем же
+    # резюме через разные topic). Совпадающий шаблонный текст сообщения из
+    # ДВУХ разных чатов — это два разных реальных события, не дубликат.
+    from datetime import datetime
+
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        None,
+        "vacancy-2",
+        "topic-1",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Необходимо пройти небольшой тест: yay-tech.ru",
+        detected_at=datetime(2026, 8, 16, 10, 0),
+    )
+    h.record_test_assigned(
+        None,
+        "vacancy-2",
+        "topic-2",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Необходимо пройти небольшой тест: yay-tech.ru",
+        detected_at=datetime(2026, 8, 16, 11, 0),
+    )
+
+    rows = h.test_assignments_since(datetime(2026, 8, 16, 9, 59))
+    assert len(rows) == 2
 
 
 def test_unique_index_prevents_duplicate_uncertain_apply():
