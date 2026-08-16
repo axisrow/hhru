@@ -177,3 +177,44 @@ def test_ssr_topic_recovery_fails_closed_when_multiple_topics_share_one_vacancy(
     assert results[1].topic is None
     assert results[1].chat_url is None
     assert any("неоднозначно" in message for message in caplog.messages)
+    # Regression #186 (round 3): topic=None alone doesn't distinguish "no chat"
+    # (e.g. discard) from "ambiguous SSR mapping" — callers persisting to
+    # history.upsert_response (keyed on vacancy_id + topic IS NULL) need this
+    # flag to avoid merging distinct negotiations into one history row.
+    assert results[0].topic_ambiguous is True
+    assert results[1].topic_ambiguous is True
+
+
+def test_ssr_topic_recovery_leaves_topic_ambiguous_false_for_genuinely_chatless_card(
+    monkeypatch,
+):
+    """Контроль: карточка без чата вовсе (нет SSR-кандидатов для её vacancy_id,
+    напр. discard) должна остаться topic_ambiguous=False — иначе commands/responses
+    пропускал бы её персистенцию без причины.
+    """
+    goto_calls: list[str] = []
+
+    def goto(page, url):
+        goto_calls.append(url)
+        page.goto_page(len(goto_calls) - 1)
+
+    def parse_card(card):
+        return card
+
+    item = responses.ResponseItem(vacancy_id="900", status=responses.ResponseStatus.DISCARD)
+
+    page = _SSRPage(
+        pages_cards=[[item]],
+        pages_html=[_ssr_html([])],  # no SSR topics at all for this vacancy
+    )
+
+    monkeypatch.setattr(responses, "goto_hh", goto)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", parse_card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    results = responses.fetch_responses(page, max_pages=1)
+
+    assert len(results) == 1
+    assert results[0].topic is None
+    assert results[0].topic_ambiguous is False

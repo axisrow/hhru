@@ -131,7 +131,18 @@ class ResponseItem:
     вакансий, чата нет при отказе, дата рендерится не всегда). raw_status —
     оригинальный текст бейджа для вывода/диагностики. topic — идентификатор
     переписки (из chat_url ?topic=...), уникальный для конкретного чата; None,
-    если chat_url без topic (ответ без чата).
+    если chat_url без topic (ответ без чата ЛИБО неоднозначная SSR-привязка —
+    см. topic_ambiguous).
+
+    topic_ambiguous различает эти два случая topic=None: True — SSR-состояние
+    страницы содержало >1 topic-кандидата для этой вакансии, сопоставить с
+    конкретной карточкой однозначно не удалось (см. fail-closed guard в
+    fetch_responses); False (по умолчанию) — карточка легитимно без чата
+    (напр. discard) ИЛИ topic успешно сопоставлен. history.upsert_response
+    матчит существующую строку по ``(vacancy_id, topic IS NULL)``, поэтому
+    несколько ambiguous-карточек одной вакансии персистились бы как одна и та
+    же NULL-строка, сливая/перезаписывая разные переписки — commands/responses
+    обязан пропускать upsert для topic_ambiguous=True карточек.
     """
 
     vacancy_id: str
@@ -141,6 +152,7 @@ class ResponseItem:
     topic: str | None = None
     date: str = ""
     raw_status: str = ""
+    topic_ambiguous: bool = False
 
 
 def _extract_vacancy_id(href: str) -> str | None:
@@ -399,6 +411,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                     result.topic = ref.topic_id
                     result.chat_url = chat_url(ref.chat_id)
                 elif result.topic is None and len(candidates) > 1:
+                    result.topic_ambiguous = True
                     logger.warning(
                         "Отклик vacancy_id=%s: %d кандидатов SSR-topic на одну "
                         "вакансию — сопоставление неоднозначно, topic не присвоен",

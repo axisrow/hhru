@@ -182,7 +182,17 @@ def run(args: argparse.Namespace) -> None:
 
         print(f"Собрано карточек переписки: {len(cards)}")
 
+        skipped_ambiguous = 0
         for card in cards:
+            if card.topic_ambiguous:
+                # Несколько SSR-topic кандидатов на одну вакансию — fetch_responses
+                # намеренно оставил topic=None (см. ResponseItem.topic_ambiguous).
+                # history.upsert_response матчит существующую строку по
+                # (vacancy_id, topic IS NULL): персистить такую карточку наравне с
+                # легитимными без-чата ответами слило бы разные переписки одной
+                # вакансии в одну строку истории. Пропускаем запись, не гадаем.
+                skipped_ambiguous += 1
+                continue
             outcome = history.upsert_response(
                 vacancy_id=card.vacancy_id,
                 employer=card.employer or None,
@@ -202,6 +212,12 @@ def run(args: argparse.Namespace) -> None:
             f"Новых ответов: {inserted + updated} "
             f"(новых записей: {inserted}, смен статуса: {updated})"
         )
+        if skipped_ambiguous:
+            print(
+                f"[WARN] Пропущено записей с неоднозначным topic: {skipped_ambiguous} "
+                "(несколько переписок на одну вакансию, сопоставление с чатом не "
+                "подтверждено — см. лог warning)"
+            )
     else:
         print("Режим --since-hours 0: обход hh.ru пропущен, вывожу всю историю ответов.")
 
