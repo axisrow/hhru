@@ -194,6 +194,105 @@ def test_account_wide_rejects_when_max_pages_truncated(tmp_path, monkeypatch):
     assert rows == []  # nothing withdrawn before the completeness check failed
 
 
+def test_account_wide_empty_discovery_warns_but_does_not_hard_fail(tmp_path, monkeypatch, capsys):
+    """Codex review round 2 (PR #196): empty discovery must not be silent.
+
+    fetch_responses() returning [] on the first page is indistinguishable
+    from a discovery failure (stale selector/render timeout) per its own
+    docstring. Refusing outright would falsely block a legitimately empty
+    account, so this must warn visibly instead of failing hard or silently
+    reporting success with no explanation.
+    """
+
+    class Page:
+        pass
+
+    class Context:
+        def new_page(self):
+            return Page()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    history = History(tmp_path / "history.db")
+    monkeypatch.setattr(command, "confirm_write", lambda *args, **kwargs: True)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *args, **kwargs: Context())
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda *args, **kwargs: type(
+            "Cfg", (), {"storage_state_file": "unused", "user_agent": None, "throttle": None}
+        )(),
+    )
+    monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
+    monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: None)
+    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages: [])
+
+    failed = command.run(_args(account_wide=True, force=True))
+    assert failed is False  # no false refusal for a legitimately empty account
+    assert "[WARN]" in capsys.readouterr().err
+
+
+def test_account_wide_skipped_cards_flip_exit_status(tmp_path, monkeypatch):
+    """Codex review round 2 (PR #196): skipped cards must count as failure.
+
+    Cards without a resolved topic were counted and printed, but the count
+    never affected the returned status — an account-wide run with resolved
+    topics all succeeding still returned False (success) even though some
+    negotiations were never attempted. That contradicts the fail-closed
+    contract for a destructive, irreversible command (issue #111).
+    """
+    from hhru_bot.responses import ResponseItem
+
+    class Response:
+        ok = True
+        status = 204
+
+    class Request:
+        def delete(self, url):
+            return Response()
+
+    class Page:
+        request = Request()
+
+    class Throttle:
+        def wait(self, reason):
+            pass
+
+    class Context:
+        def new_page(self):
+            return Page()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    cards = [
+        ResponseItem(vacancy_id="1", status="read", topic="tp1"),
+        ResponseItem(vacancy_id="2", status="read", topic=None),
+    ]
+    history = History(tmp_path / "history.db")
+    monkeypatch.setattr(command, "confirm_write", lambda *args, **kwargs: True)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *args, **kwargs: Context())
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda *args, **kwargs: type(
+            "Cfg", (), {"storage_state_file": "unused", "user_agent": None, "throttle": None}
+        )(),
+    )
+    monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
+    monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: Throttle())
+    monkeypatch.setattr(command, "fetch_responses", lambda page, max_pages: cards)
+    monkeypatch.setattr(command, "_has_next_page", lambda page, page_num: False)
+
+    failed = command.run(_args(account_wide=True, force=True))
+    assert failed is True  # a skipped card is an incomplete account-wide run
+
+
 def test_account_wide_skips_cards_without_topic(tmp_path, monkeypatch):
     """Codex review (PR #196): cards with topic=None must not look processed.
 

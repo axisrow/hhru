@@ -55,11 +55,6 @@ def _validate(args: argparse.Namespace) -> None:
     # a write merely because the current list happens to contain one item.
     if args.vacancy and args.force:
         _fail("Боевой отзыв по --vacancy запрещён; используйте уникальный --topic.")
-    if args.topic and args.dry_run:
-        return
-    if args.topic and not args.force and not args.dry_run:
-        # The prompt is handled after validation, before opening a browser.
-        return
 
 
 def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
@@ -112,6 +107,23 @@ def run(args: argparse.Namespace) -> bool:
         page = context.new_page()
         cards = fetch_responses(page, max_pages=args.max_pages)
 
+        # An empty first-page result from fetch_responses() is NOT a confirmed
+        # empty inbox (Codex review round 2, PR #196): responses.py's own
+        # docstring documents this as a known compromise — a render timeout on
+        # page 0 is indistinguishable from a genuinely empty account and is
+        # deliberately treated as empty there (no verified empty-state
+        # selector exists yet). Refusing outright here would falsely block a
+        # legitimately empty account on every run, so this stays a visible
+        # warning rather than a hard fail-closed refusal — but it must not be
+        # silent, per issue #111's "any doubt -> refuse" principle.
+        if not cards:
+            print(
+                "[WARN] Найдено 0 откликов — hh.ru не отличает пустой аккаунт от "
+                "сбоя загрузки страницы (устаревший селектор/таймаут рендера); "
+                "проверьте `probe --healthcheck` при сомнении.",
+                file=sys.stderr,
+            )
+
         # Fail-closed on truncated pagination (Codex review, PR #196): fetch_responses
         # silently stops after --max-pages pages even if hh.ru has more. Withdrawing
         # only the truncated prefix and reporting success on a destructive,
@@ -142,7 +154,14 @@ def run(args: argparse.Namespace) -> bool:
 
         if skipped:
             print(f"[INFO] Пропущено без topic (нет чата/неоднозначный SSR): {skipped}")
-        return _run_topics(args, topics, page=page, history=history, throttle=throttle)
+        # A skipped card means the account-wide run did not attempt every
+        # negotiation it found. Reporting success (False) here would silently
+        # understate coverage on a destructive, irreversible operation (Codex
+        # review round 2, PR #196) — fold it into the same failure signal as a
+        # failed withdrawal so callers/CI see an incomplete run. Withdraw first
+        # (short-circuiting on `skipped` would skip resolved topics entirely).
+        withdraw_failed = _run_topics(args, topics, page=page, history=history, throttle=throttle)
+        return withdraw_failed or bool(skipped)
 
 
 def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool:
