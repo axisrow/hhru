@@ -81,7 +81,13 @@ def run(args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         goto_hh(page, "https://hh.ru/applicant/negotiations")
-        refs = {ref.topic_id: ref.chat_id for ref in topic_refs(page.content())}
+        topic_list = topic_refs(page.content())
+        refs = {ref.topic_id: ref.chat_id for ref in topic_list}
+        # #200: SSR отдаёт resumeId для каждой переписки (проверено на живой
+        # сессии 2026-08-16, 7/7). Отдельный словарь, а не расширение refs:
+        # read_chat принимает Mapping[str, str] topic→chat_id, и менять его
+        # контракт ради аналитического поля незачем.
+        resume_by_topic = {ref.topic_id: ref.resume_id for ref in topic_list}
         for candidate in candidates:
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
@@ -120,6 +126,7 @@ def run(args: argparse.Namespace) -> None:
                         topic,
                         inbound_marker,
                         vacancy_id=str(candidate["vacancy_id"]),
+                        resume_id=resume_by_topic.get(topic),
                         status="failed",
                         reason=reason,
                     )
@@ -168,6 +175,7 @@ def run(args: argparse.Namespace) -> None:
                 topic,
                 inbound_marker,
                 vacancy_id=str(candidate["vacancy_id"]),
+                resume_id=resume_by_topic.get(topic),
                 status=status,
                 reason=reason,
             )

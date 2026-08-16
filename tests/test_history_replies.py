@@ -119,9 +119,13 @@ def test_replies_unique_allows_different_markers_in_one_topic():
         conn.close()
 
 
-def test_replies_resume_id_not_in_key_account_scope():
-    # Account-scope (как responses #12): resume_id опционален и НЕ в ключе —
-    # одна и та же (topic, marker) с разными resume_id не даёт двух строк.
+def test_replies_resume_id_not_in_key():
+    # resume_id опционален и НЕ в ключе: ключ — (topic, inbound_marker), один
+    # ответ на одно входящее. Одна и та же (topic, marker) с разными resume_id
+    # не даёт двух строк.
+    # NB (#200): «не в ключе» ≠ «атрибуции не существует» — SSR отдаёт resumeId,
+    # и record_reply_and_action его пишет. Ключ от этого не меняется: чат
+    # принадлежит одному резюме, дублировать строку не по чему.
     conn = sqlite3.connect(":memory:")
     try:
         conn.executescript(SCHEMA)
@@ -412,6 +416,44 @@ def test_replies_since_includes_created_at(tmp_path):
     row = h.replies_since(datetime(2000, 1, 1))[0]
     assert row["created_at"]
     datetime.fromisoformat(row["created_at"])  # ISO-формат, как в остальных таблицах
+
+
+# --- атрибуция к резюме (#200) --------------------------------------------
+
+
+def test_reply_summary_resume_filter_no_longer_returns_silent_zeros(tmp_path):
+    """#200: stats --resume показывал нули, хотя ответы были.
+
+    Причина была не «нечем заполнить», а «данные выбрасывались»: SSR отдаёт
+    topicList[].resumeId (проверено 2026-08-16, 7/7 переписок), но
+    record_reply_and_action его не принимал, и фильтр reply_summary по
+    resume_id не матчил ни одной строки.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_reply_and_action("t1", "m1", vacancy_id="v1", resume_id="96223331", status="success")
+    h.record_reply_and_action("t2", "m2", vacancy_id="v2", resume_id="11111111", status="success")
+
+    mine = h.reply_summary("96223331", "all")
+    assert mine["total"] == 1, "фильтр по резюме снова зануляет отчёт"
+    assert mine["period"]["success"] == 1
+    # account-wide продолжает видеть оба ответа
+    assert h.reply_summary(None, "all")["total"] == 2
+
+
+def test_record_reply_and_action_without_resume_id_keeps_account_wide_sentinel(tmp_path):
+    """Дрейф SSR не должен ронять журналирование: NULL в replies, "" в actions.
+
+    actions.resume_id объявлен NOT NULL, поэтому там сентинел — пустая строка
+    (поведение до #200 сохранено для случая, когда hh.ru поле не отдал).
+    """
+    h = History(tmp_path / "h.db")
+    h.record_reply_and_action("t1", "m1", vacancy_id="v1", status="success")
+
+    with h._connect() as conn:
+        assert conn.execute("SELECT resume_id FROM replies").fetchone()[0] is None
+        assert (
+            conn.execute("SELECT resume_id FROM actions WHERE action = 'reply'").fetchone()[0] == ""
+        )
 
 
 # --- регресс: существующие таблицы не тронуты ------------------------------

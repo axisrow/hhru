@@ -140,8 +140,14 @@ CREATE TABLE IF NOT EXISTS skipped (
 -- знает. has_replied отсекает заведомо отвеченные, живой чат подтверждает финально.
 -- status — те же значения, что в actions (success/failed/dry_run), НЕ новый
 -- словарь состояний: машины состояний (pending/in_flight/sent) по решению #55 нет.
--- Account-scope как responses: resume_id опционален и НЕ в ключе
--- (/applicant/negotiations не даёт достоверной привязки чата к резюме).
+-- resume_id опционален и НЕ в ключе. ВАЖНО (#200): это НЕ значит «привязки к
+-- резюме не существует» — прежняя формулировка («/applicant/negotiations не даёт
+-- достоверной привязки чата к резюме») опровергнута живой проверкой 2026-08-16:
+-- SSR topicList[] отдаёт resumeId у 7/7 переписок, и record_reply_and_action его
+-- теперь пишет. Опциональность осталась как защита от дрейфа разметки: если hh.ru
+-- перестанет отдавать поле, журналирование ответа не должно падать (NULL здесь,
+-- пустой сентинел в actions.resume_id, который NOT NULL). В ключ не входит,
+-- потому что ключ — (topic, inbound_marker): один ответ на одно входящее.
 CREATE TABLE IF NOT EXISTS replies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic TEXT NOT NULL,
@@ -1580,28 +1586,46 @@ class History:
         inbound_marker: str,
         *,
         vacancy_id: str,
+        resume_id: str | None = None,
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
     ) -> None:
-        """Write the reply journal and action audit in one SQLite transaction."""
+        """Write the reply journal and action audit in one SQLite transaction.
+
+        ``resume_id`` — резюме, с которого шёл отклик, из SSR ``topicList[].resumeId``
+        (#200). Опционален: hh.ru отдаёт его стабильно (проверено 2026-08-16, 7/7
+        переписок), но дрейф разметки не должен ронять журналирование ответа —
+        отсутствие даёт NULL в ``replies`` и account-wide сентинел в ``actions``,
+        как было до #200.
+        """
         if status not in REPLY_STATUS_VALUES:
             raise ValueError(f"недопустимый status={status!r} для replies")
         now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute(
                 """INSERT OR IGNORE INTO replies
-                   (topic, inbound_marker, vacancy_id, status, letter_variant, note, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (topic, inbound_marker, vacancy_id, status, letter_variant, reason, now),
+                   (topic, inbound_marker, vacancy_id, resume_id, status,
+                    letter_variant, note, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    topic,
+                    inbound_marker,
+                    vacancy_id,
+                    resume_id,
+                    status,
+                    letter_variant,
+                    reason,
+                    now,
+                ),
             )
-            # actions.resume_id is NOT NULL; empty string is the explicit
-            # account-wide sentinel (there is no trustworthy resume mapping).
+            # actions.resume_id is NOT NULL — пустая строка остаётся сентинелом
+            # только когда SSR не отдал resumeId (см. докстринг).
             conn.execute(
                 """INSERT INTO actions
                    (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
                    VALUES (?, ?, 'reply', ?, ?, ?, ?)""",
-                ("", vacancy_id, status, reason, letter_variant, now),
+                (resume_id or "", vacancy_id, status, reason, letter_variant, now),
             )
 
     def replies_since(self, since: datetime) -> list[dict]:

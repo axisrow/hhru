@@ -20,6 +20,11 @@ class TopicRef:
     topic_id: str
     chat_id: str
     vacancy_id: str | None = None
+    #: Резюме, с которого начался отклик (SSR ``topicList[].resumeId``, #200).
+    #: Опционален НЕ как «атрибуция недостоверна», а как защита от дрейфа
+    #: разметки: отсутствие поля не должно ронять маппинг topic→chat, на
+    #: котором держатся responses/reply-employers.
+    resume_id: str | None = None
 
 
 def parse_initial_state(html: str) -> dict:
@@ -37,6 +42,16 @@ def topic_refs(html: str) -> list[TopicRef]:
     can't attach it to a card without a vacancy_id to key on); dropped entries are
     logged so a silently shrinking mapping is diagnosable, matching the warning-log
     contract of the SSR-recovery except-path in responses.py.
+
+    ``resumeId`` (#200) — резюме, с которого ушёл отклик. Проверено на живой
+    сессии 2026-08-16: поле присутствует у ВСЕХ 7/7 переписок аккаунта, рядом с
+    дублирующим его ``resources[type=RESUME]``. Это опровергает исходную посылку
+    #55 §1.3 «/applicant/negotiations не даёт достоверной привязки чата к
+    резюме»: посылка опиралась на осмотр видимого DOM карточки, где поля
+    действительно нет, и на тест собственной схемы БД — но не на SSR-состояние,
+    где оно есть. Отсутствие поля НЕ роняет запись (fail-open): маппинг
+    topic→chat нужен responses/reply-employers и не должен зависеть от
+    аналитического поля.
     """
     topics = parse_initial_state(html).get("applicantNegotiations", {}).get("topicList", [])
     refs: list[TopicRef] = []
@@ -44,7 +59,15 @@ def topic_refs(html: str) -> list[TopicRef]:
         if topic.get("id") is None or topic.get("chatId") is None or topic.get("vacancyId") is None:
             logger.debug("SSR topic entry missing id/chatId/vacancyId, dropped: %r", topic)
             continue
-        refs.append(TopicRef(str(topic["id"]), str(topic["chatId"]), str(topic["vacancyId"])))
+        resume_id = topic.get("resumeId")
+        refs.append(
+            TopicRef(
+                str(topic["id"]),
+                str(topic["chatId"]),
+                str(topic["vacancyId"]),
+                None if resume_id is None else str(resume_id),
+            )
+        )
     return refs
 
 
