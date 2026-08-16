@@ -62,9 +62,12 @@ _TAG_RE = re.compile(r"^([a-zA-Z]+)$")
 _TYPE_RE = re.compile(r"^input\[type=[\"'](\w+)[\"']\]$")
 _QA_RE = re.compile(r"^\[data-qa=[\"']([\w\-]+)[\"']\]$")
 _TAG_QA_RE = re.compile(r"^([a-zA-Z]+)\[data-qa=[\"']([\w\-]+)[\"']\]$")
+_ID_RE = re.compile(r"^([a-zA-Z]+)#([\w\-]+)$")
 
 
 def _match(node, sel):
+    if m := _ID_RE.match(sel):
+        return node.tag == m.group(1) and node.attrs.get("id") == m.group(2)
     if m := _TAG_RE.match(sel):
         return node.tag == m.group(1)
     if m := _TYPE_RE.match(sel):
@@ -152,6 +155,9 @@ class _Loc:
             # Немедленное чтение без ожидания — застаёт непрогрузившийся DOM.
             return 0
         return len(self._n)
+
+    def get_attribute(self, name):
+        return self._n[0].attrs.get(name) if self._n else None
 
     def locator(self, sel):
         # Вложенный locator() внутри scope (напр. scope.locator(_RADIO)) решает
@@ -369,6 +375,24 @@ def test_detect_indeterminate_when_submit_not_in_form():
     result = detect_questions(page)
     assert result.has_questions is True
     assert result.indeterminate is True
+
+
+def test_detect_scope_when_submit_is_associated_with_form_by_id():
+    """HH.ru modal places submit outside ``form`` and links it with ``form``."""
+    html = """
+        <form id='RESPONSE_MODAL_FORM_ID'>
+            <textarea data-qa='vacancy-response-popup-form-letter-input'></textarea>
+            <input type='radio' name='q1' value='a'>
+        </form>
+        <div class='modal-footer'>
+            <button data-qa='vacancy-response-submit-popup'
+                    type='submit' form='RESPONSE_MODAL_FORM_ID'>Откликнуться</button>
+        </div>
+    """
+    result = detect_questions(_Page(html))
+    assert result.has_questions is True
+    assert result.indeterminate is False
+    assert "radio/checkbox" in result.reason
 
 
 def test_detect_indeterminate_when_submit_missing():

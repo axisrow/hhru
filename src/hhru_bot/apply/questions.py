@@ -94,7 +94,9 @@ class QuestionDetection:
         return cls(True, reason, indeterminate=True)
 
 
-_SCOPE_NOT_FOUND_REASON = "не удалось определить границы формы отклика (нет <form>-предка у submit)"
+_SCOPE_NOT_FOUND_REASON = (
+    "не удалось определить границы формы отклика (нет связанного <form> у submit)"
+)
 _RUNTIME_ERROR_REASON = (
     "ошибка при проверке анкеты формы отклика — отправка отменена (нестабильная страница)"
 )
@@ -121,7 +123,7 @@ def _wait_present(locator: Locator, *, timeout_ms: int) -> bool | None:
 
 
 def _form_scope(page: Page) -> Locator | None:
-    """Ищет ближайший предок-<form> кнопки submit — граница heuristic-поиска
+    """Ищет связанную с кнопкой submit форму — граница heuristic-поиска
     (#95 round-1 fix). Возвращает Locator при успехе, None если <form>-предок
     не найден — НЕТ fallback на весь page (round-2 fix): без надёжной границы
     heuristic не выполняется вовсе, чтобы посторонний page-level
@@ -136,9 +138,26 @@ def _form_scope(page: Page) -> Locator | None:
     гарантию для дочерних локаторов (``scope.locator(...)`` ниже в
     detect_questions), каждый из них дожидается своего состояния независимо.
     """
+    submit = page.locator(apply_form.APPLY_SUBMIT_BUTTON).first
     scope = page.locator(f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]")
     present = _wait_present(scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
-    return scope if present else None
+    if present:
+        return scope
+
+    # The response modal renders its footer button outside the form and links
+    # it with the HTML ``form`` attribute (for example, RESPONSE_MODAL_FORM_ID).
+    try:
+        form_id = submit.get_attribute("form")
+    except PlaywrightError:
+        return None
+    if not form_id:
+        return None
+    linked_scope = page.locator(f"form#{form_id}")
+    return (
+        linked_scope
+        if _wait_present(linked_scope, timeout_ms=_QUESTION_WAIT_TIMEOUT_MS)
+        else None
+    )
 
 
 def detect_questions(page: Page) -> QuestionDetection:
