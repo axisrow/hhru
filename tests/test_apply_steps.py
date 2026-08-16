@@ -355,8 +355,16 @@ def test_navigate_wait_for_url_timeout_saves_diagnostics(tmp_path: Path, monkeyp
 
     assert page.screenshot_calls == 1
     assert page.content_calls == 1
-    assert len(list(tmp_path.glob("apply_navigation_timeout_*.png"))) == 1
-    assert len(list(tmp_path.glob("apply_navigation_timeout_*.html"))) == 1
+    assert (tmp_path / "apply_navigation_timeout.png").exists()
+    assert (tmp_path / "apply_navigation_timeout.html").exists()
+
+    # Повторный таймаут перезаписывает те же файлы (идемпотентно по stage,
+    # как probe.dump_probe_snapshot), а не копит файл на каждый retry.
+    steps.navigate_to_response_form(page)
+
+    assert page.screenshot_calls == 2
+    assert len(list(tmp_path.glob("apply_navigation_timeout*.png"))) == 1
+    assert len(list(tmp_path.glob("apply_navigation_timeout*.html"))) == 1
 
 
 def test_navigate_wait_for_url_non_timeout_error_does_not_raise():
@@ -401,8 +409,8 @@ def test_navigate_missing_submit_saves_diagnostics(tmp_path: Path, monkeypatch):
 
     assert page.screenshot_calls == 1
     assert page.content_calls == 1
-    assert len(list(tmp_path.glob("apply_form_timeout_*.png"))) == 1
-    assert len(list(tmp_path.glob("apply_form_timeout_*.html"))) == 1
+    assert (tmp_path / "apply_form_timeout.png").exists()
+    assert (tmp_path / "apply_form_timeout.html").exists()
 
 
 def test_navigate_clicks_apply_button_with_no_wait_after():

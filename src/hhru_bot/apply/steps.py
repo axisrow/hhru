@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Error as PlaywrightError
@@ -62,12 +61,14 @@ def _dump_navigation_diagnostics(page: Page, stage: str) -> None:
 
     This is deliberately diagnostic-only: a failure to capture either artifact
     must not change the apply result or interrupt the remaining vacancies.
-    ``time_ns`` keeps artifacts from consecutive retries distinct because this
-    path has no vacancy context.
+    Same idempotent-by-name convention as ``probe.dump_probe_snapshot``:
+    the filename is keyed only by ``stage`` (no vacancy context is available
+    on this path) so a repeated failure overwrites the previous dump instead
+    of accumulating a new pair of files per retry.
     """
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        prefix = LOG_DIR / f"apply_{stage}_{time.time_ns()}"
+        prefix = LOG_DIR / f"apply_{stage}"
         screenshot_path = prefix.with_suffix(".png")
         html_path = prefix.with_suffix(".html")
         screenshot_path.write_bytes(page.screenshot(full_page=True))
