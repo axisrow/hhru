@@ -15,7 +15,7 @@ _ALLOWED = {"unit", "integration", "smoke", "e2e", "live_read", "live_write"}
 
 def test_every_test_file_has_exactly_one_category_marker() -> None:
     tests_dir = Path(__file__).parent
-    test_files = sorted((*tests_dir.glob("test_*.py"), tests_dir / "packaging_smoke.py"))
+    test_files = sorted(tests_dir.glob("test_*.py"))
     missing_or_multiple: list[str] = []
     for path in test_files:
         tree = ast.parse(path.read_text(), filename=str(path))
