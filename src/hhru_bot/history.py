@@ -29,9 +29,12 @@ CREATE TABLE IF NOT EXISTS actions (
     created_at TEXT NOT NULL
 );
 
+-- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
+-- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
+-- иначе гонка/повтор вставит несколько uncertain-строк для одной пары.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
     ON actions(resume_id, vacancy_id)
-    WHERE action = 'apply' AND status IN ('success', 'dry_run');
+    WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain');
 
 -- responses — мониторинг ответов работодателей (#12, account-scope).
 -- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
@@ -255,6 +258,17 @@ class History:
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
+            # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
+            # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
+            # колонок) — старые базы содержат idx_resume_vacancy_apply без
+            # 'uncertain' в условии. Пересоздаём индекс явно на каждом открытии;
+            # DROP+CREATE идемпотентны и дешёвы (индекс маленький).
+            conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
+            conn.execute(
+                "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
+                "ON actions(resume_id, vacancy_id) "
+                "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
+            )
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)

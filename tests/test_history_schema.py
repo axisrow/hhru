@@ -112,3 +112,77 @@ def test_history_works_after_schema_creation(tmp_path):
     # повторное открытие того же файла не падает и данные на месте
     h2 = History(tmp_path / "h.db")
     assert h2.has_applied("r1", "v1")
+
+
+def test_unique_index_prevents_duplicate_uncertain_apply():
+    # #177: 'uncertain' дедуплицируется в has_applied(), значит UNIQUE-индекс
+    # тоже обязан покрывать этот статус — иначе гонка/повтор может вставить
+    # несколько uncertain-строк для одной (resume_id, vacancy_id).
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(SCHEMA)
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-01')"
+        )
+        try:
+            conn.execute(
+                "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+                "VALUES ('r1','v1','apply','uncertain','','2026-01-02')"
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("ожидалась IntegrityError от UNIQUE-индекса")
+    finally:
+        conn.close()
+
+
+def test_unique_index_upgraded_on_existing_db_with_old_condition(tmp_path):
+    # Существующая БД, созданная ДО #177, содержит индекс со старым условием
+    # WHERE status IN ('success', 'dry_run') — без 'uncertain'. IF NOT EXISTS
+    # не пересоздаст индекс с новым условием на уже существующей БД (тот же
+    # caveat #51, что и для колонок) — _init_schema должен доводить его явно
+    # (DROP INDEX IF EXISTS + CREATE), а не полагаться на IF NOT EXISTS.
+    db_path = tmp_path / "h.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                resume_id TEXT NOT NULL,
+                vacancy_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_resume_vacancy_apply
+                ON actions(resume_id, vacancy_id)
+                WHERE action = 'apply' AND status IN ('success', 'dry_run');
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    History(db_path)  # открытие существующей "старой" БД должно довести индекс
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+            "VALUES ('r1','v1','apply','uncertain','','2026-01-01')"
+        )
+        try:
+            conn.execute(
+                "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
+                "VALUES ('r1','v1','apply','uncertain','','2026-01-02')"
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("ожидалась IntegrityError после доводки индекса на старой БД")
+    finally:
+        conn.close()
