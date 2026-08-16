@@ -101,6 +101,30 @@ def format_summary(summary: dict, fmt: str) -> str:
     return _ascii_table(header, rows, footer=["Итого", str(total)] + [""] * (len(header) - 2))
 
 
+def format_replies(summary: dict, fmt: str) -> str:
+    """Отрисовать сводку наших ответов работодателям."""
+    _check_format(fmt)
+    variants = summary.get("letter_variants", {})
+    rows = [
+        ["Всего отправлено", str(summary.get("total", 0))],
+        ["За период", str(summary.get("period", {}).get("success", 0))],
+        ["Провалено за период", str(summary.get("period", {}).get("failed", 0))],
+    ]
+    rows.extend([f"Шаблон: {variant}", str(count)] for variant, count in sorted(variants.items()))
+    header = ["Метрика", "Значение"]
+    if fmt == "csv":
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(["metric", "value"])
+        writer.writerows(rows)
+        return out.getvalue().rstrip("\n")
+    if fmt == "md":
+        return "| Метрика | Значение |\n| --- | --- |\n" + "\n".join(
+            f"| {label} | {value} |" for label, value in rows
+        )
+    return _ascii_table(header, rows)
+
+
 # --- actions ----------------------------------------------------------------
 
 

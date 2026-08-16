@@ -296,3 +296,18 @@ def test_mark_offer_creates_record_even_without_action(tmp_path):
             ("r1", "v1"),
         ).fetchone()
     assert row is not None
+
+
+def test_funnel_counts_successful_reply_by_response_topic(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+    h.upsert_response("v1", "Acme", "invitation", "/chat/1", topic="t1")
+    h.upsert_response("v2", "Acme", "invitation", "/chat/2", topic="t2")
+    h.record_reply("t1", "m1", status="success")
+    h.record_reply("t2", "m2", status="dry_run")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["invited"] == 2
+    assert row["replied"] == 1
+    assert row["reply_rate"] == 50.0

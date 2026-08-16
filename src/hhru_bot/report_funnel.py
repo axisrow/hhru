@@ -3,7 +3,7 @@
 Отдельный файл от report.py — конвенция CLAUDE.md: «один report-топик на файл»
 (report.py владеет #11/stats, здесь — воронка/фаннел #13).
 
-Воронка: отправлено → просмотрено → приглашение → оффер, с конверсиями между
+Воронка: отправлено → просмотрено → приглашение → наш ответ → оффер, с конверсиями между
 шагами. Плюс «мёртвая зона» (отклики без ответа старше N дней). Форматы table/md
 (как в теле #13). Только текст/ASCII — НИКАКИХ эмодзи (правило CLI-вывода).
 """
@@ -30,9 +30,11 @@ _FUNNEL_COLUMNS = (
     "sent",
     "viewed",
     "invited",
+    "replied",
     "offer",
     "view_rate",
     "invite_rate",
+    "reply_rate",
     "offer_rate",
 )
 
@@ -41,9 +43,11 @@ _FUNNEL_HEADERS = {
     "sent": "Отправлено",
     "viewed": "Просмотрено",
     "invited": "Приглашение",
+    "replied": "Наш ответ",
     "offer": "Оффер",
     "view_rate": "Просмотры %",
     "invite_rate": "Приглаш. %",
+    "reply_rate": "Наш ответ %",
     "offer_rate": "Оффер %",
 }
 
@@ -67,9 +71,11 @@ def _funnel_rows(funnel: Iterable[dict]) -> list[list[str]]:
                 str(r.get("sent", 0)),
                 str(r.get("viewed", 0)),
                 str(r.get("invited", 0)),
+                str(r.get("replied", 0)),
                 str(r.get("offer", 0)),
                 _fmt_rate(r.get("view_rate", 0.0)),
                 _fmt_rate(r.get("invite_rate", 0.0)),
+                _fmt_rate(r.get("reply_rate", 0.0)),
                 _fmt_rate(r.get("offer_rate", 0.0)),
             ]
         )

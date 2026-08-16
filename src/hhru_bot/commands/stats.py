@@ -47,7 +47,7 @@ def run(args: argparse.Namespace) -> None:
 
     from ..config import ConfigError, load_config_or_exit
     from ..history import History
-    from ..report import format_actions, format_summary
+    from ..report import format_actions, format_replies, format_summary
 
     # --resume получает slug из конфига (resume.id), но история apply/bump
     # хранится под resume.resume_id (стабильный числовой id hh.ru — см. #2).
@@ -70,3 +70,8 @@ def run(args: argparse.Namespace) -> None:
     else:
         summary = history.summary(resume_id=resume_id, period=args.period)
         print(format_summary(summary, args.format))
+        print(
+            format_replies(
+                history.reply_summary(resume_id=resume_id, period=args.period), args.format
+            )
+        )

@@ -439,6 +439,47 @@ class History:
             result["total"] += cnt
         return result
 
+    def reply_summary(self, resume_id: str | None, period: str) -> dict:
+        """Сводка наших ответов из локальной таблицы ``replies``.
+
+        Успешные ответы считаются отправленными; ``dry_run`` в отправки не
+        входит. Счётчики вариантов относятся к выбранному периоду.
+        """
+        filters: list[str] = []
+        params: list = []
+        if resume_id is not None:
+            filters.append("resume_id = ?")
+            params.append(resume_id)
+        since = self._period_since(period)
+        period_filters = [*filters]
+        period_params = [*params]
+        if since is not None:
+            period_filters.append("created_at >= ?")
+            period_params.append(since)
+        period_clause = " WHERE " + " AND ".join(period_filters) if period_filters else ""
+        total_filters = [*filters, "status = 'success'"]
+        total_clause = " WHERE " + " AND ".join(total_filters)
+        with self._connect() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM replies{total_clause}", params
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT status, letter_variant, COUNT(*) AS cnt FROM replies{period_clause} "
+                "GROUP BY status, letter_variant",
+                period_params,
+            ).fetchall()
+        result = {"total": total, "period": {"success": 0, "failed": 0}, "letter_variants": {}}
+        for row in rows:
+            if row["status"] == "success":
+                result["period"]["success"] += row["cnt"]
+                variant = row["letter_variant"] or "unknown"
+                result["letter_variants"][variant] = (
+                    result["letter_variants"].get(variant, 0) + row["cnt"]
+                )
+            elif row["status"] == "failed":
+                result["period"]["failed"] += row["cnt"]
+        return result
+
     def list_actions(self, resume_id: str | None, period: str, limit: int = 50) -> list[dict]:
         """Последние действия (свежие первыми) для таблицы stats.
 
@@ -692,6 +733,11 @@ class History:
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
                     ) THEN a.vacancy_id END) AS offer
+                    ,COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        JOIN replies p ON p.topic = r.topic AND p.status = 'success'
+                        WHERE r.vacancy_id = a.vacancy_id
+                    ) THEN a.vacancy_id END) AS replied
                 FROM actions AS a
                 {clause}
                 GROUP BY a.resume_id
@@ -702,16 +748,19 @@ class History:
 
         funnel: list[dict] = []
         for row in rows:
-            sent, viewed, invited, offer = row["sent"], row["viewed"], row["invited"], row["offer"]
+            sent, viewed, invited = row["sent"], row["viewed"], row["invited"]
+            replied, offer = row["replied"], row["offer"]
             funnel.append(
                 {
                     "resume_id": row["resume_id"],
                     "sent": sent,
                     "viewed": viewed,
                     "invited": invited,
+                    "replied": replied,
                     "offer": offer,
                     "view_rate": self._pct(viewed, sent),
                     "invite_rate": self._pct(invited, viewed),
+                    "reply_rate": self._pct(replied, invited),
                     "offer_rate": self._pct(offer, invited),
                 }
             )
