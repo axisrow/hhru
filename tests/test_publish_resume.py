@@ -71,7 +71,7 @@ def _markup(**overrides):
     values.update(overrides)
     searchable = str(values["isSearchable"]).lower()
     can_publish = str(values["canPublishOrUpdate"]).lower()
-    return f'{{"status":"{values["status"]}","isSearchable":{searchable},"canPublishOrUpdate":{can_publish}}}'
+    return f'{{"id":"{RESUME_ID}","status":"{values["status"]}","isSearchable":{searchable},"canPublishOrUpdate":{can_publish}}}'
 
 
 def _run(page, monkeypatch, *, preserve_url=False):
@@ -95,6 +95,19 @@ def test_parse_resume_state_does_not_guess_missing_values():
     assert state.status == "not_finished"
     assert state.is_searchable is None
     assert state.can_publish_or_update is None
+
+
+def test_parse_resume_state_binds_all_fields_to_target_record():
+    markup = (
+        '[{"id":"other","status":"not_finished","isSearchable":true,'
+        '"canPublishOrUpdate":true},'
+        f'{{"id":"{RESUME_ID}","status":"finished","isSearchable":false,'
+        '"canPublishOrUpdate":false}}]'
+    )
+    state = parse_resume_state(markup, RESUME_ID)
+    assert state.status == "finished"
+    assert state.is_searchable is False
+    assert state.can_publish_or_update is False
 
 
 def test_publish_rejects_identity_mismatch_before_button_lookup(monkeypatch):
@@ -148,6 +161,7 @@ def test_publish_dry_run_never_clicks(monkeypatch):
 def test_publish_requires_positive_finished_signal(monkeypatch):
     page = _Page(_markup())
     page.after_markup = _markup(status="not_finished")
+    monkeypatch.setattr(publish, "PUBLISH_TIMEOUT_MS", 1)
     result = _run(page, monkeypatch)
     assert not result.success
     assert "не подтверждена" in result.reason

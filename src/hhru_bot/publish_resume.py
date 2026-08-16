@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -46,8 +47,53 @@ class PublishResumeResult:
     is_searchable: bool | None = None
 
 
-def parse_resume_state(markup: str) -> ResumePublishState:
-    """Extract the three independent SSR state fields without guessing defaults."""
+def _walk_json(value):
+    yield value
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json(child)
+
+
+def parse_resume_state(markup: str, resume_id: str | None = None) -> ResumePublishState:
+    """Extract state, optionally from the structured record for ``resume_id``.
+
+    The page can contain state for more than one resume in embedded bootstrap
+    data. When an identity is supplied, never combine fields from separate
+    records; an unscoped regex fallback is retained for small SSR fixtures.
+    """
+    if resume_id:
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", markup):
+            try:
+                candidate, _ = decoder.raw_decode(markup[match.start() :])
+            except json.JSONDecodeError:
+                continue
+            for record in _walk_json(candidate):
+                if not isinstance(record, dict):
+                    continue
+                identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
+                if resume_id not in identifiers:
+                    continue
+                return _state_from_mapping(record)
+        return ResumePublishState()
+
+    return _state_from_regex(markup)
+
+
+def _state_from_mapping(record: dict) -> ResumePublishState:
+    """Read only fields belonging to one structured record."""
+    return ResumePublishState(
+        status=record.get("status"),
+        is_searchable=record.get("isSearchable"),
+        can_publish_or_update=record.get("canPublishOrUpdate"),
+    )
+
+
+def _state_from_regex(markup: str) -> ResumePublishState:
+    """Fixture-friendly fallback when no record identity is available."""
     state = ResumePublishState()
     for field in ("status", "isSearchable", "canPublishOrUpdate"):
         match = re.search(rf'"{field}"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)', markup)
@@ -87,7 +133,7 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
     if not _identity_matches(page, resume.resume_id):
         return PublishResumeResult(resume.id, False, "identity резюме не подтверждён")
 
-    state = parse_resume_state(page.content())
+    state = parse_resume_state(page.content(), resume.resume_id)
     if state.status is None or state.can_publish_or_update is None:
         return PublishResumeResult(
             resume.id,
@@ -145,12 +191,25 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             state.status,
             state.is_searchable,
         )
-    # Позитивный сигнал обязателен: после клика ждём, что status больше не draft.
-    try:
-        page.wait_for_timeout(500)
-        after = parse_resume_state(page.content())
-    except PlaywrightError as exc:
-        return PublishResumeResult(resume.id, False, f"результат публикации не подтверждён: {exc}")
+    # Позитивный сигнал обязателен: после клика ждём server/client state, а не
+    # выводим успех из исчезновения кнопки или отсутствия ошибки.
+    deadline = time.monotonic() + PUBLISH_TIMEOUT_MS / 1000
+    after = ResumePublishState()
+    while time.monotonic() < deadline:
+        try:
+            after = parse_resume_state(page.content(), resume.resume_id)
+        except PlaywrightError as exc:
+            return PublishResumeResult(
+                resume.id, False, f"результат публикации не подтверждён: {exc}"
+            )
+        if after.status == "finished":
+            break
+        try:
+            page.wait_for_timeout(250)
+        except PlaywrightError as exc:
+            return PublishResumeResult(
+                resume.id, False, f"результат публикации не подтверждён: {exc}"
+            )
     if after.status != "finished":
         return PublishResumeResult(
             resume.id,
