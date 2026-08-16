@@ -19,8 +19,10 @@ from playwright.sync_api import Page
 from .browser import goto_hh
 from .negotiations_probe import chat_url
 from .selector_groups.negotiations import (
+    CHAT_MESSAGE_INPUT,
     CHAT_MESSAGE_MY_MARKER,
     CHAT_MESSAGE_OTHER_MARKER,
+    CHAT_MESSAGE_SEND,
     CHAT_MESSAGE_TEXT,
 )
 
@@ -168,3 +170,29 @@ def read_employer_messages(page: Page, chat_id: str) -> list[str]:
             if text:
                 texts.append(text)
     return texts
+
+
+def send_reply(page: Page, chat_id: str, text: str) -> None:
+    """Send one message after the caller has checked the live last message.
+
+    The controls are deliberately required to be unique and visible.  A
+    missing or ambiguous composer is an error, never a reason to guess at a
+    click on a different control.
+    """
+    goto_hh(page, chat_url(chat_id))
+    input_loc = page.locator(CHAT_MESSAGE_INPUT)
+    send_loc = page.locator(CHAT_MESSAGE_SEND)
+    if input_loc.count() != 1 or send_loc.count() != 1:
+        raise RuntimeError("не удалось однозначно найти форму ответа в чате")
+    input_loc.fill(text)
+    send_loc.click()
+
+
+def send_reply_current(page: Page, text: str) -> None:
+    """Submit on the chat page already opened by :func:`read_last_message`."""
+    input_loc = page.locator(CHAT_MESSAGE_INPUT)
+    send_loc = page.locator(CHAT_MESSAGE_SEND)
+    if input_loc.count() != 1 or send_loc.count() != 1:
+        raise RuntimeError("не удалось однозначно найти форму ответа в чате")
+    input_loc.fill(text)
+    send_loc.click()

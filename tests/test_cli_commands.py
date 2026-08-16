@@ -53,6 +53,7 @@ def test_all_commands_registered():
         "copy-resume",
         "import-cookies",
         "clear-negotiations",
+        "reply-employers",
     }
 
 
@@ -87,6 +88,7 @@ def test_register_commands_returns_names():
         "copy_resume",
         "import_cookies",
         "clear_negotiations",
+        "reply_employers",
     }
 
 
