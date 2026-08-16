@@ -224,10 +224,17 @@ def _optional_text(item, *selectors: str) -> str:
 
 
 def _status_text(item, *selectors: str) -> str:
-    """Return the first non-empty, recognized status from ordered selectors."""
+    """Return the first non-empty status from ordered selectors.
+
+    A present live status is authoritative even when unrecognized by
+    normalize_status() — only an EMPTY selector falls through to the next
+    one. Falling through on "unrecognized" instead of "empty" would let a
+    stale legacy status silently override a real (if unmapped) live status
+    whenever both markup variants happen to be present in the same card.
+    """
     for selector in selectors:
         text = _optional_text(item, selector)
-        if text and normalize_status(text) != ResponseStatus.UNKNOWN:
+        if text:
             return text
     return ""
 
