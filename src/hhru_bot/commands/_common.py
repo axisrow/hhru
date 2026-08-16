@@ -304,9 +304,19 @@ def run_apply_for_resume(
     if plan.ranked and not args.dry_run:
         ids_by_hash = resolve_numeric_resume_ids(page)
         if ids_by_hash is not None:
-            account_resume_ids = set(ids_by_hash.values())
-            verify_resume_id = ids_by_hash.get(resume.resume_id, resume.resume_id)
-            if verify_resume_id == resume.resume_id:
+            numeric_id = ids_by_hash.get(resume.resume_id)
+            if numeric_id is not None:
+                # Конфиг-резюме в маппинге: верификатор сравнивает числовой id,
+                # а перечень резюме аккаунта отличает «другое собственное» от
+                # «чужого» (оба доказывают клик, #212).
+                account_resume_ids = set(ids_by_hash.values())
+                verify_resume_id = numeric_id
+            else:
+                # Конфиг-резюме НЕТ в маппинге (устаревший/неверный хэш) —
+                # перечень НЕ заполняем: иначе любая тема с id резюме аккаунта
+                # подтвердила бы отклик (success под хэшем, которого нет в
+                # аккаунте). Без перечня атрибуция уходит в incomparable →
+                # fail-closed indeterminate в самом верификаторе.
                 logger.warning(
                     "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
                     "верификаторе уйдёт в fail-closed",

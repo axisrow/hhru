@@ -133,6 +133,7 @@ def verify_response_in_negotiations(
     wanted = str(vacancy_id)
     clean_read = False
     confirmed_incomplete = False
+    attribution_incomparable = False
     problem = "список откликов не прочитан"
     seen_vacancy_ids: set[str] = set()
     for attempt in range(1, NEGOTIATIONS_VERIFY_ATTEMPTS + 1):
@@ -154,14 +155,15 @@ def verify_response_in_negotiations(
                 return _indeterminate(
                     page, wanted, "сессия не авторизована — список откликов недоступен"
                 )
-            found_detail, clean, page_problem, incomplete = _scan_negotiations(
-                page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
+            found_detail, clean, page_problem, incomplete, page_attribution_incomparable = (
+                _scan_negotiations(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
             )
             if found_detail is not None:
                 logger.info("[VERIFY] отклик подтверждён: %s", found_detail)
                 return NegotiationsVerifyResult(FOUND, found_detail)
             clean_read = clean_read or clean
             confirmed_incomplete = confirmed_incomplete or incomplete
+            attribution_incomparable = attribution_incomparable or page_attribution_incomparable
             if page_problem:
                 problem = page_problem
         if attempt < NEGOTIATIONS_VERIFY_ATTEMPTS:
@@ -175,6 +177,15 @@ def verify_response_in_negotiations(
         # неполный скан, #207).
         return _indeterminate(
             page, wanted, problem or "подтверждённая пагинация, но не все страницы прочитаны"
+        )
+    if attribution_incomparable:
+        # #212: хотя бы одна попытка нашла тему целевой вакансии, но не смогла
+        # атрибутировать резюме (несовместимые домены id без маппинга) —
+        # absence не подтверждаем. Отдельный флаг (не только problem): чистое
+        # чтение ДРУГОЙ попытки не должно замаскировать incomparable (иначе
+        # ложный not_found — ровно тот false-negative, что #212 устраняет).
+        return _indeterminate(
+            page, wanted, problem or "тема вакансии найдена, но атрибуция резюме невозможна"
         )
     if clean_read:
         # #212: not_found не оставлял артефакта для аудита — «точно нет» без
@@ -202,24 +213,28 @@ def _scan_negotiations(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
-) -> tuple[str | None, bool, str | None, bool]:
+) -> tuple[str | None, bool, str | None, bool, bool]:
     """Сканирует страницу 0 (+ следующую при подтверждённой пагинации).
 
     Возвращает (detail найденной темы | None, было ли чистое чтение,
     описание проблемы чтения | None, подтверждена ли пагинация, но не дочитана
-    страница). Чистое чтение — только когда НИ ОДНА страница не дала проблему:
-    если какая-то страница не загрузилась, карточка не прочиталась или тему
-    совпавшей вакансии не удалось атрибутировать по резюме (#212), отсутствие
-    целевой вакансии не подтверждаем (она могла быть на непрочитанной
-    странице) — иначе ложный not_found. confirmed_incomplete отдельно от
-    clean: попытка, где пагинатор подтвердил продолжение, но страница не
-    дочиталась, обязана перевесить чистые чтения ДРУГИХ попыток (иначе
-    OR-агрегация в verify_response_in_negotiations замаскировала бы неполный
-    скан, #207).
+    страница, найдена ли тема с неатрибутируемым резюме). Чистое чтение —
+    только когда НИ ОДНА страница не дала проблему: если какая-то страница не
+    загрузилась, карточка не прочиталась или тему совпавшей вакансии не удалось
+    атрибутировать по резюме (#212), отсутствие целевой вакансии не подтверждаем
+    (она могла быть на непрочитанной странице) — иначе ложный not_found.
+    confirmed_incomplete отдельно от clean: попытка, где пагинатор подтвердил
+    продолжение, но страница не дочиталась, обязана перевесить чистые чтения
+    ДРУГИХ попыток (иначе OR-агрегация в verify_response_in_negotiations
+    замаскировала бы неполный скан, #207). attribution_incomparable — тема
+    целевой вакансии найдена, но резюме не атрибутируется (несовместимые домены
+    id без маппинга): тоже обязана перевесить чистые чтения других попыток
+    (иначе ложный not_found, #212).
     """
     clean = False
     problem: str | None = None
     confirmed_incomplete = False
+    attribution_incomparable = False
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
@@ -230,13 +245,14 @@ def _scan_negotiations(
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
                 confirmed_incomplete = True
                 break
-        found_detail, page_clean, page_problem = _scan_single_page(
+        found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
             page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
         )
+        attribution_incomparable = attribution_incomparable or page_attribution_incomparable
         if page_problem:
             problem = page_problem
         if found_detail is not None:
-            return found_detail, True, None, False
+            return found_detail, True, None, False, False
         clean = clean or page_clean
         if not _has_next_page_confirmed(page, page_num):
             break
@@ -247,7 +263,7 @@ def _scan_negotiations(
             problem = "достигнут потолок скана при подтверждённой пагинации"
             confirmed_incomplete = True
             break
-    return None, clean and not problem, problem, confirmed_incomplete
+    return None, clean and not problem, problem, confirmed_incomplete, attribution_incomparable
 
 
 def _scan_single_page(
@@ -256,7 +272,7 @@ def _scan_single_page(
     resume_id: str | None,
     account_resume_ids: set[str] | None,
     seen_vacancy_ids: set[str],
-) -> tuple[str | None, bool, str | None]:
+) -> tuple[str | None, bool, str | None, bool]:
     try:
         html = page.content()
     except PlaywrightError as exc:
@@ -286,13 +302,25 @@ def _scan_single_page(
                 )
                 continue
             detail = _describe_topic(topic)
-            if resume_id is not None and str(topic.get("resumeId")) != str(resume_id):
+            topic_resume = topic.get("resumeId")
+            if (
+                resume_id is not None
+                and topic_resume is not None
+                and str(topic_resume) != str(resume_id)
+            ):
                 # Сайт приложил ДРУГОЕ собственное резюме аккаунта (форма не
                 # предлагает конфиг-резюме в not_finished и молча берёт
                 # default) — деталь в вердикте, чтобы это было видно в логах.
+                # topic_resume is None (у темы нет resumeId) сюда не попадает:
+                # str(None)="None" лгал бы «другое резюме» при отсутствии поля.
                 detail += f" — сайт приложил другое резюме аккаунта (конфиг: {resume_id})"
-            return detail, True, None
-        return None, attribution_problem is None, attribution_problem
+            return detail, True, None, False
+        return (
+            None,
+            attribution_problem is None,
+            attribution_problem,
+            attribution_problem is not None,
+        )
     dom_ids, cards_seen = _read_dom_vacancy_ids(page)
     seen_vacancy_ids.update(dom_ids)
     if wanted in dom_ids:
@@ -300,11 +328,11 @@ def _scan_single_page(
             # DOM-карточка не несёт resumeId — не можем атрибутировать отклик
             # к текущему резюме: он мог уйти с ДРУГОГО. Fail-closed
             # indeterminate, а не ложный success (как SSR-путь, #207).
-            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён"
-        return "DOM-карточка списка (SSR-состояние недоступно)", True, None
+            return None, False, "DOM-карточка без атрибуции резюме — исход неопределён", False
+        return "DOM-карточка списка (SSR-состояние недоступно)", True, None, False
     if cards_seen:
-        return None, True, None
-    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)"
+        return None, True, None, False
+    return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)", False
 
 
 def _resume_attribution(
