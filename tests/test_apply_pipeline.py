@@ -333,3 +333,122 @@ def test_apply_prefill_playwright_error_is_clean_fail(monkeypatch):
     assert result.acted is False
     assert result.uncertain is False
     assert "ошибка Playwright" in result.reason
+
+
+# --- #207: внешняя верификация fail-вердиктов после клика по кнопке отклика ---
+
+
+def _verifier(status: str, detail: str = ""):
+    """Фейковый ResponseVerifier: фиксирует вызовы, возвращает заданный вердикт."""
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    calls: list[tuple] = []
+
+    def verifier(page, vacancy_id, resume_id=None):  # noqa: ANN001
+        calls.append((page, vacancy_id, resume_id))
+        return NegotiationsVerifyResult(status, detail)
+
+    verifier.calls = calls
+    return verifier
+
+
+def test_apply_submit_unconfirmed_external_found_is_success(monkeypatch):
+    """#207 (кейс #199/МТС): submit был, успех не подтвердился локально, но
+    внешний источник нашёл отклик в /applicant/negotiations — это success
+    (acted=True, uncertain сброшен), а не failed: иначе has_applied не видит
+    запись и следующий запуск шлёт второе письмо."""
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    verifier = _verifier("found", "topic=42, resumeId=RID")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "negotiations" in result.reason
+    assert verifier.calls == [(page, "1", "RID")]
+
+
+def test_apply_submit_unconfirmed_external_not_found_stays_failed(monkeypatch):
+    """Подтверждённое внешней проверкой ОТСУТСТВИЕ отклика — вердикт не меняется:
+    failed c acted=True (осознанный fail-closed #163, теперь ещё и проверенный)."""
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    verifier = _verifier("not_found")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "нет" in result.reason
+
+
+def test_apply_submit_unconfirmed_external_indeterminate_is_uncertain(monkeypatch):
+    """Список откликов не прочитан (goto/рендер/сессия) — прежний «честный failed»
+    невозможен: исход неизвестен, fail-closed uncertain+acted как у #176."""
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    verifier = _verifier("indeterminate", "goto не прошёл")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.acted is True
+    assert result.uncertain is True
+    assert "недоступна" in result.reason
+
+
+def test_apply_form_indeterminate_external_found_is_success_acted():
+    """#207 (кейс YADRO): форма не отрисовалась (questions-indeterminate), но
+    отклик реально ушёл — внешняя проверка поднимает исход до success с
+    acted=True: ранняя классификация «до submit, следов нет» здесь врала."""
+    verifier = _verifier("found", "topic=9")
+    page = FakePage(apply_button=True, success=True, submit_in_form=False)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+    assert "negotiations" in result.reason
+
+
+def test_apply_form_indeterminate_external_not_found_keeps_early_exit():
+    """Форма не отрисовалась И список подтверждённо без отклика — ранний выход
+    сохраняется: acted=False, ничего не пишется в actions (следа на hh.ru нет)."""
+    verifier = _verifier("not_found")
+    page = FakePage(apply_button=True, success=True, submit_in_form=False)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.acted is False
+    assert result.uncertain is False
+
+
+def test_apply_submit_click_error_external_found_upgrades_to_success():
+    """#176+#207: исключение в момент submit-клика при найденном отклике —
+    uncertain апгрейдится до success (внешний источник точнее локальной
+    неопределённости)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    verifier = _verifier("found")
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError("Target page, context or browser has been closed"),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False
+
+
+def test_apply_confirmation_error_external_found_upgrades_to_success(monkeypatch):
+    """#177+#207: PlaywrightError при подтверждении + найденный отклик —
+    тоже апгрейд до success."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _raise(_page):
+        raise PlaywrightError("Page closed while polling success markers")
+
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
+    verifier = _verifier("found")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is True
+    assert result.acted is True
+    assert result.uncertain is False

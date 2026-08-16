@@ -114,7 +114,9 @@ def test_real_url_still_reaches_apply(tmp_path, monkeypatch):
     )
     applied_resume_ids: list[str] = []
 
-    def _fake_apply(page, card, resume_id, template, dry_run, *, letter_provider=None):  # noqa: ARG001
+    def _fake_apply(  # noqa: ARG001
+        page, card, resume_id, template, dry_run, *, letter_provider=None, verifier=None
+    ):
         applied_resume_ids.append(resume_id)
         return _StubResult()
 

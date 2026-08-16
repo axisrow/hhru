@@ -26,6 +26,7 @@ from .probe import NOOP_PROBE, ProbeHook
 from .questions import detect_questions
 from .steps import SubmitClickUncertain
 from .success import wait_success_confirmation
+from .verify import ResponseVerifier
 
 logger = logging.getLogger("hhru_bot.apply")
 
@@ -77,6 +78,11 @@ class ApplyContext:
     acted: bool = False
     # #176: как в ApplyResult — выставляется в _run при SubmitClickUncertain.
     uncertain: bool = False
+    # #207: внешний верификатор fail-вердиктов после клика по кнопке отклика
+    # (см. _finalize_post_click_failure). None — проверка выключена: юнит-тесты
+    # pipeline инъектируют фейк или ничего; продакшн-проводка — в
+    # commands/_common.run_apply_for_resume (verify_response_in_negotiations).
+    verifier: ResponseVerifier | None = None
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -119,6 +125,7 @@ def apply_to_vacancy(
     dry_run: bool,
     probe: ProbeHook | None = None,
     letter_provider: CoverLetterProvider | None = None,
+    verifier: ResponseVerifier | None = None,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -128,8 +135,52 @@ def apply_to_vacancy(
         dry_run=dry_run,
         probe=probe or NOOP_PROBE,
         letter_provider=letter_provider,
+        verifier=verifier,
     )
     return _run(ctx)
+
+
+def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
+    """#207: финализация fail-вердикта ПОСЛЕ клика по кнопке отклика.
+
+    Кнопка отклика открывает «серую зону»: дальнейшие таймауты (навигация к
+    форме, отрисовка, success-сигнал) не доказывают отсутствие отклика —
+    известны кейсы, когда отклик уходил на hh.ru при полном провале пайплайна
+    (#199/МТС: письмо работодателя; #207/YADRO: карточка в negotiations). До
+    финализации спрашиваем внешний источник истины — /applicant/negotiations:
+
+    * found — отклик точно ушёл: success, acted=True, uncertain сброшен;
+    * not_found — список подтверждённо прочитан и вакансии нет: вердикт без
+      изменений (post-submit → failed, ранние выходы → без записи; флаги,
+      выставленные сайтом ДО проверки — например uncertain у
+      SubmitClickUncertain, — сохраняются);
+    * indeterminate — список не прочитан: fail-closed uncertain+acted —
+      has_applied видит запись, троттл ждёт (как у #176).
+    """
+    if ctx.verifier is None:
+        return ctx.fail(reason)
+    verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    if verdict.found:
+        ctx.acted = True
+        ctx.uncertain = False
+        logger.info(
+            "[OK] %s — внешний источник подтвердил отклик: %s",
+            ctx.vacancy.title,
+            verdict.detail,
+        )
+        return ctx.ok(
+            f"{reason}; внешняя проверка: отклик присутствует в /applicant/negotiations "
+            f"({verdict.detail})"
+        )
+    if verdict.indeterminate:
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка недоступна: %s", ctx.vacancy.title, verdict.detail)
+        return ctx.fail(
+            f"{reason}; внешняя проверка недоступна ({verdict.detail}) — исход неопределён"
+        )
+    logger.info("%s — внешняя проверка: отклика в /applicant/negotiations нет", ctx.vacancy.title)
+    return ctx.fail(f"{reason}; внешняя проверка: отклика в /applicant/negotiations нет")
 
 
 def _run(ctx: ApplyContext) -> ApplyResult:
@@ -160,6 +211,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
         return ctx.ok("dry-run")
 
+    # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
+    # fail-исходы финализируются через _finalize_post_click_failure (внешняя
+    # проверка /applicant/negotiations), а не сразу ctx.fail.
     apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
     ctx.probe("form_loaded")
 
@@ -171,7 +225,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         # пишем persistent skip (fail, не skip): недостоверная причина не должна
         # навсегда исключать вакансию из is_skipped (#87).
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, questions.reason)
-        return ctx.fail(questions.reason)
+        return _finalize_post_click_failure(ctx, questions.reason)
     if questions.has_questions:
         logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
         return ctx.skip(questions.reason)
@@ -193,14 +247,18 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             "[FAIL] %s — submit-клик упал с исключением, отправка могла уйти",
             ctx.vacancy.title,
         )
-        return ctx.fail("submit-клик упал с исключением — отправка могла уйти, исход неопределён")
+        return _finalize_post_click_failure(
+            ctx, "submit-клик упал с исключением — отправка могла уйти, исход неопределён"
+        )
     except PlaywrightError as exc:
         logger.warning(
             "[FAIL] %s — ошибка Playwright при заполнении формы (%s)", ctx.vacancy.title, exc
         )
-        return ctx.fail(f"ошибка Playwright при заполнении формы отклика: {exc}")
+        return _finalize_post_click_failure(
+            ctx, f"ошибка Playwright при заполнении формы отклика: {exc}"
+        )
     if reason:
-        return ctx.fail(reason)
+        return _finalize_post_click_failure(ctx, reason)
 
     # #163: fill_response_form без причины = submit-клик выполнен (последний шаг
     # заполнения). Дальнейшие исходы — «после действия»: пауза и запись в actions.
@@ -213,10 +271,13 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
         if not wait_success_confirmation(ctx.page):
-            # Честный union-poll до таймаута БЕЗ сигнала — достоверно
-            # проверили и не нашли успеха, осознанный fail-closed #163
-            # (wait_success_confirmation docstring): uncertain НЕ ставим.
-            return ctx.fail("не удалось подтвердить успешную отправку отклика")
+            # Честный union-poll до таймаута БЕЗ сигнала — локально успеха не
+            # нашли (#163). Но это всё ещё «после действия»: вердикт финализируется
+            # внешней проверкой (#207) — found → success, неопределённость чтения
+            # → uncertain. Подтверждённое отсутствие — остаётся failed.
+            return _finalize_post_click_failure(
+                ctx, "не удалось подтвердить успешную отправку отклика"
+            )
     except PlaywrightError as exc:
         # #177 round 3 (Codex): исключение — НЕ то же самое, что False выше.
         # Мы не смогли даже проверить (browser/page упал посреди опроса),
@@ -229,7 +290,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             ctx.vacancy.title,
             exc,
         )
-        return ctx.fail(f"ошибка Playwright после отправки отклика ({exc}) — успех не подтверждён")
+        return _finalize_post_click_failure(
+            ctx, f"ошибка Playwright после отправки отклика ({exc}) — успех не подтверждён"
+        )
 
     logger.info("Отклик отправлен: %s", ctx.vacancy.title)
     return ctx.ok("success")

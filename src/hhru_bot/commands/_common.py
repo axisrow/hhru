@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
 from ..apply.letter import CoverLetterProvider
+from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..history import SKIP_REASONS, History
@@ -306,6 +307,9 @@ def run_apply_for_resume(
             cover_letter_template,
             args.dry_run,
             letter_provider=letter_provider,
+            # #207: fail-вердикты после клика по кнопке отклика подтверждаются
+            # внешней проверкой /applicant/negotiations до записи в history.
+            verifier=verify_response_in_negotiations,
         )
 
         if result.skipped:
