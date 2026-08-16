@@ -17,8 +17,12 @@ class _FakeLocator:
     def first(self):
         return self
 
-    def __init__(self, present: bool = False, attrs: dict[str, str] | None = None,
-                 click_error: Exception | None = None):
+    def __init__(
+        self,
+        present: bool = False,
+        attrs: dict[str, str] | None = None,
+        click_error: Exception | None = None,
+    ):
         self._present = present
         self._attrs = attrs or {}
         # #176: PlaywrightError в момент click() (клик мог уйти на hh.ru).

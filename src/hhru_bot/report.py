@@ -75,9 +75,7 @@ def _summary_rows(summary: dict) -> list[list[str]]:
 def format_summary(summary: dict, fmt: str) -> str:
     """Отрисовать сводку action × status (+ total) в выбранном формате."""
     _check_format(fmt)
-    header = [_SUMMARY_HEADERS["action"]] + [
-        _SUMMARY_HEADERS[s] for s in _SUMMARY_STATUS_ORDER
-    ]
+    header = [_SUMMARY_HEADERS["action"]] + [_SUMMARY_HEADERS[s] for s in _SUMMARY_STATUS_ORDER]
     rows = _summary_rows(summary)
     total = summary.get("total", 0)
 
