@@ -244,14 +244,10 @@ def parse_response_card(item) -> ResponseItem | None:
 
     # Prefer confirmed live selectors consistently; old saved markup remains a
     # fallback for fixtures and previously captured pages.
-    raw_status = _optional_text(
-        item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS
-    )
+    raw_status = _optional_text(item, ns.NEGOTIATION_STATUS, ns.LEGACY_NEGOTIATION_STATUS)
     if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
         raw_status = ""
-    employer = _optional_text(
-        item, ns.NEGOTIATION_EMPLOYER, ns.LEGACY_NEGOTIATION_EMPLOYER
-    )
+    employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER, ns.LEGACY_NEGOTIATION_EMPLOYER)
     date = _optional_text(item, ns.NEGOTIATION_DATE, ns.LEGACY_NEGOTIATION_DATE)
 
     chat_link = _first_locator(item, ns.NEGOTIATION_CHAT_LINK, ns.LEGACY_NEGOTIATION_CHAT_LINK)

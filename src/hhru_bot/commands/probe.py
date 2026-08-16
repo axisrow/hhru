@@ -572,8 +572,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                         str(i + 1),
                         loc.get_attribute("data-qa") or "-",
                         "own"
-                        if negotiations.CHAT_MESSAGE_MY_MARKER
-                        in parent_class.split()
+                        if negotiations.CHAT_MESSAGE_MY_MARKER in parent_class.split()
                         else "other",
                         loc.inner_text().replace("\n", " ")[:160],
                     ]
