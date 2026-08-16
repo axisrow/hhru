@@ -48,15 +48,18 @@ def extract_external_test_link(message_text: str) -> str | None:
     return None
 
 
-def read_latest_employer_message(page: Page, chat_id: str) -> str | None:
-    """Read the newest employer message through the confirmed chat route.
+def read_employer_messages(page: Page, chat_id: str) -> list[str]:
+    """Read all employer messages through the confirmed chat route, newest first.
 
     This performs only GET navigation and DOM reads. Messages are inspected in
-    reverse DOM order; ``message_my`` is skipped, so a user's own latest reply
-    cannot hide the last employer message that contains a test URL.
+    reverse DOM order; ``message_my`` is skipped, so the caller sees every
+    employer message, not just the latest one — a test-assignment link can sit
+    in an earlier message even if the employer's most recent message is a
+    URL-free follow-up.
     """
     goto_hh(page, f"https://chatik.hh.ru/chat/{chat_id}")
     messages = page.locator(CHAT_MESSAGE_TEXT)
+    texts: list[str] = []
     for index in range(messages.count() - 1, -1, -1):
         message = messages.nth(index)
         is_own = message.evaluate(
@@ -70,5 +73,6 @@ def read_latest_employer_message(page: Page, chat_id: str) -> str | None:
         )
         if not is_own:
             text = message.inner_text().strip()
-            return text or None
-    return None
+            if text:
+                texts.append(text)
+    return texts

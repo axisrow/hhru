@@ -151,7 +151,7 @@ def run(args: argparse.Namespace) -> None:
                 from ..browser import goto_hh
                 from ..negotiations_chat import (
                     extract_external_test_link,
-                    read_latest_employer_message,
+                    read_employer_messages,
                 )
                 from ..negotiations_probe import topic_refs
 
@@ -162,20 +162,18 @@ def run(args: argparse.Namespace) -> None:
                 for card in cards:
                     if not card.topic or card.topic not in refs:
                         continue
-                    message_text = read_latest_employer_message(page, refs[card.topic])
-                    if not message_text:
-                        continue
-                    test_url = extract_external_test_link(message_text)
-                    if test_url is None:
-                        continue
-                    history.record_test_assigned(
-                        args.resume,
-                        card.vacancy_id,
-                        card.employer,
-                        test_url,
-                        message_text,
-                    )
-                    detected += 1
+                    for message_text in read_employer_messages(page, refs[card.topic]):
+                        test_url = extract_external_test_link(message_text)
+                        if test_url is None:
+                            continue
+                        history.record_test_assigned(
+                            args.resume,
+                            card.vacancy_id,
+                            card.employer,
+                            test_url,
+                            message_text,
+                        )
+                        detected += 1
                 print(f"Назначений внешнего теста обнаружено: {detected}")
 
         print(f"Собрано карточек переписки: {len(cards)}")

@@ -142,6 +142,34 @@ def test_record_test_assignment_persists_and_reads_history(tmp_path):
     ]
 
 
+def test_record_test_assigned_deduplicates_same_message(tmp_path):
+    # Повторный обход responses --detect-external-tests перечитывает то же
+    # сообщение чата снова (нет курсора по message_id) — без UNIQUE-индекса
+    # каждый прогон вставлял бы дубль строки для того же факта.
+    from datetime import datetime
+
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        "resume-1",
+        "vacancy-2",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Необходимо пройти небольшой тест: yay-tech.ru",
+        detected_at=datetime(2026, 8, 16, 10, 0),
+    )
+    h.record_test_assigned(
+        "resume-1",
+        "vacancy-2",
+        "ЯМКЕТ",
+        "https://yay-tech.ru",
+        "Необходимо пройти небольшой тест: yay-tech.ru",
+        detected_at=datetime(2026, 8, 16, 11, 0),
+    )
+
+    rows = h.test_assignments_since(datetime(2026, 8, 16, 9, 59))
+    assert len(rows) == 1
+
+
 def test_unique_index_prevents_duplicate_uncertain_apply():
     # #177: 'uncertain' дедуплицируется в has_applied(), значит UNIQUE-индекс
     # тоже обязан покрывать этот статус — иначе гонка/повтор может вставить

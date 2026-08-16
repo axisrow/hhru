@@ -187,6 +187,14 @@ CREATE TABLE IF NOT EXISTS test_assignments (
 
 CREATE INDEX IF NOT EXISTS idx_test_assignments_detected_at
     ON test_assignments(detected_at);
+
+-- Дедупликация: повторный обход responses --detect-external-tests читает то же
+-- сообщение чата снова (детект read-only, без курсора по message_id) и без
+-- этого индекса вставлял бы дубль строки при каждом запуске. Ключ по
+-- (vacancy_id, message_text) — конкретное сообщение чата с этим текстом уже
+-- зафиксировано для этой вакансии; INSERT OR IGNORE делает повтор no-op.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_test_assignments_dedup
+    ON test_assignments(vacancy_id, message_text);
 """
 
 
@@ -1504,7 +1512,7 @@ class History:
 
     def record_test_assigned(
         self,
-        resume_id: str,
+        resume_id: str | None,
         vacancy_id: str,
         employer: str,
         test_url: str,
@@ -1512,11 +1520,17 @@ class History:
         *,
         detected_at: datetime | None = None,
     ) -> None:
-        """Append a read-only fact discovered in an employer chat."""
+        """Append a read-only fact discovered in an employer chat.
+
+        OR IGNORE: a re-run of ``responses --detect-external-tests`` re-reads
+        the same chat message (no message_id cursor), so without dedup it
+        would insert a duplicate row every time — see
+        ``idx_test_assignments_dedup``.
+        """
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO test_assignments
+                INSERT OR IGNORE INTO test_assignments
                     (resume_id, vacancy_id, employer, test_url, message_text, detected_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,

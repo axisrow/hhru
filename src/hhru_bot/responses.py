@@ -233,8 +233,6 @@ def parse_response_card(item) -> ResponseItem | None:
     raw_status = _optional_text(item, ns.LEGACY_NEGOTIATION_STATUS)
     if not raw_status:
         raw_status = _optional_text(item, ns.NEGOTIATION_STATUS)
-    if not raw_status:
-        raw_status = _optional_text(item, ns.NEGOTIATION_STATUS_VIEWED)
     if normalize_status(raw_status) == ResponseStatus.UNKNOWN:
         raw_status = ""
     employer = _optional_text(item, ns.NEGOTIATION_EMPLOYER)

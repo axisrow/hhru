@@ -22,8 +22,13 @@ NEGOTIATION_VACANCY_LINK = "[data-qa='negotiations-item-vacancy']"
 NEGOTIATION_EMPLOYER = "[data-qa='negotiations-item-company']"
 # Бейдж текущего статуса переписки (текст нормализуется: Приглашение→invitation
 # и т.д.). Опциональный: для свежего отклика без ответа статуса-бейджа может не быть.
-NEGOTIATION_STATUS = "[data-qa='negotiations-tag negotiations-item-not-viewed']"
-NEGOTIATION_STATUS_VIEWED = "[data-qa='negotiations-tag negotiations-item-viewed']"
+# Точное совпадение data-qa со значением, содержащим пробел ("negotiations-tag
+# negotiations-item-not-viewed"), никогда не матчится реальной разметке —
+# подтверждено префиксным селектором ниже (используется рабочим probe.py).
+# Статус определяется по нормализации ТЕКСТА бейджа (normalize_status в
+# responses.py), а не по различению viewed/not-viewed на уровне CSS, поэтому
+# один префиксный селектор покрывает оба состояния.
+NEGOTIATION_STATUS = "[data-qa^='negotiations-tag']"
 # Дата ответа/последнего сообщения в карточке (как текст; парсинг конкретной
 # даты не делается — форматы hh.ru зависят от локали).
 # Опциональна: hh.ru не всегда рендерит блок даты.
