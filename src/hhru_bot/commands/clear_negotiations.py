@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ..responses import _has_next_page, fetch_responses
 from .copy_resume import confirm_write
 
 ACCOUNT_SCOPE = "__account__"
@@ -71,7 +72,8 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
     return False, f"HTTP {response.status}"
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> bool:
+    """Return True when the run failed (fail-closed contract, see cli.main)."""
     _validate(args)
 
     if not args.dry_run and (args.topic or args.account_wide):
@@ -86,21 +88,19 @@ def run(args: argparse.Namespace) -> None:
     if args.topic:
         if args.dry_run:
             print(f"[DRY-RUN] Отзыв отклика topic={args.topic}")
-            return
-        _run_topics(args, [args.topic])
-        return
+            return False
+        return _run_topics(args, [args.topic])
 
     # Vacancy/resume are intentionally read-only plans. With no selector there
     # is no safe target, so do not open a browser or imply that anything ran.
     if not args.account_wide:
         scope = f"vacancy={args.vacancy}" if args.vacancy else f"resume={args.resume}"
         print(f"[INFO] Только план: фильтр {scope}; боевой отзыв по нему запрещён.")
-        return
+        return False
 
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..responses import fetch_responses
     from ..throttle import Throttle
 
     config = load_config_or_exit(args.config)
@@ -111,14 +111,42 @@ def run(args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         cards = fetch_responses(page, max_pages=args.max_pages)
+
+        # Fail-closed on truncated pagination (Codex review, PR #196): fetch_responses
+        # silently stops after --max-pages pages even if hh.ru has more. Withdrawing
+        # only the truncated prefix and reporting success on a destructive,
+        # irreversible operation would leave an unwithdrawn remainder invisible to
+        # the operator. _has_next_page() is the same confirmed-pagination check
+        # fetch_responses itself uses internally; re-run it against the last loaded
+        # page (page is left there by fetch_responses) before withdrawing anything.
+        if cards and _has_next_page(page, args.max_pages - 1):
+            _fail(
+                f"Достигнут лимит --max-pages={args.max_pages}, но на hh.ru есть ещё "
+                "страницы откликов. Увеличьте --max-pages — иначе часть откликов "
+                "не будет отозвана. Ничего не отозвано."
+            )
+
+        # Cards without a resolved topic (no chat, or ambiguous SSR match — see
+        # ResponseItem.topic_ambiguous) are legitimately skipped from withdrawal,
+        # but must not vanish silently: an account-wide run that reports success
+        # while some negotiations were never even attempted defeats the point of
+        # "account-wide" (Codex review, PR #196).
         topics = list(dict.fromkeys(card.topic for card in cards if card.topic))
+        skipped = len(cards) - len(topics)
+
         if args.dry_run:
             print(f"[DRY-RUN] Найдено откликов для отзыва: {len(topics)}")
-            return
-        _run_topics(args, topics, page=page, history=history, throttle=throttle)
+            if skipped:
+                print(f"[INFO] Пропущено без topic (нет чата/неоднозначный SSR): {skipped}")
+            return False
+
+        if skipped:
+            print(f"[INFO] Пропущено без topic (нет чата/неоднозначный SSR): {skipped}")
+        return _run_topics(args, topics, page=page, history=history, throttle=throttle)
 
 
-def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> None:
+def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool:
+    """Withdraw each topic; return True if any withdrawal failed."""
     if page is None:
         from ..browser import launch_context
         from ..config import load_config_or_exit
@@ -131,9 +159,11 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> None
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
-            _run_topics(args, topics, page=context.new_page(), history=history, throttle=throttle)
-        return
+            return _run_topics(
+                args, topics, page=context.new_page(), history=history, throttle=throttle
+            )
 
+    failed = False
     for topic in topics:
         try:
             success, reason = _withdraw_topic(page, topic)
@@ -146,3 +176,5 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> None
             throttle.wait(f"после отзыва topic={topic}")
         else:
             print(f"[FAIL] topic={topic} — {reason}")
+            failed = True
+    return failed
