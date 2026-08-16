@@ -503,7 +503,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     """Dump negotiations/chat DOM using only GET navigation and reads."""
     from ..browser import launch_context
     from ..config import load_config_or_exit
-    from ..negotiations_probe import chat_url, topic_refs
+    from ..negotiations_probe import chat_url, paginated_topic_refs
     from ..report import _ascii_table
     from ..selector_groups import negotiations
 
@@ -518,9 +518,8 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             items.first.wait_for(state="attached", timeout=10_000)
         except PlaywrightError:
             logger.warning("negotiations: cards did not attach within 10 seconds")
-        list_html = page.content()
         try:
-            refs = topic_refs(list_html)
+            refs = paginated_topic_refs(page, max_pages=getattr(args, "max_pages", 5))
         except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"[FAIL] не удалось прочитать SSR state: {exc}")
             return True

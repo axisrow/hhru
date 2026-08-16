@@ -327,10 +327,10 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
 # --- Codex review (PR #198): click confirmed but delivery unverified -------
 
 
-def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
+def test_click_without_delivery_confirmation_is_recorded_as_uncertain(tmp_path, monkeypatch, capsys):
     """send_reply_current only clicks; a click with no delivery signal must
-    not be journaled as success — otherwise has_replied() would permanently
-    suppress a retry for a reply that never actually reached the employer.
+    not be journaled as success.  The click may have reached hh.ru even when
+    the positive DOM signal was not observed, so the outcome is uncertain.
     """
     history = History(tmp_path / "history.db")
     _seed_response(history, vacancy_id="1", topic="tp1")
@@ -359,7 +359,7 @@ def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, mon
     assert "[OK]" not in out
     with history._connect() as conn:
         row = conn.execute("SELECT status FROM replies").fetchone()
-        assert row[0] == "failed"
+        assert row[0] == "uncertain"
     # Not journaled as replied — retry must remain possible.
     assert history.has_replied("tp1", "m1") is False
 

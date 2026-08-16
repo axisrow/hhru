@@ -1,4 +1,11 @@
-from hhru_bot.negotiations_probe import chat_url, parse_initial_state, topic_refs
+import json
+
+from hhru_bot.negotiations_probe import (
+    chat_url,
+    paginated_topic_refs,
+    parse_initial_state,
+    topic_refs,
+)
 
 
 def test_topic_refs_read_ssr_state_without_page_actions():
@@ -46,6 +53,49 @@ def test_topic_refs_keep_mapping_when_resume_id_absent():
     ref = topic_refs(html)[0]
     assert ref.resume_id is None
     assert (ref.topic_id, ref.chat_id) == ("123", "456")
+
+
+def test_paginated_topic_refs_collects_all_pages(monkeypatch):
+    class Page:
+        def __init__(self):
+            self.page_num = 0
+
+        def content(self):
+            state = {
+                "applicantNegotiations": {
+                    "topicList": [
+                        {
+                            "id": self.page_num + 1,
+                            "chatId": self.page_num + 11,
+                            "vacancyId": self.page_num + 21,
+                        }
+                    ]
+                }
+            }
+            return (
+                '<template id="HH-Lux-InitialState">'
+                + json.dumps(state)
+                + "</template>"
+            )
+
+    page = Page()
+    urls = []
+
+    def goto(_page, url):
+        urls.append(url)
+        page.page_num = len(urls) - 1
+
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
+    monkeypatch.setattr("hhru_bot.responses._has_next_page", lambda _page, n: n < 2)
+
+    refs = paginated_topic_refs(page, max_pages=3)
+
+    assert [ref.topic_id for ref in refs] == ["1", "2", "3"]
+    assert urls == [
+        "https://hh.ru/applicant/negotiations",
+        "https://hh.ru/applicant/negotiations?page=1",
+        "https://hh.ru/applicant/negotiations?page=2",
+    ]
 
 
 def test_chat_url_matches_hh_open_chat_route():
