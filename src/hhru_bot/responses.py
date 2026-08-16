@@ -400,22 +400,37 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             # DOM card order matches SSR topicList order (no live fixture with >1
             # topic per vacancy exists yet to confirm/refute it — same category as
             # the _form_scope() DOM-structure assumption in apply/questions.py).
-            # When exactly one candidate exists for a vacancy_id the pairing is
-            # unambiguous regardless of ordering, so it's safe to attach. When more
-            # than one candidate remains, guessing positionally risks attaching the
-            # wrong chat to the wrong negotiation — leave those unresolved instead.
+            # Decide per vacancy_id GROUP up front, from counts only — never mutate
+            # refs_by_vacancy (e.g. via candidates.pop()) while iterating cards.
+            # Regression (#186 round 4): consuming the shared candidate list one
+            # card at a time meant a second card for the same vacancy_id could see
+            # an already-drained list (len 0) after an earlier card popped its sole
+            # candidate — neither the "exactly one" nor the "more than one" branch
+            # matched, so the second card silently kept topic_ambiguous=False and
+            # was persisted as if it legitimately had no chat. Only attach when the
+            # vacancy_id has exactly one card AND exactly one SSR candidate — the
+            # only case that's unambiguous regardless of ordering. Any other
+            # mismatch (more cards than candidates, more candidates than cards, or
+            # multiple cards at all) marks every unresolved card for that
+            # vacancy_id as ambiguous instead of guessing positionally.
+            cards_by_vacancy: dict[str, list] = {}
             for result in results[page_start:]:
-                candidates = refs_by_vacancy.get(result.vacancy_id, [])
-                if result.topic is None and len(candidates) == 1:
-                    ref = candidates.pop(0)
-                    result.topic = ref.topic_id
-                    result.chat_url = chat_url(ref.chat_id)
-                elif result.topic is None and len(candidates) > 1:
-                    result.topic_ambiguous = True
+                if result.topic is None:
+                    cards_by_vacancy.setdefault(result.vacancy_id, []).append(result)
+            for vacancy_id, cards in cards_by_vacancy.items():
+                candidates = refs_by_vacancy.get(vacancy_id, [])
+                if len(cards) == 1 and len(candidates) == 1:
+                    ref = candidates[0]
+                    cards[0].topic = ref.topic_id
+                    cards[0].chat_url = chat_url(ref.chat_id)
+                elif candidates:
+                    for card in cards:
+                        card.topic_ambiguous = True
                     logger.warning(
-                        "Отклик vacancy_id=%s: %d кандидатов SSR-topic на одну "
-                        "вакансию — сопоставление неоднозначно, topic не присвоен",
-                        result.vacancy_id,
+                        "Отклик vacancy_id=%s: %d карточек и %d кандидатов SSR-topic "
+                        "— сопоставление неоднозначно, topic не присвоен",
+                        vacancy_id,
+                        len(cards),
                         len(candidates),
                     )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):

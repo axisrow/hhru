@@ -218,3 +218,62 @@ def test_ssr_topic_recovery_leaves_topic_ambiguous_false_for_genuinely_chatless_
     assert len(results) == 1
     assert results[0].topic is None
     assert results[0].topic_ambiguous is False
+
+
+def test_ssr_topic_recovery_flags_all_cards_when_candidate_pool_is_smaller_than_card_count(
+    monkeypatch, caplog
+):
+    """Регрессия #186 (round 4): две карточки одной вакансии, но SSR-состояние
+    содержит только ОДИН topic-кандидат (напр. неполный/устаревший SSR state).
+    Раньше первая карточка отбирала единственного кандидата через
+    ``candidates.pop(0)`` (ветка ``len==1``), опустошая общий список в
+    ``refs_by_vacancy`` — а вторая карточка того же vacancy_id видела уже пустой
+    список (``len==0``), не попадала ни в "единственный кандидат", ни в "больше
+    одного кандидата" ветку, и молча оставалась ``topic_ambiguous=False`` —
+    как будто у неё легитимно нет чата, хотя на самом деле сопоставление
+    неоднозначно ровно так же, как в случае с избытком кандидатов.
+
+    Фикс группирует карточки по vacancy_id ДО принятия решения (без мутации
+    общего списка кандидатов итеративным pop) — при любом несовпадении числа
+    карточек и кандидатов (не только "кандидатов больше") ВСЕ карточки этой
+    вакансии помечаются ambiguous.
+    """
+    goto_calls: list[str] = []
+
+    def goto(page, url):
+        goto_calls.append(url)
+        page.goto_page(len(goto_calls) - 1)
+
+    def parse_card(card):
+        return card
+
+    item_a = responses.ResponseItem(vacancy_id="800", status=responses.ResponseStatus.READ)
+    item_b = responses.ResponseItem(vacancy_id="800", status=responses.ResponseStatus.READ)
+
+    page = _SSRPage(
+        pages_cards=[[item_a, item_b]],
+        pages_html=[
+            # Only ONE SSR topic for vacancy_id=800, but TWO cards need pairing.
+            _ssr_html([("111", "222", "800")]),
+        ],
+    )
+
+    monkeypatch.setattr(responses, "goto_hh", goto)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", parse_card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with caplog.at_level("WARNING", logger="hhru_bot.responses"):
+        results = responses.fetch_responses(page, max_pages=1)
+
+    assert len(results) == 2
+    # Neither card was guessed at — the mismatch (2 cards, 1 candidate) means
+    # BOTH stay unresolved, not just the second one that would have drained
+    # the shared candidate list under the old pop()-based logic.
+    assert results[0].topic is None
+    assert results[0].chat_url is None
+    assert results[0].topic_ambiguous is True
+    assert results[1].topic is None
+    assert results[1].chat_url is None
+    assert results[1].topic_ambiguous is True
+    assert any("неоднозначно" in message for message in caplog.messages)
