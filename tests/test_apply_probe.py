@@ -237,6 +237,20 @@ def test_probe_no_apply_button_fails(tmp_path: Path):
     assert page.screenshot_calls == 0
 
 
+def test_probe_indeterminate_saves_partial_dump(tmp_path: Path):
+    """A form-scope timeout leaves a diagnostic DOM artifact when possible."""
+    page = FakeProbePage(submit=False)
+
+    result = probe_vacancy(page, _vacancy(), "RID", "x", tmp_path)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert "не удалось определить" in result.reason
+    partial_html = tmp_path / "probe_42_form_indeterminate.html"
+    assert partial_html.exists()
+    assert "probe dump" in partial_html.read_text(encoding="utf-8")
+
+
 def test_probe_login_form_is_checked_after_navigation(tmp_path: Path, monkeypatch):
     page = FakeProbePage()
     events: list[str] = []
