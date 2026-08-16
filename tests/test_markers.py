@@ -10,7 +10,15 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-_ALLOWED = {"unit", "integration", "smoke", "e2e", "live_read", "live_write"}
+_ALLOWED = {
+    "unit",
+    "integration",
+    "smoke",
+    "e2e",
+    "live_read",
+    "live_write",
+    "live_write_danger",
+}
 
 
 def test_every_test_file_has_exactly_one_category_marker() -> None:

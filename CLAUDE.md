@@ -243,13 +243,17 @@ config/
 
 ## Тестирование и TDD
 
-- `pytest` по умолчанию запускает только безопасные тесты: `live_read` и
-  `live_write` исключены из сбора.
+- `pytest` по умолчанию запускает только безопасные тесты: `live_read`,
+  `live_write` и `live_write_danger` исключены из сбора.
 - Каждый тестовый файл имеет ровно один маркер: `unit`, `integration`, `smoke`,
-  `e2e`, `live_read` или `live_write`.
-- Тесты `live_read` читают живой hh.ru; `live_write` изменяют живой аккаунт и
-  требуют запуска через `./scripts/live_test.sh`, который запрашивает отдельное
-  подтверждение harness на каждый вызов.
+  `e2e`, `live_read`, `live_write` или `live_write_danger`.
+- Тесты `live_read` читают живой hh.ru. `live_write` обратимо изменяют только
+  свой аккаунт и запускаются через `./scripts/live_test_safe.sh`. `live_write_danger`
+  необратимы или видимы посторонним и запускаются через `./scripts/live_test.sh`,
+  который запрашивает отдельное подтверждение harness на каждый вызов.
+- По границе команд: `copy-resume` относится к `live_write`; `publish-resume`,
+  `apply`, `bump`, `run`, `reply-employers` и `clear-negotiations` — к
+  `live_write_danger`.
 - Не создавай новые live-тесты для проверки обычной логики: используй моки и
   HTML-фикстуры. Перед изменением тестовой инфраструктуры проверь
   `pytest --collect-only -q` и убедись, что live-категории не собраны.

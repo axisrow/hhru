@@ -21,8 +21,9 @@ from hhru_bot.commands import log_cmd
 @pytest.fixture(autouse=True)
 def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Не позволяет обычным тестам случайно выйти в браузер и сеть."""
-    if request.node.get_closest_marker("live_read") or request.node.get_closest_marker(
-        "live_write"
+    if any(
+        request.node.get_closest_marker(marker)
+        for marker in ("live_read", "live_write", "live_write_danger")
     ):
         return
 
@@ -41,7 +42,7 @@ def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
             return
         raise RuntimeError(
             "launch_context заблокирован: тест должен использовать моки; "
-            "для живого hh.ru нужен маркер live_read или live_write"
+            "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
         )
 
     for module in tuple(sys.modules.values()):
