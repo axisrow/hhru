@@ -17,6 +17,7 @@ bump, не к чтению списка); истёкшая сессия (ред�
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -130,7 +131,18 @@ class ResponseItem:
     вакансий, чата нет при отказе, дата рендерится не всегда). raw_status —
     оригинальный текст бейджа для вывода/диагностики. topic — идентификатор
     переписки (из chat_url ?topic=...), уникальный для конкретного чата; None,
-    если chat_url без topic (ответ без чата).
+    если chat_url без topic (ответ без чата ЛИБО неоднозначная SSR-привязка —
+    см. topic_ambiguous).
+
+    topic_ambiguous различает эти два случая topic=None: True — SSR-состояние
+    страницы содержало >1 topic-кандидата для этой вакансии, сопоставить с
+    конкретной карточкой однозначно не удалось (см. fail-closed guard в
+    fetch_responses); False (по умолчанию) — карточка легитимно без чата
+    (напр. discard) ИЛИ topic успешно сопоставлен. history.upsert_response
+    матчит существующую строку по ``(vacancy_id, topic IS NULL)``, поэтому
+    несколько ambiguous-карточек одной вакансии персистились бы как одна и та
+    же NULL-строка, сливая/перезаписывая разные переписки — commands/responses
+    обязан пропускать upsert для topic_ambiguous=True карточек.
     """
 
     vacancy_id: str
@@ -140,6 +152,7 @@ class ResponseItem:
     topic: str | None = None
     date: str = ""
     raw_status: str = ""
+    topic_ambiguous: bool = False
 
 
 def _extract_vacancy_id(href: str) -> str | None:
@@ -355,6 +368,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             logger.info("Страница %d: ответов не найдено, останавливаюсь", page_num)
             break
 
+        page_start = len(results)
         for i in range(count):
             item = parse_response_card(cards.nth(i))
             if item is None:
@@ -363,6 +377,64 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                 )
                 continue
             results.append(item)
+
+        # The live open_chat control is a button without href.  Recover the
+        # stable topic from the same page's SSR state, preserving distinct
+        # negotiations for one vacancy. Slice by page_start (count of items
+        # actually appended this page), NOT by the DOM card count `count` —
+        # parse_response_card can skip cards (missing vacancy_id), so `count`
+        # overcounts and a `-count:` slice would reach into the previous
+        # page's already-resolved results and risk assigning them this
+        # page's SSR topics.
+        try:
+            from .negotiations_probe import chat_url, topic_refs
+
+            if not hasattr(page, "content"):
+                raise ValueError("page.content unavailable")
+            refs = topic_refs(page.content())
+            refs_by_vacancy: dict[str, list] = {}
+            for ref in refs:
+                refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
+            # Fail-closed on ambiguity: pairing an SSR topic to a DOM card relies on
+            # matching by vacancy_id alone, and there is no verified invariant that
+            # DOM card order matches SSR topicList order (no live fixture with >1
+            # topic per vacancy exists yet to confirm/refute it — same category as
+            # the _form_scope() DOM-structure assumption in apply/questions.py).
+            # Decide per vacancy_id GROUP up front, from counts only — never mutate
+            # refs_by_vacancy (e.g. via candidates.pop()) while iterating cards.
+            # Regression (#186 round 4): consuming the shared candidate list one
+            # card at a time meant a second card for the same vacancy_id could see
+            # an already-drained list (len 0) after an earlier card popped its sole
+            # candidate — neither the "exactly one" nor the "more than one" branch
+            # matched, so the second card silently kept topic_ambiguous=False and
+            # was persisted as if it legitimately had no chat. Only attach when the
+            # vacancy_id has exactly one card AND exactly one SSR candidate — the
+            # only case that's unambiguous regardless of ordering. Any other
+            # mismatch (more cards than candidates, more candidates than cards, or
+            # multiple cards at all) marks every unresolved card for that
+            # vacancy_id as ambiguous instead of guessing positionally.
+            cards_by_vacancy: dict[str, list] = {}
+            for result in results[page_start:]:
+                if result.topic is None:
+                    cards_by_vacancy.setdefault(result.vacancy_id, []).append(result)
+            for vacancy_id, cards in cards_by_vacancy.items():
+                candidates = refs_by_vacancy.get(vacancy_id, [])
+                if len(cards) == 1 and len(candidates) == 1:
+                    ref = candidates[0]
+                    cards[0].topic = ref.topic_id
+                    cards[0].chat_url = chat_url(ref.chat_id)
+                elif candidates:
+                    for card in cards:
+                        card.topic_ambiguous = True
+                    logger.warning(
+                        "Отклик vacancy_id=%s: %d карточек и %d кандидатов SSR-topic "
+                        "— сопоставление неоднозначно, topic не присвоен",
+                        vacancy_id,
+                        len(cards),
+                        len(candidates),
+                    )
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
+            logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 
         if not _has_next_page(page, page_num):
             logger.info("Достигнута последняя страница откликов (%d)", page_num)

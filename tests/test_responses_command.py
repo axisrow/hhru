@@ -46,6 +46,7 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
         "max_pages": 5,
         "since_hours": 0.0,
         "headless": False,
+        "detect_external_tests": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -174,3 +175,54 @@ def test_responses_run_indeterminate_state_is_fail_not_traceback(capsys, tmp_pat
         responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0))
     assert exc.value.code == 1
     assert "список не подтверждён" in capsys.readouterr().err
+
+
+def test_responses_run_skips_upsert_for_ambiguous_topic_cards(capsys, tmp_path, monkeypatch):
+    """Регрессия #186 (round 3): карточка с topic_ambiguous=True (несколько SSR-topic
+    кандидатов на одну вакансию, round-2 guard) НЕ должна персиститься через
+    upsert_response — history матчит существующую строку по (vacancy_id,
+    topic IS NULL), и запись такой карточки наравне с легитимными без-чата
+    ответами слила бы разные переписки одной вакансии в одну строку истории.
+
+    Проверяем: неоднозначная карточка пропущена (не в БД), обычная — записана,
+    и печатается предупреждение с количеством пропущенных.
+    """
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    cards = [
+        ResponseItem(vacancy_id="v_ok", status=ResponseStatus.READ, topic="1"),
+        ResponseItem(
+            vacancy_id="v_ambiguous",
+            status=ResponseStatus.READ,
+            topic=None,
+            topic_ambiguous=True,
+        ),
+    ]
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.commands.responses.fetch_responses", lambda *a, **k: cards, raising=False
+    )
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: cards, raising=False)
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=24.0))
+    out = capsys.readouterr().out
+
+    h = History(tmp_path / "h.db")
+    rows = h.new_responses_since(__import__("datetime").datetime.min)
+    vacancy_ids = {r["vacancy_id"] for r in rows}
+    assert "v_ok" in vacancy_ids
+    assert "v_ambiguous" not in vacancy_ids
+    assert "Пропущено записей с неоднозначным topic: 1" in out

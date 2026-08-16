@@ -513,6 +513,11 @@ def run_negotiations(args: argparse.Namespace) -> bool:
     with launch_context(config.storage_state_file, headless=args.headless) as context:
         page = context.new_page()
         goto_hh(page, list_url)
+        items = page.locator(negotiations.NEGOTIATION_ITEM)
+        try:
+            items.first.wait_for(state="attached", timeout=10_000)
+        except PlaywrightError:
+            logger.warning("negotiations: cards did not attach within 10 seconds")
         list_html = page.content()
         try:
             refs = topic_refs(list_html)
@@ -538,7 +543,6 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             )
         )
         print("RAW HTML fragment (first card):")
-        items = page.locator(negotiations.NEGOTIATION_ITEM)
         if items.count():
             print(items.first.evaluate("el => el.outerHTML")[:4000])
 
