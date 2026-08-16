@@ -32,6 +32,13 @@ dev = [
 ai = [
     "openai>=1.50",
 ]
+# Google Calendar OAuth/event command (#64). Kept optional so the hh.ru CLI does
+# not require Google dependencies and cannot create events implicitly.
+calendar = [
+    "google-api-python-client>=2.0",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
