@@ -345,6 +345,18 @@ def test_indeterminate_when_ssr_lacks_negotiations_section():
     assert result.indeterminate
 
 
+def test_indeterminate_when_ssr_state_is_non_dict():
+    # parse_initial_state возвращает любой валидный JSON, не только объект:
+    # null/массив/строка (schema-drift) не должны ронять верификатор
+    # AttributeError'ом вне try — нормализуются как «состояние недоступно»
+    # (fail-closed indeterminate, а не ложный not_found).
+    for raw in ("null", "[1,2]", '"строка"'):
+        html = f"<html><body><template id='HH-Lux-InitialState'>{raw}</template></body></html>"
+        page = FakeNegotiationsPage({NEGOTIATIONS_URL: html})
+        result = verify_response_in_negotiations(page, _V2)
+        assert result.indeterminate
+
+
 def test_indeterminate_when_vacancy_id_unknown():
     result = verify_response_in_negotiations(FakeNegotiationsPage(), None)
     assert result.indeterminate

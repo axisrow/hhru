@@ -408,6 +408,11 @@ def _ssr_topic_list(html: str) -> list[dict[str, Any]] | None:
         state = parse_initial_state(html)
     except (ValueError, AttributeError):
         return None
+    # parse_initial_state возвращает любой валидный JSON, не только объект:
+    # null/массив/строка (schema-drift) — .get() на них бросил бы AttributeError
+    # уже вне try. Нормализуем как «состояние недоступно» (fail-closed).
+    if not isinstance(state, dict):
+        return None
     neg = state.get("applicantNegotiations")
     if not isinstance(neg, dict):
         return None

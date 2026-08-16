@@ -343,3 +343,12 @@ def test_resolve_numeric_resume_ids_none_without_section():
         "<html><template id='HH-Lux-InitialState'>{\"other\":1}</template></html>"
     )
     assert cr.resolve_numeric_resume_ids(page) is None
+
+
+def test_resolve_numeric_resume_ids_none_on_non_dict_ssr_state():
+    # parse_initial_state возвращает любой валидный JSON, не только объект:
+    # null/массив/строка (schema-drift, интерстишл) не должны ронять apply
+    # AttributeError'ом вне try — нормализуются как «маппинг недоступен».
+    for raw in ("null", "[1,2]", '"строка"'):
+        page = StubResumesPage(f"<html><template id='HH-Lux-InitialState'>{raw}</template></html>")
+        assert cr.resolve_numeric_resume_ids(page) is None

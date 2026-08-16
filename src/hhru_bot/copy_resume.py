@@ -392,6 +392,16 @@ def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
     except (PlaywrightError, ValueError, AttributeError) as exc:
         logger.warning("[RESUME-ID] список резюме не прочитан (%s) — маппинг id недоступен", exc)
         return None
+    # parse_initial_state возвращает любой валидный JSON, не только объект:
+    # null/массив/строка (schema-drift, интерстишл) — .get() на них бросил бы
+    # AttributeError уже вне try и аварийно оборвал бы apply. Нормализуем как
+    # «маппинг недоступен» (fail-closed), не давая исключению прервать цикл.
+    if not isinstance(state, dict):
+        logger.warning(
+            "[RESUME-ID] SSR-состояние не объект (%s) — маппинг id недоступен",
+            type(state).__name__,
+        )
+        return None
     resumes = state.get("applicantResumes")
     if not isinstance(resumes, list):
         logger.warning("[RESUME-ID] секция applicantResumes не найдена — маппинг недоступен")
