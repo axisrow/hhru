@@ -52,6 +52,7 @@ def test_all_commands_registered():
         "market",
         "copy-resume",
         "import-cookies",
+        "clear-negotiations",
     }
 
 
@@ -85,6 +86,7 @@ def test_register_commands_returns_names():
         "market",
         "copy_resume",
         "import_cookies",
+        "clear_negotiations",
     }
 
 
