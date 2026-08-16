@@ -97,9 +97,7 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     return ChatMessage(author, marker)
 
 
-def read_chat(
-    page: Page, topic: str, topic_to_chat_id: Mapping[str, str]
-) -> ChatMessage | None:
+def read_chat(page: Page, topic: str, topic_to_chat_id: Mapping[str, str]) -> ChatMessage | None:
     """Resolve a topic from the #107 SSR mapping and read its latest message."""
     chat_id = topic_to_chat_id.get(str(topic))
     if not chat_id:
