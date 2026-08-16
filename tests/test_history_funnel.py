@@ -311,3 +311,26 @@ def test_funnel_counts_successful_reply_by_response_topic(tmp_path):
     assert row["invited"] == 2
     assert row["replied"] == 1
     assert row["reply_rate"] == 50.0
+
+
+def test_funnel_reply_rate_cannot_exceed_invited_count(tmp_path):
+    """reply_rate не должен превышать 100% (#112 review, cycle 2).
+
+    replied должен быть подмножеством invited: успешный ответ на переписку,
+    НЕ дошедшую до приглашения (status='read'/'response'), не должен
+    засчитываться в replied — иначе replied может превысить invited и
+    reply_rate станет невалидным (>100%)."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "vA", "apply", "success")
+    h.record_action("r1", "vB", "apply", "success")
+    h.record_action("r1", "vC", "apply", "success")
+    h.upsert_response("vA", "Acme", "invitation", "/chat/a", topic="tA")
+    h.upsert_response("vB", "Acme", "read", "/chat/b", topic="tB")
+    h.upsert_response("vC", "Acme", "response", "/chat/c", topic="tC")
+    h.record_reply("tB", "m-b", status="success")
+    h.record_reply("tC", "m-c", status="success")
+
+    row = h.funnel_by_resume(since=None)[0]
+    assert row["invited"] == 1
+    assert row["replied"] == 0
+    assert row["reply_rate"] <= 100.0

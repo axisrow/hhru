@@ -739,6 +739,7 @@ class History:
                         SELECT 1 FROM responses r
                         JOIN replies p ON p.topic = r.topic AND p.status = 'success'
                         WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('invitation', 'offer')
                     ) THEN a.vacancy_id END) AS replied
                 FROM actions AS a
                 {clause}
