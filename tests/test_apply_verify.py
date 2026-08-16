@@ -186,18 +186,33 @@ def test_regression_212_config_hash_vs_numeric_topic_is_indeterminate():
     assert "96223331" in result.detail and _HASH in result.detail
 
 
-def test_found_when_topic_carries_default_resume_of_account():
-    """Живой кейс аккаунта: apply шёл с python (284561395), но форма отклика
-    приложила default-резюме marketing (96223331) — тема в перечне резюме
-    аккаунта, значит клик подтверждён; деталь честно показывает подмену."""
+def test_other_own_resume_topic_is_indeterminate():
+    """Тема с ДРУГИМ собственным резюме аккаунта (форма приложила default
+    marketing 96223331, конфиг — python 284561395) НЕ подтверждает текущий
+    apply: тема могла быть создана ПРЕДЫДУЩИМ откликом, а не этим кликом
+    (Codex-ревью цикла 2). Подтверждать по ней нельзя — иначе ложный success
+    под конфиг-резюме и перманентная дедупликация подавят повторную попытку.
+    Fail-closed indeterminate (как incomparable), а не found."""
     page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, 96223331)])})
     result = verify_response_in_negotiations(
         page, _V2, resume_id=_NUM_CONFIG, account_resume_ids=_ACCOUNT
     )
+    assert result.status == "indeterminate"
+    assert "ДРУГИМ собственным резюме" in result.detail
+    assert "96223331" in result.detail and _NUM_CONFIG in result.detail
+
+
+def test_exact_match_wins_over_other_own_resume_topic():
+    # Среди тем вакансии есть и с конфиг-резюме (exact match) — подтверждение,
+    # даже если рядом тема с другим собственным резюме (не атрибутируемая).
+    page = FakeNegotiationsPage(
+        {NEGOTIATIONS_URL: _ssr_html([_topic(7, _V2, 96223331), _topic(8, _V2, _NUM_CONFIG)])}
+    )
+    result = verify_response_in_negotiations(
+        page, _V2, resume_id=_NUM_CONFIG, account_resume_ids=_ACCOUNT
+    )
     assert result.found
-    assert "resumeId=96223331" in result.detail
-    assert "другое резюме аккаунта" in result.detail
-    assert _NUM_CONFIG in result.detail
+    assert f"resumeId={_NUM_CONFIG}" in result.detail
 
 
 def test_found_by_direct_numeric_match_without_account_ids():

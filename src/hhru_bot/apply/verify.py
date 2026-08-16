@@ -28,11 +28,13 @@ Read-only: только goto + чтение. Три исхода:
 домене; «другое резюме» доказуемо только по перечню резюме аккаунта
 (``account_resume_ids`` от ``copy_resume.resolve_numeric_resume_ids``);
 без перечня разные строки — incomparable → fail-closed indeterminate, а не
-молчаливый not_found. Важно: hh.ru подписывает тему резюме, ВЫБРАННЫМ
-формой отклика, а не конфигом бота (живой аккаунт 2026-08-16: все темы
-несли id default-резюме, пока конфиг-резюме было в статусе not_finished —
-форма его не предлагает), поэтому «тема с другим СОБСТВЕННЫМ резюме» —
-всё равно подтверждение клика, а не опровержение.
+молчаливый not_found. Важно (цикл 2, Codex): тема с ДРУГИМ собственным
+резюме аккаунта (форма отклика могла приложить default-резюме, а не
+конфиг-резюме) НЕ подтверждает текущий apply — она могла быть создана
+предыдущим откликом, а не этим кликом. Подтверждать по ней нельзя: ложный
+success перманентно подавил бы повторную попытку через дедупликацию.
+Поэтому «другое собственное» → other_own → fail-closed indeterminate
+(как incomparable), а не found.
 """
 
 from __future__ import annotations
@@ -89,10 +91,13 @@ INDETERMINATE = "indeterminate"
 
 #: Атрибуция темы резюме (#212): matched — тема подтверждает отклик; foreign —
 #: доказуемо чужое резюме (continue скана); incomparable — сравнить нельзя
-#: (fail-closed indeterminate у вызывающего кода).
+#: (fail-closed indeterminate у вызывающего кода); other_own — ДРУГОЕ собственное
+#: резюме аккаунта, но не текущее (fail-closed indeterminate: тема могла быть
+#: создана предыдущим откликом, а не этим кликом — Codex-ревью цикла 2).
 _RESUME_MATCHED = "matched"
 _RESUME_FOREIGN = "foreign"
 _RESUME_INCOMPARABLE = "incomparable"
+_RESUME_OTHER_OWN = "other_own"
 
 
 @dataclass(frozen=True)
@@ -301,20 +306,22 @@ def _scan_single_page(
                     f"{resume_id} (несовместимые домены id, #212)"
                 )
                 continue
-            detail = _describe_topic(topic)
-            topic_resume = topic.get("resumeId")
-            if (
-                resume_id is not None
-                and topic_resume is not None
-                and str(topic_resume) != str(resume_id)
-            ):
-                # Сайт приложил ДРУГОЕ собственное резюме аккаунта (форма не
-                # предлагает конфиг-резюме в not_finished и молча берёт
-                # default) — деталь в вердикте, чтобы это было видно в логах.
-                # topic_resume is None (у темы нет resumeId) сюда не попадает:
-                # str(None)="None" лгал бы «другое резюме» при отсутствии поля.
-                detail += f" — сайт приложил другое резюме аккаунта (конфиг: {resume_id})"
-            return detail, True, None, False
+            if attribution == _RESUME_OTHER_OWN:
+                # Цикл 2 (Codex): тема с ДРУГИМ собственным резюме аккаунта
+                # могла быть создана ПРЕДЫДУЩИМ откликом, а не этим кликом —
+                # подтверждать текущий apply по ней нельзя (иначе ложный
+                # success и перманентная дедупликация подавит повторную
+                # попытку). Fail-closed indeterminate, как incomparable; скан
+                # продолжается: exact match ниже по списку всё ещё доказал бы
+                # found.
+                attribution_problem = (
+                    f"тема vacancy_id={wanted} найдена, но с ДРУГИМ собственным "
+                    f"резюме аккаунта (resumeId темы={topic.get('resumeId')} против "
+                    f"резюме конфига={resume_id}) — не подтверждаем: тема могла "
+                    f"быть создана предыдущим откликом"
+                )
+                continue
+            return _describe_topic(topic), True, None, False
         return (
             None,
             attribution_problem is None,
@@ -346,11 +353,14 @@ def _resume_attribution(
 
     * равные строки — matched (надёжно в любом домене);
     * ``account_resume_ids`` задан (маппинг из /applicant/resumes получен):
-      id темы в перечне — matched (hh.ru подписывает тему резюме, ВЫБРАННЫМ
-      формой отклика, а не конфигом: живой аккаунт 2026-08-16 — все 14 тем с
-      id default-резюме при конфиг-резюме в статусе not_finished; список
-      /applicant/negotiations аккаунт-приватный, «другое собственное» всё
-      равно доказывает клик), вне перечня — foreign (аномалия данных);
+      id темы в перечне, но НЕ равный конфиг-резюме — other_own (ДРУГОЕ
+      собственное резюме аккаунта). Это НЕ подтверждение текущего apply:
+      тема могла быть создана предыдущим откликом с этого резюме, а не этим
+      кликом (Codex-ревью цикла 2) — fail-closed indeterminate, а не found.
+      (До цикла 2 «другое собственное» считалось matched по посылке #212
+      «форма подписывает тему выбранным резюме»; но это не отличает свежую
+      тему от старой, и ложный success перманентно подавил бы повторную
+      попытку через дедупликацию.) Вне перечня — foreign (аномалия данных);
     * маппинга нет и строки разные — incomparable: доказать нельзя ни matched,
       ни foreign → вызывающий код обязан ответить indeterminate (fail-closed),
       а не молчаливым not_found (повторный отклик) или success (ложный).
@@ -366,7 +376,9 @@ def _resume_attribution(
     if str(topic_resume) == str(resume_id):
         return _RESUME_MATCHED
     if account_resume_ids is not None:
-        return _RESUME_MATCHED if str(topic_resume) in account_resume_ids else _RESUME_FOREIGN
+        if str(topic_resume) in account_resume_ids:
+            return _RESUME_OTHER_OWN
+        return _RESUME_FOREIGN
     return _RESUME_INCOMPARABLE
 
 
