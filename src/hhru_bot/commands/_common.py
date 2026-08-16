@@ -17,6 +17,7 @@ from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
+from ..copy_resume import resolve_numeric_resume_ids
 from ..history import SKIP_REASONS, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
@@ -292,6 +293,35 @@ def run_apply_for_resume(
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
 
+    # #212: атрибуция резюме в верификаторе. Конфиг знает хэш резюме, SSR
+    # /applicant/negotiations — только числовой resumeId; без маппинга found
+    # недостижим (false negative #3, 135170581). Один read-only goto за запуск;
+    # сбой маппинга не фатален — верификатор получит хэш и уйдёт в fail-closed
+    # indeterminate при совпадении вакансии. dry_run до клика не доходит —
+    # верификатор не зовётся, лишний goto не нужен.
+    account_resume_ids: set[str] | None = None
+    verify_resume_id = resume.resume_id
+    if plan.ranked and not args.dry_run:
+        ids_by_hash = resolve_numeric_resume_ids(page)
+        if ids_by_hash is not None:
+            account_resume_ids = set(ids_by_hash.values())
+            verify_resume_id = ids_by_hash.get(resume.resume_id, resume.resume_id)
+            if verify_resume_id == resume.resume_id:
+                logger.warning(
+                    "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
+                    "верификаторе уйдёт в fail-closed",
+                    resume.id,
+                    resume.resume_id,
+                )
+
+    def _verifier(page, vacancy_id, _pipeline_resume_id):  # noqa: ANN001
+        # pipeline передаёт хэш конфига (ключ history) — подменяем его числовым
+        # id для сравнения с SSR; запись в history и троттл остаются в домене
+        # хэша, миграций нет.
+        return verify_response_in_negotiations(
+            page, vacancy_id, verify_resume_id, account_resume_ids=account_resume_ids
+        )
+
     applied_count = 0
     for card, _score, _breakdown in plan.ranked:
         try:
@@ -309,7 +339,7 @@ def run_apply_for_resume(
             letter_provider=letter_provider,
             # #207: fail-вердикты после клика по кнопке отклика подтверждаются
             # внешней проверкой /applicant/negotiations до записи в history.
-            verifier=verify_response_in_negotiations,
+            verifier=_verifier,
         )
 
         if result.skipped:

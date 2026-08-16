@@ -11,6 +11,10 @@
 
 from __future__ import annotations
 
+import json
+from html import escape
+from types import SimpleNamespace
+
 import hhru_bot.copy_resume as cr
 from hhru_bot.selector_groups.resume_list import (
     RESUME_LIST_CARD,
@@ -227,3 +231,106 @@ def test_navigate_false_skips_goto(monkeypatch):
 
     assert len(cards) == 1
     assert page.gotos == []  # goto_hh НЕ вызван — вызывающий уже перешёл сам
+
+
+# --- resolve_numeric_resume_ids (#212) ----------------------------------------
+#
+# Маппинг «хэш резюме → числовой id» из SSR /applicant/resumes: Applicant
+# Resumes[]._attributes.{hash,id,status}. Формы — с живой пробы 2026-08-16
+# (data/logs/probe212_*.json), хэши обезличены: python-резюме там в статусе
+# not_finished (форма отклика его не предлагает), marketing — рабочее
+# default-резюме аккаунта.
+
+
+class _NoMatches:
+    def count(self):
+        return 0
+
+
+class StubResumesPage:
+    """Page для SSR-чтения: goto + content + cookies; локаторы пусты
+    (has_login_form на авторизованной странице возвращает 0 совпадений)."""
+
+    def __init__(self, html: str = "", authed: bool = True):
+        self._html = html
+        self._authed = authed
+        self.gotos: list[str] = []
+
+    def goto(self, url, wait_until=""):  # noqa: ARG002
+        self.gotos.append(url)
+
+    def content(self):
+        return self._html
+
+    def locator(self, selector):  # noqa: ARG002
+        return _NoMatches()
+
+    @property
+    def context(self):
+        cookies = [{"name": "hhtoken", "value": "x"}] if self._authed else []
+        return SimpleNamespace(cookies=lambda: cookies)
+
+
+def _resumes_ssr_html(resumes: list[dict]) -> str:
+    state = json.dumps({"applicantResumes": resumes}, ensure_ascii=False)
+    return f"<html><body><template id='HH-Lux-InitialState'>{escape(state)}</template></body></html>"
+
+
+def _resume_attrs(hash_: str, numeric_id: str, status: str = "modified") -> dict:
+    return {"_attributes": {"hash": hash_, "id": numeric_id, "status": status}}
+
+
+_HASH_PY = "c0ffee" * 5 + "b3236e"
+_HASH_MK = "6b85a1" * 5 + "6e370"
+
+
+def test_resolve_numeric_resume_ids_maps_hash_to_id():
+    page = StubResumesPage(
+        _resumes_ssr_html(
+            [_resume_attrs(_HASH_PY, "284561395", "not_finished"), _resume_attrs(_HASH_MK, "96223331")]
+        )
+    )
+    mapping = cr.resolve_numeric_resume_ids(page)
+    assert mapping == {_HASH_PY: "284561395", _HASH_MK: "96223331"}
+    assert page.gotos == [cr.RESUMES_LIST_URL]  # один goto за вызов
+
+
+def test_resolve_numeric_resume_ids_warns_on_not_finished(caplog):
+    # not_finished-резюме форма отклика не предлагает: отклики уходят с другого
+    # резюме аккаунта — это обязано попасть в логи, а не пройти молча.
+    page = StubResumesPage(_resumes_ssr_html([_resume_attrs(_HASH_PY, "284561395", "not_finished")]))
+    with caplog.at_level("WARNING", logger="hhru_bot.copy_resume"):
+        mapping = cr.resolve_numeric_resume_ids(page)
+    assert mapping == {_HASH_PY: "284561395"}
+    assert any("not_finished" in r.message for r in caplog.records)
+
+
+def test_resolve_numeric_resume_ids_skips_entries_without_ids():
+    page = StubResumesPage(
+        _resumes_ssr_html(
+            [
+                {"no_attributes": True},
+                _resume_attrs(_HASH_PY, "284561395"),
+                {"_attributes": {"hash": _HASH_MK}},  # без id
+                {"_attributes": {"id": "111"}},  # без hash
+            ]
+        )
+    )
+    assert cr.resolve_numeric_resume_ids(page) == {_HASH_PY: "284561395"}
+
+
+def test_resolve_numeric_resume_ids_none_without_session():
+    # Сессия истекла — «атрибуция недоступна» (None), не «резюме нет».
+    page = StubResumesPage(_resumes_ssr_html([_resume_attrs(_HASH_PY, "284561395")]), authed=False)
+    assert cr.resolve_numeric_resume_ids(page) is None
+
+
+def test_resolve_numeric_resume_ids_none_without_ssr_state():
+    # Страница без HH-Lux-InitialState (анти-бот/интерстишл) — None, не пустой
+    # маппинг: пустой dict лгал бы «у аккаунта нет резюме».
+    assert cr.resolve_numeric_resume_ids(StubResumesPage("<html>proxy check</html>")) is None
+
+
+def test_resolve_numeric_resume_ids_none_without_section():
+    page = StubResumesPage("<html><template id='HH-Lux-InitialState'>{\"other\":1}</template></html>")
+    assert cr.resolve_numeric_resume_ids(page) is None

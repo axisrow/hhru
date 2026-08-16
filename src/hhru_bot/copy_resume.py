@@ -23,8 +23,9 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_login_form
+from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_auth_cookie, has_login_form
 from .config import ResumeConfig
+from .negotiations_probe import parse_initial_state
 
 # Reuse the established auth-state exception rather than defining a second
 # copy-resume-only variant; the command layer already treats this shared
@@ -360,6 +361,62 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
         url = f"{HH_BASE_URL}/resume/{resume_id}"
         cards.append(ResumeCard(resume_id=resume_id, title=title, url=url))
     return cards
+
+
+def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
+    """Маппинг «хэш резюме → числовой id hh.ru» с /applicant/resumes (#212).
+
+    Домены id у hh.ru несовместимы: конфиг адресует резюме хэшем из URL
+    (``ResumeConfig.resume_id``), а SSR /applicant/negotiations подписывает
+    темы числовым ``topicList[].resumeId``. Прямое сравнение этих строк всегда
+    даёт «чужое» — верификатор apply из-за этого не мог вернуть found с
+    момента PR #209 (false negative #3, #212). Живая проба 2026-08-16
+    (data/logs/probe212_*.json): оба id лежат рядом в SSR списка резюме,
+    ``applicantResumes[]._attributes.{hash,id}`` — тот же reader-принцип, что
+    у ``list_resume_cards`` (goto + чтение, ничего не кликается).
+
+    None — прочитать не удалось (сессия, рендер, структура): вызывающий код
+    обязан трактовать это как «атрибуция резюме недоступна» (fail-closed в
+    apply/verify), а не как «резюме нет». Дополнительно warns о резюме в
+    статусе not_finished: форма отклика такие не предлагает (SSR формы:
+    ``unfinishedResumeIds``), и отклик уходит с другого резюме аккаунта, хотя
+    история пишется под конфиг-резюме — это должно быть видно в логах.
+    """
+    logger.info("Открываю список резюме для маппинга id: %s", RESUMES_LIST_URL)
+    try:
+        goto_hh(page, RESUMES_LIST_URL)
+        if not has_auth_cookie(page) or has_login_form(page):
+            logger.warning("[RESUME-ID] сессия не авторизована — маппинг id недоступен")
+            return None
+        state = parse_initial_state(page.content())
+    except (PlaywrightError, ValueError, AttributeError) as exc:
+        logger.warning("[RESUME-ID] список резюме не прочитан (%s) — маппинг id недоступен", exc)
+        return None
+    resumes = state.get("applicantResumes")
+    if not isinstance(resumes, list):
+        logger.warning("[RESUME-ID] секция applicantResumes не найдена — маппинг недоступен")
+        return None
+    mapping: dict[str, str] = {}
+    for item in resumes:
+        attrs = item.get("_attributes") if isinstance(item, dict) else None
+        if not isinstance(attrs, dict):
+            continue
+        resume_hash, numeric_id = attrs.get("hash"), attrs.get("id")
+        if not resume_hash or numeric_id is None:
+            continue
+        mapping[str(resume_hash)] = str(numeric_id)
+        if attrs.get("status") == "not_finished":
+            logger.warning(
+                "[RESUME-ID] резюме %s (id=%s) в статусе not_finished — форма отклика "
+                "его не предлагает: отклики уходят с другого резюме аккаунта",
+                resume_hash,
+                numeric_id,
+            )
+    if not mapping:
+        logger.warning("[RESUME-ID] в SSR нет пар hash→id — маппинг недоступен")
+        return None
+    logger.info("[RESUME-ID] маппинг hash→id получен: %d резюме", len(mapping))
+    return mapping
 
 
 def _goto_resumes_list(page: Page, *, post_write: bool = False) -> None:
