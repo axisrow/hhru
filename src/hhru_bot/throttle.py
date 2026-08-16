@@ -53,6 +53,14 @@ class Throttle:
         if done >= self.config.daily_bump_limit:
             raise LimitReached(resume_id, "bump", self.config.daily_bump_limit)
 
+    def check_reply_limit(self, dry_run: bool) -> None:
+        """Apply the configured daily action limit to account-wide replies."""
+        if dry_run:
+            return
+        done = self.history.count_today("", "reply")
+        if done >= self.config.daily_apply_limit:
+            raise LimitReached("account", "reply", self.config.daily_apply_limit)
+
     def can_bump_now(self, resume_id: str) -> tuple[bool, timedelta | None]:
         since = self.history.time_since_last(resume_id, "bump")
         if since is None:

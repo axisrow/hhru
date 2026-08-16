@@ -64,3 +64,8 @@ CHAT_MESSAGE_TEXT = (
 )
 CHAT_MESSAGE_MY_MARKER = "message_my"
 CHAT_MESSAGE_OTHER_MARKER = "message_other"
+
+# Composer controls on chatik.hh.ru.  Keep these here with the read selectors so
+# a markup change cannot leave the write path with a private, stale selector.
+CHAT_MESSAGE_INPUT = "textarea[data-qa='chatik-chat-message-input']"
+CHAT_MESSAGE_SEND = "button[data-qa='chatik-chat-message-send']"

@@ -1551,6 +1551,59 @@ class History:
             ).fetchone()
             return row is not None
 
+    def reply_candidates(self, limit: int | None = None) -> list[dict]:
+        """Return account-wide chat candidates using only local history.
+
+        The live message marker is intentionally not available here.  It is
+        read only after a candidate chat is opened, where ``has_replied`` can
+        perform the final duplicate check.
+        """
+        sql = """
+            SELECT r.vacancy_id, r.topic, COALESCE(v.title, r.vacancy_id) AS title,
+                   COALESCE(r.employer, '') AS employer
+              FROM responses AS r
+              LEFT JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
+             WHERE r.topic IS NOT NULL
+             GROUP BY r.vacancy_id, r.topic
+             ORDER BY MAX(r.last_seen_at) DESC, r.id DESC
+        """
+        params: list[object] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def record_reply_and_action(
+        self,
+        topic: str,
+        inbound_marker: str,
+        *,
+        vacancy_id: str,
+        status: str,
+        reason: str | None = None,
+        letter_variant: str | None = None,
+    ) -> None:
+        """Write the reply journal and action audit in one SQLite transaction."""
+        if status not in REPLY_STATUS_VALUES:
+            raise ValueError(f"недопустимый status={status!r} для replies")
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO replies
+                   (topic, inbound_marker, vacancy_id, status, letter_variant, note, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (topic, inbound_marker, vacancy_id, status, letter_variant, reason, now),
+            )
+            # actions.resume_id is NOT NULL; empty string is the explicit
+            # account-wide sentinel (there is no trustworthy resume mapping).
+            conn.execute(
+                """INSERT INTO actions
+                   (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
+                   VALUES (?, ?, 'reply', ?, ?, ?, ?)""",
+                ("", vacancy_id, status, reason, letter_variant, now),
+            )
+
     def replies_since(self, since: datetime) -> list[dict]:
         """Наши ответы, записанные после ``since`` — для аналитики и отчётов.
 
