@@ -383,19 +383,28 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             refs_by_vacancy: dict[str, list] = {}
             for ref in refs:
                 refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
-            # NOT verified on a live multi-topic-per-vacancy dump: when one employer
-            # has several negotiations (several topics for the same vacancy_id), this
-            # assumes DOM card order matches SSR topicList order and pairs them
-            # positionally (FIFO pop). If hh.ru ever orders them differently, a topic
-            # can attach to the wrong card. No live fixture with >1 topic per vacancy
-            # exists yet to confirm/refute this — treat as an open assumption, same
-            # category as the _form_scope() DOM-structure assumption in apply/questions.py.
+            # Fail-closed on ambiguity: pairing an SSR topic to a DOM card relies on
+            # matching by vacancy_id alone, and there is no verified invariant that
+            # DOM card order matches SSR topicList order (no live fixture with >1
+            # topic per vacancy exists yet to confirm/refute it — same category as
+            # the _form_scope() DOM-structure assumption in apply/questions.py).
+            # When exactly one candidate exists for a vacancy_id the pairing is
+            # unambiguous regardless of ordering, so it's safe to attach. When more
+            # than one candidate remains, guessing positionally risks attaching the
+            # wrong chat to the wrong negotiation — leave those unresolved instead.
             for result in results[page_start:]:
                 candidates = refs_by_vacancy.get(result.vacancy_id, [])
-                if result.topic is None and candidates:
+                if result.topic is None and len(candidates) == 1:
                     ref = candidates.pop(0)
                     result.topic = ref.topic_id
                     result.chat_url = chat_url(ref.chat_id)
+                elif result.topic is None and len(candidates) > 1:
+                    logger.warning(
+                        "Отклик vacancy_id=%s: %d кандидатов SSR-topic на одну "
+                        "вакансию — сопоставление неоднозначно, topic не присвоен",
+                        result.vacancy_id,
+                        len(candidates),
+                    )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
             logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 

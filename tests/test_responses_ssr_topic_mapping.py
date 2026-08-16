@@ -123,3 +123,57 @@ def test_ssr_topic_recovery_does_not_leak_into_previous_page_when_page_skips_a_c
     # Page 1's item is the only one eligible for this page's SSR topic.
     assert results[1].topic == "999"
     assert results[1].chat_url == "https://chatik.hh.ru/chat/888"
+
+
+def test_ssr_topic_recovery_fails_closed_when_multiple_topics_share_one_vacancy(
+    monkeypatch, caplog
+):
+    """Регрессия #186 (round 2): один работодатель с несколькими переписками по
+    одной вакансии (несколько topic на один vacancy_id) раньше сопоставлялся
+    позиционно (FIFO ``candidates.pop(0)``) — недоказанное допущение, что DOM-
+    порядок карточек совпадает с порядком SSR ``topicList``. Если бы порядок
+    расходился, чужой topic/chat_url присвоился бы не той карточке, испортив
+    identity переписки (`(vacancy_id, topic)` — ключ истории).
+
+    Фикс: при >1 кандидате на vacancy_id — НЕ гадать, оставить обе карточки без
+    topic и залогировать warning. Единственный кандидат по-прежнему сопоставляется
+    (это однозначно — см. соседний тест на странице 1 с одним vacancy=200 topic).
+    """
+    goto_calls: list[str] = []
+
+    def goto(page, url):
+        goto_calls.append(url)
+        page.goto_page(len(goto_calls) - 1)
+
+    def parse_card(card):
+        return card
+
+    item_a = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    item_b = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+
+    page = _SSRPage(
+        pages_cards=[[item_a, item_b]],
+        pages_html=[
+            # Two negotiations for the SAME vacancy_id=700 — reversed order vs
+            # DOM (topic 222 listed first in SSR, but nothing pins it to item_a
+            # specifically) is exactly the ambiguity the guard must reject.
+            _ssr_html([("222", "333", "700"), ("444", "555", "700")]),
+        ],
+    )
+
+    monkeypatch.setattr(responses, "goto_hh", goto)
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", parse_card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with caplog.at_level("WARNING", logger="hhru_bot.responses"):
+        results = responses.fetch_responses(page, max_pages=1)
+
+    assert len(results) == 2
+    # Neither card was guessed at — both stay unresolved rather than risking a
+    # cross-assignment between two distinct negotiations for the same employer.
+    assert results[0].topic is None
+    assert results[0].chat_url is None
+    assert results[1].topic is None
+    assert results[1].chat_url is None
+    assert any("неоднозначно" in message for message in caplog.messages)
