@@ -43,7 +43,12 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import goto_hh, launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..negotiations_chat import needs_reply, read_chat, send_reply_current
+    from ..negotiations_chat import (
+        needs_reply,
+        read_chat,
+        send_reply_current,
+        wait_reply_confirmation,
+    )
     from ..negotiations_probe import topic_refs
     from ..throttle import LimitReached, Throttle
 
@@ -100,12 +105,39 @@ def run(args: argparse.Namespace) -> None:
                 except LimitReached as exc:
                     print(f"[FAIL] {label} — {exc}")
                     break
+                # Codex-ревью (#198): между планированием (needs_reply выше) и
+                # отправкой прошло время (рендер письма, проверка лимита) —
+                # чат перечитываем непосредственно перед кликом, чтобы
+                # TOCTOU-окно не пропустило входящее от работодателя или наш
+                # собственный ответ с другого устройства между этими шагами.
+                live_chat = read_chat(page, topic, refs)
+                live_decision = needs_reply(live_chat)
+                if not live_decision.should_reply:
+                    reason = f"чат изменился перед отправкой: {live_decision.reason}"
+                    print(f"[FAIL] {label} — {reason}")
+                    history.record_reply_and_action(
+                        topic,
+                        chat.inbound_marker or "",
+                        vacancy_id=str(candidate["vacancy_id"]),
+                        status="failed",
+                        reason=reason,
+                    )
+                    continue
                 try:
                     send_reply_current(page, letter)
-                    status = "success"
-                    reason = None
-                    sent += 1
-                    print(f"[OK] {label}")
+                    # Клик мог не дойти (отклонение сервером, сетевой сбой) —
+                    # success пишем только по позитивному подтверждению
+                    # (последнее сообщение в чате стало нашим), как в
+                    # apply/success.py (#7): таймаут даёт false-negative
+                    # (failed, разрешает повтор), не false-positive success.
+                    if wait_reply_confirmation(page):
+                        status = "success"
+                        reason = None
+                        sent += 1
+                        print(f"[OK] {label}")
+                    else:
+                        reason = "отправка не подтверждена: нет сигнала доставки"
+                        print(f"[FAIL] {label} — {reason}")
                 except LimitReached as exc:
                     print(f"[FAIL] {label} — {exc}")
                     break

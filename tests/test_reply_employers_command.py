@@ -62,7 +62,16 @@ def _seed_response(history: History, *, vacancy_id: str, topic: str, title: str 
     history.upsert_vacancy_seen(vacancy_id, "q", title=title)
 
 
-def _patch_common(monkeypatch, history, *, page=None, refs=None, send=None, reader=None):
+def _patch_common(
+    monkeypatch,
+    history,
+    *,
+    page=None,
+    refs=None,
+    send=None,
+    reader=None,
+    confirmation=True,
+):
     monkeypatch.setattr(command, "confirm_write", lambda *a, **k: True)
     monkeypatch.setattr(
         "hhru_bot.browser.launch_context", lambda *a, **k: _Context(page or _Page())
@@ -75,6 +84,9 @@ def _patch_common(monkeypatch, history, *, page=None, refs=None, send=None, read
         monkeypatch.setattr("hhru_bot.negotiations_chat.read_chat", reader)
     if send is not None:
         monkeypatch.setattr("hhru_bot.negotiations_chat.send_reply_current", send)
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_chat.wait_reply_confirmation", lambda page, **k: confirmation
+    )
 
 
 # --- confirmation contract (cli-spec §1) -----------------------------------
@@ -320,4 +332,95 @@ def test_send_failure_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
         row = conn.execute("SELECT status FROM replies").fetchone()
         assert row[0] == "failed"
     # A failed send does not count as replied — retry must remain possible.
+    assert history.has_replied("tp1", "m1") is False
+
+
+# --- Codex review (PR #198): click confirmed but delivery unverified -------
+
+
+def test_click_without_delivery_confirmation_is_recorded_as_failed(tmp_path, monkeypatch, capsys):
+    """send_reply_current only clicks; a click with no delivery signal must
+    not be journaled as success — otherwise has_replied() would permanently
+    suppress a retry for a reply that never actually reached the employer.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    class Ref:
+        topic_id = "tp1"
+        chat_id = "c1"
+
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+    sent = {"called": False}
+
+    def _send(page, text):
+        sent["called"] = True
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref()],
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+        confirmation=False,
+    )
+
+    command.run(_args(force=True))
+    assert sent["called"] is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[OK]" not in out
+    with history._connect() as conn:
+        row = conn.execute("SELECT status FROM replies").fetchone()
+        assert row[0] == "failed"
+    # Not journaled as replied — retry must remain possible.
+    assert history.has_replied("tp1", "m1") is False
+
+
+# --- Codex review (PR #198): TOCTOU between planning and send --------------
+
+
+def test_chat_changed_before_send_aborts_without_sending(tmp_path, monkeypatch, capsys):
+    """The chat is re-read immediately before the click. If the employer's
+    message is no longer the latest (e.g. we already replied from another
+    device between planning and send), the command must abort instead of
+    sending a stale/duplicate reply.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+
+    class Ref:
+        topic_id = "tp1"
+        chat_id = "c1"
+
+    planning_chat = ChatMessage(author="employer", inbound_marker="m1")
+    live_chat = ChatMessage(author="me", inbound_marker="m2")
+    calls = {"n": 0}
+
+    def _reader(page, topic, refs):
+        calls["n"] += 1
+        # First read is the planning pass; the pre-send re-read sees a
+        # chat that has moved on (we already answered from elsewhere).
+        return planning_chat if calls["n"] == 1 else live_chat
+
+    def _boom_send(page, text):
+        raise AssertionError("must not send when the live chat changed before the click")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref()],
+        reader=_reader,
+        send=_boom_send,
+    )
+
+    command.run(_args(force=True))
+    assert calls["n"] == 2
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    with history._connect() as conn:
+        reply = conn.execute("SELECT topic, inbound_marker, status FROM replies").fetchone()
+        # Recorded under the ORIGINAL inbound_marker seen during planning —
+        # that is the message we decided to (and failed to) reply to.
+        assert tuple(reply) == ("tp1", "m1", "failed")
     assert history.has_replied("tp1", "m1") is False

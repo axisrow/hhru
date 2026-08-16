@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -196,3 +197,55 @@ def send_reply_current(page: Page, text: str) -> None:
         raise RuntimeError("не удалось однозначно найти форму ответа в чате")
     input_loc.fill(text)
     send_loc.click()
+
+
+_POLL_INTERVAL_MS = 80
+
+
+def _sleep(page: Page, ms: float) -> None:
+    wait_for_timeout = getattr(page, "wait_for_timeout", None)
+    if callable(wait_for_timeout):
+        wait_for_timeout(ms)
+    else:  # pragma: no cover — fallback для не-Playwright page (напр. тесты)
+        time.sleep(ms / 1000)
+
+
+def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
+    """Подтверждает, что клик отправки реально доставил сообщение (Codex #198).
+
+    ``send_reply_current`` только кликает — клик мог не дойти (отклонение
+    сервером, невалидная форма, сетевой сбой после клика), а страница при этом
+    останется без submit-ошибки. Единственный позитивный сигнал, который здесь
+    доступен без непроверенного success-маркера — author последнего сообщения
+    в чате стал ``"me"`` (тот же ``CHAT_MESSAGE_MY_MARKER``, что и в
+    ``read_last_message``). Опрашиваем union «последнее сообщение наше» в цикле
+    до таймаута — hh.ru может отрисовать новое сообщение в DOM асинхронно.
+
+    Как и ``apply/success.wait_success_confirmation`` (#7): таймаут даёт
+    false-negative (status='failed', разрешает повторную попытку), а не
+    false-positive success — постоянная дедупликация по success опаснее.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        messages = page.locator(CHAT_MESSAGE_TEXT)
+        count = messages.count()
+        if count:
+            message = messages.nth(count - 1)
+            author = message.evaluate(
+                """(el, marker) => {
+                    for (let node = el; node; node = node.parentElement) {
+                        if (String(node.className).split(/\\s+/).includes(marker)) return true;
+                    }
+                    return false;
+                }""",
+                CHAT_MESSAGE_MY_MARKER,
+            )
+            if author:
+                logger.debug("Отправка в чате подтверждена: последнее сообщение наше")
+                return True
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "Не дождались подтверждения отправки за %d мс (url=%s)", timeout_ms, page.url
+            )
+            return False
+        _sleep(page, _POLL_INTERVAL_MS)
