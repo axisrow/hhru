@@ -114,11 +114,20 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
                 f"(совпадений: {control_count}) — не кликаю"
             )
 
+        # If an older dialog is already present, do not press the withdrawal
+        # control: the page is not in a uniquely actionable state.
+        confirmation = page.locator(NEGOTIATION_WITHDRAW_CONFIRM)
+        confirmation_count = confirmation.count()
+        if confirmation_count > 1:
+            return False, (
+                f"подтверждение отзыва topic={topic} неоднозначно "
+                f"(совпадений: {confirmation_count}) — не кликаю"
+            )
+
         controls.first.click()
 
         # Some UI revisions show an explicit confirmation control after the
         # first click.  It is still a UI click and must also be unique.
-        confirmation = page.locator(NEGOTIATION_WITHDRAW_CONFIRM)
         confirmation_count = confirmation.count()
         if confirmation_count > 1:
             return False, (
