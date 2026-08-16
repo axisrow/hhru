@@ -51,7 +51,17 @@ def run(args: argparse.Namespace) -> None:
             # форма входа, hint «рано») не результат взаимодействия с hh.ru —
             # они остаются в консоли/логе, но не засоряют статистику.
             if result.acted or (args.dry_run and result.success):
-                status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+                # #176: uncertain — клик мог уйти, но результат неизвестен.
+                # Такой статус видят кулдаун can_bump_now и дневной лимит
+                # (count_today), поэтому «просто failed» не годится: он не
+                # остановил бы повторное поднятие раньше 4ч. dry_run по
+                # определению без клика — uncertain там невозможен.
+                if args.dry_run:
+                    status = "dry_run"
+                elif result.uncertain:
+                    status = "uncertain"
+                else:
+                    status = "success" if result.success else "failed"
                 # Для action='bump' нет естественного vacancy_id (поднятие резюме,
                 # не отклик). actions.vacancy_id NOT NULL — заполняем resume.resume_id
                 # как sentinel; UNIQUE-индекс idx_resume_vacancy_apply существует

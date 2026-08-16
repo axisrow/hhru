@@ -43,6 +43,11 @@ _SUMMARY_HEADERS = {
     "success": "Успех",
     "dry_run": "Прогон",
     "failed": "Провал",
+    # #176: действие могло выполниться, но Playwright упал в момент клика —
+    # исход неизвестен (fail-closed: такие строки дедуплицируются и расходуют
+    # дневной лимит, поэтому в сводке им отдельная колонка, а не смешение
+    # с «Провал»).
+    "uncertain": "Неопредел.",
 }
 
 
@@ -55,30 +60,23 @@ def _check_format(fmt: str) -> None:
 
 # --- summary ----------------------------------------------------------------
 
+# Порядок статусных колонок сводки (один источник правды для table/csv/md).
+_SUMMARY_STATUS_ORDER = ("success", "dry_run", "failed", "uncertain")
+
 
 def _summary_rows(summary: dict) -> list[list[str]]:
     rows: list[list[str]] = []
     for action in _SUMMARY_ACTIONS:
         bucket = summary.get(action, {})
-        rows.append(
-            [
-                action,
-                str(bucket.get("success", 0)),
-                str(bucket.get("dry_run", 0)),
-                str(bucket.get("failed", 0)),
-            ]
-        )
+        rows.append([action] + [str(bucket.get(s, 0)) for s in _SUMMARY_STATUS_ORDER])
     return rows
 
 
 def format_summary(summary: dict, fmt: str) -> str:
     """Отрисовать сводку action × status (+ total) в выбранном формате."""
     _check_format(fmt)
-    header = [
-        _SUMMARY_HEADERS["action"],
-        _SUMMARY_HEADERS["success"],
-        _SUMMARY_HEADERS["dry_run"],
-        _SUMMARY_HEADERS["failed"],
+    header = [_SUMMARY_HEADERS["action"]] + [
+        _SUMMARY_HEADERS[s] for s in _SUMMARY_STATUS_ORDER
     ]
     rows = _summary_rows(summary)
     total = summary.get("total", 0)
@@ -87,20 +85,22 @@ def format_summary(summary: dict, fmt: str) -> str:
         # CSV — экспорт для машин: машиночитаемые имена колонок.
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["action", "success", "dry_run", "failed"])
+        w.writerow(["action", *_SUMMARY_STATUS_ORDER])
         w.writerows(rows)
-        w.writerow(["total", total, "", ""])
+        w.writerow(["total", total, *["" for _ in _SUMMARY_STATUS_ORDER[1:]]])
         return out.getvalue().rstrip("\n")
 
     if fmt == "md":
-        lines = ["| " + " | ".join(header) + " |", "| --- | --- | --- | --- |"]
+        sep = "| " + " | ".join(["---"] * len(header)) + " |"
+        lines = ["| " + " | ".join(header) + " |", sep]
         for r in rows:
             lines.append("| " + " | ".join(r) + " |")
-        lines.append(f"| **Итого** | {total} |  |  |")
+        tail = " | ".join([str(total)] + [""] * (len(header) - 2))
+        lines.append(f"| **Итого** | {tail} |")
         return "\n".join(lines)
 
     # table — ASCII
-    return _ascii_table(header, rows, footer=["Итого", str(total), "", ""])
+    return _ascii_table(header, rows, footer=["Итого", str(total)] + [""] * (len(header) - 2))
 
 
 # --- actions ----------------------------------------------------------------

@@ -257,12 +257,17 @@ class History:
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
+        # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)
+        # тоже дедуплицируется: неопределённый отклик обязан отсекать вакансию
+        # от повторного отклика — это дешевле, чем второе письмо работодателю.
+        # Обычный 'failed' (клик был, успеха не подтвердили) дедупликацией
+        # остаётся НЕ виден — как раньше.
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1 FROM actions
                 WHERE resume_id = ? AND vacancy_id = ? AND action = 'apply'
-                  AND status IN ('success', 'dry_run')
+                  AND status IN ('success', 'dry_run', 'uncertain')
                 LIMIT 1
                 """,
                 (resume_id, vacancy_id),
@@ -297,12 +302,14 @@ class History:
             )
 
     def count_today(self, resume_id: str, action: str) -> int:
+        # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
+        # на hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
         today = datetime.now().date().isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS cnt FROM actions
-                WHERE resume_id = ? AND action = ? AND status = 'success'
+                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
                   AND created_at >= ?
                 """,
                 (resume_id, action, today),
@@ -310,11 +317,13 @@ class History:
             return row["cnt"] if row else 0
 
     def last_action_at(self, resume_id: str, action: str) -> datetime | None:
+        # #176: 'uncertain' запускает кулдаун (can_bump_now 4ч) — поднятие могло
+        # выполниться; 'dry_run'/'failed' кулдаун не запускают, как раньше.
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT created_at FROM actions
-                WHERE resume_id = ? AND action = ? AND status = 'success'
+                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -350,12 +359,13 @@ class History:
     def summary(self, resume_id: str | None, period: str) -> dict:
         """Срез счётчиков action × status за период.
 
-        Возвращает {"apply": {"success","dry_run","failed"}, "bump": {...}, "total"}.
-        Пустой период → все нули. resume_id=None означает «по всем резюме».
+        Возвращает {"apply": {"success","dry_run","failed","uncertain"},
+        "bump": {...}, "total"}. Пустой период → все нули. resume_id=None
+        означает «по всем резюме».
         """
         result: dict = {
-            "apply": {"success": 0, "dry_run": 0, "failed": 0},
-            "bump": {"success": 0, "dry_run": 0, "failed": 0},
+            "apply": {"success": 0, "dry_run": 0, "failed": 0, "uncertain": 0},
+            "bump": {"success": 0, "dry_run": 0, "failed": 0, "uncertain": 0},
             "total": 0,
         }
         where = []

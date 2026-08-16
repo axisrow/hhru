@@ -22,6 +22,7 @@ def test_summary_empty_returns_zeros(tmp_path):
     assert s["apply"]["success"] == 0
     assert s["apply"]["dry_run"] == 0
     assert s["apply"]["failed"] == 0
+    assert s["apply"]["uncertain"] == 0
     assert s["bump"]["success"] == 0
     assert s["bump"]["failed"] == 0
     assert s["total"] == 0
@@ -29,21 +30,28 @@ def test_summary_empty_returns_zeros(tmp_path):
 
 def test_summary_counts_by_action_and_status(tmp_path):
     h = History(tmp_path / "h.db")
-    # 2 успешных отклика, 1 dry_run, 1 провал; 1 успешный bump, 1 проваленный bump
+    # 2 успешных отклика, 1 dry_run, 1 провал, 1 неопределённый; 1 успешный bump,
+    # 1 проваленный bump, 1 неопределённый bump
     h.record_action("r1", "v1", "apply", "success")
     h.record_action("r1", "v2", "apply", "success")
     h.record_action("r1", "v3", "apply", "dry_run")
     h.record_action("r1", "v4", "apply", "failed", "captcha")
+    h.record_action("r1", "v8", "apply", "uncertain", "submit упал после клика")
     h.record_action("r1", "r1", "bump", "success")
     h.record_action("r1", "r1", "bump", "failed", "cooldown")
+    h.record_action("r1", "r1", "bump", "uncertain", "клик упал после отправки")
 
     s = h.summary(resume_id="r1", period="all")
     assert s["apply"]["success"] == 2
     assert s["apply"]["dry_run"] == 1
     assert s["apply"]["failed"] == 1
+    # #176: uncertain — отдельный бакет (не смешивается с failed), иначе total
+    # сводки расходился бы с суммой статусных колонок stats
+    assert s["apply"]["uncertain"] == 1
     assert s["bump"]["success"] == 1
     assert s["bump"]["failed"] == 1
-    assert s["total"] == 6
+    assert s["bump"]["uncertain"] == 1
+    assert s["total"] == 8
 
 
 def test_summary_filters_by_resume(tmp_path):

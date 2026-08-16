@@ -31,6 +31,12 @@ class BumpResult:
     # кнопка не найдена) и у dry-run: на hh.ru не осталось следа, поэтому
     # команда не пишет такие исходы в actions и не ждёт throttle.wait.
     acted: bool = False
+    # #176: действие могло выполниться, но результат неизвестен — Playwright
+    # бросил исключение во время/сразу после клика (navigation timeout,
+    # target closed). fail-closed: acted=True + uncertain=True, чтобы команда
+    # гарантированно писала action со статусом 'uncertain' (кулдаун 4ч и
+    # дневной лимит его видят) и выдерживала троттл-паузу.
+    uncertain: bool = False
 
 
 def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
@@ -87,6 +93,30 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         logger.info("[DRY-RUN] Поднял бы резюме '%s' в поиске", resume.id)
         return BumpResult(resume.id, True, "dry-run")
 
-    bump_button.click()
+    # #176: клик по кнопке поднятия — единственное необратимое действие bump.
+    # Playwright может бросить исключение уже ПОСЛЕ того, как клик уйдёт на
+    # hh.ru (navigation timeout, target closed при редиректе после действия).
+    # Проброс исключения наружу рвёт цикл команды ДО record_action/throttle.wait
+    # — поднятие на hh.ru произошло, но локальная история об этом не узнала
+    # (обход кулдауна 4ч и повторное поднятие). fail-closed в сторону «действие
+    # выполнено»: любой PlaywrightError в этой точке = acted+uncertain, запись
+    # и пауза гарантированы; ложный «acted» хуже лишь лишней паузой, пропущенный
+    # — повторным поднятием для анти-фрода hh.ru.
+    try:
+        bump_button.click()
+    except PlaywrightError as exc:
+        logger.warning(
+            "Клик поднятия резюме '%s' упал с исключением (%s) — действие могло "
+            "уйти на hh.ru, исход считаем неопределённым",
+            resume.id,
+            exc,
+        )
+        return BumpResult(
+            resume.id,
+            False,
+            f"клик поднятия выполнен, исход неопределён (Playwright: {exc})",
+            acted=True,
+            uncertain=True,
+        )
     logger.info("Резюме '%s' поднято в поиске", resume.id)
     return BumpResult(resume.id, True, "success", acted=True)

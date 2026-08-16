@@ -90,8 +90,9 @@ def test_stats_run_csv_export_machine_readable(capsys, tmp_path):
 
     stats_cmd.run(_args(config, tmp_path / "h.db", format="csv"))
     out = capsys.readouterr().out
-    # машиночитаемые имена колонок сводки
-    assert out.splitlines()[0] == "action,success,dry_run,failed"
+    # машиночитаемые имена колонок сводки (#176: добавлена колонка uncertain —
+    # действие могло выполниться при упавшем посреди клика Playwright)
+    assert out.splitlines()[0] == "action,success,dry_run,failed,uncertain"
 
 
 def test_stats_run_resume_filter(capsys, tmp_path):
