@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 from playwright.sync_api import Error as PlaywrightError
 
+import hhru_bot.apply.verify as verify_module
 from _fakes import FakeLocator, _CardLocator, _parse_root, _parse_selector
 from hhru_bot.apply.verify import verify_response_in_negotiations
 from hhru_bot.responses import NEGOTIATIONS_URL
@@ -146,6 +147,33 @@ def test_foreign_resume_topic_does_not_confirm_apply():
     page = FakeNegotiationsPage({NEGOTIATIONS_URL: _ssr_html([_topic(8, _V2, "R1")])})
     result = verify_response_in_negotiations(page, _V2, resume_id="R2")
     assert result.status == "not_found"
+
+
+def test_incomparable_numeric_ssr_and_hashed_config_resume_ids_are_indeterminate():
+    """Live format pair from #212 must not become a false not_found."""
+    page = FakeNegotiationsPage(
+        {NEGOTIATIONS_URL: _ssr_html([_topic(5503922709, "135170581", "96223331")])}
+    )
+    result = verify_response_in_negotiations(
+        page,
+        "135170581",
+        resume_id="b3236ebbff10f60ff30039ed1f6d5876645331",
+    )
+    assert result.indeterminate
+    assert "несравнимые форматы" in result.detail
+
+
+def test_not_found_dumps_read_topic_vacancy_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(verify_module, "LOG_DIR", tmp_path)
+    page = FakeNegotiationsPage(
+        {NEGOTIATIONS_URL: _ssr_html([_topic(7, "999999"), _topic(8, "888888")])}
+    )
+    result = verify_response_in_negotiations(page, _V2)
+    assert result.status == "not_found"
+    artifact = json.loads(
+        (tmp_path / f"apply_{_V2}_verify_not_found.json").read_text(encoding="utf-8")
+    )
+    assert artifact["topic_vacancy_ids"] == ["999999", "888888"]
 
 
 def test_found_matching_resume_has_no_mismatch_note():

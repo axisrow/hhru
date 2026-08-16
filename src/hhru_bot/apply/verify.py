@@ -23,7 +23,9 @@ Read-only: только goto + чтение. Три исхода:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -32,6 +34,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_auth_cookie, has_login_form
+from ..logging_setup import LOG_DIR
 from ..negotiations_probe import parse_initial_state
 from ..responses import (
     NEGOTIATIONS_URL,
@@ -142,6 +145,7 @@ def verify_response_in_negotiations(
         )
     if clean_read:
         logger.info("[VERIFY] список прочитан, vacancy_id=%s отсутствует", wanted)
+        _dump_not_found_diagnostics(page, wanted)
         return NegotiationsVerifyResult(NOT_FOUND, "список откликов прочитан, вакансии нет")
     return _indeterminate(page, wanted, problem)
 
@@ -151,6 +155,22 @@ def _indeterminate(page: Page, vacancy_id: str, detail: str) -> NegotiationsVeri
     # для посмертной диагностики (селектор — первый подозреваемый, CLAUDE.md).
     _dump_navigation_diagnostics(page, "verify_indeterminate", vacancy_id)
     return NegotiationsVerifyResult(INDETERMINATE, detail)
+
+
+def _dump_not_found_diagnostics(page: Page, vacancy_id: str) -> None:
+    """Сохраняет прочитанный SSR-набор тем вместе с обычным дампом страницы."""
+    _dump_navigation_diagnostics(page, "verify_not_found", vacancy_id)
+    try:
+        topics = _ssr_topic_list(page.content())
+        ids = [] if topics is None else [topic.get("vacancyId") for topic in topics]
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / f"apply_{vacancy_id}_verify_not_found.json"
+        path.write_text(
+            json.dumps({"vacancy_id": vacancy_id, "topic_vacancy_ids": ids}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except (OSError, PlaywrightError, TypeError, ValueError) as exc:
+        logger.warning("Дамп vacancy_id тем после not_found недоступен: %s", exc)
 
 
 def _scan_negotiations(
@@ -211,7 +231,14 @@ def _scan_single_page(
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.
         for topic in topics:
             if str(topic.get("vacancyId", "")) == wanted:
-                if _is_foreign_resume(topic, resume_id):
+                resume_match = _is_foreign_resume(topic, resume_id)
+                if resume_match is None:
+                    return (
+                        None,
+                        False,
+                        "resumeId темы и resume_id конфигурации имеют несравнимые форматы",
+                    )
+                if resume_match:
                     # Отклик с ДРУГОГО резюме на ту же вакансию — не
                     # подтверждение apply с текущего: продолжаем искать тему
                     # с совпадающим resumeId (иначе ложный success, #207).
@@ -231,7 +258,7 @@ def _scan_single_page(
     return None, False, "список не отрендерился (нет ни SSR-состояния, ни карточек)"
 
 
-def _is_foreign_resume(topic: dict[str, Any], resume_id: str | None) -> bool:
+def _is_foreign_resume(topic: dict[str, Any], resume_id: str | None) -> bool | None:
     """Отклик с другого резюме — не подтверждение apply с текущего.
 
     resume_id не задан — атрибутировать нечем, считаем совпадением (resumeId
@@ -243,7 +270,25 @@ def _is_foreign_resume(topic: dict[str, Any], resume_id: str | None) -> bool:
     topic_resume = topic.get("resumeId")
     if topic_resume is None:
         return False
-    return str(topic_resume) != str(resume_id)
+    topic_value = str(topic_resume)
+    configured_value = str(resume_id)
+    topic_domain = _resume_id_domain(topic_value)
+    configured_domain = _resume_id_domain(configured_value)
+    if {topic_domain, configured_domain} == {"numeric", "hash"}:
+        # SSR exposes hh's numeric resume id, while config/actions currently
+        # carry the opaque id from the resume URL.  They cannot be compared:
+        # treating this as foreign makes a real response look absent.
+        return None
+    return topic_value != configured_value
+
+
+def _resume_id_domain(value: str) -> str:
+    """Classify the two resume-id formats that are known to be incomparable."""
+    if re.fullmatch(r"\d+", value):
+        return "numeric"
+    if re.fullmatch(r"[0-9a-fA-F]{32,64}", value):
+        return "hash"
+    return "other"
 
 
 def _describe_topic(topic: dict[str, Any]) -> str:
