@@ -424,9 +424,10 @@ def resolve_numeric_resume_ids(page: Page) -> ResumeIdMapping | None:
         if not resume_hash or numeric_id is None:
             continue
         mapping[str(resume_hash)] = str(numeric_id)
-        if attrs.get("status") is not None:
-            statuses[str(resume_hash)] = str(attrs["status"])
-        if attrs.get("status") == "not_finished":
+        status = attrs.get("status")
+        if status is not None:
+            statuses[str(resume_hash)] = str(status)
+        if status == "not_finished":
             logger.warning(
                 "[RESUME-ID] резюме %s (id=%s) в статусе not_finished — форма отклика "
                 "его не предлагает: отклики уходят с другого резюме аккаунта",
