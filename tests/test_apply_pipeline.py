@@ -70,6 +70,7 @@ class FakePage:
         self,
         *,
         apply_button: bool = True,
+        already_responded: bool = False,
         success: bool = True,
         submit_in_form: bool = False,
         submit_click_error: Exception | None = None,
@@ -77,6 +78,7 @@ class FakePage:
         self.url = ""
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
+        self._already_responded = already_responded
         self._success = success
         # #95 round-2: submit обёрнут в <form> (детектится xpath=ancestor::form[1]
         # в apply/questions.py::_form_scope) — по умолчанию False, чтобы явно
@@ -95,6 +97,11 @@ class FakePage:
 
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
             return _FakeLocator(present=self._apply_button)
+        if selector in (
+            vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
+            vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
+        ):
+            return _FakeLocator(present=self._already_responded)
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
@@ -169,6 +176,17 @@ def test_apply_no_apply_button():
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
     assert result.acted is False  # #163: до submit — без паузы и записи
+
+
+def test_apply_already_responded_is_skip_not_missing_button_failure():
+    page = FakePage(apply_button=False, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.reason == "уже откликались по вакансии 1, пропуск"
+    assert result.acted is False
 
 
 def test_apply_probe_hook_invoked_noop_default():

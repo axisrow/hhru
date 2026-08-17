@@ -205,10 +205,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
-    if reason := check_already_responded(ctx.page, ctx.vacancy):
-        return ctx.fail(reason)
-
     if not apply_steps.wait_apply_button(ctx.page):
+        if reason := check_already_responded(ctx.page, ctx.vacancy):
+            return ctx.skip(reason)
         return ctx.fail("кнопка отклика не найдена на странице")
 
     # #17: рендер письма через провайдер, если он задан (AI/шаблон). Провайдер

@@ -1,20 +1,13 @@
 """Шаг: проверка «уже откликались».
 
-Владелец: #3. Раньше здесь был DOM-маркер APPLY_ALREADY_RESPONDED_MARKER со
-селектором `[data-qa='vacancy-serp__vacancy_response_status']` — но это селектор
-страницы ПОИСКА (serp), а не страницы вакансии. На странице вакансии такого узла
-нет, поэтому маркер никогда не срабатывал и при неблагоприятном раскладе мог дать
-ложное «уже откликались». Селектор убран (мёртвый код).
+Владелец: #3. На странице вакансии hh.ru показывает отдельные маркеры
+`vacancy-response-link-top-again` и `vacancy-response-link-view-topic`, когда
+отклик уже существует. Первый открывает модальное окно с отдельной кнопкой
+повторной отправки и поэтому не является заменой кнопке отклика.
 
-Дедупликация «уже откликались» в проекте делается ТОЛЬКО через локальную
-SQLite-историю — history.has_applied(), см. search.filter_candidates() — и она
-отсекает повторные вакансии ДО apply_to_vacancy. К моменту, когда этот шаг
-выполняется на странице вакансии, повторов уже нет.
-
-Шаг check_already_responded оставлен как точка расширения pipeline (вдруг у
-залогинённого пользователя hh.ru всё же покажет какой-то статус на странице
-вакансии — тогда сюда вернутся с подтверждённым селектором). Пока он не отсекает
-ничего.
+Локальная история по-прежнему является основной дедупликацией до открытия
+страницы. DOM-проверка нужна для диагностического/прямого запуска probe и для
+случая, когда локальная история не знает об отклике.
 """
 
 from __future__ import annotations
@@ -28,17 +21,23 @@ from ..search import VacancyCard
 logger = logging.getLogger("hhru_bot.apply.dedup")
 
 
-def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:  # noqa: ARG001
+def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
     """Возвращает причину отказа, если вакансия уже откликнута.
 
     Дедупликация идёт через history.has_applied() в filter_candidates() (см.
-    search.py) ещё до попадания в apply_to_vacancy — поэтому здесь повторов уже
-    нет и DOM-маркер не нужен. Шаг оставлен как точка расширения на случай
-    подтверждённого селектора статуса на странице вакансии.
+    search.py) ещё до попадания в apply_to_vacancy. Эта проверка дополнительно
+    распознаёт подтверждённые live-DOM маркеры, чтобы отсутствие обычной кнопки
+    не выглядело ошибкой селектора. Ошибки Playwright намеренно не скрываются:
+    это fail-closed граница для неизвестного состояния страницы.
     """
-    logger.debug(
-        "Вакансия '%s': DOM-проверка 'уже откликались' пропущена — "
-        "дедуп через history.has_applied()",
-        vacancy.title,
-    )
+    from ..selector_groups import vacancy_page
+
+    if (
+        page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN).count() > 0
+        or page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT).count() > 0
+    ):
+        reason = f"уже откликались по вакансии {vacancy.vacancy_id}, пропуск"
+        logger.info("%s — %s", vacancy.title, reason)
+        return reason
+    logger.debug("Вакансия '%s': маркеры уже отклика не найдены", vacancy.title)
     return None

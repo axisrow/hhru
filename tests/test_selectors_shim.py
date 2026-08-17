@@ -25,6 +25,8 @@ def test_shim_reexports_all_old_names():
         "VACANCY_CARD_RESPONSE_STATUS",
         # vacancy_page
         "VACANCY_APPLY_BUTTON",
+        "VACANCY_ALREADY_RESPONDED_AGAIN",
+        "VACANCY_ALREADY_RESPONDED_CHAT",
         "VACANCY_TITLE",
         "VACANCY_COMPANY_NAME",
         # apply_form (shared-селекторы формы)
@@ -41,9 +43,8 @@ def test_shim_reexports_all_old_names():
 
 
 def test_status_markers_moved_to_owners():
-    # Смягчение #3↔#7: маркеры статуса отклика НЕ в shim/apply_form.
-    # #3 («уже откликались») мёртвого DOM-маркера больше не имеет — дедуп через
-    # history.has_applied(); остаётся только success-маркер у владельца #7.
+    # Маркеры статуса отклика принадлежат vacancy_page, а не shim/apply_form.
+    # Исторические имена мёртвых маркеров остаются отсутствующими.
     assert not hasattr(sel, "APPLY_SUCCESS_MARKER")
     assert not hasattr(sel, "APPLY_ALREADY_RESPONDED_MARKER")
     from hhru_bot.apply import dedup, success
@@ -55,5 +56,7 @@ def test_status_markers_moved_to_owners():
 def test_shim_values_match_groups():
     assert sel.VACANCY_CARD == search_page.VACANCY_CARD
     assert sel.VACANCY_APPLY_BUTTON == vacancy_page.VACANCY_APPLY_BUTTON
+    assert sel.VACANCY_ALREADY_RESPONDED_AGAIN == vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN
+    assert sel.VACANCY_ALREADY_RESPONDED_CHAT == vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT
     assert sel.APPLY_SUBMIT_BUTTON == apply_form.APPLY_SUBMIT_BUTTON
     assert sel.RESUME_BUMP_BUTTON == resume_page.RESUME_BUMP_BUTTON
