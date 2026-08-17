@@ -272,6 +272,47 @@ def run_apply_for_resume(
         print(f"Пропуск: {e}")
         return False
 
+    # #216: hh.ru silently substitutes another account resume when the
+    # configured one is not_finished. Check this before searching or any
+    # possible submit, and fail closed rather than creating a misleading
+    # history entry under the configured resume.
+    account_resume_ids: set[str] | None = None
+    verify_resume_id = resume.resume_id
+    if not args.dry_run:
+        ids_by_hash = resolve_numeric_resume_ids(page)
+        if ids_by_hash is not None:
+            numeric_id = ids_by_hash.get(resume.resume_id)
+            if numeric_id is not None:
+                # Хэш конфига есть в маппинге аккаунта — SSR прочитан успешно
+                # именно для этого резюме. not_finished фейлится явно (#216).
+                # Отсутствие поля status в SSR для присутствующего в маппинге
+                # хэша (schema drift) трактуем так же: мы прочитали резюме
+                # аккаунта, но не можем подтвердить его готовность к откликам
+                # — здесь, в отличие от отсутствия самого хэша (#212, домен
+                # верификатора), у нас есть основания фейлиться до отправки,
+                # а не полагаться на пост-клик verify.
+                resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
+                if resume_status is None or resume_status == "not_finished":
+                    print(
+                        f"[FAIL] {resume.id} — статус резюме на hh.ru не подтверждён как "
+                        f"готовый к отклику (status={resume_status!r}); завершите/опубликуйте "
+                        "его вручную"
+                    )
+                    return True
+                account_resume_ids = set(ids_by_hash.values())
+                verify_resume_id = numeric_id
+            else:
+                # Конфиг-хэш отсутствует в маппинге аккаунта (устаревший/
+                # неверный хэш, #212) — не наш домен: перечень НЕ заполняем,
+                # атрибуция уходит в incomparable → fail-closed indeterminate
+                # в самом верификаторе, апробировано тестами #212.
+                logger.warning(
+                    "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
+                    "верификаторе уйдёт в fail-closed",
+                    resume.id,
+                    resume.resume_id,
+                )
+
     try:
         cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
     except VacancySearchIndeterminate as e:
@@ -301,31 +342,6 @@ def run_apply_for_resume(
     # сбой маппинга не фатален — верификатор получит хэш и уйдёт в fail-closed
     # indeterminate при совпадении вакансии. dry_run до клика не доходит —
     # верификатор не зовётся, лишний goto не нужен.
-    account_resume_ids: set[str] | None = None
-    verify_resume_id = resume.resume_id
-    if plan.ranked and not args.dry_run:
-        ids_by_hash = resolve_numeric_resume_ids(page)
-        if ids_by_hash is not None:
-            numeric_id = ids_by_hash.get(resume.resume_id)
-            if numeric_id is not None:
-                # Конфиг-резюме в маппинге: верификатор сравнивает числовой id,
-                # а перечень резюме аккаунта отличает «другое собственное» от
-                # «чужого» (оба доказывают клик, #212).
-                account_resume_ids = set(ids_by_hash.values())
-                verify_resume_id = numeric_id
-            else:
-                # Конфиг-резюме НЕТ в маппинге (устаревший/неверный хэш) —
-                # перечень НЕ заполняем: иначе любая тема с id резюме аккаунта
-                # подтвердила бы отклик (success под хэшем, которого нет в
-                # аккаунте). Без перечня атрибуция уходит в incomparable →
-                # fail-closed indeterminate в самом верификаторе.
-                logger.warning(
-                    "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
-                    "верификаторе уйдёт в fail-closed",
-                    resume.id,
-                    resume.resume_id,
-                )
-
     def _verifier(page, vacancy_id, _pipeline_resume_id):  # noqa: ANN001
         # pipeline передаёт хэш конфига (ключ history) — подменяем его числовым
         # id для сравнения с SSR; запись в history и троттл остаются в домене
