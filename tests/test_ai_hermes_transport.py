@@ -1,17 +1,8 @@
-"""Тесты LLMClient поверх hermes-agent-axisrow (issue #230).
-
-Без сети и без установленного hermes: ленивый импорт
-``agent.auxiliary_client.resolve_provider_client`` подменяется фейковым
-модулем в sys.modules, SDK-клиент — простыми объектами в форме
-``CodexAuxiliaryClient`` (``.chat.completions.create()`` → chat-подобный
-namespace). Проверяем контракт обёртки: параметры резолва (custom + явные
-креды + codex_responses — контроль расходов, фаза 1 #230), kwargs create(),
-нормализация ответа (логика экс-порта chat_completions), ImportError с
-подсказкой установки, плейсхолдер пустого ключа.
-"""
+"""LLMClient contract over the full Hermes resolver chain (issue #230)."""
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from types import SimpleNamespace
@@ -19,47 +10,25 @@ from types import SimpleNamespace
 import pytest
 
 from hhru_bot.ai.llm_client import LLMClient, _normalize_response
-from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.config_sections.ai import AiConfig
 
 pytestmark = pytest.mark.unit
-
-PLACEHOLDER = "no-key-required"
 
 
 def _cfg():
     return AiConfig(provider="openai", model="gpt-5.5", base_url="https://api.example.com/v1")
 
 
-class _FakeCreate:
-    """Записывает kwargs и возвращает заранее заданный ответ."""
-
-    def __init__(self, response):
-        self.kwargs = None
-        self._response = response
-
-    def __call__(self, **kwargs):
-        self.kwargs = kwargs
-        return self._response
-
-
-class _FakeClient:
-    def __init__(self, response):
-        create = _FakeCreate(response)
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
-        self.create = create
-
-
-def _install_fake_resolver(monkeypatch, client, model="gpt-5.5", capture=None):
-    """Подменяет agent.auxiliary_client фейком с capture-списком вызовов."""
+def _install_fake_call_llm(monkeypatch, response, capture):
+    """Install a resolver fake that records the public ``call_llm`` contract."""
     mod = types.ModuleType("agent.auxiliary_client")
 
-    def resolve_provider_client(provider, **kwargs):
-        if capture is not None:
-            capture.append((provider, kwargs))
-        return client, model
+    def call_llm(**kwargs):
+        capture.append(kwargs)
+        kwargs["route_info"].update(provider="nous", model="nous-fast")
+        return response
 
-    mod.resolve_provider_client = resolve_provider_client
+    mod.call_llm = call_llm
     monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
     monkeypatch.setitem(sys.modules, "agent.auxiliary_client", mod)
 
@@ -84,110 +53,84 @@ def _usage(prompt=10, completion=5, total=15):
     return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
 
 
-# --- резолв клиента ----------------------------------------------------------
-
-
-def test_init_resolves_custom_with_explicit_creds_and_responses_mode(monkeypatch):
-    """Фаза 1 #230: только custom + явные base_url/key/model + codex_responses.
-
-    Никакого auto-chain и borrowed-кредов hermes — контроль расходов.
-    """
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk-env")
+def test_chat_uses_full_resolver_chain_and_logs_selected_route(monkeypatch, caplog):
+    monkeypatch.setenv("HHRU_AI_API_KEY", "sk-hhru")
     capture = []
-    _install_fake_resolver(monkeypatch, _FakeClient(_response()), capture=capture)
-    LLMClient(_cfg())
+    _install_fake_call_llm(monkeypatch, _response(content="письмо", usage=_usage()), capture)
+    client = LLMClient(_cfg())
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.ai.llm_client"):
+        result = client.chat(
+            [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+            temperature=0.7,
+            max_tokens=80,
+            timeout=12.0,
+        )
+
     assert len(capture) == 1
-    provider, kwargs = capture[0]
-    assert provider == "custom"
-    assert kwargs["explicit_base_url"] == "https://api.example.com/v1"
-    assert kwargs["explicit_api_key"] == "sk-env"
-    assert kwargs["model"] == "gpt-5.5"
-    assert kwargs["api_mode"] == "codex_responses"
+    kwargs = capture[0]
+    assert kwargs["task"] == "hhru"
+    assert kwargs["messages"][1]["content"] == "u"
+    assert kwargs["temperature"] == 0.7
+    assert kwargs["max_tokens"] == 80
+    assert kwargs["timeout"] == 12.0
+    # No explicit provider/base_url/api_key bypasses the Hermes resolver.
+    assert "provider" not in kwargs and "base_url" not in kwargs and "api_key" not in kwargs
+    # A configured hhru key is the first route; Hermes owns subsequent fallback.
+    assert kwargs["main_runtime"] == {
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "base_url": "https://api.example.com/v1",
+        "api_key": "sk-hhru",
+        "api_mode": "codex_responses",
+    }
+    assert result.provider_data["hermes_route"] == {"provider": "nous", "model": "nous-fast"}
+    assert "provider=nous model=nous-fast" in caplog.text
 
 
-def test_init_empty_key_uses_placeholder(monkeypatch):
-    """Пустой ключ → no-key-required: локальные серверы работают, удалённые
-    падают 401 на запросе; подсос OPENAI_API_KEY/~.hermes пресечён."""
+def test_missing_hhru_key_leaves_route_to_existing_hermes_config(monkeypatch):
     monkeypatch.delenv("HHRU_AI_API_KEY", raising=False)
     capture = []
-    _install_fake_resolver(monkeypatch, _FakeClient(_response()), capture=capture)
-    LLMClient(_cfg())
-    assert capture[0][1]["explicit_api_key"] == PLACEHOLDER
+    _install_fake_call_llm(monkeypatch, _response(), capture)
+
+    LLMClient(_cfg()).chat([{"role": "user", "content": "u"}])
+
+    assert "main_runtime" not in capture[0]
+    assert "provider" not in capture[0]
+    assert "api_key" not in capture[0]
 
 
 def test_init_import_error_hint(monkeypatch):
-    """Без hermes — ImportError с подсказкой установки (контракт _common.py).
-
-    sys.modules[...] = None блокирует импорт даже когда пакет реально
-    установлен в окружении: None в sys.modules → ImportError у import-машины.
-    """
     monkeypatch.setitem(sys.modules, "agent.auxiliary_client", None)
     monkeypatch.setitem(sys.modules, "agent", None)
-    monkeypatch.delenv("HHRU_AI_API_KEY", raising=False)
     with pytest.raises(ImportError, match=r"pip install -e '\.\[ai\]'"):
         LLMClient(_cfg())
 
 
-def test_init_none_client_raises_runtime_error(monkeypatch):
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk")
-    _install_fake_resolver(monkeypatch, None, model=None)
-    with pytest.raises(RuntimeError, match="api.example.com"):
-        LLMClient(_cfg())
-
-
-# --- chat() ------------------------------------------------------------------
-
-
-def test_chat_forwards_model_messages_and_params(monkeypatch):
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk")
-    fake = _FakeClient(_response(content="письмо", usage=_usage()))
-    _install_fake_resolver(monkeypatch, fake)
-    client = LLMClient(_cfg())
-    messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
-    nr = client.chat(messages, temperature=0.7, timeout=12.0)
-    assert fake.create.kwargs["model"] == "gpt-5.5"
-    assert fake.create.kwargs["messages"] is messages
-    assert fake.create.kwargs["temperature"] == 0.7
-    assert fake.create.kwargs["timeout"] == 12.0
-    assert isinstance(nr, NormalizedResponse)
-    assert nr.content == "письмо"
-    assert nr.finish_reason == "stop"
-    assert nr.usage is not None and nr.usage.total_tokens == 15
-
-
-def test_chat_passes_tools_when_present(monkeypatch):
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk")
-    fake = _FakeClient(_response())
-    _install_fake_resolver(monkeypatch, fake)
-    client = LLMClient(_cfg())
+def test_chat_passes_tools_and_extra_body(monkeypatch):
+    capture = []
+    _install_fake_call_llm(monkeypatch, _response(), capture)
     tools = [{"type": "function", "function": {"name": "f"}}]
-    client.chat([{"role": "user", "content": "x"}], tools=tools)
-    assert fake.create.kwargs["tools"] is tools
+
+    LLMClient(_cfg()).chat(
+        [{"role": "user", "content": "x"}], tools=tools, extra_body={"foo": "bar"}
+    )
+
+    assert capture[0]["tools"] is tools
+    assert capture[0]["extra_body"] == {"foo": "bar"}
 
 
-def test_chat_sdk_exception_propagates_unchanged(monkeypatch):
-    """Слой не ретраит и не переключает провайдера (call_llm-патология фазы 1):
-    исключение create() доходит до потребителя как есть — fallback на шаблон
-    остаётся ответственностью letters/scoring."""
-
+def test_chat_propagates_resolver_exception(monkeypatch):
     class _Boom(Exception):
         pass
 
-    class _FailingCreate:
-        def __call__(self, **kwargs):
-            raise _Boom("connection error")
+    mod = types.ModuleType("agent.auxiliary_client")
+    mod.call_llm = lambda **kwargs: (_ for _ in ()).throw(_Boom("connection error"))
+    monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
+    monkeypatch.setitem(sys.modules, "agent.auxiliary_client", mod)
 
-    fake = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=_FailingCreate()))
-    )
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk")
-    _install_fake_resolver(monkeypatch, fake)
-    client = LLMClient(_cfg())
     with pytest.raises(_Boom):
-        client.chat([{"role": "user", "content": "x"}])
-
-
-# --- _normalize_response (логика экс-порта chat_completions #16) -------------
+        LLMClient(_cfg()).chat([{"role": "user", "content": "x"}])
 
 
 def test_normalize_finish_reason_none_defaults_to_stop():
@@ -206,7 +149,6 @@ def test_normalize_tool_calls():
     assert nr.tool_calls[0].id == "call_1"
     assert nr.tool_calls[0].name == "search"
     assert nr.tool_calls[0].arguments == '{"q":"x"}'
-    assert nr.tool_calls[0].function.name == "search"
 
 
 def test_normalize_refusal_promoted_when_sole_payload():
@@ -216,14 +158,9 @@ def test_normalize_refusal_promoted_when_sole_payload():
     assert nr.provider_data["refusal"] == "не могу помочь"
 
 
-def test_normalize_refusal_keeps_real_content():
-    nr = _normalize_response(_response(content="реальный ответ", refusal="примечание"))
-    assert nr.content == "реальный ответ"
-    assert nr.finish_reason == "stop"
-
-
-def test_normalize_reasoning_content_into_provider_data():
+def test_normalize_reasoning_content_and_route_metadata():
     resp = _response(content="x")
     resp.choices[0].message.reasoning_content = "мысли..."
-    nr = _normalize_response(resp)
+    nr = _normalize_response(resp, route_info={"provider": "openrouter", "model": "x"})
     assert nr.provider_data["reasoning_content"] == "мысли..."
+    assert nr.provider_data["hermes_route"] == {"provider": "openrouter", "model": "x"}

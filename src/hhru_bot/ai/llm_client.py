@@ -12,40 +12,22 @@
 commands/_common.py).
 
 Точка интеграции выбрана фазой 1 ишью #230 (живые проверки, не догадки):
-``agent.auxiliary_client.resolve_provider_client`` — публичный «central
-router» пакета. Вызов с ``provider="custom"`` и ЯВНЫМИ
-``explicit_base_url``/``explicit_api_key``/``model`` строит клиента ровно
-на указанном endpoint и ``api_mode="codex_responses"`` оборачивает его в
-``CodexAuxiliaryClient``: ``.chat.completions.create(**kwargs)`` принимает
-chat-completions kwargs, под капотом конвертирует в Responses API и
-возвращает ответ в chat-подобной форме (choices[0].message.content,
-finish_reason, usage).
+``agent.auxiliary_client.call_llm`` — центральный resolver chain пакета.
+Он использует настроенные Hermes provider/auth/fallback цепочки (включая
+OpenRouter и Nous Portal); hhru не читает и не изменяет ``~/.hermes``.
+Если задан ``HHRU_AI_API_KEY``, hhru передаёт свой endpoint/key как
+``main_runtime`` — это первый маршрут. Без ключа вызов намеренно остаётся
+полностью на конфигурации и credentials Hermes.
 
-Почему НЕ ``call_llm`` из того же модуля: живой тест фазы 1 показал, что
-при connection error он молча переключается на основной аккаунт hermes
-пользователя (fallback-цепочка «aux-задача не падает любой ценой»). Для
-hhru это потеря контроля расходов. ``resolve_provider_client`` уровнем
-ниже — fallback-цикла там нет, транспорт hhru дёргает ``create()``
-напрямую, и исключение доходит до потребителя как есть. Ретраев здесь
-тоже нет намеренно: устойчивость обеспечивают потребители (fallback на
-шаблон в ai/letters.py, эвристика в scoring.py).
-
-Ключи: только явный аргумент или env ``HHRU_AI_API_KEY``
-(runtime_provider). Пустой ключ передаётся как ``no-key-required`` —
-локальные серверы (Ollama/LM Studio) его игнорируют, а удалённые
-endpoint'ы честно падают 401 на первом запросе (уходит в fallback
-потребителя). Это закрывает и подсос ключей из окружения hermes: без
-плейсхолдера пустой explicit-ключ заставил бы resolver искать
-``OPENAI_API_KEY`` и креды ``~/.hermes`` (фаза 1, ветка custom).
-
-Известное ограничение провода: Responses-адаптер пакета не передаёт
-``temperature``/``max_tokens`` (Codex-эндпоинт отвергает их с 400).
-Параметры принимаются для совместимости интерфейса, но на проводах
-молча игнорируются; ``timeout`` и ``tools`` форвардятся.
+Маршрут не должен быть молчаливым: Hermes заполняет ``route_info`` реальным
+provider/model, в том числе после fallback. Мы пишем его в лог и в
+``NormalizedResponse.provider_data``. Поэтому журнал hhru показывает, какой
+из провайдеров цепочки фактически ответил, не раскрывая ключи.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from .runtime_provider import resolve_runtime_provider
@@ -54,14 +36,12 @@ from .types import NormalizedResponse, ToolCall, Usage
 if TYPE_CHECKING:
     from ..config_sections.ai import AiConfig
 
-# Локальные серверы не требуют авторизации; SDK требует непустой ключ.
-# См. модульный докстринг: плейсхолдер заодно пресекает подсос кредов
-# hermes при пустом HHRU_AI_API_KEY.
-_PLACEHOLDER_KEY = "no-key-required"
-
-# Единственный api_mode транспорта: Responses API (Chat Completions в
-# hhru больше не используется — решение пользователя в #230).
+# Responses API для явно переданного hhru runtime. Hermes выбирает формат
+# самостоятельно для fallback-провайдеров, чтобы не ломать их transport.
 API_MODE = "codex_responses"
+_TASK_NAME = "hhru"
+
+logger = logging.getLogger("hhru_bot.ai.llm_client")
 
 
 class LLMClient:
@@ -83,30 +63,15 @@ class LLMClient:
         # Ленивый импорт (не на уровне модуля): без группы [ai] пакет
         # hhru_bot и его потребители должны импортироваться как раньше.
         try:
-            from agent.auxiliary_client import resolve_provider_client
+            from agent.auxiliary_client import call_llm
         except ImportError as e:
             raise ImportError(
                 "hermes-agent-axisrow is required for LLM calls. Install it with: "
                 "pip install -e '.[ai]'  (or: pip install hermes-agent-axisrow)"
             ) from e
 
-        key = self._runtime["api_key"] or _PLACEHOLDER_KEY
-        client, model = resolve_provider_client(
-            "custom",
-            model=self._runtime["model"],
-            explicit_base_url=self._runtime["base_url"],
-            explicit_api_key=key,
-            api_mode=API_MODE,
-        )
-        if client is None:
-            # С явными base_url/key resolver не находит креды только при
-            # битом base_url — это ошибка конфигурации, падаем громко.
-            raise RuntimeError(
-                f"hermes resolve_provider_client вернул None для endpoint "
-                f"{self._runtime['base_url']!r} — проверьте секцию ai в config.yaml"
-            )
-        self._client = client
-        self._model = model
+        self._call_llm = call_llm
+        self._main_runtime = _hhru_main_runtime(self._runtime)
 
     @property
     def runtime(self) -> dict[str, Any]:
@@ -120,22 +85,51 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         **params: Any,
     ) -> NormalizedResponse:
-        """Один LLM-вызов (Responses API под капотом) → NormalizedResponse.
-
-        Дополнительные kwargs (``temperature``, ``timeout``, ``max_tokens``)
-        форвардятся в ``create()`` адаптера; исключения SDK прокидываются
-        вызывающей стороне неизменными — этот слой не ретраит и не падает
-        на другие провайдеры (контроль расходов, #230).
-        """
-        kwargs: dict[str, Any] = {"model": self._model, "messages": messages}
+        """Один вызов через полный Hermes resolver chain → NormalizedResponse."""
+        route_info: dict[str, str] = {}
+        kwargs: dict[str, Any] = {
+            "task": _TASK_NAME,
+            "messages": messages,
+            "route_info": route_info,
+        }
+        if self._main_runtime is not None:
+            kwargs["main_runtime"] = self._main_runtime
         if tools:
             kwargs["tools"] = tools
-        kwargs.update(params)
-        response = self._client.chat.completions.create(**kwargs)
-        return _normalize_response(response)
+        for name in ("temperature", "max_tokens", "timeout", "extra_body"):
+            if name in params:
+                kwargs[name] = params[name]
+        response = self._call_llm(**kwargs)
+        provider = route_info.get("provider", "unknown")
+        model = route_info.get("model", "unknown")
+        logger.info("Hermes AI request completed via provider=%s model=%s", provider, model)
+        return _normalize_response(response, route_info=route_info)
 
 
-def _normalize_response(response: Any) -> NormalizedResponse:
+def _hhru_main_runtime(runtime: dict[str, Any]) -> dict[str, str] | None:
+    """Make the hhru credential the first Hermes route only when configured.
+
+    An absent ``HHRU_AI_API_KEY`` deliberately returns ``None``: then
+    ``call_llm`` reads the user's existing Hermes auth/config and follows its
+    configured fallback chain without hhru creating or mutating any of it.
+    """
+    key = runtime.get("api_key")
+    if not isinstance(key, str) or not key:
+        return None
+    return {
+        "provider": str(runtime["provider"]),
+        "model": str(runtime["model"]),
+        "base_url": str(runtime["base_url"]),
+        "api_key": key,
+        "api_mode": API_MODE,
+    }
+
+
+def _normalize_response(
+    response: Any,
+    *,
+    route_info: dict[str, str] | None = None,
+) -> NormalizedResponse:
     """Chat-подобный ответ адаптера → NormalizedResponse.
 
     Ответ ``CodexAuxiliaryClient`` повторяет форму ChatCompletion
@@ -185,6 +179,8 @@ def _normalize_response(response: Any) -> NormalizedResponse:
     rd = getattr(msg, "reasoning_details", None)
     if rd:
         provider_data["reasoning_details"] = rd
+    if route_info:
+        provider_data["hermes_route"] = dict(route_info)
 
     # Structured-refusal: пустой content + refusal → content_filter, чтобы
     # отказ модели не выглядел как «пустой успешный ответ» (потребители
