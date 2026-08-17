@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from hhru_bot.ai.types import NormalizedResponse
@@ -154,6 +156,38 @@ def test_ai_provider_empty_response_falls_back_to_template():
     outcome = provider.render(_card("Dev", "Acme"), resume_profile=None)
     assert outcome.variant == "ai_fallback"
     assert outcome.text == "Шаблон: Dev"
+
+
+def test_ai_provider_refusal_falls_back_not_sent_to_employer():
+    # Регрессия #230: structured-refusal не должен уйти работодателю как письмо.
+    # Нормализатор держит отказ ВНЕ content (content пуст), поэтому провайдер
+    # письма видит «нет контента» и откатывается на шаблон, а не шлёт отказ.
+    from hhru_bot.ai.letters import AICoverLetterProvider
+    from hhru_bot.ai.llm_client import _normalize_response
+
+    # Минимальный chat-подобный ответ с одним structured-refusal (как из Hermes).
+    refusal_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=None, refusal="не могу написать письмо"),
+                finish_reason="stop",
+            )
+        ]
+    )
+    normalized = _normalize_response(refusal_response)
+
+    class _RefusalLLM:
+        def chat(self, messages, **params):  # noqa: ARG002
+            return normalized
+
+    provider = AICoverLetterProvider(
+        llm_client=_RefusalLLM(),
+        resume_profile=None,
+        fallback_template="Шаблон: {vacancy_title}",
+    )
+    outcome = provider.render(_card("Dev", "Acme"), resume_profile=None)
+    assert outcome.variant == "ai_fallback"
+    assert "не могу" not in outcome.text
 
 
 # --- render_cover_letter делегирует провайдеру, если он передан (#17) ---

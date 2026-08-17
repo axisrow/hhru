@@ -154,9 +154,11 @@ def test_normalize_tool_calls():
     assert nr.tool_calls[0].arguments == '{"q":"x"}'
 
 
-def test_normalize_refusal_promoted_when_sole_payload():
+def test_normalize_refusal_keeps_content_empty_and_marks_content_filter():
+    # Отказ НЕ попадает в content: письма/scoring должны увидеть пустой контент
+    # и откатиться на fallback, а не отправить текст отказа как письмо (#230).
     nr = _normalize_response(_response(content=None, refusal="не могу помочь"))
-    assert nr.content == "не могу помочь"
+    assert nr.content is None
     assert nr.finish_reason == "content_filter"
     assert nr.provider_data["refusal"] == "не могу помочь"
 

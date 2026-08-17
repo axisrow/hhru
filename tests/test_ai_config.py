@@ -147,3 +147,28 @@ def test_ai_section_empty_value_is_legacy_fail_closed(tmp_path):
     )
     with pytest.raises(ConfigError, match="устарели"):
         load_config(path)
+
+
+def test_ai_section_null_legacy_value_is_legacy_fail_closed(tmp_path):
+    """`provider:` (YAML null) — тоже задание устаревшего поля → fail-closed.
+
+    Guard режет legacy-ключ по ПРИСУТСТВИЮ, а не по значению: null/пустой ключ
+    не должен молча включить AI через Hermes, обходя защиту от устаревшего
+    маршрутизирующего конфига (#230).
+    """
+    path = _write(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/AAA111"
+            search:
+              text: "python"
+        ai:
+          provider:
+        """,
+    )
+    with pytest.raises(ConfigError, match="устарели"):
+        load_config(path)

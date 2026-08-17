@@ -58,7 +58,10 @@ def parse_ai(raw, context: str) -> AiConfig | None:
         return None
     if not isinstance(raw, dict):
         raise ConfigError(f"Секция '{context}' должна быть отображением")
-    legacy = [k for k in _LEGACY_ROUTING_FIELDS if k in raw and raw[k] is not None]
+    # Режем по ПРИСУТСТВИЮ ключа, а не значению: `provider:` / `provider: null`
+    # (пустое/нулевое значение в YAML) — тоже попытка задать устаревшую маршрутизацию,
+    # её нельзя пропустить молча. api_key не входит в legacy-поля и здесь не режется.
+    legacy = [k for k in _LEGACY_ROUTING_FIELDS if k in raw]
     if legacy:
         names = ", ".join(f"ai.{k}" for k in legacy)
         raise ConfigError(

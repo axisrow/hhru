@@ -155,9 +155,10 @@ def _normalize_response(
     if route_info:
         provider_data["hermes_route"] = dict(route_info)
 
-    # Structured-refusal: пустой content + refusal → content_filter, чтобы
-    # отказ модели не выглядел как «пустой успешный ответ» (потребители
-    # letters/scoring отличают пустой контент и уходят в fallback).
+    # Structured-refusal: отказ фиксируем как content_filter, но НЕ кладём его
+    # в content. Иначе письма/scoring приняли бы текст отказа за реальный ответ
+    # и ушли бы без fallback — письмо-отказ ушло бы работодателю. content остаётся
+    # пустым → потребители видят «нет контента» и откатываются на шаблон (#230).
     content = getattr(msg, "content", None)
     refusal = getattr(msg, "refusal", None)
     if refusal is None and hasattr(msg, "model_extra"):
@@ -166,12 +167,8 @@ def _normalize_response(
             refusal = _msg_extra.get("refusal")
     if isinstance(refusal, str) and refusal.strip():
         provider_data["refusal"] = refusal
-        _has_text = isinstance(content, str) and content.strip()
-        _has_tool_calls = bool(tool_calls)
-        if not _has_text and not _has_tool_calls:
-            content = refusal
-            if finish_reason in (None, "stop"):
-                finish_reason = "content_filter"
+        if finish_reason in (None, "stop"):
+            finish_reason = "content_filter"
 
     return NormalizedResponse(
         content=content,
