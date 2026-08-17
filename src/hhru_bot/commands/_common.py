@@ -67,10 +67,11 @@ def _build_letter_provider(
     ai_profile (данные кандидата). Иначе None → статичный .format (обратная
     совместимость, дефолт).
 
-    Построение LLMClient тянет openai (lazy, но при construction). Если openai
-    не установлен ([ai] optional-deps) — логируем и откатываемся на шаблон:
-    отсутствие AI-зависимости не должно валить обычный отклик. Сам провайдер
-    дальше устойчив (любой сбой LLM → fallback внутри), см. ai/letters.py.
+    Построение LLMClient тянет hermes-agent-axisrow (lazy, но при
+    construction). Если пакет не установлен ([ai] optional-deps) — логируем и
+    откатываемся на шаблон: отсутствие AI-зависимости не должно валить обычный
+    отклик. Сам провайдер дальше устойчив (любой сбой LLM → fallback внутри),
+    см. ai/letters.py.
     """
     ai_config = getattr(config, "ai", None)
     profile = getattr(resume, "ai_profile", None)
@@ -84,7 +85,7 @@ def _build_letter_provider(
         llm_client = LLMClient(ai_config)
     except ImportError as e:
         logger.warning(
-            "AI-письма недоступны для резюме '%s' (openai не установлен?): %s — "
+            "AI-письма недоступны для резюме '%s' (hermes-agent-axisrow не установлен?): %s — "
             "используется статичный шаблон. Установите: pip install -e '.[ai]'",
             resume.id,
             e,
@@ -111,11 +112,12 @@ def _build_scoring_provider(
     совместимость, поведение не меняется — тот же приём, что letter_provider).
 
     При AI строит: LLMClient → HeuristicScoringProvider (fallback: эвристика #15
-    + tier-буст #74) → LLMScoringProvider. Построение LLMClient тянет openai
-    (lazy, при construction): если openai не установлен ([ai] optional-deps) —
-    логируем и откатываемся на None (эвристику), как с письмами. Отсутствие
-    AI-зависимости не должно валить обычный отклик. Сам провайдер дальше устойчив
-    (любой сбой LLM → fallback внутри, circuit-breaker), см. scoring.py.
+    + tier-буст #74) → LLMScoringProvider. Построение LLMClient тянет
+    hermes-agent-axisrow (lazy, при construction): если пакет не установлен
+    ([ai] optional-deps) — логируем и откатываемся на None (эвристику), как с
+    письмами. Отсутствие AI-зависимости не должно валить обычный отклик. Сам
+    провайдер дальше устойчив (любой сбой LLM → fallback внутри,
+    circuit-breaker), см. scoring.py.
 
     Отдельный LLMClient (не из _build_letter_provider) — намеренно, ради простоты
     и независимости циклов (см. замечание по дизайну в #81).
@@ -144,7 +146,7 @@ def _build_scoring_provider(
         llm_client = LLMClient(ai_config)
     except ImportError as e:
         logger.warning(
-            "ML-скоринг недоступен для резюме '%s' (openai не установлен?): %s — "
+            "ML-скоринг недоступен для резюме '%s' (hermes-agent-axisrow не установлен?): %s — "
             "ранжирование идёт по эвристике. Установите: pip install -e '.[ai]'",
             resume.id,
             e,

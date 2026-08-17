@@ -9,10 +9,12 @@
 ``AppConfig.ai = None`` (обратная совместимость — бот без AI работает как
 раньше).
 
-API-ключ намеренно НЕ парсится из yaml — только provider/model/base_url.
-Ключ читается из env ``HHRU_AI_API_KEY`` в момент реального LLM-вызова
-(см. ``hhru_bot.ai.runtime_provider``), чтобы секрет не попадал в конфиг и
-не рисковал утечь в git-коммит.
+API-ключ намеренно НЕ парсится из yaml. Credentials и provider fallback
+настраиваются и хранятся только Hermes; hhru не читает и не изменяет их.
+Наличие секции ``ai`` включает AI-функциональность (letters/scoring); поля
+``provider``/``model``/``base_url`` устарели (issue #230) и НЕ управляют
+маршрутизацией — при их задании парсер падает fail-closed, чтобы оператор
+явно мигрировал, а не молча отправлял промпты через неожиданный маршрут.
 """
 
 from __future__ import annotations
@@ -24,46 +26,53 @@ from ..config import ConfigError
 
 @dataclass(frozen=True)
 class AiConfig:
-    """Конфигурация LLM-провайдера (OpenAI-совместимый endpoint).
+    """Конфигурация AI-интеграции.
 
-    provider: имя провайдера для логов/метаданных (напр. 'openai', 'openrouter').
-    model: имя модели, отправляемое в API (напр. 'gpt-4o').
-    base_url: корневой URL OpenAI-совместимого API (напр. 'https://api.openai.com/v1').
+    Присутствие секции включает AI; сами поля — устаревшие метаданные.
+    Маршрутизация (provider/model/base_url/credentials) принадлежит Hermes.
+
+    provider: устаревшее, не влияет на запрос (для логов/диагностики).
+    model: устаревшее, не влияет на запрос (реальную модель решает Hermes chain).
+    base_url: устаревшее, не влияет на запрос.
     """
 
-    provider: str
-    model: str
-    base_url: str
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
 
 
-def _require(mapping: dict, key: str, context: str):
-    if key not in mapping or mapping[key] is None:
-        raise ConfigError(f"В конфиге отсутствует обязательное поле '{key}' ({context})")
-    return mapping[key]
+_LEGACY_ROUTING_FIELDS = ("provider", "model", "base_url")
 
 
 def parse_ai(raw, context: str) -> AiConfig | None:
     """raw — корневая секция ai. Возвращает AiConfig или None, если секции нет.
 
     ``context`` — строка для диагностики ошибок (обычно 'ai').
+
+    Поля устарели (issue #230): маршрутизацию/credentials ведёт Hermes, секция
+    лишь включает AI. Если оператор всё ещё задал ``provider``/``model``/
+    ``base_url`` — падаем fail-closed с инструкцией по миграции (иначе молча
+    ушёл бы трафик через неожиданный провайдер/аккаунт).
     """
-    if not raw:
+    if raw is None:
         return None
     if not isinstance(raw, dict):
         raise ConfigError(f"Секция '{context}' должна быть отображением")
-    provider = _require(raw, "provider", context)
-    model = _require(raw, "model", context)
-    base_url = _require(raw, "base_url", context)
-    for name, value in (("provider", provider), ("model", model), ("base_url", base_url)):
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigError(
-                f"Поле '{name}' ({context}) должно быть непустой строкой, получено: {value!r}"
-            )
-    return AiConfig(
-        provider=provider.strip(),
-        model=model.strip(),
-        base_url=base_url.strip(),
-    )
+    # Режем по ПРИСУТСТВИЮ ключа, а не значению: `provider:` / `provider: null`
+    # (пустое/нулевое значение в YAML) — тоже попытка задать устаревшую маршрутизацию,
+    # её нельзя пропустить молча. api_key не входит в legacy-поля и здесь не режется.
+    legacy = [k for k in _LEGACY_ROUTING_FIELDS if k in raw]
+    if legacy:
+        names = ", ".join(f"ai.{k}" for k in legacy)
+        raise ConfigError(
+            f"Поля {names} устарели (issue #230) и больше НЕ управляют маршрутизацией: "
+            "provider/model/credentials ведёт hermes-agent-axisrow из ~/.hermes. "
+            "Удалите эти поля и оставьте пустую секцию 'ai' (или 'ai: {}'), чтобы "
+            "включить AI-функциональность."
+        )
+    # После fail-closed guard'а legacy-поля не могут быть не-None — AiConfig
+    # всегда строится без них (маршрутизация Hermes-owned).
+    return AiConfig()
 
 
 # ai — корневая секция (как account), не resume-подсекция, поэтому в resume-реестр

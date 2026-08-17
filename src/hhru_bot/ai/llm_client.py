@@ -1,65 +1,69 @@
-# Ported from NousResearch/hermes-agent (MIT) -- transport conversion contract.
-# The ``LLMClient`` wrapper itself is new for hhru.
+# Обёртка над pip-зависимостью hermes-agent-axisrow (issue #230). Заменяет
+# самодельный замороженный порт из NousResearch/hermes-agent (#16/#96):
+# конвертацию chat→Responses теперь делает сам пакет, hhru владеет только
+# построением клиента и нормализацией ответа.
 #
-"""Thin LLM client over the ``openai`` SDK.
+"""Тонкий LLM-клиент поверх ``hermes-agent-axisrow`` (Responses API).
 
-``openai`` is an OPTIONAL dependency (install group ``[ai]``). It is imported
-lazily inside the methods so that importing this package -- and the rest of
-``hhru_bot`` -- does not require it. A clear ``ImportError`` is raised only
-when an LLM call is actually attempted without the SDK installed.
+``hermes-agent-axisrow`` — опциональная зависимость (группа ``[ai]``),
+импортируется лениво в конструкторе, чтобы остальной код импортировался
+без неё. ImportError поднимается только при реальной попытке построить
+клиента — команды ловят его и откатываются на не-AI режим (см.
+commands/_common.py).
 
-The client delegates format conversion / request kwargs assembly / response
-normalization to the registered transport (``chat_completions`` by default).
-It owns only client construction and the SDK call -- no retry, streaming,
-credential refresh, or prompt caching (those concerns belong elsewhere).
+Точка интеграции выбрана фазой 1 ишью #230 (живые проверки, не догадки):
+``agent.auxiliary_client.call_llm`` — центральный resolver chain пакета.
+Он использует настроенные Hermes provider/auth/fallback цепочки (включая
+OpenRouter и Nous Portal); hhru не читает и не изменяет ``~/.hermes``.
+hhru не передаёт ключи или endpoint override: вызов намеренно остаётся
+полностью на конфигурации и credentials Hermes.
+
+Маршрут не должен быть молчаливым: Hermes заполняет ``route_info`` реальным
+provider/model, в том числе после fallback. Мы пишем его в лог и в
+``NormalizedResponse.provider_data``. Поэтому журнал hhru показывает, какой
+из провайдеров цепочки фактически ответил, не раскрывая ключи.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
-from .registry import get_transport
 from .runtime_provider import resolve_runtime_provider
-from .types import NormalizedResponse
+from .types import NormalizedResponse, ToolCall, Usage
 
 if TYPE_CHECKING:
     from ..config_sections.ai import AiConfig
 
+_TASK_NAME = "hhru"
+
+logger = logging.getLogger("hhru_bot.ai.llm_client")
+
 
 class LLMClient:
-    """Minimal synchronous client for an OpenAI-compatible chat endpoint.
+    """Минимальный синхронный клиент на Responses API через hermes-форк.
 
     Args:
-        ai_config: parsed top-level ``ai`` config (provider / model / base_url).
-        api_key: optional explicit key; otherwise read from ``HHRU_AI_API_KEY``.
-        api_mode: transport to use; defaults to ``chat_completions``.
+        ai_config: распарсенная корневая секция ``ai`` (provider/model/base_url).
     """
 
     def __init__(
         self,
         ai_config: AiConfig,
-        *,
-        api_key: str | None = None,
-        api_mode: str | None = None,
     ) -> None:
         self._config = ai_config
-        self._runtime = resolve_runtime_provider(ai_config, api_key=api_key, api_mode=api_mode)
-        self._api_mode = self._runtime["api_mode"]
-        # The OpenAI client owns a persistent httpx connection pool; construct it
-        # once and reuse it across calls rather than paying pool setup per chat().
-        # ``openai`` is imported lazily here (not at module import) so the package
-        # stays importable without the optional [ai] extra installed.
+        self._runtime = resolve_runtime_provider(ai_config)
+        # Ленивый импорт (не на уровне модуля): без группы [ai] пакет
+        # hhru_bot и его потребители должны импортироваться как раньше.
         try:
-            from openai import OpenAI
+            from agent.auxiliary_client import call_llm
         except ImportError as e:
             raise ImportError(
-                "openai SDK is required for LLM calls. Install it with: "
-                "pip install -e '.[ai]'  (or: pip install openai)"
+                "hermes-agent-axisrow is required for LLM calls. Install it with: "
+                "pip install -e '.[ai]'  (or: pip install hermes-agent-axisrow)"
             ) from e
-        self._client = OpenAI(
-            base_url=self._runtime["base_url"],
-            api_key=self._runtime["api_key"],
-        )
+
+        self._call_llm = call_llm
 
     @property
     def runtime(self) -> dict[str, Any]:
@@ -73,24 +77,108 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         **params: Any,
     ) -> NormalizedResponse:
-        """Run a chat-completions request and return a NormalizedResponse.
+        """Один вызов через полный Hermes resolver chain → NormalizedResponse."""
+        route_info: dict[str, str] = {}
+        kwargs: dict[str, Any] = {
+            "task": _TASK_NAME,
+            "messages": messages,
+            "route_info": route_info,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        for name in ("temperature", "max_tokens", "timeout", "extra_body"):
+            # None = «не задано»: не шлём его в Hermes, чтобы не переопределить
+            # дефолт SDK значением None (поведение прежнего транспорта).
+            if name in params and params[name] is not None:
+                kwargs[name] = params[name]
+        response = self._call_llm(**kwargs)
+        provider = route_info.get("provider", "unknown")
+        model = route_info.get("model", "unknown")
+        logger.info("Hermes AI request completed via provider=%s model=%s", provider, model)
+        return _normalize_response(response, route_info=route_info)
 
-        Extra keyword arguments are forwarded to the transport's ``build_kwargs``
-        (e.g. ``temperature``, ``max_tokens``, ``timeout``). ``openai`` SDK
-        exceptions propagate to the caller unchanged -- this layer does not retry.
-        """
-        transport = get_transport(self._api_mode)
-        if transport is None:
-            raise RuntimeError(
-                f"No transport registered for api_mode={self._api_mode!r}. "
-                f"Install the corresponding transport module or check ai_mode."
+
+def _normalize_response(
+    response: Any,
+    *,
+    route_info: dict[str, str] | None = None,
+) -> NormalizedResponse:
+    """Chat-подобный ответ адаптера → NormalizedResponse.
+
+    Ответ ``CodexAuxiliaryClient`` повторяет форму ChatCompletion
+    (choices[0].message / usage), поэтому нормализация — та же логика,
+    что была в удалённом порте chat_completions (#16): коэрсция
+    finish_reason, refusal→content_filter, tool_calls, usage.
+    """
+    choice = response.choices[0]
+    msg = choice.message
+    # Некоторые шлюзы возвращают числовой finish_reason.
+    _fr = choice.finish_reason
+    if isinstance(_fr, int):
+        _fr = str(_fr)
+    finish_reason = _fr or "stop"
+
+    tool_calls = None
+    if getattr(msg, "tool_calls", None):
+        tool_calls = []
+        for tc in msg.tool_calls:
+            tool_calls.append(
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=tc.function.arguments,
+                )
             )
 
-        kwargs = transport.build_kwargs(
-            self._runtime["model"],
-            messages,
-            tools,
-            **params,
+    usage = None
+    if hasattr(response, "usage") and response.usage:
+        u = response.usage
+        usage = Usage(
+            prompt_tokens=getattr(u, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(u, "completion_tokens", 0) or 0,
+            total_tokens=getattr(u, "total_tokens", 0) or 0,
         )
-        response = self._client.chat.completions.create(**kwargs)
-        return transport.normalize_response(response)
+
+    reasoning = getattr(msg, "reasoning", None)
+    reasoning_content = getattr(msg, "reasoning_content", None)
+    if reasoning_content is None and hasattr(msg, "model_extra"):
+        model_extra = getattr(msg, "model_extra", None) or {}
+        if isinstance(model_extra, dict) and "reasoning_content" in model_extra:
+            reasoning_content = model_extra["reasoning_content"]
+
+    provider_data: dict[str, Any] = {}
+    if reasoning_content is not None:
+        provider_data["reasoning_content"] = reasoning_content
+    rd = getattr(msg, "reasoning_details", None)
+    if rd:
+        provider_data["reasoning_details"] = rd
+    if route_info:
+        provider_data["hermes_route"] = dict(route_info)
+
+    # Fail-closed: контент нельзя доверять, если ответ помечен content_filter
+    # ИЛИ несёт непустой structured-refusal (отказ/фильтрация, иногда вместе с
+    # частичным текстом). Очищаем его, чтобы письма/scoring увидели «нет контента»
+    # и откатились на шаблон, а не отправили отказ или частичный отфильтрованный
+    # текст работодателю (#230). tool_calls сохраняются отдельно.
+    content = getattr(msg, "content", None)
+    refusal = getattr(msg, "refusal", None)
+    if refusal is None and hasattr(msg, "model_extra"):
+        _msg_extra = getattr(msg, "model_extra", None) or {}
+        if isinstance(_msg_extra, dict):
+            refusal = _msg_extra.get("refusal")
+    if finish_reason == "content_filter":
+        content = None
+    if isinstance(refusal, str) and refusal.strip():
+        provider_data["refusal"] = refusal
+        content = None
+        if finish_reason in (None, "stop"):
+            finish_reason = "content_filter"
+
+    return NormalizedResponse(
+        content=content,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        reasoning=reasoning,
+        usage=usage,
+        provider_data=provider_data or None,
+    )

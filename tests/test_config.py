@@ -19,6 +19,7 @@ from hhru_bot.config import (
     is_resume_url_placeholder,
     load_config,
 )
+from hhru_bot.config_sections.ai import parse_ai
 from hhru_bot.config_sections.ai_profile import AIProfile
 
 pytestmark = pytest.mark.unit
@@ -626,3 +627,31 @@ def test_load_config_ai_profile_cover_letter_examples_wrong_type(tmp_path):
     )
     with pytest.raises(ConfigError, match="cover_letter_examples"):
         load_config(path)
+
+
+def test_parse_ai_empty_dict_enables_ai_without_fields():
+    # Issue #230: наличие секции включает AI; поля больше не обязательны.
+    cfg = parse_ai({}, "ai")
+    assert cfg is not None
+    assert cfg.provider is None
+    assert cfg.model is None
+    assert cfg.base_url is None
+
+
+def test_parse_ai_absent_returns_none():
+    assert parse_ai(None, "ai") is None
+
+
+def test_parse_ai_legacy_routing_fields_fail_closed():
+    # Issue #230: legacy provider/model/base_url не констрейнят маршрут —
+    # при их задании парсер падает, чтобы оператор явно мигрировал.
+    with pytest.raises(ConfigError, match="устарели"):
+        parse_ai(
+            {"provider": "openai", "model": "gpt-4o", "base_url": "https://api.openai.com/v1"},
+            "ai",
+        )
+
+
+def test_parse_ai_legacy_single_field_fail_closed():
+    with pytest.raises(ConfigError, match="ai.model"):
+        parse_ai({"model": "gpt-4o"}, "ai")
