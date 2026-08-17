@@ -87,14 +87,18 @@ def parse_resume_state(markup: str, resume_id: str | None = None) -> ResumePubli
             for record in _walk_json(candidate):
                 if not isinstance(record, dict):
                     continue
-                identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
+                identifiers = {
+                    str(record.get(key, "")) for key in ("id", "hash", "resumeId")
+                }
                 if resume_id not in identifiers:
                     continue
                 # hh.ru keeps the wizard's ``scheme`` next to the resume
                 # record, rather than inside it.  It is still page-scoped and
                 # therefore safe to attach only after the target identity was
                 # found in this JSON document.
-                scheme = candidate.get("scheme") if isinstance(candidate, dict) else None
+                scheme = (
+                    candidate.get("scheme") if isinstance(candidate, dict) else None
+                )
                 return _state_from_mapping(record, scheme)
         return ResumePublishState()
 
@@ -117,8 +121,15 @@ def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePubli
 def _state_from_regex(markup: str) -> ResumePublishState:
     """Fixture-friendly fallback when no record identity is available."""
     state = ResumePublishState()
-    for field in ("status", "isSearchable", "canPublishOrUpdate", "nextIncompleteScreenId"):
-        match = re.search(rf'"{field}"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)', markup)
+    for field in (
+        "status",
+        "isSearchable",
+        "canPublishOrUpdate",
+        "nextIncompleteScreenId",
+    ):
+        match = re.search(
+            rf'"{field}"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)', markup
+        )
         if not match:
             continue
         raw = match.group(1)
@@ -148,7 +159,9 @@ def _visibility_text(page: Page) -> str:
     return ""
 
 
-def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> PublishResumeResult:
+def publish_resume_on_hh(
+    page: Page, resume: ResumeConfig, dry_run: bool
+) -> PublishResumeResult:
     """Inspect one config resume and optionally click its publish button."""
     url = f"{HH_BASE_URL}/resume/{resume.resume_id}"
     goto_hh(page, url)
@@ -176,7 +189,9 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         )
     if state.status != "not_finished":
         reason = f"status={state.status}"
-        return PublishResumeResult(resume.id, False, reason, state.status, state.is_searchable)
+        return PublishResumeResult(
+            resume.id, False, reason, state.status, state.is_searchable
+        )
     if state.can_publish_or_update is not True:
         incomplete = (
             f"; nextIncompleteScreenId={state.next_incomplete_screen_id}"
@@ -191,7 +206,9 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             state.is_searchable,
         )
 
-    publish = page.locator(RESUME_PUBLISH_BUTTON).or_(page.locator(RESUME_PUBLISH_BUTTON_DATA_QA))
+    publish = page.locator(RESUME_PUBLISH_BUTTON).or_(
+        page.locator(RESUME_PUBLISH_BUTTON_DATA_QA)
+    )
     count = publish.count()
     if count == 0:
         try:
@@ -203,9 +220,11 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         return PublishResumeResult(
             resume.id,
             False,
-            "кнопка «Опубликовать» не найдена"
-            if count == 0
-            else f"кнопка «Опубликовать» определяется неоднозначно ({count}) — клик запрещён",
+            (
+                "кнопка «Опубликовать» не найдена"
+                if count == 0
+                else f"кнопка «Опубликовать» определяется неоднозначно ({count}) — клик запрещён"
+            ),
             state.status,
             state.is_searchable,
         )
@@ -214,7 +233,9 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         reason = "dry-run; кнопка не нажата"
         if visibility:
             reason += f"; видимость: {visibility}"
-        return PublishResumeResult(resume.id, True, reason, state.status, state.is_searchable)
+        return PublishResumeResult(
+            resume.id, True, reason, state.status, state.is_searchable
+        )
 
     try:
         publish.first.click(timeout=PUBLISH_TIMEOUT_MS)
@@ -289,4 +310,6 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             after.is_searchable,
             uncertain=True,
         )
-    return PublishResumeResult(resume.id, True, "опубликовано", after.status, after.is_searchable)
+    return PublishResumeResult(
+        resume.id, True, "опубликовано", after.status, after.is_searchable
+    )
