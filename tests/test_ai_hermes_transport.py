@@ -205,3 +205,47 @@ def test_normalize_content_only_message_without_tool_calls_attr():
     assert nr.content == "x"
     assert nr.tool_calls is None
     assert nr.finish_reason == "stop"
+
+
+def test_real_hermes_adapter_content_filter_partial_output_is_fail_closed():
+    """Contract через реальный адаптер hermes-agent-axisrow (#230).
+
+    Codex ревью (round 4) предположил, что адаптер теряет метаданные content_filter
+    при частичном output (реконструирует finish_reason='stop' и сохраняет частичный
+    текст). Воспроизведение через установленный адаптер ОПРОВЕРГАЕТ это:
+    ``_normalize_codex_response`` для status='incomplete' +
+    incomplete_details.reason='content_filter' + частичного output выдаёт
+    finish_reason='content_filter'. После нашего _normalize_response контент
+    очищается → письмо уходит в fallback, а не отправляет фильтрованный текст.
+
+    Пропускается без optional-группы [ai] (пакет agent не установлен).
+    """
+    pytest.importorskip("agent.codex_responses_adapter")
+
+    from agent.codex_responses_adapter import _normalize_codex_response
+
+    partial = "Частичный отфильтрованный текст письма"
+    raw = SimpleNamespace(
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="content_filter"),
+        output=[
+            SimpleNamespace(
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[SimpleNamespace(type="output_text", text=partial)],
+            )
+        ],
+        output_text=None,
+        error=None,
+    )
+    msg, finish_reason = _normalize_codex_response(raw)
+    assert finish_reason == "content_filter"  # метаданные не потеряны
+
+    normalized = _normalize_response(
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=msg, finish_reason=finish_reason)], usage=None
+        )
+    )
+    assert normalized.content is None
+    assert normalized.finish_reason == "content_filter"
