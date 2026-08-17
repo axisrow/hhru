@@ -83,87 +83,171 @@ def test_account_wide_rejects_non_positive_max_pages(bad_max_pages, tmp_path):
         hhru_bot.config.load_config_or_exit = original
 
 
+class _Locator:
+    def __init__(self, count=1, *, clicked=None, children=None):
+        self._count = count
+        self.clicked = clicked
+        self.children = children or {}
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return self._count
+
+    def click(self):
+        if self.clicked is not None:
+            self.clicked.append(True)
+
+    def wait_for(self, **kwargs):
+        return None
+
+    def locator(self, selector):
+        assert selector in self.children, f"unexpected child selector: {selector}"
+        return self.children[selector]
+
+
+class _Page:
+    """Mirrors the production DOM: card-scoped locators (control/confirm/
+    success) live under NEGOTIATION_ITEM, not directly on the page, so a
+    test can distinguish a card-scoped read from an unscoped page-wide one.
+    """
+
+    def __init__(self, *, control_count=1, confirm_count=0, success_count=1):
+        self.clicked = []
+        self._control = _Locator(control_count, clicked=self.clicked)
+        self._confirm = _Locator(confirm_count)
+        self._success = _Locator(success_count)
+        self._card = _Locator(
+            1,
+            children={
+                command.NEGOTIATION_WITHDRAW: self._control,
+                command.NEGOTIATION_WITHDRAW_CONFIRM: self._confirm,
+                command.NEGOTIATION_WITHDRAW_SUCCESS: self._success,
+            },
+        )
+
+    def locator(self, selector):
+        if selector == command.NEGOTIATION_ITEM:
+            return self._card
+        raise AssertionError(f"unexpected page-level selector: {selector}")
+
+    def content(self):
+        return "<html />"
+
+
+class _Throttle:
+    def wait(self, reason):
+        pass
+
+
+def _patch_withdraw_page(monkeypatch):
+    monkeypatch.setattr(command, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(command, "topic_refs", lambda html: [type("Ref", (), {"topic_id": "77"})()])
+
+
 def test_successful_withdraw_is_audited(tmp_path, monkeypatch):
-    class Response:
-        ok = True
-        status = 204
-
-    class Request:
-        def delete(self, url):
-            assert url.endswith("/negotiations/active/77")
-            return Response()
-
-    class Page:
-        request = Request()
-
-    class Throttle:
-        def wait(self, reason):
-            pass
-
+    _patch_withdraw_page(monkeypatch)
+    page = _Page()
     history = History(tmp_path / "history.db")
     failed = command._run_topics(
-        _args(force=True), ["77"], page=Page(), history=history, throttle=Throttle()
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
     )
     with history._connect() as conn:
         row = conn.execute("SELECT resume_id, vacancy_id, action, status FROM actions").fetchone()
     assert tuple(row) == (command.ACCOUNT_SCOPE, "77", "withdraw", "success")
     assert failed is False
+    assert page.clicked == [True]
 
 
-def test_partial_withdraw_failure_reported_as_failed(tmp_path):
-    """Codex review (PR #196): a failed withdrawal must flip the CLI exit code.
-
-    Previously run()/_run_topics() always returned None, so cli.main's
-    ``if failed is True: sys.exit(1)`` never fired even when some withdrawals
-    failed — a partial account-wide failure silently exited 0.
-    """
-
-    class Response:
-        ok = False
-        status = 500
-
-    class Request:
-        def delete(self, url):
-            return Response()
-
-    class Page:
-        request = Request()
-
-    class Throttle:
-        def wait(self, reason):
-            pass
-
+def test_withdraw_without_positive_confirmation_is_failed(tmp_path, monkeypatch):
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(success_count=0)
     history = History(tmp_path / "history.db")
     failed = command._run_topics(
-        _args(force=True), ["77"], page=Page(), history=history, throttle=Throttle()
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
     )
     assert failed is True
     with history._connect() as conn:
-        row = conn.execute("SELECT status FROM actions").fetchone()
-    assert row[0] == "failed"
+        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "failed"
+
+
+def test_withdraw_without_unique_button_does_not_click(tmp_path, monkeypatch):
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(control_count=0)
+    history = History(tmp_path / "history.db")
+    command._run_topics(_args(force=True), ["77"], page=page, history=history, throttle=_Throttle())
+    assert page.clicked == []
+
+
+def test_withdraw_refuses_when_topic_filter_unproven(tmp_path, monkeypatch):
+    """?topic= filtering the SSR list is unverified; if the same read also
+    surfaces an unrelated topic, a single remaining DOM card can no longer
+    be trusted as this topic's card (it may just be an unfiltered list that
+    happens to render one card) — must refuse, never click on the guess.
+    """
+    monkeypatch.setattr(command, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(
+        command,
+        "topic_refs",
+        lambda html: [
+            type("Ref", (), {"topic_id": "77"})(),
+            type("Ref", (), {"topic_id": "88"})(),
+        ],
+    )
+    page = _Page()
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is True
+    assert page.clicked == []
+
+
+def test_withdraw_success_marker_is_scoped_to_card_not_page(tmp_path, monkeypatch):
+    """A page-wide success-marker read could be satisfied by an unrelated
+    negotiation's marker (e.g. a prior withdrawal still rendered on the
+    same page during _run_topics' page-reuse loop) and falsely report
+    success for a topic that was never actually withdrawn. The mock _Page
+    only exposes NEGOTIATION_WITHDRAW_SUCCESS as a child of the card
+    locator (not page-level), so this only passes if the production code
+    reads it via card.locator(...), not page.locator(...).
+    """
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(success_count=1)
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is False
+    with history._connect() as conn:
+        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "success"
+
+
+def test_withdraw_refuses_when_confirmation_dialog_already_open(tmp_path, monkeypatch):
+    """A confirmation dialog already present before the click may belong to
+    a stale attempt on a previous topic (_run_topics reuses the same page
+    across iterations) — must refuse rather than click the withdraw control
+    into an already-non-actionable page state.
+    """
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(confirm_count=1)
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is True
+    assert page.clicked == []
 
 
 def test_run_topic_returns_true_on_failed_withdraw(tmp_path, monkeypatch):
-    """run() itself (the --topic path) must surface a failed withdraw too."""
-
-    class Response:
-        ok = False
-        status = 500
-
-    class Request:
-        def delete(self, url):
-            return Response()
-
-    class Page:
-        request = Request()
-
-    class Throttle:
-        def wait(self, reason):
-            pass
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(success_count=0)
 
     class Context:
         def new_page(self):
-            return Page()
+            return page
 
         def __enter__(self):
             return self
@@ -181,10 +265,9 @@ def test_run_topic_returns_true_on_failed_withdraw(tmp_path, monkeypatch):
         )(),
     )
     monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
-    monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: Throttle())
+    monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: _Throttle())
 
-    failed = command.run(_args(topic="77", force=True))
-    assert failed is True
+    assert command.run(_args(topic="77", force=True)) is True
 
 
 def test_account_wide_rejects_when_max_pages_truncated(tmp_path, monkeypatch):
