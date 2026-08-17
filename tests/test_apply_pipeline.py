@@ -213,6 +213,38 @@ def test_apply_already_responded_is_skip_not_missing_button_failure():
     assert result.acted is False
 
 
+def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
+    """#226 cycle-review round 2 (codex): already-responded skip раньше терялся под
+    HAS_QUESTIONS — clear-skipped --reason already_applied не мог его снять, а
+    clear-skipped --reason has_questions мог ошибочно пере-обработать уже
+    откликнутую вакансию. Persistent-причина обязана быть ALREADY_APPLIED.
+    """
+    from hhru_bot.history import SKIP_REASONS
+
+    page = FakePage(apply_button=False, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.skip_reason == SKIP_REASONS.ALREADY_APPLIED
+
+
+def test_ctx_skip_default_reason_is_has_questions_unchanged():
+    """#226 cycle-review round 2: skip_reason по умолчанию — HAS_QUESTIONS, как
+    было единственное поведение questions-пути (#95, pipeline.py:245) до
+    добавления явного skip_reason для already-responded-пути.
+    """
+    from hhru_bot.apply.pipeline import ApplyContext
+    from hhru_bot.history import SKIP_REASONS
+
+    ctx = ApplyContext(
+        page=None, vacancy=_vacancy(), resume_id="RID", cover_letter_template="x", dry_run=True
+    )
+
+    result = ctx.skip("форма требует анкеты")
+
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+
+
 def test_wait_apply_button_already_responded_avoids_full_timeout():
     """#226 cycle-review: одна пара wait_for, не последовательное ожидание.
 
