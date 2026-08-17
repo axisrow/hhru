@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-import sys
-from contextlib import contextmanager
 from pathlib import Path
 
+import playwright._impl._driver
+import playwright._impl._transport
 import pytest
 
 from hhru_bot import logging_setup
@@ -17,40 +17,72 @@ from hhru_bot.apply import probe
 from hhru_bot.apply import steps as apply_steps
 from hhru_bot.commands import log_cmd
 
+_LIVE_MARKERS = ("live_read", "live_write", "live_write_danger")
+
+_BLOCKED_MESSAGE = (
+    "Playwright заблокирован: тест должен использовать моки; "
+    "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
+)
+
+# Модули, где `compute_driver_executable` доступна как атрибут: `_transport`
+# импортирует её по имени, поэтому патчить надо оба, иначе останется живая ссылка.
+_DRIVER_MODULES = (playwright._impl._driver, playwright._impl._transport)
+
+_real_compute_driver_executable = playwright._impl._driver.compute_driver_executable
+
+# Снимается ровно на время исполнения теста с live-маркером (см. _allow_live_browser).
+_live_allowed = False
+
+
+def _guarded_compute_driver_executable() -> tuple[str, str]:
+    if not _live_allowed:
+        raise RuntimeError(_BLOCKED_MESSAGE)
+    return _real_compute_driver_executable()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Ставит защиту ДО сбора тестов (#217).
+
+    Почему не autouse-фикстура: pytest импортирует все тест-модули на этапе
+    collection — до применения `-m` и до запуска любой фикстуры. Код на уровне
+    модуля исполняется прямо там, поэтому фикстура физически не успевает.
+    Проверено: файл с маркером `live_write_danger`, который pytest ИСКЛЮЧИЛ из
+    сбора (`1 deselected`), всё равно поднимал настоящий Chromium на импорте.
+
+    Почему именно `compute_driver_executable`: это узкое место запуска
+    процесса-драйвера — через него идут и sync, и async API, и прямое
+    построение `PipeTransport`. Патч классов (`PlaywrightContextManager`)
+    закрывал только sync-путь и обходился через `async_playwright`,
+    `importlib.reload` или сохранённую до патча ссылку на метод. Граница
+    процесса одна на все пути, поэтому держать инвариант надо на ней.
+
+    Заглушка не снимается по завершении теста и не восстанавливается
+    монки-патчем: единственный способ её обойти — маркер live_*, который
+    открывает доступ только на время самого теста (`_allow_live_browser`).
+    """
+    for module in _DRIVER_MODULES:
+        module.compute_driver_executable = _guarded_compute_driver_executable
+
 
 @pytest.fixture(autouse=True)
-def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Не позволяет обычным тестам случайно выйти в браузер и сеть."""
-    if any(
-        request.node.get_closest_marker(marker)
-        for marker in ("live_read", "live_write", "live_write_danger")
-    ):
+def _allow_live_browser(request: pytest.FixtureRequest) -> object:
+    """Открывает доступ к движку только на время live-теста.
+
+    Обычные тесты не трогают флаг вовсе — для них движок закрыт с момента
+    `pytest_configure`. Флаг возвращается в исходное состояние в teardown, даже
+    если тест упал, поэтому «открытость» не протекает на соседние тесты.
+    """
+    global _live_allowed
+    if not any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        yield
         return
 
-    import hhru_bot.browser as browser
-
-    real_launch_context = browser.launch_context
-    real_sync_playwright = browser.sync_playwright
-
-    @contextmanager
-    def _blocked_launch_context(*args: object, **kwargs: object):
-        # Разрешаем только тесту, явно подменившему сам Playwright (например,
-        # test_browser_navigation); настоящий движок остаётся закрыт.
-        if browser.sync_playwright is not real_sync_playwright:
-            with real_launch_context(*args, **kwargs) as context:
-                yield context
-            return
-        raise RuntimeError(
-            "launch_context заблокирован: тест должен использовать моки; "
-            "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
-        )
-
-    for module in tuple(sys.modules.values()):
-        if module is None or module is browser:
-            continue
-        if getattr(module, "launch_context", None) is real_launch_context:
-            monkeypatch.setattr(module, "launch_context", _blocked_launch_context)
-    monkeypatch.setattr(browser, "launch_context", _blocked_launch_context)
+    previous = _live_allowed
+    _live_allowed = True
+    try:
+        yield
+    finally:
+        _live_allowed = previous
 
 
 @pytest.fixture(autouse=True)
