@@ -87,7 +87,9 @@ class LLMClient:
         if tools:
             kwargs["tools"] = tools
         for name in ("temperature", "max_tokens", "timeout", "extra_body"):
-            if name in params:
+            # None = «не задано»: не шлём его в Hermes, чтобы не переопределить
+            # дефолт SDK значением None (поведение прежнего транспорта).
+            if name in params and params[name] is not None:
                 kwargs[name] = params[name]
         response = self._call_llm(**kwargs)
         provider = route_info.get("provider", "unknown")

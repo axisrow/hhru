@@ -111,6 +111,18 @@ def test_chat_passes_tools_and_extra_body(monkeypatch):
     assert capture[0]["extra_body"] == {"foo": "bar"}
 
 
+def test_chat_omits_none_params(monkeypatch):
+    # None = «не задано»: не пересылаем его в Hermes (как прежний transport),
+    # чтобы не переопределить дефолт SDK значением None.
+    capture = []
+    _install_fake_call_llm(monkeypatch, _response(), capture)
+
+    LLMClient(_cfg()).chat([{"role": "user", "content": "x"}], timeout=None, temperature=None)
+
+    assert "timeout" not in capture[0]
+    assert "temperature" not in capture[0]
+
+
 def test_chat_propagates_resolver_exception(monkeypatch):
     class _Boom(Exception):
         pass
