@@ -67,9 +67,7 @@ def test_apply_crash_after_planning_leaves_durable_uncertain_audit(tmp_path, mon
         _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
     with history._connect() as conn:
-        row = conn.execute(
-            "SELECT resume_id, vacancy_id, action, status FROM actions"
-        ).fetchone()
+        row = conn.execute("SELECT resume_id, vacancy_id, action, status FROM actions").fetchone()
 
     assert row is not None
     assert tuple(row) == ("AAA111", "123", "apply", "uncertain")
@@ -126,8 +124,6 @@ def test_apply_finalizes_the_pre_submit_marker_in_place(tmp_path, monkeypatch):
     _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
 
     with history._connect() as conn:
-        rows = conn.execute(
-            "SELECT resume_id, vacancy_id, action, status FROM actions"
-        ).fetchall()
+        rows = conn.execute("SELECT resume_id, vacancy_id, action, status FROM actions").fetchall()
 
     assert [tuple(row) for row in rows] == [("AAA111", "123", "apply", "success")]

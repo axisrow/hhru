@@ -360,7 +360,7 @@ def run_apply_for_resume(
 
         action_id = None
 
-        def _before_submit() -> None:
+        def _before_submit(vacancy_id: str = card.vacancy_id) -> None:
             nonlocal action_id
             # #245: commit the fail-closed audit marker immediately before
             # entering the irreversible form path. A process crash can leave
@@ -369,7 +369,7 @@ def run_apply_for_resume(
             # would make the next run send a duplicate. Keeping this hook after
             # navigation/questions preserves the old no-action semantics for
             # confirmed pre-submit exits.
-            action_id = history.begin_action(resume.resume_id, card.vacancy_id, "apply")
+            action_id = history.begin_action(resume.resume_id, vacancy_id, "apply")
 
         apply_kwargs = {
             "letter_provider": letter_provider,
