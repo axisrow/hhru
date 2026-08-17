@@ -84,10 +84,10 @@ def test_account_wide_rejects_non_positive_max_pages(bad_max_pages, tmp_path):
 
 
 class _Locator:
-    def __init__(self, count=1, *, clicked=None, child=None):
+    def __init__(self, count=1, *, clicked=None, children=None):
         self._count = count
         self.clicked = clicked
-        self.child = child
+        self.children = children or {}
 
     @property
     def first(self):
@@ -104,26 +104,34 @@ class _Locator:
         return None
 
     def locator(self, selector):
-        assert self.child is not None
-        return self.child
+        assert selector in self.children, f"unexpected child selector: {selector}"
+        return self.children[selector]
 
 
 class _Page:
-    def __init__(self, *, control_count=1, success_count=1):
+    """Mirrors the production DOM: card-scoped locators (control/confirm/
+    success) live under NEGOTIATION_ITEM, not directly on the page, so a
+    test can distinguish a card-scoped read from an unscoped page-wide one.
+    """
+
+    def __init__(self, *, control_count=1, confirm_count=0, success_count=1):
         self.clicked = []
         self._control = _Locator(control_count, clicked=self.clicked)
-        self._card = _Locator(1, child=self._control)
-        self._confirm = _Locator(0)
+        self._confirm = _Locator(confirm_count)
         self._success = _Locator(success_count)
+        self._card = _Locator(
+            1,
+            children={
+                command.NEGOTIATION_WITHDRAW: self._control,
+                command.NEGOTIATION_WITHDRAW_CONFIRM: self._confirm,
+                command.NEGOTIATION_WITHDRAW_SUCCESS: self._success,
+            },
+        )
 
     def locator(self, selector):
         if selector == command.NEGOTIATION_ITEM:
             return self._card
-        if selector == command.NEGOTIATION_WITHDRAW_CONFIRM:
-            return self._confirm
-        if selector == command.NEGOTIATION_WITHDRAW_SUCCESS:
-            return self._success
-        raise AssertionError(f"unexpected selector: {selector}")
+        raise AssertionError(f"unexpected page-level selector: {selector}")
 
     def content(self):
         return "<html />"
@@ -170,6 +178,66 @@ def test_withdraw_without_unique_button_does_not_click(tmp_path, monkeypatch):
     page = _Page(control_count=0)
     history = History(tmp_path / "history.db")
     command._run_topics(_args(force=True), ["77"], page=page, history=history, throttle=_Throttle())
+    assert page.clicked == []
+
+
+def test_withdraw_refuses_when_topic_filter_unproven(tmp_path, monkeypatch):
+    """?topic= filtering the SSR list is unverified; if the same read also
+    surfaces an unrelated topic, a single remaining DOM card can no longer
+    be trusted as this topic's card (it may just be an unfiltered list that
+    happens to render one card) — must refuse, never click on the guess.
+    """
+    monkeypatch.setattr(command, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(
+        command,
+        "topic_refs",
+        lambda html: [
+            type("Ref", (), {"topic_id": "77"})(),
+            type("Ref", (), {"topic_id": "88"})(),
+        ],
+    )
+    page = _Page()
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is True
+    assert page.clicked == []
+
+
+def test_withdraw_success_marker_is_scoped_to_card_not_page(tmp_path, monkeypatch):
+    """A page-wide success-marker read could be satisfied by an unrelated
+    negotiation's marker (e.g. a prior withdrawal still rendered on the
+    same page during _run_topics' page-reuse loop) and falsely report
+    success for a topic that was never actually withdrawn. The mock _Page
+    only exposes NEGOTIATION_WITHDRAW_SUCCESS as a child of the card
+    locator (not page-level), so this only passes if the production code
+    reads it via card.locator(...), not page.locator(...).
+    """
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(success_count=1)
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is False
+    with history._connect() as conn:
+        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "success"
+
+
+def test_withdraw_refuses_when_confirmation_dialog_already_open(tmp_path, monkeypatch):
+    """A confirmation dialog already present before the click may belong to
+    a stale attempt on a previous topic (_run_topics reuses the same page
+    across iterations) — must refuse rather than click the withdraw control
+    into an already-non-actionable page state.
+    """
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(confirm_count=1)
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is True
     assert page.clicked == []
 
 

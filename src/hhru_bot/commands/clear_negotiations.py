@@ -82,19 +82,36 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
     """Withdraw one topic with an identity-bound UI click.
 
     This is deliberately conservative.  The topic must be present exactly once
-    in the SSR state of the page opened for that topic, its card and withdrawal
-    control must each be unique, and success requires a positive post-click
-    marker.  Disappearance of a card is not evidence of success.
+    in the SSR state of the page opened for that topic, the SSR state must
+    contain no OTHER topic (so a single remaining DOM card can't be a
+    coincidence of an unfiltered list), its card and withdrawal control must
+    each be unique, and success requires a positive post-click marker scoped
+    to that same card.  Disappearance of a card is not evidence of success.
     """
     try:
         url = f"{HH_BASE_URL}/applicant/negotiations?topic={quote(str(topic), safe='')}"
         goto_hh(page, url)
 
-        refs = [ref for ref in topic_refs(page.content()) if ref.topic_id == str(topic)]
+        all_refs = topic_refs(page.content())
+        refs = [ref for ref in all_refs if ref.topic_id == str(topic)]
         if len(refs) != 1:
             return False, (
                 f"topic={topic} не подтверждён на открытой странице "
                 f"(совпадений в SSR: {len(refs)}) — не кликаю"
+            )
+
+        # Whether ?topic= actually filters the SSR list server-side is
+        # unverified (no live dump confirms it). If it doesn't, a single
+        # remaining DOM card would only "prove" identity by coincidence on
+        # an account with exactly one negotiation total. Any OTHER topic
+        # surviving in the same SSR read means the query param did not
+        # scope the page, so a single DOM card can no longer be trusted as
+        # this topic's card — refuse rather than click on an unproven match.
+        if len(all_refs) != 1:
+            return False, (
+                f"topic={topic}: страница ?topic= вернула {len(all_refs)} "
+                "переговоров вместо одной — фильтр по topic не подтверждён, "
+                "однозначность карточки нельзя доказать — не кликаю"
             )
 
         cards = page.locator(NEGOTIATION_ITEM)
@@ -114,20 +131,23 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
                 f"(совпадений: {control_count}) — не кликаю"
             )
 
-        # If an older dialog is already present, do not press the withdrawal
-        # control: the page is not in a uniquely actionable state.
-        confirmation = page.locator(NEGOTIATION_WITHDRAW_CONFIRM)
+        # Any confirmation dialog already present means the page is not in a
+        # uniquely actionable state for THIS click: it may belong to a stale
+        # attempt (e.g. a previous topic in _run_topics' page-reuse loop) and
+        # must not be mistaken for a dialog our own click is about to raise.
+        confirmation = card.locator(NEGOTIATION_WITHDRAW_CONFIRM)
         confirmation_count = confirmation.count()
-        if confirmation_count > 1:
+        if confirmation_count > 0:
             return False, (
-                f"подтверждение отзыва topic={topic} неоднозначно "
+                f"подтверждение отзыва topic={topic} уже присутствует на странице "
                 f"(совпадений: {confirmation_count}) — не кликаю"
             )
 
         controls.first.click()
 
         # Some UI revisions show an explicit confirmation control after the
-        # first click.  It is still a UI click and must also be unique.
+        # first click.  It is still a UI click and must also be unique, and
+        # scoped to the same card so a stale dialog elsewhere can't be hit.
         confirmation_count = confirmation.count()
         if confirmation_count > 1:
             return False, (
@@ -137,7 +157,12 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         if confirmation_count == 1:
             confirmation.first.click()
 
-        success = page.locator(NEGOTIATION_WITHDRAW_SUCCESS)
+        # Scoped to the identity-confirmed card: a page-wide locator could be
+        # satisfied by an unrelated negotiation's marker (a prior withdrawal
+        # still rendered on the page, or a stale marker from a previous
+        # iteration of _run_topics' page-reuse loop), which would report
+        # success for a topic that was never actually withdrawn.
+        success = card.locator(NEGOTIATION_WITHDRAW_SUCCESS)
         try:
             success.first.wait_for(state="visible", timeout=10_000)
         except (PlaywrightTimeoutError, PlaywrightError):
