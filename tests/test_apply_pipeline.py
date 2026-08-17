@@ -258,6 +258,8 @@ def test_apply_already_responded_check_always_blocks_regardless_of_button():
         assert all(
             t == _VISIBILITY_CHECK_TIMEOUT_MS for t in page.already_responded_wait_for_timeouts
         )
+
+
 def test_apply_rechecks_responded_marker_before_form_submit():
     """A marker rendered while opening the form must block the submit."""
 

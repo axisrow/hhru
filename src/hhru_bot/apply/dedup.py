@@ -60,9 +60,7 @@ def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
         page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT)
     )
     try:
-        already_responded.first.wait_for(
-            state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
-        )
+        already_responded.first.wait_for(state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS)
     except PlaywrightError:
         logger.debug("Вакансия '%s': маркеры уже отклика не найдены", vacancy.title)
         return None
