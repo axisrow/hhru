@@ -667,6 +667,7 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     from hhru_bot.apply.verify import NegotiationsVerifyResult
     from hhru_bot.commands import _common
     from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.copy_resume import ResumeIdMapping
     from hhru_bot.history import History
     from hhru_bot.search import VacancyCard
     from hhru_bot.throttle import Throttle
@@ -688,9 +689,14 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     monkeypatch.setattr("hhru_bot.commands._common.verify_response_in_negotiations", _fake_verify)
     # #212: маппинг «хэш → числовой id» — как от /applicant/resumes (два резюме
     # аккаунта; конфиг — первое). Без подмены резолвер ходил бы в сеть.
+    # #216: статус конфиг-резюме должен быть подтверждён (не not_finished,
+    # не отсутствовать) — иначе run_apply_for_resume фейлится до поиска.
     monkeypatch.setattr(
         "hhru_bot.commands._common.resolve_numeric_resume_ids",
-        lambda page: {"AAA111": "284561395", "BBB222": "96223331"},
+        lambda page: ResumeIdMapping(
+            {"AAA111": "284561395", "BBB222": "96223331"},
+            statuses={"AAA111": "modified", "BBB222": "modified"},
+        ),
     )
 
     resume = ResumeConfig(
@@ -740,6 +746,50 @@ def test_run_apply_for_resume_fails_before_search_for_unfinished_resume(tmp_path
     monkeypatch.setattr(
         "hhru_bot.commands._common.resolve_numeric_resume_ids",
         lambda page: ResumeIdMapping({"AAA111": "284561395"}, statuses={"AAA111": "not_finished"}),
+    )
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python developer"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="Здравствуйте!",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(dry_run=False, limit=1, max_pages=5, headless=True)
+
+    assert (
+        _common.run_apply_for_resume(
+            _ApplyPipelineFakePage(), config, resume, history, throttle, args
+        )
+        is True
+    )
+
+
+def test_run_apply_for_resume_fails_before_search_when_status_unknown(tmp_path, monkeypatch):
+    """#216: конфиг-хэш присутствует в маппинге (SSR прочитан успешно для
+    этого резюме), но поле status для него отсутствует (schema drift) — мы
+    объективно не можем подтвердить готовность резюме к откликам, поэтому
+    фейлимся так же, как при not_finished, а не молча продолжаем."""
+    import argparse
+
+    from hhru_bot.commands import _common
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.copy_resume import ResumeIdMapping
+    from hhru_bot.history import History
+    from hhru_bot.throttle import Throttle
+
+    def _unexpected_search(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("resume with unknown status must fail before vacancy search")
+
+    monkeypatch.setattr("hhru_bot.commands._common.search_vacancies", _unexpected_search)
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        lambda page: ResumeIdMapping({"AAA111": "284561395"}, statuses={}),
     )
     resume = ResumeConfig(
         id="python",

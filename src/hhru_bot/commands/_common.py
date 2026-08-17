@@ -279,18 +279,31 @@ def run_apply_for_resume(
     if not args.dry_run:
         ids_by_hash = resolve_numeric_resume_ids(page)
         if ids_by_hash is not None:
-            resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
-            if resume_status == "not_finished":
-                print(
-                    f"[FAIL] {resume.id} — резюме имеет статус not_finished на hh.ru; "
-                    "сначала завершите/опубликуйте его вручную"
-                )
-                return True
             numeric_id = ids_by_hash.get(resume.resume_id)
             if numeric_id is not None:
+                # Хэш конфига есть в маппинге аккаунта — SSR прочитан успешно
+                # именно для этого резюме. not_finished фейлится явно (#216).
+                # Отсутствие поля status в SSR для присутствующего в маппинге
+                # хэша (schema drift) трактуем так же: мы прочитали резюме
+                # аккаунта, но не можем подтвердить его готовность к откликам
+                # — здесь, в отличие от отсутствия самого хэша (#212, домен
+                # верификатора), у нас есть основания фейлиться до отправки,
+                # а не полагаться на пост-клик verify.
+                resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
+                if resume_status is None or resume_status == "not_finished":
+                    print(
+                        f"[FAIL] {resume.id} — статус резюме на hh.ru не подтверждён как "
+                        f"готовый к отклику (status={resume_status!r}); завершите/опубликуйте "
+                        "его вручную"
+                    )
+                    return True
                 account_resume_ids = set(ids_by_hash.values())
                 verify_resume_id = numeric_id
             else:
+                # Конфиг-хэш отсутствует в маппинге аккаунта (устаревший/
+                # неверный хэш, #212) — не наш домен: перечень НЕ заполняем,
+                # атрибуция уходит в incomparable → fail-closed indeterminate
+                # в самом верификаторе, апробировано тестами #212.
                 logger.warning(
                     "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
                     "верификаторе уйдёт в fail-closed",
