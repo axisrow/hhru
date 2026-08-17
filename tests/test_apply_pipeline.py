@@ -26,16 +26,23 @@ class _FakeLocator:
         present: bool = False,
         attrs: dict[str, str] | None = None,
         click_error: Exception | None = None,
+        wait_for_calls: list[int] | None = None,
     ):
         self._present = present
         self._attrs = attrs or {}
         # #176: PlaywrightError в момент click() (клик мог уйти на hh.ru).
         self._click_error = click_error
+        # #226 cycle-review: общий счётчик wait_for-вызовов, разделяемый через
+        # .or_() — проверяет, что wait_apply_button делает РОВНО один wait_for
+        # на объединённом локаторе, а не последовательно кнопка-потом-маркеры
+        # (что копило бы полный APPLY_TIMEOUT_MS на each already-responded вакансии).
+        self._wait_for_calls = wait_for_calls if wait_for_calls is not None else []
 
     def count(self) -> int:
         return 1 if self._present else 0
 
     def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+        self._wait_for_calls.append(1)
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -62,6 +69,15 @@ class _FakeLocator:
         # сам факт resolve/no-resolve form-scope (indeterminate-путь).
         return _FakeLocator(present=False)
 
+    def or_(self, other: _FakeLocator) -> _FakeLocator:
+        # #226 cycle-review: wait_apply_button() ждёт кнопку ИЛИ already-responded
+        # маркеры одним локатором — фейк комбинирует "present", если хотя бы один
+        # из объединяемых локаторов присутствует; wait_for-вызовы объединённого
+        # локатора продолжают писаться в тот же общий счётчик.
+        return _FakeLocator(
+            present=self._present or other._present, wait_for_calls=self._wait_for_calls
+        )
+
 
 class FakePage:
     """Имитирует Playwright Page для путей pipeline. Настраивает «состояние» страницы."""
@@ -70,6 +86,7 @@ class FakePage:
         self,
         *,
         apply_button: bool = True,
+        already_responded: bool = False,
         success: bool = True,
         submit_in_form: bool = False,
         submit_click_error: Exception | None = None,
@@ -77,6 +94,7 @@ class FakePage:
         self.url = ""
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
+        self._already_responded = already_responded
         self._success = success
         # #95 round-2: submit обёрнут в <form> (детектится xpath=ancestor::form[1]
         # в apply/questions.py::_form_scope) — по умолчанию False, чтобы явно
@@ -84,6 +102,10 @@ class FakePage:
         self._submit_in_form = submit_in_form
         # #176: PlaywrightError в момент submit-клика (клик мог уйти).
         self._submit_click_error = submit_click_error
+        # #226 cycle-review: общий счётчик wait_for-вызовов apply-button/
+        # already-responded локаторов — считает, что wait_apply_button ждёт
+        # объединённым локатором (1 wait_for), а не последовательно.
+        self.apply_wait_for_calls: list[int] = []
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -94,7 +116,16 @@ class FakePage:
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
-            return _FakeLocator(present=self._apply_button)
+            return _FakeLocator(
+                present=self._apply_button, wait_for_calls=self.apply_wait_for_calls
+            )
+        if selector in (
+            vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
+            vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
+        ):
+            return _FakeLocator(
+                present=self._already_responded, wait_for_calls=self.apply_wait_for_calls
+            )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
@@ -169,6 +200,103 @@ def test_apply_no_apply_button():
     assert result.success is False
     assert "кнопка отклика не найдена" in result.reason
     assert result.acted is False  # #163: до submit — без паузы и записи
+
+
+def test_apply_already_responded_is_skip_not_missing_button_failure():
+    page = FakePage(apply_button=False, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.reason == "уже откликались по вакансии 1, пропуск"
+    assert result.acted is False
+
+
+def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
+    """#226 cycle-review round 2 (codex): already-responded skip раньше терялся под
+    HAS_QUESTIONS — clear-skipped --reason already_applied не мог его снять, а
+    clear-skipped --reason has_questions мог ошибочно пере-обработать уже
+    откликнутую вакансию. Persistent-причина обязана быть ALREADY_APPLIED.
+    """
+    from hhru_bot.history import SKIP_REASONS
+
+    page = FakePage(apply_button=False, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.skip_reason == SKIP_REASONS.ALREADY_APPLIED
+
+
+def test_ctx_skip_default_reason_is_has_questions_unchanged():
+    """#226 cycle-review round 2: skip_reason по умолчанию — HAS_QUESTIONS, как
+    было единственное поведение questions-пути (#95, pipeline.py:245) до
+    добавления явного skip_reason для already-responded-пути.
+    """
+    from hhru_bot.apply.pipeline import ApplyContext
+    from hhru_bot.history import SKIP_REASONS
+
+    ctx = ApplyContext(
+        page=None, vacancy=_vacancy(), resume_id="RID", cover_letter_template="x", dry_run=True
+    )
+
+    result = ctx.skip("форма требует анкеты")
+
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+
+
+def test_check_already_responded_ignores_hidden_attached_marker():
+    """#226 cycle-review round 3 (codex, high): count()>0 проверял ТОЛЬКО attached
+    к DOM, не видимость. Скрытая/устаревшая SPA-копия already-responded-маркера
+    (шаблон, hidden-дубликат) была бы засчитана как «уже откликались» и записана
+    persistent через record_skip(ALREADY_APPLIED) — почти необратимо исключая
+    валидную вакансию из будущих прогонов. check_already_responded теперь требует
+    ВИДИМОСТИ маркера (wait_for state='visible'), а не только count()>0.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from hhru_bot.apply.dedup import check_already_responded
+
+    class _HiddenMarkerLocator:
+        """Присутствует в DOM (count()==1), но не видим (wait_for(visible) падает)."""
+
+        @property
+        def first(self):
+            return self
+
+        def count(self) -> int:
+            return 1
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            if state == "visible":
+                raise PlaywrightTimeoutError("hidden marker")
+
+    class _HiddenMarkerPage:
+        def locator(self, _selector: str) -> _HiddenMarkerLocator:
+            return _HiddenMarkerLocator()
+
+    reason = check_already_responded(_HiddenMarkerPage(), _vacancy())
+
+    assert reason is None
+
+
+def test_wait_apply_button_already_responded_avoids_full_timeout():
+    """#226 cycle-review: одна пара wait_for, не последовательное ожидание.
+
+    wait_apply_button ждёт кнопку и already-responded-маркеры ОДНИМ объединённым
+    локатором (Locator.or_) — если бы код сначала ждал полный APPLY_TIMEOUT_MS
+    на кнопке и только потом проверял маркеры отдельным вызовом, здесь было бы
+    больше одного wait_for на батч. На батче из многих already-responded вакансий
+    последовательная схема копила бы по 10с задержки на каждую.
+    """
+    from hhru_bot.apply import steps as apply_steps
+
+    page = FakePage(apply_button=False, already_responded=True)
+
+    found = apply_steps.wait_apply_button(page)
+
+    assert found is False  # кнопки нет — только already-responded маркер
+    assert len(page.apply_wait_for_calls) == 1
 
 
 def test_apply_probe_hook_invoked_noop_default():

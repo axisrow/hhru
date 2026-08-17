@@ -54,6 +54,11 @@ class _FakeLocator:
     def nth(self, _i: int) -> _FakeLocator:  # noqa: ARG002
         return self
 
+    def or_(self, other: _FakeLocator) -> _FakeLocator:
+        # #226 cycle-review: wait_apply_button() комбинирует apply-button и
+        # already-responded-маркеры одним локатором.
+        return _FakeLocator(present=self._present or other._present)
+
 
 class _ApplyFakePage:
     """Page для apply-pipeline в dry-run: есть кнопка отклика, до формы не доходим."""

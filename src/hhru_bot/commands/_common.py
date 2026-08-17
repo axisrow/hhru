@@ -18,7 +18,7 @@ from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
-from ..history import SKIP_REASONS, History
+from ..history import History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     VacancyCard,
@@ -374,7 +374,10 @@ def run_apply_for_resume(
             # #95: форма требует анкеты — НЕ считаем откликом, НЕ пишем actions,
             # НЕ ждём throttle (отправки не было — анти-бан-пауза не нужна). Кэш
             # skipped (#87) не даст повторно дойти до формы на следующем search.
-            history.record_skip(resume.resume_id, card.vacancy_id, SKIP_REASONS.HAS_QUESTIONS)
+            # #226 cycle-review: причина берётся из result.skip_reason, а не
+            # жёстко HAS_QUESTIONS — иначе already-responded-skip (#226) терялся
+            # бы под чужой причиной (ломало clear-skipped --reason).
+            history.record_skip(resume.resume_id, card.vacancy_id, result.skip_reason)
             print(f"  [skip] {card.title} — {result.reason}")
             continue
 

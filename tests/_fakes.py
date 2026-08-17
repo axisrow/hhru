@@ -165,6 +165,11 @@ class FakeLocator:
             return FakeLocator(node, lambda _v: False, matches=[found] if found else [])
         raise AssertionError(f"FakeLocator.locator unsupported selector: {selector}")
 
+    def or_(self, other: FakeLocator) -> FakeLocator:
+        # #226 cycle-review: wait_apply_button() комбинирует apply-button и
+        # already-responded-маркеры одним локатором — объединяем совпадения обоих.
+        return FakeLocator(self._root, self._qa_match, matches=self._resolved() + other._resolved())
+
 
 class _CardLocator(FakeLocator):
     """Локатор карточки: ``.locator(selector)`` ищет ВНУТРИ этой карточки.

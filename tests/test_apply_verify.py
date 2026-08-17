@@ -627,6 +627,11 @@ class _SimpleLocator:
     def locator(self, _selector: str) -> _SimpleLocator:
         return _SimpleLocator(False)
 
+    def or_(self, other: _SimpleLocator) -> _SimpleLocator:
+        # #226 cycle-review: wait_apply_button() комбинирует apply-button и
+        # already-responded-маркеры одним локатором.
+        return _SimpleLocator(self._present or other._present)
+
 
 class _ApplyPipelineFakePage:
     """Не-dry-run прогон до questions-indeterminate: кнопка отклика есть,

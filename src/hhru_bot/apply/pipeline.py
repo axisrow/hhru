@@ -18,6 +18,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..browser import goto_hh, has_login_form
+from ..history import SKIP_REASONS
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .dedup import check_already_responded
@@ -39,10 +40,17 @@ class ApplyResult:
     # A/B-вариант письма (#17): 'template' / 'ai' / 'ai_fallback'. Для записи в
     # history.actions.letter_variant. По умолчанию 'template' (без AI-провайдера).
     letter_variant: str = VARIANT_TEMPLATE
-    # #95: skip — третий исход (помимо success/fail). True → вакансия требует анкеты,
-    # submit НЕ выполнялся. В отличие от fail, skip не пишет status='failed' в actions
-    # и не расходует дневной лимит/троттл (см. commands/_common.run_apply_for_resume).
+    # #95: skip — третий исход (помимо success/fail). True → отправки не было
+    # (вопросы в форме #95 или уже существующий отклик #226). В отличие от fail,
+    # skip не пишет status='failed' в actions и не расходует дневной лимит/троттл
+    # (см. commands/_common.run_apply_for_resume).
     skipped: bool = False
+    # #226 cycle-review: persistent skip-причина для history.record_skip
+    # (SKIP_REASONS.*). Раньше run_apply_for_resume жёстко писал HAS_QUESTIONS
+    # для ЛЮБОГО skipped=True — already-responded-skip терялся под чужой причиной
+    # (ломало clear-skipped --reason и отчётность). Дефолт сохраняет прежнее
+    # поведение questions-пути (#95); already-responded-путь передаёт свой explicit.
+    skip_reason: str = SKIP_REASONS.HAS_QUESTIONS
     # #163: реальное действие на hh.ru выполнено (submit формы отклика).
     # False у всех выходов до submit (форма входа, «уже откликались», кнопка
     # не найдена, dry-run) — цикл откликов не пишет их в actions и не ждёт
@@ -103,17 +111,20 @@ class ApplyContext:
             acted=self.acted,
         )
 
-    def skip(self, reason: str) -> ApplyResult:
+    def skip(self, reason: str, skip_reason: str = SKIP_REASONS.HAS_QUESTIONS) -> ApplyResult:
         # #95: skip отличён от fail — отправки не было, но и ошибки нет. success=False,
         # skipped=True: цикл откликов пишет record_skip (НЕ record_action failed) и
         # не ждёт throttle. mirror of fail()/ok() — несёт letter_variant для консистентности.
         # #163: acted всегда False — skip по определению до submit.
+        # #226: skip_reason — persistent причина для record_skip, дефолт совпадает
+        # с прежним единственным вызывающим (#95 questions).
         return ApplyResult(
             self.vacancy,
             success=False,
             reason=reason,
             letter_variant=self.letter_variant,
             skipped=True,
+            skip_reason=skip_reason,
         )
 
 
@@ -205,10 +216,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
-    if reason := check_already_responded(ctx.page, ctx.vacancy):
-        return ctx.fail(reason)
-
     if not apply_steps.wait_apply_button(ctx.page):
+        if reason := check_already_responded(ctx.page, ctx.vacancy):
+            return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
         return ctx.fail("кнопка отклика не найдена на странице")
 
     # #17: рендер письма через провайдер, если он задан (AI/шаблон). Провайдер

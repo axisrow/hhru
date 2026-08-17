@@ -179,11 +179,10 @@ def probe_vacancy(
             "Сессия недействительна: страница содержит форму входа. Выполните login.",
         )
 
-    if reason := check_already_responded(page, vacancy):
-        logger.info("[PROBE] Вакансия '%s' уже откликнута — пропускаю без дампа", vacancy.title)
-        return ProbeResult(vacancy, False, reason)
-
     if not apply_steps.wait_apply_button(page):
+        if reason := check_already_responded(page, vacancy):
+            logger.info("[PROBE] Вакансия '%s' уже откликнута — пропускаю без дампа", vacancy.title)
+            return ProbeResult(vacancy, False, reason, skipped=True)
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
     apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
