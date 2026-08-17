@@ -245,6 +245,41 @@ def test_ctx_skip_default_reason_is_has_questions_unchanged():
     assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
 
 
+def test_check_already_responded_ignores_hidden_attached_marker():
+    """#226 cycle-review round 3 (codex, high): count()>0 проверял ТОЛЬКО attached
+    к DOM, не видимость. Скрытая/устаревшая SPA-копия already-responded-маркера
+    (шаблон, hidden-дубликат) была бы засчитана как «уже откликались» и записана
+    persistent через record_skip(ALREADY_APPLIED) — почти необратимо исключая
+    валидную вакансию из будущих прогонов. check_already_responded теперь требует
+    ВИДИМОСТИ маркера (wait_for state='visible'), а не только count()>0.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from hhru_bot.apply.dedup import check_already_responded
+
+    class _HiddenMarkerLocator:
+        """Присутствует в DOM (count()==1), но не видим (wait_for(visible) падает)."""
+
+        @property
+        def first(self):
+            return self
+
+        def count(self) -> int:
+            return 1
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            if state == "visible":
+                raise PlaywrightTimeoutError("hidden marker")
+
+    class _HiddenMarkerPage:
+        def locator(self, _selector: str) -> _HiddenMarkerLocator:
+            return _HiddenMarkerLocator()
+
+    reason = check_already_responded(_HiddenMarkerPage(), _vacancy())
+
+    assert reason is None
+
+
 def test_wait_apply_button_already_responded_avoids_full_timeout():
     """#226 cycle-review: одна пара wait_for, не последовательное ожидание.
 
