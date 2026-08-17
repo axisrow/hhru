@@ -182,16 +182,24 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
     if state.status != "not_finished":
         reason = f"status={state.status}"
         return PublishResumeResult(resume.id, False, reason, state.status, state.is_searchable)
-    if state.can_publish_or_update is not True:
-        incomplete = (
-            f"; nextIncompleteScreenId={state.next_incomplete_screen_id}"
-            if state.next_incomplete_screen_id
-            else ""
-        )
+    # fail-closed (#225): незавершённый шаг блокирует клик независимо от
+    # canPublishOrUpdate. hh.ru может отдать nextIncompleteScreenId вместе с
+    # canPublishOrUpdate=True (или они разойдутся при SPA-гидратации), и тогда
+    # обход guard ниже позволил бы клик по неполному резюме. Не угадываем кнопку.
+    if state.next_incomplete_screen_id:
         return PublishResumeResult(
             resume.id,
             False,
-            f"canPublishOrUpdate={state.can_publish_or_update}{incomplete}; клик запрещён",
+            f"незавершённый шаг "
+            f"nextIncompleteScreenId={state.next_incomplete_screen_id}; клик запрещён",
+            state.status,
+            state.is_searchable,
+        )
+    if state.can_publish_or_update is not True:
+        return PublishResumeResult(
+            resume.id,
+            False,
+            f"canPublishOrUpdate={state.can_publish_or_update}; клик запрещён",
             state.status,
             state.is_searchable,
         )

@@ -166,12 +166,24 @@ def test_publish_rejects_any_searchable_resume_and_does_not_click(monkeypatch, s
 
 
 def test_publish_rejects_can_publish_false(monkeypatch):
-    page = _Page(
-        _markup(canPublishOrUpdate=False)[:-1] + ',"nextIncompleteScreenId":"professional_role"}'
-    )
+    page = _Page(_markup(canPublishOrUpdate=False))
     result = _run(page, monkeypatch)
     assert not result.success
     assert "canPublishOrUpdate=False" in result.reason
+    assert page.clicked == 0
+
+
+@pytest.mark.parametrize("can_publish", [True, False])
+def test_publish_rejects_any_incomplete_screen_before_click(monkeypatch, can_publish):
+    # fail-closed инвариант из cli-spec: наличие nextIncompleteScreenId
+    # блокирует клик независимо от canPublishOrUpdate — иначе рассинхрон
+    # (True + незавершённый шаг) дал бы клик по неполному резюме.
+    page = _Page(
+        _markup(canPublishOrUpdate=can_publish)[:-1]
+        + ',"nextIncompleteScreenId":"professional_role"}'
+    )
+    result = _run(page, monkeypatch)
+    assert not result.success
     assert "nextIncompleteScreenId=professional_role" in result.reason
     assert page.clicked == 0
 
