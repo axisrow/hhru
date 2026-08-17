@@ -739,9 +739,7 @@ def test_run_apply_for_resume_fails_before_search_for_unfinished_resume(tmp_path
     monkeypatch.setattr("hhru_bot.commands._common.search_vacancies", _unexpected_search)
     monkeypatch.setattr(
         "hhru_bot.commands._common.resolve_numeric_resume_ids",
-        lambda page: ResumeIdMapping(
-            {"AAA111": "284561395"}, statuses={"AAA111": "not_finished"}
-        ),
+        lambda page: ResumeIdMapping({"AAA111": "284561395"}, statuses={"AAA111": "not_finished"}),
     )
     resume = ResumeConfig(
         id="python",
@@ -758,9 +756,12 @@ def test_run_apply_for_resume_fails_before_search_for_unfinished_resume(tmp_path
     throttle = Throttle(config.throttle, history)
     args = argparse.Namespace(dry_run=False, limit=1, max_pages=5, headless=True)
 
-    assert _common.run_apply_for_resume(
-        _ApplyPipelineFakePage(), config, resume, history, throttle, args
-    ) is True
+    assert (
+        _common.run_apply_for_resume(
+            _ApplyPipelineFakePage(), config, resume, history, throttle, args
+        )
+        is True
+    )
 
 
 def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch):
