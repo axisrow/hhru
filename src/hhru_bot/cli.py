@@ -31,10 +31,17 @@ from .write_lock import WriteLockBusy, acquire_write_lock
 DEFAULT_CONFIG_PATH = Path("data") / "config.yaml"
 DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 
-WRITE_COMMANDS = frozenset({
-    "apply", "bump", "run", "copy-resume", "publish-resume",
-    "reply-employers", "clear-negotiations",
-})
+WRITE_COMMANDS = frozenset(
+    {
+        "apply",
+        "bump",
+        "run",
+        "copy-resume",
+        "publish-resume",
+        "reply-employers",
+        "clear-negotiations",
+    }
+)
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
