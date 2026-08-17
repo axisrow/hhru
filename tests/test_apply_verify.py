@@ -723,6 +723,46 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     assert "negotiations" in rows[0][2]
 
 
+def test_run_apply_for_resume_fails_before_search_for_unfinished_resume(tmp_path, monkeypatch):
+    """#216: an unfinished configured resume must never reach the apply plan."""
+    import argparse
+
+    from hhru_bot.commands import _common
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.copy_resume import ResumeIdMapping
+    from hhru_bot.history import History
+    from hhru_bot.throttle import Throttle
+
+    def _unexpected_search(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("unfinished resume must fail before vacancy search")
+
+    monkeypatch.setattr("hhru_bot.commands._common.search_vacancies", _unexpected_search)
+    monkeypatch.setattr(
+        "hhru_bot.commands._common.resolve_numeric_resume_ids",
+        lambda page: ResumeIdMapping(
+            {"AAA111": "284561395"}, statuses={"AAA111": "not_finished"}
+        ),
+    )
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python developer"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="Здравствуйте!",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(dry_run=False, limit=1, max_pages=5, headless=True)
+
+    assert _common.run_apply_for_resume(
+        _ApplyPipelineFakePage(), config, resume, history, throttle, args
+    ) is True
+
+
 def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch):
     """#212: сбой маппинга (None) не роняет apply — верификатор получает хэш
     конфига без перечня резюме; атрибуция деградирует до fail-closed

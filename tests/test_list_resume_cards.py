@@ -299,6 +299,7 @@ def test_resolve_numeric_resume_ids_maps_hash_to_id():
     )
     mapping = cr.resolve_numeric_resume_ids(page)
     assert mapping == {_HASH_PY: "284561395", _HASH_MK: "96223331"}
+    assert mapping.statuses == {_HASH_PY: "not_finished", _HASH_MK: "modified"}
     assert page.gotos == [cr.RESUMES_LIST_URL]  # один goto за вызов
 
 

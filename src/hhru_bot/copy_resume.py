@@ -363,7 +363,15 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
     return cards
 
 
-def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
+class ResumeIdMapping(dict[str, str]):
+    """Hash-to-numeric-id mapping with the status read from the same SSR."""
+
+    def __init__(self, *args, statuses: dict[str, str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.statuses = statuses
+
+
+def resolve_numeric_resume_ids(page: Page) -> ResumeIdMapping | None:
     """Маппинг «хэш резюме → числовой id hh.ru» с /applicant/resumes (#212).
 
     Домены id у hh.ru несовместимы: конфиг адресует резюме хэшем из URL
@@ -407,6 +415,7 @@ def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
         logger.warning("[RESUME-ID] секция applicantResumes не найдена — маппинг недоступен")
         return None
     mapping: dict[str, str] = {}
+    statuses: dict[str, str] = {}
     for item in resumes:
         attrs = item.get("_attributes") if isinstance(item, dict) else None
         if not isinstance(attrs, dict):
@@ -415,6 +424,8 @@ def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
         if not resume_hash or numeric_id is None:
             continue
         mapping[str(resume_hash)] = str(numeric_id)
+        if attrs.get("status") is not None:
+            statuses[str(resume_hash)] = str(attrs["status"])
         if attrs.get("status") == "not_finished":
             logger.warning(
                 "[RESUME-ID] резюме %s (id=%s) в статусе not_finished — форма отклика "
@@ -426,7 +437,7 @@ def resolve_numeric_resume_ids(page: Page) -> dict[str, str] | None:
         logger.warning("[RESUME-ID] в SSR нет пар hash→id — маппинг недоступен")
         return None
     logger.info("[RESUME-ID] маппинг hash→id получен: %d резюме", len(mapping))
-    return mapping
+    return ResumeIdMapping(mapping, statuses=statuses)
 
 
 def _goto_resumes_list(page: Page, *, post_write: bool = False) -> None:
