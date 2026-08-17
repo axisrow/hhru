@@ -395,6 +395,42 @@ class History:
             return None
         return datetime.now() - last
 
+    def has_unresolved_uncertain(self, resume_id: str, action: str) -> bool:
+        """Whether an 'uncertain' row for ``resume_id``/``action`` is unresolved.
+
+        Unresolved means: an 'uncertain' row exists with no later 'success' row
+        for the same resume_id/action. Checking only the single most-recent row
+        (as opposed to this "any uncertain since the last success" scan) would
+        let an intervening 'failed' row — e.g. a NotAuthenticated retry that
+        never reached the click — silently clear an earlier unresolved
+        uncertain, since 'failed' means "never attempted the click", not
+        "the earlier uncertain was resolved".
+        """
+        with self._connect() as conn:
+            last_success = conn.execute(
+                """
+                SELECT created_at FROM actions
+                WHERE resume_id = ? AND action = ? AND status = 'success'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (resume_id, action),
+            ).fetchone()
+            params: tuple = (resume_id, action)
+            since_clause = ""
+            if last_success:
+                since_clause = "AND created_at > ?"
+                params = (*params, last_success["created_at"])
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM actions
+                WHERE resume_id = ? AND action = ? AND status = 'uncertain' {since_clause}
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            return row is not None
+
     # --- Агрегаты для команды stats (#11) -------------------------------------
     # Новые методы в конец файла: паттерн with self._connect(), существующие
     # методы не трогаем. summary/list_actions считают ВСЕ строки (success/
