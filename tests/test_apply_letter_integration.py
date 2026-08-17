@@ -36,7 +36,7 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
