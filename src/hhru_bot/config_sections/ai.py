@@ -44,17 +44,6 @@ class AiConfig:
 _LEGACY_ROUTING_FIELDS = ("provider", "model", "base_url")
 
 
-def _opt_str(mapping: dict, key: str, context: str) -> str | None:
-    value = mapping.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(
-            f"Поле '{key}' ({context}) должно быть непустой строкой, получено: {value!r}"
-        )
-    return value.strip()
-
-
 def parse_ai(raw, context: str) -> AiConfig | None:
     """raw — корневая секция ai. Возвращает AiConfig или None, если секции нет.
 
@@ -78,10 +67,9 @@ def parse_ai(raw, context: str) -> AiConfig | None:
             "Удалите эти поля и оставьте пустую секцию 'ai' (или 'ai: {}'), чтобы "
             "включить AI-функциональность."
         )
-    provider = _opt_str(raw, "provider", context)
-    model = _opt_str(raw, "model", context)
-    base_url = _opt_str(raw, "base_url", context)
-    return AiConfig(provider=provider, model=model, base_url=base_url)
+    # После fail-closed guard'а legacy-поля не могут быть не-None — AiConfig
+    # всегда строится без них (маршрутизация Hermes-owned).
+    return AiConfig()
 
 
 # ai — корневая секция (как account), не resume-подсекция, поэтому в resume-реестр
