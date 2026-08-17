@@ -27,6 +27,7 @@ class _FakeLocator:
         attrs: dict[str, str] | None = None,
         click_error: Exception | None = None,
         wait_for_calls: list[int] | None = None,
+        wait_for_timeouts: list[float] | None = None,
     ):
         self._present = present
         self._attrs = attrs or {}
@@ -37,12 +38,17 @@ class _FakeLocator:
         # на объединённом локаторе, а не последовательно кнопка-потом-маркеры
         # (что копило бы полный APPLY_TIMEOUT_MS на each already-responded вакансии).
         self._wait_for_calls = wait_for_calls if wait_for_calls is not None else []
+        # #241 cycle-review round 1 (codex): фиксирует переданный timeout каждого
+        # wait_for-вызова — проверяет, что check_already_responded передаёт 0
+        # (blocking=False), когда apply-кнопка уже подтверждена wait_apply_button.
+        self._wait_for_timeouts = wait_for_timeouts if wait_for_timeouts is not None else []
 
     def count(self) -> int:
         return 1 if self._present else 0
 
     def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         self._wait_for_calls.append(1)
+        self._wait_for_timeouts.append(timeout)
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -106,6 +112,9 @@ class FakePage:
         # already-responded локаторов — считает, что wait_apply_button ждёт
         # объединённым локатором (1 wait_for), а не последовательно.
         self.apply_wait_for_calls: list[int] = []
+        # #241 cycle-review round 1 (codex): фиксирует переданные already-responded
+        # wait_for-таймауты отдельно от общего apply_wait_for_calls счётчика.
+        self.already_responded_wait_for_timeouts: list[float] = []
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -124,7 +133,9 @@ class FakePage:
             vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
         ):
             return _FakeLocator(
-                present=self._already_responded, wait_for_calls=self.apply_wait_for_calls
+                present=self._already_responded,
+                wait_for_calls=self.apply_wait_for_calls,
+                wait_for_timeouts=self.already_responded_wait_for_timeouts,
             )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
@@ -221,6 +232,37 @@ def test_apply_transitional_both_markers_prefers_already_responded():
 
     assert result.skipped is True
     assert result.skip_reason == "already_applied"
+
+
+def test_apply_button_found_skips_blocking_already_responded_wait():
+    """#241 cycle-review round 1 (codex): когда wait_apply_button уже подтвердил
+    кнопку отклика, DOM уже settled — check_already_responded не должен платить
+    полный _VISIBILITY_CHECK_TIMEOUT_MS на каждом из двух селекторов (до 3с
+    оверхеда на каждую обычную вакансию). Ожидаем timeout=0 на обоих вызовах.
+    """
+    page = FakePage(apply_button=True, already_responded=False)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.success is True
+    assert page.already_responded_wait_for_timeouts
+    assert all(t == 0 for t in page.already_responded_wait_for_timeouts)
+
+
+def test_apply_button_missing_still_blocks_on_already_responded_wait():
+    """Ветка «кнопка не найдена» — транзитное состояние ещё может дорендерить
+    маркер, полный таймаут ожидания видимости должен сохраниться (#241 п.1).
+    """
+    page = FakePage(apply_button=False, already_responded=False)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.success is False
+    assert "кнопка отклика не найдена" in result.reason
+    assert page.already_responded_wait_for_timeouts
+    from hhru_bot.apply.dedup import _VISIBILITY_CHECK_TIMEOUT_MS
+
+    assert all(t == _VISIBILITY_CHECK_TIMEOUT_MS for t in page.already_responded_wait_for_timeouts)
 
 
 def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():

@@ -27,7 +27,9 @@ logger = logging.getLogger("hhru_bot.apply.dedup")
 _VISIBILITY_CHECK_TIMEOUT_MS = 1_500
 
 
-def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
+def check_already_responded(
+    page: Page, vacancy: VacancyCard, *, blocking: bool = True
+) -> str | None:
     """Возвращает причину отказа, если вакансия уже откликнута.
 
     Дедупликация идёт через history.has_applied() в filter_candidates() (см.
@@ -41,17 +43,24 @@ def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
     навсегда исключает вакансию из будущих прогонов через is_skipped() — скрытая
     или устаревшая SPA-копия маркера, засчитанная как attached, дала бы
     ложноположительный и практически необратимый пропуск валидной вакансии.
+
+    #241 cycle-review round 1 (codex): blocking=True (по умолчанию, ветка
+    "кнопка не найдена" в pipeline._run) ждёт видимость с полным таймаутом —
+    транзитное SPA-состояние ещё может дорендерить маркер. blocking=False
+    (ветка "кнопка уже подтверждена wait_apply_button") проверяет видимость
+    БЕЗ ожидания: комбинированный wait_for в wait_apply_button уже дождался
+    отрисовки DOM, повторный полный таймаут на каждой обычной вакансии (до
+    2 x _VISIBILITY_CHECK_TIMEOUT_MS) был чистым оверхедом на happy path.
     """
     from ..selector_groups import vacancy_page
 
+    timeout = _VISIBILITY_CHECK_TIMEOUT_MS if blocking else 0
     for selector in (
         vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
         vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
     ):
         try:
-            page.locator(selector).first.wait_for(
-                state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
-            )
+            page.locator(selector).first.wait_for(state="visible", timeout=timeout)
         except PlaywrightError:
             continue
         reason = f"уже откликались по вакансии {vacancy.vacancy_id}, пропуск"

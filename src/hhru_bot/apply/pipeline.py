@@ -219,8 +219,11 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     apply_button_found = apply_steps.wait_apply_button(ctx.page)
     # The combined wait can observe both markers during a transitional SPA
     # render. Re-check independently after it completes so the apply button
-    # cannot win over an already-responded marker.
-    if reason := check_already_responded(ctx.page, ctx.vacancy):
+    # cannot win over an already-responded marker. When the button was already
+    # confirmed present, wait_apply_button's combined wait already settled the
+    # DOM — a non-blocking check is enough (#241 cycle-review round 1: a full
+    # timeout on the happy path was pure overhead, up to 3s per vacancy).
+    if reason := check_already_responded(ctx.page, ctx.vacancy, blocking=not apply_button_found):
         return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
     if not apply_button_found:
         return ctx.fail("кнопка отклика не найдена на странице")
