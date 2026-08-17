@@ -358,16 +358,34 @@ def run_apply_for_resume(
             print(f"Дневной лимит достигнут, останавливаюсь: {e}")
             break
 
+        action_id = None
+
+        def _before_submit() -> None:
+            nonlocal action_id
+            # #245: commit the fail-closed audit marker immediately before
+            # entering the irreversible form path. A process crash can leave
+            # browser dumps (and possibly a sent application) without
+            # returning an ApplyResult; waiting for the post-action record
+            # would make the next run send a duplicate. Keeping this hook after
+            # navigation/questions preserves the old no-action semantics for
+            # confirmed pre-submit exits.
+            action_id = history.begin_action(resume.resume_id, card.vacancy_id, "apply")
+
+        apply_kwargs = {
+            "letter_provider": letter_provider,
+            # #207: fail-вердикты после клика по кнопке отклика подтверждаются
+            # внешней проверкой /applicant/negotiations до записи в history.
+            "verifier": _verifier,
+        }
+        if not args.dry_run:
+            apply_kwargs["before_submit"] = _before_submit
         result = apply_to_vacancy(
             page,
             card,
             resume.resume_id,
             cover_letter_template,
             args.dry_run,
-            letter_provider=letter_provider,
-            # #207: fail-вердикты после клика по кнопке отклика подтверждаются
-            # внешней проверкой /applicant/negotiations до записи в history.
-            verifier=_verifier,
+            **apply_kwargs,
         )
 
         if result.skipped:
@@ -378,6 +396,8 @@ def run_apply_for_resume(
             # жёстко HAS_QUESTIONS — иначе already-responded-skip (#226) терялся
             # бы под чужой причиной (ломало clear-skipped --reason).
             history.record_skip(resume.resume_id, card.vacancy_id, result.skip_reason)
+            if action_id is not None:
+                history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
             continue
 
@@ -386,7 +406,7 @@ def run_apply_for_resume(
         # строки НЕ трогаем: их читает дедупликация has_applied (CLAUDE.md п.2).
         # Провалы до submit (форма входа, «уже откликались», кнопка не найдена)
         # на hh.ru не отправлялись — остаются в консоли/логе, не в статистике.
-        if result.acted or (args.dry_run and result.success):
+        if action_id is not None:
             # #176: uncertain — submit мог уйти, но результат неизвестен. Такой
             # статус видит дедупликация has_applied (повторный запуск не
             # откликнется на ту же вакансию вторым письмом) — «просто failed»
@@ -398,11 +418,30 @@ def run_apply_for_resume(
                 status = "uncertain"
             else:
                 status = "success" if result.success else "failed"
+            history.finalize_action(
+                action_id,
+                status,
+                result.reason,
+                letter_variant=result.letter_variant,
+            )
+        elif result.acted:
+            # The verifier can positively reconcile an external submit even
+            # when the pre-submit hook was not reached (for example, a
+            # transitional page exposed the post-click state directly).
             history.record_action(
                 resume.resume_id,
                 card.vacancy_id,
                 "apply",
-                status,
+                "uncertain" if result.uncertain else ("success" if result.success else "failed"),
+                result.reason,
+                letter_variant=result.letter_variant,
+            )
+        elif args.dry_run and result.success:
+            history.record_action(
+                resume.resume_id,
+                card.vacancy_id,
+                "apply",
+                "dry_run",
                 result.reason,
                 letter_variant=result.letter_variant,
             )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Callable
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -91,6 +92,8 @@ class ApplyContext:
     # pipeline инъектируют фейк или ничего; продакшн-проводка — в
     # commands/_common.run_apply_for_resume (verify_response_in_negotiations).
     verifier: ResponseVerifier | None = None
+    # #245: durable audit marker immediately before entering the submit path.
+    before_submit: Callable[[], None] | None = None
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -137,6 +140,7 @@ def apply_to_vacancy(
     probe: ProbeHook | None = None,
     letter_provider: CoverLetterProvider | None = None,
     verifier: ResponseVerifier | None = None,
+    before_submit: Callable[[], None] | None = None,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -147,6 +151,7 @@ def apply_to_vacancy(
         probe=probe or NOOP_PROBE,
         letter_provider=letter_provider,
         verifier=verifier,
+        before_submit=before_submit,
     )
     return _run(ctx)
 
@@ -264,6 +269,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     #     чистый fail с acted=False: на hh.ru следа нет, как у остальных
     #     ранних выходов #163, но traceback больше не рвёт цикл откликов.
     try:
+        if ctx.before_submit is not None:
+            ctx.before_submit()
         reason = apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter)
     except SubmitClickUncertain:
         ctx.acted = True
