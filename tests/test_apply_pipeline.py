@@ -27,6 +27,7 @@ class _FakeLocator:
         attrs: dict[str, str] | None = None,
         click_error: Exception | None = None,
         wait_for_calls: list[int] | None = None,
+        wait_for_timeouts: list[float] | None = None,
     ):
         self._present = present
         self._attrs = attrs or {}
@@ -37,12 +38,18 @@ class _FakeLocator:
         # на объединённом локаторе, а не последовательно кнопка-потом-маркеры
         # (что копило бы полный APPLY_TIMEOUT_MS на each already-responded вакансии).
         self._wait_for_calls = wait_for_calls if wait_for_calls is not None else []
+        # #241 cycle-review round 2: фиксирует переданный timeout каждого
+        # wait_for-вызова — проверяет, что check_already_responded всегда
+        # получает полный _VISIBILITY_CHECK_TIMEOUT_MS (round 1 пробовал
+        # передавать 0 при подтверждённой кнопке, отклонено дважды).
+        self._wait_for_timeouts = wait_for_timeouts if wait_for_timeouts is not None else []
 
     def count(self) -> int:
         return 1 if self._present else 0
 
     def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         self._wait_for_calls.append(1)
+        self._wait_for_timeouts.append(timeout)
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -106,6 +113,10 @@ class FakePage:
         # already-responded локаторов — считает, что wait_apply_button ждёт
         # объединённым локатором (1 wait_for), а не последовательно.
         self.apply_wait_for_calls: list[int] = []
+        # #241 cycle-review round 2: фиксирует переданные already-responded
+        # wait_for-таймауты отдельно от общего apply_wait_for_calls счётчика —
+        # проверяет, что они всегда равны полному _VISIBILITY_CHECK_TIMEOUT_MS.
+        self.already_responded_wait_for_timeouts: list[float] = []
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -124,7 +135,9 @@ class FakePage:
             vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
         ):
             return _FakeLocator(
-                present=self._already_responded, wait_for_calls=self.apply_wait_for_calls
+                present=self._already_responded,
+                wait_for_calls=self.apply_wait_for_calls,
+                wait_for_timeouts=self.already_responded_wait_for_timeouts,
             )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
@@ -211,6 +224,37 @@ def test_apply_already_responded_is_skip_not_missing_button_failure():
     assert result.skipped is True
     assert result.reason == "уже откликались по вакансии 1, пропуск"
     assert result.acted is False
+
+
+def test_apply_transitional_both_markers_prefers_already_responded():
+    """A transient page showing both markers must fail closed to skip."""
+    page = FakePage(apply_button=True, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.skipped is True
+    assert result.skip_reason == "already_applied"
+
+
+def test_apply_already_responded_check_always_blocks_regardless_of_button():
+    """#241 cycle-review round 2: попытка пропускать блокирующее ожидание, когда
+    кнопка уже найдена (round 1), была отклонена ДВАЖДЫ — codex указал на гонку
+    состояний (маркер может отрендериться сразу после кнопки), /review указал на
+    Playwright-семантику timeout=0 (означает "без таймаута", т.е. бесконечное
+    ожидание, а не мгновенную проверку). check_already_responded всегда должен
+    получать полный _VISIBILITY_CHECK_TIMEOUT_MS, независимо от apply_button_found.
+    """
+    from hhru_bot.apply.dedup import _VISIBILITY_CHECK_TIMEOUT_MS
+
+    for apply_button in (True, False):
+        page = FakePage(apply_button=apply_button, already_responded=False)
+
+        apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+        assert page.already_responded_wait_for_timeouts
+        assert all(
+            t == _VISIBILITY_CHECK_TIMEOUT_MS for t in page.already_responded_wait_for_timeouts
+        )
 
 
 def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
