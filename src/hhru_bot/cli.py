@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import commands as _commands_pkg
 from .logging_setup import setup_logging
+from .write_lock import WriteLockBusy, acquire_write_lock
 
 # Дефолтные пути — ОТНОСИТЕЛЬНЫЕ (relative-to-cwd), а не привязанные к пакету.
 # После `pip install` пакет уезжает в site-packages, и привязка путей к
@@ -29,6 +30,11 @@ from .logging_setup import setup_logging
 # целиком в .gitignore одной строкой.
 DEFAULT_CONFIG_PATH = Path("data") / "config.yaml"
 DEFAULT_HISTORY_PATH = Path("data") / "history.db"
+
+WRITE_COMMANDS = frozenset({
+    "apply", "bump", "run", "copy-resume", "publish-resume",
+    "reply-employers", "clear-negotiations",
+})
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
@@ -68,7 +74,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command not in WRITE_COMMANDS:
+        return _execute(args)
 
+    lock_path = Path(args.history).expanduser().resolve().parent / ".hhru.lock"
+    try:
+        with acquire_write_lock(lock_path):
+            return _execute(args)
+    except WriteLockBusy:
+        print("[FAIL] другой процесс уже выполняет WRITE-действие")
+        sys.exit(1)
+
+
+def _execute(args: argparse.Namespace) -> None:
     # READ-команда `log` намеренно минует setup_logging: FileHandler создал бы
     # data/logs/hhru_bot.log на запись до run(), что нарушает READ-контракт «не меняет
     # локально» (#21), делает ветку «файл не найден» недостижимой (setup_logging
