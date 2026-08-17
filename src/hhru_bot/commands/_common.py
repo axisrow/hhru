@@ -377,6 +377,9 @@ def run_apply_for_resume(
             # #226 cycle-review: причина берётся из result.skip_reason, а не
             # жёстко HAS_QUESTIONS — иначе already-responded-skip (#226) терялся
             # бы под чужой причиной (ломало clear-skipped --reason).
+            # Инвариант: все persistent skip-результаты создаются через
+            # ApplyContext.skip(), чей дефолт — HAS_QUESTIONS; новый skip-путь
+            # обязан передать здесь собственный skip_reason явно.
             history.record_skip(resume.resume_id, card.vacancy_id, result.skip_reason)
             print(f"  [skip] {card.title} — {result.reason}")
             continue

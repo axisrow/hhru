@@ -213,6 +213,16 @@ def test_apply_already_responded_is_skip_not_missing_button_failure():
     assert result.acted is False
 
 
+def test_apply_transitional_both_markers_prefers_already_responded():
+    """A transient page showing both markers must fail closed to skip."""
+    page = FakePage(apply_button=True, already_responded=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+
+    assert result.skipped is True
+    assert result.skip_reason == "already_applied"
+
+
 def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
     """#226 cycle-review round 2 (codex): already-responded skip раньше терялся под
     HAS_QUESTIONS — clear-skipped --reason already_applied не мог его снять, а

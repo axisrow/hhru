@@ -216,9 +216,13 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
-    if not apply_steps.wait_apply_button(ctx.page):
-        if reason := check_already_responded(ctx.page, ctx.vacancy):
-            return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
+    apply_button_found = apply_steps.wait_apply_button(ctx.page)
+    # The combined wait can observe both markers during a transitional SPA
+    # render. Re-check independently after it completes so the apply button
+    # cannot win over an already-responded marker.
+    if reason := check_already_responded(ctx.page, ctx.vacancy):
+        return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
+    if not apply_button_found:
         return ctx.fail("кнопка отклика не найдена на странице")
 
     # #17: рендер письма через провайдер, если он задан (AI/шаблон). Провайдер
