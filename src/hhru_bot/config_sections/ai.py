@@ -9,10 +9,8 @@
 ``AppConfig.ai = None`` (обратная совместимость — бот без AI работает как
 раньше).
 
-API-ключ намеренно НЕ парсится из yaml — только provider/model/base_url.
-Ключ читается из env ``HHRU_AI_API_KEY`` в момент реального LLM-вызова
-(см. ``hhru_bot.ai.runtime_provider``), чтобы секрет не попадал в конфиг и
-не рисковал утечь в git-коммит.
+API-ключ намеренно НЕ парсится из yaml. Credentials и provider fallback
+настраиваются и хранятся только Hermes; hhru не читает и не изменяет их.
 """
 
 from __future__ import annotations

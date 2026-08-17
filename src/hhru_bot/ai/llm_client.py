@@ -15,8 +15,7 @@ commands/_common.py).
 ``agent.auxiliary_client.call_llm`` — центральный resolver chain пакета.
 Он использует настроенные Hermes provider/auth/fallback цепочки (включая
 OpenRouter и Nous Portal); hhru не читает и не изменяет ``~/.hermes``.
-Если задан ``HHRU_AI_API_KEY``, hhru передаёт свой endpoint/key как
-``main_runtime`` — это первый маршрут. Без ключа вызов намеренно остаётся
+hhru не передаёт ключи или endpoint override: вызов намеренно остаётся
 полностью на конфигурации и credentials Hermes.
 
 Маршрут не должен быть молчаливым: Hermes заполняет ``route_info`` реальным
@@ -36,9 +35,6 @@ from .types import NormalizedResponse, ToolCall, Usage
 if TYPE_CHECKING:
     from ..config_sections.ai import AiConfig
 
-# Responses API для явно переданного hhru runtime. Hermes выбирает формат
-# самостоятельно для fallback-провайдеров, чтобы не ломать их transport.
-API_MODE = "codex_responses"
 _TASK_NAME = "hhru"
 
 logger = logging.getLogger("hhru_bot.ai.llm_client")
@@ -49,17 +45,14 @@ class LLMClient:
 
     Args:
         ai_config: распарсенная корневая секция ``ai`` (provider/model/base_url).
-        api_key: явный ключ; иначе читается из ``HHRU_AI_API_KEY``.
     """
 
     def __init__(
         self,
         ai_config: AiConfig,
-        *,
-        api_key: str | None = None,
     ) -> None:
         self._config = ai_config
-        self._runtime = resolve_runtime_provider(ai_config, api_key=api_key)
+        self._runtime = resolve_runtime_provider(ai_config)
         # Ленивый импорт (не на уровне модуля): без группы [ai] пакет
         # hhru_bot и его потребители должны импортироваться как раньше.
         try:
@@ -71,7 +64,6 @@ class LLMClient:
             ) from e
 
         self._call_llm = call_llm
-        self._main_runtime = _hhru_main_runtime(self._runtime)
 
     @property
     def runtime(self) -> dict[str, Any]:
@@ -92,8 +84,6 @@ class LLMClient:
             "messages": messages,
             "route_info": route_info,
         }
-        if self._main_runtime is not None:
-            kwargs["main_runtime"] = self._main_runtime
         if tools:
             kwargs["tools"] = tools
         for name in ("temperature", "max_tokens", "timeout", "extra_body"):
@@ -104,25 +94,6 @@ class LLMClient:
         model = route_info.get("model", "unknown")
         logger.info("Hermes AI request completed via provider=%s model=%s", provider, model)
         return _normalize_response(response, route_info=route_info)
-
-
-def _hhru_main_runtime(runtime: dict[str, Any]) -> dict[str, str] | None:
-    """Make the hhru credential the first Hermes route only when configured.
-
-    An absent ``HHRU_AI_API_KEY`` deliberately returns ``None``: then
-    ``call_llm`` reads the user's existing Hermes auth/config and follows its
-    configured fallback chain without hhru creating or mutating any of it.
-    """
-    key = runtime.get("api_key")
-    if not isinstance(key, str) or not key:
-        return None
-    return {
-        "provider": str(runtime["provider"]),
-        "model": str(runtime["model"]),
-        "base_url": str(runtime["base_url"]),
-        "api_key": key,
-        "api_mode": API_MODE,
-    }
 
 
 def _normalize_response(

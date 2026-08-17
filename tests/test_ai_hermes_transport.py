@@ -54,7 +54,6 @@ def _usage(prompt=10, completion=5, total=15):
 
 
 def test_chat_uses_full_resolver_chain_and_logs_selected_route(monkeypatch, caplog):
-    monkeypatch.setenv("HHRU_AI_API_KEY", "sk-hhru")
     capture = []
     _install_fake_call_llm(monkeypatch, _response(content="письмо", usage=_usage()), capture)
     client = LLMClient(_cfg())
@@ -76,20 +75,12 @@ def test_chat_uses_full_resolver_chain_and_logs_selected_route(monkeypatch, capl
     assert kwargs["timeout"] == 12.0
     # No explicit provider/base_url/api_key bypasses the Hermes resolver.
     assert "provider" not in kwargs and "base_url" not in kwargs and "api_key" not in kwargs
-    # A configured hhru key is the first route; Hermes owns subsequent fallback.
-    assert kwargs["main_runtime"] == {
-        "provider": "openai",
-        "model": "gpt-5.5",
-        "base_url": "https://api.example.com/v1",
-        "api_key": "sk-hhru",
-        "api_mode": "codex_responses",
-    }
+    assert "main_runtime" not in kwargs
     assert result.provider_data["hermes_route"] == {"provider": "nous", "model": "nous-fast"}
     assert "provider=nous model=nous-fast" in caplog.text
 
 
-def test_missing_hhru_key_leaves_route_to_existing_hermes_config(monkeypatch):
-    monkeypatch.delenv("HHRU_AI_API_KEY", raising=False)
+def test_call_never_overrides_existing_hermes_config(monkeypatch):
     capture = []
     _install_fake_call_llm(monkeypatch, _response(), capture)
 
