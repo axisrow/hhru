@@ -31,6 +31,7 @@ dev = [
 # пакета не ломает импорт остального кода.
 ai = [
     "openai>=1.50",
+    "hermes-agent-axisrow>=0.20",
 ]
 # Google Calendar OAuth/event command (#64). Kept optional so the hh.ru CLI does
 # not require Google dependencies and cannot create events implicitly.

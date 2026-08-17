@@ -1,7 +1,7 @@
 # Ported from NousResearch/hermes-agent (MIT) -- transport conversion contract.
 # The ``LLMClient`` wrapper itself is new for hhru.
 #
-"""Thin LLM client over the ``openai`` SDK.
+"""Thin LLM client over the ``openai`` Responses API.
 
 ``openai`` is an OPTIONAL dependency (install group ``[ai]``). It is imported
 lazily inside the methods so that importing this package -- and the rest of
@@ -27,12 +27,12 @@ if TYPE_CHECKING:
 
 
 class LLMClient:
-    """Minimal synchronous client for an OpenAI-compatible chat endpoint.
+    """Minimal synchronous client for an OpenAI-compatible Responses endpoint.
 
     Args:
         ai_config: parsed top-level ``ai`` config (provider / model / base_url).
         api_key: optional explicit key; otherwise read from ``HHRU_AI_API_KEY``.
-        api_mode: transport to use; defaults to ``chat_completions``.
+        api_mode: transport to use; defaults to ``responses``.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         **params: Any,
     ) -> NormalizedResponse:
-        """Run a chat-completions request and return a NormalizedResponse.
+        """Run a Responses API request and return a NormalizedResponse.
 
         Extra keyword arguments are forwarded to the transport's ``build_kwargs``
         (e.g. ``temperature``, ``max_tokens``, ``timeout``). ``openai`` SDK
@@ -92,5 +92,5 @@ class LLMClient:
             tools,
             **params,
         )
-        response = self._client.chat.completions.create(**kwargs)
+        response = self._client.responses.create(**kwargs)
         return transport.normalize_response(response)

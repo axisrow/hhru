@@ -53,7 +53,8 @@ def _discover_transports() -> None:
     """Import all bundled transport modules to trigger auto-registration."""
     global _discovered
     _discovered = True
-    try:
-        from . import chat_completions  # noqa: F401
-    except ImportError:
-        pass
+    for module in ("chat_completions", "responses"):
+        try:
+            __import__(f"{__package__}.{module}")
+        except ImportError:
+            pass

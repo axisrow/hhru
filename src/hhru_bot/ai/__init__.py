@@ -11,7 +11,8 @@ Public surface:
     get_transport          -- resolve a transport instance by api_mode
     register_transport     -- register a transport class for an api_mode
     resolve_runtime_provider -- build a runtime entry from AiConfig + env key
-    ChatCompletionsTransport -- the default OpenAI-compat transport
+    ChatCompletionsTransport -- legacy OpenAI-compat transport
+    ResponsesTransport       -- the default OpenAI Responses API transport
     ProviderTransport      -- ABC for provider transports
 """
 
@@ -21,6 +22,7 @@ from .base import ProviderTransport
 from .chat_completions import ChatCompletionsTransport
 from .llm_client import LLMClient
 from .registry import get_transport, register_transport
+from .responses import ResponsesTransport
 from .runtime_provider import resolve_runtime_provider
 from .types import NormalizedResponse, ToolCall, Usage, build_tool_call, map_finish_reason
 
@@ -35,5 +37,6 @@ __all__ = [
     "register_transport",
     "resolve_runtime_provider",
     "ChatCompletionsTransport",
+    "ResponsesTransport",
     "ProviderTransport",
 ]

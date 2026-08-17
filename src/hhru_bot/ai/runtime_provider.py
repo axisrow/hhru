@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..config_sections.ai import AiConfig
 
-# The single transport shipped with this package. A future api_mode (anthropic,
-# responses, ...) would be selected here based on provider/base_url.
-DEFAULT_API_MODE = "chat_completions"
+# Responses is the supported API mode. The explicit override remains for
+# callers migrating from the legacy chat-completions transport.
+DEFAULT_API_MODE = "responses"
 
 # Env var that carries the API key. The key is intentionally NOT read from
 # config.yaml so it can't be committed by accident.
