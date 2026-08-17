@@ -1,4 +1,4 @@
-"""Live-smoke AI-транспорта поверх hermes-agent-axisrow (issues #230, #237).
+"""Live-smoke AI-транспорта поверх hermes-agent-axisrow (issues #230, #237, #242).
 
 Реальный LLM-вызов за деньги пользователя (категория live_read по #230:
 мутаций нигде нет, единственный побочный эффект — токены провайдера).
@@ -7,12 +7,34 @@
 
     HHRU_AI_LIVE=1
 
-Запуск:
+Запуск под pytest:
     HHRU_AI_LIVE=1 pytest -m live_read tests/test_ai_live_transport.py
 
-Проверяет полный Hermes resolver-chain путь генерации сопроводительного письма
-с существующими Hermes credentials/config и ненулевым текстом в ответе. Ключи
-и endpoint hhru не читает и не передаёт.
+Проверяет полный Hermes resolver-chain путь (в т.ч. генерацию сопроводительного
+письма) с существующими Hermes credentials/config и ненулевым текстом в ответе.
+Ключи и endpoint hhru не читает и не передаёт.
+
+**Важно (issue #242): под pytest этот тест физически не может дойти до
+реального ответа Hermes.** `hermes_cli/auth.py:_auth_file_path()` содержит
+намеренный seatbelt-guard пакета: он отказывает, когда одновременно видит
+`PYTEST_CURRENT_TEST` (её всегда ставит сам pytest вокруг выполнения теста) и
+`HERMES_HOME`, резолвящийся в реальный `~/.hermes/auth.json`. Это защита
+самого Hermes от порчи боевого auth-store тестами — обходить её здесь
+(подменять `HERMES_HOME`, копировать credentials) нельзя, это не наш guard.
+
+`PYTEST_CURRENT_TEST` ставит сам pytest на время КАЖДОГО теста без исключений,
+поэтому под pytest guard срабатывает всегда — но переменную pytest выставляет
+только в фазе setup каждого теста, ПОСЛЕ импорта модуля (`pytestmark` на
+уровне модуля читает её на импорте и всегда видит `None` — не годится). Вместо
+этого условие проверяет autouse-фикстура `_skip_under_pytest_seatbelt_guard`
+(она выполняется в setup, когда переменная уже установлена) и скипает ДО тела
+теста — без перехвата текста чужого `RuntimeError` постфактум, так тесты не
+привязаны к формулировке исключения стороннего пакета, которая может
+измениться в новой версии.
+
+Для реальной проверки живого Hermes-вызова (включая генерацию письма) вне
+pytest см. `docs/testing.md` (раздел "AI-транспорт (Hermes)") — там дана
+команда запуска отдельным `python3`-скриптом, без pytest-раннера.
 """
 
 from __future__ import annotations
@@ -28,6 +50,14 @@ from hhru_bot.search import VacancyCard
 
 _LIVE = os.environ.get("HHRU_AI_LIVE", "") == "1"
 
+_SEATBELT_GUARD_SKIP_REASON = (
+    "Hermes seatbelt-guard (hermes_cli/auth.py:_auth_file_path()) блокирует "
+    "доступ к ~/.hermes/auth.json, пока установлена PYTEST_CURRENT_TEST — а "
+    "pytest ставит её всегда. Штатная защита пакета, не баг hhru. Реальный "
+    'прогон — см. docs/testing.md, раздел "AI-транспорт (Hermes)", отдельный '
+    "скрипт вне pytest."
+)
+
 pytestmark = [
     pytest.mark.live_read,
     pytest.mark.skipif(
@@ -35,6 +65,12 @@ pytestmark = [
         reason="требуется явный opt-in HHRU_AI_LIVE=1 и настроенный Hermes",
     ),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _skip_under_pytest_seatbelt_guard():
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        pytest.skip(_SEATBELT_GUARD_SKIP_REASON)
 
 
 def test_live_single_call_returns_text():
