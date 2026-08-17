@@ -77,6 +77,11 @@ class _FakeLocator:
         # resolve/no-resolve form-scope через APPLY_SUBMIT_BUTTON.
         return _FakeLocator(present=False)
 
+    def or_(self, other: _FakeLocator) -> _FakeLocator:
+        # #226 cycle-review: wait_apply_button() объединяет кнопку и
+        # already-responded-маркеры одним локатором.
+        return _FakeLocator(present=self._present or other._present)
+
 
 class _ClickTrackingLocator(_FakeLocator):
     """Локатор, сообщающий о каждом click() в общий счётчик владельца-страницы."""

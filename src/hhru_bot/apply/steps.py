@@ -90,12 +90,24 @@ def _dump_navigation_diagnostics(page: Page, stage: str, vacancy_id: str | None 
 
 
 def wait_apply_button(page: Page) -> bool:
-    """Ждёт появления кнопки отклика на странице вакансии. False — не дождались."""
+    """Ждёт появления кнопки отклика на странице вакансии. False — не дождались.
+
+    #226 cycle-review: ждём кнопку ИЛИ already-responded-маркеры одним локатором
+    (Locator.or_), чтобы вакансия с уже существующим откликом распознавалась сразу,
+    а не после полного APPLY_TIMEOUT_MS — иначе батч из многих таких вакансий
+    последовательно копит по 10с задержки на каждую. Возвращаем True только когда
+    появилась именно кнопка отклика; already-responded случай — False, дальше его
+    различает check_already_responded() в pipeline/probe.
+    """
+    apply_button = page.locator(vacancy_page.VACANCY_APPLY_BUTTON)
+    already_responded = page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN).or_(
+        page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT)
+    )
     try:
-        page.locator(vacancy_page.VACANCY_APPLY_BUTTON).first.wait_for(timeout=APPLY_TIMEOUT_MS)
+        apply_button.or_(already_responded).first.wait_for(timeout=APPLY_TIMEOUT_MS)
     except PlaywrightTimeoutError:
         return False
-    return True
+    return apply_button.count() > 0
 
 
 def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> None:

@@ -26,16 +26,23 @@ class _FakeLocator:
         present: bool = False,
         attrs: dict[str, str] | None = None,
         click_error: Exception | None = None,
+        wait_for_calls: list[int] | None = None,
     ):
         self._present = present
         self._attrs = attrs or {}
         # #176: PlaywrightError в момент click() (клик мог уйти на hh.ru).
         self._click_error = click_error
+        # #226 cycle-review: общий счётчик wait_for-вызовов, разделяемый через
+        # .or_() — проверяет, что wait_apply_button делает РОВНО один wait_for
+        # на объединённом локаторе, а не последовательно кнопка-потом-маркеры
+        # (что копило бы полный APPLY_TIMEOUT_MS на each already-responded вакансии).
+        self._wait_for_calls = wait_for_calls if wait_for_calls is not None else []
 
     def count(self) -> int:
         return 1 if self._present else 0
 
     def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+        self._wait_for_calls.append(1)
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -62,6 +69,15 @@ class _FakeLocator:
         # сам факт resolve/no-resolve form-scope (indeterminate-путь).
         return _FakeLocator(present=False)
 
+    def or_(self, other: _FakeLocator) -> _FakeLocator:
+        # #226 cycle-review: wait_apply_button() ждёт кнопку ИЛИ already-responded
+        # маркеры одним локатором — фейк комбинирует "present", если хотя бы один
+        # из объединяемых локаторов присутствует; wait_for-вызовы объединённого
+        # локатора продолжают писаться в тот же общий счётчик.
+        return _FakeLocator(
+            present=self._present or other._present, wait_for_calls=self._wait_for_calls
+        )
+
 
 class FakePage:
     """Имитирует Playwright Page для путей pipeline. Настраивает «состояние» страницы."""
@@ -86,6 +102,10 @@ class FakePage:
         self._submit_in_form = submit_in_form
         # #176: PlaywrightError в момент submit-клика (клик мог уйти).
         self._submit_click_error = submit_click_error
+        # #226 cycle-review: общий счётчик wait_for-вызовов apply-button/
+        # already-responded локаторов — считает, что wait_apply_button ждёт
+        # объединённым локатором (1 wait_for), а не последовательно.
+        self.apply_wait_for_calls: list[int] = []
 
     def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
@@ -96,12 +116,16 @@ class FakePage:
         from hhru_bot.selector_groups import apply_form, vacancy_page
 
         if selector == vacancy_page.VACANCY_APPLY_BUTTON:
-            return _FakeLocator(present=self._apply_button)
+            return _FakeLocator(
+                present=self._apply_button, wait_for_calls=self.apply_wait_for_calls
+            )
         if selector in (
             vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
             vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
         ):
-            return _FakeLocator(present=self._already_responded)
+            return _FakeLocator(
+                present=self._already_responded, wait_for_calls=self.apply_wait_for_calls
+            )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
@@ -187,6 +211,25 @@ def test_apply_already_responded_is_skip_not_missing_button_failure():
     assert result.skipped is True
     assert result.reason == "уже откликались по вакансии 1, пропуск"
     assert result.acted is False
+
+
+def test_wait_apply_button_already_responded_avoids_full_timeout():
+    """#226 cycle-review: одна пара wait_for, не последовательное ожидание.
+
+    wait_apply_button ждёт кнопку и already-responded-маркеры ОДНИМ объединённым
+    локатором (Locator.or_) — если бы код сначала ждал полный APPLY_TIMEOUT_MS
+    на кнопке и только потом проверял маркеры отдельным вызовом, здесь было бы
+    больше одного wait_for на батч. На батче из многих already-responded вакансий
+    последовательная схема копила бы по 10с задержки на каждую.
+    """
+    from hhru_bot.apply import steps as apply_steps
+
+    page = FakePage(apply_button=False, already_responded=True)
+
+    found = apply_steps.wait_apply_button(page)
+
+    assert found is False  # кнопки нет — только already-responded маркер
+    assert len(page.apply_wait_for_calls) == 1
 
 
 def test_apply_probe_hook_invoked_noop_default():

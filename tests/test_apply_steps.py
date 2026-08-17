@@ -140,6 +140,16 @@ class _FakeLocator:
         self._state.clicks += 1  # клик по выбранной опции
         return self
 
+    def or_(self, other: _FakeLocator) -> _FakeLocator:
+        # #226 cycle-review: wait_apply_button() объединяет apply-button и
+        # already-responded-маркеры одним локатором. Фейк комбинирует state:
+        # visible/match_count по OR, чтобы wait_for/count отражали объединение.
+        combined = _SelectorState(visible=self._state.visible or other._state.visible)
+        combined.is_collection = self._state.is_collection or other._state.is_collection
+        combined.match_count = max(self._state.match_count, other._state.match_count)
+        combined.wait_error = self._state.wait_error or other._state.wait_error
+        return _FakeLocator(f"({self.selector})|({other.selector})", combined, strict=False)
+
 
 class _SelectorState:
     def __init__(self, visible: bool = False) -> None:
