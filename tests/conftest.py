@@ -6,12 +6,11 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-import playwright.sync_api
+import playwright._impl._driver
+import playwright._impl._transport
 import pytest
-from playwright.sync_api._context_manager import PlaywrightContextManager
 
 from hhru_bot import logging_setup
 from hhru_bot.apply import probe
@@ -25,52 +24,65 @@ _BLOCKED_MESSAGE = (
     "для живого hh.ru нужен маркер live_read, live_write или live_write_danger"
 )
 
+# Модули, где `compute_driver_executable` доступна как атрибут: `_transport`
+# импортирует её по имени, поэтому патчить надо оба, иначе останется живая ссылка.
+_DRIVER_MODULES = (playwright._impl._driver, playwright._impl._transport)
+
+_real_compute_driver_executable = playwright._impl._driver.compute_driver_executable
+
+# Снимается ровно на время исполнения теста с live-маркером (см. _allow_live_browser).
+_live_allowed = False
+
+
+def _guarded_compute_driver_executable() -> tuple[str, str]:
+    if not _live_allowed:
+        raise RuntimeError(_BLOCKED_MESSAGE)
+    return _real_compute_driver_executable()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Ставит защиту ДО сбора тестов (#217).
+
+    Почему не autouse-фикстура: pytest импортирует все тест-модули на этапе
+    collection — до применения `-m` и до запуска любой фикстуры. Код на уровне
+    модуля исполняется прямо там, поэтому фикстура физически не успевает.
+    Проверено: файл с маркером `live_write_danger`, который pytest ИСКЛЮЧИЛ из
+    сбора (`1 deselected`), всё равно поднимал настоящий Chromium на импорте.
+
+    Почему именно `compute_driver_executable`: это узкое место запуска
+    процесса-драйвера — через него идут и sync, и async API, и прямое
+    построение `PipeTransport`. Патч классов (`PlaywrightContextManager`)
+    закрывал только sync-путь и обходился через `async_playwright`,
+    `importlib.reload` или сохранённую до патча ссылку на метод. Граница
+    процесса одна на все пути, поэтому держать инвариант надо на ней.
+
+    Заглушка не снимается по завершении теста и не восстанавливается
+    монки-патчем: единственный способ её обойти — маркер live_*, который
+    открывает доступ только на время самого теста (`_allow_live_browser`).
+    """
+    for module in _DRIVER_MODULES:
+        module.compute_driver_executable = _guarded_compute_driver_executable
+
 
 @pytest.fixture(autouse=True)
-def _block_live_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Не позволяет обычным тестам случайно выйти в браузер и сеть.
+def _allow_live_browser(request: pytest.FixtureRequest) -> object:
+    """Открывает доступ к движку только на время live-теста.
 
-    Защита стоит на `PlaywrightContextManager.__enter__` — это фактическая точка
-    старта движка: `sync_playwright()` лишь конструирует объект, а процесс
-    Playwright поднимается только при входе в контекст-менеджер (`start()`
-    внутри тоже вызывает `__enter__`). Патч метода НА КЛАССЕ перекрывает сразу
-    все ссылки на фабрику, потому что объект создаётся позже, а метод ищется на
-    классе в момент входа.
-
-    Почему именно так, а не патчем имени `sync_playwright` по модулям: любая
-    ссылка, захваченная до старта autouse-фикстуры, патч по имени переживает.
-    Достаточно импорта под другим именем в шапке модуля теста
-    (`from playwright.sync_api import sync_playwright as factory`), замыкания
-    или default-аргумента — и заглушка обходится. Класс же один на всех.
-
-    Дополнительно оставлен патч имени `sync_playwright` в загруженных модулях:
-    он даёт раннюю и более внятную ошибку в обычном случае (`browser`, `auth`),
-    не дожидаясь входа в контекст-менеджер. Это удобство, а не сама защита —
-    инвариант держит `__enter__`.
-
-    Тесту, подменившему `sync_playwright` своим моком (см. test_browser_navigation),
-    фикстура не мешает: мок не является `PlaywrightContextManager`, поэтому
-    исполняется только он сам.
+    Обычные тесты не трогают флаг вовсе — для них движок закрыт с момента
+    `pytest_configure`. Флаг возвращается в исходное состояние в teardown, даже
+    если тест упал, поэтому «открытость» не протекает на соседние тесты.
     """
-    if any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+    global _live_allowed
+    if not any(request.node.get_closest_marker(marker) for marker in _LIVE_MARKERS):
+        yield
         return
 
-    def _blocked_enter(self: PlaywrightContextManager) -> None:
-        raise RuntimeError(_BLOCKED_MESSAGE)
-
-    monkeypatch.setattr(PlaywrightContextManager, "__enter__", _blocked_enter)
-
-    real_sync_playwright = playwright.sync_api.sync_playwright
-
-    def _blocked_sync_playwright(*args: object, **kwargs: object):
-        raise RuntimeError(_BLOCKED_MESSAGE)
-
-    for module in tuple(sys.modules.values()):
-        if module is None:
-            continue
-        if getattr(module, "sync_playwright", None) is real_sync_playwright:
-            monkeypatch.setattr(module, "sync_playwright", _blocked_sync_playwright)
-    monkeypatch.setattr(playwright.sync_api, "sync_playwright", _blocked_sync_playwright)
+    previous = _live_allowed
+    _live_allowed = True
+    try:
+        yield
+    finally:
+        _live_allowed = previous
 
 
 @pytest.fixture(autouse=True)

@@ -11,16 +11,23 @@ B. ссылка на `launch_context`, импортированная в шап�
 C. `auth.login` вызывает `sync_playwright()` напрямую, минуя `launch_context`,
    то есть заявленный в #217 инвариант «единственная дверь наружу» не держался.
 
-Ревью PR #224 нашло, что переноса перехвата на имя `sync_playwright` мало:
+Ревью PR #224 нашло ещё три пути, каждый из которых поднимал настоящий движок:
 
 D. фабрику можно импортировать под ДРУГИМ именем в шапке модуля теста
    (`from playwright.sync_api import sync_playwright as factory`) — патч по
    имени такую ссылку не догоняет, и она возвращала живой
-   `PlaywrightContextManager`.
+   `PlaywrightContextManager`;
+E. код на уровне модуля исполняется при СБОРЕ, до применения `-m` и до любой
+   фикстуры. Файл с маркером `live_write_danger`, который pytest исключил из
+   сбора (`1 deselected`), всё равно стартовал Chromium на импорте;
+F. `async_playwright` — отдельный контекст-менеджер со своим `Connection`,
+   патч sync-класса его не касался: обычный тест поднимал движок через
+   `asyncio.run`.
 
-Итоговый инвариант держит патч `PlaywrightContextManager.__enter__` — самой
-точки старта движка. Класс один на все ссылки, поэтому алиас, замыкание и
-default-аргумент закрываются одинаково.
+Итоговый инвариант держит `compute_driver_executable` — узкое место запуска
+процесса-драйвера, общее для sync, async и прямого `PipeTransport`. Защита
+ставится в `pytest_configure`, то есть ДО сбора, и снимается только на время
+теста с live-маркером.
 
 Сам файл маркера live_* НЕ несёт — в этом суть проверки.
 """
@@ -131,11 +138,12 @@ def test_aliased_factory_captured_at_import_is_blocked() -> None:
 
     Патч по имени `sync_playwright` такую ссылку не догонял — она возвращала
     живой PlaywrightContextManager, и вход в него поднял бы Chromium с
-    сохранённой сессией hh.ru. Теперь блокирует патч `__enter__` на классе.
+    сохранённой сессией hh.ru.
 
-    Вход в контекст-менеджер здесь безопасен именно потому, что заглушка
-    срабатывает до старта движка; если тест когда-нибудь начнёт падать не
-    RuntimeError'ом, а зависать или поднимать браузер — защита сломана.
+    Вход в контекст-менеджер здесь безопасен именно потому, что блокировка
+    срабатывает до запуска процесса-драйвера; если тест когда-нибудь начнёт
+    падать не RuntimeError'ом, а зависать или поднимать браузер — защита
+    сломана.
     """
     factory = _factory_captured_at_import()
 
@@ -152,19 +160,97 @@ def test_aliased_factory_start_is_blocked() -> None:
         factory.start()
 
 
-def test_guard_covers_every_sync_playwright_caller_in_src() -> None:
-    """Инвариант #217 «дверь наружу одна» проверяется, а не декларируется.
+def test_async_api_is_blocked() -> None:
+    """Дыра F: async-API — отдельный контекст-менеджер со своим Connection.
 
-    Если в src/ появится новый прямой вызов sync_playwright (как было с auth.py),
-    он обязан импортировать его как атрибут модуля — только такие имена фикстура
-    способна перехватить. `from playwright.sync_api import sync_playwright` даёт
-    именно такой атрибут; вызов вида `playwright.sync_api.sync_playwright()`
-    тоже покрыт, так как патчится и сам модуль playwright.sync_api.
+    Патч sync-класса его не касался, и обычный тест поднимал настоящий движок
+    через `asyncio.run`. Общая для обоих API граница — процесс-драйвер.
     """
-    import hhru_bot.auth as auth
-    import hhru_bot.browser as browser
+    import asyncio
 
-    for module in (browser, auth):
-        blocked = module.sync_playwright
+    from playwright.async_api import async_playwright
+
+    async def _try_start() -> None:
+        async with async_playwright():
+            pass
+
+    with pytest.raises(RuntimeError, match="Playwright заблокирован"):
+        asyncio.run(_try_start())
+
+
+def test_direct_driver_entrypoint_is_blocked() -> None:
+    """Инвариант держится на границе процесса, а не на именах и классах.
+
+    `compute_driver_executable` — единственный источник пути к бинарю драйвера;
+    и sync, и async, и прямое построение `PipeTransport` идут через неё. Если
+    кто-то обойдёт все обёртки, он всё равно упрётся сюда.
+    """
+    import playwright._impl._driver as driver
+    import playwright._impl._transport as transport
+
+    for module in (driver, transport):
         with pytest.raises(RuntimeError, match="Playwright заблокирован"):
-            blocked()
+            module.compute_driver_executable()
+
+
+def test_engine_is_blocked_during_collection(tmp_path: Path) -> None:
+    """Дыра E: код на уровне модуля исполняется при СБОРЕ, до всякой фикстуры.
+
+    Самый опасный из найденных путей: файл с маркером `live_write_danger`,
+    который pytest ИСКЛЮЧАЕТ из сбора, всё равно поднимал Chromium на импорте —
+    маркеры применяются уже после того, как модуль импортирован.
+
+    Проверяется отдельным процессом pytest: внутри текущего процесса стадию
+    collection не воспроизвести. Тест-образец пишет исход в файл, поэтому
+    «не запустился вовсе» и «запустился, но заблокирован» различимы.
+
+    Образец обязан лежать ВНУТРИ `tests/`: conftest.py применяется по цепочке
+    каталогов, и файл во временной папке защиту бы не получил — тест тогда
+    проверял бы не тот процесс, а собственную ошибку.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    marker = tmp_path / "outcome.txt"
+    sample = Path(__file__).parent / "test_zz_collection_sample_tmp.py"
+    sample.write_text(
+        textwrap.dedent(
+            f"""
+            import pytest
+            from playwright.sync_api import sync_playwright
+
+            pytestmark = pytest.mark.live_write_danger
+
+            try:
+                with sync_playwright():
+                    _outcome = "ENGINE_STARTED"
+            except RuntimeError as exc:
+                _outcome = f"BLOCKED: {{exc}}"
+            except Exception as exc:  # noqa: BLE001 — фиксируем любой иной исход
+                _outcome = f"OTHER: {{type(exc).__name__}}"
+
+            open({str(marker)!r}, "w").write(_outcome)
+
+
+            def test_placeholder():
+                pass
+            """
+        ).lstrip()
+    )
+
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pytest", str(sample), "-p", "no:randomly"],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+    finally:
+        # Образец лежит в tests/ — не оставлять его даже при падении: иначе он
+        # попадёт в обычный сбор и в валидатор маркеров (test_markers.py).
+        sample.unlink(missing_ok=True)
+
+    assert marker.exists(), "тест-образец не исполнился — проверка ничего не доказала"
+    assert marker.read_text().startswith("BLOCKED"), marker.read_text()
