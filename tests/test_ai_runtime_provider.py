@@ -1,7 +1,7 @@
-"""Тесты resolve_runtime_provider (issue #16, Этап 5).
+"""Тесты resolve_runtime_provider (issue #16, Этап 5; api_mode — #230).
 
-Тонкий порт: по AiConfig (provider/model/base_url) + env-ключу строит runtime
-dict {provider, api_mode, base_url, api_key, model, source}. Без сети и без
+По AiConfig (provider/model/base_url) + env-ключу строит runtime dict
+{provider, api_mode, base_url, api_key, model, source}. Без сети и без
 hermes-зависимостей — чистая функция, тестируется на моках env.
 
 Приоритет ключа: явный аргумент > env HHRU_AI_API_KEY > пустая строка.

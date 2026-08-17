@@ -1,16 +1,13 @@
-# Ported from NousResearch/hermes-agent (MIT).
-# Copyright (c) 2025 Nous Research.
-#
 """Runtime provider resolution for the AI transport.
 
-This is a deliberately thin port of hermes-agent's ``resolve_runtime_provider``.
-The original resolves credentials across ~20 providers via credential pools,
-OAuth, Vertex, Bedrock, Azure Foundry, and a trust-gated custom-provider
-chain. hhru needs none of that: it talks to one OpenAI-compatible endpoint
-configured in ``config.yaml`` (section ``ai``) with a key from the environment.
+hhru-специфичный резолвер (не порт): один endpoint из ``config.yaml``
+(секция ``ai``) + ключ из окружения. Кредитный роутинг hermes (пулы,
+OAuth, ~20 провайдеров) сознательно не используется — контроль расходов
+должен оставаться на стороне hhru (#230).
 
-The output dict shape mirrors the original so a future richer resolver could
-drop in: ``provider``, ``api_mode``, ``base_url``, ``api_key``, ``model``.
+Форма выходного dict сохранена с порта #16 (``provider``, ``api_mode``,
+``base_url``, ``api_key``, ``model``), чтобы обёртка в llm_client.py
+оставалась тонкой.
 """
 
 from __future__ import annotations
@@ -21,9 +18,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..config_sections.ai import AiConfig
 
-# The single transport shipped with this package. A future api_mode (anthropic,
-# responses, ...) would be selected here based on provider/base_url.
-DEFAULT_API_MODE = "chat_completions"
+# Единственный режим транспорта после #230: Responses API (Chat Completions
+# устарел — решение пользователя). Совпадает с llm_client.API_MODE.
+DEFAULT_API_MODE = "codex_responses"
 
 # Env var that carries the API key. The key is intentionally NOT read from
 # config.yaml so it can't be committed by accident.
@@ -56,7 +53,7 @@ def resolve_runtime_provider(
     Args:
         config: parsed top-level ``ai`` config (provider / model / base_url).
         api_key: optional explicit key; overrides the ``HHRU_AI_API_KEY`` env var.
-        api_mode: optional override; defaults to ``chat_completions``.
+        api_mode: optional override; defaults to ``codex_responses``.
 
     Returns a dict with ``provider``, ``api_mode``, ``base_url``, ``api_key``,
     ``model`` and ``source`` (``"config"`` when the key came from config/env,

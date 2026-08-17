@@ -24,13 +24,15 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
 ]
-# AI/LLM-функциональность (issue #16, Этап 5). Не входит в базовые dependencies —
+# AI/LLM-функциональность (issue #230). Не входит в базовые dependencies —
 # бот работает без LLM; установите группу [ai] только когда нужна AI-интеграция:
 #   pip install -e '.[ai]'
-# openai импортируется лениво внутри hhru_bot.ai.llm_client, поэтому отсутствие
-# пакета не ломает импорт остального кода.
+# hermes-agent-axisrow импортируется лениво внутри hhru_bot.ai.llm_client,
+# поэтому отсутствие пакета не ломает импорт остального кода. openai SDK
+# приходит транзитивно (форк пинит openai==2.24.0 — версию с Responses API);
+# отдельно openai больше не указываем.
 ai = [
-    "openai>=1.50",
+    "hermes-agent-axisrow>=0.20.1.2",
 ]
 # Google Calendar OAuth/event command (#64). Kept optional so the hh.ru CLI does
 # not require Google dependencies and cannot create events implicitly.
