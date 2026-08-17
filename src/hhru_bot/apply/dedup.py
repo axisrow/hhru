@@ -54,18 +54,18 @@ def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
     """
     from ..selector_groups import vacancy_page
 
-    for selector in (
-        vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
-        vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
-    ):
-        try:
-            page.locator(selector).first.wait_for(
-                state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
-            )
-        except PlaywrightError:
-            continue
-        reason = f"уже откликались по вакансии {vacancy.vacancy_id}, пропуск"
-        logger.info("%s — %s", vacancy.title, reason)
-        return reason
-    logger.debug("Вакансия '%s': маркеры уже отклика не найдены", vacancy.title)
-    return None
+    # Both markers represent the same state. Waiting on their union keeps the
+    # bounded wait to one timeout instead of paying it once per selector.
+    already_responded = page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN).or_(
+        page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT)
+    )
+    try:
+        already_responded.first.wait_for(
+            state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        logger.debug("Вакансия '%s': маркеры уже отклика не найдены", vacancy.title)
+        return None
+    reason = f"уже откликались по вакансии {vacancy.vacancy_id}, пропуск"
+    logger.info("%s — %s", vacancy.title, reason)
+    return reason

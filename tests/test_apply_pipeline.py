@@ -11,6 +11,7 @@ import pytest
 
 import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
+from hhru_bot.history import SKIP_REASONS
 from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.integration
@@ -82,7 +83,9 @@ class _FakeLocator:
         # из объединяемых локаторов присутствует; wait_for-вызовы объединённого
         # локатора продолжают писаться в тот же общий счётчик.
         return _FakeLocator(
-            present=self._present or other._present, wait_for_calls=self._wait_for_calls
+            present=self._present or other._present,
+            wait_for_calls=self._wait_for_calls,
+            wait_for_timeouts=self._wait_for_timeouts,
         )
 
 
@@ -255,6 +258,21 @@ def test_apply_already_responded_check_always_blocks_regardless_of_button():
         assert all(
             t == _VISIBILITY_CHECK_TIMEOUT_MS for t in page.already_responded_wait_for_timeouts
         )
+def test_apply_rechecks_responded_marker_before_form_submit():
+    """A marker rendered while opening the form must block the submit."""
+
+    class _MarkerAppearsAfterNavigation(FakePage):
+        def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+            super().goto(url, wait_until)
+            self._already_responded = True
+
+    page = _MarkerAppearsAfterNavigation(apply_button=True, submit_in_form=True)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.ALREADY_APPLIED
+    assert result.acted is False
 
 
 def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
@@ -310,6 +328,9 @@ def test_check_already_responded_ignores_hidden_attached_marker():
 
         def count(self) -> int:
             return 1
+
+        def or_(self, _other):
+            return self
 
         def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
             if state == "visible":

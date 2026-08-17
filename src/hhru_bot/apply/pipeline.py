@@ -248,6 +248,12 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
     ctx.probe("form_loaded")
 
+    # The vacancy state can change while the letter is rendered and the form
+    # is opened. Re-check immediately before any form processing so a marker
+    # rendered during that window blocks the irreversible submit.
+    if reason := check_already_responded(ctx.page, ctx.vacancy):
+        return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
+
     # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
     # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).
     questions = detect_questions(ctx.page)
