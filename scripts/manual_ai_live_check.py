@@ -12,6 +12,10 @@
     python3 scripts/manual_ai_live_check.py
 
 Ключи и endpoint hhru не читает и не передаёт — маршрут выбирает Hermes.
+
+Fail-closed: скрипт завершается ненулевым кодом, если ping вернул пустой
+ответ/маршрут или письмо откатилось на fallback вместо реального AI-ответа —
+иначе недоступность Hermes была бы неотличима от успешной проверки (exit 0).
 """
 
 from __future__ import annotations
@@ -36,7 +40,14 @@ def main() -> int:
         timeout=60.0,
     )
     print(f"[ping] content={nr.content!r} finish_reason={nr.finish_reason}")
-    print(f"[ping] hermes_route={(nr.provider_data or {}).get('hermes_route')}")
+    hermes_route = (nr.provider_data or {}).get("hermes_route")
+    print(f"[ping] hermes_route={hermes_route}")
+    if not (nr.content and nr.content.strip()):
+        print("[ping] FAIL: пустой ответ Hermes", file=sys.stderr)
+        return 1
+    if not (hermes_route and hermes_route.get("provider") and hermes_route.get("model")):
+        print("[ping] FAIL: hermes_route не заполнен", file=sys.stderr)
+        return 1
 
     vacancy = VacancyCard(
         vacancy_id="manual-live-check-242",
@@ -51,12 +62,13 @@ def main() -> int:
     outcome = provider.render(vacancy)
     print(f"[letter] variant={outcome.variant}")
     print(f"[letter] text={outcome.text!r}")
-    if outcome.variant != "ai":
+    if outcome.variant != "ai" or not outcome.text.strip():
         print(
-            "[letter] WARNING: получен fallback-вариант, не AI — "
+            "[letter] FAIL: получен fallback-вариант или пустой текст, не AI — "
             "Hermes не ответил или вернул пустой текст, см. лог выше",
             file=sys.stderr,
         )
+        return 1
     return 0
 
 
