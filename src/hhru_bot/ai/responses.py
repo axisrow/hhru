@@ -92,4 +92,5 @@ class ResponsesTransport(ProviderTransport):
             usage=usage,
         )
 
+
 register_transport("responses", ResponsesTransport)
