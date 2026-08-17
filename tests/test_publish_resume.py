@@ -85,11 +85,7 @@ def _markup(**overrides):
 
 
 def _run(page, monkeypatch, *, preserve_url=False):
-    goto = (
-        (lambda page, url: None)
-        if preserve_url
-        else lambda page, url: setattr(page, "url", url)
-    )
+    goto = (lambda page, url: None) if preserve_url else lambda page, url: setattr(page, "url", url)
     monkeypatch.setattr(publish, "goto_hh", goto)
     monkeypatch.setattr(publish, "has_login_form", lambda page: False)
     return publish.publish_resume_on_hh(page, _resume(), dry_run=False)
@@ -171,8 +167,7 @@ def test_publish_rejects_any_searchable_resume_and_does_not_click(monkeypatch, s
 
 def test_publish_rejects_can_publish_false(monkeypatch):
     page = _Page(
-        _markup(canPublishOrUpdate=False)[:-1]
-        + ',"nextIncompleteScreenId":"professional_role"}'
+        _markup(canPublishOrUpdate=False)[:-1] + ',"nextIncompleteScreenId":"professional_role"}'
     )
     result = _run(page, monkeypatch)
     assert not result.success
