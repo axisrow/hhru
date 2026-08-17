@@ -167,3 +167,21 @@ def test_normalize_reasoning_content_and_route_metadata():
     nr = _normalize_response(resp, route_info={"provider": "openrouter", "model": "x"})
     assert nr.provider_data["reasoning_content"] == "мысли..."
     assert nr.provider_data["hermes_route"] == {"provider": "openrouter", "model": "x"}
+
+
+def test_normalize_content_only_message_without_tool_calls_attr():
+    # Hermes recovery может вернуть message только с content — без атрибута
+    # tool_calls вовсе. Нормализация не должна падать AttributeError.
+    msg = SimpleNamespace(
+        content="x",
+        refusal=None,
+        reasoning=None,
+        reasoning_content=None,
+        reasoning_details=None,
+        model_extra=None,
+    )
+    resp = SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")], usage=None)
+    nr = _normalize_response(resp)
+    assert nr.content == "x"
+    assert nr.tool_calls is None
+    assert nr.finish_reason == "stop"

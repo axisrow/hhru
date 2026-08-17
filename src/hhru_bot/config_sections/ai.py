@@ -12,19 +12,16 @@
 API-ключ намеренно НЕ парсится из yaml. Credentials и provider fallback
 настраиваются и хранятся только Hermes; hhru не читает и не изменяет их.
 Наличие секции ``ai`` включает AI-функциональность (letters/scoring); поля
-``provider``/``model``/``base_url`` больше НЕ управляют маршрутизацией
-(Responses API через ``hermes-agent-axisrow``, issue #230) — они остались
-как устаревшая метаданная и, если заданы, выдают deprecation-warning.
+``provider``/``model``/``base_url`` устарели (issue #230) и НЕ управляют
+маршрутизацией — при их задании парсер падает fail-closed, чтобы оператор
+явно мигрировал, а не молча отправлял промпты через неожиданный маршрут.
 """
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 
 from ..config import ConfigError
-
-logger = logging.getLogger("hhru_bot.config_sections.ai")
 
 
 @dataclass(frozen=True)
@@ -44,6 +41,9 @@ class AiConfig:
     base_url: str | None = None
 
 
+_LEGACY_ROUTING_FIELDS = ("provider", "model", "base_url")
+
+
 def _opt_str(mapping: dict, key: str, context: str) -> str | None:
     value = mapping.get(key)
     if value is None:
@@ -60,24 +60,27 @@ def parse_ai(raw, context: str) -> AiConfig | None:
 
     ``context`` — строка для диагностики ошибок (обычно 'ai').
 
-    Поля больше не обязательны (issue #230): секция только включает AI, а
-    маршрутизацию/credentials ведёт Hermes. Если оператор всё ещё задал
-    ``provider``/``model``/``base_url`` — предупреждаем, что они игнорируются.
+    Поля устарели (issue #230): маршрутизацию/credentials ведёт Hermes, секция
+    лишь включает AI. Если оператор всё ещё задал ``provider``/``model``/
+    ``base_url`` — падаем fail-closed с инструкцией по миграции (иначе молча
+    ушёл бы трафик через неожиданный провайдер/аккаунт).
     """
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise ConfigError(f"Секция '{context}' должна быть отображением")
+    legacy = [k for k in _LEGACY_ROUTING_FIELDS if k in raw and raw[k] is not None]
+    if legacy:
+        names = ", ".join(f"ai.{k}" for k in legacy)
+        raise ConfigError(
+            f"Поля {names} устарели (issue #230) и больше НЕ управляют маршрутизацией: "
+            "provider/model/credentials ведёт hermes-agent-axisrow из ~/.hermes. "
+            "Удалите эти поля и оставьте пустую секцию 'ai' (или 'ai: {}'), чтобы "
+            "включить AI-функциональность."
+        )
     provider = _opt_str(raw, "provider", context)
     model = _opt_str(raw, "model", context)
     base_url = _opt_str(raw, "base_url", context)
-    if any(v is not None for v in (provider, model, base_url)):
-        logger.warning(
-            "Секция 'ai' задаёт provider/model/base_url — они устарели (issue #230) "
-            "и больше НЕ управляют маршрутизацией: provider/model/credentials ведёт "
-            "hermes-agent-axisrow из ~/.hermes. Достаточно пустой секции 'ai' для "
-            "включения AI-функциональности."
-        )
     return AiConfig(provider=provider, model=model, base_url=base_url)
 
 

@@ -642,22 +642,16 @@ def test_parse_ai_absent_returns_none():
     assert parse_ai(None, "ai") is None
 
 
-def test_parse_ai_deprecated_fields_still_accepted_with_warning(caplog):
-    import logging
-
-    cfg = parse_ai(
-        {"provider": "openai", "model": "gpt-4o", "base_url": "https://api.openai.com/v1"},
-        "ai",
-    )
-    assert cfg is not None
-    assert cfg.provider == "openai"
-    assert cfg.model == "gpt-4o"
-    assert cfg.base_url == "https://api.openai.com/v1"
-    with caplog.at_level(logging.WARNING, logger="hhru_bot.config_sections.ai"):
-        assert any("устарели" in r.message for r in caplog.records)
+def test_parse_ai_legacy_routing_fields_fail_closed():
+    # Issue #230: legacy provider/model/base_url не констрейнят маршрут —
+    # при их задании парсер падает, чтобы оператор явно мигрировал.
+    with pytest.raises(ConfigError, match="устарели"):
+        parse_ai(
+            {"provider": "openai", "model": "gpt-4o", "base_url": "https://api.openai.com/v1"},
+            "ai",
+        )
 
 
-def test_parse_ai_wrong_type_field_raises():
-    # Непустое поле не-строкового типа по-прежнему валидируется.
-    with pytest.raises(ConfigError, match="provider"):
-        parse_ai({"provider": 123}, "ai")
+def test_parse_ai_legacy_single_field_fail_closed():
+    with pytest.raises(ConfigError, match="ai.model"):
+        parse_ai({"model": "gpt-4o"}, "ai")

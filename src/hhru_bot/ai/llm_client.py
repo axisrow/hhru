@@ -119,7 +119,7 @@ def _normalize_response(
     finish_reason = _fr or "stop"
 
     tool_calls = None
-    if msg.tool_calls:
+    if getattr(msg, "tool_calls", None):
         tool_calls = []
         for tc in msg.tool_calls:
             tool_calls.append(
@@ -158,7 +158,7 @@ def _normalize_response(
     # Structured-refusal: пустой content + refusal → content_filter, чтобы
     # отказ модели не выглядел как «пустой успешный ответ» (потребители
     # letters/scoring отличают пустой контент и уходят в fallback).
-    content = msg.content
+    content = getattr(msg, "content", None)
     refusal = getattr(msg, "refusal", None)
     if refusal is None and hasattr(msg, "model_extra"):
         _msg_extra = getattr(msg, "model_extra", None) or {}

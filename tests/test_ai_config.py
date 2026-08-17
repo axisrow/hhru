@@ -26,6 +26,7 @@ def _write(tmp_path, body: str):
 
 
 def test_ai_section_parsed(tmp_path):
+    """Issue #230: пустая секция ai включает AI (AiConfig без полей)."""
     path = _write(
         tmp_path,
         """
@@ -36,17 +37,14 @@ def test_ai_section_parsed(tmp_path):
             resume_url: "https://hh.ru/resume/AAA111"
             search:
               text: "python"
-        ai:
-          provider: openai
-          model: gpt-4o
-          base_url: https://api.openai.com/v1
+        ai: {}
         """,
     )
     config = load_config(path)
     assert isinstance(config.ai, AiConfig)
-    assert config.ai.provider == "openai"
-    assert config.ai.model == "gpt-4o"
-    assert config.ai.base_url == "https://api.openai.com/v1"
+    assert config.ai.provider is None
+    assert config.ai.model is None
+    assert config.ai.base_url is None
 
 
 def test_ai_section_optional_defaults_to_none(tmp_path):
@@ -67,10 +65,10 @@ def test_ai_section_optional_defaults_to_none(tmp_path):
     assert config.ai is None
 
 
-def test_ai_section_missing_model_is_none(tmp_path):
-    """Issue #230: поля больше не обязательны; отсутствующее → None (не ошибка).
+def test_ai_section_legacy_routing_fields_fail_closed(tmp_path):
+    """Issue #230: legacy provider/model/base_url не констрейнят маршрут → ошибка.
 
-    Маршрутизацию ведёт hermes-agent-axisrow; секция ai лишь включает AI.
+    Маршрутизацию ведёт hermes-agent-axisrow; оператор обязан явно мигрировать.
     """
     path = _write(
         tmp_path,
@@ -87,11 +85,8 @@ def test_ai_section_missing_model_is_none(tmp_path):
           base_url: https://api.openai.com/v1
         """,
     )
-    config = load_config(path)
-    assert config.ai is not None
-    assert config.ai.provider == "openai"
-    assert config.ai.model is None
-    assert config.ai.base_url == "https://api.openai.com/v1"
+    with pytest.raises(ConfigError, match="устарели"):
+        load_config(path)
 
 
 def test_ai_section_non_mapping_raises(tmp_path):
@@ -113,7 +108,7 @@ def test_ai_section_non_mapping_raises(tmp_path):
 
 
 def test_ai_api_key_not_parsed_from_yaml(tmp_path):
-    """api_key в yaml намеренно НЕ читается (только env) — поля api_key в AiConfig нет."""
+    """api_key в yaml не читается — и не триггерит fail-closed (это не legacy routing)."""
     path = _write(
         tmp_path,
         """
@@ -125,9 +120,6 @@ def test_ai_api_key_not_parsed_from_yaml(tmp_path):
             search:
               text: "python"
         ai:
-          provider: openai
-          model: gpt-4o
-          base_url: https://api.openai.com/v1
           api_key: sk-should-be-ignored
         """,
     )
@@ -137,8 +129,8 @@ def test_ai_api_key_not_parsed_from_yaml(tmp_path):
     assert {f.name for f in fields(config.ai)} == {"provider", "model", "base_url"}
 
 
-def test_ai_section_empty_value_raises(tmp_path):
-    """Пустая строка в обязательном поле — ConfigError (а не тихая пустота)."""
+def test_ai_section_empty_value_is_legacy_fail_closed(tmp_path):
+    """Пустая строка в legacy-поле — fail-closed (это задание устаревшего поля)."""
     path = _write(
         tmp_path,
         """
@@ -151,9 +143,7 @@ def test_ai_section_empty_value_raises(tmp_path):
               text: "python"
         ai:
           provider: ""
-          model: gpt-4o
-          base_url: https://api.openai.com/v1
         """,
     )
-    with pytest.raises(ConfigError, match="непустой строкой"):
+    with pytest.raises(ConfigError, match="устарели"):
         load_config(path)
