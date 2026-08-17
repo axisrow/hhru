@@ -27,9 +27,7 @@ logger = logging.getLogger("hhru_bot.apply.dedup")
 _VISIBILITY_CHECK_TIMEOUT_MS = 1_500
 
 
-def check_already_responded(
-    page: Page, vacancy: VacancyCard, *, blocking: bool = True
-) -> str | None:
+def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
     """Возвращает причину отказа, если вакансия уже откликнута.
 
     Дедупликация идёт через history.has_applied() в filter_candidates() (см.
@@ -44,23 +42,26 @@ def check_already_responded(
     или устаревшая SPA-копия маркера, засчитанная как attached, дала бы
     ложноположительный и практически необратимый пропуск валидной вакансии.
 
-    #241 cycle-review round 1 (codex): blocking=True (по умолчанию, ветка
-    "кнопка не найдена" в pipeline._run) ждёт видимость с полным таймаутом —
-    транзитное SPA-состояние ещё может дорендерить маркер. blocking=False
-    (ветка "кнопка уже подтверждена wait_apply_button") проверяет видимость
-    БЕЗ ожидания: комбинированный wait_for в wait_apply_button уже дождался
-    отрисовки DOM, повторный полный таймаут на каждой обычной вакансии (до
-    2 x _VISIBILITY_CHECK_TIMEOUT_MS) был чистым оверхедом на happy path.
+    #241 cycle-review round 1 (codex): пробовали пропускать блокирующее ожидание,
+    когда кнопка отклика уже найдена (timeout=0 при apply_button_found=True) —
+    round 2 отклонил это ДВАЖДЫ: (1) codex — комбинированный wait_apply_button
+    доказывает лишь то, что маркер не виден В МОМЕНТ проверки, а не то, что он не
+    отрендерится следом (та же transitional SPA-гонка из #241, теперь непойманная);
+    (2) /review — Playwright timeout=0 означает "отключить таймаут" (ждать
+    бесконечно), а НЕ "мгновенная проверка" — happy-path завис бы навсегда.
+    Блокирующее ожидание с полным таймаутом сохранено безусловно; экономия
+    времени на happy path не стоит риска дублирующего отклика или зависания.
     """
     from ..selector_groups import vacancy_page
 
-    timeout = _VISIBILITY_CHECK_TIMEOUT_MS if blocking else 0
     for selector in (
         vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN,
         vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT,
     ):
         try:
-            page.locator(selector).first.wait_for(state="visible", timeout=timeout)
+            page.locator(selector).first.wait_for(
+                state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
+            )
         except PlaywrightError:
             continue
         reason = f"уже откликались по вакансии {vacancy.vacancy_id}, пропуск"
