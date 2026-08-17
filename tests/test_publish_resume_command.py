@@ -131,6 +131,33 @@ def test_run_refuses_retry_after_unresolved_uncertain_without_touching_browser(
     assert browser_called is False
 
 
+def test_run_still_refuses_after_intervening_failed_row(env, capsys, tmp_path):
+    # /review-раунд 3 (#219): last_action_status читал только САМУЮ СВЕЖУЮ
+    # запись — промежуточный failed (например NotAuthenticated при повторной
+    # попытке, случившийся ДО клика) стирал бы блокировку от старого
+    # неразрешённого uncertain, хотя реальная публикация так и осталась
+    # неподтверждённой. has_unresolved_uncertain смотрит на всю историю
+    # после последнего success, а не только на последнюю строку.
+    h = History(tmp_path / "h.db")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "uncertain", "прошлая попытка")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "failed", "сессия истекла")
+    browser_called = False
+
+    @contextmanager
+    def fail_if_called(*a, **kw):
+        nonlocal browser_called
+        browser_called = True
+        yield SimpleNamespace(new_page=lambda: SimpleNamespace())
+
+    import hhru_bot.browser as browser_mod
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(browser_mod, "launch_context", fail_if_called)
+        with pytest.raises(SystemExit):
+            cmd.run(_args(tmp_path, force=True))
+    assert browser_called is False
+
+
 def test_run_allows_retry_after_resolved_success(env, capsys, tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "uncertain", "прошлая попытка")

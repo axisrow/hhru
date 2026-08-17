@@ -39,10 +39,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     history = History(args.history)
-    if (
-        not args.dry_run
-        and history.last_action_status(resume.resume_id, "publish_resume") == "uncertain"
-    ):
+    if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, "publish_resume"):
         print(
             f"[FAIL] {resume.id} — предыдущая публикация не подтверждена (uncertain). "
             "Проверьте статус резюме на hh.ru вручную перед повтором."
