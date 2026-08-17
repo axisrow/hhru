@@ -45,6 +45,7 @@ class PublishResumeResult:
     reason: str = ""
     status: str | None = None
     is_searchable: bool | None = None
+    uncertain: bool = False
 
 
 def _walk_json(value):
@@ -184,12 +185,18 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
     try:
         publish.first.click(timeout=PUBLISH_TIMEOUT_MS)
     except PlaywrightError as exc:
+        # #219 (по аналогии с #176/#207): клик мог уйти на hh.ru раньше, чем
+        # Playwright поднял исключение (например, обрыв во время ожидания
+        # реакции на клик) — обычный failed скрыл бы состоявшуюся публикацию
+        # и позволил бы пользователю бездумно повторить --force. Fail-closed:
+        # это uncertain, не failed.
         return PublishResumeResult(
             resume.id,
             False,
             f"ошибка клика; результат не подтверждён: {exc}",
             state.status,
             state.is_searchable,
+            uncertain=True,
         )
     # Позитивный сигнал обязателен: после клика ждём server/client state, а не
     # выводим успех из исчезновения кнопки или отсутствия ошибки.
@@ -200,7 +207,10 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             after = parse_resume_state(page.content(), resume.resume_id)
         except PlaywrightError as exc:
             return PublishResumeResult(
-                resume.id, False, f"результат публикации не подтверждён: {exc}"
+                resume.id,
+                False,
+                f"результат публикации не подтверждён: {exc}",
+                uncertain=True,
             )
         if after.status == "finished":
             break
@@ -208,7 +218,10 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             page.wait_for_timeout(250)
         except PlaywrightError as exc:
             return PublishResumeResult(
-                resume.id, False, f"результат публикации не подтверждён: {exc}"
+                resume.id,
+                False,
+                f"результат публикации не подтверждён: {exc}",
+                uncertain=True,
             )
     if after.status != "finished":
         # The SPA can keep the original SSR bootstrap snapshot after the write.
@@ -217,19 +230,29 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             page.reload(wait_until="domcontentloaded")
             if not _identity_matches(page, resume.resume_id):
                 return PublishResumeResult(
-                    resume.id, False, "identity резюме после публикации не подтверждён"
+                    resume.id,
+                    False,
+                    "identity резюме после публикации не подтверждён",
+                    uncertain=True,
                 )
             after = parse_resume_state(page.content(), resume.resume_id)
         except PlaywrightError as exc:
             return PublishResumeResult(
-                resume.id, False, f"результат публикации не подтверждён: {exc}"
+                resume.id,
+                False,
+                f"результат публикации не подтверждён: {exc}",
+                uncertain=True,
             )
     if after.status != "finished":
+        # Клик состоялся, сервер опрошен (включая reload), но подтверждения
+        # нет — это тоже серая зона, не чистый failed: локальный таймаут не
+        # доказывает отсутствие публикации на стороне hh.ru.
         return PublishResumeResult(
             resume.id,
             False,
             "публикация не подтверждена позитивным сигналом",
             after.status,
             after.is_searchable,
+            uncertain=True,
         )
     return PublishResumeResult(resume.id, True, "опубликовано", after.status, after.is_searchable)

@@ -24,7 +24,9 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
+    from ..history import History
     from ..publish_resume import publish_resume_on_hh
+    from ..responses import NotAuthenticated
 
     config = load_config_or_exit(args.config)
     try:
@@ -36,13 +38,29 @@ def run(args: argparse.Namespace) -> None:
         print("[FAIL] Боевой режим требует --force. Ничего не нажато.")
         sys.exit(1)
 
-    with launch_context(
-        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-    ) as context:
-        result = publish_resume_on_hh(context.new_page(), resume, args.dry_run)
+    history = History(args.history)
+    try:
+        with launch_context(
+            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        ) as context:
+            result = publish_resume_on_hh(context.new_page(), resume, args.dry_run)
+    except NotAuthenticated as exc:
+        if not args.dry_run:
+            history.record_action(
+                resume.resume_id, resume.resume_id, "publish_resume", "failed", str(exc)
+            )
+        print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
+        sys.exit(1)
+
+    if not args.dry_run:
+        status = "uncertain" if result.uncertain else ("success" if result.success else "failed")
+        history.record_action(
+            resume.resume_id, resume.resume_id, "publish_resume", status, result.reason
+        )
 
     if not result.success:
-        print(f"[FAIL] {resume.id} — {result.reason}")
+        prefix = "[FAIL]" if not result.uncertain else "[FAIL] (uncertain)"
+        print(f"{prefix} {resume.id} — {result.reason}")
         sys.exit(1)
     if args.dry_run:
         print(f"[DRY-RUN] Резюме {resume.id}: {result.reason}")

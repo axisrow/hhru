@@ -1,4 +1,5 @@
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.publish_resume as publish
 from hhru_bot.config import ResumeConfig, SearchFilters
@@ -39,7 +40,11 @@ class _Locator:
         return "Изменить видимость"
 
     def or_(self, other):
-        return _Locator(self.page, max(self._count, other._count))
+        # Real Playwright's .or_() keeps clicking the actual matched element —
+        # preserve the concrete locator type so error-injecting subclasses
+        # (e.g. _ErrorLocator) aren't silently swapped for a plain _Locator.
+        winner = self if self._count >= other._count else other
+        return type(winner)(self.page, max(self._count, other._count))
 
 
 class _Page:
@@ -171,6 +176,10 @@ def test_publish_requires_positive_finished_signal(monkeypatch):
     assert not result.success
     assert "не подтверждена" in result.reason
     assert page.clicked == 1
+    # #219 (по аналогии с #176/#207): клик состоялся, но подтверждения нет —
+    # это серая зона, не обычный failed, иначе пользователь может бездумно
+    # повторить --force поверх уже состоявшейся публикации.
+    assert result.uncertain is True
 
 
 def test_publish_succeeds_only_after_finished_signal(monkeypatch):
@@ -178,3 +187,29 @@ def test_publish_succeeds_only_after_finished_signal(monkeypatch):
     result = _run(page, monkeypatch)
     assert result.success
     assert page.clicked == 1
+    assert result.uncertain is False
+
+
+def test_publish_marks_uncertain_on_click_error(monkeypatch):
+    class _ErrorLocator(_Locator):
+        def click(self, timeout=None):
+            raise PlaywrightError("navigation interrupted")
+
+    class _ErrorPage(_Page):
+        def locator(self, selector):
+            if "Опубликовать" in selector or "resume-publish" in selector:
+                return _ErrorLocator(self, self.publish_count)
+            return _Locator(self, 0)
+
+    page = _ErrorPage(_markup())
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert result.uncertain is True
+    assert "ошибка клика" in result.reason
+
+
+def test_publish_pre_click_rejection_is_not_uncertain(monkeypatch):
+    page = _Page(_markup(status="finished"))
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert result.uncertain is False
