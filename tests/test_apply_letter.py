@@ -158,15 +158,34 @@ def test_ai_provider_empty_response_falls_back_to_template():
     assert outcome.text == "Шаблон: Dev"
 
 
-def test_ai_provider_refusal_falls_back_not_sent_to_employer():
-    # Регрессия #230: structured-refusal не должен уйти работодателю как письмо.
-    # Нормализатор держит отказ ВНЕ content (content пуст), поэтому провайдер
-    # письма видит «нет контента» и откатывается на шаблон, а не шлёт отказ.
+def _normalized_llm_outcome(chat_response, title="Dev"):
+    """Пропустить ответ через реальный нормализатор и отрендерить письмо.
+
+    end-to-end #230: форма ответа Hermes → _normalize_response →
+    AICoverLetterProvider. Если нормализатор оставит отказ/фильтрацию в content,
+    провайдер увидит непустой текст и отправит его работодателю — тест это ловит.
+    """
     from hhru_bot.ai.letters import AICoverLetterProvider
     from hhru_bot.ai.llm_client import _normalize_response
 
-    # Минимальный chat-подобный ответ с одним structured-refusal (как из Hermes).
-    refusal_response = SimpleNamespace(
+    normalized = _normalize_response(chat_response)
+
+    class _NormalizedLLM:
+        def chat(self, messages, **params):  # noqa: ARG002
+            return normalized
+
+    provider = AICoverLetterProvider(
+        llm_client=_NormalizedLLM(),
+        resume_profile=None,
+        fallback_template="Шаблон: {vacancy_title}",
+    )
+    return provider.render(_card(title, "Acme"), resume_profile=None)
+
+
+def test_ai_provider_refusal_falls_back_not_sent_to_employer():
+    # Регрессия #230: structured-refusal (пустой content + refusal) не должен уйти
+    # работодателю как письмо. Нормализатор держит отказ ВНЕ content → fallback.
+    chat = SimpleNamespace(
         choices=[
             SimpleNamespace(
                 message=SimpleNamespace(content=None, refusal="не могу написать письмо"),
@@ -174,18 +193,38 @@ def test_ai_provider_refusal_falls_back_not_sent_to_employer():
             )
         ]
     )
-    normalized = _normalize_response(refusal_response)
+    outcome = _normalized_llm_outcome(chat)
+    assert outcome.variant == "ai_fallback"
+    assert "не могу" not in outcome.text
 
-    class _RefusalLLM:
-        def chat(self, messages, **params):  # noqa: ARG002
-            return normalized
 
-    provider = AICoverLetterProvider(
-        llm_client=_RefusalLLM(),
-        resume_profile=None,
-        fallback_template="Шаблон: {vacancy_title}",
+def test_ai_provider_content_filter_with_text_falls_back_not_sent():
+    # content_filter с непустым текстом → нормализатор очищает content → fallback,
+    # а не отправка частичного отфильтрованного текста работодателю (#230).
+    chat = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="частичный отфильтрованный текст", refusal=None),
+                finish_reason="content_filter",
+            )
+        ]
     )
-    outcome = provider.render(_card("Dev", "Acme"), resume_profile=None)
+    outcome = _normalized_llm_outcome(chat)
+    assert outcome.variant == "ai_fallback"
+    assert "отфильтрованный" not in outcome.text
+
+
+def test_ai_provider_mixed_content_and_refusal_falls_back_not_sent():
+    # content + refusal вместе — тоже отказ: нормализатор очищает content → fallback.
+    chat = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="некий текст", refusal="не могу помочь"),
+                finish_reason="stop",
+            )
+        ]
+    )
+    outcome = _normalized_llm_outcome(chat)
     assert outcome.variant == "ai_fallback"
     assert "не могу" not in outcome.text
 

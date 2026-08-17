@@ -163,6 +163,24 @@ def test_normalize_refusal_keeps_content_empty_and_marks_content_filter():
     assert nr.provider_data["refusal"] == "не могу помочь"
 
 
+def test_normalize_content_filter_with_text_clears_content():
+    # content_filter с непустым текстом — это отфильтрованный/частичный ответ:
+    # контент очищается, чтобы письмо не ушло работодателю (#230).
+    nr = _normalize_response(
+        _response(content="частичный отфильтрованный текст", finish_reason="content_filter")
+    )
+    assert nr.content is None
+    assert nr.finish_reason == "content_filter"
+
+
+def test_normalize_mixed_content_and_refusal_clears_content():
+    # content + refusal вместе — тоже отказ: контент очищается (fail-closed) (#230).
+    nr = _normalize_response(_response(content="некий текст", refusal="не могу помочь"))
+    assert nr.content is None
+    assert nr.finish_reason == "content_filter"
+    assert nr.provider_data["refusal"] == "не могу помочь"
+
+
 def test_normalize_reasoning_content_and_route_metadata():
     resp = _response(content="x")
     resp.choices[0].message.reasoning_content = "мысли..."
