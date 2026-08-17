@@ -101,6 +101,54 @@ def test_run_uncertain_result_records_uncertain_and_fails(env, capsys, tmp_path)
     assert h.count_today(RESUME_ID, "publish_resume") == 1
 
 
+def test_run_refuses_retry_after_unresolved_uncertain_without_touching_browser(
+    env, capsys, tmp_path
+):
+    # Codex-раунд 2 (#219): uncertain писался в history, но следующий запуск
+    # никак его не учитывал и мог дойти до нового клика на основе свежего
+    # (возможно устаревшего сразу после мутации) live-статуса резюме.
+    # Fail-closed: неразрешённый uncertain блокирует live-клик до ручной
+    # проверки, браузер вообще не запускается.
+    h = History(tmp_path / "h.db")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "uncertain", "прошлая попытка")
+    browser_called = False
+
+    @contextmanager
+    def fail_if_called(*a, **kw):
+        nonlocal browser_called
+        browser_called = True
+        yield SimpleNamespace(new_page=lambda: SimpleNamespace())
+
+    import hhru_bot.browser as browser_mod
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(browser_mod, "launch_context", fail_if_called)
+        with pytest.raises(SystemExit):
+            cmd.run(_args(tmp_path, force=True))
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "не подтверждена" in out
+    assert browser_called is False
+
+
+def test_run_allows_retry_after_resolved_success(env, capsys, tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "uncertain", "прошлая попытка")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "success", "опубликовано вручную")
+    cmd.run(_args(tmp_path, force=True))
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+
+
+def test_run_dry_run_bypasses_uncertain_guard(env, capsys, tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action(RESUME_ID, RESUME_ID, "publish_resume", "uncertain", "прошлая попытка")
+    env.result = PublishResumeResult("python", True, "dry-run; кнопка не нажата", "not_finished")
+    cmd.run(_args(tmp_path, dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out
+
+
 def test_run_plain_failure_does_not_count_toward_limit(env, capsys, tmp_path):
     env.result = PublishResumeResult("python", False, "кнопка не найдена")
     with pytest.raises(SystemExit):

@@ -395,6 +395,25 @@ class History:
             return None
         return datetime.now() - last
 
+    def last_action_status(self, resume_id: str, action: str) -> str | None:
+        """Status of the most recent ``action`` row for ``resume_id``, or None.
+
+        Unlike :meth:`last_action_at`, this is not filtered to success/uncertain —
+        callers that need to distinguish an unresolved 'uncertain' attempt from a
+        confirmed 'success' or an inert 'failed'/'dry_run' read the raw status.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status FROM actions
+                WHERE resume_id = ? AND action = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (resume_id, action),
+            ).fetchone()
+            return row["status"] if row else None
+
     # --- Агрегаты для команды stats (#11) -------------------------------------
     # Новые методы в конец файла: паттерн with self._connect(), существующие
     # методы не трогаем. summary/list_actions считают ВСЕ строки (success/
