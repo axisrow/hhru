@@ -36,6 +36,7 @@ class ResumePublishState:
     status: str | None = None
     is_searchable: bool | None = None
     can_publish_or_update: bool | None = None
+    next_incomplete_screen_id: str | None = None
 
 
 @dataclass
@@ -46,6 +47,17 @@ class PublishResumeResult:
     status: str | None = None
     is_searchable: bool | None = None
     uncertain: bool = False
+
+
+def _is_published(state: ResumePublishState) -> bool:
+    """Return the positive live signal for a published hh.ru resume.
+
+    hh.ru currently uses several ``status`` values (including ``new``,
+    ``approved`` and ``modified``) for searchable resumes.  The stable
+    publication signal is therefore ``isSearchable=True``; ``finished`` is
+    retained for compatibility with the original state contract.
+    """
+    return state.is_searchable is True or state.status == "finished"
 
 
 def _walk_json(value):
@@ -78,25 +90,39 @@ def parse_resume_state(markup: str, resume_id: str | None = None) -> ResumePubli
                 identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
                 if resume_id not in identifiers:
                     continue
-                return _state_from_mapping(record)
+                # hh.ru keeps the wizard's ``scheme`` next to the resume
+                # record, rather than inside it.  It is still page-scoped and
+                # therefore safe to attach only after the target identity was
+                # found in this JSON document.
+                scheme = candidate.get("scheme") if isinstance(candidate, dict) else None
+                return _state_from_mapping(record, scheme)
         return ResumePublishState()
 
     return _state_from_regex(markup)
 
 
-def _state_from_mapping(record: dict) -> ResumePublishState:
+def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePublishState:
     """Read only fields belonging to one structured record."""
+    next_incomplete = record.get("nextIncompleteScreenId")
+    if next_incomplete is None and isinstance(scheme, dict):
+        next_incomplete = scheme.get("nextIncompleteScreenId")
     return ResumePublishState(
         status=record.get("status"),
         is_searchable=record.get("isSearchable"),
         can_publish_or_update=record.get("canPublishOrUpdate"),
+        next_incomplete_screen_id=next_incomplete,
     )
 
 
 def _state_from_regex(markup: str) -> ResumePublishState:
     """Fixture-friendly fallback when no record identity is available."""
     state = ResumePublishState()
-    for field in ("status", "isSearchable", "canPublishOrUpdate"):
+    for field in (
+        "status",
+        "isSearchable",
+        "canPublishOrUpdate",
+        "nextIncompleteScreenId",
+    ):
         match = re.search(rf'"{field}"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)', markup)
         if not match:
             continue
@@ -106,8 +132,10 @@ def _state_from_regex(markup: str) -> ResumePublishState:
             state.status = value
         elif field == "isSearchable":
             state.is_searchable = value
-        else:
+        elif field == "canPublishOrUpdate":
             state.can_publish_or_update = value
+        else:
+            state.next_incomplete_screen_id = value
     return state
 
 
@@ -143,11 +171,30 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
             state.status,
             state.is_searchable,
         )
-    if state.status != "not_finished":
-        reason = (
-            "резюме уже опубликовано" if state.status == "finished" else f"status={state.status}"
+    if _is_published(state):
+        return PublishResumeResult(
+            resume.id,
+            False,
+            "резюме уже опубликовано",
+            state.status,
+            state.is_searchable,
         )
+    if state.status != "not_finished":
+        reason = f"status={state.status}"
         return PublishResumeResult(resume.id, False, reason, state.status, state.is_searchable)
+    # fail-closed (#225): незавершённый шаг блокирует клик независимо от
+    # canPublishOrUpdate. hh.ru может отдать nextIncompleteScreenId вместе с
+    # canPublishOrUpdate=True (или они разойдутся при SPA-гидратации), и тогда
+    # обход guard ниже позволил бы клик по неполному резюме. Не угадываем кнопку.
+    if state.next_incomplete_screen_id:
+        return PublishResumeResult(
+            resume.id,
+            False,
+            f"незавершённый шаг "
+            f"nextIncompleteScreenId={state.next_incomplete_screen_id}; клик запрещён",
+            state.status,
+            state.is_searchable,
+        )
     if state.can_publish_or_update is not True:
         return PublishResumeResult(
             resume.id,
@@ -169,9 +216,11 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         return PublishResumeResult(
             resume.id,
             False,
-            "кнопка «Опубликовать» не найдена"
-            if count == 0
-            else f"кнопка «Опубликовать» определяется неоднозначно ({count}) — клик запрещён",
+            (
+                "кнопка «Опубликовать» не найдена"
+                if count == 0
+                else f"кнопка «Опубликовать» определяется неоднозначно ({count}) — клик запрещён"
+            ),
             state.status,
             state.is_searchable,
         )
@@ -212,7 +261,7 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                 f"результат публикации не подтверждён: {exc}",
                 uncertain=True,
             )
-        if after.status == "finished":
+        if _is_published(after):
             break
         try:
             page.wait_for_timeout(250)
@@ -223,7 +272,7 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                 f"результат публикации не подтверждён: {exc}",
                 uncertain=True,
             )
-    if after.status != "finished":
+    if not _is_published(after):
         # The SPA can keep the original SSR bootstrap snapshot after the write.
         # One read-only reload revalidates server state before we report failure.
         try:
@@ -243,7 +292,7 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                 f"результат публикации не подтверждён: {exc}",
                 uncertain=True,
             )
-    if after.status != "finished":
+    if not _is_published(after):
         # Клик состоялся, сервер опрошен (включая reload), но подтверждения
         # нет — это тоже серая зона, не чистый failed: локальный таймаут не
         # доказывает отсутствие публикации на стороне hh.ru.

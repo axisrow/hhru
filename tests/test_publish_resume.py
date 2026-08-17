@@ -50,7 +50,7 @@ class _Locator:
 class _Page:
     def __init__(self, markup, publish_count=1):
         self.markup = markup
-        self.after_markup = markup.replace('"status":"not_finished"', '"status":"finished"')
+        self.after_markup = _markup(status="new", isSearchable=True)
         self.publish_count = publish_count
         self.clicked = 0
         self.reloaded = 0
@@ -93,11 +93,13 @@ def _run(page, monkeypatch, *, preserve_url=False):
 
 def test_parse_resume_state_keeps_independent_fields():
     state = parse_resume_state(
-        '{"status":"not_finished","isSearchable":false,"canPublishOrUpdate":true}'
+        '{"status":"not_finished","isSearchable":false,"canPublishOrUpdate":true,'
+        '"nextIncompleteScreenId":"professional_role"}'
     )
     assert state.status == "not_finished"
     assert state.is_searchable is False
     assert state.can_publish_or_update is True
+    assert state.next_incomplete_screen_id == "professional_role"
 
 
 def test_parse_resume_state_does_not_guess_missing_values():
@@ -105,6 +107,7 @@ def test_parse_resume_state_does_not_guess_missing_values():
     assert state.status == "not_finished"
     assert state.is_searchable is None
     assert state.can_publish_or_update is None
+    assert state.next_incomplete_screen_id is None
 
 
 def test_parse_resume_state_binds_all_fields_to_target_record():
@@ -118,6 +121,16 @@ def test_parse_resume_state_binds_all_fields_to_target_record():
     assert state.status == "finished"
     assert state.is_searchable is False
     assert state.can_publish_or_update is False
+
+
+def test_parse_resume_state_reads_page_scoped_incomplete_screen_for_target():
+    markup = (
+        '{"scheme":{"nextIncompleteScreenId":"professional_role"},'
+        f'"resume":{{"hash":"{RESUME_ID}","status":"not_finished",'
+        '"isSearchable":false,"canPublishOrUpdate":false}}}'
+    )
+    state = parse_resume_state(markup, RESUME_ID)
+    assert state.next_incomplete_screen_id == "professional_role"
 
 
 def test_publish_rejects_identity_mismatch_before_button_lookup(monkeypatch):
@@ -143,11 +156,35 @@ def test_publish_rejects_finished_resume_and_does_not_click(monkeypatch):
     assert page.clicked == 0
 
 
+@pytest.mark.parametrize("status", ["new", "approved", "modified"])
+def test_publish_rejects_any_searchable_resume_and_does_not_click(monkeypatch, status):
+    page = _Page(_markup(status=status, isSearchable=True, canPublishOrUpdate=False))
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert result.reason == "резюме уже опубликовано"
+    assert page.clicked == 0
+
+
 def test_publish_rejects_can_publish_false(monkeypatch):
     page = _Page(_markup(canPublishOrUpdate=False))
     result = _run(page, monkeypatch)
     assert not result.success
     assert "canPublishOrUpdate=False" in result.reason
+    assert page.clicked == 0
+
+
+@pytest.mark.parametrize("can_publish", [True, False])
+def test_publish_rejects_any_incomplete_screen_before_click(monkeypatch, can_publish):
+    # fail-closed инвариант из cli-spec: наличие nextIncompleteScreenId
+    # блокирует клик независимо от canPublishOrUpdate — иначе рассинхрон
+    # (True + незавершённый шаг) дал бы клик по неполному резюме.
+    page = _Page(
+        _markup(canPublishOrUpdate=can_publish)[:-1]
+        + ',"nextIncompleteScreenId":"professional_role"}'
+    )
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert "nextIncompleteScreenId=professional_role" in result.reason
     assert page.clicked == 0
 
 
@@ -170,7 +207,7 @@ def test_publish_dry_run_never_clicks(monkeypatch):
 
 def test_publish_requires_positive_finished_signal(monkeypatch):
     page = _Page(_markup())
-    page.after_markup = _markup(status="not_finished")
+    page.after_markup = _markup(status="not_finished", isSearchable=False)
     monkeypatch.setattr(publish, "PUBLISH_TIMEOUT_MS", 1)
     result = _run(page, monkeypatch)
     assert not result.success
@@ -182,7 +219,7 @@ def test_publish_requires_positive_finished_signal(monkeypatch):
     assert result.uncertain is True
 
 
-def test_publish_succeeds_only_after_finished_signal(monkeypatch):
+def test_publish_succeeds_only_after_searchable_signal(monkeypatch):
     page = _Page(_markup())
     result = _run(page, monkeypatch)
     assert result.success
