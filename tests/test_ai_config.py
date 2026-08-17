@@ -67,7 +67,11 @@ def test_ai_section_optional_defaults_to_none(tmp_path):
     assert config.ai is None
 
 
-def test_ai_section_missing_model_raises(tmp_path):
+def test_ai_section_missing_model_is_none(tmp_path):
+    """Issue #230: поля больше не обязательны; отсутствующее → None (не ошибка).
+
+    Маршрутизацию ведёт hermes-agent-axisrow; секция ai лишь включает AI.
+    """
     path = _write(
         tmp_path,
         """
@@ -83,8 +87,11 @@ def test_ai_section_missing_model_raises(tmp_path):
           base_url: https://api.openai.com/v1
         """,
     )
-    with pytest.raises(ConfigError, match="model"):
-        load_config(path)
+    config = load_config(path)
+    assert config.ai is not None
+    assert config.ai.provider == "openai"
+    assert config.ai.model is None
+    assert config.ai.base_url == "https://api.openai.com/v1"
 
 
 def test_ai_section_non_mapping_raises(tmp_path):
