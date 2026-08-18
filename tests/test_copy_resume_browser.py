@@ -259,7 +259,7 @@ def test_dry_run_does_not_click(monkeypatch):
 def test_goto_hh_ready_selector_and_login_check_order(monkeypatch):
     """#153: auth probe is fast, then fallback waits for rendered cards (#142)."""
     page = StubPage(
-        url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
     )
     _patch_env(monkeypatch, page)
     page.events = []
@@ -617,18 +617,36 @@ def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
 
 
-def test_url_shows_old_id_falls_back_to_list_diff(monkeypatch):
-    # Навигация привела на URL исходного резюме — новый id берём из diff списка.
+def test_url_shows_old_id_without_candidate_fails_closed(monkeypatch):
+    # Навигация привела на URL исходного резюме — url_candidate пуст. Без
+    # identity-bound привязки список мог показать чужое/конкурентное резюме как
+    # «копию»; поэтому diff без кандидата не даёт успех — fail-closed.
     page = StubPage(
         url_after_click=f"https://hh.ru/resume/{OLD_ID}",
         card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
     )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
-    assert result.success
-    assert result.new_resume_id == NEW_ID
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтвердил новый resume_id" in result.reason
     # Список перезагружали для diff.
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
+
+
+def test_concurrent_no_navigation_diff_never_succeeds(monkeypatch):
+    # url_candidate пуст, но в diff ровно одна новая карточка. Это может быть
+    # чужое/конкурентное создание, а не продукт этого клика — success с этим id
+    # записал бы в config неверный resume_id. Должен быть uncertain.
+    page = StubPage(
+        url_after_click=f"https://hh.ru/resume/{OLD_ID}",
+        card_hashes=[{OLD_ID}, {OLD_ID, "d" * 38}],
+    )
+    _patch_env(monkeypatch, page)
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+    assert not result.success
+    assert result.uncertain is True
+    assert "однозначно нельзя" in result.reason
 
 
 def test_new_url_without_list_reconciliation_fails_closed(monkeypatch):

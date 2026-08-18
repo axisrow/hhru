@@ -536,7 +536,18 @@ def _reconcile_created_resume(
         )
 
     created_id = created.pop()
-    if url_candidate and url_candidate != created_id:
+    # Identity-bound success (#311): a bare account-wide list diff is not proof
+    # the clone was this click's product.  Without a URL candidate matching the
+    # list, the new card could be a concurrent creation (or a pre-existing
+    # unrelated resume) — recording it as the clone would write a wrong id into
+    # config.  Fail closed and let the user reconcile manually.
+    if not url_candidate:
+        return "", (
+            f"URL после дублирования не подтвердил новый resume_id, а список "
+            f"показал {created_id} — связать копию с этим кликом однозначно "
+            "нельзя (fail-closed; сверьте список резюме вручную)"
+        )
+    if url_candidate != created_id:
         return "", (
             f"URL после дублирования указывает на {url_candidate}, а список "
             f"подтвердил {created_id} — состояние копии не подтверждено "
