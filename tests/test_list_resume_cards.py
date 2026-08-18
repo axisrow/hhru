@@ -129,6 +129,9 @@ class StubPage:
             return StubCardsLocator(self._cards, self._delayed_cards)
         raise AssertionError(f"неожиданный page.locator: {selector}")
 
+    def content(self):
+        return ""
+
 
 def _patch_goto(monkeypatch, page):
     monkeypatch.setattr(cr, "goto_hh", lambda p, url, **kw: page.gotos.append(url))
@@ -233,6 +236,45 @@ def test_navigate_false_skips_goto(monkeypatch):
 
     assert len(cards) == 1
     assert page.gotos == []  # goto_hh НЕ вызван — вызывающий уже перешёл сам
+
+
+def test_lists_cards_with_status_from_ssr(monkeypatch):
+    """#315: статус резюме читается из SSR и добавляется в карточку."""
+    state = {
+        "applicantResumes": [
+            {"_attributes": {"hash": ID_A, "id": "284561395", "status": "not_finished"}},
+            {"_attributes": {"hash": ID_B, "id": "96223331", "status": "modified"}},
+        ]
+    }
+    html = (
+        f"<html><body><template id='HH-Lux-InitialState'>"
+        f"{escape(json.dumps(state, ensure_ascii=False))}</template></body></html>"
+    )
+    page = StubPage(
+        [
+            StubCard(ID_A, title_text="Должность не указана"),
+            StubCard(ID_B, title_text="Backend developer"),
+        ]
+    )
+    _patch_goto(monkeypatch, page)
+    monkeypatch.setattr(page, "content", lambda: html)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 2
+    assert cards[0].status == "not_finished"
+    assert cards[1].status == "modified"
+
+
+def test_missing_ssr_does_not_fail(monkeypatch):
+    """Без SSR статус резюме остаётся None — падения быть не должно."""
+    page = StubPage([StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+
+    cards = cr.list_resume_cards(page)
+
+    assert len(cards) == 1
+    assert cards[0].status is None
 
 
 # --- resolve_numeric_resume_ids (#212) ----------------------------------------

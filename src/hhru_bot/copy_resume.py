@@ -86,6 +86,8 @@ class ResumeCard:
     resume_id: str
     title: str
     url: str
+    status: str | None = None
+    ssr_unavailable: bool = False  # True если SSR данные недоступны или некорректны
 
 
 class ResumeListIndeterminate(PageStateIndeterminate):
@@ -314,41 +316,19 @@ def _card_hashes(page: Page) -> set[str]:
     return hashes
 
 
-def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
-    """Список резюме аккаунта с /applicant/resumes: хэш + название + URL (#135).
+def list_resume_cards(
+    page: Page, *, navigate: bool = True, url: str | None = None
+) -> list[ResumeCard]:
+    """Список резюме аккаунта: хэш + название + URL + статус (#135, #315).
 
-    READ-only: только goto + чтение DOM, ничего не кликается и не отправляется.
-    Заголовок читается ПОД каждой карточкой (RESUME_LIST_CARD), не под page —
-    тот же принцип, что и для кнопки «Дублировать» (см. copy_resume_on_hh:
-    page.locator(...).first взял бы первую в DOM-порядке при нескольких резюме).
-    RESUME_LIST_CARD_TITLE не подтверждён живым дампом — его отсутствие даёт
-    title="", а не исключение.
-
-    ``navigate=False`` (#147, Codex adversarial review PR #152): пропустить
-    собственный goto, если вызывающий код уже перешёл на RESUMES_LIST_URL сам —
-    нужно, когда между открытием страницы и чтением карточек есть DOM-проверка
-    (list_resumes.py --remote зовёт browser.has_login_form(page) до этой функции;
-    на ещё не навигированной странице такая проверка была бы фиктивной — всегда
-    0 совпадений независимо от реального состояния сессии). По умолчанию True —
-    поведение не меняется для остальных вызывающих/тестов.
-
-    Playwright ``Locator.all()`` резолвит элементы, присутствующие ПРЯМО СЕЙЧАС,
-    и не ждёт их появления — в отличие от copy_resume_on_hh, которая после
-    goto_hh делает явный wait_for на карточке. Без такого ожидания здесь
-    медленный рендер /applicant/resumes (или анти-бот/интерстишл-страница)
-    даёт 0 карточек «прямо сейчас», что неотличимо от честно пустого
-    аккаунта — команда солгала бы «резюме не найдено». Поэтому при первом
-    count()==0 ждём появления хотя бы одной карточки коротким wait_for.
-
-    Если карточка так и не появилась за это время — состояние страницы НЕ
-    подтверждено (см. ResumeListIndeterminate): нет надёжного маркера «список
-    действительно пуст», отличить честно пустой аккаунт от timeout/интерстишла/
-    дрейфа селектора здесь нельзя, поэтому функция не молчит и не выдаёт
-    пустой список за факт — поднимает исключение.
+    READ-only: только goto + чтение DOM/SSR, ничего не кликается и не отправляется.
+    ``url`` — целевая страница списка резюме (по умолчанию ``RESUMES_LIST_URL``;
+    для полного списка, включая черновики, используйте ``RESUMES_FULL_LIST_URL``).
     """
+    target_url = url if url is not None else RESUMES_LIST_URL
     if navigate:
-        logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
-        goto_hh(page, RESUMES_LIST_URL)
+        logger.info("Открываю список резюме: %s", target_url)
+        goto_hh(page, target_url)
 
     cards_locator = page.locator(RESUME_LIST_CARD)
     if cards_locator.count() == 0:
@@ -360,6 +340,30 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
                 "/applicant/resumes не подтверждено (timeout, анти-бот/"
                 "интерстишл-страница или дрейф селектора RESUME_LIST_CARD)"
             ) from None
+
+    status_by_hash: dict[str, str] = {}
+    ssr_unavailable = False  # Флаг: SSR данные недоступны или некорректны
+    try:
+        state = parse_initial_state(page.content())
+    except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
+        # PlaywrightError/PlaywrightTimeoutError могут возникнуть при закрытии страницы,
+        # сбое renderer или деградации браузера. Помечаем SSR как недоступный.
+        state = None
+        ssr_unavailable = True
+
+    if not ssr_unavailable and isinstance(state, dict):
+        resumes = state.get("applicantResumes")
+        if not isinstance(resumes, list):
+            # applicantResumes отсутствует или имеет неправильный тип
+            ssr_unavailable = True
+        else:
+            for item in resumes:
+                attrs = item.get("_attributes") if isinstance(item, dict) else None
+                if isinstance(attrs, dict):
+                    resume_hash = attrs.get("hash")
+                    status = attrs.get("status")
+                    if resume_hash and status is not None:
+                        status_by_hash[str(resume_hash)] = str(status)
 
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
@@ -378,7 +382,15 @@ def list_resume_cards(page: Page, *, navigate: bool = True) -> list[ResumeCard]:
             title = (title_locator.first.inner_text() or "").strip()
 
         url = f"{HH_BASE_URL}/resume/{resume_id}"
-        cards.append(ResumeCard(resume_id=resume_id, title=title, url=url))
+        cards.append(
+            ResumeCard(
+                resume_id=resume_id,
+                title=title,
+                url=url,
+                status=status_by_hash.get(resume_id),
+                ssr_unavailable=ssr_unavailable,
+            )
+        )
     return cards
 
 
