@@ -2,6 +2,10 @@
 <!--
   launchd LaunchAgent (macOS) — ШАБЛОН. Регулярный bump резюме каждые ~4ч (#18).
 
+  Этот шаблон рассчитан на один именованный аккаунт. Для каждого аккаунта
+  создайте отдельную копию, заменив __ACCOUNT_NAME__ во всём файле; это также
+  делает Label уникальным для launchd.
+
   CLAUDE.md ЗАПРЕЩАЕТ фоновые демоны внутри кода проекта. Этот файл — не часть
   кода, а конфиг внешнего планировщика ОС (launchd), который пользователь
   устанавливает САМ под свою машину. Он лишь «нажимает кнопку» — зовёт
@@ -17,14 +21,19 @@
                       в активированном venv). launchd НЕ активирует venv и имеет
                       урезанный PATH — без этого джоб упадёт на ModuleNotFoundError:
                       playwright. scheduled_run.sh читает HHRU_PYTHON.
+    __ACCOUNT_NAME__ — имя аккаунта из data/accounts/<name>/ (например, marketing)
 
   Установка:
-    cp deploy/com.hhru.bot.bump.plist ~/Library/LaunchAgents/com.hhru.bot.bump.plist
-    # (предварительно заменив плейсхолдеры в копии)
-    launchctl load ~/Library/LaunchAgents/com.hhru.bot.bump.plist
+    sed -e 's|__REPO_ROOT__|/Users/me/hhru|g' \
+        -e 's|__LOG_DIR__|/Users/me/hhru/data/logs|g' \
+        -e 's|__PYTHON_BIN__|/Users/me/hhru/.venv/bin/python|g' \
+        -e 's|__ACCOUNT_NAME__|marketing|g' \
+        deploy/com.hhru.bot.bump.plist > \
+        ~/Library/LaunchAgents/com.hhru.bot.bump.marketing.plist
+    launchctl load ~/Library/LaunchAgents/com.hhru.bot.bump.marketing.plist
   Проверка/выгрузка:
     launchctl list | grep hhru
-    launchctl unload ~/Library/LaunchAgents/com.hhru.bot.bump.plist
+    launchctl unload ~/Library/LaunchAgents/com.hhru.bot.bump.marketing.plist
 
   Эквивалентный конфиг генерируется командой:
     hhru-bot schedule (формат plist, действие bump, интервал 4 часа)
@@ -33,10 +42,12 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hhru.bot.bump</string>
+    <string>com.hhru.bot.bump.__ACCOUNT_NAME__</string>
     <key>ProgramArguments</key>
     <array>
         <string>__REPO_ROOT__/scripts/scheduled_run.sh</string>
+        <string>--account</string>
+        <string>__ACCOUNT_NAME__</string>
         <string>--headless</string>
         <string>bump</string>
     </array>
