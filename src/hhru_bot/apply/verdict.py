@@ -57,7 +57,7 @@ def compose(attempts: Iterable[PageRead], vacancy_id: str) -> str:
     """Compose a verdict from reads using one fail-closed decision table."""
     reads = tuple(attempts)
     if any(
-        topic.vacancy_id == vacancy_id and topic.resume_attribution is ResumeAttribution.MATCHED
+        topic.vacancy_id == vacancy_id and topic.resume_attribution == ResumeAttribution.MATCHED
         for read in reads
         for topic in read.topics
     ):
@@ -74,11 +74,11 @@ def compose(attempts: Iterable[PageRead], vacancy_id: str) -> str:
     ):
         return INDETERMINATE
     if any(isinstance(read.completeness, Partial) for read in reads) or any(
-        read.completeness is Completeness.UNRENDERED for read in reads
+        read.completeness == Completeness.UNRENDERED for read in reads
     ):
         return INDETERMINATE
     return (
         NOT_FOUND
-        if any(read.completeness is Completeness.LAST_CONFIRMED for read in reads)
+        if any(read.completeness == Completeness.LAST_CONFIRMED for read in reads)
         else INDETERMINATE
     )
