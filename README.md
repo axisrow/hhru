@@ -2,7 +2,9 @@
 
 Инструмент для поиска вакансий, откликов и поднятия резюме на hh.ru через Playwright.
 
-Запускается только вручную из терминала. Никакого фонового/скрытого режима —
+По умолчанию запускается вручную из терминала. Для регулярного запуска можно
+подключить внешний планировщик (cron/launchd или Docker); бот не содержит
+собственного scheduler-daemon. Никакого скрытого режима —
 каждая команда логирует, что она делает, поддерживает `--dry-run` и
 ограничена дневными лимитами и случайными паузами, чтобы не выглядеть как
 подозрительная автоматизация в глазах анти-фрод системы hh.ru.
@@ -114,6 +116,72 @@ config/
 
 Добавь `--headless`, если не нужно видеть окно браузера (не рекомендуется
 на первых запусках — полезно наблюдать, что происходит).
+
+## Автопилот: запуск по расписанию
+
+Регулярность задаётся внешним планировщиком, а не Python-кодом. Каждый вариант
+ниже запускает обычную команду `run` (apply + bump), поэтому действуют те же
+дедупликация, дневные лимиты и кулдаун поднятия резюме. Перед автоматизацией
+один раз создай `data/config.yaml` и проверь `./scripts/run.sh run --dry-run`.
+
+### Локаль (cron / launchd)
+
+Для Linux или macOS с cron скопируй `scripts/crontab.example`, замени
+`__REPO_ROOT__` и `__PYTHON_BIN__` на абсолютные пути и добавь строку через
+`crontab -e`. Важно использовать Python из виртуального окружения: cron не
+активирует его сам. Обёртка переходит в корень проекта, пишет в
+`data/logs/scheduled.log` и возвращает код ошибки планировщику.
+
+На macOS вместо cron можно использовать готовый шаблон
+`deploy/com.hhru.bot.apply.plist` (ежедневный apply) или
+`deploy/com.hhru.bot.bump.plist` (проверка bump каждые 4 часа). В копии plist
+замени `__REPO_ROOT__`, `__LOG_DIR__` и `__PYTHON_BIN__`, затем установи его:
+
+```bash
+cp deploy/com.hhru.bot.apply.plist ~/Library/LaunchAgents/com.hhru.bot.apply.plist
+launchctl load ~/Library/LaunchAgents/com.hhru.bot.apply.plist
+```
+
+Выгрузить агент: `launchctl unload ~/Library/LaunchAgents/com.hhru.bot.apply.plist`.
+Также можно сгенерировать шаблон: `./scripts/run.sh schedule --format plist
+--action apply --apply-time 10:00 --apply-limit 5`.
+
+### Docker
+
+Образ устанавливает зависимости Playwright и Chromium, а каталог `data/`
+монтируется с хоста: конфиг, history, storage state и логи сохраняются между
+запусками. Сначала подготовь конфиг на хосте, затем запусти разовый прогон:
+
+```bash
+mkdir -p data
+cp config/config.example.yaml data/config.yaml
+docker compose run --rm hhru
+```
+
+Для непрерывного варианта `docker-compose.yml` содержит минимальный sleep-loop:
+он запускает `run --headless`, ждёт 4 часа и повторяет. Запусти его так:
+
+```bash
+docker compose up -d
+docker compose logs -f hhru
+```
+
+Остановить: `docker compose down`. Не монтируй `storage_state` в публичные
+каталоги и не добавляй `data/` в образ или git.
+
+### VPS
+
+На VPS нужен только Docker Compose и этот репозиторий. Скопируй конфиг и сессию
+в `data/` безопасным способом, затем выполни:
+
+```bash
+ssh user@example.com 'cd /opt/hhru && docker compose up -d --build'
+ssh user@example.com 'cd /opt/hhru && docker compose logs -f hhru'
+```
+
+Сессию hh.ru сначала создай локально через `./scripts/run.sh login` или выполни
+login в контейнере с временно отключённым `--headless`; не передавай пароли в
+compose-файле. Обновление: `git pull && docker compose up -d --build`.
 
 ## Справочник команд
 

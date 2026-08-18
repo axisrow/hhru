@@ -1,0 +1,15 @@
+services:
+  hhru:
+    build: .
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    command:
+      - sh
+      - -c
+      - >-
+        while true; do
+          python3 -m hhru_bot.cli --headless run;
+          sleep 14400;
+        done

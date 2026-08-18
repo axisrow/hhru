@@ -27,7 +27,7 @@
     launchctl unload ~/Library/LaunchAgents/com.hhru.bot.bump.plist
 
   Эквивалентный конфиг генерируется командой:
-    hhru-bot schedule --format plist --action bump --bump-interval-hours 4
+    hhru-bot schedule (формат plist, действие bump, интервал 4 часа)
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
