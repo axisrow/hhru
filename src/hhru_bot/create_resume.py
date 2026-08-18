@@ -10,7 +10,7 @@ from playwright.sync_api import Locator, Page
 
 from .browser import HH_BASE_URL, RESUMES_FULL_LIST_URL, goto_hh
 from .external_forms.detect import normalize
-from .selector_groups.resume_list import RESUME_LIST_CARD_TITLE
+from .selector_groups.resume_list import RESUME_LIST_CARD, RESUME_LIST_CARD_TITLE
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
     RESUME_CREATION_CATEGORY_INPUT,
@@ -105,11 +105,28 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
 
 
-def _existing_resume_reason(page: Page, title: str) -> str:
-    titles = page.locator(RESUME_LIST_CARD_TITLE).all_text_contents()
+def _existing_title_reason(card_count: int, titles: list[str], title: str) -> str:
+    """Fail-closed duplicate check from a confirmed card count and read titles.
+
+    ``RESUME_LIST_CARD_TITLE`` is unconfirmed (resume_list.py). A non-empty card
+    list (``RESUME_LIST_CARD``, confirmed) with zero extractable titles means the
+    title selector drifted and the safety check cannot prove there is no
+    duplicate — refuse (Codex cycle 2/3). A zero-card list is a genuine empty
+    account (the caller anchors list hydration on ``RESUME_CREATE_BUTTON`` before
+    reading) and must not be blocked: an empty account legitimately creates its
+    first resume.
+    """
+    if card_count > 0 and not titles:
+        return "не удалось прочитать заголовки существующих резюме; создание запрещено"
     if normalize(title) in {normalize(item) for item in titles}:
         return f"резюме с должностью «{title}» уже существует; второе создать нельзя"
     return ""
+
+
+def _existing_resume_reason(page: Page, title: str) -> str:
+    cards = page.locator(RESUME_LIST_CARD)
+    titles = cards.locator(RESUME_LIST_CARD_TITLE).all_text_contents()
+    return _existing_title_reason(cards.count(), titles, title)
 
 
 def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> CreateResumeResult:
