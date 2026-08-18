@@ -164,5 +164,19 @@ def edit_skills_on_hh(
         return SkillsResult(
             False, existing, skills, reason="кнопка сохранения не найдена однозначно"
         )
-    save.click()
+    try:
+        save.click()
+        # The editor disappearing is the only confirmed positive UI signal for
+        # this inline mutation.  A timeout is deliberately reported as
+        # uncertain: the click may already have reached hh.ru.
+        editor.wait_for(state="hidden", timeout=30_000)
+    except PlaywrightError as exc:
+        return SkillsResult(
+            False,
+            existing,
+            skills,
+            tuple(s.name for s in additions),
+            reason=f"сохранение навыков не подтверждено: {exc}",
+            acted=True,
+        )
     return SkillsResult(True, existing, skills, tuple(s.name for s in additions), acted=True)
