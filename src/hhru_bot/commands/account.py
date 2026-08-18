@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..accounts import AccountError
+from ..report import _ascii_table
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_TEMPLATE_PATH = Path("config") / "config.example.yaml"
+
+
+@dataclass(frozen=True)
+class AccountInfo:
+    """A configured local account and whether its history exists."""
+
+    name: str
+    config_path: Path
+    history_exists: bool
 
 
 def register(subparsers) -> None:
@@ -27,6 +38,48 @@ def register(subparsers) -> None:
     )
     create.add_argument("name", help="Имя нового аккаунта")
     create.set_defaults(func=run_create)
+
+    list_accounts = commands.add_parser(
+        "list",
+        help="Показать настроенные локальные аккаунты (READ)",
+    )
+    list_accounts.set_defaults(func=run_list)
+
+
+def scan_accounts(data_dir: Path = DEFAULT_DATA_DIR) -> list[AccountInfo]:
+    """Find account configs below ``data_dir/accounts`` without changing files."""
+    accounts_dir = data_dir / "accounts"
+    if not accounts_dir.is_dir():
+        return []
+
+    result: list[AccountInfo] = []
+    for config_path in sorted(accounts_dir.glob("*/config.yaml")):
+        if not config_path.is_file():
+            continue
+        account_dir = config_path.parent
+        result.append(
+            AccountInfo(
+                name=account_dir.name,
+                config_path=config_path,
+                history_exists=(account_dir / "history.db").is_file(),
+            )
+        )
+    return result
+
+
+def run_list(args: argparse.Namespace) -> None:
+    """Print configured accounts and local history presence."""
+    del args
+    accounts = scan_accounts()
+    if not accounts:
+        print("[INFO] Аккаунтов не найдено. Используйте hhru account create <name>.")
+        return
+
+    rows = [
+        [account.name, str(account.config_path), "да" if account.history_exists else "нет"]
+        for account in accounts
+    ]
+    print(_ascii_table(["name", "config_path", "history_exists"], rows))
 
 
 def create_account(
