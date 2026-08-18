@@ -3,6 +3,7 @@
 import pytest
 
 from hhru_bot.about import AboutGenerationError, build_about_prompt, generate_about
+from hhru_bot.commands.about import draft_prefix
 
 pytestmark = pytest.mark.unit
 
@@ -71,3 +72,8 @@ def test_prompt_does_not_include_emoji_or_unscoped_portfolio_instruction():
     prompt = build_about_prompt("", None)
     assert "эмодзи" in prompt[0]["content"]
     assert "портфолио" in prompt[0]["content"]
+
+
+def test_dry_run_marker_is_not_used_for_write_mode():
+    assert draft_prefix(True) == "[DRY-RUN]"
+    assert draft_prefix(False) == "[INFO] Предложение"

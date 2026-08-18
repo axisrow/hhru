@@ -25,6 +25,11 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def draft_prefix(dry_run: bool) -> str:
+    """Keep the dry-run marker exclusive to the no-write path."""
+    return "[DRY-RUN]" if dry_run else "[INFO] Предложение"
+
+
 def run(args: argparse.Namespace) -> None:
     from ..about import AboutGenerationError, generate_about, open_about_editor, save_about
     from ..ai.llm_client import LLMClient
@@ -53,7 +58,7 @@ def run(args: argparse.Namespace) -> None:
             page = context.new_page()
             existing = open_about_editor(page, resume)
             draft = generate_about(llm, existing, resume.ai_profile)
-            print(f"[DRY-RUN] «Обо мне» ({draft.mode}):\n{draft.text}")
+            print(f"{draft_prefix(args.dry_run)} «Обо мне» ({draft.mode}):\n{draft.text}")
             if args.dry_run:
                 print("[INFO] Ничего не сохранено.")
                 return
