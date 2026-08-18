@@ -70,35 +70,34 @@ def _walk_json(value):
             yield from _walk_json(child)
 
 
-def parse_resume_state(markup: str, resume_id: str | None = None) -> ResumePublishState:
-    """Extract state, optionally from the structured record for ``resume_id``.
+def parse_resume_state(markup: str, resume_id: str) -> ResumePublishState:
+    """Extract state from the structured record for ``resume_id``.
 
     The page can contain state for more than one resume in embedded bootstrap
-    data. When an identity is supplied, never combine fields from separate
-    records; an unscoped regex fallback is retained for small SSR fixtures.
+    data. Never combine fields from separate records.
     """
-    if resume_id:
-        decoder = json.JSONDecoder()
-        for match in re.finditer(r"\{", markup):
-            try:
-                candidate, _ = decoder.raw_decode(markup[match.start() :])
-            except json.JSONDecodeError:
-                continue
-            for record in _walk_json(candidate):
-                if not isinstance(record, dict):
-                    continue
-                identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
-                if resume_id not in identifiers:
-                    continue
-                # hh.ru keeps the wizard's ``scheme`` next to the resume
-                # record, rather than inside it.  It is still page-scoped and
-                # therefore safe to attach only after the target identity was
-                # found in this JSON document.
-                scheme = candidate.get("scheme") if isinstance(candidate, dict) else None
-                return _state_from_mapping(record, scheme)
-        return ResumePublishState()
+    if not resume_id:
+        raise ValueError("resume_id is required to parse resume state safely")
 
-    return _state_from_regex(markup)
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", markup):
+        try:
+            candidate, _ = decoder.raw_decode(markup[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        for record in _walk_json(candidate):
+            if not isinstance(record, dict):
+                continue
+            identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
+            if resume_id not in identifiers:
+                continue
+            # hh.ru keeps the wizard's ``scheme`` next to the resume
+            # record, rather than inside it.  It is still page-scoped and
+            # therefore safe to attach only after the target identity was
+            # found in this JSON document.
+            scheme = candidate.get("scheme") if isinstance(candidate, dict) else None
+            return _state_from_mapping(record, scheme)
+    return ResumePublishState()
 
 
 def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePublishState:
@@ -112,31 +111,6 @@ def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePubli
         can_publish_or_update=record.get("canPublishOrUpdate"),
         next_incomplete_screen_id=next_incomplete,
     )
-
-
-def _state_from_regex(markup: str) -> ResumePublishState:
-    """Fixture-friendly fallback when no record identity is available."""
-    state = ResumePublishState()
-    for field in (
-        "status",
-        "isSearchable",
-        "canPublishOrUpdate",
-        "nextIncompleteScreenId",
-    ):
-        match = re.search(rf'"{field}"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)', markup)
-        if not match:
-            continue
-        raw = match.group(1)
-        value = None if raw == "null" else json.loads(raw)
-        if field == "status":
-            state.status = value
-        elif field == "isSearchable":
-            state.is_searchable = value
-        elif field == "canPublishOrUpdate":
-            state.can_publish_or_update = value
-        else:
-            state.next_incomplete_screen_id = value
-    return state
 
 
 def _identity_matches(page: Page, resume_id: str) -> bool:

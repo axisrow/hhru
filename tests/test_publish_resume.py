@@ -93,8 +93,9 @@ def _run(page, monkeypatch, *, preserve_url=False):
 
 def test_parse_resume_state_keeps_independent_fields():
     state = parse_resume_state(
-        '{"status":"not_finished","isSearchable":false,"canPublishOrUpdate":true,'
-        '"nextIncompleteScreenId":"professional_role"}'
+        f'{{"id":"{RESUME_ID}","status":"not_finished","isSearchable":false,'
+        '"canPublishOrUpdate":true,"nextIncompleteScreenId":"professional_role"}}',
+        RESUME_ID,
     )
     assert state.status == "not_finished"
     assert state.is_searchable is False
@@ -103,11 +104,16 @@ def test_parse_resume_state_keeps_independent_fields():
 
 
 def test_parse_resume_state_does_not_guess_missing_values():
-    state = parse_resume_state('{"status":"not_finished"}')
+    state = parse_resume_state(f'{{"id":"{RESUME_ID}","status":"not_finished"}}', RESUME_ID)
     assert state.status == "not_finished"
     assert state.is_searchable is None
     assert state.can_publish_or_update is None
     assert state.next_incomplete_screen_id is None
+
+
+def test_parse_resume_state_requires_identity():
+    with pytest.raises(ValueError, match="resume_id is required"):
+        parse_resume_state('{"status":"not_finished"}', "")
 
 
 def test_parse_resume_state_binds_all_fields_to_target_record():
