@@ -155,7 +155,7 @@ launchctl load ~/Library/LaunchAgents/com.hhru.bot.apply.plist
 ```bash
 mkdir -p data
 cp config/config.example.yaml data/config.yaml
-docker compose run --rm hhru
+docker compose run --rm hhru --headless run
 ```
 
 Для непрерывного варианта `docker-compose.yml` содержит минимальный sleep-loop:
