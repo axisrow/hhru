@@ -340,9 +340,9 @@ class History:
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
-    ) -> None:
+    ) -> int:
         with self._connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO actions
                     (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
@@ -358,6 +358,43 @@ class History:
                     datetime.now().isoformat(),
                 ),
             )
+            return int(cursor.lastrowid)
+
+    def begin_action(self, resume_id: str, vacancy_id: str, action: str) -> int:
+        """Durably reserve a potentially external action before browser work.
+
+        ``uncertain`` is deliberate: if the process disappears after the browser
+        side effect but before its result is recorded, ``has_applied`` must still
+        block a duplicate on the next run.  A normal completion changes this row
+        in place via :meth:`finalize_action`.
+        """
+        return self.record_action(
+            resume_id,
+            vacancy_id,
+            action,
+            "uncertain",
+            reason="действие начато, результат не зафиксирован",
+        )
+
+    def finalize_action(
+        self,
+        action_id: int,
+        status: str,
+        reason: str | None = None,
+        letter_variant: str | None = None,
+    ) -> None:
+        """Finalize a pre-action audit marker without creating a second row."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE actions
+                   SET status = ?, reason = ?, letter_variant = ?
+                 WHERE id = ?
+                """,
+                (status, reason, letter_variant, action_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Действие истории не найдено: id={action_id}")
 
     def count_today(self, resume_id: str, action: str) -> int:
         # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
