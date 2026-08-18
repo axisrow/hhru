@@ -38,6 +38,7 @@ WRITE_COMMANDS = frozenset(
         "run",
         "copy-resume",
         "publish-resume",
+        "edit-experience",
         "about",
         "reply-employers",
         "clear-negotiations",
