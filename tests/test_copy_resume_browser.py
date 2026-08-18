@@ -259,7 +259,7 @@ def test_dry_run_does_not_click(monkeypatch):
 def test_goto_hh_ready_selector_and_login_check_order(monkeypatch):
     """#153: auth probe is fast, then fallback waits for rendered cards (#142)."""
     page = StubPage(
-        url_after_click=f"https://hh.ru/resume/{OLD_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}", card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}]
     )
     _patch_env(monkeypatch, page)
     page.events = []
@@ -304,15 +304,17 @@ def test_post_click_login_form_reports_unconfirmed_state(monkeypatch):
     # second (fallback, post-click) navigation.
     monkeypatch.setattr(cr, "has_login_form", lambda p: len(goto_calls) >= 2)
 
-    with pytest.raises(cr.NotAuthenticated) as exc_info:
-        cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert len(goto_calls) == 2  # pre-click goto + fallback goto after the click
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
     assert page.reloads == []  # после WRITE-клика recovery категорически запрещён
-    message = str(exc_info.value)
-    assert "НЕ подтверждено" in message
-    assert "уже создана" in message
+    # Неопределённое состояние после WRITE-клика → uncertain (а не обычный
+    # failed): копия могла создаться, повтор не должен выглядеть безопасным.
+    assert result.success is False
+    assert result.uncertain is True
+    assert "НЕ подтверждено" in result.reason
+    assert "уже создана" in result.reason
 
 
 def test_pre_click_login_form_reports_ordinary_failure(monkeypatch):
@@ -369,6 +371,7 @@ def test_duplicate_button_can_appear_after_menu_poll(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
     page = StubPage(
         dup_locators={CARD_SEL: duplicate},
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
         url_after_click=f"https://hh.ru/resume/{NEW_ID}",
     )
     page.tick_actions = [lambda: setattr(duplicate, "_count", 1)]
@@ -383,7 +386,10 @@ def test_duplicate_button_can_appear_after_menu_poll(monkeypatch):
 
 def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     page.tick_actions = [
@@ -409,7 +415,10 @@ def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
 
 def test_hydration_error_reloads_once_then_succeeds(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     page.goto_action = lambda: page.emit(
@@ -532,7 +541,10 @@ def test_unrelated_background_request_does_not_extend_stall(monkeypatch):
 
 def test_profile_resource_progress_extends_watchdog_until_ready(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     profile = StubRequest("https://resume-profile-front.hh.ru/static/chunk.js")
@@ -580,7 +592,10 @@ def test_duplicate_button_ambiguous_on_page_fails_closed(monkeypatch):
 
 
 def test_success_via_url_navigation(monkeypatch):
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}?query=1")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}?query=1",
+    )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert result.success
@@ -593,6 +608,7 @@ def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
     # обязан содержать ровно одно глобальное действие.
     page = StubPage(
         dup_locators={CARD_SEL: StubLocator(None, DUP_SEL)},
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
         url_after_click=f"https://hh.ru/resume/{NEW_ID}",
     )
     _patch_env(monkeypatch, page)
@@ -601,18 +617,66 @@ def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
 
 
-def test_url_shows_old_id_falls_back_to_list_diff(monkeypatch):
-    # Навигация привела на URL исходного резюме — новый id берём из diff списка.
+def test_url_shows_old_id_without_candidate_fails_closed(monkeypatch):
+    # Навигация привела на URL исходного резюме — url_candidate пуст. Без
+    # identity-bound привязки список мог показать чужое/конкурентное резюме как
+    # «копию»; поэтому diff без кандидата не даёт успех — fail-closed.
     page = StubPage(
         url_after_click=f"https://hh.ru/resume/{OLD_ID}",
         card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
     )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
-    assert result.success
-    assert result.new_resume_id == NEW_ID
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтвердил новый resume_id" in result.reason
     # Список перезагружали для diff.
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
+
+
+def test_concurrent_no_navigation_diff_never_succeeds(monkeypatch):
+    # url_candidate пуст, но в diff ровно одна новая карточка. Это может быть
+    # чужое/конкурентное создание, а не продукт этого клика — success с этим id
+    # записал бы в config неверный resume_id. Должен быть uncertain.
+    page = StubPage(
+        url_after_click=f"https://hh.ru/resume/{OLD_ID}",
+        card_hashes=[{OLD_ID}, {OLD_ID, "d" * 38}],
+    )
+    _patch_env(monkeypatch, page)
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+    assert not result.success
+    assert result.uncertain is True
+    assert "однозначно нельзя" in result.reason
+
+
+def test_new_url_without_list_reconciliation_fails_closed(monkeypatch):
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтвердил создание копии" in result.reason
+
+
+def test_url_and_list_reconciliation_mismatch_fails_closed(monkeypatch):
+    other_id = "c" * 38
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, other_id}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.uncertain is True
+    assert NEW_ID in result.reason
+    assert other_id in result.reason
 
 
 def test_no_navigation_and_no_new_card_fails(monkeypatch):
@@ -621,6 +685,7 @@ def test_no_navigation_and_no_new_card_fails(monkeypatch):
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
+    assert result.uncertain is True
     assert result.new_resume_id == ""
 
 
@@ -630,3 +695,26 @@ def test_multiple_new_cards_ambiguous_fails(monkeypatch):
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
+    assert result.uncertain is True
+
+
+def test_reconcile_exception_after_write_is_uncertain(monkeypatch):
+    # WRITE-клик уже отправлен, но reconcile падает (не прочитан список) — это
+    # не доказывает, что копия не создана, поэтому исход uncertain (fail-closed,
+    # зеркалит #176/#207).
+    page = StubPage(
+        card_hashes=[{OLD_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    def boom():
+        raise cr.ResumeListIndeterminate("список не прочитан")
+
+    monkeypatch.setattr(cr, "_wait_resume_list_ready", lambda p: boom())
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтверждено" in result.reason
