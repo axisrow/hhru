@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from .account_profile import read_account_profile
 from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
 
 
-def login(config: AppConfig) -> None:
+def login(config: AppConfig, history_path: str | Path = Path("data/history.db")) -> None:
     """
     Открывает hh.ru в headed-браузере и ждёт, пока пользователь вручную войдёт
     в аккаунт (логин/пароль, СМС-код, капча — всё, что попросит hh.ru).
@@ -89,6 +91,7 @@ def login(config: AppConfig) -> None:
         # проверка cookie здесь была бы недостижимым дублированием.
         context.storage_state(path=str(storage_state_file))
         logger.info("Сессия сохранена: %s", storage_state_file)
+        read_account_profile(page, history_path)
 
         context.close()
         browser.close()

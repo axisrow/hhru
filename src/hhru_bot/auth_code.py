@@ -82,6 +82,8 @@ def submit_code(config: AppConfig, code: str) -> None:
     pending = _pending_path(config)
     if not pending.exists():
         raise RuntimeError("Промежуточная сессия не найдена: сначала выполните --request")
+    # TODO(#167, #285): once authenticated code login is implemented, reuse
+    # account_profile.read_account_profile here after positive auth confirmation.
     # hh.ru did not expose the code input in the anonymous live dump.  Failing
     # explicitly is safer than guessing a selector and silently timing out.
     raise RuntimeError(

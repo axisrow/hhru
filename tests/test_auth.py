@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -55,10 +56,13 @@ def test_login_succeeds_when_auth_confirmed_on_third_poll(monkeypatch, tmp_path)
     monkeypatch.setattr(time, "monotonic", itertools.chain([0, 2, 4], itertools.repeat(4)).__next__)
 
     config = MagicMock(storage_state_file=tmp_path / "session.json", user_agent=None)
+    read_profile = MagicMock()
+    monkeypatch.setattr(auth, "read_account_profile", read_profile)
 
     auth.login(config)
 
     context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
+    read_profile.assert_called_once_with(context.new_page.return_value, Path("data/history.db"))
 
 
 def test_login_times_out_when_login_form_never_disappears(monkeypatch, tmp_path):
