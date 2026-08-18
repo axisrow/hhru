@@ -58,6 +58,15 @@ from ..responses import (
 )
 from ..selector_groups import negotiations as ns
 from .steps import _dump_navigation_diagnostics
+from .verdict import (
+    Completeness,
+    PageRead,
+    PageSource,
+    Partial,
+    ResumeAttribution,
+    TopicRead,
+    compose,
+)
 
 logger = logging.getLogger("hhru_bot.apply.verify")
 
@@ -94,10 +103,10 @@ INDETERMINATE = "indeterminate"
 #: (fail-closed indeterminate у вызывающего кода); other_own — ДРУГОЕ собственное
 #: резюме аккаунта, но не текущее (fail-closed indeterminate: тема могла быть
 #: создана предыдущим откликом, а не этим кликом — Codex-ревью цикла 2).
-_RESUME_MATCHED = "matched"
-_RESUME_FOREIGN = "foreign"
-_RESUME_INCOMPARABLE = "incomparable"
-_RESUME_OTHER_OWN = "other_own"
+_RESUME_MATCHED = ResumeAttribution.MATCHED
+_RESUME_FOREIGN = ResumeAttribution.FOREIGN
+_RESUME_INCOMPARABLE = ResumeAttribution.INCOMPARABLE
+_RESUME_OTHER_OWN = ResumeAttribution.OTHER_OWN
 
 
 @dataclass(frozen=True)
@@ -240,6 +249,7 @@ def _scan_negotiations(
     problem: str | None = None
     confirmed_incomplete = False
     attribution_incomparable = False
+    reads: list[PageRead] = []
     for page_num in range(NEGOTIATIONS_VERIFY_MAX_PAGES):
         if page_num > 0:
             try:
@@ -249,11 +259,28 @@ def _scan_negotiations(
                 # страница 1 не дочитана: целевая вакансия могла быть на ней.
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
                 confirmed_incomplete = True
+                reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
                 break
         found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
             page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
         )
         attribution_incomparable = attribution_incomparable or page_attribution_incomparable
+        if page_attribution_incomparable:
+            reads.append(
+                PageRead(
+                    PageSource.SSR,
+                    (TopicRead(wanted, ResumeAttribution.INCOMPARABLE),),
+                    Completeness.LAST_CONFIRMED,
+                )
+            )
+        elif page_clean:
+            reads.append(PageRead(PageSource.SSR, (), Completeness.LAST_CONFIRMED))
+        else:
+            reads.append(
+                PageRead(
+                    PageSource.SSR, (), Partial(page_problem or "страница прочитана не полностью")
+                )
+            )
         if page_problem:
             problem = page_problem
         if found_detail is not None:
@@ -267,7 +294,15 @@ def _scan_negotiations(
             # Fail-closed: indeterminate, а не ложный not_found (#207).
             problem = "достигнут потолок скана при подтверждённой пагинации"
             confirmed_incomplete = True
+            reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
             break
+    # Keep the legacy tuple for the browser reader, but let the typed decision
+    # table own the final absence/uncertainty policy (#213).
+    composed = compose(reads, wanted)
+    if composed == "not_found":
+        clean = True
+    elif composed == "indeterminate":
+        clean = False
     return None, clean and not problem, problem, confirmed_incomplete, attribution_incomparable
 
 
