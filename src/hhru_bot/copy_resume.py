@@ -680,3 +680,6 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
     logger.info("Резюме '%s' скопировано, новый resume_id: %s", resume.id, new_id)
     return CopyResumeResult(resume.id, True, new_resume_id=new_id)
+
+
+# CI re-trigger after main plugin-name fix
