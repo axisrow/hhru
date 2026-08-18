@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from . import commands as _commands_pkg
+from .accounts import AccountError, resolve_account_paths
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
 
@@ -70,9 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hhru_bot",
         description="Автоматизация поиска, откликов и поднятия резюме на hh.ru",
     )
-    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Путь к config.yaml")
+    parser.add_argument("--config", help="Путь к config.yaml")
+    parser.add_argument("--history", help="Путь к файлу истории (SQLite)")
     parser.add_argument(
-        "--history", default=str(DEFAULT_HISTORY_PATH), help="Путь к файлу истории (SQLite)"
+        "--account",
+        help="Имя аккаунта (data/accounts/<name>/config.yaml + history.db)",
     )
     parser.add_argument(
         "--headless", action="store_true", help="Запустить браузер в headless-режиме"
@@ -87,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        _resolve_paths(args)
+    except AccountError as exc:
+        print(f"[FAIL] {exc}")
+        sys.exit(1)
     if args.command not in WRITE_COMMANDS:
         return _execute(args)
 
@@ -97,6 +105,27 @@ def main(argv: list[str] | None = None) -> None:
     except WriteLockBusy:
         print("[FAIL] другой процесс уже выполняет WRITE-действие")
         sys.exit(1)
+
+
+def _resolve_paths(args: argparse.Namespace) -> None:
+    """Apply account defaults while preserving explicit path arguments."""
+    account_paths = None
+    if args.account is not None and (args.config is None or args.history is None):
+        account_paths = resolve_account_paths(args.account)
+    args.config = str(
+        Path(args.config)
+        if args.config is not None
+        else account_paths.config
+        if account_paths is not None
+        else DEFAULT_CONFIG_PATH
+    )
+    args.history = str(
+        Path(args.history)
+        if args.history is not None
+        else account_paths.history
+        if account_paths is not None
+        else DEFAULT_HISTORY_PATH
+    )
 
 
 def _execute(args: argparse.Namespace) -> None:

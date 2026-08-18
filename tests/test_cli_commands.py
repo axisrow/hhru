@@ -9,10 +9,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 
 import pytest
 
-from hhru_bot.cli import build_parser, main, register_commands
+from hhru_bot.cli import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_HISTORY_PATH,
+    _resolve_paths,
+    build_parser,
+    main,
+    register_commands,
+)
 from hhru_bot.history import SKIP_REASONS, History
 
 pytestmark = pytest.mark.integration
@@ -20,6 +28,38 @@ pytestmark = pytest.mark.integration
 
 def _build() -> argparse.ArgumentParser:
     return build_parser()
+
+
+def test_account_paths_are_defaults_but_explicit_paths_win(tmp_path, monkeypatch):
+    account = tmp_path / "data" / "accounts" / "work"
+    account.mkdir(parents=True)
+    (account / "config.yaml").touch()
+    parser = _build()
+
+    monkeypatch.chdir(tmp_path)
+    args = parser.parse_args(["--account", "work", "whoami"])
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == account / "config.yaml"
+    assert Path(args.history).resolve() == account / "history.db"
+
+    args = parser.parse_args(
+        [
+            "--account",
+            "missing-but-ignored",
+            "--config",
+            str(tmp_path / "custom.yaml"),
+            "--history",
+            str(tmp_path / "custom.db"),
+            "whoami",
+        ]
+    )
+    args.config = str(tmp_path / "custom.yaml")
+    args.history = str(tmp_path / "custom.db")
+    _resolve_paths(args)
+    assert Path(args.config) == tmp_path / "custom.yaml"
+    assert Path(args.history) == tmp_path / "custom.db"
+    assert DEFAULT_CONFIG_PATH == Path("data/config.yaml")
+    assert DEFAULT_HISTORY_PATH == Path("data/history.db")
 
 
 def _subparser_actions(parser):
