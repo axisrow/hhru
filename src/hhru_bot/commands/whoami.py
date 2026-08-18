@@ -136,6 +136,7 @@ def run(args: argparse.Namespace) -> None:
     new_responses = len(history.new_responses_since(now - timedelta(hours=24)))
     all_responses = history.new_responses_since(datetime.min)
     invitations = sum(1 for r in all_responses if r.get("status") == "invitation")
+    pending_tests = len(history.test_assignments_since(datetime.min))
 
     resume_label = ", ".join(r.id for r in resumes) or "(нет резюме в конфиге)"
 
@@ -144,6 +145,7 @@ def run(args: argparse.Namespace) -> None:
         ["Откликов сегодня", f"{applied_today} / {apply_limit}"],
         ["Новых ответов 24ч", str(new_responses)],
         ["Приглашений", str(invitations)],
+        ["Тестов ожидает", str(pending_tests)],
     ]
 
     print(_ascii_table(["Поле", "Значение"], rows))

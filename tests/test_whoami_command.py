@@ -261,6 +261,23 @@ def test_empty_history_shows_zero_counts(tmp_path, capsys):
     # 0 откликов / лимит
     assert "0 / 40" in out
     assert "Приглашений" in out
+    assert "Тестов ожидает" in out
+    assert "| Тестов ожидает" in out
+    assert "| 0            |" in out
+
+
+def test_summary_counts_pending_external_tests(tmp_path, capsys):
+    session = _valid_session(tmp_path)
+    cfg = _write_config(tmp_path, _config_body(str(session)))
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        None, "v1", "topic-1", "Acme", "https://example.test/quiz", "Пройдите тест"
+    )
+
+    out = _run(_args(cfg, tmp_path / "h.db"), capsys)
+
+    assert "| Тестов ожидает" in out
+    assert "| 1            |" in out
 
 
 def test_resume_filter_counts_only_selected(tmp_path, capsys):
