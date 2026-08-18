@@ -94,6 +94,23 @@ resumes:
     #   cover_letter_examples:
     #     - "Здравствуйте! Пишу как бэкенд-разработчик, откликаюсь на вакансию."
     #     - "Добрый день. Мой опыт в {python|django} релевантен вашей задаче."
+    # Опционально (#262): LLM-план образования. В dry-run поля проверяются,
+    # но кнопка Save не нажимается. primary и additional поддерживают несколько записей.
+    # education:
+    #   source: "МГУ, физика, бакалавриат, 2015; курс SQL, 2020"
+    #   mode: from_scratch  # from_scratch | prefill
+    #   primary:
+    #     - institution: "МГУ"
+    #       level: "бакалавриат"  # metadata; не записывается в faculty
+    #       faculty: "Физический факультет"
+    #       specialty: "Физика"
+    #       year: "2015"
+    #   additional:
+    #     - institution: "Курс SQL"
+    #       level: ""  # metadata; не записывается в organization
+    #       organization: "Школа данных"
+    #       specialty: "SQL"
+    #       year: "2020"
     cover_letter: null
 
   - id: "resume-name-2"
