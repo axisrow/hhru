@@ -59,10 +59,14 @@ class Page:
         self.clicked = False
         self.waited = None
         self.ready_waited = None
+        self.reloaded = None
         self.detached_error = detached_error
         self.readiness_error = readiness_error
         self.remaining = remaining
         self.ready_count = ready_count
+
+    def reload(self, *, wait_until):
+        self.reloaded = wait_until
 
     def locator(self, selector):
         if selector == RESUME_DELETE_CONFIRM:
@@ -91,6 +95,7 @@ def test_success_waits_for_identity_card_to_detach(monkeypatch):
     assert result.uncertain is False
     assert page.clicked is True
     assert page.waited == 30_000
+    assert page.reloaded == "domcontentloaded"
     assert page.ready_waited == 30_000
 
 

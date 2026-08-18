@@ -95,6 +95,11 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     # hh.ru may already have accepted the deletion.
     try:
         card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+        # A different card may have existed before the click.  Waiting for
+        # that card alone can therefore succeed before the post-delete render
+        # settles.  Force a fresh list document so the readiness marker below
+        # belongs to state observed after the destructive action.
+        page.reload(wait_until="domcontentloaded")
         if not re.fullmatch(r"https://hh\.ru/applicant/resumes(?:[/?#].*)?", page.url):
             return DeleteResumeResult(
                 resume_id, False, "удаление не подтверждено: hh.ru не вернул список резюме", True
