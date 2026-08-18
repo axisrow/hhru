@@ -6,18 +6,23 @@ import re
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, RESUMES_FULL_LIST_URL, goto_hh
+from .external_forms.detect import normalize
+from .selector_groups.resume_list import RESUME_LIST_CARD_TITLE
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
-    RESUME_CREATION_AREA,
-    RESUME_CREATION_SUBMIT,
-    RESUME_CREATION_TITLE,
+    RESUME_CREATION_CATEGORY_INPUT,
+    RESUME_CREATION_CATEGORY_SEARCH,
+    RESUME_CREATION_CATEGORY_SUBMIT,
+    RESUME_CREATION_NEXT,
+    RESUME_CREATION_POSITION,
+    RESUME_CREATION_SELECT_JOB,
+    RESUME_CREATION_URL,
 )
 
-RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
-CREATION_URL = f"{HH_BASE_URL}/resume/creation"
+CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
 _RESUME_ID_RE = re.compile(r"/resume/([0-9a-f]{32,40})(?:[/?#]|$)")
 
 
@@ -29,7 +34,7 @@ class CreateResumeResult:
     uncertain: bool = False
 
 
-def _one(page: Page, selector: str, label: str):
+def _one(page: Page, selector: str, label: str) -> tuple[Locator | None, str]:
     locator = page.locator(selector)
     count = locator.count()
     if count != 1:
@@ -37,13 +42,71 @@ def _one(page: Page, selector: str, label: str):
     return locator.first, ""
 
 
+def _require(locator: Locator | None) -> Locator:
+    """Narrow ``_one()``'s optional result after its reason has been checked empty."""
+    assert locator is not None
+    return locator
+
+
+def _click_one(page: Page, selector: str, label: str) -> str:
+    """Resolve exactly one locator and click it; return a non-empty reason on failure."""
+    locator, reason = _one(page, selector, label)
+    if reason:
+        return reason
+    _require(locator).click()
+    return ""
+
+
+def _select_catalog_leaf(page: Page, area: str) -> str:
+    """Select one exact leaf from hh.ru's full profession tree."""
+    search, reason = _one(page, RESUME_CREATION_CATEGORY_SEARCH, "поиск каталога профессий")
+    if reason:
+        return reason
+    _require(search).fill(area)
+    # get_by_text() resolves to the inner ``cell-text-content`` span on the
+    # current hh.ru DOM, while the identifier we need is on its wrapper.
+    # Match the wrapper by its own rendered text instead of assuming the
+    # attribute is attached to the text node.
+    candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
+    matches = [
+        candidate
+        for candidate in candidates
+        if normalize(candidate.text_content() or "") == normalize(area)
+    ]
+    if len(matches) != 1:
+        return f"профессия «{area}» не найдена однозначно в каталоге (совпадений: {len(matches)})"
+    qa = matches[0].get_attribute("data-qa") or ""
+    match = re.search(r"tree-selector-item-text-(\d+)$", qa)
+    if not match:
+        return f"пункт каталога «{area}» не является leaf-профессией"
+    checkbox, reason = _one(
+        page,
+        RESUME_CREATION_CATEGORY_INPUT.format(match.group(1)),
+        f"чекбокс профессии «{area}»",
+    )
+    if reason:
+        return reason
+    _require(checkbox).check()
+    return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
+
+
+def _existing_resume_reason(page: Page, title: str) -> str:
+    titles = page.locator(RESUME_LIST_CARD_TITLE).all_text_contents()
+    if normalize(title) in {normalize(item) for item in titles}:
+        return f"резюме с должностью «{title}» уже существует; второе создать нельзя"
+    return ""
+
+
 def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> CreateResumeResult:
     """Create one draft; never uses a direct HTTP request.
 
     Dry-run only reads the list and wizard DOM.  In particular it never clicks
-    the list button, inputs, or submit control.
+    the list button, wizard cards, catalog checkboxes, or continue controls.
     """
-    goto_hh(page, RESUMES_LIST_URL)
+    goto_hh(page, RESUMES_FULL_LIST_URL)
+    duplicate_reason = _existing_resume_reason(page, title)
+    if duplicate_reason:
+        return CreateResumeResult(False, reason=duplicate_reason)
     create_button, reason = _one(page, RESUME_CREATE_BUTTON, "кнопка создания резюме")
     if reason:
         return CreateResumeResult(False, reason=reason)
@@ -52,27 +115,46 @@ def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> 
         goto_hh(page, CREATION_URL)
     else:
         try:
-            create_button.click()
-            page.wait_for_url("**/resume/creation**", wait_until="commit")
+            _require(create_button).click()
+            page.wait_for_url(f"**{RESUME_CREATION_URL}**", wait_until="commit")
         except PlaywrightError as exc:
             return CreateResumeResult(False, reason=f"не удалось открыть визард: {exc}")
 
-    area_control, reason = _one(page, RESUME_CREATION_AREA, "поле профобласти")
-    if reason:
-        return CreateResumeResult(False, reason=reason)
-    title_control, reason = _one(page, RESUME_CREATION_TITLE, "поле должности")
-    if reason:
-        return CreateResumeResult(False, reason=reason)
-    submit, reason = _one(page, RESUME_CREATION_SUBMIT, "кнопка сохранения черновика")
-    if reason:
-        return CreateResumeResult(False, reason=reason)
+    # wait_until="commit" only guarantees the URL changed, not that the SPA
+    # has hydrated the wizard screen yet (#304 live run: _one() saw count=0
+    # on a still-blank body immediately after commit).
+    select_job_locator = page.locator(RESUME_CREATION_SELECT_JOB)
+    try:
+        select_job_locator.first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return CreateResumeResult(False, reason=f"визард не отрисовался: {exc}")
+
+    count = select_job_locator.count()
+    if count != 1:
+        return CreateResumeResult(
+            False,
+            reason=f"карточка выбора профессии не подтверждена однозначно (совпадений: {count})",
+        )
+    select_job = select_job_locator.first
     if dry_run:
-        return CreateResumeResult(True, reason="dry-run; кнопка сохранения не нажата")
+        return CreateResumeResult(True, reason="dry-run; визард найден, клики не выполнены")
 
     try:
-        area_control.fill(area)
-        title_control.fill(title)
-        submit.click()
+        select_job.click()
+        page.locator(RESUME_CREATION_POSITION).first.wait_for(state="visible", timeout=15000)
+        position, reason = _one(page, RESUME_CREATION_POSITION, "поле поиска профессии")
+        if reason:
+            return CreateResumeResult(False, reason=reason)
+        _require(position).fill(title)
+        reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
+        if reason:
+            return CreateResumeResult(False, reason=reason)
+        category_reason = _select_catalog_leaf(page, area)
+        if category_reason:
+            return CreateResumeResult(False, reason=category_reason)
+        reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения после каталога")
+        if reason:
+            return CreateResumeResult(False, reason=reason)
         page.wait_for_url(_RESUME_ID_RE, wait_until="commit")
     except PlaywrightError as exc:
         return CreateResumeResult(

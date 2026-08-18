@@ -372,7 +372,8 @@ class History:
                     datetime.now().isoformat(),
                 ),
             )
-            return int(cursor.lastrowid)
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
 
     def begin_action(self, resume_id: str, vacancy_id: str, action: str) -> int:
         """Durably reserve a potentially external action before browser work.

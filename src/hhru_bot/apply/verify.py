@@ -316,7 +316,7 @@ def _scan_single_page(
     try:
         html = page.content()
     except PlaywrightError as exc:
-        return None, False, f"page.content() упал ({exc})"
+        return None, False, f"page.content() упал ({exc})", False
     topics = _ssr_topic_list(html)
     if topics is not None:
         # SSR — серверная истина; DOM читает те же данные, fallback не нужен.

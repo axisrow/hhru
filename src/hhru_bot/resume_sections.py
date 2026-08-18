@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 
@@ -136,6 +136,53 @@ def _fill(locator, value: str) -> None:
     locator.fill(value)
 
 
+def _fill_attestation_row(page: Page, item: Attestation) -> Locator:
+    for qa_field, value in zip(ATTESTATION_FIELDS, item.__dict__.values(), strict=True):
+        _fill(page.locator(f"[data-qa='{qa_field}']"), value)
+    return page.locator("[data-qa='profile-layout-save-button']")
+
+
+def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
+    scope = (
+        page.locator("input[name='company']")
+        .first.locator("xpath=..")
+        .locator("xpath=..")
+        .locator("xpath=..")
+    )
+    _fill(scope.locator("input[name='company']"), item.company)
+    inputs = scope.locator("input")
+    if inputs.count() > 1:
+        _fill(inputs.nth(0), item.name)
+    if inputs.count() > 2:
+        _fill(inputs.nth(1), item.position)
+    _fill(scope.locator("textarea"), item.text)
+    return page.locator("[data-qa='resume-partial-edit-save']")
+
+
+def _apply_rows(
+    page: Page,
+    block: str,
+    items: list[Attestation] | list[Recommendation],
+    fill_row,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    errors: list[str] = []
+    trigger = page.locator(RESUME_EDIT_BUTTON[block])
+    for index, item in enumerate(items):
+        if index >= trigger.count():
+            errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
+            continue
+        trigger.nth(index).click()
+        save = fill_row(page, item)
+        if not dry_run:
+            if save.count() != 1:
+                errors.append(f"{block}: неоднозначная кнопка сохранения")
+                continue
+            save.click()
+    return errors
+
+
 def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run: bool) -> list[str]:
     """Apply only existing, live-confirmed rows. Never invents add controls."""
     if not has_auth_cookie(page):
@@ -144,38 +191,10 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
     if has_login_form(page):
         return ["hh.ru показал форму входа"]
     errors = list(plan.skipped)
-    for block, items in (
-        ("attestations", plan.attestations),
-        ("recommendations", plan.recommendations),
-    ):
-        trigger = page.locator(RESUME_EDIT_BUTTON[block])
-        for index, item in enumerate(items):
-            if index >= trigger.count():
-                errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
-                continue
-            trigger.nth(index).click()
-            if block == "attestations":
-                for field, value in zip(ATTESTATION_FIELDS, item.__dict__.values(), strict=True):
-                    _fill(page.locator(f"[data-qa='{field}']"), value)
-                save = page.locator("[data-qa='profile-layout-save-button']")
-            else:
-                scope = (
-                    page.locator("input[name='company']")
-                    .first.locator("xpath=..")
-                    .locator("xpath=..")
-                    .locator("xpath=..")
-                )
-                _fill(scope.locator("input[name='company']"), item.company)
-                inputs = scope.locator("input")
-                if inputs.count() > 1:
-                    _fill(inputs.nth(0), item.name)
-                if inputs.count() > 2:
-                    _fill(inputs.nth(1), item.position)
-                _fill(scope.locator("textarea"), item.text)
-                save = page.locator("[data-qa='resume-partial-edit-save']")
-            if not dry_run:
-                if save.count() != 1:
-                    errors.append(f"{block}: неоднозначная кнопка сохранения")
-                    continue
-                save.click()
+    errors += _apply_rows(
+        page, "attestations", plan.attestations, _fill_attestation_row, dry_run=dry_run
+    )
+    errors += _apply_rows(
+        page, "recommendations", plan.recommendations, _fill_recommendation_row, dry_run=dry_run
+    )
     return errors

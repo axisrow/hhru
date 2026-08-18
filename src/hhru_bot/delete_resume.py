@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import RESUMES_FULL_LIST_URL, goto_hh
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
@@ -23,7 +23,6 @@ from .selector_groups.resume_page import (
     RESUME_DELETE_HIDE_CONFIRM,
 )
 
-RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
 DELETE_VERIFY_TIMEOUT_MS = 30_000
 
 
@@ -57,7 +56,7 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     Success requires the list URL and disappearance of the identity-bound card.
     """
     resume_id = resume.resume_id
-    goto_hh(page, RESUMES_LIST_URL)
+    goto_hh(page, RESUMES_FULL_LIST_URL)
     card = page.locator(
         f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
     )
@@ -75,6 +74,10 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
 
     try:
         button.first.click()
+        # The confirm dialog renders asynchronously after the click (React);
+        # an immediate count() can observe the DOM before it mounts (same
+        # commit-vs-hydration race documented in create_resume.py for #304).
+        page.locator(RESUME_DELETE_CONFIRM).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
         return DeleteResumeResult(resume_id, False, f"не удалось открыть подтверждение: {exc}")
 
@@ -100,7 +103,7 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
         # settles.  Force a fresh list document so the readiness marker below
         # belongs to state observed after the destructive action.
         page.reload(wait_until="domcontentloaded")
-        if not re.fullmatch(r"https://hh\.ru/applicant/resumes(?:[/?#].*)?", page.url):
+        if not re.fullmatch(r"https://hh\.ru/applicant/my_resumes(?:[/?#].*)?", page.url):
             return DeleteResumeResult(
                 resume_id, False, "удаление не подтверждено: hh.ru не вернул список резюме", True
             )

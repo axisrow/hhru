@@ -19,6 +19,10 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 logger = logging.getLogger("hhru_bot.browser")
 
 HH_BASE_URL = "https://hh.ru"
+# /applicant/resumes redirects to the profile shell; the dedicated list at
+# /applicant/my_resumes is the stable read-only surface used by both
+# create_resume.py and delete_resume.py for identity checks and post-action proof.
+RESUMES_FULL_LIST_URL = f"{HH_BASE_URL}/applicant/my_resumes"
 
 # Общий словарь состояний браузерной страницы. Эти значения описывают
 # подтверждённость результата, а DTO сохраняют исторические bool-поля.

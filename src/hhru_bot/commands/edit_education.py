@@ -63,7 +63,7 @@ def run(args: argparse.Namespace) -> None:
     source = args.source if args.source is not None else education.source
     mode = args.mode or education.mode
     llm = None
-    if getattr(config, "ai", None) is not None:
+    if config.ai is not None:
         try:
             from ..ai.llm_client import LLMClient
 

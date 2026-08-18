@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import TYPE_CHECKING, cast
 
 from .copy_resume import confirm_write
+
+if TYPE_CHECKING:
+    from ..config_sections.ai_profile import AIProfile
 
 
 def register(subparsers) -> None:
@@ -44,6 +48,9 @@ def run(args: argparse.Namespace) -> None:
     if config.ai is None or resume.ai_profile is None:
         print("[FAIL] Для resume-sections нужны секции ai и ai_profile")
         sys.exit(1)
+    # See commands/about.py for why this cast is needed: ResumeConfig.ai_profile
+    # is a neutral `object | None` placeholder shared across unrelated features.
+    ai_profile = cast("AIProfile", resume.ai_profile)
     if not args.dry_run and not confirm_write(
         args.force,
         prompt=f"Заполнить дополнительные разделы резюме '{resume.id}' на hh.ru?",
@@ -58,7 +65,7 @@ def run(args: argparse.Namespace) -> None:
     except ImportError as exc:
         print(f"[FAIL] LLM недоступен: {exc}")
         sys.exit(1)
-    plan = generate_plan(client, sections, resume.ai_profile)
+    plan = generate_plan(client, sections, ai_profile)
     print(
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}"

@@ -165,6 +165,9 @@ def load_config(path: str | Path) -> AppConfig:
         kwargs: dict[str, object] = {"cover_letter": r.get("cover_letter")}
         for sec_name in section_names():
             parser = section_parser(sec_name)
+            # section_names() only lists names that are actually registered,
+            # so the lookup above always hits.
+            assert parser is not None
             kwargs[sec_name] = parser(r.get(sec_name), f"{context}.{sec_name}")
 
         resume = ResumeConfig(

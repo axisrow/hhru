@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import TYPE_CHECKING, cast
 
 from .copy_resume import confirm_write
+
+if TYPE_CHECKING:
+    from ..config_sections.ai_profile import AIProfile
 
 
 def register(subparsers) -> None:
@@ -45,6 +49,10 @@ def run(args: argparse.Namespace) -> None:
     if config.ai is None or resume.ai_profile is None:
         print("[FAIL] Для команды about нужны секция ai и ai_profile у резюме")
         sys.exit(1)
+    # ResumeConfig.ai_profile is typed as a neutral `object | None` placeholder
+    # (see CLAUDE.md config_sections) shared across unrelated features; #17
+    # (about) owns the AIProfile shape, so narrow it here at the point of use.
+    ai_profile = cast("AIProfile", resume.ai_profile)
     try:
         llm = LLMClient(config.ai)
     except ImportError as exc:
@@ -57,7 +65,7 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             page = context.new_page()
             existing = open_about_editor(page, resume)
-            draft = generate_about(llm, existing, resume.ai_profile)
+            draft = generate_about(llm, existing, ai_profile)
             print(f"{draft_prefix(args.dry_run)} «Обо мне» ({draft.mode}):\n{draft.text}")
             if args.dry_run:
                 print("[INFO] Ничего не сохранено.")
