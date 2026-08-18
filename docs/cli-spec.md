@@ -84,6 +84,7 @@
 | `bump`      | поднятие резюме (кулдаун 4ч, дневной лимит)  | WRITE-hh-ru    | `[OK]`/`[FAIL]`                |
 | `run`       | полный цикл `apply` + `bump`                 | WRITE-hh-ru    | наследует                      |
 | `probe`     | дамп формы отклика без отправки (#8)         | READ           | `[OK]`/`[FAIL]`                |
+| `fill-form` | заполнение внешней формы без отправки (#276) | WRITE-local    | `[DRY-RUN]`/`[FAIL]`          |
 | `stats`     | сводка и экспорт истории (#11)               | READ           | ASCII-таблица / csv / md       |
 | `query`     | read-only SELECT к `history.db` (#45)        | READ           | ASCII-таблица / csv            |
 | `responses` | мониторинг ответов работодателей (#12)       | READ           | ASCII-таблица                  |
