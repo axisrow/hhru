@@ -80,9 +80,7 @@ def test_read_account_profile_does_not_write_empty_or_ambiguous_values(
     assert "поле «Фамилия» не подтверждено" in output
 
 
-def test_read_account_profile_removes_stale_hh_values_on_confirmed_absence(
-    monkeypatch, tmp_path
-):
+def test_read_account_profile_removes_stale_hh_values_on_confirmed_absence(monkeypatch, tmp_path):
     history = History(tmp_path / "history.db")
     history.upsert_profile_field("Имя", "Старое имя", source="hh_ru")
     page = _page_for(counts={})
