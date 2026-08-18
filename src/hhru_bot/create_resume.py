@@ -108,16 +108,21 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
 def _existing_title_reason(card_count: int, titles: list[str], title: str) -> str:
     """Fail-closed duplicate check from a confirmed card count and read titles.
 
-    ``RESUME_LIST_CARD_TITLE`` is unconfirmed (resume_list.py). A non-empty card
-    list (``RESUME_LIST_CARD``, confirmed) with zero extractable titles means the
-    title selector drifted and the safety check cannot prove there is no
-    duplicate — refuse (Codex cycle 2/3). A zero-card list is a genuine empty
-    account (the caller anchors list hydration on ``RESUME_CREATE_BUTTON`` before
-    reading) and must not be blocked: an empty account legitimately creates its
-    first resume.
+    ``RESUME_LIST_CARD`` is confirmed; ``RESUME_LIST_CARD_TITLE`` is unconfirmed
+    (resume_list.py). A zero-card list is a genuine empty account (the caller
+    anchors list hydration on ``RESUME_CREATE_BUTTON`` before reading) and must
+    not be blocked: an empty account legitimately creates its first resume.
+
+    For a non-empty list, the safety check is only trustworthy if EVERY confirmed
+    card yielded exactly one non-empty title. Any mismatch — fewer titles than
+    cards, a blank title, or extra matches — means the title selector drifted and
+    an existing same-title resume could be invisible, so refuse rather than
+    assume there is no duplicate (Codex cycles 2/3).
     """
-    if card_count > 0 and not titles:
-        return "не удалось прочитать заголовки существующих резюме; создание запрещено"
+    if card_count == 0:
+        return ""
+    if len(titles) != card_count or not all(titles):
+        return "не удалось прочитать заголовки всех существующих резюме; создание запрещено"
     if normalize(title) in {normalize(item) for item in titles}:
         return f"резюме с должностью «{title}» уже существует; второе создать нельзя"
     return ""
