@@ -369,6 +369,7 @@ def test_duplicate_button_can_appear_after_menu_poll(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
     page = StubPage(
         dup_locators={CARD_SEL: duplicate},
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
         url_after_click=f"https://hh.ru/resume/{NEW_ID}",
     )
     page.tick_actions = [lambda: setattr(duplicate, "_count", 1)]
@@ -383,7 +384,10 @@ def test_duplicate_button_can_appear_after_menu_poll(monkeypatch):
 
 def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     page.tick_actions = [
@@ -409,7 +413,10 @@ def test_profile_ready_marker_can_appear_after_ssr_card(monkeypatch):
 
 def test_hydration_error_reloads_once_then_succeeds(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     page.goto_action = lambda: page.emit(
@@ -532,7 +539,10 @@ def test_unrelated_background_request_does_not_extend_stall(monkeypatch):
 
 def test_profile_resource_progress_extends_watchdog_until_ready(monkeypatch):
     duplicate = StubLocator(None, DUP_SEL, count=0, scope=CARD_SEL)
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
     page._dup_locators[CARD_SEL] = duplicate
     page.ready_count = 0
     profile = StubRequest("https://resume-profile-front.hh.ru/static/chunk.js")
@@ -580,7 +590,10 @@ def test_duplicate_button_ambiguous_on_page_fails_closed(monkeypatch):
 
 
 def test_success_via_url_navigation(monkeypatch):
-    page = StubPage(url_after_click=f"https://hh.ru/resume/{NEW_ID}?query=1")
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}?query=1",
+    )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert result.success
@@ -593,6 +606,7 @@ def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
     # обязан содержать ровно одно глобальное действие.
     page = StubPage(
         dup_locators={CARD_SEL: StubLocator(None, DUP_SEL)},
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
         url_after_click=f"https://hh.ru/resume/{NEW_ID}",
     )
     _patch_env(monkeypatch, page)
@@ -613,6 +627,34 @@ def test_url_shows_old_id_falls_back_to_list_diff(monkeypatch):
     assert result.new_resume_id == NEW_ID
     # Список перезагружали для diff.
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
+
+
+def test_new_url_without_list_reconciliation_fails_closed(monkeypatch):
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert "не подтвердил создание копии" in result.reason
+
+
+def test_url_and_list_reconciliation_mismatch_fails_closed(monkeypatch):
+    other_id = "c" * 38
+    page = StubPage(
+        card_hashes=[{OLD_ID}, {OLD_ID, other_id}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert NEW_ID in result.reason
+    assert other_id in result.reason
 
 
 def test_no_navigation_and_no_new_card_fails(monkeypatch):
