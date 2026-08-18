@@ -1,5 +1,5 @@
 {
-  "name": "hhru-plugin",
+  "name": "hhru-cc-plugin",
   "version": "0.1.0",
   "description": "Safe hh.ru job-search workflows powered by the hhru CLI.",
   "author": {
