@@ -33,6 +33,7 @@ from .selector_groups.resume_experience import (
 )
 
 logger = logging.getLogger("hhru_bot.experience")
+SAVE_TIMEOUT_MS = 30_000
 
 
 @dataclass
@@ -143,11 +144,45 @@ def plan_experience(llm_client, *, mode: str, career: str, existing=None) -> Exp
         reason = f"LLM недоступен: {exc}"
     else:
         reason = "LLM вернул неполный или невалидный JSON"
+    if entries is not None and mode == "fill" and existing is not None:
+        entries = _merge_fill_plan(existing, entries)
+        if entries is None:
+            return ExperiencePlan(
+                list(existing),
+                used_fallback=True,
+                reason="LLM изменил защищённые поля или число записей",
+            )
     if entries is None:
         # In fill mode preserving existing data is safe.  In create mode an empty
         # plan is safer than writing fabricated content or a guessed fallback.
         return ExperiencePlan(list(existing or []), used_fallback=True, reason=reason)
     return ExperiencePlan(entries)
+
+
+def _merge_fill_plan(
+    existing: list[ExperienceEntry], proposed: list[ExperienceEntry]
+) -> list[ExperienceEntry] | None:
+    """Keep identity fields and existing text authoritative in ``fill`` mode."""
+    if len(existing) != len(proposed):
+        return None
+    merged = []
+    for old, new in zip(existing, proposed, strict=True):
+        protected = ("company", "position", "start_year", "end_year", "current", "company_url")
+        if any(getattr(old, key) != getattr(new, key) for key in protected):
+            return None
+        merged.append(
+            ExperienceEntry(
+                company=old.company,
+                position=old.position,
+                start_year=old.start_year,
+                end_year=old.end_year,
+                current=old.current,
+                company_url=old.company_url,
+                duties=old.duties or new.duties,
+                achievements=old.achievements or new.achievements,
+            )
+        )
+    return merged
 
 
 def _identity_matches(page: Page, resume_id: str) -> bool:
@@ -248,6 +283,16 @@ def edit_experience_on_hh(
                 if save.count() != 1:
                     return results + [f"строка {index}: save-кнопка не подтверждена"]
                 save.click()
+                try:
+                    page.wait_for_url(
+                        f"**/resume/{resume_id}",
+                        wait_until="commit",
+                        timeout=SAVE_TIMEOUT_MS,
+                    )
+                except PlaywrightError as exc:
+                    return results + [f"строка {index}: сохранение не подтверждено: {exc}"]
+                if not _identity_matches(page, resume_id):
+                    return results + [f"строка {index}: после save identity резюме не подтверждён"]
                 results.append(f"строка {index}: сохранено")
         except (PlaywrightError, ValueError) as exc:
             return results + [f"строка {index}: {exc}"]

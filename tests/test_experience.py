@@ -2,6 +2,7 @@ import pytest
 
 from hhru_bot.experience import (
     ExperienceEntry,
+    _merge_fill_plan,
     build_prompt,
     parse_plan,
     plan_experience,
@@ -47,3 +48,22 @@ def test_prompt_contains_fill_context_and_fact_guard():
     prompt = build_prompt("fill", "facts", [ExperienceEntry(company="Acme")])
     assert "только сведения пользователя" in prompt[0]["content"]
     assert '"existing"' in prompt[1]["content"]
+
+
+def test_fill_plan_preserves_existing_fields_and_text():
+    old = ExperienceEntry(company="Acme", position="Engineer", duties="existing")
+    proposed = ExperienceEntry(
+        company="Acme", position="Engineer", duties="new", achievements=["metric"]
+    )
+    merged = _merge_fill_plan([old], [proposed])
+    assert merged == [
+        ExperienceEntry(
+            company="Acme", position="Engineer", duties="existing", achievements=["metric"]
+        )
+    ]
+
+
+def test_fill_plan_rejects_identity_or_count_changes():
+    old = ExperienceEntry(company="Acme")
+    assert _merge_fill_plan([old], [ExperienceEntry(company="Other")]) is None
+    assert _merge_fill_plan([old], []) is None
