@@ -101,12 +101,14 @@ resumes:
     #   mode: from_scratch  # from_scratch | prefill
     #   primary:
     #     - institution: "МГУ"
-    #       level: "бакалавриат"
+    #       level: "бакалавриат"  # metadata; не записывается в faculty
+    #       faculty: "Физический факультет"
     #       specialty: "Физика"
     #       year: "2015"
     #   additional:
     #     - institution: "Курс SQL"
-    #       level: ""
+    #       level: ""  # metadata; не записывается в organization
+    #       organization: "Школа данных"
     #       specialty: "SQL"
     #       year: "2020"
     cover_letter: null

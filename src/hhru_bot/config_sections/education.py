@@ -11,7 +11,11 @@ from ._registry import register
 @dataclass(frozen=True)
 class EducationRecord:
     institution: str = ""
+    # level is source metadata; hh.ru's confirmed forms expose faculty/
+    # organization instead, so it is never written into those fields.
     level: str = ""
+    faculty: str = ""
+    organization: str = ""
     specialty: str = ""
     year: str = ""
 
@@ -37,7 +41,7 @@ def _records(raw, key: str, context: str) -> list[EducationRecord]:
         if not isinstance(item, dict):
             raise ConfigError(f"Элемент '{context}.{key}[{i}]' должен быть отображением")
         values = {}
-        for field_name in ("institution", "level", "specialty", "year"):
+        for field_name in ("institution", "level", "faculty", "organization", "specialty", "year"):
             value = item.get(field_name, "")
             if value is None:
                 value = ""

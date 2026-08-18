@@ -32,6 +32,7 @@ def test_plan_supports_multiple_primary_and_separate_additional():
     assert plan.primary[1].institution == "НИУ ВШЭ"
     assert plan.additional[0].specialty == "SQL"
     assert "Не выдумывай" in llm.messages[0][0]["content"]
+    assert "faculty" in llm.messages[0][0]["content"]
 
 
 def test_bad_llm_response_preserves_prefill_without_fabrication():

@@ -23,6 +23,11 @@ logger = logging.getLogger("hhru_bot.resume_education")
 
 PRIMARY_TRIGGER = "[data-qa='resume-edit-button-education-{index}']"
 ADDITIONAL_TRIGGER = "[data-qa='resume-edit-button-additionalEducation-{index}']"
+# Confirmed by a read-only live DOM probe on the dedicated training resume
+# 584926d4ff10f8b2870039ed1f707779623239 (2026-08-18). These links only open
+# the form; they do not persist anything until SAVE_BUTTON is clicked.
+PRIMARY_ADD = "[data-qa='resume-list-card-education'] [data-qa='link']"
+ADDITIONAL_ADD = "[data-qa='resume-list-card-additionalEducation'] [data-qa='link']"
 PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation/[^/?#]+")
 ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
 CANCEL_BUTTON = "[data-qa='profile-layout-cancel-button']"
@@ -30,16 +35,17 @@ SAVE_BUTTON = "[data-qa='profile-layout-save-button']"
 
 _PRIMARY_FIELDS = {
     "institution": "[data-qa='profile-education-university-input']",
-    "level": "[data-qa='profile-education-faculty-input']",
+    "faculty": "[data-qa='profile-education-faculty-input']",
     "specialty": "[data-qa='profile-education-specialty-input']",
     "year": "[data-qa='profile-education-year-input']",
 }
 _ADDITIONAL_FIELDS = {
     "institution": "[data-qa='profile-education-additional-name']",
-    "level": "[data-qa='profile-education-additional-organization']",
+    "organization": "[data-qa='profile-education-additional-organization']",
     "specialty": "[data-qa='profile-education-additional-specialty']",
     "year": "[data-qa='profile-education-year-input']",
 }
+_RESUME_ROUTE = re.compile(r"/resume/[^/?#]+(?:\?.*)?$")
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,10 @@ class EducationPlan:
 def _record(value: Any) -> EducationRecord:
     if not isinstance(value, dict):
         raise ValueError("запись образования должна быть объектом")
-    values = {k: value.get(k, "") for k in ("institution", "level", "specialty", "year")}
+    values = {
+        k: value.get(k, "")
+        for k in ("institution", "level", "faculty", "organization", "specialty", "year")
+    }
     if any(not isinstance(v, (str, int)) for v in values.values()):
         raise ValueError("поля образования должны быть строками")
     return EducationRecord(**{k: str(v).strip() for k, v in values.items()})
@@ -90,8 +99,12 @@ def build_education_prompt(
     }
     system = (
         "Ты заполняешь данные образования кандидата для hh.ru. Верни только JSON без markdown: "
-        '{"primary":[{"institution":"","level":"","specialty":"","year":""}],'
-        '"additional":[{"institution":"","level":"","specialty":"","year":""}]} . '
+        '{"primary":[{"institution":"","level":"","faculty":"",'
+        '"specialty":"","year":""}],'
+        '"additional":[{"institution":"","level":"","organization":"",'
+        '"specialty":"","year":""}]} . '
+        "level — метаданные для плана; в подтвержденной форме hh.ru нет отдельного "
+        "поля уровня. Для primary используй faculty, для additional — organization. "
         "Не выдумывай факты; неизвестные поля оставляй пустыми. Сохраняй все учебные заведения."
     )
     user = (
@@ -138,6 +151,7 @@ def _edit_block(
     page, records: list[EducationRecord], *, additional: bool, dry_run: bool
 ) -> EducationResult:
     trigger = ADDITIONAL_TRIGGER if additional else PRIMARY_TRIGGER
+    add_selector = ADDITIONAL_ADD if additional else PRIMARY_ADD
     fields = _ADDITIONAL_FIELDS if additional else _PRIMARY_FIELDS
     route = ADDITIONAL_ROUTE if additional else PRIMARY_ROUTE
     kind = "additional" if additional else "primary"
@@ -145,25 +159,44 @@ def _edit_block(
         return EducationResult(kind, True, "нет записей для изменения")
     for index, record in enumerate(records):
         button = page.locator(trigger.format(index=index))
-        if button.count() != 1:
+        button_count = button.count()
+        if button_count > 1:
             return EducationResult(kind, False, f"триггер образования {index} не найден однозначно")
+        if button_count == 0:
+            # The confirmed Add link is the only safe way to create a missing
+            # row. Never guess an unverified route or API endpoint.
+            button = page.locator(add_selector)
+            if button.count() != 1:
+                return EducationResult(
+                    kind,
+                    False,
+                    f"строка образования {index} отсутствует, подтвержденная кнопка Добавить "
+                    "не найдена однозначно",
+                )
         save_clicked = False
         try:
             button.click()
             page.wait_for_url(route)
             for name, selector in fields.items():
+                value = getattr(record, name)
+                # Empty LLM fields mean "unknown", not "erase the current value".
+                # This protects prefill and also makes a partial from-scratch plan
+                # fail closed rather than destroy data already on hh.ru.
+                if not value:
+                    continue
                 locator = page.locator(selector)
                 if locator.count() != 1:
                     return EducationResult(kind, False, f"поле {selector} не найдено однозначно")
-                locator.fill(getattr(record, name))
+                locator.fill(value)
             if dry_run:
                 page.locator(CANCEL_BUTTON).first.click()
             else:
                 save = page.locator(SAVE_BUTTON)
                 if save.count() != 1:
                     return EducationResult(kind, False, "кнопка сохранения не найдена однозначно")
-                save.click()
                 save_clicked = True
+                save.click()
+                page.wait_for_url(_RESUME_ROUTE)
         except PlaywrightError as exc:
             return EducationResult(
                 kind,
@@ -174,7 +207,8 @@ def _edit_block(
     return EducationResult(
         kind,
         True,
-        f"обработано записей: {len(records)}" + ("; save не нажимался" if dry_run else ""),
+        f"обработано записей: {len(records)}"
+        + ("; save не нажимался" if dry_run else "; сохранение подтверждено возвратом на резюме"),
     )
 
 
