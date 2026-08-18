@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from hhru_bot import cli
 from hhru_bot.cli import WRITE_COMMANDS, main
 from hhru_bot.write_lock import WriteLockBusy, acquire_write_lock
 
@@ -36,7 +37,6 @@ def test_cli_rejects_concurrent_write_command(tmp_path, capsys):
 
 def test_lock_covers_all_hhru_write_commands():
     assert WRITE_COMMANDS == {
-        "account",
         "apply",
         "bump",
         "run",
@@ -53,3 +53,23 @@ def test_lock_covers_all_hhru_write_commands():
         "resume-sections",
         "edit-skills",
     }
+
+
+def test_account_list_is_read_only_and_bypasses_lock_and_logging(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "setup_logging",
+        lambda **kwargs: pytest.fail("account list must not initialize file logging"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "acquire_write_lock",
+        lambda path: pytest.fail("account list must not acquire the write lock"),
+    )
+
+    main(["account", "list"])
+
+    assert "Аккаунтов не найдено" in capsys.readouterr().out
+    assert not (tmp_path / "data").exists()

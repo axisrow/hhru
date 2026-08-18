@@ -49,9 +49,12 @@ WRITE_COMMANDS = frozenset(
         "resume-position",
         "resume-sections",
         "edit-skills",
-        "account",
     }
 )
+
+# Nested commands need their own classification: account create mutates local
+# files, while account list is a read-only directory scan.
+WRITE_SUBCOMMANDS = frozenset({("account", "create")})
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
@@ -98,7 +101,7 @@ def main(argv: list[str] | None = None) -> None:
     except AccountError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    if args.command not in WRITE_COMMANDS:
+    if not _is_write_command(args):
         return _execute(args)
 
     lock_path = Path(args.history).expanduser().resolve().parent / ".hhru.lock"
@@ -108,6 +111,18 @@ def main(argv: list[str] | None = None) -> None:
     except WriteLockBusy:
         print("[FAIL] другой процесс уже выполняет WRITE-действие")
         sys.exit(1)
+
+
+def _is_write_command(args: argparse.Namespace) -> bool:
+    """Whether this parsed command needs the write lock."""
+    return (
+        args.command in WRITE_COMMANDS
+        or (
+            args.command,
+            getattr(args, "account_command", None),
+        )
+        in WRITE_SUBCOMMANDS
+    )
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:
@@ -139,7 +154,9 @@ def _execute(args: argparse.Namespace) -> None:
     # log сам ничего не логирует — ему не нужны handlers (цикл ревью #61, #58).
     # #179: то же условие решает, есть ли у логгера hhru_bot FileHandler — нужно
     # ниже ещё раз (except Exception), считаем один раз, не дублируем условие.
-    logging_enabled = args.command != "log"
+    logging_enabled = args.command != "log" and not (
+        args.command == "account" and getattr(args, "account_command", None) == "list"
+    )
     if logging_enabled:
         setup_logging(verbose=args.verbose)
 
