@@ -228,7 +228,10 @@ class _FakeCard:
 
 
 def test_remote_rows_marks_configured_and_unconfigured():
-    cards = [_FakeCard("11111111", "Backend developer", "modified"), _FakeCard("99999999", "", "not_finished")]
+    cards = [
+        _FakeCard("11111111", "Backend developer", "modified"),
+        _FakeCard("99999999", "", "not_finished"),
+    ]
     rows = list_resumes_cmd._remote_rows(cards, configured_ids={"11111111"})
 
     assert rows == [
@@ -301,7 +304,10 @@ def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch)
         lambda path: _config_with_storage_state(path, storage_state),
     )
 
-    fake_cards = [_FakeCard("11111111", "Backend developer", "modified"), _FakeCard("99999999", "Analyst", "approved")]
+    fake_cards = [
+        _FakeCard("11111111", "Backend developer", "modified"),
+        _FakeCard("99999999", "Analyst", "approved"),
+    ]
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)

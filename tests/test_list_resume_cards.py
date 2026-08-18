@@ -251,7 +251,10 @@ def test_lists_cards_with_status_from_ssr(monkeypatch):
         f"{escape(json.dumps(state, ensure_ascii=False))}</template></body></html>"
     )
     page = StubPage(
-        [StubCard(ID_A, title_text="Должность не указана"), StubCard(ID_B, title_text="Backend developer")]
+        [
+            StubCard(ID_A, title_text="Должность не указана"),
+            StubCard(ID_B, title_text="Backend developer"),
+        ]
     )
     _patch_goto(monkeypatch, page)
     monkeypatch.setattr(page, "content", lambda: html)

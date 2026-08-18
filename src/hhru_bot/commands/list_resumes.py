@@ -162,7 +162,13 @@ def run(args: argparse.Namespace) -> None:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
 
-    from ..browser import RESUMES_FULL_LIST_URL, goto_hh, has_auth_cookie, has_login_form, launch_context
+    from ..browser import (
+        RESUMES_FULL_LIST_URL,
+        goto_hh,
+        has_auth_cookie,
+        has_login_form,
+        launch_context,
+    )
     from ..copy_resume import ResumeListIndeterminate, list_resume_cards
 
     with launch_context(
@@ -215,7 +221,11 @@ def run(args: argparse.Namespace) -> None:
 
     configured_ids = {r.resume_id for r in config.resumes}
     print()
-    print(_ascii_table(["resume_id", "название", "статус", "в конфиге"], _remote_rows(cards, configured_ids)))
+    print(
+        _ascii_table(
+            ["resume_id", "название", "статус", "в конфиге"], _remote_rows(cards, configured_ids)
+        )
+    )
 
     not_configured = [c for c in cards if c.resume_id not in configured_ids]
     if not_configured:

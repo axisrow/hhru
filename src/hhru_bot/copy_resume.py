@@ -23,7 +23,13 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, PageStateIndeterminate, RESUMES_FULL_LIST_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    PageStateIndeterminate,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+)
 from .config import ResumeConfig
 from .negotiations_probe import parse_initial_state
 
@@ -296,7 +302,9 @@ def _card_hashes(page: Page) -> set[str]:
     return hashes
 
 
-def list_resume_cards(page: Page, *, navigate: bool = True, url: str | None = None) -> list[ResumeCard]:
+def list_resume_cards(
+    page: Page, *, navigate: bool = True, url: str | None = None
+) -> list[ResumeCard]:
     """Список резюме аккаунта: хэш + название + URL + статус (#135, #315).
 
     READ-only: только goto + чтение DOM/SSR, ничего не кликается и не отправляется.
@@ -352,7 +360,11 @@ def list_resume_cards(page: Page, *, navigate: bool = True, url: str | None = No
             title = (title_locator.first.inner_text() or "").strip()
 
         url = f"{HH_BASE_URL}/resume/{resume_id}"
-        cards.append(ResumeCard(resume_id=resume_id, title=title, url=url, status=status_by_hash.get(resume_id)))
+        cards.append(
+            ResumeCard(
+                resume_id=resume_id, title=title, url=url, status=status_by_hash.get(resume_id)
+            )
+        )
     return cards
 
 
