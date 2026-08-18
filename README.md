@@ -222,7 +222,8 @@ codex plugin marketplace add axisrow/hhru --ref main
 ```
 
 В Codex CLI открой `/plugins`, выбери marketplace `hhru`, установи
-`hhru-cc-plugin` и начни новый чат. Public submission в OpenAI Plugins Directory
+`hhru-cc-plugin` и начни новый чат. Repo marketplace зарегистрирован в
+`.agents/plugins/marketplace.json`; public submission в OpenAI Plugins Directory
 для командной установки не требуется.
 
 ### Команда `/hhru`

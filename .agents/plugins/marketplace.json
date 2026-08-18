@@ -1,0 +1,21 @@
+{
+  "name": "hhru",
+  "interface": {
+    "displayName": "HH.ru"
+  },
+  "plugins": [
+    {
+      "name": "hhru-cc-plugin",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/axisrow/hhru.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
