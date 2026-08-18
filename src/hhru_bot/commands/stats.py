@@ -16,7 +16,7 @@ FORMATS = ("table", "csv", "md")
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("stats", help="Сводка и экспорт истории откликов/поднятий")
-    p.add_argument("--resume", help="ID резюме (по умолчанию — все)")
+    p.add_argument("--resume", help="Slug из конфига или resume_id HH.ru (по умолчанию — все)")
     p.add_argument(
         "--period",
         choices=PERIODS,
@@ -56,8 +56,10 @@ def run(args: argparse.Namespace) -> None:
     config = load_config_or_exit(args.config)
     resume_id = None
     if args.resume is not None:
+        from ._common import resolve_resume
+
         try:
-            resume = config.get_resume(args.resume)
+            resume = resolve_resume(config, args.resume)
         except ConfigError as e:
             print(f"Ошибка конфигурации: {e}", file=sys.stderr)
             sys.exit(1)

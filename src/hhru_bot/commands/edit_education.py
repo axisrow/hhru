@@ -18,7 +18,11 @@ def register(subparsers) -> None:
             "--dry-run не нажимает Save; боевой режим требует --force или TTY-подтверждение."
         ),
     )
-    parser.add_argument("--resume", required=True, help="ID резюме из конфига")
+    parser.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     parser.add_argument(
         "--section",
         choices=("primary", "additional", "both"),
@@ -41,16 +45,18 @@ def run(args: argparse.Namespace) -> None:
     from ..resume_education import edit_education_on_hh
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
+    # needs='education': команда не имеет смысла без секции — точечная ошибка
+    # вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume, needs=("education",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
 
-    education = getattr(resume, "education", None)
-    if education is None:
-        print("[FAIL] Добавьте секцию education в конфиг резюме")
-        sys.exit(1)
+    education = resume.education
+
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Сохранить образование резюме '{resume.id}' на hh.ru?"
     ):

@@ -16,7 +16,11 @@ def register(subparsers) -> None:
             "WRITE-hh-ru: боевой режим требует --force или подтверждения TTY."
         ),
     )
-    parser.add_argument("--resume", required=True, help="ID резюме из конфига")
+    parser.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     parser.add_argument("--mode", choices=("create", "fill"), default="fill")
     parser.add_argument("--career", required=True, help="Факты карьеры для LLM")
     parser.add_argument(
@@ -54,8 +58,10 @@ def run(args: argparse.Namespace) -> None:
     from .copy_resume import confirm_write
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         raise SystemExit(1) from exc

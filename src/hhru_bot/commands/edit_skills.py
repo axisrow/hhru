@@ -18,7 +18,11 @@ def register(subparsers) -> None:
             "или TTY-подтверждение."
         ),
     )
-    parser.add_argument("--resume", required=True, help="ID резюме из конфига")
+    parser.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     parser.add_argument("--mode", choices=("fresh", "append"), default="append")
     parser.add_argument(
         "--skill",
@@ -47,8 +51,10 @@ def run(args: argparse.Namespace) -> None:
     )
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)

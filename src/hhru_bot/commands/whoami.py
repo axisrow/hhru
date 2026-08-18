@@ -29,7 +29,7 @@ def register(subparsers) -> None:
         "whoami",
         help="Проверить сессию и показать сводку аккаунта (из локальной истории)",
     )
-    p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
+    p.add_argument("--resume", help="Slug из конфига или resume_id HH.ru (по умолчанию — все)")
     p.add_argument(
         "--online",
         action="store_true",
@@ -71,13 +71,14 @@ def _check_session(storage_state_file: Path) -> tuple[bool, str]:
 
 
 def _resumes_for(config, args: argparse.Namespace):
-    """Резюме под сводку: --resume → одно (валидируется slug'ом), иначе все."""
+    """Резюме под сводку: --resume → одно (slug или resume_id HH.ru, #319), иначе все."""
     if args.resume is None:
         return config.resumes
     from ..config import ConfigError
+    from ._common import resolve_resume
 
     try:
-        return [config.get_resume(args.resume)]
+        return [resolve_resume(config, args.resume)]
     except ConfigError as e:
         print(f"Ошибка конфигурации: {e}", file=sys.stderr)
         sys.exit(1)

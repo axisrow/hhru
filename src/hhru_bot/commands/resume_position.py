@@ -12,7 +12,11 @@ def register(subparsers) -> None:
         "resume-position",
         help="Предложить и заполнить LLM значения желаемой работы в резюме",
     )
-    p.add_argument("--resume", required=True, help="ID резюме из конфига")
+    p.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     p.add_argument("--mode", choices=("from-scratch", "fill"), default="fill")
     p.add_argument("--dry-run", action="store_true", help="Показать план без изменения hh.ru")
     p.add_argument("--force", action="store_true", help="Подтвердить запись без prompt")
@@ -40,18 +44,18 @@ def run(args: argparse.Namespace) -> bool:
     )
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
+    # needs='ai_profile': точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume, needs=("ai_profile",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         return True
     if config.ai is None:
         print("[FAIL] Для resume-position нужна секция ai в config.yaml")
         return True
-    profile = getattr(resume, "ai_profile", None)
-    if profile is None:
-        print("[FAIL] Для resume-position нужна секция ai_profile у резюме")
-        return True
+    profile = resume.ai_profile
     try:
         llm = LLMClient(config.ai)
         with launch_context(

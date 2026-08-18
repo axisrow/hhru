@@ -15,7 +15,11 @@ def register(subparsers) -> None:
             "боевой режим требует --force; --dry-run ничего не нажимает."
         ),
     )
-    p.add_argument("--resume", required=True, help="ID резюме из конфига")
+    p.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     p.add_argument("--dry-run", action="store_true", help="Проверить состояние без клика")
     p.add_argument("--force", action="store_true", help="Разрешить боевой UI-клик")
     p.set_defaults(func=run)
@@ -29,8 +33,10 @@ def run(args: argparse.Namespace) -> None:
     from ..responses import NotAuthenticated
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)

@@ -20,6 +20,19 @@
 - **READ/WRITE-маркировка** у каждой команды (см. §3) — это контракт безопасности:
   `READ` ничего не меняет ни на hh.ru, ни локально; `WRITE-local` меняет только
   файлы пользователя; `WRITE-hh-ru` меняет состояние аккаунта на hh.ru.
+- **Адресация резюме — slug ИЛИ реальный `resume_id` HH.ru (#319).** Аргумент
+  `--resume` у команд адресации (`publish-resume`, `copy-resume`, `delete-resume`,
+  `edit-*`, `about`, `resume-position`, `resume-sections`, `mark`, `stats`,
+  `funnel`, `whoami`) принимает либо slug из `config.yaml`, либо числовой хэш
+  `resume_id` (например, полученный из `list-resumes`). Хэш без записи в конфиге
+  даёт «bare»-резюме без настроек: команды, работающие только с hh.ru
+  (publish/delete/copy/edit-skills/edit-experience/mark/stats/funnel), выполняются
+  без конфигурации; командам, которым нужна конкретная секция настроек
+  (`ai_profile`, `education`, `resume_sections` — `about`, `resume-position`,
+  `resume-sections`, `edit-education`), выдаётся точечная ошибка
+  «требуется настройка …», а не «резюме не найдено в конфиге». Поисково-массовый
+  путь (`apply`/`run`/`search`/`probe`) требует регистрации резюме в конфиге —
+  отклик без настроек не имеет смысла.
 - **`--force`/подтверждение — для новых деструктивных/массовых команд, не для всех
   WRITE-hh-ru.** Существующие `apply`/`bump`/`run` — **live-by-default**: они
   выполняют боевое действие при запуске, безопасность даётся opt-in `--dry-run`
