@@ -1071,6 +1071,20 @@ class History:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def delete_profile_field(self, question_key: str, source: str = "manual") -> bool:
+        """Удаляет значение профиля указанного источника.
+
+        Возвращает ``True``, если строка существовала. Нормализация ключа здесь
+        повторяет ``upsert_profile_field`` и защищает вызывающих от расхождения
+        между командами и автоматическим сбором профиля.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM account_profile WHERE question_key = ? AND source = ?",
+                (normalize(question_key), source),
+            )
+        return cursor.rowcount > 0
+
     # --- Pre-LLM фильтр работодателя (#85) -----------------------------------
     # Новый метод в конец файла (паттерн with self._connect(), существующие
     # не трогаем). employer_interacted — позитивный сигнал для эвристического
