@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .external_forms.detect import normalize
+
 if TYPE_CHECKING:
     # SalaryInfo (доменный тип #34) возвращается estimate_salary (#93). Ленивый
     # импорт внутри метода разрывает цикл history <-> search (search тянет history
@@ -74,6 +76,18 @@ CREATE TABLE IF NOT EXISTS manual_offers (
     vacancy_id TEXT NOT NULL,
     marked_at TEXT NOT NULL,
     UNIQUE (resume_id, vacancy_id)
+);
+
+-- account_profile — единый профиль аккаунта для автозаполнения внешних форм
+-- (#282). Одинаковый вопрос может иметь два значения: ручное значение имеет
+-- приоритет над автоматически считанным с hh.ru, но строки хранятся отдельно.
+CREATE TABLE IF NOT EXISTS account_profile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (question_key, source)
 );
 
 -- vacancies_seen — собранные карточки вакансий (#66, Этап 1: рынок).
@@ -1003,6 +1017,57 @@ class History:
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
                 "search_query, first_seen_at, last_seen_at, employer_tier "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # --- Профиль аккаунта для внешних форм (#282/#284) -----------------------
+
+    def upsert_profile_field(self, question_key: str, value: str, source: str) -> None:
+        """Сохраняет значение профиля, не смешивая источники.
+
+        Ключ нормализуется тем же правилом, что и подписи полей внешних форм.
+        Поэтому повторный login обновляет только ``hh_ru``-строку, а ручное
+        значение для того же вопроса остаётся отдельной строкой.
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_profile (question_key, value, source, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(question_key, source) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (normalize(question_key), value, source, now),
+            )
+
+    def get_profile_answers(self) -> dict[str, str]:
+        """Возвращает профиль для ``apply_answers`` с приоритетом manual."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT question_key, value
+                FROM account_profile
+                ORDER BY question_key,
+                         CASE source WHEN 'manual' THEN 0 ELSE 1 END,
+                         id
+                """
+            ).fetchall()
+        answers: dict[str, str] = {}
+        for row in rows:
+            answers.setdefault(row["question_key"], row["value"])
+        return answers
+
+    def list_profile_fields(self) -> list[dict]:
+        """Возвращает все исходные строки профиля для ``profile show``."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT question_key, value, source, updated_at
+                FROM account_profile
+                ORDER BY question_key, source, id
+                """
             ).fetchall()
         return [dict(row) for row in rows]
 
