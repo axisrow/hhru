@@ -57,9 +57,20 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     """
     resume_id = resume.resume_id
     goto_hh(page, RESUMES_FULL_LIST_URL)
-    card = page.locator(
+    card_selector = (
         f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
     )
+    card = page.locator(card_selector)
+    if card.count() == 0:
+        try:
+            card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+        except PlaywrightError:
+            return DeleteResumeResult(
+                resume_id,
+                False,
+                f"карточка resume_id={resume_id} не появилась после загрузки списка",
+                False,
+            )
     if card.count() != 1:
         return DeleteResumeResult(
             resume_id, False, f"карточка resume_id={resume_id} не подтверждена однозначно", False
@@ -72,14 +83,40 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     if dry_run:
         return DeleteResumeResult(resume_id, True, "dry-run; кнопка удаления не нажата")
 
-    try:
-        button.first.click()
-        # The confirm dialog renders asynchronously after the click (React);
-        # an immediate count() can observe the DOM before it mounts (same
-        # commit-vs-hydration race documented in create_resume.py for #304).
-        page.locator(RESUME_DELETE_CONFIRM).first.wait_for(state="visible", timeout=15000)
-    except PlaywrightError as exc:
-        return DeleteResumeResult(resume_id, False, f"не удалось открыть подтверждение: {exc}")
+    for attempt in range(2):
+        try:
+            # The action can be present in SSR while its React handler is not
+            # attached yet.  A bounded pre-click wait plus one safe reload
+            # avoids treating that hydration race as a permanent failure.
+            button.first.wait_for(state="visible", timeout=15000)
+            button.first.click()
+            # The confirm dialog renders asynchronously after the click (React);
+            # an immediate count() can observe the DOM before it mounts (same
+            # commit-vs-hydration race documented in create_resume.py for #304).
+            page.locator(RESUME_DELETE_CONFIRM).first.wait_for(state="visible", timeout=15000)
+            break
+        except PlaywrightError as exc:
+            if attempt == 1:
+                return DeleteResumeResult(
+                    resume_id, False, f"не удалось открыть подтверждение: {exc}"
+                )
+            page.reload(wait_until="domcontentloaded")
+            card = page.locator(card_selector)
+            if card.count() != 1:
+                return DeleteResumeResult(
+                    resume_id,
+                    False,
+                    f"карточка resume_id={resume_id} не подтверждена после recovery reload",
+                    False,
+                )
+            button = card.locator(RESUME_DELETE_BUTTON)
+            if button.count() != 1:
+                return DeleteResumeResult(
+                    resume_id,
+                    False,
+                    "кнопка удаления не подтверждена после recovery reload",
+                    False,
+                )
 
     confirm = page.locator(RESUME_DELETE_CONFIRM)
     if page.locator(RESUME_DELETE_HIDE_CONFIRM).count() > 1 or confirm.count() != 1:
@@ -104,9 +141,17 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
         # belongs to state observed after the destructive action.
         page.reload(wait_until="domcontentloaded")
         if not re.fullmatch(r"https://hh\.ru/applicant/my_resumes(?:[/?#].*)?", page.url):
-            return DeleteResumeResult(
-                resume_id, False, "удаление не подтверждено: hh.ru не вернул список резюме", True
-            )
+            # hh.ru may redirect a reload to the profile shell.  That route is
+            # not a valid post-delete proof; explicitly return to the stable
+            # list before deciding whether the destructive action succeeded.
+            goto_hh(page, RESUMES_FULL_LIST_URL)
+            if not re.fullmatch(r"https://hh\.ru/applicant/my_resumes(?:[/?#].*)?", page.url):
+                return DeleteResumeResult(
+                    resume_id,
+                    False,
+                    "удаление не подтверждено: hh.ru не вернул список резюме",
+                    True,
+                )
         _wait_resume_list_ready(page)
         remaining = page.locator(
             f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
