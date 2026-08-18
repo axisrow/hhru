@@ -23,7 +23,14 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, PageStateIndeterminate, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    RESUMES_FULL_LIST_URL,
+    PageStateIndeterminate,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+)
 from .config import ResumeConfig
 from .negotiations_probe import parse_initial_state
 
@@ -43,7 +50,10 @@ from .selector_groups.resume_list import (
 
 logger = logging.getLogger("hhru_bot.copy_resume")
 
-RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
+# /applicant/resumes now redirects to the profile shell.  Keep the historical
+# name as the module-level seam used by callers/tests, but point every list
+# operation at the dedicated, stable list surface (#311).
+RESUMES_LIST_URL = RESUMES_FULL_LIST_URL
 COPY_TIMEOUT_MS = 30_000
 PROFILE_STALL_SECONDS = 15.0
 PROFILE_ABSOLUTE_TIMEOUT_SECONDS = 300.0
@@ -215,7 +225,12 @@ def _wait_duplicate_action(
     обязано дать ровно одно совпадение.
     """
     more = card.locator(RESUME_LIST_ACTION_MORE)
-    duplicate = page.locator(RESUME_DUPLICATE_MENU_ITEM).or_(card.locator(RESUME_DUPLICATE_INLINE))
+    # Both menu implementations are rendered outside the target card: the
+    # opened action sheet is a portal, including the live ``resume-dublicate``
+    # variant on /applicant/my_resumes.  The target card remains identity-bound
+    # through ``more``; after that safe menu open, require exactly one global
+    # duplicate action instead of incorrectly scoping the portal to the card.
+    duplicate = page.locator(f"{RESUME_DUPLICATE_MENU_ITEM}, {RESUME_DUPLICATE_INLINE}")
     profile_ready = page.locator(RESUME_PROFILE_READY)
     menu_opened = False
     ready_seen = False
@@ -481,8 +496,49 @@ def _wait_resume_list_ready(page: Page) -> None:
     except PlaywrightTimeoutError:
         raise ResumeListIndeterminate(
             "карточки резюме не появились за отведённое время — состояние "
-            "/applicant/resumes не подтверждено"
+            f"{RESUMES_LIST_URL} не подтверждено"
         ) from None
+
+
+def _reconcile_created_resume(
+    page: Page,
+    before: set[str],
+    url_candidate: str,
+) -> tuple[str, str]:
+    """Confirm the clone in the stable list after the WRITE click (#311).
+
+    A profile URL is only a candidate: the clone request may have failed, or
+    navigation may have landed on an existing profile.  The list diff is the
+    authoritative post-action proof and must contain exactly one new id.
+    """
+    _goto_resumes_list(page, post_write=True)
+    _wait_resume_list_ready(page)
+
+    deadline = _monotonic() + COPY_TIMEOUT_MS / 1000
+    created: set[str] = set()
+    while True:
+        created = _card_hashes(page) - before
+        if len(created) == 1:
+            break
+        if _monotonic() >= deadline:
+            break
+        page.wait_for_timeout(PROFILE_POLL_MS)
+
+    if len(created) != 1:
+        return "", (
+            f"hh.ru не подтвердил создание копии (новых резюме в списке: "
+            f"{len(created)}) — состояние после WRITE-клика не подтверждено "
+            "(fail-closed)"
+        )
+
+    created_id = created.pop()
+    if url_candidate and url_candidate != created_id:
+        return "", (
+            f"URL после дублирования указывает на {url_candidate}, а список "
+            f"подтвердил {created_id} — состояние копии не подтверждено "
+            "(fail-closed)"
+        )
+    return created_id, ""
 
 
 def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
@@ -589,22 +645,13 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     except PlaywrightTimeoutError:
         logger.warning("Навигация на новое резюме не дождалась — сверяю список резюме")
 
-    if not new_id or new_id == resume.resume_id:
-        # Fallback: hh.ru мог увести не на страницу копии — сверяем список до/после.
-        # post_write=True: клик по «Дублировать» уже отправлен выше, поэтому
-        # отзыв сессии здесь — это неподтверждённое состояние копии, а не
-        # обычный pre-write отказ (Codex adversarial review, PR #158).
-        _goto_resumes_list(page, post_write=True)
-        _wait_resume_list_ready(page)
-        created = _card_hashes(page) - before
-        if len(created) != 1:
-            return CopyResumeResult(
-                resume.id,
-                False,
-                reason=f"hh.ru не подтвердил создание копии (новых резюме в списке: "
-                f"{len(created)}) — останавливаюсь (fail-closed)",
-            )
-        new_id = created.pop()
+    # URL is only a candidate.  Always reconcile against the list because the
+    # click may have produced a SPA navigation without creating a resume, and
+    # the URL alone does not prove that the clone is visible in the account.
+    url_candidate = "" if new_id == resume.resume_id else new_id
+    new_id, reconciliation_failure = _reconcile_created_resume(page, before, url_candidate)
+    if reconciliation_failure:
+        return CopyResumeResult(resume.id, False, reason=reconciliation_failure)
 
     if new_id == resume.resume_id:
         return CopyResumeResult(
