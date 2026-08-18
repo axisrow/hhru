@@ -61,6 +61,7 @@ def test_all_commands_registered():
         "reply-employers",
         "calendar",
         "resume-sections",
+        "edit-skills",
     }
 
 
@@ -101,6 +102,7 @@ def test_register_commands_returns_names():
         "reply_employers",
         "calendar",
         "resume_sections",
+        "edit_skills",
     }
 
 
