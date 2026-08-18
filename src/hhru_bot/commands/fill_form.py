@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -55,7 +57,9 @@ def run(args: argparse.Namespace) -> bool:
         ok, missing = apply_answers(page, scan, answers)
         out = Path(LOG_DIR)
         out.mkdir(parents=True, exist_ok=True)
-        slug = "external_form_dry_run"
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        host_slug = re.sub(r"[^a-z0-9]+", "-", parsed.netloc.casefold()).strip("-")
+        slug = f"external_form_dry_run_{timestamp}_{host_slug}"
         html = out / f"{slug}.html"
         png = out / f"{slug}.png"
         html.write_text(page.content(), encoding="utf-8")

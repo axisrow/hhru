@@ -97,7 +97,7 @@ def scan_form(page: Page) -> FormScan:
                 options = tuple(
                     normalize(_radio_label(page, group.nth(j))) for j in range(group.count())
                 )
-                selector = f"input[type='radio'][name='{name}']"
+                selector = f"form input[type='radio'][name='{name}']"
                 required = (
                     group_node.get_attribute("aria-required") == "true"
                     or "обязательное поле" in label.casefold()
@@ -107,11 +107,14 @@ def scan_form(page: Page) -> FormScan:
                 required = (
                     control.get_attribute("aria-required") or ""
                 ).casefold() == "true" or control.get_attribute("required") is not None
-                selector = (
-                    f"#{control.get_attribute('id')}"
-                    if control.get_attribute("id")
-                    else f"{kind}:nth-of-type({i + 1})"
-                )
+                control_id = control.get_attribute("id")
+                tag = control.evaluate("e => e.tagName").lower()
+                if control_id:
+                    selector = f"#{control_id}"
+                elif tag == "textarea":
+                    selector = f"form textarea >> nth={i}"
+                else:
+                    selector = f"form input[type='{kind}'] >> nth={i}"
             clean_label = _question_text(label)
             state = "confirmed" if clean_label else "indeterminate"
             fields.append(
@@ -146,9 +149,10 @@ def apply_answers(page: Page, scan: FormScan, answers: dict[str, str]) -> tuple[
             if normalize(value) not in form_field.options:
                 missing.append(form_field.label)
             else:
-                # Radio groups are identified by their accessible label; only
-                # check the exact option, and do not activate the form's buttons.
-                for option in page.locator("input[type='radio']").all():
+                # form_field.selector already scopes to this exact radio group
+                # (input[type='radio'][name=...]) inside the single confirmed
+                # form scan_form validated — never search the whole page.
+                for option in loc.all():
                     if normalize(_radio_label(page, option)) == normalize(value):
                         option.check()
                         break
