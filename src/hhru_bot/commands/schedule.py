@@ -87,7 +87,7 @@ def _parse_time(hhmm: str) -> tuple[int, int]:
     return hour, minute
 
 
-def _program_arguments(action: str, apply_limit: int) -> list[str]:
+def _program_arguments(action: str, apply_limit: int, account: str | None = None) -> list[str]:
     """Аргументы, которые планировщик передаёт scheduled_run.sh.
 
     bump — без лимита (дневной лимит и кулдаун 4ч держит throttle).
@@ -99,9 +99,12 @@ def _program_arguments(action: str, apply_limit: int) -> list[str]:
     (unrecognized arguments); валидный порядок — `--headless bump ...`.
     Плановый прогон идёт без GUI, поэтому --headless захардкожен.
     """
+    args = ["--headless"]
+    if account is not None:
+        args += ["--account", account]
     if action == "bump":
-        return ["--headless", "bump"]
-    return ["--headless", "apply", "--limit", str(apply_limit)]
+        return [*args, "bump"]
+    return [*args, "apply", "--limit", str(apply_limit)]
 
 
 def render_schedule(
@@ -111,6 +114,7 @@ def render_schedule(
     interval_hours: int = DEFAULT_BUMP_INTERVAL_HOURS,
     apply_time: str = DEFAULT_APPLY_TIME,
     apply_limit: int = DEFAULT_APPLY_LIMIT,
+    account: str | None = None,
 ) -> str:
     """Генерирует текст конфига планировщика для копирования (чистая функция).
 
@@ -128,11 +132,11 @@ def render_schedule(
     cfg.validate()
 
     if format == "plist":
-        return _render_plist(cfg)
-    return _render_crontab(cfg)
+        return _render_plist(cfg, account=account)
+    return _render_crontab(cfg, account=account)
 
 
-def _render_plist(cfg: ScheduleConfig) -> str:
+def _render_plist(cfg: ScheduleConfig, *, account: str | None = None) -> str:
     """Чистый launchd .plist (валидный XML), БЕЗ #-инструкций перед <?xml>.
 
     Инструкции живут отдельно (_instructions) и печатаются в stderr — тогда
@@ -140,7 +144,7 @@ def _render_plist(cfg: ScheduleConfig) -> str:
     launchd примет как есть (plutil -lint / plistlib не ругаются на '#').
     """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
-    args = [wrapper, *_program_arguments(cfg.action, cfg.apply_limit)]
+    args = [wrapper, *_program_arguments(cfg.action, cfg.apply_limit, account)]
     label = f"com.hhru.bot.{cfg.action}"
     log_out = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
     log_err = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
@@ -200,7 +204,7 @@ def _plist_start_block(cfg: ScheduleConfig) -> str:
     )
 
 
-def _render_crontab(cfg: ScheduleConfig) -> str:
+def _render_crontab(cfg: ScheduleConfig, *, account: str | None = None) -> str:
     """Чистая crontab-строка (расписание + команда), БЕЗ #-инструкций.
 
     Инструкции — в stderr через _instructions. Тогда `hhru-bot schedule
@@ -210,7 +214,7 @@ def _render_crontab(cfg: ScheduleConfig) -> str:
     """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
     # Командная часть без пробелов внутри одного аргумента — собираем через join.
-    cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit))
+    cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit, account))
     # HHRU_PYTHON префиксом: cron НЕ активирует venv проекта, голый python3 в
     # cron-окружении не имеет playwright. scheduled_run.sh читает HHRU_PYTHON.
     command = f"HHRU_PYTHON={PLACEHOLDER_PYTHON_BIN} {wrapper} {cmd_args}"
@@ -316,6 +320,7 @@ def run(args: argparse.Namespace) -> None:
             interval_hours=cfg.interval_hours,
             apply_time=cfg.apply_time,
             apply_limit=cfg.apply_limit,
+            account=args.account,
         )
     except ValueError as e:
         print(f"Ошибка: {e}", file=sys.stderr)
