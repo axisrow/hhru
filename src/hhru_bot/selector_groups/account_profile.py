@@ -26,7 +26,7 @@ ACCOUNT_PROFILE_EMAIL = "[data-qa='profile-contact-item-email']"
 
 # Resume-level contact fields: confirmed in the authenticated live DOM of
 # /resume/{resume_id}; name and city were not rendered as account fields there.
-RESUME_CONTACTS_PHONE = "[data-qa='resume-contact-phone-value-preferred']"
+RESUME_CONTACT_PHONE = "[data-qa='resume-contact-phone-value-preferred']"
 RESUME_CONTACT_EMAIL = "[data-qa='resume-contact-email-value']"
 
 # /applicant/resumes: confirmed only as profile-header name; no contact fields
