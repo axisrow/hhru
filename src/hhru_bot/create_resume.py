@@ -94,11 +94,15 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     match = re.search(r"tree-selector-item-text-(\d+)$", qa)
     if not match:
         return f"пункт каталога «{area}» не является leaf-профессией"
-    checkbox, reason = _one(
-        page,
-        RESUME_CREATION_CATEGORY_INPUT.format(match.group(1)),
-        f"чекбокс профессии «{area}»",
-    )
+    # The checkbox shares the tree row confirmed rendered above, but it is still
+    # a distinct control the SPA attaches asynchronously; wait before the strict
+    # _one() so the commit-vs-hydration pattern stays symmetric across the wizard.
+    checkbox_selector = RESUME_CREATION_CATEGORY_INPUT.format(match.group(1))
+    try:
+        page.locator(checkbox_selector).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return f"чекбокс профессии «{area}» не отрисовался: {exc}"
+    checkbox, reason = _one(page, checkbox_selector, f"чекбокс профессии «{area}»")
     if reason:
         return reason
     _require(checkbox).check()

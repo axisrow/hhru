@@ -43,7 +43,13 @@ pytestmark = pytest.mark.unit
 )
 def test_existing_title_reason(card_count, titles, title, expected):
     reason = _existing_title_reason(card_count, titles, title)
-    assert expected in reason
+    if expected:
+        assert expected in reason
+    else:
+        # Allowed-case assertions must pin reason == "" (not just contain ""):
+        # "" in reason is trivially true for any string and would mask a
+        # regression where a legitimately-allowed case starts failing closed.
+        assert reason == ""
 
 
 @pytest.mark.parametrize(
