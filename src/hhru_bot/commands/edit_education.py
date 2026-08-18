@@ -114,12 +114,12 @@ def run(args: argparse.Namespace) -> None:
 
         history = History(args.history)
         for result in results:
-            if result.success or result.uncertain:
+            if result.success or result.uncertain or result.saved:
                 history.record_action(
                     resume.resume_id,
                     resume.resume_id,
                     "edit_education",
-                    "uncertain" if result.uncertain else "success",
+                    "uncertain" if result.uncertain or not result.success else "success",
                     result.reason,
                 )
 

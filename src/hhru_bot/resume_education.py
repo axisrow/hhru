@@ -155,13 +155,20 @@ def _edit_block(
     fields = _ADDITIONAL_FIELDS if additional else _PRIMARY_FIELDS
     route = ADDITIONAL_ROUTE if additional else PRIMARY_ROUTE
     kind = "additional" if additional else "primary"
+    saved_count = 0
     if not records:
         return EducationResult(kind, True, "нет записей для изменения")
     for index, record in enumerate(records):
         button = page.locator(trigger.format(index=index))
         button_count = button.count()
         if button_count > 1:
-            return EducationResult(kind, False, f"триггер образования {index} не найден однозначно")
+            return EducationResult(
+                kind,
+                False,
+                f"триггер образования {index} не найден однозначно",
+                uncertain=saved_count > 0,
+                saved=saved_count,
+            )
         if button_count == 0:
             # The confirmed Add link is the only safe way to create a missing
             # row. Never guess an unverified route or API endpoint.
@@ -172,6 +179,8 @@ def _edit_block(
                     False,
                     f"строка образования {index} отсутствует, подтвержденная кнопка Добавить "
                     "не найдена однозначно",
+                    uncertain=saved_count > 0,
+                    saved=saved_count,
                 )
         save_clicked = False
         try:
@@ -186,29 +195,44 @@ def _edit_block(
                     continue
                 locator = page.locator(selector)
                 if locator.count() != 1:
-                    return EducationResult(kind, False, f"поле {selector} не найдено однозначно")
+                    return EducationResult(
+                        kind,
+                        False,
+                        f"поле {selector} не найдено однозначно",
+                        uncertain=saved_count > 0,
+                        saved=saved_count,
+                    )
                 locator.fill(value)
             if dry_run:
                 page.locator(CANCEL_BUTTON).first.click()
             else:
                 save = page.locator(SAVE_BUTTON)
                 if save.count() != 1:
-                    return EducationResult(kind, False, "кнопка сохранения не найдена однозначно")
+                    return EducationResult(
+                        kind,
+                        False,
+                        "кнопка сохранения не найдена однозначно",
+                        uncertain=saved_count > 0,
+                        saved=saved_count,
+                    )
                 save_clicked = True
                 save.click()
                 page.wait_for_url(_RESUME_ROUTE)
+                saved_count += 1
         except PlaywrightError as exc:
             return EducationResult(
                 kind,
                 False,
                 f"ошибка UI: {exc}",
-                uncertain=save_clicked,
+                uncertain=save_clicked or saved_count > 0,
+                saved=saved_count,
             )
     return EducationResult(
         kind,
         True,
         f"обработано записей: {len(records)}"
         + ("; save не нажимался" if dry_run else "; сохранение подтверждено возвратом на резюме"),
+        saved=saved_count,
     )
 
 
@@ -218,6 +242,7 @@ class EducationResult:
     success: bool
     reason: str
     uncertain: bool = False
+    saved: int = 0
 
 
 def edit_education_on_hh(
