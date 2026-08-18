@@ -4,6 +4,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.publish_resume as publish
+from hhru_bot.browser import NotAuthenticated
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.publish_resume import parse_resume_state
 
@@ -267,3 +268,26 @@ def test_publish_pre_click_rejection_is_not_uncertain(monkeypatch):
     result = _run(page, monkeypatch)
     assert not result.success
     assert result.uncertain is False
+
+
+def test_publish_reload_session_rejection_after_click_is_uncertain(monkeypatch):
+    # #308: клик по кнопке публикации состоялся, но read-only reload после
+    # клика выявил, что сессия отвергнута (страница отдала форму входа).
+    # require_authenticated_page поднимает NotAuthenticated (RuntimeError),
+    # который раньше утекал мимо `except PlaywrightError` наружу, и команда
+    # выходила без записи uncertain-аудита — повторный --force мог бы
+    # опубликовать поверх уже состоявшейся публикации. Теперь это fail-closed
+    # серая зона: uncertain=True, а не необработанное исключение.
+    class _AuthRejectedPage(_Page):
+        def reload(self, wait_until=None):
+            super().reload(wait_until=wait_until)
+            raise NotAuthenticated("сессия отвергнута сервером")
+
+    page = _AuthRejectedPage(_markup(status="not_finished"))
+    page.after_markup = _markup(status="not_finished", isSearchable=False)
+    monkeypatch.setattr(publish, "PUBLISH_TIMEOUT_MS", 1)
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтверждён" in result.reason
+    assert page.clicked == 1

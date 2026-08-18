@@ -16,7 +16,12 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import open_confirmed_resume, require_authenticated_page, resume_identity_matches
+from .browser import (
+    NotAuthenticated,
+    open_confirmed_resume,
+    require_authenticated_page,
+    resume_identity_matches,
+)
 from .config import ResumeConfig
 from .selector_groups.resume_page import (
     RESUME_PUBLISH_BUTTON,
@@ -249,7 +254,12 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                     uncertain=True,
                 )
             after = parse_resume_state(page.content(), resume.resume_id)
-        except PlaywrightError as exc:
+        except (PlaywrightError, NotAuthenticated) as exc:
+            # После клика сессия могла быть отвергнута при reload (страница
+            # вернула форму входа). Клик уже ушёл, поэтому это серая зона —
+            # uncertain, а не утечка NotAuthenticated наружу (иначе команда
+            # вышла бы [FAIL] без записи uncertain-аудита и позволила бы
+            # бездумный повтор --force поверх уже состоявшейся публикации).
             return PublishResumeResult(
                 resume.id,
                 False,
