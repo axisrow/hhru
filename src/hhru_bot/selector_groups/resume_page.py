@@ -46,3 +46,11 @@ RESUME_DELETE_CONTENT = "[data-qa='resume-delete-content']"
 RESUME_DELETE_CONFIRM = "[data-qa='resume-delete-confirm']"
 RESUME_DELETE_HIDE_CONFIRM = "[data-qa='resume-hide-confirm']"
 RESUME_DELETE_CLOSE = "[data-qa='resume-delete-close']"
+
+# Create-resume wizard (#304).  These values must be checked against an
+# authenticated live DOM before enabling a real run; the command remains
+# fail-closed when any marker is absent or ambiguous.
+RESUME_CREATE_BUTTON = "[data-qa='resume-create']"
+RESUME_CREATION_AREA = "[data-qa='resume-creation-professional-area']"
+RESUME_CREATION_TITLE = "[data-qa='resume-creation-title']"
+RESUME_CREATION_SUBMIT = "[data-qa='resume-creation-submit']"
