@@ -93,6 +93,12 @@ def run(args: argparse.Namespace) -> None:
                 "Ничего не отправлено."
             )
             sys.exit(1)
+        if history.has_unresolved_uncertain(resume.resume_id, "copy_resume"):
+            print(
+                f"[FAIL] {resume.id} — предыдущее копирование не подтверждено (uncertain). "
+                "Проверьте статус резюме на hh.ru вручную перед повтором."
+            )
+            sys.exit(1)
         if history.count_today(resume.resume_id, "copy_resume") > 0:
             print(
                 f"[INFO] Уже копировали {resume.id} сегодня — "

@@ -210,3 +210,22 @@ def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, 
         ).fetchone()
     assert row["status"] == "uncertain"
     assert "исключение в браузерном шаге" in row["reason"]
+
+
+def test_run_uncertain_blocks_subsequent_copy(env, tmp_path, monkeypatch, capsys):
+    # Regression test for Codex finding: uncertain copy results must block retries.
+    # Если есть unresolved uncertain запись, следующий run должен fail с explicit error,
+    # а не позволять повторный клик который создаст дубликат резюме на hh.ru.
+    h = History(tmp_path / "h.db")
+    # Сначала записываем uncertain (как будто предыдущий клик мог уйти)
+    h.record_action(
+        OLD_ID, OLD_ID, "copy_resume", "uncertain", "состояние после WRITE-клика не подтверждено"
+    )
+    # Пытаемся запустить снова — должен быть rejected
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "не подтверждено (uncertain)" in out
+    assert env.calls == []  # до браузера не дошло
