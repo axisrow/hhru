@@ -66,6 +66,26 @@ def run(args: argparse.Namespace) -> bool:
                     "LLM предложил зарплату без подтверждённого факта пользователя; "
                     "значение отклонено"
                 )
+            if current.employment is None and plan.employment:
+                raise RuntimeError(
+                    "LLM предложил тип занятости без подтверждённого факта пользователя; "
+                    "значение отклонено"
+                )
+            if current.work_format is None and plan.work_format:
+                raise RuntimeError(
+                    "LLM предложил формат работы без подтверждённого факта пользователя; "
+                    "значение отклонено"
+                )
+            if current.commute is None and plan.commute is not None:
+                raise RuntimeError(
+                    "LLM предложил время в пути без подтверждённого факта пользователя; "
+                    "значение отклонено"
+                )
+            if current.business_trips is None and plan.business_trips is not None:
+                raise RuntimeError(
+                    "LLM предложил командировки без подтверждённого факта пользователя; "
+                    "значение отклонено"
+                )
             if args.mode == "fill":
                 plan = fill_only_missing(current, plan)
             elif any(

@@ -45,6 +45,8 @@ TRAVEL_LABELS = {
     "up_to_2_hours": "Не дольше 2 часов",
     "up_to_3_hours": "Не дольше 3 часов",
 }
+DISPLAY_EMPLOYMENT = {**EMPLOYMENT_LABELS, "full_time": "Постоянная работа"}
+DISPLAY_WORK = {**WORK_LABELS, "office": "На месте работодателя", "remote": "Удалённо"}
 
 
 @dataclass
@@ -182,10 +184,10 @@ def read_display_position(page: Page) -> PositionValues:
     )
     employment_text = text("[data-qa='resume-position-field-employmentForms']")
     employment = next(
-        (key for key, label in EMPLOYMENT_LABELS.items() if label in employment_text), None
+        (key for key, label in DISPLAY_EMPLOYMENT.items() if label in employment_text), None
     )
     work_text = text("[data-qa='resume-position-field-workFormats']")
-    work_format = next((key for key, label in WORK_LABELS.items() if label in work_text), None)
+    work_format = next((key for key, label in DISPLAY_WORK.items() if label in work_text), None)
     commute_text = text("[data-qa='resume-position-field-travelTime']")
     commute = next((key for key, label in TRAVEL_LABELS.items() if label in commute_text), None)
     trips_text = text("[data-qa='resume-position-field-businessTripReadiness']")
