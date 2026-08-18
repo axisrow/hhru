@@ -632,6 +632,12 @@ class _SimpleLocator:
         # already-responded-маркеры одним локатором.
         return _SimpleLocator(self._present or other._present)
 
+    def filter(self, *, visible: bool | None = None) -> _SimpleLocator:  # noqa: ARG002
+        # #248 cycle-review round 2: dedup.check_already_responded() narrows the
+        # union to visible matches before .first — the fake has no hidden-vs-
+        # visible distinction, so filtering is a no-op here.
+        return self
+
 
 class _ApplyPipelineFakePage:
     """Не-dry-run прогон до questions-indeterminate: кнопка отклика есть,

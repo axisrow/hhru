@@ -7,10 +7,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
+from hhru_bot.history import SKIP_REASONS
 from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.integration
@@ -82,8 +85,18 @@ class _FakeLocator:
         # из объединяемых локаторов присутствует; wait_for-вызовы объединённого
         # локатора продолжают писаться в тот же общий счётчик.
         return _FakeLocator(
-            present=self._present or other._present, wait_for_calls=self._wait_for_calls
+            present=self._present or other._present,
+            wait_for_calls=self._wait_for_calls,
+            wait_for_timeouts=self._wait_for_timeouts,
         )
+
+    def filter(self, *, visible: bool | None = None) -> _FakeLocator:  # noqa: ARG002
+        # #248 cycle-review round 2: filter(visible=True) narrows the union to
+        # visible matches before .first resolves. The fake only models a single
+        # present/absent boolean per selector (no hidden-vs-visible distinction
+        # within one _present state), so filtering is a no-op here — presence
+        # already implies visibility in this fake's model.
+        return self
 
 
 class FakePage:
@@ -257,6 +270,44 @@ def test_apply_already_responded_check_always_blocks_regardless_of_button():
         )
 
 
+def test_apply_rechecks_responded_marker_before_form_submit():
+    """A marker rendered during letter generation must block the submit.
+
+    The recheck runs on the vacancy page (before navigating to the response
+    form), so it can see vacancy-page markers. The marker appears only after
+    the initial check, during letter render — the TOCTOU window #247 targets.
+    The fake is URL-aware: vacancy-page markers exist only on the vacancy page,
+    so the test fails if the recheck is ever moved after navigation (where the
+    response-form DOM has no vacancy markers).
+    """
+
+    class _MarkerAppearsDuringLetterRender(FakePage):
+        def wait_for_url(self, _url_pattern, **_kwargs):
+            # navigate_to_response_form lands on the response-form page, where
+            # vacancy-page markers are absent.
+            self.url = "/applicant/vacancy_response"
+
+        def locator(self, selector: str):
+            if self.url.startswith("https://hh.ru/vacancy/"):
+                return super().locator(selector)
+            return _FakeLocator(present=False)
+
+    page = _MarkerAppearsDuringLetterRender(apply_button=True, submit_in_form=True)
+
+    class _LetterProvider:
+        def render(self, _vacancy):
+            page._already_responded = True
+            return SimpleNamespace(text="x", variant="template")
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, letter_provider=_LetterProvider()
+    )
+
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.ALREADY_APPLIED
+    assert result.acted is False
+
+
 def test_apply_already_responded_skip_reason_is_already_applied_not_has_questions():
     """#226 cycle-review round 2 (codex): already-responded skip раньше терялся под
     HAS_QUESTIONS — clear-skipped --reason already_applied не мог его снять, а
@@ -311,6 +362,24 @@ def test_check_already_responded_ignores_hidden_attached_marker():
         def count(self) -> int:
             return 1
 
+        def or_(self, _other):
+            return self
+
+        def filter(self, *, visible: bool | None = None):  # noqa: ARG002
+            # A visible-only filter on a purely hidden marker yields no match —
+            # model that as a locator whose wait_for always times out, so the
+            # subsequent wait_for(state="attached") behaves like the real
+            # filter(visible=True) narrowing to zero elements.
+            return _HiddenMarkerLocator._EmptyLocator()
+
+        class _EmptyLocator:
+            @property
+            def first(self):
+                return self
+
+            def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+                raise PlaywrightTimeoutError("no visible marker")
+
         def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
             if state == "visible":
                 raise PlaywrightTimeoutError("hidden marker")
@@ -322,6 +391,73 @@ def test_check_already_responded_ignores_hidden_attached_marker():
     reason = check_already_responded(_HiddenMarkerPage(), _vacancy())
 
     assert reason is None
+
+
+def test_check_already_responded_visible_marker_survives_hidden_dom_order():
+    """#248 cycle-review round 2 (codex, high): Locator.or_().first selects by
+    DOM order, not by visibility. If a hidden/stale AGAIN marker precedes a
+    visible CHAT marker in the union's DOM order, .first.wait_for(state=
+    "visible") would wait on the hidden element and time out — even though a
+    visible marker exists and proves an existing response. filter(visible=True)
+    must be applied to the union before .first so a hidden element earlier in
+    DOM order cannot hide a visible one later in DOM order.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from hhru_bot.apply.dedup import check_already_responded
+    from hhru_bot.selector_groups import vacancy_page
+
+    class _AgainMarkerLocator:
+        """Hidden, and comes first in the union's DOM order."""
+
+        @property
+        def first(self):
+            return self
+
+        def or_(self, other):
+            return _UnionLocator(other)
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            raise PlaywrightTimeoutError("hidden — never resolves as visible")
+
+    class _ChatMarkerLocator:
+        """Visible, but second in the union's DOM order."""
+
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            return None
+
+    class _UnionLocator:
+        """Models Locator.or_(): .first picks by DOM order (AGAIN, i.e. first
+        operand) unless narrowed by filter(visible=True) to only visible matches
+        (here, only the CHAT operand)."""
+
+        def __init__(self, chat_locator):
+            self._chat = chat_locator
+
+        @property
+        def first(self):
+            # Unfiltered union resolves .first to the hidden AGAIN marker
+            # (earlier in DOM order) — this is the bug filter(visible=True) fixes.
+            return _AgainMarkerLocator()
+
+        def filter(self, *, visible: bool | None = None):  # noqa: ARG002
+            # Narrowed to visible matches only: the hidden AGAIN marker drops
+            # out, leaving the visible CHAT marker.
+            return self._chat
+
+    class _MarkerOrderPage:
+        def locator(self, selector: str):
+            if selector == vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT:
+                return _ChatMarkerLocator()
+            return _AgainMarkerLocator()
+
+    reason = check_already_responded(_MarkerOrderPage(), _vacancy())
+
+    assert reason == "уже откликались по вакансии 1, пропуск"
 
 
 def test_wait_apply_button_already_responded_avoids_full_timeout():
