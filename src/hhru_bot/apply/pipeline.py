@@ -242,17 +242,22 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
         return ctx.ok("dry-run")
 
+    # #247: ревалидация маркера «уже откликались» ДО клика по кнопке отклика.
+    # Маркеры — vacancy-page селекторы (dedup.py), их нет в DOM формы
+    # /applicant/vacancy_response, поэтому проверка после navigate_to_response_form
+    # была бы неэффективной. Здесь, на странице вакансии, она ловит маркер,
+    # отрендерившийся за время рендера письма (letter render — самое долгое
+    # окно TOCTOU, особенно с AI-провайдером). Окно самой навигации (после
+    # клика) vacancy-маркерами не покрыть — его компенсирует post-click
+    # верификация #207 (_finalize_post_click_failure).
+    if reason := check_already_responded(ctx.page, ctx.vacancy):
+        return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
+
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
     apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
     ctx.probe("form_loaded")
-
-    # The vacancy state can change while the letter is rendered and the form
-    # is opened. Re-check immediately before any form processing so a marker
-    # rendered during that window blocks the irreversible submit.
-    if reason := check_already_responded(ctx.page, ctx.vacancy):
-        return ctx.skip(reason, skip_reason=SKIP_REASONS.ALREADY_APPLIED)
 
     # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
     # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import hhru_bot.apply.pipeline as pipeline_module
@@ -261,16 +263,37 @@ def test_apply_already_responded_check_always_blocks_regardless_of_button():
 
 
 def test_apply_rechecks_responded_marker_before_form_submit():
-    """A marker rendered while opening the form must block the submit."""
+    """A marker rendered during letter generation must block the submit.
 
-    class _MarkerAppearsAfterNavigation(FakePage):
-        def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
-            super().goto(url, wait_until)
-            self._already_responded = True
+    The recheck runs on the vacancy page (before navigating to the response
+    form), so it can see vacancy-page markers. The marker appears only after
+    the initial check, during letter render — the TOCTOU window #247 targets.
+    The fake is URL-aware: vacancy-page markers exist only on the vacancy page,
+    so the test fails if the recheck is ever moved after navigation (where the
+    response-form DOM has no vacancy markers).
+    """
 
-    page = _MarkerAppearsAfterNavigation(apply_button=True, submit_in_form=True)
+    class _MarkerAppearsDuringLetterRender(FakePage):
+        def wait_for_url(self, _url_pattern, **_kwargs):
+            # navigate_to_response_form lands on the response-form page, where
+            # vacancy-page markers are absent.
+            self.url = "/applicant/vacancy_response"
 
-    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+        def locator(self, selector: str):
+            if self.url.startswith("https://hh.ru/vacancy/"):
+                return super().locator(selector)
+            return _FakeLocator(present=False)
+
+    page = _MarkerAppearsDuringLetterRender(apply_button=True, submit_in_form=True)
+
+    class _LetterProvider:
+        def render(self, _vacancy):
+            page._already_responded = True
+            return SimpleNamespace(text="x", variant="template")
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, letter_provider=_LetterProvider()
+    )
 
     assert result.skipped is True
     assert result.skip_reason == SKIP_REASONS.ALREADY_APPLIED
