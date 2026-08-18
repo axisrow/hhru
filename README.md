@@ -196,12 +196,12 @@ ssh user@example.com 'cd /opt/hhru && docker compose logs -f hhru'
 login в контейнере с временно отключённым `--headless`; не передавай пароли в
 compose-файле. Обновление: `git pull && docker compose up -d --build`.
 
-## Claude Code plugin
+## Claude Code и Codex plugin
 
-Этот репозиторий — **маркетплейс** Claude Code-плагина `hhru-cc-plugin`: он
-подключает команды hhru-бота как инструменты и скиллы прямо из CC-сессии
-(оркестратор, воркеры, пользователь). Плагин — только CLI-обёртка + скиллы
-поверх существующих команд, без LLM-транспорта (у Claude Code свой LLM-доступ).
+Этот репозиторий — **маркетплейс** плагина `hhru-cc-plugin` для Claude Code и
+Codex. Он подключает команды hhru-бота как инструменты и скиллы прямо из
+агентской сессии. Плагин — только CLI-обёртка + скиллы поверх существующих
+команд, без LLM-транспорта.
 
 ### Установка
 
@@ -210,6 +210,21 @@ compose-файле. Обновление: `git pull && docker compose up -d --bu
 claude plugin marketplace add axisrow/hhru
 claude plugin install hhru-cc-plugin@hhru --scope user
 ```
+
+### Установка для команды в Codex
+
+Каждый участник устанавливает CLI, затем добавляет marketplace из проверенной
+ветки `main`:
+
+```bash
+pip install "git+https://github.com/axisrow/hhru.git@main"
+codex plugin marketplace add axisrow/hhru --ref main
+```
+
+В Codex CLI открой `/plugins`, выбери marketplace `hhru`, установи
+`hhru-cc-plugin` и начни новый чат. Repo marketplace зарегистрирован в
+`.agents/plugins/marketplace.json`; public submission в OpenAI Plugins Directory
+для командной установки не требуется.
 
 ### Команда `/hhru`
 

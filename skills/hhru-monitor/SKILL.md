@@ -13,8 +13,8 @@ argument-hint: "[--resume <id>]"
 ## Статус сессии и резюме
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" whoami
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" list-resumes
+hhru whoami
+hhru list-resumes
 ```
 
 `whoami` — действительность сессии + сводка аккаунта (откликов сегодня, новых
@@ -24,7 +24,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" list-resumes
 ## Ответы работодателей
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" responses
+hhru responses
 ```
 
 Мониторинг ответов/приглашений работодателей. `--resume <id>` — по конкретному
@@ -33,7 +33,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" responses
 ## Воронка откликов
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" funnel
+hhru funnel
 ```
 
 Воронка откликов (сколько откликнулся, ответили, пригласили). `--resume <id>` —
@@ -42,7 +42,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" funnel
 ## Статистика
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" stats
+hhru stats
 ```
 
 Сводка и экспорт истории откликов. Флаг `--format csv|md|table` — формат вывода;
