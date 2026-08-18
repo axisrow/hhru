@@ -61,6 +61,11 @@ def run(args: argparse.Namespace) -> bool:
             current = open_position_form(page, resume)
             response = llm.chat(build_position_prompt(profile, current, args.mode))
             plan = parse_position_response(response.content)
+            if current.salary is None and plan.salary is not None:
+                raise RuntimeError(
+                    "LLM предложил зарплату без подтверждённого факта пользователя; "
+                    "значение отклонено"
+                )
             if args.mode == "fill":
                 plan = fill_only_missing(current, plan)
             elif any(
