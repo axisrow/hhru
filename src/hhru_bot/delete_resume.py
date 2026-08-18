@@ -101,7 +101,20 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
                     resume_id, False, f"не удалось открыть подтверждение: {exc}"
                 )
             page.reload(wait_until="domcontentloaded")
+            # Same commit-vs-hydration guard as above: after domcontentloaded the
+            # React card may not be attached yet, so a bare count()==0 right after
+            # the reload must not be treated as a permanent failure.
             card = page.locator(card_selector)
+            if card.count() == 0:
+                try:
+                    card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+                except PlaywrightError:
+                    return DeleteResumeResult(
+                        resume_id,
+                        False,
+                        f"карточка resume_id={resume_id} не появилась после recovery reload",
+                        False,
+                    )
             if card.count() != 1:
                 return DeleteResumeResult(
                     resume_id,

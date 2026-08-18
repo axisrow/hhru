@@ -75,6 +75,10 @@ class CopyResumeResult:
     success: bool
     new_resume_id: str = ""
     reason: str = ""
+    # True: копия могла быть создана, но это не подтверждено (post-WRITE, #176/#207).
+    # Записывается в actions как `uncertain`, а не `failed`, чтобы повторный запуск
+    # не выглядел безопасным (зеркалит DeleteResumeResult.uncertain, #293).
+    uncertain: bool = False
 
 
 @dataclass
@@ -649,16 +653,19 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     # click may have produced a SPA navigation without creating a resume, and
     # the URL alone does not prove that the clone is visible in the account.
     url_candidate = "" if new_id == resume.resume_id else new_id
-    new_id, reconciliation_failure = _reconcile_created_resume(page, before, url_candidate)
-    if reconciliation_failure:
-        return CopyResumeResult(resume.id, False, reason=reconciliation_failure)
-
-    if new_id == resume.resume_id:
+    try:
+        new_id, reconciliation_failure = _reconcile_created_resume(page, before, url_candidate)
+    except (NotAuthenticated, ResumeListIndeterminate, PlaywrightError) as exc:
+        # WRITE-клик уже отправлен; исключение здесь не доказывает, что копия
+        # не создана (таймаут, отзыв сессии, stale DOM) — fail-closed, uncertain.
         return CopyResumeResult(
             resume.id,
             False,
-            reason="новый resume_id совпал с исходным — копия не создана (fail-closed)",
+            uncertain=True,
+            reason=f"состояние после WRITE-клика не подтверждено: {exc} (fail-closed)",
         )
+    if reconciliation_failure:
+        return CopyResumeResult(resume.id, False, uncertain=True, reason=reconciliation_failure)
 
     logger.info("Резюме '%s' скопировано, новый resume_id: %s", resume.id, new_id)
     return CopyResumeResult(resume.id, True, new_resume_id=new_id)

@@ -304,15 +304,17 @@ def test_post_click_login_form_reports_unconfirmed_state(monkeypatch):
     # second (fallback, post-click) navigation.
     monkeypatch.setattr(cr, "has_login_form", lambda p: len(goto_calls) >= 2)
 
-    with pytest.raises(cr.NotAuthenticated) as exc_info:
-        cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert len(goto_calls) == 2  # pre-click goto + fallback goto after the click
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
     assert page.reloads == []  # после WRITE-клика recovery категорически запрещён
-    message = str(exc_info.value)
-    assert "НЕ подтверждено" in message
-    assert "уже создана" in message
+    # Неопределённое состояние после WRITE-клика → uncertain (а не обычный
+    # failed): копия могла создаться, повтор не должен выглядеть безопасным.
+    assert result.success is False
+    assert result.uncertain is True
+    assert "НЕ подтверждено" in result.reason
+    assert "уже создана" in result.reason
 
 
 def test_pre_click_login_form_reports_ordinary_failure(monkeypatch):
@@ -639,6 +641,7 @@ def test_new_url_without_list_reconciliation_fails_closed(monkeypatch):
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert not result.success
+    assert result.uncertain is True
     assert "не подтвердил создание копии" in result.reason
 
 
@@ -653,6 +656,7 @@ def test_url_and_list_reconciliation_mismatch_fails_closed(monkeypatch):
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert not result.success
+    assert result.uncertain is True
     assert NEW_ID in result.reason
     assert other_id in result.reason
 
@@ -663,6 +667,7 @@ def test_no_navigation_and_no_new_card_fails(monkeypatch):
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
+    assert result.uncertain is True
     assert result.new_resume_id == ""
 
 
@@ -672,3 +677,26 @@ def test_multiple_new_cards_ambiguous_fails(monkeypatch):
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
+    assert result.uncertain is True
+
+
+def test_reconcile_exception_after_write_is_uncertain(monkeypatch):
+    # WRITE-клик уже отправлен, но reconcile падает (не прочитан список) — это
+    # не доказывает, что копия не создана, поэтому исход uncertain (fail-closed,
+    # зеркалит #176/#207).
+    page = StubPage(
+        card_hashes=[{OLD_ID}],
+        url_after_click=f"https://hh.ru/resume/{NEW_ID}",
+    )
+    _patch_env(monkeypatch, page)
+
+    def boom():
+        raise cr.ResumeListIndeterminate("список не прочитан")
+
+    monkeypatch.setattr(cr, "_wait_resume_list_ready", lambda p: boom())
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтверждено" in result.reason
