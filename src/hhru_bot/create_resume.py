@@ -59,6 +59,14 @@ def _click_one(page: Page, selector: str, label: str) -> str:
 
 def _select_catalog_leaf(page: Page, area: str) -> str:
     """Select one exact leaf from hh.ru's full profession tree."""
+    # The caller arrives right after clicking the wizard's NEXT control, which
+    # re-renders the catalog screen asynchronously (React); a strict _one() on
+    # the search input immediately after can observe the stale blank body (the
+    # same commit-vs-hydration race guarded for SELECT_JOB/POSITION above).
+    try:
+        page.locator(RESUME_CREATION_CATEGORY_SEARCH).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return f"экран каталога профессий не отрисовался: {exc}"
     search, reason = _one(page, RESUME_CREATION_CATEGORY_SEARCH, "поиск каталога профессий")
     if reason:
         return reason
@@ -111,6 +119,16 @@ def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> 
     the list button, wizard cards, catalog checkboxes, or continue controls.
     """
     goto_hh(page, RESUMES_FULL_LIST_URL)
+    # The duplicate check reads the resume-list DOM; on a just-committed SPA
+    # page that list may not be hydrated yet, and an unrendered page would read
+    # as "no such title" and wrongly permit creation (fail-open, Codex cycle 2).
+    # Anchor hydration on the create button, which the list screen always
+    # renders once the SPA has drawn the page — the list itself may legitimately
+    # be empty, so it cannot be the anchor. wait_until="commit" is insufficient.
+    try:
+        page.locator(RESUME_CREATE_BUTTON).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
     duplicate_reason = _existing_resume_reason(page, title)
     if duplicate_reason:
         return CreateResumeResult(False, reason=duplicate_reason)
