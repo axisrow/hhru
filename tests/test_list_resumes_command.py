@@ -221,10 +221,11 @@ def test_registers_list_resumes_subparser():
 
 
 class _FakeCard:
-    def __init__(self, resume_id, title, status=None):
+    def __init__(self, resume_id, title, status=None, ssr_unavailable=False):
         self.resume_id = resume_id
         self.title = title
         self.status = status
+        self.ssr_unavailable = ssr_unavailable
 
 
 def test_remote_rows_marks_configured_and_unconfigured():

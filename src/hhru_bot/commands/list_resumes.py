@@ -219,6 +219,14 @@ def run(args: argparse.Namespace) -> None:
             "не подтверждён) — колонка «название» может быть неточной."
         )
 
+    # Проверяем доступность SSR данных статусов
+    ssr_unavailable_cards = [c for c in cards if c.ssr_unavailable]
+    if ssr_unavailable_cards:
+        print(
+            "[WARN] Данные о статусе резюме недоступны (SSR не загрузился). "
+            "Колонка «статус» может быть неточной для некоторых резюме."
+        )
+
     configured_ids = {r.resume_id for r in config.resumes}
     print()
     print(

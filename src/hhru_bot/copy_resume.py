@@ -79,6 +79,7 @@ class ResumeCard:
     title: str
     url: str
     status: str | None = None
+    ssr_unavailable: bool = False  # True если SSR данные недоступны или некорректны
 
 
 class ResumeListIndeterminate(PageStateIndeterminate):
@@ -328,15 +329,21 @@ def list_resume_cards(
             ) from None
 
     status_by_hash: dict[str, str] = {}
+    ssr_unavailable = False  # Флаг: SSR данные недоступны или некорректны
     try:
         state = parse_initial_state(page.content())
     except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
-        # PlaywrightError/PlaywrightTimeoutError могут возникать при закрытии страницы,
-        # сбое renderer или деградации браузера. Возвращаем пустой статус вместо traceback.
+        # PlaywrightError/PlaywrightTimeoutError могут возникнуть при закрытии страницы,
+        # сбое renderer или деградации браузера. Помечаем SSR как недоступный.
         state = None
-    if isinstance(state, dict):
+        ssr_unavailable = True
+
+    if not ssr_unavailable and isinstance(state, dict):
         resumes = state.get("applicantResumes")
-        if isinstance(resumes, list):
+        if not isinstance(resumes, list):
+            # applicantResumes отсутствует или имеет неправильный тип
+            ssr_unavailable = True
+        else:
             for item in resumes:
                 attrs = item.get("_attributes") if isinstance(item, dict) else None
                 if isinstance(attrs, dict):
@@ -364,7 +371,11 @@ def list_resume_cards(
         url = f"{HH_BASE_URL}/resume/{resume_id}"
         cards.append(
             ResumeCard(
-                resume_id=resume_id, title=title, url=url, status=status_by_hash.get(resume_id)
+                resume_id=resume_id,
+                title=title,
+                url=url,
+                status=status_by_hash.get(resume_id),
+                ssr_unavailable=ssr_unavailable
             )
         )
     return cards
