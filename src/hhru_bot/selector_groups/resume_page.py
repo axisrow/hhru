@@ -34,3 +34,15 @@ RESUME_SKILLS_RECOMMENDED = "[data-qa^='resume-editor-skills-recommended-']"
 RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
+
+# Live read-only research for issue #293 (2026-08-18).  These controls are
+# rendered on the resume list card, but are kept here with the resume-page
+# controls because they address one resume and the dialog is shared by both
+# list/profile renderers.  The destructive confirm is deliberately distinct
+# from the reversible "hide" action.
+RESUME_DELETE_BUTTON = "[data-qa='resume-delete']"
+RESUME_DELETE_TITLE = "[data-qa='resume-delete-title']"
+RESUME_DELETE_CONTENT = "[data-qa='resume-delete-content']"
+RESUME_DELETE_CONFIRM = "[data-qa='resume-delete-confirm']"
+RESUME_DELETE_HIDE_CONFIRM = "[data-qa='resume-hide-confirm']"
+RESUME_DELETE_CLOSE = "[data-qa='resume-delete-close']"
