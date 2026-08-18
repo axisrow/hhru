@@ -62,6 +62,7 @@ def test_all_commands_registered():
         "calendar",
         "resume-position",
         "resume-sections",
+        "edit-skills",
     }
 
 
@@ -103,6 +104,7 @@ def test_register_commands_returns_names():
         "calendar",
         "resume_position",
         "resume_sections",
+        "edit_skills",
     }
 
 

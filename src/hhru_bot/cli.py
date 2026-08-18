@@ -44,6 +44,7 @@ WRITE_COMMANDS = frozenset(
         "clear-negotiations",
         "resume-position",
         "resume-sections",
+        "edit-skills",
     }
 )
 

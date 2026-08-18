@@ -24,5 +24,13 @@ RESUME_VISIBILITY_BUTTON = "button:has-text('Изменить видимость
 RESUME_EDIT_ABOUT_BUTTON = "[data-qa='resume-edit-button-about']"
 RESUME_ABOUT_EDITOR = "[data-qa='resume-editor-about']"
 RESUME_ABOUT_NO_EXPERIENCE_REASON = "[data-qa^='resume-editor-about-no-experience-reason-']"
+
+# Skills are edited inline on /resume/{id}; /resume/{id}/edit is not a route
+# (confirmed by the authenticated read-only probe for issue #268).
+RESUME_SKILLS_EDIT_BUTTON = "[data-qa='skills-add']"
+RESUME_SKILLS_INPUT = "[data-qa='resume-editor-skills-input']"
+RESUME_SKILLS_CHIP_INPUT = "[data-qa='chips-trigger-input']"
+RESUME_SKILLS_RECOMMENDED = "[data-qa^='resume-editor-skills-recommended-']"
+RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"

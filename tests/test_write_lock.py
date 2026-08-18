@@ -47,4 +47,5 @@ def test_lock_covers_all_hhru_write_commands():
         "clear-negotiations",
         "resume-position",
         "resume-sections",
+        "edit-skills",
     }
