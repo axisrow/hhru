@@ -11,7 +11,7 @@
     {
       "name": "hhru-cc-plugin",
       "source": "./",
-      "description": "CLI-инструмент для поиска вакансий, откликов и поднятия резюме на hh.ru (Playwright). Подключает команды hhru-бота как инструменты и скиллы для Claude Code.",
+      "description": "CLI-инструмент для поиска вакансий, откликов и поднятия резюме на hh.ru (Playwright). Подключает команды hhru-бота как инструменты и скиллы.",
       "version": "0.1.0",
       "author": {
         "name": "axisrow"
