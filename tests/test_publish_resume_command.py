@@ -176,31 +176,27 @@ def test_run_dry_run_bypasses_uncertain_guard(env, capsys, tmp_path):
     assert "[DRY-RUN]" in out
 
 
-def test_run_plain_failure_does_not_count_toward_limit(env, capsys, tmp_path):
+def test_run_plain_failure_is_not_recorded_or_counted(env, capsys, tmp_path):
     env.result = PublishResumeResult("python", False, "кнопка не найдена")
     with pytest.raises(SystemExit):
         cmd.run(_args(tmp_path, force=True))
     h = History(tmp_path / "h.db")
     assert h.count_today(RESUME_ID, "publish_resume") == 0
+    with h._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
 
 
-def test_run_not_authenticated_records_failed_and_exits(env, capsys, tmp_path):
+def test_run_not_authenticated_is_not_recorded_and_exits(env, capsys, tmp_path):
     env.exc = NotAuthenticated("сессия истекла")
     with pytest.raises(SystemExit):
         cmd.run(_args(tmp_path, force=True))
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "Сессия недействительна" in out
-    # failed не расходует дневной лимит/кулдаун (никакого клика не было вовсе —
-    # сессия отвергнута до захода на страницу резюме), но факт попытки
-    # остаётся в аудите (actions), не только в exit-коде.
+    # Никакого клика не было вовсе — сессия отвергнута до захода на страницу
+    # резюме, поэтому pre-click отказ не оставляет строку в actions.
     with History(tmp_path / "h.db")._connect() as conn:
-        row = conn.execute(
-            "SELECT status FROM actions WHERE resume_id = ? AND action = 'publish_resume'",
-            (RESUME_ID,),
-        ).fetchone()
-    assert row is not None
-    assert row["status"] == "failed"
+        assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
 
 
 def test_run_dry_run_writes_nothing_to_history(env, capsys, tmp_path):

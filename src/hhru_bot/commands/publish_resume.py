@@ -52,14 +52,14 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             result = publish_resume_on_hh(context.new_page(), resume, args.dry_run)
     except NotAuthenticated as exc:
-        if not args.dry_run:
-            history.record_action(
-                resume.resume_id, resume.resume_id, "publish_resume", "failed", str(exc)
-            )
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         sys.exit(1)
 
-    if not args.dry_run:
+    # actions — журнал взаимодействий с hh.ru, а не всех проверок команды.
+    # До клика (identity/state/button guards) внешний эффект невозможен и не
+    # должен выглядеть в истории как неудачная попытка публикации.  ``uncertain``
+    # означает, что клик уже мог уйти, поэтому такую запись сохраняем.
+    if not args.dry_run and (result.success or result.uncertain):
         status = "uncertain" if result.uncertain else ("success" if result.success else "failed")
         history.record_action(
             resume.resume_id, resume.resume_id, "publish_resume", status, result.reason
