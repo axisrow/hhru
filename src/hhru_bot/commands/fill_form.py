@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from ..external_forms import scan_form
 from ..external_forms.detect import apply_answers
+from ..history import History
 from ..logging_setup import LOG_DIR
 
 
@@ -38,9 +39,8 @@ def run(args: argparse.Namespace) -> bool:
     from ..config import load_config_or_exit
 
     config = load_config_or_exit(args.config)
-    resume = config.get_resume(args.resume)
-    profile = resume.form_profile
-    answers = getattr(profile, "answers", {}) if profile is not None else {}
+    history = History(args.history)
+    answers = history.get_profile_answers()
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:

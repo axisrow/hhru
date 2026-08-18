@@ -12,7 +12,6 @@ from . import (  # noqa: F401
     account,
     ai_profile,
     education,
-    form_profile,
     resume_sections,
     scoring,
     search,
