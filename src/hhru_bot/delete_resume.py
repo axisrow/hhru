@@ -72,14 +72,24 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     except PlaywrightError as exc:
         return DeleteResumeResult(resume_id, False, f"ошибка destructive-клика: {exc}", True)
 
+    # The list URL already matches before the click, so wait_for_url alone is
+    # not a post-click signal: Playwright may return immediately.  Waiting for
+    # this identity-bound card to detach proves the rendered list changed after
+    # the destructive click.  Any verification error stays uncertain because
+    # hh.ru may already have accepted the deletion.
     try:
-        page.wait_for_url(re.compile(r"https://hh\.ru/applicant/resumes(?:[/?#].*)?$"))
-    except PlaywrightError as exc:
+        card.wait_for(state="detached", timeout=30_000)
+        if not re.fullmatch(r"https://hh\.ru/applicant/resumes(?:[/?#].*)?", page.url):
+            return DeleteResumeResult(
+                resume_id, False, "удаление не подтверждено: hh.ru не вернул список резюме", True
+            )
+        remaining = page.locator(
+            f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
+        ).count()
+    except Exception as exc:
         return DeleteResumeResult(
-            resume_id, False, f"удаление не подтверждено навигацией: {exc}", True
+            resume_id, False, f"не удалось проверить результат удаления: {exc}", True
         )
-    if page.locator(
-        f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
-    ).count():
+    if remaining:
         return DeleteResumeResult(resume_id, False, "карточка резюме всё ещё отображается", True)
     return DeleteResumeResult(resume_id, True, "резюме удалено; карточка исчезла из списка")
