@@ -56,11 +56,22 @@ def check_already_responded(page: Page, vacancy: VacancyCard) -> str | None:
 
     # Both markers represent the same state. Waiting on their union keeps the
     # bounded wait to one timeout instead of paying it once per selector.
+    #
+    # #248 cycle-review round 2 (codex): .or_().first selects by DOM order, not
+    # by visibility — if a hidden/stale marker precedes a visible one in the
+    # DOM, .first.wait_for(state="visible") waits on the hidden element and
+    # times out even though the visible marker proves an existing response
+    # (the same transitional-both-markers scenario #241 already documented).
+    # filter(visible=True) restricts the union to visible matches before
+    # .first resolves, so DOM order among hidden elements can't hide a
+    # visible one.
     already_responded = page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN).or_(
         page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT)
     )
     try:
-        already_responded.first.wait_for(state="visible", timeout=_VISIBILITY_CHECK_TIMEOUT_MS)
+        already_responded.filter(visible=True).first.wait_for(
+            state="attached", timeout=_VISIBILITY_CHECK_TIMEOUT_MS
+        )
     except PlaywrightError:
         logger.debug("Вакансия '%s': маркеры уже отклика не найдены", vacancy.title)
         return None

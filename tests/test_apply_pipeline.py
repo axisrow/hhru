@@ -90,6 +90,14 @@ class _FakeLocator:
             wait_for_timeouts=self._wait_for_timeouts,
         )
 
+    def filter(self, *, visible: bool | None = None) -> _FakeLocator:  # noqa: ARG002
+        # #248 cycle-review round 2: filter(visible=True) narrows the union to
+        # visible matches before .first resolves. The fake only models a single
+        # present/absent boolean per selector (no hidden-vs-visible distinction
+        # within one _present state), so filtering is a no-op here — presence
+        # already implies visibility in this fake's model.
+        return self
+
 
 class FakePage:
     """Имитирует Playwright Page для путей pipeline. Настраивает «состояние» страницы."""
@@ -357,6 +365,21 @@ def test_check_already_responded_ignores_hidden_attached_marker():
         def or_(self, _other):
             return self
 
+        def filter(self, *, visible: bool | None = None):  # noqa: ARG002
+            # A visible-only filter on a purely hidden marker yields no match —
+            # model that as a locator whose wait_for always times out, so the
+            # subsequent wait_for(state="attached") behaves like the real
+            # filter(visible=True) narrowing to zero elements.
+            return _HiddenMarkerLocator._EmptyLocator()
+
+        class _EmptyLocator:
+            @property
+            def first(self):
+                return self
+
+            def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+                raise PlaywrightTimeoutError("no visible marker")
+
         def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
             if state == "visible":
                 raise PlaywrightTimeoutError("hidden marker")
@@ -368,6 +391,73 @@ def test_check_already_responded_ignores_hidden_attached_marker():
     reason = check_already_responded(_HiddenMarkerPage(), _vacancy())
 
     assert reason is None
+
+
+def test_check_already_responded_visible_marker_survives_hidden_dom_order():
+    """#248 cycle-review round 2 (codex, high): Locator.or_().first selects by
+    DOM order, not by visibility. If a hidden/stale AGAIN marker precedes a
+    visible CHAT marker in the union's DOM order, .first.wait_for(state=
+    "visible") would wait on the hidden element and time out — even though a
+    visible marker exists and proves an existing response. filter(visible=True)
+    must be applied to the union before .first so a hidden element earlier in
+    DOM order cannot hide a visible one later in DOM order.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from hhru_bot.apply.dedup import check_already_responded
+    from hhru_bot.selector_groups import vacancy_page
+
+    class _AgainMarkerLocator:
+        """Hidden, and comes first in the union's DOM order."""
+
+        @property
+        def first(self):
+            return self
+
+        def or_(self, other):
+            return _UnionLocator(other)
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            raise PlaywrightTimeoutError("hidden — never resolves as visible")
+
+    class _ChatMarkerLocator:
+        """Visible, but second in the union's DOM order."""
+
+        @property
+        def first(self):
+            return self
+
+        def wait_for(self, *, state: str = "attached", timeout: float = 0) -> None:  # noqa: ARG002
+            return None
+
+    class _UnionLocator:
+        """Models Locator.or_(): .first picks by DOM order (AGAIN, i.e. first
+        operand) unless narrowed by filter(visible=True) to only visible matches
+        (here, only the CHAT operand)."""
+
+        def __init__(self, chat_locator):
+            self._chat = chat_locator
+
+        @property
+        def first(self):
+            # Unfiltered union resolves .first to the hidden AGAIN marker
+            # (earlier in DOM order) — this is the bug filter(visible=True) fixes.
+            return _AgainMarkerLocator()
+
+        def filter(self, *, visible: bool | None = None):  # noqa: ARG002
+            # Narrowed to visible matches only: the hidden AGAIN marker drops
+            # out, leaving the visible CHAT marker.
+            return self._chat
+
+    class _MarkerOrderPage:
+        def locator(self, selector: str):
+            if selector == vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT:
+                return _ChatMarkerLocator()
+            return _AgainMarkerLocator()
+
+    reason = check_already_responded(_MarkerOrderPage(), _vacancy())
+
+    assert reason == "уже откликались по вакансии 1, пропуск"
 
 
 def test_wait_apply_button_already_responded_avoids_full_timeout():

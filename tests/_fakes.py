@@ -170,6 +170,13 @@ class FakeLocator:
         # already-responded-маркеры одним локатором — объединяем совпадения обоих.
         return FakeLocator(self._root, self._qa_match, matches=self._resolved() + other._resolved())
 
+    def filter(self, *, visible: bool | None = None) -> FakeLocator:  # noqa: ARG002
+        # #248 cycle-review round 2: dedup.check_already_responded() narrows the
+        # union to visible matches before .first. This fake has no hidden/visible
+        # distinction in its parsed HTML model — a matched node is always
+        # considered visible — so filtering is a no-op here.
+        return self
+
 
 class _CardLocator(FakeLocator):
     """Локатор карточки: ``.locator(selector)`` ищет ВНУТРИ этой карточки.
