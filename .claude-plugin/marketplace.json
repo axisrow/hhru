@@ -1,0 +1,29 @@
+{
+  "name": "hhru",
+  "owner": {
+    "name": "axisrow"
+  },
+  "metadata": {
+    "description": "Marketplace for the hhru CLI plugin — job search, apply, and resume bump automation for hh.ru.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "hhru-cc-plugin",
+      "source": "./",
+      "description": "CLI-инструмент для поиска вакансий, откликов и поднятия резюме на hh.ru (Playwright). Подключает команды hhru-бота как инструменты и скиллы для Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "axisrow"
+      },
+      "keywords": [
+        "hh.ru",
+        "job-search",
+        "playwright",
+        "cli",
+        "vacancies",
+        "apply"
+      ]
+    }
+  ]
+}

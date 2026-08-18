@@ -1,0 +1,21 @@
+{
+  "name": "hhru-cc-plugin",
+  "version": "0.1.0",
+  "description": "CLI-инструмент для поиска вакансий, откликов и поднятия резюме на hh.ru (Playwright). Подключает команды hhru-бота как инструменты и скиллы для Claude Code.",
+  "author": {
+    "name": "axisrow"
+  },
+  "homepage": "https://github.com/axisrow/hhru",
+  "repository": "https://github.com/axisrow/hhru",
+  "license": "MIT",
+  "keywords": [
+    "hh.ru",
+    "job-search",
+    "playwright",
+    "cli",
+    "vacancies",
+    "apply"
+  ],
+  "commands": "./commands",
+  "skills": "./skills"
+}
