@@ -63,6 +63,13 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     if reason:
         return reason
     _require(search).fill(area)
+    # The filtered tree re-renders asynchronously (React) after typing; .all()
+    # right after fill() can observe the stale/blank tree (the same commit-vs-
+    # hydration race guarded for SELECT_JOB/POSITION in #304), which would
+    # surface as a false "профессия «…» не найдена однозначно (совпадений: 0)".
+    page.locator("[data-qa*='tree-selector-item-text-']").first.wait_for(
+        state="visible", timeout=15000
+    )
     # get_by_text() resolves to the inner ``cell-text-content`` span on the
     # current hh.ru DOM, while the identifier we need is on its wrapper.
     # Match the wrapper by its own rendered text instead of assuming the
@@ -146,12 +153,17 @@ def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> 
         if reason:
             return CreateResumeResult(False, reason=reason)
         _require(position).fill(title)
+        # The NEXT control (and the catalog screen after SUBMIT below) renders
+        # asynchronously after each input; a strict count()/click right away can
+        # see count=0 before the SPA hydrates (same #304 race guarded above).
+        page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
         category_reason = _select_catalog_leaf(page, area)
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
+        page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения после каталога")
         if reason:
             return CreateResumeResult(False, reason=reason)
