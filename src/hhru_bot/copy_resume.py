@@ -330,7 +330,9 @@ def list_resume_cards(
     status_by_hash: dict[str, str] = {}
     try:
         state = parse_initial_state(page.content())
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
+        # PlaywrightError/PlaywrightTimeoutError могут возникать при закрытии страницы,
+        # сбое renderer или деградации браузера. Возвращаем пустой статус вместо traceback.
         state = None
     if isinstance(state, dict):
         resumes = state.get("applicantResumes")
