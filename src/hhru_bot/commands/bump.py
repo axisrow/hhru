@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ._audit import action_status, record_resume_action
 from ._common import add_common_args, resumes_from_args
 
 
@@ -56,19 +57,14 @@ def run(args: argparse.Namespace) -> None:
                 # (count_today), поэтому «просто failed» не годится: он не
                 # остановил бы повторное поднятие раньше 4ч. dry_run по
                 # определению без клика — uncertain там невозможен.
-                if args.dry_run:
-                    status = "dry_run"
-                elif result.uncertain:
-                    status = "uncertain"
-                else:
-                    status = "success" if result.success else "failed"
+                status = action_status(
+                    dry_run=args.dry_run, success=result.success, uncertain=result.uncertain
+                )
                 # Для action='bump' нет естественного vacancy_id (поднятие резюме,
                 # не отклик). actions.vacancy_id NOT NULL — заполняем resume.resume_id
                 # как sentinel; UNIQUE-индекс idx_resume_vacancy_apply существует
                 # только WHERE action='apply', так что коллизий нет.
-                history.record_action(
-                    resume.resume_id, resume.resume_id, "bump", status, result.reason
-                )
+                record_resume_action(history, resume.resume_id, "bump", status, result.reason)
 
             if result.success:
                 print(f"  [OK] {resume.id} поднято")

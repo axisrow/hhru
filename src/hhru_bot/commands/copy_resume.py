@@ -74,6 +74,7 @@ def run(args: argparse.Namespace) -> None:
     from ..copy_resume import copy_resume_on_hh
     from ..history import History
     from ..responses import NotAuthenticated
+    from ._audit import action_status, record_resume_action
 
     config = load_config_or_exit(args.config)
     try:
@@ -105,25 +106,20 @@ def run(args: argparse.Namespace) -> None:
             page = context.new_page()
             result = copy_resume_on_hh(page, resume, args.dry_run)
     except NotAuthenticated as e:
-        history.record_action(
-            resume.resume_id,
-            resume.resume_id,
-            "copy_resume",
-            "failed",
-            str(e),
-        )
+        record_resume_action(history, resume.resume_id, "copy_resume", "failed", str(e))
         print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
         sys.exit(1)
     except Exception as e:
         # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
         # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
         # ретраи) — копия на hh.ru могла создаться, а локальной записи не будет.
-        # Пишем неуспех в аудит перед прокидыванием исключения дальше, а не молчим.
-        history.record_action(
-            resume.resume_id,
+        # Результат после возможного клика не подтверждён: это ``uncertain`,
+        # а не failed, чтобы не разрешить безопасный на вид повтор.
+        record_resume_action(
+            history,
             resume.resume_id,
             "copy_resume",
-            "failed",
+            "uncertain",
             f"исключение в браузерном шаге: {e}",
         )
         raise
@@ -135,16 +131,12 @@ def run(args: argparse.Namespace) -> None:
             result.success = False
             result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
 
-    status = (
-        "dry_run"
-        if args.dry_run
-        else ("uncertain" if result.uncertain else ("success" if result.success else "failed"))
-    )
+    status = action_status(dry_run=args.dry_run, success=result.success, uncertain=result.uncertain)
     reason = f"new_resume_id={result.new_resume_id}" if status == "success" else result.reason
     # Для action='copy_resume' нет vacancy_id (операция над резюме, не отклик) —
     # как у bump, заполняем sentinel'ом resume_id; UNIQUE-индекс actions существует
     # только WHERE action='apply', коллизий нет.
-    history.record_action(resume.resume_id, resume.resume_id, "copy_resume", status, reason)
+    record_resume_action(history, resume.resume_id, "copy_resume", status, reason)
 
     if args.dry_run:
         if not result.success:

@@ -648,23 +648,24 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     assert duplicate is not None
     # Снимок для post-WRITE diff делаем только после полной pre-write готовности.
     before = _card_hashes(page)
-    duplicate.click()
-    logger.info("Клик по «Дублировать» — жду страницу нового резюме")
 
-    new_id = ""
     try:
-        page.wait_for_url(_RESUME_HASH_RE, timeout=COPY_TIMEOUT_MS)
-        m = _RESUME_HASH_RE.search(page.url)
-        if m:
-            new_id = m.group(1)
-    except PlaywrightTimeoutError:
-        logger.warning("Навигация на новое резюме не дождалась — сверяю список резюме")
+        duplicate.click()
+        logger.info("Клик по «Дублировать» — жду страницу нового резюме")
 
-    # URL is only a candidate.  Always reconcile against the list because the
-    # click may have produced a SPA navigation without creating a resume, and
-    # the URL alone does not prove that the clone is visible in the account.
-    url_candidate = "" if new_id == resume.resume_id else new_id
-    try:
+        new_id = ""
+        try:
+            page.wait_for_url(_RESUME_HASH_RE, timeout=COPY_TIMEOUT_MS)
+            m = _RESUME_HASH_RE.search(page.url)
+            if m:
+                new_id = m.group(1)
+        except PlaywrightTimeoutError:
+            logger.warning("Навигация на новое резюме не дождалась — сверяю список резюме")
+
+        # URL is only a candidate.  Always reconcile against the list because the
+        # click may have produced a SPA navigation without creating a resume, and
+        # the URL alone does not prove that the clone is visible in the account.
+        url_candidate = "" if new_id == resume.resume_id else new_id
         new_id, reconciliation_failure = _reconcile_created_resume(page, before, url_candidate)
     except (NotAuthenticated, ResumeListIndeterminate, PlaywrightError) as exc:
         # WRITE-клик уже отправлен; исключение здесь не доказывает, что копия
@@ -675,6 +676,7 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
             uncertain=True,
             reason=f"состояние после WRITE-клика не подтверждено: {exc} (fail-closed)",
         )
+
     if reconciliation_failure:
         return CopyResumeResult(resume.id, False, uncertain=True, reason=reconciliation_failure)
 

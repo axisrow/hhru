@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ._audit import action_status, record_resume_action
+
 
 def register(subparsers) -> None:
     p = subparsers.add_parser(
@@ -60,10 +62,8 @@ def run(args: argparse.Namespace) -> None:
     # должен выглядеть в истории как неудачная попытка публикации.  ``uncertain``
     # означает, что клик уже мог уйти, поэтому такую запись сохраняем.
     if not args.dry_run and (result.success or result.uncertain):
-        status = "uncertain" if result.uncertain else "success"
-        history.record_action(
-            resume.resume_id, resume.resume_id, "publish_resume", status, result.reason
-        )
+        status = action_status(dry_run=False, success=result.success, uncertain=result.uncertain)
+        record_resume_action(history, resume.resume_id, "publish_resume", status, result.reason)
 
     if not result.success:
         prefix = "[FAIL]" if not result.uncertain else "[FAIL] (uncertain)"
