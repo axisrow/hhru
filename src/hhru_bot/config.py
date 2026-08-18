@@ -62,6 +62,7 @@ class ResumeConfig:
     scoring: object | None = None
     ai_profile: object | None = None
     resume_sections: object | None = None
+    education: object | None = None
 
     @property
     def resume_id(self) -> str:

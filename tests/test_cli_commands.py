@@ -63,6 +63,7 @@ def test_all_commands_registered():
         "resume-position",
         "resume-sections",
         "edit-skills",
+        "edit-education",
     }
 
 
@@ -105,6 +106,7 @@ def test_register_commands_returns_names():
         "resume_position",
         "resume_sections",
         "edit_skills",
+        "edit_education",
     }
 
 
