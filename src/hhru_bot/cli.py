@@ -41,6 +41,7 @@ WRITE_COMMANDS = frozenset(
         "about",
         "reply-employers",
         "clear-negotiations",
+        "resume-sections",
     }
 )
 

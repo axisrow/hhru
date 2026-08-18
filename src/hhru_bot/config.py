@@ -61,6 +61,7 @@ class ResumeConfig:
     # ResumeConfig. None = секция отсутствует в конфиге.
     scoring: object | None = None
     ai_profile: object | None = None
+    resume_sections: object | None = None
 
     @property
     def resume_id(self) -> str:
