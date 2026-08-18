@@ -25,15 +25,15 @@ pip3 install -r requirements.txt
 python3 -m playwright install chromium
 
 # Настройка (вся папка data/ в .gitignore — коммитить не нужно)
-mkdir -p data && cp config/config.example.yaml data/config.yaml
+./scripts/run.sh account create default
 
 # Все команды запускаются через обёртку run.sh (вызывает установленный entry point `hhru`)
-./scripts/run.sh login                                    # ручной вход, сохраняет сессию
-./scripts/run.sh search --resume <id> --dry-run           # поиск без откликов
-./scripts/run.sh apply  --resume <id> --dry-run --limit 5 # план откликов
-./scripts/run.sh apply  --resume <id> --limit 5           # боевой отклик
-./scripts/run.sh bump   --resume <id>                     # поднять резюме (не чаще 1 раза в 4 часа)
-./scripts/run.sh run                                       # apply + bump для всех резюме
+./scripts/run.sh --account default login                                    # ручной вход, сохраняет сессию
+./scripts/run.sh --account default search --resume <id> --dry-run           # поиск без откликов
+./scripts/run.sh --account default apply  --resume <id> --dry-run --limit 5 # план откликов
+./scripts/run.sh --account default apply  --resume <id> --limit 5           # боевой отклик
+./scripts/run.sh --account default bump   --resume <id>                     # поднять резюме (не чаще 1 раза в 4 часа)
+./scripts/run.sh --account default run                                       # apply + bump для всех резюме
 
 # Общие флаги: --headless, --verbose, --config <path>, --history <path>, --max-pages <n>
 # --resume опционален — без него команда идёт по всем резюме из конфига
@@ -227,6 +227,9 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
 
 ```
 data/                      # всё изменяемое, целиком в .gitignore
+  accounts/<name>/
+    config.yaml             # настройки аккаунта (создаётся account create)
+    history.db              # история аккаунта
   config.yaml              # личные настройки (шаблон — config/config.example.yaml)
   history.db               # SQLite: история откликов, вакансии, ответы
   storage_state/

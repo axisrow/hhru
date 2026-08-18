@@ -74,6 +74,7 @@ def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
     assert set(action.choices) == {
+        "account",
         "login",
         "login-code",
         "search",
@@ -119,6 +120,7 @@ def test_register_commands_returns_names():
     # (проверяется отдельно в test_all_commands_registered через action.choices).
     # Аналогично модуль list_resumes регистрирует команду 'list-resumes'.
     assert set(names) == {
+        "account",
         "login",
         "login_code",
         "search",
