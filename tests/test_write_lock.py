@@ -36,6 +36,7 @@ def test_cli_rejects_concurrent_write_command(tmp_path, capsys):
 
 def test_lock_covers_all_hhru_write_commands():
     assert WRITE_COMMANDS == {
+        "account",
         "apply",
         "bump",
         "run",

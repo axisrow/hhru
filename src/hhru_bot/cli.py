@@ -48,6 +48,7 @@ WRITE_COMMANDS = frozenset(
         "resume-position",
         "resume-sections",
         "edit-skills",
+        "account",
     }
 )
 

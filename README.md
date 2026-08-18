@@ -37,10 +37,18 @@ pip3 install -e .
 ## Настройка
 
 ```bash
-mkdir -p data && cp config/config.example.yaml data/config.yaml
+hhru account create default
 ```
 
-Отредактируй `data/config.yaml`:
+Команда создаёт `data/accounts/default/config.yaml` из шаблона и не перезаписывает
+существующий аккаунт. Для следующих команд передай имя созданного аккаунта
+глобальным флагом (глобальные флаги указываются до имени команды):
+
+```bash
+./scripts/run.sh --account default login
+```
+
+Отредактируй созданный конфиг:
 - `resumes` — список твоих резюме на hh.ru, у каждого свои фильтры поиска
   (`text`, `area`, `salary_from`, `experience`, `schedule`,
   `exclude_employers`, `exclude_keywords`) и опционально своё сопроводительное
@@ -58,6 +66,10 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
 
 ```
 data/                      # всё изменяемое, целиком в .gitignore
+  accounts/
+    default/
+      config.yaml           # конфиг аккаунта (создаётся account create)
+      history.db            # история аккаунта
   config.yaml              # твои настройки (шаблон — config/config.example.yaml)
   history.db               # SQLite: история откликов, вакансии, ответы
   storage_state/
@@ -155,12 +167,12 @@ launchctl load ~/Library/LaunchAgents/com.hhru.bot.apply.plist
 
 ```bash
 mkdir -p data
-cp config/config.example.yaml data/config.yaml
-docker compose run --rm hhru --headless run
+  ./scripts/run.sh account create default
+docker compose run --rm --entrypoint hhru hhru --headless --account default run
 ```
 
 Для непрерывного варианта `docker-compose.yml` содержит минимальный sleep-loop:
-он запускает `run --headless`, ждёт 4 часа и повторяет. Запусти его так:
+он запускает `--account default run --headless`, ждёт 4 часа и повторяет. Запусти его так:
 
 ```bash
 docker compose up -d
@@ -180,7 +192,7 @@ ssh user@example.com 'cd /opt/hhru && docker compose up -d --build'
 ssh user@example.com 'cd /opt/hhru && docker compose logs -f hhru'
 ```
 
-Сессию hh.ru сначала создай локально через `./scripts/run.sh login` или выполни
+Сессию hh.ru сначала создай локально через `./scripts/run.sh --account default login` или выполни
 login в контейнере с временно отключённым `--headless`; не передавай пароли в
 compose-файле. Обновление: `git pull && docker compose up -d --build`.
 
@@ -264,6 +276,12 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 - `--resume` — ID резюме из конфига
 - `--dry-run` — Показать предложение без сохранения
 - `--force` — Подтвердить сохранение без prompt
+
+### `account`
+
+Создание и управление локальными профилями аккаунтов hh.ru.
+
+- (без аргументов)
 
 ### `apply`
 
