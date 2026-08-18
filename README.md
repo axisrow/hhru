@@ -183,6 +183,42 @@ ssh user@example.com 'cd /opt/hhru && docker compose logs -f hhru'
 login в контейнере с временно отключённым `--headless`; не передавай пароли в
 compose-файле. Обновление: `git pull && docker compose up -d --build`.
 
+## Claude Code plugin
+
+Этот репозиторий — **маркетплейс** Claude Code-плагина `hhru-cc-plugin`: он
+подключает команды hhru-бота как инструменты и скиллы прямо из CC-сессии
+(оркестратор, воркеры, пользователь). Плагин — только CLI-обёртка + скиллы
+поверх существующих команд, без LLM-транспорта (у Claude Code свой LLM-доступ).
+
+### Установка
+
+```bash
+# Репо = маркетплейс: подключить и установить плагин
+claude plugin marketplace add axisrow/hhru
+claude plugin install hhru-cc-plugin@hhru --scope user
+```
+
+### Команда `/hhru`
+
+Одна команда с сабкомандами — диспетчеризует аргументы в CLI:
+
+```bash
+/hhru whoami
+/hhru search --resume <id> --dry-run --max-pages 3
+/hhru apply --resume <id> --dry-run --limit 5
+/hhru responses
+```
+
+Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-run` сначала и
+подтверждения перед боевым запуском. Вывод — только текст/ASCII, без эмодзи.
+
+### Скиллы
+
+- **`hhru`** — главный: CLI-справочник, правила безопасности, проверка готовности.
+- **`hhru-apply`** — воркфлоу отклика (dry-run-first, safety-critical).
+- **`hhru-market`** — анализ рынка (read-only).
+- **`hhru-monitor`** — мониторинг/статус (read-only).
+
 ## Этап 5 roadmap #65: подготовка к интервью и follow-up
 
 Этот этап находится **вне бота** и выполняется пользователем вручную после
