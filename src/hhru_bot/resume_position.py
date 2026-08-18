@@ -101,6 +101,9 @@ def parse_position_response(content: str | None) -> PositionValues:
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("LLM-план должен быть JSON-объектом")
+    title = data.get("title")
+    if title is not None and not isinstance(title, str):
+        raise ValueError("title должен быть строкой или null")
     salary = data.get("salary")
     if salary is not None and (
         isinstance(salary, bool) or not isinstance(salary, int) or salary < 0
@@ -131,7 +134,7 @@ def parse_position_response(content: str | None) -> PositionValues:
     if trips is not None and not isinstance(trips, bool):
         raise ValueError("business_trips должен быть boolean или null")
     return PositionValues(
-        title=str(data.get("title") or "").strip(),
+        title=(title or "").strip(),
         salary=salary,
         currency=currency,
         specializations=strings("specializations"),

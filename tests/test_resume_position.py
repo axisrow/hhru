@@ -33,6 +33,11 @@ def test_position_response_rejects_unknown_enum():
         parse_position_response('{"employment":["whatever"]}')
 
 
+def test_position_response_rejects_non_string_title():
+    with pytest.raises(ValueError, match="title"):
+        parse_position_response('{"title":{"role":"Backend"}}')
+
+
 def test_prompt_contains_mode_and_current_values():
     messages = build_position_prompt(
         type("Profile", (), {"desired_role": "Python developer", "skills": ["Python"]})(),
