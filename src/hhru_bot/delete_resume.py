@@ -24,6 +24,7 @@ from .selector_groups.resume_page import (
 )
 
 RESUMES_LIST_URL = f"{HH_BASE_URL}/applicant/resumes"
+DELETE_VERIFY_TIMEOUT_MS = 30_000
 
 
 @dataclass
@@ -32,6 +33,21 @@ class DeleteResumeResult:
     success: bool
     reason: str
     uncertain: bool = False
+
+
+def _wait_resume_list_ready(page: Page) -> None:
+    """Wait for a positive post-rerender list state.
+
+    The target card detaching is only a transition signal.  During the
+    following client render hh.ru can briefly show no cards (or an
+    interstitial), so absence at that point is not evidence of deletion.
+    A separately resolved list-card marker is required.  There is no
+    confirmed empty-state selector in the authenticated DOM research, so an
+    empty final list remains uncertain rather than being guessed as ready.
+    """
+    page.locator(RESUME_LIST_CARD).first.wait_for(
+        state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS
+    )
 
 
 def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult:
@@ -78,11 +94,17 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
     # the destructive click.  Any verification error stays uncertain because
     # hh.ru may already have accepted the deletion.
     try:
-        card.wait_for(state="detached", timeout=30_000)
+        card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+        # A different card may have existed before the click.  Waiting for
+        # that card alone can therefore succeed before the post-delete render
+        # settles.  Force a fresh list document so the readiness marker below
+        # belongs to state observed after the destructive action.
+        page.reload(wait_until="domcontentloaded")
         if not re.fullmatch(r"https://hh\.ru/applicant/resumes(?:[/?#].*)?", page.url):
             return DeleteResumeResult(
                 resume_id, False, "удаление не подтверждено: hh.ru не вернул список резюме", True
             )
+        _wait_resume_list_ready(page)
         remaining = page.locator(
             f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
         ).count()
