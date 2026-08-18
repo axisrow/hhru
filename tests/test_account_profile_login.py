@@ -82,9 +82,22 @@ def test_read_account_profile_does_not_write_empty_or_ambiguous_values(
 
 def test_read_account_profile_removes_stale_hh_values_on_confirmed_absence(monkeypatch, tmp_path):
     history = History(tmp_path / "history.db")
-    history.upsert_profile_field("Имя", "Старое имя", source="hh_ru")
+    history.upsert_profile_field("Город", "Старый город", source="hh_ru")
+    page = _page_for(
+        counts={profile_selectors.ACCOUNT_PROFILE_FIRST_NAME: 1},
+        values={profile_selectors.ACCOUNT_PROFILE_FIRST_NAME: "Новое имя"},
+    )
+    monkeypatch.setattr(account_profile, "goto_hh", MagicMock())
+
+    assert account_profile.read_account_profile(page, tmp_path / "history.db") == 1
+    assert history.get_profile_answers() == {"имя": "Новое имя"}
+
+
+def test_read_account_profile_preserves_values_when_page_marker_is_missing(monkeypatch, tmp_path):
+    history = History(tmp_path / "history.db")
+    history.upsert_profile_field("Телефон", "+7", source="hh_ru")
     page = _page_for(counts={})
     monkeypatch.setattr(account_profile, "goto_hh", MagicMock())
 
     assert account_profile.read_account_profile(page, tmp_path / "history.db") == 0
-    assert history.list_profile_fields() == []
+    assert history.get_profile_answers() == {"телефон": "+7"}

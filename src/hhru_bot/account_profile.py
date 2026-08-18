@@ -44,6 +44,21 @@ def read_account_profile(page: Page, history_path: str | Path) -> int:
         print("[INFO] Профиль обновлён: 0 полей")
         return 0
 
+    # A successful navigation alone is not enough: hh.ru can return an error,
+    # auth, or not-yet-rendered page with a zero count for every field. The
+    # confirmed name card is the profile-specific positive marker that permits
+    # absence-based cleanup below.
+    try:
+        page_marker = page.locator(account_profile.ACCOUNT_PROFILE_FIRST_NAME)
+        if page_marker.count() != 1:
+            _warn("страница профиля не подтверждена — старые данные сохранены")
+            print("[INFO] Профиль обновлён: 0 полей")
+            return 0
+    except PlaywrightError as exc:
+        _warn(f"страница профиля не подтверждена: {exc}")
+        print("[INFO] Профиль обновлён: 0 полей")
+        return 0
+
     try:
         history = History(history_path)
     except (OSError, sqlite3.Error) as exc:
