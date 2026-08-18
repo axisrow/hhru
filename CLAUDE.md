@@ -27,7 +27,7 @@ python3 -m playwright install chromium
 # Настройка (вся папка data/ в .gitignore — коммитить не нужно)
 mkdir -p data && cp config/config.example.yaml data/config.yaml
 
-# Все команды запускаются через обёртку run.sh (ставит PYTHONPATH=src и вызывает hhru_bot.cli)
+# Все команды запускаются через обёртку run.sh (вызывает установленный entry point `hhru`)
 ./scripts/run.sh login                                    # ручной вход, сохраняет сессию
 ./scripts/run.sh search --resume <id> --dry-run           # поиск без откликов
 ./scripts/run.sh apply  --resume <id> --dry-run --limit 5 # план откликов
@@ -40,7 +40,7 @@ mkdir -p data && cp config/config.example.yaml data/config.yaml
 ```
 
 Тестов, линтера и системы сборки в проекте **нет** — это простой скрипт с `requirements.txt`
-и запуском через `PYTHONPATH=src python3 -m hhru_bot.cli`.
+и запуском через установленный entry point `hhru` (editable install `pip install -e .`).
 
 ## Архитектура
 

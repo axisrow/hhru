@@ -31,6 +31,7 @@ hh.ru могла отличаться от того, что заложено в 
 ```bash
 pip3 install -r requirements.txt
 python3 -m playwright install chromium
+pip3 install -e .
 ```
 
 ## Настройка

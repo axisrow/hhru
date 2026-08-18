@@ -3,7 +3,8 @@
 # Этап 6 «автопилот» (#18). Сама обёртка НЕ демон — её вызывает планировщик в
 # нужное время. CLAUDE.md запрещает фоновые демоны внутри проекта.
 #
-# По образцу scripts/run.sh: ставит PYTHONPATH=src и вызывает hhru_bot.cli.
+# CLI резолвится через editable install (pip install -e .) site-packages,
+# без подстановки PYTHONPATH на локальную копию src рядом со скриптом.
 # Дополнительно: пишет свой вывод в data/logs/scheduled.log и вызывает bump + apply.
 # Предохранители (дневные лимиты, кулдаун бампа 4ч) живут в коде — throttle.py.
 #
@@ -16,7 +17,6 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PYTHONPATH="${PROJECT_ROOT}/src"
 
 # CLI резолвит data/config.yaml, data/history.db и data/logs/ ОТНОСИТЕЛЬНО cwd
 # (см. cli.py: DEFAULT_CONFIG_PATH = Path("data")/"config.yaml"). launchd и
@@ -37,7 +37,7 @@ LOG_FILE="${LOG_DIR}/scheduled.log"
 } >> "${LOG_FILE}"
 
 # Запускаем CLI, вывод дублируется в scheduled.log. tee без буферизации (-a —
-# дозапись, чтобы история запусков копилась). exit-код пробрасываем дальше,
+# дозапись, чтобы история запусков копировалась). exit-код пробрасываем дальше,
 # чтобы планировщик видел упавший прогон.
 #
 # Интерпретатор: launchd/cron имеют УРЕЗАННЫЙ PATH и НЕ активируют виртуальное
@@ -47,6 +47,7 @@ LOG_FILE="${LOG_DIR}/scheduled.log"
 # launchd-агент через EnvironmentVariables (см. deploy/*.plist) или cron через
 # префикс `HHRU_PYTHON=/path/to/venv/bin/python`. Без него падаем на тот же
 # python3, что и интерактивный run.sh (совместимость с ручным запуском).
+# Без PYTHONPATH=src: код резолвится из site-packages editable install.
 PYTHON_BIN="${HHRU_PYTHON:-python3}"
 run_cli() {
   "${PYTHON_BIN}" -m hhru_bot.cli "$@" 2>&1 | tee -a "${LOG_FILE}"

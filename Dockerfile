@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY . .
 
-ENV PYTHONPATH=/app/src
+RUN pip install --no-cache-dir -e .
 
-ENTRYPOINT ["python3", "-m", "hhru_bot.cli"]
+ENTRYPOINT ["hhru"]
 CMD ["--headless", "run"]

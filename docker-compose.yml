@@ -10,6 +10,6 @@ services:
       - -c
       - >-
         while true; do
-          python3 -m hhru_bot.cli --headless run;
+          hhru --headless run;
           sleep 14400;
         done

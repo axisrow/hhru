@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 hhru-bot = "hhru_bot.cli:main"
+hhru = "hhru_bot.cli:main"
 
 [project.optional-dependencies]
 dev = [
