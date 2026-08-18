@@ -10,7 +10,7 @@
   history.py), поэтому повторный запуск за тот же день не переоткликнется.
 
   StartCalendarInterval раз в день в 10:00 (измените Hour/Minute под себя).
-  apply --limit 5 ограничивает один прогон (сверх дневного лимита), чтобы не
+  apply с лимитом 5 ограничивает один прогон (сверх дневного лимита), чтобы не
   вырабатывать весь daily_apply_limit за раз.
 
   ПЕРЕД УСТАНОВКОЙ замените плейсхолдеры:
@@ -31,7 +31,7 @@
     launchctl unload ~/Library/LaunchAgents/com.hhru.bot.apply.plist
 
   Эквивалентный конфиг генерируется командой:
-    hhru-bot schedule --format plist --action apply --apply-time 10:00 --apply-limit 5
+    hhru-bot schedule (формат plist, действие apply, время 10:00, лимит 5)
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
