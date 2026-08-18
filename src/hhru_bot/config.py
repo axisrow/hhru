@@ -63,6 +63,7 @@ class ResumeConfig:
     ai_profile: object | None = None
     resume_sections: object | None = None
     education: object | None = None
+    form_profile: object | None = None
 
     @property
     def resume_id(self) -> str:
