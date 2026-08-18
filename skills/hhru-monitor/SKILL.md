@@ -45,7 +45,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" funnel
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" stats
 ```
 
-Сводка и экспорт истории откликов. Флаги `--format csv` / `-o <file>` — экспорт.
+Сводка и экспорт истории откликов. Флаг `--format csv|md|table` — формат вывода;
+`--list` — список последних действий вместо сводки. Экспорт в файл (`-o <file>`) —
+у команды `query`, не у `stats`.
 
 ## Правила
 

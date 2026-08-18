@@ -206,7 +206,7 @@ claude plugin install hhru-cc-plugin@hhru --scope user
 /hhru whoami
 /hhru search --resume <id> --dry-run --max-pages 3
 /hhru apply --resume <id> --dry-run --limit 5
-/hhru monitor
+/hhru responses
 ```
 
 Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-run` сначала и
