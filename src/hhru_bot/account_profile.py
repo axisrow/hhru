@@ -56,10 +56,16 @@ def read_account_profile(page: Page, history_path: str | Path) -> int:
             locator = page.locator(selector)
             count = locator.count()
             if count != 1:
+                if count == 0:
+                    # A successfully loaded profile can legitimately omit a
+                    # private/unfilled field. Remove a previous hh_ru value so
+                    # it cannot leak into a later account's form fill.
+                    history.delete_profile_field(question_key, source="hh_ru")
                 _warn(f"поле «{question_key}» не подтверждено (найдено: {count})")
                 continue
             value = locator.inner_text().strip()
             if not value:
+                history.delete_profile_field(question_key, source="hh_ru")
                 _warn(f"поле «{question_key}» пустое")
                 continue
             history.upsert_profile_field(question_key, value, source="hh_ru")

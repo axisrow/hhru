@@ -78,3 +78,15 @@ def test_read_account_profile_does_not_write_empty_or_ambiguous_values(
     output = capsys.readouterr().out
     assert "поле «Имя» пустое" in output
     assert "поле «Фамилия» не подтверждено" in output
+
+
+def test_read_account_profile_removes_stale_hh_values_on_confirmed_absence(
+    monkeypatch, tmp_path
+):
+    history = History(tmp_path / "history.db")
+    history.upsert_profile_field("Имя", "Старое имя", source="hh_ru")
+    page = _page_for(counts={})
+    monkeypatch.setattr(account_profile, "goto_hh", MagicMock())
+
+    assert account_profile.read_account_profile(page, tmp_path / "history.db") == 0
+    assert history.list_profile_fields() == []
