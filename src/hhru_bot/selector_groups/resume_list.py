@@ -1,5 +1,5 @@
 """Список резюме (/applicant/resumes) — селекторы для copy-resume (#116)
-и list-resumes --remote (#135).
+и list-resumes (#135).
 
 Статус проверки (live-дамп под залогиненной сессией, 2026-08-01):
 

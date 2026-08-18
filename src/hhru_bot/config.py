@@ -146,9 +146,13 @@ def load_config(path: str | Path) -> AppConfig:
 
     cover_letter_default = raw.get("cover_letter_default", "")
 
-    resumes_raw = _require(raw, "resumes", "корневой раздел")
-    if not isinstance(resumes_raw, list) or not resumes_raw:
-        raise ConfigError("Раздел 'resumes' должен быть непустым списком")
+    # #320: resumes — опциональный overlay настроек, а не реестр резюме:
+    # пустой список или отсутствие раздела допустимы (канонический список живёт
+    # на hh.ru; list-resumes читает его напрямую, команды адресации работают
+    # по resume_id — #319). Записи с настройками по-прежнему валидируются строго.
+    resumes_raw = raw.get("resumes") or []
+    if not isinstance(resumes_raw, list):
+        raise ConfigError("Раздел 'resumes' должен быть списком")
 
     resumes: list[ResumeConfig] = []
     seen_ids = set()

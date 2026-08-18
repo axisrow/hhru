@@ -263,7 +263,7 @@ def run_apply_for_resume(
         # default-резюме, а история пишется под фейковым id.
         print(
             f"[FAIL] {resume.id} — в конфиге указан плейсхолдер resume_url; "
-            "укажите реальный URL (получить можно через list-resumes --remote)"
+            "укажите реальный URL (получить можно через list-resumes)"
         )
         return True
     try:

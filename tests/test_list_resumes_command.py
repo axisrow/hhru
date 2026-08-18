@@ -1,14 +1,12 @@
-"""Тесты команды list-resumes (#57): список резюме из конфига (READ, #21).
+"""Тесты команды list-resumes: live-дефолт #320, --local, READ-контракт #21.
 
-READ-команда: читает config.resumes, опционально --status добавляет колонки
-«можно bump» (throttle.can_bump_now) и «последний bump» (history.last_action_at).
-Браузер НЕ нужен — только config.yaml + SQLite-история. hh.ru НЕ дёргается.
+Запускают run() end-to-end на реальной History (tmp SQLite) и реальном Throttle;
+кулдауны управляются засеянной историей, а не моками. Браузер/live-чтение
+замоканы по строковым путям hhru_bot.browser.* / hhru_bot.copy_resume.*.
 
-Конвенция (как test_mark_command.py): интеграционный прогон run() целиком на
-реальном History (tmp SQLite) + реальном Throttle поверх него. Время кулдауна
-(BUMP_COOLDOWN = 4ч) контролируется через созданные записи истории:
-  - resume без bump в истории     → can_bump_now() = (True, None)
-  - resume с недавним success-bump → can_bump_now() = (False, wait_left)
+Модель #320: дефолт — канонический live-список HH.ru (единая таблица
+resume_id | alias | название | статус); ``--local`` — офлайн-просмотр overlay
+из конфига; сбой live-чтения даёт [FAIL] БЕЗ молчаливого fallback на конфиг.
 """
 
 from __future__ import annotations
@@ -47,24 +45,32 @@ def _two_resumes_config() -> str:
         """
 
 
+def _empty_overlay_config() -> str:
+    """#320: пустой overlay — раздел resumes отсутствует, конфиг валиден."""
+    return """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        """
+
+
 def _args(config_path, history_path, **overrides) -> argparse.Namespace:
     base = {
         "config": str(config_path),
         "history": str(history_path),
         "status": False,
-        "remote": False,
+        "local": False,
         "headless": True,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
 
 
-# --- базовый READ (без --status) --------------------------------------------
+# --- --local (офлайн-просмотр overlay из конфига) -----------------------------
 
 
-def test_list_resumes_prints_table_from_config(capsys, tmp_path):
+def test_local_prints_table_from_config(capsys, tmp_path):
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True))
 
     out = capsys.readouterr().out
     # обе строки резюме видны: slug (id) + числовой resume_id
@@ -76,30 +82,30 @@ def test_list_resumes_prints_table_from_config(capsys, tmp_path):
     assert "+" in out and "-" in out and "|" in out
 
 
-def test_list_resumes_no_status_omits_status_columns(capsys, tmp_path):
+def test_local_no_status_omits_status_columns(capsys, tmp_path):
     """Без --status колонки «можно bump»/«последний bump» не появляются."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True))
 
     out = capsys.readouterr().out
     assert "можно bump" not in out
     assert "последний bump" not in out
 
 
-def test_list_resumes_headers(capsys, tmp_path):
-    """Базовый режим: ровно колонки id | resume_id."""
+def test_local_headers(capsys, tmp_path):
+    """Локальный режим: ровно колонки id | resume_id."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True))
 
     out = capsys.readouterr().out
     assert "id" in out
     assert "resume_id" in out
 
 
-def test_list_resumes_no_emoji(capsys, tmp_path):
+def test_no_emoji_in_local_output(capsys, tmp_path):
     """Контракт проекта: вывод только текст/ASCII, НИ ОДНОЙ эмодзи."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True))
 
     out = capsys.readouterr().out
     # эмодзи лежат в высоких плоскостях Unicode — проверяем их отсутствие.
@@ -107,10 +113,10 @@ def test_list_resumes_no_emoji(capsys, tmp_path):
         assert not ("\U0001f000" <= ch <= "\U0001faff"), f"найдена эмодзи: {ch!r}"
 
 
-def test_list_resumes_shows_all_resume_fields(capsys, tmp_path):
+def test_local_shows_all_resume_fields(capsys, tmp_path):
     """Каждое резюме из конфига: и slug (id), и числовой resume_id (хвост URL)."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True))
 
     out = capsys.readouterr().out
     # slug и resume_id разделены (не склеены) — оба видны как отдельные значения
@@ -118,22 +124,35 @@ def test_list_resumes_shows_all_resume_fields(capsys, tmp_path):
     assert "analyst" in out and "22222222" in out
 
 
-# --- --status ----------------------------------------------------------------
-
-
-def test_status_adds_status_columns(capsys, tmp_path):
+def test_local_does_not_touch_hhru(tmp_path, monkeypatch):
+    """READ-контракт --local: команда не открывает браузер/не ходит на hh.ru.
+    Любой сетевой/браузерный вызов должен упасть, если команда попытается его сделать."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    def _boom(*a, **kw):
+        raise AssertionError("list-resumes --local не должен открывать браузер/ходить в сеть")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
+    # команда должна выполниться без исключений
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
+
+
+# --- --status (bump-колонки из локальной истории; в --local и в live) ---------
+
+
+def test_local_status_adds_status_columns(capsys, tmp_path):
+    config = _write_config(tmp_path, _two_resumes_config())
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
 
     out = capsys.readouterr().out
     assert "можно bump" in out
     assert "последний bump" in out
 
 
-def test_status_never_bumped_shows_yes_and_dash(capsys, tmp_path):
+def test_local_status_never_bumped_shows_yes_and_dash(capsys, tmp_path):
     """Резюме без bump в истории: «можно bump» = да, «последний bump» = —."""
     config = _write_config(tmp_path, _two_resumes_config())
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
 
     out = capsys.readouterr().out
     assert "да" in out
@@ -141,29 +160,29 @@ def test_status_never_bumped_shows_yes_and_dash(capsys, tmp_path):
     assert "—" in out or "-" in out
 
 
-def test_status_recent_bump_shows_no_and_timestamp(capsys, tmp_path):
+def test_local_status_recent_bump_shows_no_and_timestamp(capsys, tmp_path):
     """Резюме с недавним success-bump: «можно bump» = нет, «последний bump» = дата."""
     config = _write_config(tmp_path, _two_resumes_config())
     h = History(tmp_path / "h.db")
     # success-bump для backend (vacancy_id = resume_id как sentinel, см. bump.py)
     h.record_action("11111111", "11111111", "bump", "success")
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
 
     out = capsys.readouterr().out
-    assert "нет" in out  # кулдаунд 4ч ещё не прошёл
+    assert "нет" in out  # кулдаун 4ч ещё не прошёл
     # analyst без bump — «да»; backend с bump — «нет»: обе ветки can_bump_now проверены
     assert "да" in out
 
 
-def test_status_dry_run_bump_not_treated_as_success(capsys, tmp_path):
+def test_local_status_dry_run_bump_not_treated_as_success(capsys, tmp_path):
     """last_action_at/can_bump_now считают только status='success'
     (как count_today/time_since_last). dry_run-bump НЕ делает «последний bump»."""
     config = _write_config(tmp_path, _two_resumes_config())
     h = History(tmp_path / "h.db")
     h.record_action("11111111", "11111111", "bump", "dry_run")
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
 
     out = capsys.readouterr().out
     # dry_run не считается успехом → оба резюме «можно bump»: да
@@ -172,31 +191,18 @@ def test_status_dry_run_bump_not_treated_as_success(capsys, tmp_path):
     assert "нет" not in out
 
 
-def test_status_failed_bump_not_treated_as_success(capsys, tmp_path):
+def test_local_status_failed_bump_not_treated_as_success(capsys, tmp_path):
     """failed-bump тоже не считается (last_action_at/can_bump_now фильтруют
     status='success'). Неудачное поднятие не делает резюме «кулдаунным»."""
     config = _write_config(tmp_path, _two_resumes_config())
     h = History(tmp_path / "h.db")
     h.record_action("11111111", "11111111", "bump", "failed")
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", local=True, status=True))
 
     out = capsys.readouterr().out
     assert "да" in out
     assert "нет" not in out
-
-
-def test_status_does_not_touch_hhru(tmp_path, monkeypatch):
-    """READ-контракт: команда не открывает браузер/не ходит на hh.ru.
-    Любой сетевой/браузерный вызов должен упасть, если команда попытается его сделать."""
-    config = _write_config(tmp_path, _two_resumes_config())
-
-    def _boom(*a, **kw):
-        raise AssertionError("list-resumes не должен открывать браузер/ходить в сеть")
-
-    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
-    # команда должна выполниться без исключений
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
 
 
 # --- register (авторегистрация через pkgutil) -------------------------------
@@ -214,10 +220,12 @@ def test_registers_list_resumes_subparser():
     subparser = sub.choices["list-resumes"]
     flags = {a.option_strings[0] for a in subparser._actions if a.option_strings}
     assert "--status" in flags
-    assert "--remote" in flags
+    assert "--local" in flags
+    # #320: флаг --remote удалён — live-список стал поведением по умолчанию.
+    assert "--remote" not in flags
 
 
-# --- --remote (#135) ---------------------------------------------------------
+# --- live-дефолт (#320) ------------------------------------------------------
 
 
 class _FakeCard:
@@ -228,33 +236,27 @@ class _FakeCard:
         self.ssr_unavailable = ssr_unavailable
 
 
-def test_remote_rows_marks_configured_and_unconfigured():
-    cards = [
-        _FakeCard("11111111", "Backend developer", "modified"),
-        _FakeCard("99999999", "", "not_finished"),
-    ]
-    rows = list_resumes_cmd._remote_rows(cards, configured_ids={"11111111"})
-
-    assert rows == [
-        ["11111111", "Backend developer", "опубликовано", "да"],
-        ["99999999", "—", "черновик", "—"],
-    ]
+class _StubThrottle:
+    def can_bump_now(self, resume_id):
+        return True, None
 
 
-def test_remote_invalid_session_prints_fail_and_does_not_launch_browser(
-    capsys, tmp_path, monkeypatch
-):
-    config = _write_config(tmp_path, _two_resumes_config())
+class _StubHistory:
+    def last_action_at(self, resume_id, action):
+        return None
 
-    def _boom(*a, **kw):
-        raise AssertionError("не должен открывать браузер без валидной сессии")
 
-    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
-
-    out = capsys.readouterr().out
-    assert "[FAIL]" in out
-    assert "login" in out
+def _patch_live(monkeypatch, fake_cards, *, page=None, auth_cookie=True, login_form=False):
+    """Стандартная обвязка live-чтения: сессия-файл, браузер, карточки."""
+    storage_state = page  # не используется; страница отдельным аргументом ниже
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext(page))
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda p: auth_cookie)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda p, url, **kw: None)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda p: login_form)
+    monkeypatch.setattr(
+        "hhru_bot.copy_resume.list_resume_cards", lambda p, navigate=True: fake_cards
+    )
+    return storage_state
 
 
 class _FakeLocator:
@@ -296,69 +298,92 @@ class _FakeContext:
         return self._page
 
 
-def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch):
-    config = _write_config(tmp_path, _two_resumes_config())
+def _live_env(tmp_path, monkeypatch, config_body=None):
+    """Валидная сессия + реальный конфиг с подменённым storage_state-путём."""
+    config = _write_config(tmp_path, config_body or _two_resumes_config())
     storage_state = tmp_path / "session.json"
     storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
     monkeypatch.setattr(
         "hhru_bot.config.load_config_or_exit",
         lambda path: _config_with_storage_state(path, storage_state),
     )
+    return config
 
+
+def _live_rows_pure():
+    """Чистый тест строк live-таблицы без браузера/конфига."""
+    cards = [
+        _FakeCard("11111111", "Backend developer", "modified"),
+        _FakeCard("99999999", "", "not_finished"),
+    ]
+    return cards, {"11111111": "backend"}
+
+
+def test_live_rows_alias_and_status():
+    cards, alias_by_hash = _live_rows_pure()
+    rows = list_resumes_cmd._live_rows(
+        cards, alias_by_hash, with_status=False, throttle=None, history=None
+    )
+
+    assert rows == [
+        ["11111111", "backend", "Backend developer", "опубликовано"],
+        ["99999999", "—", "—", "черновик"],
+    ]
+
+
+def test_live_rows_status_columns():
+    cards, alias_by_hash = _live_rows_pure()
+    rows = list_resumes_cmd._live_rows(
+        cards,
+        alias_by_hash,
+        with_status=True,
+        throttle=_StubThrottle(),
+        history=_StubHistory(),
+    )
+
+    assert rows[0] == ["11111111", "backend", "Backend developer", "опубликовано", "да", "—"]
+    assert rows[1] == ["99999999", "—", "—", "черновик", "да", "—"]
+
+
+def test_default_live_prints_unified_table(capsys, tmp_path, monkeypatch):
+    """#320: без флагов — live-таблица HH.ru с alias из конфига; remote-only
+    резюме видно с alias «—» и YAML-подсказкой опциональных настроек."""
+    config = _live_env(tmp_path, monkeypatch)
     fake_cards = [
         _FakeCard("11111111", "Backend developer", "modified"),
         _FakeCard("99999999", "Analyst", "approved"),
     ]
+    _patch_live(monkeypatch, fake_cards)
 
-    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
-    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
-    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
-    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
-    monkeypatch.setattr(
-        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
-    )
-
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "resume_id" in out
+    assert "alias" in out
     assert "название" in out
     assert "статус" in out
-    assert "в конфиге" in out
-    assert "11111111" in out and "Backend developer" in out
+    assert "11111111" in out and "backend" in out and "Backend developer" in out
     assert "опубликовано" in out
-    assert "99999999" in out and "Analyst" in out
-    assert "опубликовано" in out
-    # 99999999 не в конфиге -> готовый YAML-фрагмент для вставки
-    assert "resume_url" in out
+    # 99999999 не в конфиге → alias «—» и YAML-фрагмент опциональных настроек
     assert "99999999" in out
+    assert "resume_url" in out
+    assert "опциональны" in out
+    # локальная таблица конфига (заголовок «| id |») в live-режиме не печатается;
+    # slug analyst встречается только в [WARN]-сироте, не в таблице
+    assert "\n| id " not in out
 
 
-def test_remote_shows_draft_without_position(capsys, tmp_path, monkeypatch):
-    """#315: черновик (not_finished) без должности показывается в --remote
-    со статусом «черновик» и не вызывает падения."""
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
-
+def test_default_live_shows_draft_without_position(capsys, tmp_path, monkeypatch):
+    """#315: черновик (not_finished) без должности показывается со статусом
+    «черновик» и не вызывает падения."""
+    config = _live_env(tmp_path, monkeypatch)
     fake_cards = [
         _FakeCard("11111111", "Backend developer", "modified"),
         _FakeCard("99999999", "", "not_finished"),
     ]
+    _patch_live(monkeypatch, fake_cards)
 
-    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
-    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
-    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
-    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
-    monkeypatch.setattr(
-        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
-    )
-
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "99999999" in out
@@ -367,18 +392,84 @@ def test_remote_shows_draft_without_position(capsys, tmp_path, monkeypatch):
     assert "—" in out
 
 
-def test_remote_expired_session_detected_via_auth_cookie(capsys, tmp_path, monkeypatch):
+def test_default_live_empty_overlay_all_dashes(capsys, tmp_path, monkeypatch):
+    """#320: пустой overlay (resumes отсутствует) — live-список работает,
+    все alias «—», ничего не «не найдено»."""
+    config = _live_env(tmp_path, monkeypatch, config_body=_empty_overlay_config())
+    fake_cards = [_FakeCard("11111111", "Backend developer", "modified")]
+    _patch_live(monkeypatch, fake_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "11111111" in out
+    assert "— |" in out.replace("+", "") or "| —" in out
+    assert "не найдено" not in out
+    assert "опциональны" in out  # подсказка настроек всё ещё полезна
+
+
+def test_default_live_orphan_config_entries_warn(capsys, tmp_path, monkeypatch):
+    """Сироты overlay: запись конфига без резюме на hh.ru — [WARN], не молча."""
+    config = _live_env(tmp_path, monkeypatch)
+    # жива только карточка 11111111; analyst/22222222 на hh.ru нет
+    fake_cards = [_FakeCard("11111111", "Backend developer", "modified")]
+    _patch_live(monkeypatch, fake_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "[WARN]" in out
+    assert "analyst = 22222222" in out
+    assert "настройки не применяются" in out
+
+
+def test_default_live_status_adds_bump_columns(capsys, tmp_path, monkeypatch):
+    """--status в live-режиме: bump-колонки keyed by resume_id работают для
+    любых карточек, включая remote-only."""
+    config = _live_env(tmp_path, monkeypatch)
+    h = History(tmp_path / "h.db")
+    h.record_action("11111111", "11111111", "bump", "success")
+    fake_cards = [
+        _FakeCard("11111111", "Backend developer", "modified"),
+        _FakeCard("99999999", "Draft", "not_finished"),
+    ]
+    _patch_live(monkeypatch, fake_cards)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "можно bump" in out
+    assert "последний bump" in out
+    # 11111111 с недавним bump — «нет (кулдаун)»; 99999999 без истории — «да»
+    assert "нет" in out
+    assert "да" in out
+
+
+def test_default_live_invalid_session_fail_without_fallback(capsys, tmp_path, monkeypatch):
+    """#320: сбой live-чтения — явный [FAIL]; локальная таблица конфига НЕ
+    печатается (запрет молчаливого fallback на неполный список)."""
+    config = _write_config(tmp_path, _two_resumes_config())
+
+    def _boom(*a, **kw):
+        raise AssertionError("не должен открывать браузер без валидной сессии")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _boom)
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "login" in out
+    # никакой локальной таблицы поверх/после FAIL
+    assert "backend" not in out
+    assert "analyst" not in out
+
+
+def test_default_live_expired_session_detected_via_auth_cookie(capsys, tmp_path, monkeypatch):
     """_check_session проверяет только формат файла — реальную авторизацию на
     hh.ru подтверждает cookie hhtoken (has_auth_cookie), НЕ browser.is_logged_in()
     (та проверяет "account/login" в URL — приём, отвергнутый в auth.py как
     ненадёжный). Истёкшие cookies не должны маскироваться под «резюме не найдено»."""
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
+    config = _live_env(tmp_path, monkeypatch)
 
     def _boom_list_cards(page):
         raise AssertionError("list_resume_cards не должен вызываться после провала has_auth_cookie")
@@ -387,7 +478,7 @@ def test_remote_expired_session_detected_via_auth_cookie(capsys, tmp_path, monke
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "[FAIL]" in out
@@ -395,48 +486,27 @@ def test_remote_expired_session_detected_via_auth_cookie(capsys, tmp_path, monke
     assert "не найдено" not in out
 
 
-def test_remote_unconfirmed_title_selector_warns_when_all_titles_empty(
-    capsys, tmp_path, monkeypatch
-):
+def test_default_live_unconfirmed_title_selector_warns(capsys, tmp_path, monkeypatch):
     """Если RESUME_LIST_CARD_TITLE не совпал ни для одной карточки — предупредить,
     а не молча выдать прочерки за подтверждённые данные."""
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
-
+    config = _live_env(tmp_path, monkeypatch)
     fake_cards = [_FakeCard("11111111", ""), _FakeCard("99999999", "")]
+    _patch_live(monkeypatch, fake_cards)
 
-    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
-    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
-    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
-    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
-    monkeypatch.setattr(
-        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
-    )
-
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "не подтверждён" in out
 
 
-def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monkeypatch):
+def test_default_live_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monkeypatch):
     """Codex adversarial review (PR #136, round 2): list_resume_cards может поднять
     ResumeListIndeterminate (timeout/интерстишл/дрейф селектора — состояние страницы
-    не подтверждено). Команда обязана сообщить [FAIL], а не «резюме не найдено»."""
+    не подтверждено). Команда обязана сообщить [FAIL], а не «резюме не найдено»;
+    локального fallback тоже нет (#320)."""
     from hhru_bot.copy_resume import ResumeListIndeterminate
 
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
+    config = _live_env(tmp_path, monkeypatch)
 
     def _raise_indeterminate(page, navigate=True):
         raise ResumeListIndeterminate("карточки резюме не появились за отведённое время")
@@ -447,23 +517,19 @@ def test_remote_indeterminate_state_prints_fail_not_empty(capsys, tmp_path, monk
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _raise_indeterminate)
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "не найдено" not in out
+    # fallback на локальную таблицу не происходит
+    assert "backend" not in out
 
 
-def test_remote_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
+def test_default_live_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
     """#147: hhtoken присутствует в jar, но сервер отдал форму входа — сессия
     отвергнута сервером, а не подтверждена одной лишь cookie."""
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
+    config = _live_env(tmp_path, monkeypatch)
 
     def _boom_list_cards(page, navigate=True):
         raise AssertionError("list_resume_cards не должен вызываться после провала has_login_form")
@@ -474,7 +540,7 @@ def test_remote_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: True)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "[FAIL]" in out
@@ -492,13 +558,7 @@ def test_login_form_check_reads_navigated_page(capsys, tmp_path, monkeypatch):
     goto/has_login_form, а не просто замоканный результат."""
     from hhru_bot.browser import has_login_form as real_has_login_form
 
-    config = _write_config(tmp_path, _two_resumes_config())
-    storage_state = tmp_path / "session.json"
-    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
-    monkeypatch.setattr(
-        "hhru_bot.config.load_config_or_exit",
-        lambda path: _config_with_storage_state(path, storage_state),
-    )
+    config = _live_env(tmp_path, monkeypatch)
 
     # Форма входа отсутствует на бланке страницы (count_before=0) и появляется
     # после goto (count_after=1) — так реально ведёт себя hh.ru: отозванная
@@ -517,7 +577,7 @@ def test_login_form_check_reads_navigated_page(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.has_login_form", real_has_login_form)
     monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom_list_cards)
 
-    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
 
     out = capsys.readouterr().out
     assert "[FAIL]" in out
