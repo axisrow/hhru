@@ -87,7 +87,13 @@ def _parse_time(hhmm: str) -> tuple[int, int]:
     return hour, minute
 
 
-def _program_arguments(action: str, apply_limit: int, account: str | None = None) -> list[str]:
+def _program_arguments(
+    action: str,
+    apply_limit: int,
+    account: str | None = None,
+    config: str | None = None,
+    history: str | None = None,
+) -> list[str]:
     """Аргументы, которые планировщик передаёт scheduled_run.sh.
 
     bump — без лимита (дневной лимит и кулдаун 4ч держит throttle).
@@ -100,7 +106,12 @@ def _program_arguments(action: str, apply_limit: int, account: str | None = None
     Плановый прогон идёт без GUI, поэтому --headless захардкожен.
     """
     args = ["--headless"]
-    if account is not None:
+    if config is not None or history is not None:
+        if config is not None:
+            args += ["--config", config]
+        if history is not None:
+            args += ["--history", history]
+    elif account is not None:
         args += ["--account", account]
     if action == "bump":
         return [*args, "bump"]
@@ -115,6 +126,8 @@ def render_schedule(
     apply_time: str = DEFAULT_APPLY_TIME,
     apply_limit: int = DEFAULT_APPLY_LIMIT,
     account: str | None = None,
+    config: str | None = None,
+    history: str | None = None,
 ) -> str:
     """Генерирует текст конфига планировщика для копирования (чистая функция).
 
@@ -132,11 +145,17 @@ def render_schedule(
     cfg.validate()
 
     if format == "plist":
-        return _render_plist(cfg, account=account)
-    return _render_crontab(cfg, account=account)
+        return _render_plist(cfg, account=account, config=config, history=history)
+    return _render_crontab(cfg, account=account, config=config, history=history)
 
 
-def _render_plist(cfg: ScheduleConfig, *, account: str | None = None) -> str:
+def _render_plist(
+    cfg: ScheduleConfig,
+    *,
+    account: str | None = None,
+    config: str | None = None,
+    history: str | None = None,
+) -> str:
     """Чистый launchd .plist (валидный XML), БЕЗ #-инструкций перед <?xml>.
 
     Инструкции живут отдельно (_instructions) и печатаются в stderr — тогда
@@ -144,7 +163,10 @@ def _render_plist(cfg: ScheduleConfig, *, account: str | None = None) -> str:
     launchd примет как есть (plutil -lint / plistlib не ругаются на '#').
     """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
-    args = [wrapper, *_program_arguments(cfg.action, cfg.apply_limit, account)]
+    args = [
+        wrapper,
+        *_program_arguments(cfg.action, cfg.apply_limit, account, config, history),
+    ]
     label = f"com.hhru.bot.{cfg.action}"
     log_out = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
     log_err = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
@@ -204,7 +226,13 @@ def _plist_start_block(cfg: ScheduleConfig) -> str:
     )
 
 
-def _render_crontab(cfg: ScheduleConfig, *, account: str | None = None) -> str:
+def _render_crontab(
+    cfg: ScheduleConfig,
+    *,
+    account: str | None = None,
+    config: str | None = None,
+    history: str | None = None,
+) -> str:
     """Чистая crontab-строка (расписание + команда), БЕЗ #-инструкций.
 
     Инструкции — в stderr через _instructions. Тогда `hhru-bot schedule
@@ -214,7 +242,7 @@ def _render_crontab(cfg: ScheduleConfig, *, account: str | None = None) -> str:
     """
     wrapper = f"{PLACEHOLDER_REPO_ROOT}/scripts/scheduled_run.sh"
     # Командная часть без пробелов внутри одного аргумента — собираем через join.
-    cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit, account))
+    cmd_args = " ".join(_program_arguments(cfg.action, cfg.apply_limit, account, config, history))
     # HHRU_PYTHON префиксом: cron НЕ активирует venv проекта, голый python3 в
     # cron-окружении не имеет playwright. scheduled_run.sh читает HHRU_PYTHON.
     command = f"HHRU_PYTHON={PLACEHOLDER_PYTHON_BIN} {wrapper} {cmd_args}"
@@ -321,6 +349,8 @@ def run(args: argparse.Namespace) -> None:
             apply_time=cfg.apply_time,
             apply_limit=cfg.apply_limit,
             account=args.account,
+            config=args.config,
+            history=args.history,
         )
     except ValueError as e:
         print(f"Ошибка: {e}", file=sys.stderr)

@@ -145,6 +145,19 @@ def test_program_arguments_preserve_account():
     assert _program_arguments("bump", 5, "work") == ["--headless", "--account", "work", "bump"]
 
 
+def test_program_arguments_preserve_resolved_explicit_paths():
+    from hhru_bot.commands.schedule import _program_arguments
+
+    assert _program_arguments("bump", 5, "work", "custom.yaml", "custom.db") == [
+        "--headless",
+        "--config",
+        "custom.yaml",
+        "--history",
+        "custom.db",
+        "bump",
+    ]
+
+
 def test_plist_programarguments_headless_before_action():
     """В сгенерированном .plist ProgramArguments[1] должен быть --headless, а не subcommand."""
     out = render_schedule(format="plist", action="bump", interval_hours=4)
