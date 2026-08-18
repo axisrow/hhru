@@ -11,6 +11,10 @@
 # Аргументы передаются дальше CLI как есть, например:
 #   scripts/scheduled_run.sh bump --headless
 #   scripts/scheduled_run.sh apply --headless --limit 5
+# Для именованного аккаунта передайте глобальный флаг до команды:
+#   scripts/scheduled_run.sh --account marketing --headless apply --limit 5
+# Либо задайте HHRU_ACCOUNT=marketing; явный --account в аргументах имеет
+# приоритет, если заданы оба варианта.
 # Планировщик обычно зовёт одно действие за раз (см. deploy/*.plist шаблоны и
 # вывод `hhru-bot schedule`).
 
@@ -54,4 +58,9 @@ run_cli() {
   return "${PIPESTATUS[0]}"
 }
 
-run_cli "$@"
+ACCOUNT_ARGS=()
+if [[ -n "${HHRU_ACCOUNT:-}" ]]; then
+  ACCOUNT_ARGS=(--account "${HHRU_ACCOUNT}")
+fi
+
+run_cli "${ACCOUNT_ARGS[@]}" "$@"

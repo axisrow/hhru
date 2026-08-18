@@ -16,10 +16,12 @@ READ-only анализ рынка с целью **максимизация до�
 отдаёт ни под каким `data-qa` (#117).
 
 Сначала **соберите данные** по нескольким сферам — прогоните search с разными
-`text` в `config.yaml` (или несколькими резюме):
+`text` в `config.yaml` (или несколькими резюме). Для именованного аккаунта
+конфиг и история автоматически берутся из `data/accounts/<name>/`:
 
 ```
 ./scripts/run.sh search --resume <id> --max-pages 5
+./scripts/run.sh --account marketing search --resume <id> --max-pages 5
 ```
 
 Дальше — всё через `query` (read-only SELECT к `history.db`):
@@ -36,6 +38,18 @@ READ-only анализ рынка с целью **максимизация до�
 ```
 ./scripts/run.sh --history data/history.db query "<SQL>"
 ```
+
+Для отдельного аккаунта достаточно одного флага (он также должен стоять до
+подкоманды):
+
+```
+./scripts/run.sh --account marketing query "<SQL отсюда>"
+./scripts/run.sh --account marketing query "<SQL>" --csv
+```
+
+Аккаунт `marketing` должен иметь файл `data/accounts/marketing/config.yaml`;
+его история хранится в `data/accounts/marketing/history.db`. Явно переданные
+`--config` и `--history` имеют приоритет над соответствующими путями аккаунта.
 
 Все запросы ниже — `SELECT`/`WITH`, безопасны (read-only).
 
