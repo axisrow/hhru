@@ -41,6 +41,7 @@ def test_lock_covers_all_hhru_write_commands():
         "run",
         "copy-resume",
         "publish-resume",
+        "edit-experience",
         "about",
         "reply-employers",
         "clear-negotiations",
