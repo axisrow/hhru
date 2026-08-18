@@ -58,6 +58,7 @@ def test_all_commands_registered():
         "clear-negotiations",
         "reply-employers",
         "calendar",
+        "resume-sections",
     }
 
 
@@ -95,6 +96,7 @@ def test_register_commands_returns_names():
         "clear_negotiations",
         "reply_employers",
         "calendar",
+        "resume_sections",
     }
 
 

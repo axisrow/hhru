@@ -40,6 +40,7 @@ WRITE_COMMANDS = frozenset(
         "publish-resume",
         "reply-employers",
         "clear-negotiations",
+        "resume-sections",
     }
 )
 
