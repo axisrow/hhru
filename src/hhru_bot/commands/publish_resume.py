@@ -60,7 +60,7 @@ def run(args: argparse.Namespace) -> None:
     # должен выглядеть в истории как неудачная попытка публикации.  ``uncertain``
     # означает, что клик уже мог уйти, поэтому такую запись сохраняем.
     if not args.dry_run and (result.success or result.uncertain):
-        status = "uncertain" if result.uncertain else ("success" if result.success else "failed")
+        status = "uncertain" if result.uncertain else "success"
         history.record_action(
             resume.resume_id, resume.resume_id, "publish_resume", status, result.reason
         )
