@@ -49,9 +49,9 @@ def _load_existing(path: Path | None):
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
-    from ..copy_resume import confirm_write
     from ..experience import edit_experience_on_hh, plan_experience, read_experience_on_hh
     from ..history import History
+    from .copy_resume import confirm_write
 
     config = load_config_or_exit(args.config)
     try:

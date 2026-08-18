@@ -47,10 +47,15 @@ RESUME_DELETE_CONFIRM = "[data-qa='resume-delete-confirm']"
 RESUME_DELETE_HIDE_CONFIRM = "[data-qa='resume-hide-confirm']"
 RESUME_DELETE_CLOSE = "[data-qa='resume-delete-close']"
 
-# Create-resume wizard (#304).  These values must be checked against an
-# authenticated live DOM before enabling a real run; the command remains
-# fail-closed when any marker is absent or ambiguous.
-RESUME_CREATE_BUTTON = "[data-qa='resume-create']"
-RESUME_CREATION_AREA = "[data-qa='resume-creation-professional-area']"
-RESUME_CREATION_TITLE = "[data-qa='resume-creation-title']"
-RESUME_CREATION_SUBMIT = "[data-qa='resume-creation-submit']"
+# Create-resume wizard (#304), confirmed against the authenticated live DOM
+# on 2026-08-18.  The catalog is a live tree: top-level rows expand, while
+# leaf professions have checkboxes.  Do not replace this with a hand-copied
+# partial list; the tree search exposes the full current catalog.
+RESUME_CREATE_BUTTON = "[data-qa='mainmenu_createResume']"
+RESUME_CREATION_URL = "/profile/resume/professional_role"
+RESUME_CREATION_SELECT_JOB = "[data-qa='resume-profile-card-select-job']"
+RESUME_CREATION_POSITION = "[data-qa='resume-profile-position-input']"
+RESUME_CREATION_NEXT = "[data-qa='resume-profile-next-screen']"
+RESUME_CREATION_CATEGORY_SEARCH = "[data-qa='tree-selector-search-input']"
+RESUME_CREATION_CATEGORY_SUBMIT = "[data-qa='category-modal-submit']"
+RESUME_CREATION_CATEGORY_INPUT = "[data-qa~='tree-selector-input-{}']"

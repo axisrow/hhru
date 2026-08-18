@@ -109,7 +109,7 @@ def read_chrome_cookies(cookie_file: Path | str) -> list[dict[str, Any]]:
     import browser_cookie3
 
     chrome = browser_cookie3.Chrome(cookie_file=str(cookie_file), domain_name="hh.ru")
-    with browser_cookie3._DatabaseConnetion(str(cookie_file)) as connection:
+    with browser_cookie3._DatabaseConnetion(Path(cookie_file)) as connection:
         connection.text_factory = browser_cookie3._text_factory
         cursor = connection.cursor()
         has_integrity = chrome._has_integrity_check_for_cookie_domain(cursor)

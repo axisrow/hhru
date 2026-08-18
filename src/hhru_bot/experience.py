@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -102,7 +102,9 @@ def parse_plan(content: str | None) -> list[ExperienceEntry] | None:
     if not isinstance(raw, list) or not raw:
         return None
     result = [_entry(item) for item in raw]
-    return result if all(item is not None for item in result) else None
+    if any(item is None for item in result):
+        return None
+    return cast("list[ExperienceEntry]", result)
 
 
 def build_prompt(mode: str, career: str, existing: list[ExperienceEntry] | None = None):
@@ -114,7 +116,7 @@ def build_prompt(mode: str, career: str, existing: list[ExperienceEntry] | None 
         "используй только сведения пользователя. achievements — список строк. "
         "current=true означает работу по настоящее время."
     )
-    context = {"career": career, "mode": mode}
+    context: dict[str, Any] = {"career": career, "mode": mode}
     if existing is not None:
         context["existing"] = [entry.__dict__ for entry in existing]
     instruction = (

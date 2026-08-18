@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.delete_resume as delete
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
@@ -42,6 +44,9 @@ class Locator:
             self.page.clicked = True
 
     def wait_for(self, *, state, timeout):
+        if state == "visible":
+            self.page.confirm_waited = timeout
+            return
         if state == "attached":
             self.page.ready_waited = timeout
         else:
@@ -54,11 +59,12 @@ class Locator:
 
 class Page:
     def __init__(self, detached_error=None, readiness_error=None, remaining=0, ready_count=1):
-        self.url = delete.RESUMES_LIST_URL
+        self.url = delete.RESUMES_FULL_LIST_URL
         self.dialog_opened = False
         self.clicked = False
         self.waited = None
         self.ready_waited = None
+        self.confirm_waited = None
         self.reloaded = None
         self.detached_error = detached_error
         self.readiness_error = readiness_error
@@ -90,7 +96,7 @@ def _patch_goto(monkeypatch):
 def test_success_waits_for_identity_card_to_detach(monkeypatch):
     _patch_goto(monkeypatch)
     page = Page()
-    result = delete.delete_resume_on_hh(page, RESUME, dry_run=False)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
     assert result.success is True
     assert result.uncertain is False
     assert page.clicked is True
@@ -102,7 +108,7 @@ def test_success_waits_for_identity_card_to_detach(monkeypatch):
 def test_post_click_verification_error_is_uncertain(monkeypatch):
     _patch_goto(monkeypatch)
     page = Page(detached_error=RuntimeError("context closed"))
-    result = delete.delete_resume_on_hh(page, RESUME, dry_run=False)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
     assert result.success is False
     assert result.uncertain is True
     assert "проверить результат" in result.reason
@@ -111,7 +117,7 @@ def test_post_click_verification_error_is_uncertain(monkeypatch):
 def test_detachment_without_ready_list_is_uncertain(monkeypatch):
     _patch_goto(monkeypatch)
     page = Page(ready_count=0, readiness_error=RuntimeError("list is still rendering"))
-    result = delete.delete_resume_on_hh(page, RESUME, dry_run=False)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
     assert result.success is False
     assert result.uncertain is True
     assert "проверить результат" in result.reason

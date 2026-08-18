@@ -302,10 +302,15 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
         except Exception as exc:
             success, reason = False, str(exc)
         status = "success" if success else "failed"
+        # history is only ever None on the empty-discovery path (no topics
+        # means the loop never runs); with real topics the callers above
+        # always supply it, so it cannot be None here.
+        assert history is not None
         history.record_action(ACCOUNT_SCOPE, topic, "withdraw", status, reason or None)
         if success:
             print(f"[OK] Отозван отклик topic={topic}")
-            throttle.wait(f"после отзыва topic={topic}")
+            if throttle is not None:
+                throttle.wait(f"после отзыва topic={topic}")
         else:
             print(f"[FAIL] topic={topic} — {reason}")
             failed = True

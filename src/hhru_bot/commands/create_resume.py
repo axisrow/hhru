@@ -13,12 +13,14 @@ def register(subparsers) -> None:
         help="Создать пустой черновик резюме на hh.ru",
         description=(
             "Открывает визард hh.ru и создаёт новый черновик резюме. "
+            "Один запуск создаёт одно резюме с одной основной профессией; "
+            "для нескольких профессий нужны отдельные резюме и отдельные запуски. "
             "WRITE-команда: по умолчанию только dry-run; боевой запуск требует "
             "--force или интерактивного подтверждения."
         ),
     )
-    p.add_argument("--area", required=True, help="Профобласть первого шага визарда")
-    p.add_argument("--title", required=True, help="Желаемая должность первого шага")
+    p.add_argument("--area", required=True, help="Точная leaf-профессия из live-каталога hh.ru")
+    p.add_argument("--title", required=True, help="Одна основная профессия резюме")
     p.add_argument("--dry-run", action="store_true", help="Показать план без создания")
     p.add_argument("--force", action="store_true", help="Подтвердить боевое создание")
     p.set_defaults(func=run)
