@@ -27,10 +27,11 @@ from playwright.sync_api import Page
 
 from .browser import (
     HH_BASE_URL,
-    PageStateIndeterminate,
+    NotAuthenticated,  # noqa: F401
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    require_authenticated_page,
 )
 from .selector_groups import negotiations as ns
 
@@ -42,14 +43,6 @@ NEGOTIATIONS_URL = f"{HH_BASE_URL}/applicant/negotiations"
 # рендера hh.ru; если за это время карточек нет — считаем страницу пустой/селектор
 # устаревшим (см. fetch_responses). Не бесконечно, чтобы обход не зависал.
 RENDER_TIMEOUT_MS = 10_000
-
-
-class NotAuthenticated(PageStateIndeterminate):
-    """Сессия hh.ru истекла: страница переговоров не подтверждает auth-cookie.
-
-    fetch_responses поднимает это, чтобы команда responses НЕ трактовала пустой
-    результат выгруженной сессии как «нет новых ответов» и НЕ затирала историю.
-    """
 
 
 class ResponsesIndeterminate(RuntimeError):
@@ -345,20 +338,9 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
 
         # Проверяем единый auth-маркер до чтения DOM: пустая страница без cookie
         # не должна маскироваться под пустой inbox.
-        if not has_auth_cookie(page):
-            raise NotAuthenticated(
-                "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
-            )
-
-        # A stale/revoked hhtoken can remain in the jar.  The login form is a
-        # server-rendered positive indication that hh.ru rejected the session;
-        # URL checks are deliberately excluded because they rejected valid
-        # sessions in #140/#145.
-        if has_login_form(page):
-            raise NotAuthenticated(
-                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
-                "сервером (запустите `login`, затем повторите)"
-            )
+        require_authenticated_page(
+            page, auth_cookie_check=has_auth_cookie, login_form_check=has_login_form
+        )
 
         # DOMContentLoaded приходит раньше JS-карточек. Перед count() ждём attached
         # ограниченное время: так delayed-render карточки попадают в обход. У

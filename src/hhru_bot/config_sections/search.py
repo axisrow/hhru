@@ -8,12 +8,7 @@ from __future__ import annotations
 
 from ..config import ConfigError, SearchFilters
 from ._registry import register
-
-
-def _require(mapping: dict, key: str, context: str):
-    if key not in mapping or mapping[key] is None:
-        raise ConfigError(f"В конфиге отсутствует обязательное поле '{key}' ({context})")
-    return mapping[key]
+from ._validation import require
 
 
 @register("search")
@@ -22,7 +17,7 @@ def parse_search(raw, context: str) -> SearchFilters:
     if not raw:
         raise ConfigError(f"В конфиге отсутствует обязательное поле 'search' ({context})")
     return SearchFilters(
-        text=_require(raw, "text", f"{context}.text"),
+        text=require(raw, "text", f"{context}.text"),
         area=raw.get("area"),
         salary_from=raw.get("salary_from"),
         experience=raw.get("experience"),

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import ConfigError
+from ._validation import require
 
 
 @dataclass
@@ -19,12 +20,6 @@ class AccountConfig:
     # None = пусть Playwright ставит родной UA (по умолчанию). Задайте строку,
     # только если hh.ru требует конкретный User-Agent.
     user_agent: str | None = None
-
-
-def _require(mapping: dict, key: str, context: str):
-    if key not in mapping or mapping[key] is None:
-        raise ConfigError(f"В конфиге отсутствует обязательное поле '{key}' ({context})")
-    return mapping[key]
 
 
 def parse_account(raw, base_dir: Path) -> AccountConfig:
@@ -43,7 +38,7 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
     """
     if not raw:
         raise ConfigError("В конфиге отсутствует обязательное поле 'storage_state_file' (account)")
-    storage_state_file = _require(raw, "storage_state_file", "account")
+    storage_state_file = require(raw, "storage_state_file", "account")
     # user_agent опционален: None = родной UA Playwright (никакого хардкода).
     user_agent = raw.get("user_agent")
     if user_agent is not None and not isinstance(user_agent, str):

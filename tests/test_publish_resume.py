@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
@@ -55,6 +57,7 @@ class _Page:
         self.clicked = 0
         self.reloaded = 0
         self.url = f"https://hh.ru/resume/{RESUME_ID}"
+        self.context = SimpleNamespace(cookies=lambda: [{"name": "hhtoken"}])
 
     def content(self):
         return self.markup
@@ -86,8 +89,13 @@ def _markup(**overrides):
 
 def _run(page, monkeypatch, *, preserve_url=False):
     goto = (lambda page, url: None) if preserve_url else lambda page, url: setattr(page, "url", url)
-    monkeypatch.setattr(publish, "goto_hh", goto)
-    monkeypatch.setattr(publish, "has_login_form", lambda page: False)
+
+    def open_confirmed(page, resume_id):
+        goto(page, f"https://hh.ru/resume/{resume_id}")
+        if preserve_url:
+            raise ValueError("identity резюме не подтверждён")
+
+    monkeypatch.setattr(publish, "open_confirmed_resume", open_confirmed)
     return publish.publish_resume_on_hh(page, _resume(), dry_run=False)
 
 
@@ -204,8 +212,11 @@ def test_publish_rejects_missing_or_ambiguous_button(monkeypatch):
 
 def test_publish_dry_run_never_clicks(monkeypatch):
     page = _Page(_markup())
-    monkeypatch.setattr(publish, "goto_hh", lambda page, url: setattr(page, "url", url))
-    monkeypatch.setattr(publish, "has_login_form", lambda page: False)
+    monkeypatch.setattr(
+        publish,
+        "open_confirmed_resume",
+        lambda page, resume_id: setattr(page, "url", f"https://hh.ru/resume/{resume_id}"),
+    )
     result = publish.publish_resume_on_hh(page, _resume(), dry_run=True)
     assert result.success
     assert page.clicked == 0
