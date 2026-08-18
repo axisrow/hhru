@@ -135,7 +135,11 @@ def run(args: argparse.Namespace) -> None:
             result.success = False
             result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
 
-    status = "dry_run" if args.dry_run else ("success" if result.success else "failed")
+    status = (
+        "dry_run"
+        if args.dry_run
+        else ("uncertain" if result.uncertain else ("success" if result.success else "failed"))
+    )
     reason = f"new_resume_id={result.new_resume_id}" if status == "success" else result.reason
     # Для action='copy_resume' нет vacancy_id (операция над резюме, не отклик) —
     # как у bump, заполняем sentinel'ом resume_id; UNIQUE-индекс actions существует
@@ -151,5 +155,6 @@ def run(args: argparse.Namespace) -> None:
         print(f"[OK] Резюме {resume.id} скопировано. Новый resume_id: {result.new_resume_id}")
         print(format_config_snippet(result.new_resume_id))
     else:
-        print(f"[FAIL] {resume.id} — {result.reason}")
+        prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
+        print(f"{prefix} {resume.id} — {result.reason}")
         sys.exit(1)
