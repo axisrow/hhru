@@ -221,18 +221,19 @@ def test_registers_list_resumes_subparser():
 
 
 class _FakeCard:
-    def __init__(self, resume_id, title):
+    def __init__(self, resume_id, title, status=None):
         self.resume_id = resume_id
         self.title = title
+        self.status = status
 
 
 def test_remote_rows_marks_configured_and_unconfigured():
-    cards = [_FakeCard("11111111", "Backend developer"), _FakeCard("99999999", "")]
+    cards = [_FakeCard("11111111", "Backend developer", "modified"), _FakeCard("99999999", "", "not_finished")]
     rows = list_resumes_cmd._remote_rows(cards, configured_ids={"11111111"})
 
     assert rows == [
-        ["11111111", "Backend developer", "да"],
-        ["99999999", "—", "—"],
+        ["11111111", "Backend developer", "опубликовано", "да"],
+        ["99999999", "—", "черновик", "—"],
     ]
 
 
@@ -300,7 +301,7 @@ def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch)
         lambda path: _config_with_storage_state(path, storage_state),
     )
 
-    fake_cards = [_FakeCard("11111111", "Backend developer"), _FakeCard("99999999", "Analyst")]
+    fake_cards = [_FakeCard("11111111", "Backend developer", "modified"), _FakeCard("99999999", "Analyst", "approved")]
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
     monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
@@ -315,12 +316,48 @@ def test_remote_valid_session_prints_remote_table(capsys, tmp_path, monkeypatch)
     out = capsys.readouterr().out
     assert "resume_id" in out
     assert "название" in out
+    assert "статус" in out
     assert "в конфиге" in out
     assert "11111111" in out and "Backend developer" in out
+    assert "опубликовано" in out
     assert "99999999" in out and "Analyst" in out
+    assert "опубликовано" in out
     # 99999999 не в конфиге -> готовый YAML-фрагмент для вставки
     assert "resume_url" in out
     assert "99999999" in out
+
+
+def test_remote_shows_draft_without_position(capsys, tmp_path, monkeypatch):
+    """#315: черновик (not_finished) без должности показывается в --remote
+    со статусом «черновик» и не вызывает падения."""
+    config = _write_config(tmp_path, _two_resumes_config())
+    storage_state = tmp_path / "session.json"
+    storage_state.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: _config_with_storage_state(path, storage_state),
+    )
+
+    fake_cards = [
+        _FakeCard("11111111", "Backend developer", "modified"),
+        _FakeCard("99999999", "", "not_finished"),
+    ]
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
+    monkeypatch.setattr(
+        "hhru_bot.copy_resume.list_resume_cards", lambda page, navigate=True: fake_cards
+    )
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", remote=True))
+
+    out = capsys.readouterr().out
+    assert "99999999" in out
+    assert "черновик" in out
+    assert "Должность не указана" not in out  # у нас прочерк, не падение
+    assert "—" in out
 
 
 def test_remote_expired_session_detected_via_auth_cookie(capsys, tmp_path, monkeypatch):

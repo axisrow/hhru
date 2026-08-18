@@ -12,11 +12,12 @@ READ-команда: по умолчанию читает ``config.resumes`` л�
   - «последний bump» — ``history.last_action_at(resume_id, 'bump')`` (дата
     последнего успешного поднятия из actions, или «—» если не поднимали).
 
-Флаг ``--remote`` (#135) — read-only поход на hh.ru: открывает
-/applicant/resumes под сохранённой сессией (``copy_resume.list_resume_cards``)
-и печатает реальные резюме аккаунта (хэш, название, подключено ли в конфиге).
+Флаг ``--remote`` (#135, #315) — read-only поход на hh.ru: открывает
+/applicant/my_resumes под сохранённой сессией (``copy_resume.list_resume_cards``)
+и печатает реальные резюме аккаунта (хэш, название, статус, подключено ли в конфиге).
+Черновики (status=not_finished) показываются отдельно от опубликованных.
 Разблокирует ``copy-resume`` (#116), в конфиге которого resume_url — плейсхолдеры.
-Только ``goto`` + чтение DOM — ничего не кликается и не отправляется, поэтому
+Только ``goto`` + чтение DOM/SSR — ничего не кликается и не отправляется, поэтому
 подтверждение WRITE (``--force``) не требуется. Совместим с ``--status``
 (тот читает локальную историю — конфликта источников данных нет).
 
@@ -46,7 +47,9 @@ Cookie в jar не гарантирует, что сервер принял её
 Контракт вывода — docs/cli-spec.md §list-resumes: базовые колонки
 ``id | resume_id | можно bump | последний bump`` (последние две — только с
 ``--status``); ``--remote`` печатает отдельную таблицу
-``resume_id | название | в конфиге``. ``id`` — slug из конфига; ``resume_id`` —
+``resume_id | название | статус | в конфиге``. Статус читается из SSR
+/applicant/my_resumes: ``not_finished`` → ``черновик``, остальные известные
+значения → ``опубликовано``. ``id`` — slug из конфига; ``resume_id`` —
 числовой хвост ``resume_url`` (``ResumeConfig.resume_id``). Только текст/ASCII,
 без эмодзи.
 """
@@ -100,8 +103,19 @@ def _format_last_bump_cell(last_at: datetime | None) -> str:
     return last_at.strftime("%Y-%m-%d %H:%M")
 
 
+def _format_status(status: str | None) -> str:
+    """Колонка «статус»: ``черновик`` / ``опубликовано`` / ``—``."""
+    if status == "not_finished":
+        return "черновик"
+    if status in ("modified", "approved", "new", "finished"):
+        return "опубликовано"
+    if status:
+        return status
+    return "—"
+
+
 def _remote_rows(cards, configured_ids: set[str]) -> list[list[str]]:
-    """Строки таблицы --remote: resume_id | название | в конфиге.
+    """Строки таблицы --remote: resume_id | название | статус | в конфиге.
 
     «в конфиге» — id резюме из config.resumes, если resume_id карточки совпал
     с ResumeConfig.resume_id какого-то элемента (передаётся отдельно, т.к.
@@ -109,7 +123,7 @@ def _remote_rows(cards, configured_ids: set[str]) -> list[list[str]]:
     rows: list[list[str]] = []
     for card in cards:
         in_config = "да" if card.resume_id in configured_ids else "—"
-        rows.append([card.resume_id, card.title or "—", in_config])
+        rows.append([card.resume_id, card.title or "—", _format_status(card.status), in_config])
     return rows
 
 
@@ -148,8 +162,8 @@ def run(args: argparse.Namespace) -> None:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
         return
 
-    from ..browser import goto_hh, has_auth_cookie, has_login_form, launch_context
-    from ..copy_resume import RESUMES_LIST_URL, ResumeListIndeterminate, list_resume_cards
+    from ..browser import RESUMES_FULL_LIST_URL, goto_hh, has_auth_cookie, has_login_form, launch_context
+    from ..copy_resume import ResumeListIndeterminate, list_resume_cards
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -168,9 +182,9 @@ def run(args: argparse.Namespace) -> None:
         # текущей страницы — на свежей странице context.new_page() (ещё без
         # навигации) это всегда 0 совпадений, что сделало бы проверку фиктивной
         # независимо от реального состояния сессии. Поэтому переходим на
-        # RESUMES_LIST_URL здесь, ДО проверки, и list_resume_cards ниже вызывается
+        # RESUMES_FULL_LIST_URL здесь, ДО проверки, и list_resume_cards ниже вызывается
         # с navigate=False, чтобы не переходить туда же повторно.
-        goto_hh(page, RESUMES_LIST_URL)
+        goto_hh(page, RESUMES_FULL_LIST_URL)
         # устаревший/отозванный hhtoken может остаться в jar без явного
         # Set-Cookie на очистку — cookie сама по себе не подтверждает, что
         # сервер принял сессию на текущей странице. Форма входа — подтверждённый
@@ -201,7 +215,7 @@ def run(args: argparse.Namespace) -> None:
 
     configured_ids = {r.resume_id for r in config.resumes}
     print()
-    print(_ascii_table(["resume_id", "название", "в конфиге"], _remote_rows(cards, configured_ids)))
+    print(_ascii_table(["resume_id", "название", "статус", "в конфиге"], _remote_rows(cards, configured_ids)))
 
     not_configured = [c for c in cards if c.resume_id not in configured_ids]
     if not_configured:
