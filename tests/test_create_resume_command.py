@@ -69,6 +69,12 @@ def test_force_prints_yaml_but_does_not_modify_config(env, tmp_path, capsys):
     assert not (tmp_path / "config.yaml").exists()
 
 
+def test_dry_run_wins_when_force_is_also_present(env, tmp_path, capsys):
+    cmd.run(_args(tmp_path, force=True, dry_run=True))
+    assert "[DRY-RUN]" in capsys.readouterr().out
+    assert env.calls == [("it", "Backend developer", True)]
+
+
 def test_no_force_is_dry_run_even_in_non_tty(env, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
     cmd.run(_args(tmp_path, force=False, dry_run=False))

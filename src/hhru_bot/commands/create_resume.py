@@ -32,7 +32,10 @@ def run(args: argparse.Namespace) -> None:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    dry_run = not args.force if hasattr(args, "force") else True
+    # --dry-run is an explicit safety promise and always wins over --force.
+    # This also makes scripted invocations safe when a shared command builder
+    # supplies --force while toggling dry-run independently.
+    dry_run = args.dry_run or not args.force
     if not dry_run and not confirm_write(
         args.force, prompt=f"Создать новое резюме «{args.title}» на hh.ru?"
     ):
