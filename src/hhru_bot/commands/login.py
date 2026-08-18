@@ -15,4 +15,4 @@ def run(args: argparse.Namespace) -> None:
     from ..config import load_config_or_exit
 
     config = load_config_or_exit(args.config)
-    login(config)
+    login(config, history_path=args.history)
