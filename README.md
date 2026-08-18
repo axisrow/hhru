@@ -249,8 +249,9 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 
 **Глобальные флаги** (до имени команды):
 
-- `--config` — Путь к config.yaml (по умолчанию: 'data/config.yaml')
-- `--history` — Путь к файлу истории (SQLite) (по умолчанию: 'data/history.db')
+- `--config` — Путь к config.yaml
+- `--history` — Путь к файлу истории (SQLite)
+- `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db)
 - `--headless` — Запустить браузер в headless-режиме
 - `--verbose` — Подробное логирование
 
