@@ -74,6 +74,20 @@ def test_stats_run_empty_db_does_not_crash(capsys, tmp_path):
     out = capsys.readouterr().out
     assert "apply" in out
     assert "0" in out  # нули на пустой истории
+    assert "Тестов ожидает: 0" in out
+
+
+def test_stats_run_shows_pending_external_tests(capsys, tmp_path):
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_test_assigned(
+        None, "v1", "topic-1", "Acme", "https://example.test/quiz", "Пройдите тест"
+    )
+
+    stats_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+
+    assert "Тестов ожидает: 1" in out
 
 
 def test_stats_run_list_mode_md(capsys, tmp_path):

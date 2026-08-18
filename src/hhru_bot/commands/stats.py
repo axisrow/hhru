@@ -8,6 +8,7 @@ ASCII-таблицы/текстовые префиксы для table, CSV дл�
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 
 PERIODS = ("today", "week", "month", "all")
 FORMATS = ("table", "csv", "md")
@@ -64,12 +65,24 @@ def run(args: argparse.Namespace) -> None:
 
     history = History(args.history)
 
+    # Назначения внешних тестов — read-only факты без автоматического перехода
+    # на сторонний домен. Пока отдельного acknowledgement нет, все записи
+    # считаются ожидающими внимания пользователя.
+    test_since = datetime.min
+    if args.period == "today":
+        test_since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    elif args.period in {"week", "month"}:
+        test_since = datetime.now() - timedelta(days={"week": 7, "month": 30}[args.period])
+    pending_tests = len(history.test_assignments_since(test_since))
+
     if args.list:
         rows = history.list_actions(resume_id=resume_id, period=args.period, limit=args.limit)
         print(format_actions(rows, args.format))
     else:
         summary = history.summary(resume_id=resume_id, period=args.period)
         print(format_summary(summary, args.format))
+        if args.format != "csv":
+            print(f"Тестов ожидает: {pending_tests}")
         # CSV — экспорт для машин: один документ, одна схема колонок (см. #112
         # ревью). Reply-сводка имеет другую схему (metric,value), поэтому в csv
         # её печатать вторым документом в тот же stdout-поток нельзя — консьюмер,
