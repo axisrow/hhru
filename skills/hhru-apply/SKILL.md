@@ -14,8 +14,8 @@ argument-hint: "[--resume <id>] [--limit N] [--vacancy-id N]"
 ## Шаг 1 — проверь готовность
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" whoami
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" list-resumes
+hhru whoami
+hhru list-resumes
 ```
 
 Если сессия невалидна — `login` (интерактивный, требует пользователя). Если
@@ -27,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" list-resumes
 Для конкретной вакансии — диагностический дамп формы без отправки:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" probe --vacancy-id <id>
+hhru probe --vacancy-id <id>
 ```
 
 `probe` ничего не отправляет на hh.ru (submit не кликается). Полезен, чтобы
@@ -36,7 +36,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" probe --vacancy-id <id>
 ## Шаг 3 — сухой прогон (dry-run, обязательно)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" apply --resume <id> --dry-run --limit 5
+hhru apply --resume <id> --dry-run --limit 5
 ```
 
 `--dry-run` показывает план откликов **без действия** на hh.ru. Покажи
@@ -51,7 +51,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" apply --resume <id> --dry-run --limi
 ## Шаг 4 — боевой отклик (только после подтверждения)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" apply --resume <id> --limit 5
+hhru apply --resume <id> --limit 5
 ```
 
 Боевой запуск реально отправляет отклики. **Не запускай без явного

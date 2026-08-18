@@ -14,7 +14,7 @@ argument-hint: "[--resume <id>] [--max-pages N]"
 ## Шаг 1 — собрать вакансии (search, READ)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" search --resume <id> --dry-run --max-pages N
+hhru search --resume <id> --dry-run --max-pages N
 ```
 
 `search` собирает карточки вакансий по фильтрам из конфига и наполняет
@@ -25,7 +25,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" search --resume <id> --dry-run --max
 ## Шаг 2 — агрегаты рынка (market, READ)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" market
+hhru market
 ```
 
 Сравнение сфер по медианной зарплате (по данным, собранным `search`). Флаг
@@ -35,7 +35,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" market
 ## Шаг 3 — точечные запросы (query, READ)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" query "SELECT ..."
+hhru query "SELECT ..."
 ```
 
 `query` — read-only SELECT к `history.db`. Полезен для распределения ЗП,

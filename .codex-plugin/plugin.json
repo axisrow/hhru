@@ -1,0 +1,36 @@
+{
+  "name": "hhru-cc-plugin",
+  "version": "0.1.0",
+  "description": "Safe HH.ru job-search workflows powered by the hhru CLI.",
+  "author": {
+    "name": "axisrow"
+  },
+  "homepage": "https://github.com/axisrow/hhru",
+  "repository": "https://github.com/axisrow/hhru",
+  "license": "MIT",
+  "keywords": [
+    "hh.ru",
+    "job-search",
+    "playwright",
+    "cli",
+    "vacancies",
+    "apply"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "HH.ru",
+    "shortDescription": "Safe hh.ru job-search workflows",
+    "longDescription": "Search vacancies, monitor responses, and run confirmation-gated hh.ru application workflows through the hhru CLI.",
+    "developerName": "axisrow",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/axisrow/hhru",
+    "defaultPrompt": [
+      "Use HH.ru to check my application status.",
+      "Use HH.ru to find relevant vacancies without applying."
+    ]
+  }
+}

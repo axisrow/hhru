@@ -15,10 +15,10 @@ argument-hint: "[задача: поиск | отклик | поднятие | с
 
 ## Как вызывать CLI
 
-Все команды запускаются через обёртку:
+Все команды запускаются через установленный CLI:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" <command> [flags]
+hhru <command> [flags]
 ```
 
 Общие флаги: `--headless`, `--verbose`, `--config <path>`, `--history <path>`,
@@ -46,9 +46,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" <command> [flags]
 
 1. **Конфиг** — `data/config.yaml` (шаблон `config/config.example.yaml`). Если
    нет — скажи пользователю скопировать шаблон и заполнить `resume_url`.
-2. **Сессия** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" whoami`. Если сессия
+2. **Сессия** — `hhru whoami`. Если сессия
    невалидна — `login` (интерактивный вход, требует пользователя).
-3. **Резюме** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" list-resumes`.
+3. **Резюме** — `hhru list-resumes`.
 
 ## Справочник команд
 
@@ -76,4 +76,4 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" <command> [flags]
 
 Если задача не покрыта скиллами — используй справочник команд выше и правила
 безопасности. Не выдумывай флаги, которых нет в CLI: при сомнении покажи
-`bash "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" --help`.
+`hhru --help`.
