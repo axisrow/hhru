@@ -16,6 +16,15 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from _fakes import FakeLocator, _CardLocator, _parse_root, _parse_selector
+from hhru_bot.apply.verdict import (
+    Completeness,
+    PageRead,
+    PageSource,
+    Partial,
+    ResumeAttribution,
+    TopicRead,
+    compose,
+)
 from hhru_bot.apply.verify import verify_response_in_negotiations
 from hhru_bot.responses import NEGOTIATIONS_URL
 from hhru_bot.selector_groups import negotiations as ns
@@ -23,6 +32,35 @@ from hhru_bot.selector_groups import negotiations as ns
 pytestmark = pytest.mark.integration
 
 _V1, _V2 = "111111", "222222"
+
+
+@pytest.mark.parametrize(
+    ("reads", "expected"),
+    [
+        ([PageRead(PageSource.SSR, (TopicRead(_V1),), Completeness.LAST_CONFIRMED)], "found"),
+        ([PageRead(PageSource.DOM, (), Completeness.LAST_CONFIRMED)], "not_found"),
+        ([PageRead(PageSource.SSR, (), Partial("pagination"))], "indeterminate"),
+        (
+            [
+                PageRead(
+                    PageSource.SSR,
+                    (TopicRead(_V1, ResumeAttribution.INCOMPARABLE),),
+                    Completeness.LAST_CONFIRMED,
+                )
+            ],
+            "indeterminate",
+        ),
+        (
+            [
+                PageRead(PageSource.SSR, (), Completeness.LAST_CONFIRMED),
+                PageRead(PageSource.DOM, (), Partial("render")),
+            ],
+            "indeterminate",
+        ),
+    ],
+)
+def test_verdict_compose_matrix(reads, expected):
+    assert compose(reads, _V1) == expected
 
 
 class _PageLocator:
