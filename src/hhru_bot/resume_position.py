@@ -279,9 +279,8 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     """Fill fields only. Caller owns confirmation and must click SAVE explicitly."""
     if plan.title == "":
         raise ValueError(
-            "hh.ru не позволяет сохранить пустой title желаемой должности "
-            "(форма отклоняет с 'Пожалуйста, укажите'). Явная очистка title "
-            "невозможна; укажите непустое значение или не трогайте это поле."
+            "Пустой title отклоняется hh.ru. Укажите значение, например: "
+            '--title "Python-разработчик", или не передавайте --title.'
         )
     if plan.specializations:
         raise RuntimeError("селектор specializations не подтверждён на форме hh.ru")
