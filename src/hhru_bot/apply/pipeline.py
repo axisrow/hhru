@@ -261,7 +261,10 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
-    apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
+    if not apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id):
+        reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
+        logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
+        return _finalize_post_click_failure(ctx, reason)
     ctx.probe("form_loaded")
 
     # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:

@@ -86,7 +86,10 @@ class QuestionDetection:
         return cls(True, reason, indeterminate=True)
 
 
-_SCOPE_NOT_FOUND_REASON = "не удалось определить границы формы отклика (нет <form>-предка у submit)"
+_SCOPE_NOT_FOUND_REASON = (
+    "не удалось подтвердить состояние формы отклика (форма не отрисовалась "
+    "или границы формы не определены)"
+)
 _RUNTIME_ERROR_REASON = (
     "ошибка при проверке анкеты формы отклика — отправка отменена (нестабильная страница)"
 )
