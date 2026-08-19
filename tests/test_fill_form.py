@@ -44,9 +44,18 @@ def test_resolve_answers_adds_only_confident_semantic_matches():
             return SimpleNamespace(content='{"key":"город","confidence":0.9}')
 
     scan = FormScan([FormField("text", "#city", "Ваш город?", True)])
-    assert resolve_answers(scan, {}, known_data={"город": "Москва"}, client=FakeLLM()) == {
-        "Ваш город?": "Москва"
-    }
+    resolved, llm_matched = resolve_answers(
+        scan, {}, known_data={"город": "Москва"}, client=FakeLLM()
+    )
+    assert resolved == {"Ваш город?": "Москва"}
+    assert llm_matched == {"Ваш город?"}
+
+
+def test_resolve_answers_marks_exact_matches_as_not_llm_derived():
+    scan = FormScan([FormField("text", "#name", "Ваше имя?", True)])
+    resolved, llm_matched = resolve_answers(scan, {"Ваше имя?": "Ada Lovelace"})
+    assert resolved == {"Ваше имя?": "Ada Lovelace"}
+    assert llm_matched == set()
 
 
 def test_match_answer_llm_sends_only_keys_not_pii_values():
@@ -73,6 +82,75 @@ def test_match_answer_llm_degrades_on_transport_error():
             raise RuntimeError("upstream unavailable")
 
     assert match_answer_llm("Ваш город?", {"город": "Москва"}, FailingLLM()) is None
+
+
+def test_run_degrades_when_llm_client_construction_raises_any_exception(monkeypatch, tmp_path):
+    """#280 review round 2: any LLMClient() construction failure (not just
+    ImportError/RuntimeError/ValueError) must degrade to exact-match, not crash."""
+
+    class FakeHistory:
+        def __init__(self, _path):
+            pass
+
+        def get_profile_answers(self):
+            return {"город": "Москва"}
+
+    class FakePage:
+        url = "https://forms.example.test/application"
+
+        def goto(self, _url, wait_until):
+            pass
+
+        def content(self):
+            return "<html></html>"
+
+        def screenshot(self, **_kwargs):
+            pass
+
+    class FakeContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return FakePage()
+
+    class BrokenLLMClient:
+        def __init__(self, _ai_config):
+            raise KeyError("malformed ai config")
+
+    monkeypatch.setattr(fill_form, "History", FakeHistory)
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda _path: SimpleNamespace(
+            storage_state_file=tmp_path / "session.json",
+            user_agent=None,
+            ai=SimpleNamespace(provider="fake"),
+        ),
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: FakeContext())
+    monkeypatch.setattr(
+        fill_form,
+        "scan_form",
+        lambda _page: SimpleNamespace(indeterminate=False, reason=""),
+    )
+    monkeypatch.setattr("hhru_bot.ai.llm_client.LLMClient", BrokenLLMClient)
+    monkeypatch.setattr(fill_form, "apply_answers", lambda *_a, **_kw: (True, []))
+    monkeypatch.setattr(fill_form, "LOG_DIR", tmp_path / "logs")
+
+    result = fill_form.run(
+        Namespace(
+            dry_run=True,
+            url="https://forms.example.test/application",
+            config="config.yaml",
+            history=str(tmp_path / "history.db"),
+            headless=True,
+        )
+    )
+
+    assert result is False
 
 
 def test_run_uses_account_profile_answers(monkeypatch, tmp_path):
@@ -142,3 +220,74 @@ def test_run_uses_account_profile_answers(monkeypatch, tmp_path):
     assert result is False
     assert captured["history_path"] == str(tmp_path / "history.db")
     assert captured["answers"] == {"your name": "Ada Lovelace"}
+
+
+def test_run_reports_llm_matched_fields_in_dry_run_output(monkeypatch, tmp_path, capsys):
+    """#280 review round 2: LLM-inferred matches must be visible to the reviewer,
+    not silently indistinguishable from exact form_profile.answers matches."""
+
+    class FakeHistory:
+        def __init__(self, _path):
+            pass
+
+        def get_profile_answers(self):
+            return {"город": "Москва"}
+
+    class FakePage:
+        url = "https://forms.example.test/application"
+
+        def goto(self, _url, wait_until):
+            pass
+
+        def content(self):
+            return "<html></html>"
+
+        def screenshot(self, **_kwargs):
+            pass
+
+    class FakeContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return FakePage()
+
+    monkeypatch.setattr(fill_form, "History", FakeHistory)
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda _path: SimpleNamespace(
+            storage_state_file=tmp_path / "session.json", user_agent=None, ai=None
+        ),
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: FakeContext())
+    monkeypatch.setattr(
+        fill_form,
+        "scan_form",
+        lambda _page: SimpleNamespace(indeterminate=False, reason=""),
+    )
+    monkeypatch.setattr(
+        fill_form,
+        "resolve_answers",
+        lambda *_a, **_kw: ({"Ваш город?": "Москва"}, {"Ваш город?"}),
+    )
+    monkeypatch.setattr(fill_form, "apply_answers", lambda *_a, **_kw: (True, []))
+    monkeypatch.setattr(fill_form, "LOG_DIR", tmp_path / "logs")
+
+    result = fill_form.run(
+        Namespace(
+            dry_run=True,
+            url="https://forms.example.test/application",
+            config="config.yaml",
+            history=str(tmp_path / "history.db"),
+            headless=True,
+        )
+    )
+
+    assert result is False
+    out = capsys.readouterr().out
+    assert "[INFO] LLM-сопоставление" in out
+    assert "Ваш город?" in out
+    assert "Москва" in out

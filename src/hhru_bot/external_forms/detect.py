@@ -213,11 +213,20 @@ def resolve_answers(
     *,
     known_data: dict[str, str] | None = None,
     client=None,
-) -> dict[str, str]:
-    """Merge exact profile answers with safe semantic matches from known data."""
+) -> tuple[dict[str, str], set[str]]:
+    """Merge exact profile answers with safe semantic matches from known data.
+
+    Returns ``(resolved, llm_matched_labels)``: ``apply_answers`` treats every
+    key of ``resolved`` alike ("exact, configured match"), so the LLM-derived
+    subset must stay visible to the caller — the dry-run output reports which
+    labels were filled by inference rather than by an exact configured/known
+    match (#280 review round 2: an LLM guess must never look identical to a
+    user-approved answer in the reviewable dump).
+    """
     resolved = dict(answers)
     normalized = {normalize(key) for key in resolved}
     facts = known_data or {}
+    llm_matched: set[str] = set()
     for form_field in getattr(scan, "fields", []):
         if not form_field.label or normalize(form_field.label) in normalized or client is None:
             continue
@@ -225,4 +234,5 @@ def resolve_answers(
         if value is not None:
             resolved[form_field.label] = value
             normalized.add(normalize(form_field.label))
-    return resolved
+            llm_matched.add(form_field.label)
+    return resolved, llm_matched

@@ -63,10 +63,16 @@ def run(args: argparse.Namespace) -> bool:
                 from ..ai.llm_client import LLMClient
 
                 llm = LLMClient(config.ai)
-            except (ImportError, RuntimeError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 — конструктор внешнего клиента не
+                # должен ронять fill_form; та же деградация, что при сбое самого
+                # чата (см. detect.py::match_answer_llm) и в ai/letters.py.
                 print(f"[WARN] LLM-сопоставление отключено: {exc}")
-        resolved_answers = resolve_answers(scan, answers, known_data=answers, client=llm)
+        resolved_answers, llm_matched = resolve_answers(
+            scan, answers, known_data=answers, client=llm
+        )
         ok, missing = apply_answers(page, scan, resolved_answers)
+        for label in sorted(llm_matched):
+            print(f"[INFO] LLM-сопоставление: {label!r} -> {resolved_answers[label]!r}")
         out = Path(LOG_DIR)
         out.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
