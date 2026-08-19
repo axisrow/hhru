@@ -68,6 +68,26 @@ def test_recommendation_text_fails_closed_when_current_form_has_no_text_field():
         )
 
 
+def test_recommendation_text_is_rejected_before_opening_editor(monkeypatch) -> None:
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    page.locator.return_value = trigger
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(recommendations=[Recommendation("unsupported", "Acme")]),
+        dry_run=True,
+    )
+
+    assert "не содержит поля текста" in errors[0]
+    trigger.nth.assert_not_called()
+
+
 def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
     page = MagicMock()
     trigger = MagicMock()
@@ -91,7 +111,7 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
     errors = apply_plan(
         page,
         "resume-id",
-        ResumeSectionsPlan(recommendations=[Recommendation("Text", "Acme")]),
+        ResumeSectionsPlan(recommendations=[Recommendation("", "Acme")]),
         dry_run=True,
     )
 
@@ -198,7 +218,7 @@ def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> 
     errors = apply_plan(
         page,
         "resume-id",
-        ResumeSectionsPlan(recommendations=[Recommendation("Text", "Acme")]),
+        ResumeSectionsPlan(recommendations=[Recommendation("", "Acme")]),
         dry_run=True,
     )
 
@@ -232,7 +252,7 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
     errors = apply_plan(
         page,
         "resume-id",
-        ResumeSectionsPlan(recommendations=[Recommendation("Text", "Acme")]),
+        ResumeSectionsPlan(recommendations=[Recommendation("", "Acme")]),
         dry_run=False,
     )
 
