@@ -65,3 +65,17 @@ hhru --headless probe --resume python --vacancy-id 133801099
 The command is read-only: it navigates to the vacancy and response form and
 never clicks the submit control. The HTML dump is a diagnostic artifact and
 must not be committed.
+
+## Probe follow-up (2026-08-20)
+
+The live run initially stopped before the form on every new candidate because
+`_hidden_resume_warning_is_expanded()` passed the selector positionally to
+Playwright Python. That call now uses `arg=selector`; a real Chromium
+regression test covers the same JavaScript visibility check in
+`tests/test_apply_steps.py::test_hidden_resume_warning_uses_playwright_named_arg`.
+
+The first follow-up candidate (`136190066`) reached a clean response form but
+had no `task-body` questions. Subsequent candidates were stopped by the
+authenticated session/browser challenge before a reliable form dump could be
+captured. Therefore this document deliberately still reports **two** confirmed
+question-bearing vacancies, not ten; no unobserved combinations are inferred.
