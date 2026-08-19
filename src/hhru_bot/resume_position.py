@@ -277,6 +277,12 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
 
 def apply_position(page: Page, plan: PositionValues) -> None:
     """Fill fields only. Caller owns confirmation and must click SAVE explicitly."""
+    if plan.title == "":
+        raise ValueError(
+            "hh.ru не позволяет сохранить пустой title желаемой должности "
+            "(форма отклоняет с 'Пожалуйста, укажите'). Явная очистка title "
+            "невозможна; укажите непустое значение или не трогайте это поле."
+        )
     if plan.specializations:
         raise RuntimeError("селектор specializations не подтверждён на форме hh.ru")
     if plan.title is not None:
