@@ -97,7 +97,9 @@ def _config(tmp_path):
     return type("Config", (), {"storage_state_file": tmp_path / "state.json", "user_agent": None})()
 
 
-def test_login_with_code_keeps_one_context_and_saves_after_auth(monkeypatch, tmp_path):
+def test_login_with_code_keeps_one_context_and_saves_after_auth(
+    monkeypatch, tmp_path, caplog, capsys
+):
     page = _Page()
     context = _Context(page)
     monkeypatch.setattr("hhru_bot.auth_code.launch_context", lambda *args, **kwargs: context)
@@ -105,11 +107,15 @@ def test_login_with_code_keeps_one_context_and_saves_after_auth(monkeypatch, tmp
 
     code_file = tmp_path / "code.txt"
     code_file.write_text("1234\n", encoding="utf-8")
+    caplog.set_level(logging.INFO, logger="hhru_bot.auth_code")
     login_with_code(_config(tmp_path), "person@example.com", code_file=code_file, timeout_seconds=1)
 
     assert page.email_selected
     assert page.code == "1234"
     assert context.saved == str(tmp_path / "state.json")
+    assert "person@example.com" not in caplog.text
+    assert "1234" not in caplog.text
+    assert "person@example.com" not in capsys.readouterr().out
 
 
 def test_login_with_code_wrong_code_is_fail_closed(monkeypatch, tmp_path):
