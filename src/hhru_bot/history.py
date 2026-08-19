@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS account_profile (
     UNIQUE (question_key, source)
 );
 
+-- settings — произвольные пользовательские настройки CLI (#383).
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- vacancies_seen — собранные карточки вакансий (#66, Этап 1: рынок).
 -- search СОБИРАЕТ VacancyCard с зарплатой/датой (#34), но НЕ писал их в БД —
 -- рынок-анализ (сравнение сфер по медианной ЗП) был не из чего строить. Эта
@@ -1139,6 +1145,31 @@ class History:
                 (normalize(question_key), source),
             )
         return cursor.rowcount > 0
+
+    # --- Произвольные настройки CLI (#383) -----------------------------------
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Создаёт или обновляет локальную настройку."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+
+    def get_setting(self, key: str) -> str | None:
+        """Возвращает настройку или ``None``, если ключ не найден."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def list_settings(self) -> list[dict[str, str]]:
+        """Возвращает настройки в стабильном порядке ключей."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+        return [dict(row) for row in rows]
 
     # --- Pre-LLM фильтр работодателя (#85) -----------------------------------
     # Новый метод в конец файла (паттерн with self._connect(), существующие
