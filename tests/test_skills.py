@@ -146,7 +146,8 @@ def test_edit_skills_rejects_editor_on_wrong_resume_route(monkeypatch) -> None:
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
-    monkeypatch.setattr(skills_module, "read_skills", lambda _page: ())
+    read_skills = MagicMock(return_value=())
+    monkeypatch.setattr(skills_module, "read_skills", read_skills)
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
@@ -154,6 +155,8 @@ def test_edit_skills_rejects_editor_on_wrong_resume_route(monkeypatch) -> None:
 
     assert result.success is False
     assert result.reason == "форма навыков открыта не для того резюме"
+    read_skills.assert_not_called()
+    cancel.click.assert_not_called()
 
 
 def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) -> None:

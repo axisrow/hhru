@@ -135,12 +135,14 @@ def test_open_position_form_rejects_form_on_wrong_resume_route(monkeypatch):
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
     monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
-    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+    read_position = MagicMock(return_value=PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", read_position)
 
     with pytest.raises(
         RuntimeError, match="форма редактирования позиции открыта не для того резюме"
     ):
         resume_position.open_position_form(page, resume)
+    read_position.assert_not_called()
 
 
 def test_open_position_form_accepts_correct_edit_route_on_first_attempt(monkeypatch):
@@ -194,9 +196,11 @@ def test_open_position_form_rejects_already_mounted_form_on_wrong_route(monkeypa
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
     monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
-    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+    read_position = MagicMock(return_value=PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", read_position)
 
     with pytest.raises(
         RuntimeError, match="форма редактирования позиции открыта не для того резюме"
     ):
         resume_position.open_position_form(page, resume)
+    read_position.assert_not_called()
