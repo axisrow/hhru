@@ -580,8 +580,31 @@ def test_apply_non_dry_run_indeterminate_is_fail_not_skip():
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
     assert result.success is False
     assert result.skipped is False
-    assert "границы формы" in result.reason
+    assert "состояние формы" in result.reason
     assert result.acted is False  # #163: indeterminate — до submit, без паузы
+
+
+def test_apply_form_render_failure_does_not_run_question_detection(monkeypatch):
+    """A missing rendered form must not be misreported as a missing form scope."""
+    page = FakePage(apply_button=True, success=False)
+    detected = False
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+
+    def fail_if_detected(_page):
+        nonlocal detected
+        detected = True
+        raise AssertionError("question detection must wait for confirmed form render")
+
+    monkeypatch.setattr(pipeline_module, "detect_questions", fail_if_detected)
+
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+
+    assert result.success is False
+    assert result.acted is False
+    assert "форма отклика не отрисовалась" in result.reason
+    assert detected is False
 
 
 # --- #176: окно действия — исключение Playwright не теряет acted/запись --------

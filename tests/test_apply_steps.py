@@ -271,7 +271,7 @@ def test_navigate_clicks_apply_button_and_waits_submit():
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
-    steps.navigate_to_response_form(page)
+    assert steps.navigate_to_response_form(page) is True
 
     # Клик по apply-кнопке + ожидание URL через wait_for_url (#179).
     assert page.navigation_entered == 1
@@ -284,7 +284,7 @@ def test_navigate_does_not_raise_when_form_never_renders():
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     # submit намеренно отсутствует
 
-    steps.navigate_to_response_form(page)  # не должен бросать
+    assert steps.navigate_to_response_form(page) is False
 
     assert page.navigation_entered == 1
 

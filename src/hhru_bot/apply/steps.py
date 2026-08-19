@@ -108,8 +108,12 @@ def wait_apply_button(page: Page) -> bool:
     return apply_button.count() > 0
 
 
-def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> None:
+def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> bool:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
+
+    Возвращает ``True``, если submit-кнопка формы стала видимой, иначе ``False``.
+    Это различие важно: pipeline не должен запускать детекцию вопросов для формы,
+    рендер которой не подтверждён.
 
     ``vacancy_id`` (опционален — probe.py его тоже передаёт, но не обязан) даёт
     диагностическим дампам таймаутов отдельное имя на вакансию, чтобы не терять
@@ -165,12 +169,12 @@ def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> None
         # Клик по apply-кнопке — до submit, ранний отказ (#163): на hh.ru следа
         # нет, не крашим цикл откликов необработанным исключением.
         logger.warning("Клик по кнопке отклика упал с ошибкой (%s) — вакансия пропущена", exc)
-        return
+        return False
     # #179: таймаут/ошибка ожидания URL сама по себе не означает, что клик не
     # сработал — не крашим весь pipeline необработанным исключением, а
     # логируем и отдаём управление дальше. fill_response_form (через
-    # отсутствие APPLY_SUBMIT_BUTTON) и detect_questions сами вернут
-    # корректный fail/skip, если форма реально не загрузилась.
+    # отсутствие APPLY_SUBMIT_BUTTON) и последующая проверка рендера формы
+    # различат навигационный сбой и реально загрузившуюся форму.
     try:
         page.wait_for_url(
             "**/applicant/vacancy_response**", wait_until="commit", timeout=GOTO_TIMEOUT_MS
@@ -189,9 +193,11 @@ def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> None
         )
     except PlaywrightError as exc:
         _dump_navigation_diagnostics(page, "form_timeout", vacancy_id)
-        # Форма не загрузилась — fill_response_form всё равно вернёт причину отказа
-        # (submit не найден), логируем для диагностики устаревшего селектора.
+        # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
+        # чтобы таймаут рендера не выглядел как неверная граница <form>.
         logger.warning("Форма отклика не отрисовалась (%s)", exc)
+        return False
+    return True
 
 
 def _is_visible(page: Page, selector: str, *, timeout_ms: int) -> bool:
