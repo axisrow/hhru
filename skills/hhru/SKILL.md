@@ -50,6 +50,20 @@ hhru <command> [flags]
    невалидна — `login` (интерактивный вход, требует пользователя).
 3. **Резюме** — `hhru list-resumes`.
 
+## Диагностика sandbox Codex
+
+Если запуск headed Chromium завершается с маркером
+`CODEX_SANDBOX_BROWSER_FAILURE` или в выводе есть сочетание
+`Operation not permitted`, `Crashpad`, `NSApplication` или
+`NSMenuBarPresentationInstance`, это проблема разрешений sandbox среды
+исполнения Codex, а не Chromium, Playwright, hh.ru или сессии аккаунта.
+
+В этом случае не переустанавливай Chromium и не объявляй багом проекта:
+повтори ту же read-only-команду с elevated/system permission. Если elevated
+запуск недоступен, используй `hhru --headless <command>` как безопасный
+обход. Сообщи пользователю, что причина классифицирована как
+`CODEX_SANDBOX_BROWSER_FAILURE`.
+
 ## Справочник команд
 
 | Команда | Природа | Что делает |

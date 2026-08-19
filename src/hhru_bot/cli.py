@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
+from .browser import BrowserLaunchError
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
 
@@ -168,6 +169,9 @@ def _execute(args: argparse.Namespace) -> None:
         # deleted-row count) or None must not be mistaken for a failure.
         if failed is True:
             sys.exit(1)
+    except BrowserLaunchError as exc:
+        print(f"[ENVIRONMENT] {exc}", file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(130)
