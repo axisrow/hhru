@@ -193,7 +193,9 @@ def _apply_rows(
             if not dry_run:
                 if save.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка сохранения")
-                    continue
+                    # The row editor is left open in this state; querying the
+                    # next trigger against it would be unreliable (#331).
+                    break
                 save.click()
                 page.wait_for_url(f"**/resume/{resume_id}", wait_until="commit")
             else:
@@ -207,13 +209,17 @@ def _apply_rows(
                 cancel = page.locator(f"[data-qa='{cancel_qa}']")
                 if cancel.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка отмены")
-                    continue
+                    # Same reasoning as the save branch: the editor stays open,
+                    # so stop this block instead of leaving it open (#331).
+                    break
                 cancel.click()
         except PlaywrightError as exc:
             # A hydration timeout here may follow an already-successful save.click()
-            # on a previous row (#352/codex): fail closed with an explicit error for
-            # this row and stop the block instead of letting the exception escape
-            # apply_plan and hide which earlier rows already saved.
+            # on a previous row (#352/codex round 3), including a wait_for_url
+            # timeout right after save.click() (#331/codex+claude): fail closed
+            # with an explicit error for this row and stop the block instead of
+            # letting the exception escape apply_plan and hide which earlier
+            # rows already saved.
             errors.append(f"{block}: строка {index} не подтверждена: {exc}")
             break
     return errors

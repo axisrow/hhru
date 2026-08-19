@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.resume_sections as resume_sections
 from hhru_bot.config import ConfigError
@@ -64,3 +65,73 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
 
     assert errors == []
     partial_cancel.click.assert_called_once_with()
+
+
+def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> None:
+    """#331 (codex+claude): an uncaught wait_for_url after save must not abort apply_plan."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    no_recommendations = MagicMock()
+    no_recommendations.count.return_value = 0
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+    }[selector]
+    page.wait_for_url.side_effect = PlaywrightError("timeout waiting for navigation")
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: save)
+
+    from hhru_bot.resume_sections import Attestation
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(attestations=[Attestation("AWS", "Amazon", "Cloud", "2024")]),
+        dry_run=False,
+    )
+
+    assert len(errors) == 1
+    assert "сохранение" in errors[0] or "attestations" in errors[0]
+    save.click.assert_called_once_with()
+
+
+def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkeypatch) -> None:
+    """#331: an ambiguous save/cancel match must not query the next row's
+    trigger while the current row editor is still open."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 2
+    no_recommendations = MagicMock()
+    no_recommendations.count.return_value = 0
+    ambiguous_save = MagicMock()
+    ambiguous_save.count.return_value = 2
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: ambiguous_save)
+
+    from hhru_bot.resume_sections import Attestation
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(
+            attestations=[
+                Attestation("AWS", "Amazon", "Cloud", "2024"),
+                Attestation("GCP", "Google", "Cloud", "2023"),
+            ]
+        ),
+        dry_run=False,
+    )
+
+    assert len(errors) == 1
+    assert trigger.nth.call_count == 1

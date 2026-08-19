@@ -205,11 +205,17 @@ def apply_answers(page: Page, scan: FormScan, answers: dict[str, str]) -> tuple[
                 missing.append(form_field.label)
             else:
                 option_label = next(
-                    option
-                    for option in loc.locator("option").all_inner_texts()
-                    if normalize(option) == normalize(value)
+                    (
+                        option
+                        for option in loc.locator("option").all_inner_texts()
+                        if normalize(option) == normalize(value)
+                    ),
+                    None,
                 )
-                loc.select_option(label=option_label)
+                if option_label is None:
+                    missing.append(form_field.label)
+                else:
+                    loc.select_option(label=option_label)
         else:
             missing.append(form_field.label)
     return not missing, missing

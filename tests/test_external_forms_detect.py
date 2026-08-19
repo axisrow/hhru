@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 
 import pytest
 
-from hhru_bot.external_forms.detect import apply_answers, scan_form
+from hhru_bot.external_forms.detect import FormField, FormScan, apply_answers, scan_form
 
 pytestmark = pytest.mark.integration
 
@@ -207,6 +207,32 @@ def test_id_addressed_control_keeps_nth_index_for_later_control():
     ) == (True, [])
     assert page.locator("#first").nodes[0].value == "first@example.test"
     assert page.locator("form input[type='email'] >> nth=1").nodes[0].value == "second@example.test"
+
+
+def test_select_answer_missing_from_live_dom_degrades_instead_of_crashing():
+    """#331: scan-time options can drift from the live DOM by apply time."""
+    page = _Page(
+        """
+        <form>
+          <label for="role">Role</label><select id="role"><option>Manager</option></select>
+        </form>
+        """
+    )
+    scan = scan_form(page)
+    stale_field = FormField(
+        kind="select",
+        selector=scan.fields[0].selector,
+        label=scan.fields[0].label,
+        required=scan.fields[0].required,
+        # Scan-time options claimed "Developer" existed; the live DOM above
+        # only has "Manager" now (a real drift scenario, not fabricated).
+        options=("developer", "manager"),
+    )
+    stale_scan = FormScan(fields=[stale_field])
+
+    result = apply_answers(page, stale_scan, {"role": "Developer"})
+
+    assert result == (False, ["role"])
 
 
 def test_bare_and_explicit_text_inputs_share_selector_base():
