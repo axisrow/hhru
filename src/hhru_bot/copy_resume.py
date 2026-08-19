@@ -351,19 +351,33 @@ def list_resume_cards(
         state = None
         ssr_unavailable = True
 
-    if not ssr_unavailable and isinstance(state, dict):
+    if not ssr_unavailable and not isinstance(state, dict):
+        # Valid JSON can still have the wrong top-level shape (for example an
+        # interstitial payload such as null or a list).
+        ssr_unavailable = True
+    elif not ssr_unavailable:
         resumes = state.get("applicantResumes")
-        if not isinstance(resumes, list):
-            # applicantResumes отсутствует или имеет неправильный тип
+        if not isinstance(resumes, list) or not resumes:
+            # applicantResumes отсутствует, пуст или имеет неправильный тип:
+            # пустой список неотличим от SSR, который не загрузился.
             ssr_unavailable = True
         else:
             for item in resumes:
                 attrs = item.get("_attributes") if isinstance(item, dict) else None
-                if isinstance(attrs, dict):
-                    resume_hash = attrs.get("hash")
-                    status = attrs.get("status")
-                    if resume_hash and status is not None:
-                        status_by_hash[str(resume_hash)] = str(status)
+                resume_hash = attrs.get("hash") if isinstance(attrs, dict) else None
+                status = attrs.get("status") if isinstance(attrs, dict) else None
+                if (
+                    not isinstance(resume_hash, str)
+                    or not resume_hash
+                    or not isinstance(status, str)
+                    or not status
+                ):
+                    # A partially valid SSR payload must not be presented as a
+                    # complete status read: callers need to know that status
+                    # data is unavailable or schema-drifted.
+                    ssr_unavailable = True
+                    continue
+                status_by_hash[resume_hash] = status
 
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
