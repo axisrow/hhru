@@ -150,7 +150,12 @@ def load_config(path: str | Path) -> AppConfig:
     # пустой список или отсутствие раздела допустимы (канонический список живёт
     # на hh.ru; list-resumes читает его напрямую, команды адресации работают
     # по resume_id — #319). Записи с настройками по-прежнему валидируются строго.
-    resumes_raw = raw.get("resumes") or []
+    # cycle-review PR #322: raw.get("resumes") or [] маскировал явный
+    # falsy-но-не-list тип (resumes: 0/false/"") под «раздела нет» — отсутствие
+    # ключа/None различаем от неверного типа ДО isinstance-проверки.
+    resumes_raw = raw.get("resumes")
+    if resumes_raw is None:
+        resumes_raw = []
     if not isinstance(resumes_raw, list):
         raise ConfigError("Раздел 'resumes' должен быть списком")
 
