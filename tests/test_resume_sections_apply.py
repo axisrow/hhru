@@ -30,6 +30,11 @@ class FakeSaveButton:
     def click(self):
         self._page.saved_rows.append(self._page.current_index)
 
+    def wait_for(self, *, state="hidden", timeout=None):  # noqa: ARG002
+        # The inline editor closing (this button disappearing) confirms the
+        # save (#331) — the fakes above always model a successful close.
+        pass
+
 
 class FakeReadyLocator:
     def __init__(self, page, ready: bool):

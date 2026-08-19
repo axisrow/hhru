@@ -46,10 +46,12 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
     no_attestations.count.return_value = 0
     partial_cancel = MagicMock()
     partial_cancel.count.return_value = 1
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
+        "input[name='company']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -77,9 +79,11 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
     save = MagicMock()
     save.count.return_value = 1
     save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -112,9 +116,11 @@ def test_save_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> No
     save = MagicMock()
     save.count.return_value = 1
     save.click.side_effect = PlaywrightError("element is not attached to the DOM")
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -147,10 +153,12 @@ def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> 
     partial_cancel = MagicMock()
     partial_cancel.count.return_value = 1
     partial_cancel.click.side_effect = PlaywrightError("element is not attached to the DOM")
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
+        "input[name='company']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -180,9 +188,11 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
     no_attestations.count.return_value = 0
     save = MagicMock()
     save.count.return_value = 1
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        "input[name='company']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -216,9 +226,11 @@ def test_unconfirmed_save_stops_block_instead_of_clicking_next_row(monkeypatch) 
     save = MagicMock()
     save.count.return_value = 1
     save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
@@ -255,9 +267,11 @@ def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkey
     no_recommendations.count.return_value = 0
     ambiguous_save = MagicMock()
     ambiguous_save.count.return_value = 2
+    ready = MagicMock()
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+        f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
     }[selector]
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
