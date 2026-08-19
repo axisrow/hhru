@@ -92,6 +92,7 @@
 | `login`     | ручной вход, сохранение сессии               | WRITE-local    | `[INFO]` + текстовые подсказки |
 | `login-code`| единый вход по одноразовому коду             | WRITE-local    | `[OK]`/ошибка                  |
 | `import-cookies` | импорт куки hh.ru из Chrome в storage_state | WRITE-local | `[OK]`/`[FAIL]`/`[INFO]` |
+| `refresh-token` | проверка/пересохранение сессии            | READ / WRITE-local (`--force`) | `[INFO]`/`[OK]`/`[FAIL]` |
 | `search`    | поиск вакансий по фильтрам (без откликов)    | READ           | `[candidate]`/`[skip]`         |
 | `apply`     | отклик с письмом                             | WRITE-hh-ru    | `[OK]`/`[FAIL]`/`[DRY-RUN]`    |
 | `bump`      | поднятие резюме (кулдаун 4ч, дневной лимит)  | WRITE-hh-ru    | `[OK]`/`[FAIL]`                |
@@ -631,7 +632,7 @@ READ-команды (быстрые, безопасные) → WRITE-local → W
 | 1 (READ)  | `whoami`            | READ        | `responses`/`actions` (есть)      |
 | 1 (READ)  | `list-resumes`      | READ        | `config`, `throttle.can_bump_now` |
 | 1 (READ)  | `log`               | READ        | `logging_setup` (есть)            |
-| 1 (READ)  | `refresh-token`     | READ        | `auth`/`storage_state` (есть)     |
+| 1 (READ)  | `refresh-token`     | READ / WRITE-local (`--force`) | `auth`/`storage_state` (есть)     |
 | 1 (READ)  | `call-api`          | READ        | Playwright-сессия (GET только)    |
 | 2 (LOCAL) | `config`            | READ/WRITE-local | `config.py` (есть)           |
 | 2 (LOCAL) | `settings`          | READ/WRITE-local | новая таблица в `SCHEMA`     |
