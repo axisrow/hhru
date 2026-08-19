@@ -6,10 +6,10 @@ import argparse
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser("login-code", help="Неинтерактивный вход по одноразовому коду hh.ru")
+    p = subparsers.add_parser("login-code", help="Запрос кода; отправка пока недоступна")
     phase = p.add_mutually_exclusive_group(required=True)
     phase.add_argument("--request", action="store_true", help="Запросить код")
-    phase.add_argument("--submit", action="store_true", help="Отправить код")
+    phase.add_argument("--submit", action="store_true", help="Отклонить: поле кода не подтверждено")
     p.add_argument("--login", help="Email или телефон (только с --request)")
     p.add_argument("--code", help="Одноразовый код (только с --submit)")
     p.set_defaults(func=run)
@@ -24,7 +24,7 @@ def run(args: argparse.Namespace) -> None:
     config = load_config_or_exit(args.config)
     if args.request:
         request_code(config, args.login)
-        print("[OK] Код запрошен; выполните --submit --code <код>")
+        print("[OK] Код запрошен; отправка через CLI пока недоступна, используйте ручной login")
     else:
         submit_code(config, args.code)
         print("[OK] Сессия сохранена")

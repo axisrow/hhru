@@ -168,6 +168,7 @@ def _apply_rows(
     fill_row,
     *,
     dry_run: bool,
+    resume_id: str,
 ) -> list[str]:
     errors: list[str] = []
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
@@ -194,6 +195,15 @@ def _apply_rows(
                     errors.append(f"{block}: неоднозначная кнопка сохранения")
                     continue
                 save.click()
+                page.wait_for_url(f"**/resume/{resume_id}", wait_until="commit")
+            else:
+                # Leave the row editor before moving to the next row.  Otherwise
+                # the next trigger is queried while the previous form is still open.
+                cancel = page.locator("[data-qa='profile-layout-cancel-button']")
+                if cancel.count() != 1:
+                    errors.append(f"{block}: неоднозначная кнопка отмены")
+                    continue
+                cancel.click()
         except PlaywrightError as exc:
             # A hydration timeout here may follow an already-successful save.click()
             # on a previous row (#352/codex): fail closed with an explicit error for
@@ -213,9 +223,19 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         return ["hh.ru показал форму входа"]
     errors = list(plan.skipped)
     errors += _apply_rows(
-        page, "attestations", plan.attestations, _fill_attestation_row, dry_run=dry_run
+        page,
+        "attestations",
+        plan.attestations,
+        _fill_attestation_row,
+        dry_run=dry_run,
+        resume_id=resume_id,
     )
     errors += _apply_rows(
-        page, "recommendations", plan.recommendations, _fill_recommendation_row, dry_run=dry_run
+        page,
+        "recommendations",
+        plan.recommendations,
+        _fill_recommendation_row,
+        dry_run=dry_run,
+        resume_id=resume_id,
     )
     return errors
