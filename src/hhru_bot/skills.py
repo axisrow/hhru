@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -17,6 +18,7 @@ from .selector_groups import resume_page
 logger = logging.getLogger("hhru_bot.skills")
 
 LEVELS = frozenset(("basic", "intermediate", "advanced"))
+EDITOR_MOUNT_TIMEOUT_MS = 30_000
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,7 @@ def edit_skills_on_hh(
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
     editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
+    profile_path = f"/resume/{resume.resume_id}"
     # As with position (#337), the visible SSR trigger can precede React event
     # hydration.  Only the editor becoming visible confirms that a click worked.
     for attempt in range(2):
@@ -143,10 +146,10 @@ def edit_skills_on_hh(
             return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
         trigger.click()
         try:
-            editor.wait_for(state="visible", timeout=10_000)
+            editor.wait_for(state="visible", timeout=EDITOR_MOUNT_TIMEOUT_MS)
             break
         except PlaywrightError:
-            if attempt:
+            if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
                 return SkillsResult(False, reason="форма навыков не открылась")
     existing = read_skills(page)
     existing_keys = {skill.casefold() for skill in existing}

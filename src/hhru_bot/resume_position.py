@@ -13,6 +13,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -237,16 +238,17 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
         # The server-rendered trigger is visible before React attaches its
         # click handler.  A click in that window is a no-op on live hh.ru, so
         # retry once only when the positive form marker did not appear (#337).
+        profile_path = f"/resume/{resume.resume_id}"
         for attempt in range(2):
             trigger = page.locator(EDIT)
             if trigger.count() != 1:
                 raise RuntimeError("кнопка редактирования позиции не подтверждена")
             trigger.click()
             try:
-                page.locator(FORM).wait_for(state="visible", timeout=10_000)
+                page.locator(FORM).wait_for(state="visible", timeout=30_000)
                 break
             except PlaywrightError as exc:
-                if attempt:
+                if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
                     raise RuntimeError("форма редактирования позиции не открылась") from exc
     form_values = read_position(page)
     return PositionValues(

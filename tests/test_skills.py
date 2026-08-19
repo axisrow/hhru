@@ -52,6 +52,7 @@ def test_edit_skills_retries_pre_hydration_noop_click(monkeypatch) -> None:
     """#337: a visible SSR trigger can receive a no-op click before hydration."""
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     trigger = MagicMock()
     trigger.count.return_value = 1
     editor = MagicMock()
@@ -77,4 +78,36 @@ def test_edit_skills_retries_pre_hydration_noop_click(monkeypatch) -> None:
     assert result.success is True
     assert trigger.click.call_count == 2
     assert editor.wait_for.call_count == 2
+    editor.wait_for.assert_called_with(state="visible", timeout=30_000)
     page.wait_for_url.assert_not_called()
+
+
+def test_edit_skills_does_not_retry_after_navigation_to_editor(monkeypatch) -> None:
+    """A slow editor mount after navigation is not a hydration no-op (#337)."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    editor = MagicMock()
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    def navigate_then_timeout(**_kwargs):
+        page.url = "https://hh.ru/resume/edit/resume-id/keySkills"
+        raise PlaywrightTimeoutError("editor is still mounting")
+
+    editor.wait_for.side_effect = navigate_then_timeout
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert trigger.click.call_count == 1

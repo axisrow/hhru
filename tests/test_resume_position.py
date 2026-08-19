@@ -74,6 +74,7 @@ def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     edit = MagicMock()
     edit.count.return_value = 1
     form = MagicMock()
@@ -94,4 +95,5 @@ def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
 
     assert edit.click.call_count == 2
     assert form.wait_for.call_count == 2
+    form.wait_for.assert_called_with(state="visible", timeout=30_000)
     page.wait_for_url.assert_not_called()
