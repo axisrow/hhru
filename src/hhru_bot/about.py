@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import goto_hh
+from .browser import goto_hh, open_hydrated_resume_editor
 from .selector_groups import resume_page
 
 if TYPE_CHECKING:
@@ -121,12 +121,18 @@ def _fallback_about(existing: str, profile: AIProfile | None, mode: str) -> Abou
 def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     """Open the confirmed inline editor and return its current textarea value."""
     goto_hh(page, resume.resume_url, ready_selector=resume_page.RESUME_EDIT_ABOUT_BUTTON)
-    trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
-    if trigger.count() != 1:
-        raise AboutGenerationError("кнопка редактирования «Обо мне» не найдена однозначно")
-    trigger.click()
-    field = page.locator(resume_page.RESUME_ABOUT_EDITOR)
-    field.wait_for(state="visible")
+    try:
+        field = open_hydrated_resume_editor(
+            page,
+            trigger_selector=resume_page.RESUME_EDIT_ABOUT_BUTTON,
+            editor_selector=resume_page.RESUME_ABOUT_EDITOR,
+            profile_path=f"/resume/{resume.resume_id}",
+            trigger_error="кнопка редактирования «Обо мне» не найдена однозначно",
+            open_error="форма «Обо мне» не открылась",
+            wrong_route_error="форма «Обо мне» открыта не для того резюме",
+        )
+    except RuntimeError as exc:
+        raise AboutGenerationError(str(exc)) from exc
     return field.input_value()
 
 

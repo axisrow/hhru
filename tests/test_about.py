@@ -1,9 +1,18 @@
 """Pure tests for the LLM-assisted inline about-section flow."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
-from hhru_bot.about import AboutGenerationError, build_about_prompt, generate_about
+import hhru_bot.about as about_module
+from hhru_bot.about import (
+    AboutGenerationError,
+    build_about_prompt,
+    generate_about,
+    open_about_editor,
+)
 from hhru_bot.commands.about import draft_prefix
+from hhru_bot.config import bare_resume
 
 pytestmark = pytest.mark.unit
 
@@ -77,3 +86,32 @@ def test_prompt_does_not_include_emoji_or_unscoped_portfolio_instruction():
 def test_dry_run_marker_is_not_used_for_write_mode():
     assert draft_prefix(True) == "[DRY-RUN]"
     assert draft_prefix(False) == "[INFO] Предложение"
+
+
+def test_open_about_editor_retries_pre_hydration_noop_click(monkeypatch):
+    """The about editor marker must positively confirm a functional click."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    field = MagicMock()
+    field.count.return_value = 0
+    field.input_value.return_value = ""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    field.wait_for.side_effect = [PlaywrightTimeoutError("not hydrated"), None]
+
+    def click_side_effect():
+        if trigger.click.call_count == 2:
+            page.url = "https://hh.ru/resume/resume-id"
+
+    trigger.click.side_effect = click_side_effect
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    assert open_about_editor(page, bare_resume("resume-id")) == ""
+    assert trigger.click.call_count == 2
+    assert field.wait_for.call_count == 2
