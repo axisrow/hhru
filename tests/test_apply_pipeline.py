@@ -13,6 +13,7 @@ import pytest
 
 import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
+from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.history import SKIP_REASONS
 from hhru_bot.search import VacancyCard
 
@@ -209,6 +210,42 @@ def test_apply_login_form_is_checked_after_navigation(monkeypatch):
     assert "Сессия недействительна" in result.reason
     assert events == ["goto", "auth"]
     assert result.acted is False  # #163: провал до submit — без паузы и записи
+
+
+def test_antibot_detection_terminates_pipeline_before_per_vacancy_work(monkeypatch):
+    page = FakePage()
+    detection = AntiBotDetection("captcha_data_qa", "виден маркер captcha_data_qa")
+    monkeypatch.setattr(pipeline_module, "detect_antibot_on_page", lambda _page: detection)
+
+    with pytest.raises(AntiBotChallengeDetected, match="решите её вручную"):
+        apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
+
+    # The terminal signal is raised immediately after navigation: no apply
+    # button wait, submit attempt, or per-vacancy result/history path follows.
+    assert page.goto_calls == ["https://hh.ru/vacancy/1"]
+    assert page.apply_wait_for_calls == []
+
+
+def test_late_antibot_detection_stops_before_submit_audit_marker(monkeypatch):
+    page = FakePage(submit_in_form=True)
+    detection = AntiBotDetection("hcaptcha", "виден маркер hcaptcha")
+    observations = iter((None, None, None, detection))
+    monkeypatch.setattr(pipeline_module, "detect_antibot_on_page", lambda _page: next(observations))
+    before_submit_calls: list[bool] = []
+
+    with pytest.raises(AntiBotChallengeDetected):
+        apply_to_vacancy(
+            page,
+            _vacancy(),
+            "RID",
+            "x",
+            dry_run=False,
+            before_submit=lambda: before_submit_calls.append(True),
+        )
+
+    # The challenge appeared on the last pre-submit barrier.  No durable action
+    # reservation is created because no irreversible submit was attempted.
+    assert before_submit_calls == []
 
 
 def test_apply_already_responded_not_deduped_by_dom():
