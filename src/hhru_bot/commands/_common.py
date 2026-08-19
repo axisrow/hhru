@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
-from ..apply.antibot import raise_for_antibot
+from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
 from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
@@ -429,14 +429,22 @@ def run_apply_for_resume(
         }
         if not args.dry_run:
             apply_kwargs["before_submit"] = _before_submit
-        result = apply_to_vacancy(
-            page,
-            card,
-            resume.resume_id,
-            cover_letter_template,
-            args.dry_run,
-            **apply_kwargs,
-        )
+        try:
+            result = apply_to_vacancy(
+                page,
+                card,
+                resume.resume_id,
+                cover_letter_template,
+                args.dry_run,
+                **apply_kwargs,
+            )
+        except AntiBotChallengeDetected as exc:
+            # A post-submit challenge can arrive after before_submit reserved
+            # the row. Keep its dedup/limit-safe uncertain status, but replace
+            # the generic crash reason before terminating the whole command.
+            if action_id is not None:
+                history.finalize_action(action_id, "uncertain", str(exc))
+            raise
 
         if result.skipped:
             # #95: форма требует анкеты — НЕ считаем откликом, НЕ пишем actions,

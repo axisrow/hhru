@@ -218,6 +218,16 @@ def test_success_all_signals_absent_returns_false():
     assert success.wait_success_confirmation(page, timeout_ms=0) is False
 
 
+def test_terminal_check_interrupts_post_submit_poll():
+    page = _FakePage()
+
+    def _terminal() -> None:
+        raise RuntimeError("confirmed challenge")
+
+    with pytest.raises(RuntimeError, match="confirmed challenge"):
+        success.wait_success_confirmation(page, terminal_check=_terminal)
+
+
 def test_success_timeout_logs_page_url(caplog):
     """Ишью #7 критерий готовности: ветки ошибок логируют URL.
 

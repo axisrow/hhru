@@ -178,6 +178,10 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
         return ctx.fail(reason)
     try:
         verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    except AntiBotChallengeDetected:
+        # A confirmed challenge is terminal, unlike an arbitrary verifier
+        # crash. The pre-submit audit reservation remains fail-closed uncertain.
+        raise
     except Exception as exc:  # noqa: BLE001
         # #207: сбой самой внешней проверки не должен обрывать apply до записи
         # в history и паузы троттлинга — иначе следующий запуск не увидит запись
@@ -337,7 +341,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     try:
         ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
-        if not wait_success_confirmation(ctx.page):
+        if not wait_success_confirmation(ctx.page, terminal_check=lambda: _halt_if_antibot(ctx)):
             # Честный union-poll до таймаута БЕЗ сигнала — локально успеха не
             # нашли (#163). Но это всё ещё «после действия»: вердикт финализируется
             # внешней проверкой (#207) — found → success, неопределённость чтения

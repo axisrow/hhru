@@ -57,6 +57,7 @@ from ..responses import (
     parse_response_card,
 )
 from ..selector_groups import negotiations as ns
+from .antibot import raise_for_antibot
 from .steps import _dump_navigation_diagnostics
 from .verdict import (
     Completeness,
@@ -163,6 +164,9 @@ def verify_response_in_negotiations(
             problem = f"goto списка откликов не прошёл ({exc})"
             logger.warning("[VERIFY] %s", problem)
         else:
+            # #344: do not retry navigation against an account challenge or
+            # downgrade the terminal signal to an indeterminate verdict.
+            raise_for_antibot(page)
             # Истёкшая сессия не лечится ретраями: hhtoken мог остаться в jar,
             # но сервер отвечает формой входа (тот же маркер, что в fetch_responses).
             if not has_auth_cookie(page) or has_login_form(page):

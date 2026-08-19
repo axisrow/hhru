@@ -15,7 +15,9 @@ from types import SimpleNamespace
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
+import hhru_bot.apply.verify as verify_module
 from _fakes import FakeLocator, _CardLocator, _parse_root, _parse_selector
+from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.apply.verdict import (
     Completeness,
     PageRead,
@@ -165,6 +167,22 @@ def _ssr_html(topics: list[dict], extra: str = "") -> str:
         f"{extra}"
         "</body></html>"
     )
+
+
+def test_verifier_challenge_stops_before_retry(monkeypatch):
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: "<html></html>"})
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+
+    def _challenge(_page):
+        raise AntiBotChallengeDetected(detection)
+
+    monkeypatch.setattr(verify_module, "raise_for_antibot", _challenge)
+
+    with pytest.raises(AntiBotChallengeDetected):
+        verify_response_in_negotiations(page, _V1)
+
+    assert page.goto_calls == [NEGOTIATIONS_URL]
+    assert page.wait_for_timeout_calls == []
 
 
 # DOM-разметка без SSR-состояния: карточка с span-вакансией внутри <a> (#44).

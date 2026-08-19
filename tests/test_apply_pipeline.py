@@ -598,7 +598,7 @@ def test_apply_submit_unconfirmed_is_acted(monkeypatch):
     """#163: submit-клик был, но успех не подтвердился (wait_success_confirmation
     False) — это провал ПОСЛЕ действия: acted=True, цикл откликов обязан
     ждать паузу и писать failed. Регрессия против «фикс отключил троттлинг»."""
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False)
     assert result.success is False
@@ -681,7 +681,7 @@ def test_apply_confirmation_error_after_submit_keeps_acted(monkeypatch):
     вакансию, а не оставить её доступной для повторного отклика."""
     from playwright.sync_api import Error as PlaywrightError
 
-    def _raise(_page):
+    def _raise(_page, **_kwargs):
         raise PlaywrightError("Page closed while polling success markers")
 
     monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
@@ -733,7 +733,7 @@ def test_apply_submit_unconfirmed_external_found_is_success(monkeypatch):
     внешний источник нашёл отклик в /applicant/negotiations — это success
     (acted=True, uncertain сброшен), а не failed: иначе has_applied не видит
     запись и следующий запуск шлёт второе письмо."""
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
     verifier = _verifier("found", "topic=42, resumeId=RID")
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
@@ -747,7 +747,7 @@ def test_apply_submit_unconfirmed_external_found_is_success(monkeypatch):
 def test_apply_submit_unconfirmed_external_not_found_stays_failed(monkeypatch):
     """Подтверждённое внешней проверкой ОТСУТСТВИЕ отклика — вердикт не меняется:
     failed c acted=True (осознанный fail-closed #163, теперь ещё и проверенный)."""
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
     verifier = _verifier("not_found")
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
@@ -760,7 +760,7 @@ def test_apply_submit_unconfirmed_external_not_found_stays_failed(monkeypatch):
 def test_apply_submit_unconfirmed_external_indeterminate_is_uncertain(monkeypatch):
     """Список откликов не прочитан (goto/рендер/сессия) — прежний «честный failed»
     невозможен: исход неизвестен, fail-closed uncertain+acted как у #176."""
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
     verifier = _verifier("indeterminate", "goto не прошёл")
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
@@ -818,7 +818,7 @@ def test_apply_confirmation_error_external_found_upgrades_to_success(monkeypatch
     тоже апгрейд до success."""
     from playwright.sync_api import Error as PlaywrightError
 
-    def _raise(_page):
+    def _raise(_page, **_kwargs):
         raise PlaywrightError("Page closed while polling success markers")
 
     monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
@@ -837,7 +837,7 @@ def test_apply_verifier_crash_is_uncertain_acted(monkeypatch):
     uncertain + acted, как у #176."""
     from playwright.sync_api import Error as PlaywrightError
 
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
 
     def _crash(page, vacancy_id, resume_id=None):  # noqa: ANN001
         raise PlaywrightError("Page closed while polling negotiations")
@@ -855,7 +855,7 @@ def test_apply_verifier_non_playwright_crash_is_uncertain_acted(monkeypatch):
     SSR/DOM) — тот же класс неопределённости, что и упавшая страница: apply не
     должен оборваться до записи uncertain+acted (иначе дубликат на следующем
     запуске). Граница fail-closed ловит Exception, а не только PlaywrightError."""
-    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page: False)
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
 
     def _crash(page, vacancy_id, resume_id=None):  # noqa: ANN001
         raise ValueError("malformed href in topicList")
@@ -866,3 +866,15 @@ def test_apply_verifier_non_playwright_crash_is_uncertain_acted(monkeypatch):
     assert result.acted is True
     assert result.uncertain is True
     assert "упала" in result.reason
+
+
+def test_apply_verifier_antibot_signal_remains_terminal(monkeypatch):
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", lambda page, **_kwargs: False)
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+
+    def _challenge(*_args, **_kwargs):
+        raise AntiBotChallengeDetected(detection)
+
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    with pytest.raises(AntiBotChallengeDetected):
+        apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=_challenge)
