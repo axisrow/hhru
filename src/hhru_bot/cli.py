@@ -52,6 +52,7 @@ WRITE_COMMANDS = frozenset(
         "resume-sections",
         "edit-skills",
         "settings",
+        "config",
     }
 )
 
