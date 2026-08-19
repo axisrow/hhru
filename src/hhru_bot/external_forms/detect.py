@@ -19,9 +19,7 @@ _SPACE = re.compile(r"\s+")
 # round 3): a confident-but-mismatched guess on these is the costliest failure
 # mode. They remain fillable only via an exact form_profile.answers match —
 # the same, already-accepted disclosure boundary from #276/#277/#280.
-_LLM_DENIED_KEY_PATTERN = re.compile(
-    r"телефон|phone|email|e-mail|почта|паспорт|passport|снилс|инн", re.IGNORECASE
-)
+_LLM_DENIED_KEY_PATTERN = re.compile(r"паспорт|passport|снилс|инн", re.IGNORECASE)
 
 
 def normalize(text: str) -> str:

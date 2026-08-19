@@ -70,16 +70,14 @@ def test_match_answer_llm_sends_only_keys_not_pii_values():
             assert "ada@example.test" not in content
             return SimpleNamespace(content='{"key":"город","confidence":0.9}')
 
-    # "город" is not a denied (sensitive) key — see
-    # test_match_answer_llm_never_selects_high_sensitivity_keys for phone/email.
+    # "город" is not a denied (sensitive) key; contact values are also kept
+    # out of the prompt even though their field names may be classified.
     facts = {"город": "Москва", "email": "ada@example.test"}
     assert match_answer_llm("В каком городе вы живёте?", facts, FakeLLM()) == "Москва"
 
 
-def test_match_answer_llm_never_selects_high_sensitivity_keys():
-    """#280 review round 3: even a confident LLM match must not auto-select
-    phone/email/passport-like fields — those require an exact configured
-    match instead, so a mismatched-but-confident guess can't disclose them."""
+def test_match_answer_llm_allows_contact_fields_but_denies_document_ids():
+    """Contact fields are safe to infer; document identifiers still require exact answers."""
 
     class FakeLLM:
         def __init__(self, content):
@@ -88,15 +86,27 @@ def test_match_answer_llm_never_selects_high_sensitivity_keys():
         def chat(self, _messages, **_kwargs):
             return SimpleNamespace(content=self.content)
 
-    facts = {"телефон": "+7 900 123-45-67", "email": "ada@example.test", "город": "Москва"}
+    facts = {
+        "телефон": "+7 900 123-45-67",
+        "email": "ada@example.test",
+        "паспорт": "0000 000000",
+        "СНИЛС": "000-000-000 00",
+        "ИНН": "000000000000",
+        "город": "Москва",
+    }
     assert (
         match_answer_llm("Ваш контакт?", facts, FakeLLM('{"key":"телефон","confidence":0.99}'))
-        is None
+        == "+7 900 123-45-67"
     )
     assert (
         match_answer_llm("Как связаться?", facts, FakeLLM('{"key":"email","confidence":0.99}'))
-        is None
+        == "ada@example.test"
     )
+    for key in ("паспорт", "СНИЛС", "ИНН"):
+        assert (
+            match_answer_llm("Документ?", facts, FakeLLM(f'{{"key":"{key}","confidence":0.99}}'))
+            is None
+        )
     # Low-sensitivity fields remain matchable.
     assert (
         match_answer_llm("Ваш город?", facts, FakeLLM('{"key":"город","confidence":0.9}'))
