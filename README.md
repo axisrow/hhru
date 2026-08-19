@@ -127,6 +127,25 @@ config/
 ./scripts/run.sh run
 ```
 
+### Профиль для внешних форм
+
+После успешного `login`/`login-code` подтверждённые контактные данные аккаунта
+автоматически сохраняются в history-БД аккаунта (при работе через `--account`
+это `data/accounts/<name>/history.db`, а не общий `data/history.db`). Для
+данных, которых нет на hh.ru (например, Telegram), используйте локальную
+команду — с тем же `--account`, что и `login`/`fill-form`, иначе значения
+уйдут в другую БД и не будут видны при заполнении форм:
+
+```bash
+./scripts/run.sh --account default profile set "Telegram" "@username"
+./scripts/run.sh --account default profile show
+./scripts/run.sh --account default profile unset "Telegram"
+```
+
+Выпуск с `account_profile` заменяет прежний `resume.form_profile.answers` в YAML.
+Если этот блок был в вашем `data/config.yaml`, перенесите значения вручную через
+`profile set`; старый YAML-источник больше не читается.
+
 Добавь `--headless`, если не нужно видеть окно браузера (не рекомендуется
 на первых запусках — полезно наблюдать, что происходит).
 
