@@ -106,7 +106,8 @@ def run(args: argparse.Namespace) -> None:
                 sys.exit(1)
             save_about(page, text)
     except AboutGenerationError as exc:
-        print(f"[FAIL] {resume.id} — {exc}")
+        prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
+        print(f"{prefix} {resume.id} — {exc}")
         sys.exit(1)
 
     print(f"[OK] Раздел «Обо мне» резюме {resume.id} сохранён")
