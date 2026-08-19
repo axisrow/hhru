@@ -87,20 +87,35 @@ def test_generic_captcha_markup_is_not_queried_or_matched():
 
 
 @pytest.mark.parametrize(
-    "passive_widget",
+    "vendor_selector",
     [
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha" i]',
-        'iframe[title*="captcha" i]',
         ".g-recaptcha",
         ".h-captcha",
     ],
 )
-def test_passive_captcha_widget_is_not_a_terminal_marker(passive_widget):
-    page = _Page("https://hh.ru/vacancy/1", {passive_widget: (True, True)})
+def test_visible_vendor_captcha_widget_is_terminal(vendor_selector):
+    page = _Page("https://hh.ru/vacancy/1", {vendor_selector: (True, True)})
+
+    result = detect_antibot_on_page(page)
+
+    assert result is not None
+
+
+@pytest.mark.parametrize(
+    "vendor_selector",
+    [
+        'iframe[src*="recaptcha" i]',
+        'iframe[src*="hcaptcha" i]',
+        ".g-recaptcha",
+        ".h-captcha",
+    ],
+)
+def test_hidden_vendor_captcha_widget_does_not_halt_run(vendor_selector):
+    page = _Page("https://hh.ru/vacancy/1", {vendor_selector: (True, False)})
 
     assert detect_antibot_on_page(page) is None
-    assert passive_widget not in page.queried
 
 
 def test_unknown_observed_marker_is_ignored():

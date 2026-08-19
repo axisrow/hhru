@@ -18,13 +18,24 @@ from playwright.sync_api import Page
 _CHALLENGE_PATH_SEGMENTS = frozenset({"captcha", "checkpoint", "nocaptcha"})
 
 # Exact, visible challenge controls from the audited references.  Generic
-# ``[data-qa*='captcha']`` / ``[class*='captcha']`` selectors are intentionally
-# excluded: dormant templates and unrelated vacancy markup could otherwise halt
-# a healthy run (the failure mode is still only a hypothesis, #344).
+# ``[data-qa*='captcha']`` / ``[class*='captcha']`` substring selectors are
+# intentionally excluded: dormant templates and unrelated vacancy markup could
+# otherwise halt a healthy run (the failure mode is still only a hypothesis,
+# #344). Vendor mount points below are a different case: ``.g-recaptcha`` /
+# ``.h-captcha`` and the recaptcha/hcaptcha iframe ``src`` are exact,
+# vendor-specific markers (not a bare "captcha" substring on arbitrary
+# elements), named explicitly in the issue #344 reference implementation
+# (docs/research/reference-selector-diff-audit.md). They carry the same
+# ``filter(visible=True)`` guard as the HH-specific markers, so a dormant
+# template does not trip them either.
 ANTIBOT_MARKER_SELECTORS: tuple[tuple[str, str], ...] = (
     ("captcha_data_qa", "[data-qa='captcha']"),
     ("account_captcha_input", "[data-qa='account-captcha-input']"),
     ("account_captcha_picture", "[data-qa='account-captcha-picture']"),
+    ("recaptcha_iframe", 'iframe[src*="recaptcha" i]'),
+    ("hcaptcha_iframe", 'iframe[src*="hcaptcha" i]'),
+    ("recaptcha_widget", ".g-recaptcha"),
+    ("hcaptcha_widget", ".h-captcha"),
 )
 
 
