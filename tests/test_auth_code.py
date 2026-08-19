@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import stat
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
@@ -72,8 +73,9 @@ class _Context:
     def cookies(self):
         return self._cookies
 
-    def storage_state(self, *, path):
-        self.saved = path
+    def storage_state(self):
+        self.saved = True
+        return {"cookies": self._cookies, "origins": []}
 
 
 class _Page:
@@ -123,7 +125,9 @@ def test_login_with_code_keeps_one_context_and_saves_after_auth(
 
     assert page.email_selected
     assert page.code == "1234"
-    assert context.saved == str(tmp_path / "state.json")
+    assert context.saved is True
+    assert (tmp_path / "state.json").exists()
+    assert stat.S_IMODE((tmp_path / "state.json").stat().st_mode) == 0o600
     assert "person@example.com" not in caplog.text
     assert "1234" not in caplog.text
     assert "person@example.com" not in capsys.readouterr().out
@@ -141,7 +145,8 @@ def test_login_with_code_waits_for_delayed_code_form(monkeypatch, tmp_path):
     login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
 
     assert page.code == "1234"
-    assert context.saved == str(tmp_path / "state.json")
+    assert context.saved is True
+    assert (tmp_path / "state.json").exists()
 
 
 def test_login_with_code_wrong_code_is_fail_closed(monkeypatch, tmp_path):

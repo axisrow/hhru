@@ -21,6 +21,7 @@ from .browser import (
     require_authenticated_page,
 )
 from .config import AppConfig
+from .cookie_import import write_storage_state
 from .selectors import (
     LOGIN_CODE_REQUEST_BUTTON,
     LOGIN_EMAIL_INPUT,
@@ -141,7 +142,7 @@ def login_with_code(
             code = _read_code(code_file, timeout_seconds)
             code_field.fill(code)
             _wait_for_authenticated_page(page, timeout_seconds)
-            context.storage_state(path=str(config.storage_state_file))
+            write_storage_state(context.storage_state(), config.storage_state_file)
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
         raise RuntimeError("Ошибка браузера при входе; сессия не сохранена") from exc
     finally:
