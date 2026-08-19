@@ -262,7 +262,7 @@ def test_probe_indeterminate_saves_partial_dump(tmp_path: Path):
 
     assert result.success is False
     assert result.skipped is True
-    assert "не удалось определить" in result.reason
+    assert "форма отклика не отрисовалась" in result.reason
     partial_html = tmp_path / "probe_42_form_indeterminate.html"
     assert partial_html.exists()
     assert "probe dump" in partial_html.read_text(encoding="utf-8")

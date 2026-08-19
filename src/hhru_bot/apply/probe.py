@@ -185,7 +185,17 @@ def probe_vacancy(
             return ProbeResult(vacancy, False, reason, skipped=True)
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
-    apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
+    if not apply_steps.navigate_to_response_form(page, vacancy.vacancy_id):
+        reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
+        partial_ctx = ProbeContext(
+            vacancy_id=vacancy.vacancy_id,
+            vacancy_url=vacancy.url,
+            stage="form_indeterminate",
+            logs_dir=ctx_dir.logs_dir,
+        )
+        dump_probe_snapshot(page, partial_ctx, best_effort=True)
+        logger.warning("[WARN %s] %s — %s", PAGE_STATE["indeterminate"], vacancy.title, reason)
+        return ProbeResult(vacancy, success=False, reason=reason, skipped=True)
     logger.info("[PROBE] Дошёл до формы отклика, сохраняю исходный DOM")
 
     # Сохраняем форму до любых взаимодействий с её полями. В частности, не
