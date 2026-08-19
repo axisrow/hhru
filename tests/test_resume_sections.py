@@ -135,6 +135,48 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
     page.wait_for_url.assert_not_called()
 
 
+def test_unconfirmed_save_stops_block_instead_of_clicking_next_row(monkeypatch) -> None:
+    """#331 (codex+claude): a save.wait_for timeout means the editor is likely
+    still open, exactly like the ambiguous save/cancel branches — the block
+    must stop instead of clicking the next row's trigger against a stale,
+    unresolved editor state."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 2
+    no_recommendations = MagicMock()
+    no_recommendations.count.return_value = 0
+    save = MagicMock()
+    save.count.return_value = 1
+    save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: save)
+
+    from hhru_bot.resume_sections import Attestation
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(
+            attestations=[
+                Attestation("AWS", "Amazon", "Cloud", "2024"),
+                Attestation("GCP", "Google", "Cloud", "2023"),
+            ]
+        ),
+        dry_run=False,
+    )
+
+    assert len(errors) == 1
+    # Only the first row's trigger was clicked — the block stopped instead of
+    # querying the second row's trigger against a still-open editor.
+    assert trigger.nth.call_count == 1
+
+
 def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkeypatch) -> None:
     """#331: an ambiguous save/cancel match must not query the next row's
     trigger while the current row editor is still open."""

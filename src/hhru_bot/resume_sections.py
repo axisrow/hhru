@@ -206,7 +206,12 @@ def _apply_rows(
                 # immediately regardless of whether the save actually
                 # succeeded (#331: false-positive success). The editor
                 # closing (the save button disappearing) is the positive,
-                # save-specific signal instead.
+                # save-specific signal instead. A timeout here means the
+                # editor is likely still open (same rationale as the ambiguous
+                # save/cancel branches below), so it falls through to the
+                # shared except below and stops the block, rather than
+                # clicking the next row's trigger against an unresolved
+                # editor state (#331, codex+claude cycle-review round 2).
                 save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
             else:
                 # Leave the row editor before moving to the next row.  Otherwise
