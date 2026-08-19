@@ -199,7 +199,12 @@ def _apply_rows(
             else:
                 # Leave the row editor before moving to the next row.  Otherwise
                 # the next trigger is queried while the previous form is still open.
-                cancel = page.locator("[data-qa='profile-layout-cancel-button']")
+                cancel_qa = (
+                    "resume-partial-edit-cancel"
+                    if block == "recommendations"
+                    else "profile-layout-cancel-button"
+                )
+                cancel = page.locator(f"[data-qa='{cancel_qa}']")
                 if cancel.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка отмены")
                     continue
