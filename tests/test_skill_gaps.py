@@ -1,4 +1,8 @@
+import pytest
+
 from hhru_bot.skill_gaps import aggregate_skill_gaps
+
+pytestmark = pytest.mark.unit
 
 
 def test_aggregate_counts_each_vacancy_once_and_ranks():
