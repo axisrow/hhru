@@ -250,7 +250,11 @@ def _edit_block(
                         saved=saved_count,
                     )
                 saved_count += 1
-        except PlaywrightError as exc:
+        except (PlaywrightError, RuntimeError) as exc:
+            # open_hydrated_resume_editor raises RuntimeError (not PlaywrightError)
+            # for trigger-not-found/open-failed/wrong-route — a hydration failure
+            # on a later row must not escape _edit_block uncaught after an earlier
+            # row already saved (#352/#331 pattern, codex round 1 finding on #368).
             return EducationResult(
                 kind,
                 False,

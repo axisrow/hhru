@@ -35,8 +35,19 @@ RESUME_EDIT_BUTTON = {
 }
 SECTION_ROUTES = {
     "attestations": re.compile(r"/profile/edit/attestationEducation/[^/?#]+"),
-    "recommendations": re.compile(r"/resume/edit/[^/?#]+/recommendation/[^/?#]+"),
+    # The attestation route has no resume id in it (only an attestation id),
+    # so its pattern is static. The recommendations route embeds the resume id
+    # itself — bind it per-call via _recommendation_route() so a stale or
+    # misdirected edit link for a DIFFERENT resume cannot pass the route guard
+    # (#368 cycle-review round 1, codex finding: the previous static pattern
+    # matched any resume id here despite wrong_route_error's identity claim).
 }
+
+
+def _recommendation_route(resume_id: str) -> re.Pattern[str]:
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation/[^/?#]+")
+
+
 ATTESTATION_FIELDS = (
     "profile-education-attestation-name",
     "profile-education-attestation-organization",
@@ -89,7 +100,8 @@ def build_messages(config: ResumeSectionsConfig, profile: AIProfile | None) -> l
         "Сформируй дополнительные разделы резюме. Ответь только JSON-объектом с "
         "массивами attestations и recommendations. Не выдумывай факты: неизвестное "
         "оставляй пустым. Каждая аттестация: name, organization, specialty, year. "
-        "Каждая рекомендация: text, company, name, position."
+        "Каждая рекомендация: company, name, position. Поле text не поддерживается "
+        "текущей формой HH.ru и не будет сохранено (#367) — не заполняй его."
     )
     user = (
         f"Режим: {config.mode}. Нужные блоки: {', '.join(config.blocks)}.\n"
@@ -209,12 +221,17 @@ def _apply_rows(
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
             if resume_id:
+                edit_path = (
+                    _recommendation_route(resume_id)
+                    if block == "recommendations"
+                    else SECTION_ROUTES[block]
+                )
                 open_hydrated_resume_editor(
                     page,
                     trigger_selector=trigger.nth(index),
                     editor_selector=ready_selector,
                     profile_path=f"/resume/{resume_id}",
-                    edit_path=SECTION_ROUTES[block],
+                    edit_path=edit_path,
                     click_trigger=True,
                     timeout=FORM_TIMEOUT_MS,
                     trigger_error=f"{block}: строка {index} не найдена однозначно",
