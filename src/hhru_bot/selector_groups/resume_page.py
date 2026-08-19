@@ -20,13 +20,16 @@ RESUME_PUBLISH_BUTTON_DATA_QA = "[data-qa='resume-publish']"
 RESUME_VISIBILITY_BUTTON = "button:has-text('Изменить видимость')"
 
 # Inline editor selectors confirmed by the authenticated read-only research in
-# issue #268.  The about section is not available at /resume/{id}/edit.
+# issue #268.  NOTE: #268 called this section inline (no /edit route), but #328
+# found the same claim false for the neighbouring position/skills editors on
+# this same profile page — this claim is unaudited against #328's finding and
+# should not be trusted until re-verified on live DOM (see #328 follow-up).
 RESUME_EDIT_ABOUT_BUTTON = "[data-qa='resume-edit-button-about']"
 RESUME_ABOUT_EDITOR = "[data-qa='resume-editor-about']"
 RESUME_ABOUT_NO_EXPERIENCE_REASON = "[data-qa^='resume-editor-about-no-experience-reason-']"
 
-# Skills are edited inline on /resume/{id}; /resume/{id}/edit is not a route
-# (confirmed by the authenticated read-only probe for issue #268).
+# The profile-page control routes to /resume/edit/{id}/keySkills before the
+# editor is mounted (authenticated live audit, #328).
 RESUME_SKILLS_EDIT_BUTTON = "[data-qa='skills-add']"
 RESUME_SKILLS_INPUT = "[data-qa='resume-editor-skills-input']"
 RESUME_SKILLS_CHIP_INPUT = "[data-qa='chips-trigger-input']"

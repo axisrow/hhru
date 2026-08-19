@@ -1,9 +1,10 @@
 """LLM planning and browser editing for the resume position block (#259).
 
-The browser side deliberately uses only selectors confirmed by the live probe in
-issue #268.  In particular, editing is inline on ``/resume/<id>``; there is no
-``/edit`` route.  The save button is kept behind the command's explicit write
-confirmation and is never clicked by the dry-run path.
+The browser side deliberately uses only selectors confirmed by the live probe.
+Opening the position editor navigates to its dedicated ``/resume/edit/<id>/position``
+route, so its form must not be queried until that navigation has committed (#328).
+The save button is kept behind the command's explicit write confirmation and is
+never clicked by the dry-run path.
 """
 
 from __future__ import annotations
@@ -235,6 +236,10 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
         if page.locator(EDIT).count() != 1:
             raise RuntimeError("кнопка редактирования позиции не подтверждена")
         page.locator(EDIT).click()
+        # This is a client-side route change, not an inline editor.  Waiting
+        # for the route before the form prevents inspecting the old DOM during
+        # the transition (#328).
+        page.wait_for_url(f"**/resume/edit/{resume.resume_id}/position", wait_until="commit")
         page.locator(FORM).wait_for(state="visible", timeout=10_000)
     form_values = read_position(page)
     return PositionValues(
