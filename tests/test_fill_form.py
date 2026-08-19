@@ -49,6 +49,32 @@ def test_resolve_answers_adds_only_confident_semantic_matches():
     }
 
 
+def test_match_answer_llm_sends_only_keys_not_pii_values():
+    """Prompt must never carry the actual profile values (#280 review: PII disclosure)."""
+
+    class FakeLLM:
+        def chat(self, messages, **_kwargs):
+            content = messages[0]["content"]
+            # The model is only a key-classifier: it needs to know the field
+            # names exist, never the underlying contact data.
+            assert "+7 900 123-45-67" not in content
+            assert "ada@example.test" not in content
+            return SimpleNamespace(content='{"key":"телефон","confidence":0.9}')
+
+    facts = {"телефон": "+7 900 123-45-67", "email": "ada@example.test"}
+    assert match_answer_llm("Ваш телефон?", facts, FakeLLM()) == "+7 900 123-45-67"
+
+
+def test_match_answer_llm_degrades_on_transport_error():
+    """Any client.chat() failure must fall back to None, not crash fill-form (#280 review)."""
+
+    class FailingLLM:
+        def chat(self, _messages, **_kwargs):
+            raise RuntimeError("upstream unavailable")
+
+    assert match_answer_llm("Ваш город?", {"город": "Москва"}, FailingLLM()) is None
+
+
 def test_run_uses_account_profile_answers(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 

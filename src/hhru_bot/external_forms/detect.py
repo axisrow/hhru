@@ -173,13 +173,17 @@ def match_answer_llm(question: str, known_data: dict[str, str], client) -> str |
     """
     if not known_data:
         return None
+    # Only the field NAMES are sent to the model — it is a key-classifier and
+    # never needs the underlying values, which may hold PII (phone, email).
+    # The selected value is looked up locally from known_data below, so no
+    # contact data ever leaves the process.
     prompt = (
-        "Сопоставь вопрос анкеты с одним из известных фактов кандидата. "
-        "Не придумывай ответ и не исправляй значения. Верни только JSON вида "
+        "Сопоставь вопрос анкеты с одним из известных полей кандидата по названию поля. "
+        "Не придумывай ответ. Верни только JSON вида "
         '{"key": "точный ключ или null", "confidence": 0.0}. '
-        "Выбирай ключ только если факт действительно отвечает на вопрос; "
+        "Выбирай ключ только если поле действительно отвечает на вопрос; "
         "иначе key=null. Уверенный порог: confidence >= 0.85.\n"
-        + json.dumps({"question": question, "known_data": known_data}, ensure_ascii=False)
+        + json.dumps({"question": question, "known_keys": sorted(known_data)}, ensure_ascii=False)
     )
     try:
         response = client.chat([{"role": "user", "content": prompt}], temperature=0)
@@ -197,7 +201,8 @@ def match_answer_llm(question: str, known_data: dict[str, str], client) -> str |
             and confidence >= 0.85
         ):
             return known_data[key]
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+    except Exception:  # noqa: BLE001 — любой сбой LLM/транспорта -> откат к exact-match,
+        # см. тот же паттерн в ai/letters.py и scoring.py.
         return None
     return None
 
