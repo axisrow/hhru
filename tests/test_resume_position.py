@@ -1,5 +1,9 @@
+from unittest.mock import MagicMock
+
 import pytest
 
+import hhru_bot.resume_position as resume_position
+from hhru_bot.config import bare_resume
 from hhru_bot.resume_position import (
     PositionValues,
     build_position_prompt,
@@ -64,3 +68,29 @@ def test_fill_mode_preserves_existing_values():
     assert merged.employment is None
     assert merged.business_trips is None
     assert merged.salary == 100000
+
+
+def test_open_position_form_waits_for_dedicated_editor_route(monkeypatch):
+    """#328: the edit click leaves /resume/<id> before the form is mounted."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+
+    resume_position.open_position_form(page, resume)
+
+    edit.click.assert_called_once_with()
+    page.wait_for_url.assert_called_once_with(
+        "**/resume/edit/resume-id/position", wait_until="commit"
+    )
+    form.wait_for.assert_called_once_with(state="visible", timeout=10_000)

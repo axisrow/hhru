@@ -130,7 +130,7 @@ def edit_skills_on_hh(
     dry_run: bool,
     mode: str,
 ) -> SkillsResult:
-    """Open the confirmed inline editor; save only when the caller authorized it."""
+    """Open the confirmed skills editor; save only when the caller authorized it."""
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
@@ -138,11 +138,13 @@ def edit_skills_on_hh(
     if trigger.count() != 1:
         return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
     trigger.click()
+    # #328: wait for the dedicated keySkills route before querying the editor.
     editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
     try:
+        page.wait_for_url(f"**/resume/edit/{resume.resume_id}/keySkills", wait_until="commit")
         editor.wait_for(state="visible")
     except PlaywrightError:
-        return SkillsResult(False, reason="inline-форма навыков не открылась")
+        return SkillsResult(False, reason="форма навыков не открылась после перехода")
     existing = read_skills(page)
     existing_keys = {skill.casefold() for skill in existing}
     additions = tuple(skill for skill in skills if skill.name.casefold() not in existing_keys)
