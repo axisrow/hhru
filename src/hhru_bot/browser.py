@@ -36,16 +36,16 @@ def launch_browser(playwright, *, headless: bool) -> Browser:
         details = str(exc)
         sandbox_markers = (
             "Operation not permitted",
+            "Permission denied",
             "Crashpad",
             "NSApplication",
             "NSMenuBarPresentationInstance",
         )
-        if not headless and any(marker in details for marker in sandbox_markers):
+        if any(marker in details for marker in sandbox_markers):
             raise BrowserLaunchError(
-                "CODEX_SANDBOX_BROWSER_FAILURE: headed Chromium was blocked by "
-                "the execution sandbox (macOS GUI/Crashpad permission). "
-                "Retry this same command with elevated system permission; "
-                "for read-only work, use 'hhru --headless ...'."
+                "CODEX_SANDBOX_BROWSER_FAILURE: Chromium was blocked by the "
+                "execution sandbox (macOS/Crashpad permission). Retry this same "
+                "command with elevated system permission."
             ) from exc
         raise
 
