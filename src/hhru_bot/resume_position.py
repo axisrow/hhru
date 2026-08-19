@@ -85,8 +85,9 @@ def build_position_prompt(profile: Any, current: PositionValues, mode: str) -> l
         "full_time, part_time, project, internship, volunteer. Допустимые "
         "work_format: office, hybrid, remote. Допустимые commute: no_limit, "
         "up_to_1_hour, up_to_2_hours, up_to_3_hours. salary — целое число или null. "
-        "Никогда не выдумывай salary, currency или условия. В режиме fill не меняй "
-        "уже заполненные значения; specializations оставь пустым, если фактов нет."
+        "Никогда не выдумывай salary, currency или условия. Тайтл должен быть "
+        "непустым, если он нужен для заполнения. В режиме fill не меняй уже "
+        "заполненные значения; specializations оставь пустым, если фактов нет."
     )
     payload = {"mode": mode, "candidate": _profile_context(profile), "current": asdict(current)}
     return [
@@ -213,6 +214,20 @@ def read_display_position(page: Page) -> PositionValues:
         commute=commute,
         business_trips=trips,
     )
+
+
+def validate_position_title(current: PositionValues, plan: PositionValues) -> None:
+    """Reject title states that HH.ru cannot save."""
+    if plan.title is not None and not plan.title.strip():
+        raise ValueError(
+            "Пустой тайтл невозможен: укажите непустую желаемую должность "
+            "через --title или в LLM-плане."
+        )
+    if not (current.title or "").strip() and not (plan.title or "").strip():
+        raise ValueError(
+            "Тайтл обязателен: текущее поле пустое, укажите непустую желаемую "
+            "должность через --title или в LLM-плане."
+        )
 
 
 def fill_only_missing(current: PositionValues, plan: PositionValues) -> PositionValues:

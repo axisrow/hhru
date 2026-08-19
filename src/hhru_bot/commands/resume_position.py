@@ -83,6 +83,7 @@ def run(args: argparse.Namespace) -> bool:
         fill_only_missing,
         open_position_form,
         parse_position_response,
+        validate_position_title,
     )
 
     config = load_config_or_exit(args.config)
@@ -188,6 +189,7 @@ def run(args: argparse.Namespace) -> bool:
                     )
                 ):
                     raise RuntimeError("режим from-scratch требует пустого раздела")
+            validate_position_title(current, plan)
             _print_plan(plan)
             if args.dry_run:
                 page.locator(CANCEL).click()
