@@ -23,6 +23,7 @@ from .browser import (
 from .config import AppConfig
 from .cookie_import import write_storage_state
 from .selectors import (
+    LOGIN_CODE_INPUT,
     LOGIN_CODE_REQUEST_BUTTON,
     LOGIN_EMAIL_INPUT,
     LOGIN_EMAIL_TYPE,
@@ -32,7 +33,6 @@ from .selectors import (
 logger = logging.getLogger("hhru_bot.auth_code")
 
 _LOGIN_URL = f"{HH_BASE_URL}/account/login"
-_CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
 CODE_TIMEOUT_SECONDS = 300
 CODE_FORM_TIMEOUT_MS = 15_000
 CODE_FILE_POLL_SECONDS = 0.1
@@ -67,7 +67,6 @@ def _read_code(code_file: Path | None, timeout_seconds: int) -> str:
                 )
             time.sleep(min(CODE_FILE_POLL_SECONDS, remaining))
     else:
-        print(f"[WAIT] Введите код (таймаут {timeout_seconds} сек):", flush=True)
         ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
         if not ready:
             raise RuntimeError(f"Ввод кода истёк через {timeout_seconds} секунд")
@@ -143,9 +142,11 @@ def login_with_code(
                 field = page.locator(LOGIN_PHONE_INPUT)
             _wait_for_one_visible(field, "поле логина")
             field.fill(login)
-            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
+            submit_button = page.locator(LOGIN_CODE_REQUEST_BUTTON)
+            _wait_for_one_visible(submit_button, "кнопка отправки кода")
+            submit_button.click()
             _raise_for_captcha_or_timeout(page)
-            code_field = page.locator(_CODE_INPUT)
+            code_field = page.locator(LOGIN_CODE_INPUT)
             _wait_for_one_visible(code_field, "поле одноразового кода")
             print(
                 f"[WAIT] Код отправлен на {mask_login(login)}. "
