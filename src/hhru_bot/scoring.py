@@ -655,6 +655,20 @@ def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[
         if info.reviews_count is not None:
             parts.append(f"отзывов: {info.reviews_count}")
         lines.append("Работодатель: " + ", ".join(parts) + ".")
+    requirement = getattr(card, "portfolio_evidence_requirement", None)
+    if requirement is not None and requirement.level != "none":
+        lines.append(
+            "Требование портфолио/проектов: "
+            f"{requirement.level}; источник: " + " | ".join(requirement.evidence)
+        )
+    elif getattr(card, "vacancy_text", ""):
+        # Consumers that construct cards from a full description need not run
+        # the parser themselves; keep the prompt read-only and deterministic.
+        from .portfolio_evidence import detect_portfolio_evidence
+
+        detected = detect_portfolio_evidence(card.vacancy_text)
+        if detected.level != "none":
+            lines.append("Требование портфолио/проектов: " + detected.level)
 
     if profile is not None:
         if profile.summary:

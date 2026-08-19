@@ -14,6 +14,7 @@ from .browser import HH_BASE_URL, goto_hh
 from .config import ResumeConfig, SearchFilters
 from .config_sections.scoring import ScoringConfig, ScoringWeights
 from .history import SKIP_REASONS
+from .portfolio_evidence import PortfolioEvidenceRequirement, detect_portfolio_evidence
 
 if TYPE_CHECKING:
     # EmployerInfo живёт в scoring.py; импортируем только для type-checking,
@@ -172,6 +173,14 @@ class VacancyCard:
     # classify_employer и LLM-скоринга (#74 Этапы 2-3). Ленивый импорт типа —
     # чтобы не тащить scoring.py (а с ним ai) на уровень search.py импорта.
     employer_info: EmployerInfo | None = None
+    # Read-only signal from vacancy/card text.  Full descriptions can be passed
+    # by callers through ``vacancy_text`` when available.
+    vacancy_text: str = ""
+    portfolio_evidence_requirement: PortfolioEvidenceRequirement | None = None
+
+    def __post_init__(self) -> None:
+        if self.portfolio_evidence_requirement is None and self.vacancy_text:
+            self.portfolio_evidence_requirement = detect_portfolio_evidence(self.vacancy_text)
 
 
 def build_search_url(filters: SearchFilters, page_num: int = 0) -> str:
@@ -287,6 +296,7 @@ def search_vacancies(
 
         for i in range(count):
             card = cards.nth(i)
+            card_text = card.inner_text()
             title_link = card.locator(sel.VACANCY_CARD_TITLE_LINK).first
             title = title_link.inner_text().strip()
             href = title_link.get_attribute("href") or ""
@@ -339,6 +349,8 @@ def search_vacancies(
                     ),
                     salary=salary,
                     employer_info=employer_info,
+                    vacancy_text=card_text,
+                    portfolio_evidence_requirement=detect_portfolio_evidence(card_text),
                 )
             )
 
