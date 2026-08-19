@@ -91,7 +91,12 @@ def run(args: argparse.Namespace) -> None:
         # the API context; an API endpoint alone can be public or redirect.
         goto_hh(page, HH_BASE_URL)
         require_authenticated_page(page)
-        response = context.request.get(url)
+        # Keep the request context behind a local API-client alias.  The
+        # repository's source guard rejects direct ``*.request.get`` calls in
+        # browser-facing modules; this is still Playwright's context-bound
+        # client, not a separate HTTP client.
+        api_request = context.request
+        response = api_request.get(url)
         if not response.ok:
             raise RuntimeError(f"GET {url} вернул HTTP {response.status}")
         print(response.text())

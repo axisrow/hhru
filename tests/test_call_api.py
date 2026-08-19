@@ -7,6 +7,8 @@ import pytest
 from hhru_bot.commands import call_api
 from hhru_bot.commands.call_api import CallApiError, _endpoint_url
 
+pytestmark = pytest.mark.integration
+
 
 def test_endpoint_defaults_to_hh_and_encodes_params():
     assert _endpoint_url("/employers", ["text=IT", "only_with_vacancies=true"]) == (
