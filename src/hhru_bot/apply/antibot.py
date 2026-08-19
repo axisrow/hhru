@@ -95,3 +95,10 @@ def detect_antibot_on_page(page: Page) -> AntiBotDetection | None:
         except (AttributeError, PlaywrightError):
             continue
     return detect_antibot_challenge(url=url, visible_markers=visible)
+
+
+def raise_for_antibot(page: Page) -> None:
+    """Raise the terminal command signal when the narrow detector confirms it."""
+
+    if detection := detect_antibot_on_page(page):
+        raise AntiBotChallengeDetected(detection)

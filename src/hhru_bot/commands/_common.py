@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..apply import apply_to_vacancy
+from ..apply.antibot import raise_for_antibot
 from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
@@ -320,6 +321,9 @@ def run_apply_for_resume(
     verify_resume_id = resume.resume_id
     if not args.dry_run:
         ids_by_hash = resolve_numeric_resume_ids(page)
+        # #344: a challenge during the resume preflight is terminal for the
+        # whole apply/run command, not an unknown mapping to continue past.
+        raise_for_antibot(page)
         if ids_by_hash is not None:
             numeric_id = ids_by_hash.get(resume.resume_id)
             if numeric_id is not None:
@@ -356,10 +360,16 @@ def run_apply_for_resume(
     try:
         cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
     except VacancySearchIndeterminate as e:
+        # Search timeouts are normally per-resume failures, but a confirmed
+        # challenge must escape as the terminal AntiBotChallengeDetected state.
+        raise_for_antibot(page)
         # Один сбой рендера не должен скрыться как пустой apply-план или
         # остановить обработку остальных резюме в команде apply/run.
         print(f"[FAIL] {e}")
         return True
+    # Also catch challenge pages that happened to look like an empty/partial
+    # search result to the parser and therefore returned without raising.
+    raise_for_antibot(page)
     scoring_provider = _build_scoring_provider(config, resume)
     plan = build_apply_plan(
         cards,
