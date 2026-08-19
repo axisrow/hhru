@@ -27,6 +27,13 @@ def register(subparsers) -> None:
         help="Slug из конфига или реальный resume_id HH.ru (#319)",
     )
     parser.add_argument(
+        "--text",
+        help=(
+            "Готовый текст раздела «Обо мне» без LLM (#326): "
+            "ai_profile/секция ai не требуются, текст сохраняется как есть"
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="Показать предложение без сохранения"
     )
     parser.add_argument("--force", action="store_true", help="Подтвердить сохранение без prompt")
@@ -47,24 +54,30 @@ def run(args: argparse.Namespace) -> None:
     config = load_config_or_exit(args.config)
     from ._common import resolve_resume
 
-    # needs='ai_profile': точечная ошибка вместо «резюме не найдено в конфиге» (#319).
+    # --text (#326): готовый текст в обход LLM — как edit-skills --skill,
+    # ручной ввод не требует ни ai_profile, ни секции ai.
+    manual = getattr(args, "text", None) is not None
+    needs = () if manual else ("ai_profile",)
     try:
-        resume = resolve_resume(config, args.resume, needs=("ai_profile",))
+        resume = resolve_resume(config, args.resume, needs=needs)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    if config.ai is None:
-        print("[FAIL] Для команды about нужна секция ai в config.yaml")
-        sys.exit(1)
-    # ResumeConfig.ai_profile is typed as a neutral `object | None` placeholder
-    # (see CLAUDE.md config_sections) shared across unrelated features; #17
-    # (about) owns the AIProfile shape, so narrow it here at the point of use.
-    ai_profile = cast("AIProfile", resume.ai_profile)
-    try:
-        llm = LLMClient(config.ai)
-    except ImportError as exc:
-        print(f"[FAIL] AI-зависимость недоступна: {exc}")
-        sys.exit(1)
+    llm = None
+    ai_profile = None
+    if not manual:
+        if config.ai is None:
+            print("[FAIL] Для команды about нужна секция ai в config.yaml")
+            sys.exit(1)
+        # ResumeConfig.ai_profile is typed as a neutral `object | None` placeholder
+        # (see CLAUDE.md config_sections) shared across unrelated features; #17
+        # (about) owns the AIProfile shape, so narrow it here at the point of use.
+        ai_profile = cast("AIProfile", resume.ai_profile)
+        try:
+            llm = LLMClient(config.ai)
+        except ImportError as exc:
+            print(f"[FAIL] AI-зависимость недоступна: {exc}")
+            sys.exit(1)
 
     try:
         with launch_context(
@@ -72,12 +85,16 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             page = context.new_page()
             existing = open_about_editor(page, resume)
-            draft = generate_about(llm, existing, ai_profile)
-            print(f"{draft_prefix(args.dry_run)} «Обо мне» ({draft.mode}):\n{draft.text}")
+            if manual:
+                text, mode = args.text, "manual"
+            else:
+                draft = generate_about(llm, existing, ai_profile)
+                text, mode = draft.text, draft.mode
+            print(f"{draft_prefix(args.dry_run)} «Обо мне» ({mode}):\n{text}")
             if args.dry_run:
                 print("[INFO] Ничего не сохранено.")
                 return
-            if draft.text.strip() == existing.strip():
+            if text.strip() == existing.strip():
                 print("[INFO] Новый текст не предложен; существующее содержимое не изменено.")
                 return
             if not confirm_write(
@@ -86,7 +103,7 @@ def run(args: argparse.Namespace) -> None:
             ):
                 print("[FAIL] Нужен --force или интерактивное подтверждение. Ничего не сохранено.")
                 sys.exit(1)
-            save_about(page, draft.text)
+            save_about(page, text)
     except AboutGenerationError as exc:
         print(f"[FAIL] {resume.id} — {exc}")
         sys.exit(1)

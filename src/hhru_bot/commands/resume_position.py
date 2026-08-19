@@ -17,7 +17,44 @@ def register(subparsers) -> None:
         required=True,
         help="Slug из конфига или реальный resume_id HH.ru (#319)",
     )
-    p.add_argument("--mode", choices=("from-scratch", "fill"), default="fill")
+    # Ручной ввод (#326): любое из этих полей отключает LLM-планирование.
+    p.add_argument(
+        "--title",
+        help="Готовая желаемая должность без LLM (#326)",
+    )
+    p.add_argument(
+        "--specialization",
+        action="append",
+        help=(
+            "Специализация (можно несколько); селектор hh.ru не подтверждён — "
+            "запись упадёт fail-closed"
+        ),
+    )
+    p.add_argument("--salary", type=int, help="Зарплата (целое число, без LLM)")
+    p.add_argument("--currency", choices=("RUR", "EUR", "USD"), help="Валюта зарплаты")
+    p.add_argument(
+        "--employment",
+        action="append",
+        choices=("full_time", "part_time", "project", "internship", "volunteer"),
+        help="Тип занятости (можно несколько)",
+    )
+    p.add_argument(
+        "--work-format",
+        action="append",
+        choices=("office", "hybrid", "remote"),
+        help="Формат работы (можно несколько)",
+    )
+    p.add_argument(
+        "--commute",
+        choices=("no_limit", "up_to_1_hour", "up_to_2_hours", "up_to_3_hours"),
+        help="Время в пути",
+    )
+    p.add_argument(
+        "--business-trips",
+        choices=("true", "false"),
+        help="Готовность к командировкам",
+    )
+    p.add_argument("--mode", choices=("from-scratch", "fill"))
     p.add_argument("--dry-run", action="store_true", help="Показать план без изменения hh.ru")
     p.add_argument("--force", action="store_true", help="Подтвердить запись без prompt")
     p.set_defaults(func=run)
@@ -36,6 +73,7 @@ def run(args: argparse.Namespace) -> bool:
     from ..resume_position import (
         CANCEL,
         SAVE,
+        PositionValues,
         apply_position,
         build_position_prompt,
         fill_only_missing,
@@ -46,64 +84,104 @@ def run(args: argparse.Namespace) -> bool:
     config = load_config_or_exit(args.config)
     from ._common import resolve_resume
 
+    # Ручной ввод (#326): любое готовое поле отключает LLM; facts-гварды и
+    # fill/from-scratch не применяются — значения даёт вызывающий, как в
+    # edit-skills --skill.
+    manual = any(
+        value is not None
+        for value in (
+            getattr(args, name, None)
+            for name in (
+                "title",
+                "specialization",
+                "salary",
+                "currency",
+                "employment",
+                "work_format",
+                "commute",
+                "business_trips",
+            )
+        )
+    )
+    if manual and args.mode is not None:
+        print("[FAIL] --mode относится к LLM-планированию и не сочетается с ручными полями (#326)")
+        return True
+    mode = args.mode or "fill"
+
     # needs='ai_profile': точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = resolve_resume(config, args.resume, needs=("ai_profile",))
+        resume = resolve_resume(config, args.resume, needs=() if manual else ("ai_profile",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         return True
-    if config.ai is None:
+    if not manual and config.ai is None:
         print("[FAIL] Для resume-position нужна секция ai в config.yaml")
         return True
     profile = resume.ai_profile
     try:
-        llm = LLMClient(config.ai)
+        llm = None if manual else LLMClient(config.ai)
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
             current = open_position_form(page, resume)
-            response = llm.chat(build_position_prompt(profile, current, args.mode))
-            plan = parse_position_response(response.content)
-            if current.salary is None and plan.salary is not None:
-                raise RuntimeError(
-                    "LLM предложил зарплату без подтверждённого факта пользователя; "
-                    "значение отклонено"
+            if manual:
+                plan = PositionValues(
+                    title=getattr(args, "title", None) or "",
+                    salary=getattr(args, "salary", None),
+                    currency=getattr(args, "currency", None),
+                    specializations=getattr(args, "specialization", None),
+                    employment=getattr(args, "employment", None),
+                    work_format=getattr(args, "work_format", None),
+                    commute=getattr(args, "commute", None),
+                    business_trips=(
+                        None
+                        if getattr(args, "business_trips", None) is None
+                        else args.business_trips == "true"
+                    ),
                 )
-            if current.employment is None and plan.employment:
-                raise RuntimeError(
-                    "LLM предложил тип занятости без подтверждённого факта пользователя; "
-                    "значение отклонено"
-                )
-            if current.work_format is None and plan.work_format:
-                raise RuntimeError(
-                    "LLM предложил формат работы без подтверждённого факта пользователя; "
-                    "значение отклонено"
-                )
-            if current.commute is None and plan.commute is not None:
-                raise RuntimeError(
-                    "LLM предложил время в пути без подтверждённого факта пользователя; "
-                    "значение отклонено"
-                )
-            if current.business_trips is None and plan.business_trips is not None:
-                raise RuntimeError(
-                    "LLM предложил командировки без подтверждённого факта пользователя; "
-                    "значение отклонено"
-                )
-            if args.mode == "fill":
-                plan = fill_only_missing(current, plan)
-            elif any(
-                value not in (None, "", [])
-                for value in (
-                    current.title,
-                    current.salary,
-                    current.employment,
-                    current.work_format,
-                    current.commute,
-                    current.business_trips,
-                )
-            ):
-                raise RuntimeError("режим from-scratch требует пустого раздела")
+            else:
+                response = llm.chat(build_position_prompt(profile, current, mode))
+                plan = parse_position_response(response.content)
+                if current.salary is None and plan.salary is not None:
+                    raise RuntimeError(
+                        "LLM предложил зарплату без подтверждённого факта пользователя; "
+                        "значение отклонено"
+                    )
+                if current.employment is None and plan.employment:
+                    raise RuntimeError(
+                        "LLM предложил тип занятости без подтверждённого факта пользователя; "
+                        "значение отклонено"
+                    )
+                if current.work_format is None and plan.work_format:
+                    raise RuntimeError(
+                        "LLM предложил формат работы без подтверждённого факта пользователя; "
+                        "значение отклонено"
+                    )
+                if current.commute is None and plan.commute is not None:
+                    raise RuntimeError(
+                        "LLM предложил время в пути без подтверждённого факта пользователя; "
+                        "значение отклонено"
+                    )
+                if current.business_trips is None and plan.business_trips is not None:
+                    raise RuntimeError(
+                        "LLM предложил командировки без подтверждённого факта пользователя; "
+                        "значение отклонено"
+                    )
+                if mode == "fill":
+                    plan = fill_only_missing(current, plan)
+                elif any(
+                    value not in (None, "", [])
+                    for value in (
+                        current.title,
+                        current.salary,
+                        current.employment,
+                        current.work_format,
+                        current.commute,
+                        current.business_trips,
+                    )
+                ):
+                    raise RuntimeError("режим from-scratch требует пустого раздела")
             _print_plan(plan)
             if args.dry_run:
                 page.locator(CANCEL).click()

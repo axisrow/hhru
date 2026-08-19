@@ -31,6 +31,30 @@ def register(subparsers) -> None:
     )
     parser.add_argument("--source", help="Контекст кандидата (переопределяет education.source)")
     parser.add_argument("--mode", choices=("from_scratch", "prefill"), help="Режим планирования")
+    # Ручной ввод (#326): готовые записи без LLM; секция education в конфиге
+    # и секция ai не требуются.
+    parser.add_argument("--institution", help="Учебное заведение (основное образование, без LLM)")
+    parser.add_argument("--faculty", help="Факультет (основное образование, без LLM)")
+    parser.add_argument("--specialty", help="Специальность (без LLM)")
+    parser.add_argument("--year", help="Год окончания (без LLM)")
+    parser.add_argument(
+        "--primary-entry",
+        action="append",
+        metavar="JSON",
+        help=(
+            "Готовая запись основного образования JSON без LLM (#326), можно несколько: "
+            "'{\"institution\":..., \"faculty\":..., \"specialty\":..., \"year\":...}'"
+        ),
+    )
+    parser.add_argument(
+        "--additional-entry",
+        action="append",
+        metavar="JSON",
+        help=(
+            "Готовая запись доп. образования JSON без LLM (#326), можно несколько: "
+            "'{\"institution\":..., \"organization\":..., \"specialty\":..., \"year\":...}'"
+        ),
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Заполнить только локальную форму; Save не нажимать"
     )
@@ -38,19 +62,52 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def _parse_manual_records(flag: str, raw_entries) -> list:
+    """Parse repeatable JSON flags into EducationRecord; fail closed (#326)."""
+    import json
+
+    from ..resume_education import _record
+
+    records = []
+    for raw in raw_entries:
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{flag} должен содержать валидный JSON: {exc}") from exc
+        record = _record(item)
+        if not record.institution.strip():
+            raise ValueError(f"{flag} требует непустой institution")
+        records.append(record)
+    return records
+
+
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..responses import NotAuthenticated
-    from ..resume_education import edit_education_on_hh
+    from ..resume_education import _record, edit_education_on_hh
 
     config = load_config_or_exit(args.config)
     from ._common import resolve_resume
 
+    scalar_fields = tuple(
+        getattr(args, name, None) for name in ("institution", "faculty", "specialty", "year")
+    )
+    manual = any(value is not None for value in scalar_fields) or bool(
+        getattr(args, "primary_entry", None) or getattr(args, "additional_entry", None)
+    )
+    if manual and (args.source is not None or args.mode is not None):
+        print(
+            "[FAIL] --source/--mode относятся к LLM-планированию и не сочетаются "
+            "с ручными записями (#326)"
+        )
+        sys.exit(1)
+
     # needs='education': команда не имеет смысла без секции — точечная ошибка
-    # вместо «резюме не найдено в конфиге» (#319).
+    # вместо «резюме не найдено в конфиге» (#319). Ручной ввод (#326) полный,
+    # секция не нужна.
     try:
-        resume = resolve_resume(config, args.resume, needs=("education",))
+        resume = resolve_resume(config, args.resume, needs=() if manual else ("education",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
@@ -66,32 +123,57 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    source = args.source if args.source is not None else education.source
-    mode = args.mode or education.mode
-    llm = None
-    if config.ai is not None:
-        try:
-            from ..ai.llm_client import LLMClient
+    try:
+        primary_manual = _parse_manual_records("--primary-entry", args.primary_entry or [])
+        additional_manual = _parse_manual_records("--additional-entry", args.additional_entry or [])
+        if any(value is not None for value in scalar_fields):
+            scalar_record = _record(
+                {
+                    name: (getattr(args, name) or "")
+                    for name in ("institution", "faculty", "specialty", "year")
+                }
+            )
+            if not scalar_record.institution.strip():
+                print("[FAIL] Явные поля основного образования требуют непустой --institution")
+                sys.exit(1)
+            primary_manual.append(scalar_record)
+    except ValueError as exc:
+        print(f"[FAIL] {exc}")
+        sys.exit(1)
 
-            llm = LLMClient(config.ai)
-        except ImportError as exc:
-            print(f"[INFO] LLM недоступен: {exc}; используется исходный план")
-    if llm is None:
+    if manual:
         plan = EducationPlan(
-            primary=list(education.primary),
-            additional=list(education.additional),
-            mode=mode,
-            used_fallback=True,
-            reason="LLM не настроен; использованы записи из education",
+            primary=primary_manual,
+            additional=additional_manual,
+            mode="manual",
         )
     else:
-        plan = generate_education_plan(
-            llm,
-            source,
-            mode=mode,
-            current_primary=education.primary,
-            current_additional=education.additional,
-        )
+        source = args.source if args.source is not None else education.source
+        mode = args.mode or education.mode
+        llm = None
+        if config.ai is not None:
+            try:
+                from ..ai.llm_client import LLMClient
+
+                llm = LLMClient(config.ai)
+            except ImportError as exc:
+                print(f"[INFO] LLM недоступен: {exc}; используется исходный план")
+        if llm is None:
+            plan = EducationPlan(
+                primary=list(education.primary),
+                additional=list(education.additional),
+                mode=mode,
+                used_fallback=True,
+                reason="LLM не настроен; использованы записи из education",
+            )
+        else:
+            plan = generate_education_plan(
+                llm,
+                source,
+                mode=mode,
+                current_primary=education.primary,
+                current_additional=education.additional,
+            )
 
     plan_prefix = "[DRY-RUN]" if args.dry_run else "[INFO]"
     print(

@@ -26,6 +26,25 @@ def register(subparsers) -> None:
         required=True,
         help="Slug из конфига или реальный resume_id HH.ru (#319)",
     )
+    # Ручной ввод (#326): готовые записи без LLM; ai_profile/секция ai не нужны.
+    parser.add_argument(
+        "--attestation",
+        action="append",
+        metavar="JSON",
+        help=(
+            "Готовая аттестация JSON без LLM (#326), можно несколько: "
+            "'{\"name\":..., \"organization\":..., \"specialty\":..., \"year\":...}'"
+        ),
+    )
+    parser.add_argument(
+        "--recommendation",
+        action="append",
+        metavar="JSON",
+        help=(
+            "Готовая рекомендация JSON без LLM (#326), можно несколько: "
+            "'{\"text\":..., \"company\":..., \"name\":..., \"position\":...}'"
+        ),
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Показать план без изменений на hh.ru"
     )
@@ -33,8 +52,45 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def _parse_manual_sections(args: argparse.Namespace):
+    """Parse --attestation/--recommendation JSON flags into a plan (#326)."""
+    import json
+
+    from ..resume_sections import Attestation, Recommendation, ResumeSectionsPlan, _text
+
+    def records(flag: str, raw_items, fields, build):
+        result = []
+        for raw in raw_items or []:
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{flag} должен содержать валидный JSON: {exc}") from exc
+            if not isinstance(item, dict):
+                raise ValueError(f"{flag} должен содержать JSON-объект")
+            record = build(*(_text(item.get(key)) for key in fields))
+            if not any(record.__dict__.values()):
+                raise ValueError(f"{flag} содержит пустую запись")
+            result.append(record)
+        return result
+
+    attestations = records(
+        "--attestation",
+        args.attestation,
+        ("name", "organization", "specialty", "year"),
+        Attestation,
+    )
+    recommendations = records(
+        "--recommendation",
+        args.recommendation,
+        ("text", "company", "name", "position"),
+        Recommendation,
+    )
+    if not attestations and not recommendations:
+        raise ValueError("укажите хотя бы один --attestation или --recommendation")
+    return ResumeSectionsPlan(attestations=attestations, recommendations=recommendations)
+
+
 def run(args: argparse.Namespace) -> None:
-    from ..ai.llm_client import LLMClient
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_sections import apply_plan, generate_plan
@@ -42,13 +98,19 @@ def run(args: argparse.Namespace) -> None:
     config = load_config_or_exit(args.config)
     from ._common import resolve_resume
 
+    manual = bool(getattr(args, "attestation", None) or getattr(args, "recommendation", None))
+
     # needs: точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = resolve_resume(config, args.resume, needs=("resume_sections", "ai_profile"))
+        resume = resolve_resume(
+            config,
+            args.resume,
+            needs=() if manual else ("resume_sections", "ai_profile"),
+        )
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    if config.ai is None:
+    if not manual and config.ai is None:
         print("[FAIL] Для resume-sections нужна секция ai в config.yaml")
         sys.exit(1)
 
@@ -65,12 +127,21 @@ def run(args: argparse.Namespace) -> None:
             "подтверждения. Ничего не отправлено."
         )
         sys.exit(1)
-    try:
-        client = LLMClient(config.ai)
-    except ImportError as exc:
-        print(f"[FAIL] LLM недоступен: {exc}")
-        sys.exit(1)
-    plan = generate_plan(client, sections, ai_profile)
+    if manual:
+        try:
+            plan = _parse_manual_sections(args)
+        except ValueError as exc:
+            print(f"[FAIL] {exc}")
+            sys.exit(1)
+    else:
+        try:
+            from ..ai.llm_client import LLMClient
+
+            client = LLMClient(config.ai)
+        except ImportError as exc:
+            print(f"[FAIL] LLM недоступен: {exc}")
+            sys.exit(1)
+        plan = generate_plan(client, sections, ai_profile)
     print(
         f"[{'DRY-RUN' if args.dry_run else 'INFO'}] "
         f"Аттестаций: {len(plan.attestations)}, рекомендаций: {len(plan.recommendations)}"
