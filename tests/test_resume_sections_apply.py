@@ -59,16 +59,27 @@ class FakeTriggerRow:
         self._index = index
 
     def click(self):
+        if self._index in self._page._click_fails:
+            raise PlaywrightTimeoutError("триггер не кликается")
         self._page.current_index = self._index
 
 
 class FakePage:
     """Строка ``ready_by_index[i] = False`` имитирует таймаут гидратации на
-    строке i (после того как строки < i уже были кликнуты save)."""
+    строке i (после того как строки < i уже были кликнуты save). ``click_fails``
+    имитирует таймаут САМОГО клика по триггеру строки i (codex, cycle 2:
+    trigger.nth(index).click() изначально был вне try/except)."""
 
-    def __init__(self, *, trigger_count: int, ready_by_index: dict[int, bool] | None = None):
+    def __init__(
+        self,
+        *,
+        trigger_count: int,
+        ready_by_index: dict[int, bool] | None = None,
+        click_fails: set[int] | None = None,
+    ):
         self._trigger_count = trigger_count
         self._ready_by_index = ready_by_index or {}
+        self._click_fails = click_fails or set()
         self.saved_rows: list[int] = []
         self.current_index = -1
 
@@ -100,6 +111,20 @@ def test_hydration_timeout_after_prior_save_is_reported_not_raised():
     assert len(errors) == 1
     assert "строка 1" in errors[0]
     assert "attestations" in errors[0]
+
+
+def test_trigger_click_failure_after_prior_save_is_reported_not_raised():
+    """Codex-находка cycle 2: trigger.nth(index).click() строки 1 падает ПОСЛЕ
+    успешного save строки 0 — должно вернуться как элемент errors, а не всплыть
+    исключением из _apply_rows (клик был вне try/except до этого фикса)."""
+    page = FakePage(trigger_count=2, click_fails={1})
+    items = [Attestation("A", "Org", "Spec", "2020"), Attestation("B", "Org", "Spec", "2021")]
+
+    errors = _apply_rows(page, "attestations", items, _fill_row, dry_run=False)
+
+    assert page.saved_rows == [0]
+    assert len(errors) == 1
+    assert "строка 1" in errors[0]
 
 
 def test_all_rows_hydrate_and_save_without_errors():

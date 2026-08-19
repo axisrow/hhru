@@ -175,13 +175,13 @@ def _apply_rows(
         if index >= trigger.count():
             errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
             continue
-        trigger.nth(index).click()
         ready_selector = (
             f"[data-qa='{ATTESTATION_FIELDS[0]}']"
             if block == "attestations"
             else "input[name='company']"
         )
         try:
+            trigger.nth(index).click()
             page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             save = fill_row(page, item)
             if not dry_run:
