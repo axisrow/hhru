@@ -203,6 +203,15 @@ def _apply_rows(
     errors: list[str] = []
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
     for index, item in enumerate(items):
+        # The current HH.ru recommendation editor has no text control. Reject
+        # such rows before opening the editor so fail-closed handling cannot
+        # leave a partially opened form behind (#367).
+        if block == "recommendations" and getattr(item, "text", ""):
+            errors.append(
+                f"{block}: строка {index} не подтверждена: "
+                "текущая форма рекомендации не содержит поля текста; запись остановлена"
+            )
+            break
         ready_selector = (
             f"[data-qa='{ATTESTATION_FIELDS[0]}']"
             if block == "attestations"
