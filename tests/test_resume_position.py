@@ -71,16 +71,22 @@ def test_fill_mode_preserves_existing_values():
     assert merged.salary == 100000
 
 
-def test_apply_position_explicit_empty_title_clears_but_none_leaves_unchanged():
+def test_apply_position_rejects_empty_title_without_touching_dom():
+    page = MagicMock()
+
+    with pytest.raises(ValueError, match="Пустой title отклоняется hh.ru"):
+        resume_position.apply_position(page, PositionValues(title=""))
+
+    page.locator.assert_not_called()
+
+
+def test_apply_position_none_title_leaves_unchanged():
     page = MagicMock()
     title = MagicMock()
     page.locator.side_effect = lambda selector: title if selector == TITLE else MagicMock()
 
-    resume_position.apply_position(page, PositionValues(title=""))
-    title.fill.assert_called_once_with("")
-
-    title.reset_mock()
     resume_position.apply_position(page, PositionValues(title=None))
+
     title.fill.assert_not_called()
 
 
