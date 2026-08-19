@@ -22,6 +22,28 @@ class _LLM:
         )
 
 
+def test_exact_account_profile_answer_skips_llm_matching():
+    llm = _LLM({"answer": "generated", "confidence": 1.0})
+    question = Question(0, "Ваш телефон?", "text")
+
+    proposal = AIQuestionAnswerer(llm, known_data={"Ваш телефон?": "+7 900"}).propose(question)
+
+    assert proposal.answer == "+7 900"
+    assert proposal.confidence == 1.0
+    assert llm.messages == []
+
+
+def test_account_profile_semantic_match_precedes_generated_answer():
+    llm = _LLM({"key": "город", "confidence": 0.99})
+    question = Question(0, "В каком городе вы живёте?", "text")
+
+    proposal = AIQuestionAnswerer(llm, known_data={"город": "Москва"}).propose(question)
+
+    assert proposal.answer == "Москва"
+    assert proposal.confidence == 1.0
+    assert len(llm.messages) == 1
+
+
 def test_choice_answer_uses_zero_based_index_and_confidence():
     llm = _LLM({"answer": "Python", "confidence": 0.91, "indices": [1]})
     question = Question(0, "Опыт с Python?", "choice", ("Нет", "Да"))
