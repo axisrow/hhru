@@ -133,6 +133,7 @@ class _Page:
             return _Locator(self, [node for node in nodes if node.attrs.get("id") == selector[1:]])
         if selector.startswith("form "):
             selector = selector[5:]
+        selector = selector.replace(", form ", ", ")
         if " >> nth=" in selector:
             selector, raw_index = selector.rsplit(" >> nth=", 1)
             candidates = self._match_nodes(nodes, selector)
