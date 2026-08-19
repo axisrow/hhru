@@ -12,10 +12,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .browser import goto_hh, has_auth_cookie, has_login_form
+from .browser import goto_hh, has_auth_cookie, has_login_form, resume_identity_matches
 from .config_sections.education import EducationRecord
 from .responses import NotAuthenticated
 
@@ -45,7 +46,7 @@ _ADDITIONAL_FIELDS = {
     "specialty": "[data-qa='profile-education-additional-specialty']",
     "year": "[data-qa='profile-education-year-input']",
 }
-_RESUME_ROUTE = re.compile(r"/resume/[^/?#]+(?:\?.*)?$")
+FORM_TIMEOUT_MS = 15_000
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,12 @@ def generate_education_plan(
 
 
 def _edit_block(
-    page, records: list[EducationRecord], *, additional: bool, dry_run: bool
+    page,
+    records: list[EducationRecord],
+    *,
+    additional: bool,
+    dry_run: bool,
+    resume_id: str,
 ) -> EducationResult:
     trigger = ADDITIONAL_TRIGGER if additional else PRIMARY_TRIGGER
     add_selector = ADDITIONAL_ADD if additional else PRIMARY_ADD
@@ -185,7 +191,11 @@ def _edit_block(
         save_clicked = False
         try:
             button.click()
-            page.wait_for_url(route)
+            page.wait_for_url(route, wait_until="commit")
+            # The route can commit before React has mounted the editor.
+            page.locator(next(iter(fields.values()))).wait_for(
+                state="visible", timeout=FORM_TIMEOUT_MS
+            )
             for name, selector in fields.items():
                 value = getattr(record, name)
                 # Empty LLM fields mean "unknown", not "erase the current value".
@@ -217,7 +227,15 @@ def _edit_block(
                     )
                 save_clicked = True
                 save.click()
-                page.wait_for_url(_RESUME_ROUTE)
+                page.wait_for_url(f"**/resume/{resume_id}", wait_until="commit")
+                if not resume_identity_matches(page, resume_id):
+                    return EducationResult(
+                        kind,
+                        False,
+                        "после сохранения identity резюме не подтверждён",
+                        uncertain=True,
+                        saved=saved_count,
+                    )
                 saved_count += 1
         except PlaywrightError as exc:
             return EducationResult(
@@ -251,10 +269,20 @@ def edit_education_on_hh(
     """Apply selected blocks through the confirmed UI flow; never HTTP."""
     if not has_auth_cookie(page) or has_login_form(page):
         raise NotAuthenticated("сессия hh.ru не подтверждена")
+    path_parts = [part for part in urlsplit(resume_url).path.split("/") if part]
+    if len(path_parts) != 2 or path_parts[0] != "resume" or not path_parts[1]:
+        raise ValueError("resume_url не содержит однозначный resume_id")
+    resume_id = path_parts[1]
     goto_hh(page, resume_url)
     results = []
     if section in ("primary", "both"):
-        results.append(_edit_block(page, plan.primary, additional=False, dry_run=dry_run))
+        results.append(
+            _edit_block(page, plan.primary, additional=False, dry_run=dry_run, resume_id=resume_id)
+        )
     if section in ("additional", "both"):
-        results.append(_edit_block(page, plan.additional, additional=True, dry_run=dry_run))
+        results.append(
+            _edit_block(
+                page, plan.additional, additional=True, dry_run=dry_run, resume_id=resume_id
+            )
+        )
     return results

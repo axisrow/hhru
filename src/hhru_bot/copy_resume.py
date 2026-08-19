@@ -679,7 +679,7 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
 
         new_id = ""
         try:
-            page.wait_for_url(_RESUME_HASH_RE, timeout=COPY_TIMEOUT_MS)
+            page.wait_for_url(_RESUME_HASH_RE, wait_until="commit", timeout=COPY_TIMEOUT_MS)
             m = _RESUME_HASH_RE.search(page.url)
             if m:
                 new_id = m.group(1)

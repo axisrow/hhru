@@ -32,6 +32,7 @@ from .selector_groups.resume_experience import (
 
 logger = logging.getLogger("hhru_bot.experience")
 SAVE_TIMEOUT_MS = 30_000
+FORM_TIMEOUT_MS = 10_000
 
 
 @dataclass
@@ -257,6 +258,9 @@ def edit_experience_on_hh(
             return results + [f"строка опыта {index}: триггер не найден однозначно"]
         try:
             trigger.click()
+            page.locator(EXPERIENCE_COMPANY.format(index=index)).wait_for(
+                state="visible", timeout=FORM_TIMEOUT_MS
+            )
             _fill(page.locator(EXPERIENCE_COMPANY.format(index=index)), entry.company)
             _fill(page.locator(EXPERIENCE_POSITION.format(index=index)), entry.position)
             _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
