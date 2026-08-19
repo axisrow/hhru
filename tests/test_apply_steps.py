@@ -468,6 +468,8 @@ def test_navigate_clicks_apply_button_with_no_wait_after():
 
 def test_fill_form_only_submit_present_clicks_submit_returns_none():
     page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -478,12 +480,15 @@ def test_fill_form_only_submit_present_clicks_submit_returns_none():
     # Опциональные поля не трогались.
     assert page._state(apply_form.APPLY_COVER_LETTER_TOGGLE).clicks == 0
     assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == []
-    assert page._state(apply_form.APPLY_RESUME_SELECT).clicks == 0
+    # The confirmed single option is inspected and selected before submit.
+    assert page._state(apply_form.APPLY_RESUME_SELECT).clicks > 0
 
 
 def test_fill_form_missing_submit_returns_reason_no_click():
     page = FakeStepsPage()
-    # Никаких полей, включая submit.
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID"]
+    # Submit отсутствует.
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
@@ -499,6 +504,8 @@ def test_fill_form_submit_click_error_raises_uncertain_marker():
     Раньше исключение пробрасывалось сырым и валило цикл откликов до
     record_action/throttle.wait."""
     page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID"]
     submit = page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
     submit.click_error = Error("Target page, context or browser has been closed")
 
@@ -511,6 +518,8 @@ def test_fill_form_submit_click_error_raises_uncertain_marker():
 
 def test_fill_form_with_letter_fills_textarea():
     page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID"]
     page.set_visible(apply_form.APPLY_COVER_LETTER_TOGGLE, True)
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -526,6 +535,8 @@ def test_fill_form_with_letter_fills_textarea():
 def test_fill_form_letter_toggle_absent_skips_textarea():
     # Toggle отсутствует → его не кличем; textarea тоже отсутствует → не заполняем.
     page = FakeStepsPage()
+    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
+    st.option_hrefs = ["/resume/RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -682,17 +693,18 @@ def test_resume_select_uses_full_timeout_not_optional():
     assert steps.RESUME_SELECT_TIMEOUT_MS >= steps.APPLY_TIMEOUT_MS
 
 
-def test_fill_form_resume_select_absent_single_resume_submits():
-    # Happy path одного резюме: выбора нет (селектор отсутствует после долгого ожидания)
-    # → submit жмётся. Не ломаем аккаунты с одним резюме.
+def test_fill_form_resume_select_absent_does_not_submit():
+    # Красный тест #340: отсутствие подтверждённого селектора нельзя трактовать
+    # как «у аккаунта одно резюме» — иначе hh.ru прикладывает default-резюме.
     page = FakeStepsPage()
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
     # APPLY_RESUME_SELECT намеренно отсутствует.
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
-    assert result is None
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+    assert result is not None
+    assert "резюме не подтверждено" in result
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
 def test_fill_form_resume_selector_disappears_after_detect_does_not_submit():

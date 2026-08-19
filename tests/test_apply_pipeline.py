@@ -154,6 +154,10 @@ class FakePage:
             )
         if selector == success.APPLY_SUCCESS_MARKER:
             return _FakeLocator(present=self._success)
+        if selector == apply_form.APPLY_RESUME_SELECT:
+            # A confirmed resume control is required before a non-dry-run submit.
+            # Keep the pipeline fake aligned with the fail-closed production path.
+            return _FakeLocator(present=self._success, attrs={"href": "/resume/RID"})
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
             return _FakeLocator(present=self._success and self._submit_in_form)
         # Прочие селекторы формы — считаем отсутствующими (форма не заполнена,
