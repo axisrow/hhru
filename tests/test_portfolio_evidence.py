@@ -74,6 +74,25 @@ def test_llm_failure_falls_back_to_keyword_result():
     assert result.source == "keyword"
 
 
+class _RaisingLLM:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def classify(self, text):  # noqa: ARG002
+        raise self.exc
+
+
+def test_llm_transport_failure_falls_back_to_keyword_result():
+    """A real LLM client can raise transport errors (network/timeout), not
+    just malformed-JSON errors.  The documented contract (transport failures
+    fall back to the keyword result) must hold for those too."""
+    result = classify_portfolio_evidence(
+        "Please include GitHub links.", _RaisingLLM(ConnectionError("upstream unreachable"))
+    )
+    assert result.level == "preferred"
+    assert result.source == "keyword"
+
+
 def test_vacancy_card_exposes_signal_for_downstream_consumers():
     card = VacancyCard(
         vacancy_id="1",
@@ -84,3 +103,16 @@ def test_vacancy_card_exposes_signal_for_downstream_consumers():
     )
     assert card.portfolio_evidence_requirement is not None
     assert card.portfolio_evidence_requirement.level == "preferred"
+
+
+def test_evidence_sentence_is_truncated_to_avoid_unbounded_prompt_injection():
+    """A pathologically long, unpunctuated vacancy sentence must not produce
+    unbounded evidence text: unbounded evidence flows verbatim into the LLM
+    scoring prompt (scoring.py), risking prompt-size/token inflation and
+    injection attempts from adversarial vacancy descriptions."""
+    long_tail = "x" * 5000
+    text = f"Please attach a link to your GitHub portfolio {long_tail}."
+    result = detect_portfolio_evidence(text)
+    assert result.level != "none"
+    assert len(result.evidence) == 1
+    assert len(result.evidence[0]) <= 501

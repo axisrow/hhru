@@ -56,6 +56,12 @@ _COMPANY_LINK = re.compile(
 )
 _SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]|$)")
 
+# Evidence sentences are embedded verbatim into the LLM scoring prompt
+# (scoring.py).  A pathologically long or unpunctuated vacancy description is
+# employer-controlled input, so cap each sentence to bound prompt size/token
+# cost and reduce the surface for prompt-injection attempts.
+_MAX_EVIDENCE_SENTENCE_LEN = 500
+
 
 def _evidence_sentences(text: str, spans: list[tuple[int, int]]) -> tuple[str, ...]:
     result: list[str] = []
@@ -65,6 +71,8 @@ def _evidence_sentences(text: str, spans: list[tuple[int, int]]) -> tuple[str, .
             for start, end in spans
         ):
             value = " ".join(sentence.group(0).split()).strip()
+            if len(value) > _MAX_EVIDENCE_SENTENCE_LEN:
+                value = value[:_MAX_EVIDENCE_SENTENCE_LEN].rstrip() + "…"
             if value and value not in result:
                 result.append(value)
     return tuple(result)
@@ -133,5 +141,7 @@ def classify_portfolio_evidence(
             confidence=min(confidence, 1.0),
             source="keyword+llm",
         )
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+    except Exception:  # noqa: BLE001 - any classifier failure (transport, parsing,
+        # malformed response) must fall back to the keyword result, never propagate
+        # and never claim a requirement the keyword stage did not confirm.
         return keyword

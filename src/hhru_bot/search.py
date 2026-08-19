@@ -349,8 +349,9 @@ def search_vacancies(
                     ),
                     salary=salary,
                     employer_info=employer_info,
+                    # VacancyCard.__post_init__ derives portfolio_evidence_requirement
+                    # from vacancy_text automatically; no need to compute it twice.
                     vacancy_text=card_text,
-                    portfolio_evidence_requirement=detect_portfolio_evidence(card_text),
                 )
             )
 
