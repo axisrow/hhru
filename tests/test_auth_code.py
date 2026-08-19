@@ -205,6 +205,17 @@ def test_read_code_stdin_timeout(monkeypatch):
         _read_code(None, 300)
 
 
+def test_read_code_waits_for_code_file_to_be_populated(monkeypatch, tmp_path):
+    code_file = tmp_path / "code.txt"
+
+    def populate_file(_seconds):
+        code_file.write_text("1234\n", encoding="utf-8")
+
+    monkeypatch.setattr("hhru_bot.auth_code.time.sleep", populate_file)
+
+    assert _read_code(code_file, 1) == "1234"
+
+
 def test_credentials_are_not_logged(caplog):
     caplog.set_level(logging.INFO, logger="hhru_bot.auth_code")
     logger = logging.getLogger("hhru_bot.auth_code")

@@ -35,6 +35,7 @@ _LOGIN_URL = f"{HH_BASE_URL}/account/login"
 _CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
 CODE_TIMEOUT_SECONDS = 300
 CODE_FORM_TIMEOUT_MS = 15_000
+CODE_FILE_POLL_SECONDS = 0.1
 
 
 def mask_login(value: str) -> str:
@@ -51,10 +52,20 @@ def mask_login(value: str) -> str:
 
 def _read_code(code_file: Path | None, timeout_seconds: int) -> str:
     if code_file is not None:
-        try:
-            code = code_file.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise RuntimeError(f"Не удалось прочитать --code-file: {exc}") from exc
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                code = code_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                code = ""
+            if code:
+                return code
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"--code-file не появился или остался пустым через {timeout_seconds} секунд"
+                )
+            time.sleep(min(CODE_FILE_POLL_SECONDS, remaining))
     else:
         print(f"[WAIT] Введите код (таймаут {timeout_seconds} сек):", flush=True)
         ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
