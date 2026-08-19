@@ -256,6 +256,30 @@ def test_dry_run_does_not_click(monkeypatch):
     assert page.gotos == [cr.RESUMES_LIST_URL]
 
 
+def test_duplicate_click_error_is_uncertain(monkeypatch):
+    class ErrorDuplicate(StubLocator):
+        @property
+        def first(self):
+            return self
+
+        def click(self, timeout=None):
+            raise PlaywrightError("navigation interrupted")
+
+    page = StubPage(
+        dup_locators={
+            "": ErrorDuplicate(None, DUP_SEL),
+            CARD_SEL: ErrorDuplicate(None, DUP_SEL),
+        }
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert result.uncertain is True
+    assert "не подтверждено" in result.reason
+
+
 def test_goto_hh_ready_selector_and_login_check_order(monkeypatch):
     """#153: auth probe is fast, then fallback waits for rendered cards (#142)."""
     page = StubPage(

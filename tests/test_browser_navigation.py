@@ -15,7 +15,13 @@ import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot import browser
-from hhru_bot.browser import GOTO_TIMEOUT_MS, goto_hh
+from hhru_bot.browser import (
+    GOTO_TIMEOUT_MS,
+    NotAuthenticated,
+    goto_hh,
+    open_confirmed_resume,
+    require_authenticated_page,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -162,6 +168,34 @@ def test_has_auth_cookie_false_on_empty_cookies():
     page.context.cookies.return_value = []
 
     assert browser.has_auth_cookie(page) is False
+
+
+def test_require_authenticated_page_rejects_missing_cookie():
+    page = MagicMock(name="Page")
+    page.context.cookies.return_value = []
+    with pytest.raises(NotAuthenticated, match="hhtoken"):
+        require_authenticated_page(page)
+
+
+def test_require_authenticated_page_rejects_login_form_with_cookie(monkeypatch):
+    page = MagicMock(name="Page")
+    page.context.cookies.return_value = [{"name": "hhtoken"}]
+    monkeypatch.setattr(browser, "has_login_form", lambda page: True)
+    with pytest.raises(NotAuthenticated, match="форму входа"):
+        require_authenticated_page(page)
+
+
+def test_open_confirmed_resume_checks_auth_and_identity(monkeypatch):
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/123"
+    page.context.cookies.return_value = [{"name": "hhtoken"}]
+    monkeypatch.setattr(browser, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(browser, "has_login_form", lambda page: False)
+    open_confirmed_resume(page, "123")
+
+    page.url = "https://hh.ru/resume/other"
+    with pytest.raises(ValueError, match="identity"):
+        open_confirmed_resume(page, "123")
 
 
 def test_browser_has_no_legacy_url_auth_checker():

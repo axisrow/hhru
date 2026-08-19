@@ -11,6 +11,7 @@ import logging
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
@@ -41,6 +42,49 @@ class PageStateIndeterminate(RuntimeError):
     Пустой результат нельзя выдавать за достоверный, если DOM не подтверждён
     из-за timeout, сетевой ошибки, анти-бота или дрейфа селектора.
     """
+
+
+class NotAuthenticated(PageStateIndeterminate):
+    """The current page does not prove that the hh.ru session is valid."""
+
+
+def require_authenticated_page(
+    page: Page,
+    *,
+    auth_cookie_check=None,
+    login_form_check=None,
+) -> None:
+    """Fail closed when hh.ru did not return an authenticated page.
+
+    This must be called after navigation: the login form is a server-rendered
+    positive signal, while a cookie alone only proves that it remains in the jar.
+    """
+    if not (auth_cookie_check or has_auth_cookie)(page):
+        raise NotAuthenticated(
+            "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
+        )
+    if (login_form_check or has_login_form)(page):
+        raise NotAuthenticated(
+            "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
+            "сервером (запустите `login`, затем повторите)"
+        )
+
+
+def open_confirmed_resume(page: Page, resume_id: str) -> None:
+    """Navigate to and strictly confirm the requested resume identity."""
+    if not resume_id:
+        raise ValueError("resume_id is required")
+    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
+    require_authenticated_page(page)
+    if not resume_identity_matches(page, resume_id):
+        raise ValueError("identity резюме не подтверждён")
+
+
+def resume_identity_matches(page: Page, resume_id: str) -> bool:
+    """Return whether the current URL is exactly the requested resume page."""
+    path = urlsplit(page.url).path.rstrip("/")
+    parts = [part for part in path.split("/") if part]
+    return len(parts) >= 2 and parts[-2] == "resume" and parts[-1] == resume_id
 
 
 # Потолок ожидания навигации по hh.ru. Дефолт Playwright 30с — hh.ru под

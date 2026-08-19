@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ._audit import action_status
 from .copy_resume import confirm_write, format_config_snippet
 
 
@@ -56,11 +57,7 @@ def run(args: argparse.Namespace) -> None:
     except Exception as exc:
         history.record_action("account", "account", "create_resume", "failed", f"исключение: {exc}")
         raise
-    status = (
-        "dry_run"
-        if dry_run
-        else ("uncertain" if result.uncertain else ("success" if result.success else "failed"))
-    )
+    status = action_status(dry_run=dry_run, success=result.success, uncertain=result.uncertain)
     history.record_action("account", "account", "create_resume", status, result.reason)
     if not result.success:
         prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"

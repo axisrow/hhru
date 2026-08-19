@@ -82,8 +82,8 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         raise ValueError("max_pages must be >= 1")
 
     # Lazy imports avoid a module cycle while responses.py recovers topics.
-    from .browser import goto_hh, has_auth_cookie, has_login_form
-    from .responses import NEGOTIATIONS_URL, NotAuthenticated, _has_next_page
+    from .browser import goto_hh, require_authenticated_page
+    from .responses import NEGOTIATIONS_URL, _has_next_page
 
     refs: list[TopicRef] = []
     for page_num in range(max_pages):
@@ -96,15 +96,7 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
         # диагностируемого NotAuthenticated — тот же класс ошибки, что и
         # пустой inbox, но с другой причиной, которую вызывающий код не
         # должен путать с завершённой пагинацией.
-        if not has_auth_cookie(page):
-            raise NotAuthenticated(
-                "cookie hhtoken не найден — сессия истекла (запустите `login`, затем повторите)"
-            )
-        if has_login_form(page):
-            raise NotAuthenticated(
-                "страница содержит форму входа при наличии hhtoken — сессия отвергнута "
-                "сервером (запустите `login`, затем повторите)"
-            )
+        require_authenticated_page(page)
         refs.extend(topic_refs(page.content()))
         try:
             has_next = _has_next_page(page, page_num)

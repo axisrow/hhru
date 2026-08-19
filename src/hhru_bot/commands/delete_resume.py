@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ._audit import action_status, record_resume_action
 from .copy_resume import confirm_write
 
 
@@ -58,25 +59,17 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             result = delete_resume_on_hh(context.new_page(), resume, dry_run)
     except NotAuthenticated as exc:
-        history.record_action(
-            resume.resume_id, resume.resume_id, "delete_resume", "failed", str(exc)
-        )
+        record_resume_action(history, resume.resume_id, "delete_resume", "failed", str(exc))
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         raise SystemExit(1) from None
     except Exception as exc:
-        history.record_action(
-            resume.resume_id, resume.resume_id, "delete_resume", "failed", f"исключение: {exc}"
+        record_resume_action(
+            history, resume.resume_id, "delete_resume", "failed", f"исключение: {exc}"
         )
         raise
 
-    status = (
-        "dry_run"
-        if dry_run
-        else ("uncertain" if result.uncertain else ("success" if result.success else "failed"))
-    )
-    history.record_action(
-        resume.resume_id, resume.resume_id, "delete_resume", status, result.reason
-    )
+    status = action_status(dry_run=dry_run, success=result.success, uncertain=result.uncertain)
+    record_resume_action(history, resume.resume_id, "delete_resume", status, result.reason)
     if not result.success:
         prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
         print(f"{prefix} {resume.id} — {result.reason}")

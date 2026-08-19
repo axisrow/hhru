@@ -11,15 +11,18 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh, has_login_form
+from .browser import (
+    NotAuthenticated,
+    open_confirmed_resume,
+    require_authenticated_page,
+    resume_identity_matches,
+)
 from .config import ResumeConfig
-from .responses import NotAuthenticated
 from .selector_groups.resume_page import (
     RESUME_PUBLISH_BUTTON,
     RESUME_PUBLISH_BUTTON_DATA_QA,
@@ -28,7 +31,6 @@ from .selector_groups.resume_page import (
 
 logger = logging.getLogger("hhru_bot.publish_resume")
 PUBLISH_TIMEOUT_MS = 30_000
-_RESUME_URL_RE = re.compile(r"/resume/([^/?#]+)")
 
 
 @dataclass
@@ -113,12 +115,6 @@ def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePubli
     )
 
 
-def _identity_matches(page: Page, resume_id: str) -> bool:
-    path = urlsplit(page.url).path.rstrip("/")
-    match = _RESUME_URL_RE.fullmatch(path) or _RESUME_URL_RE.search(path)
-    return bool(match and match.group(1) == resume_id)
-
-
 def _visibility_text(page: Page) -> str:
     """Read visibility control text only; never click the visibility control."""
     locator = page.locator(RESUME_VISIBILITY_BUTTON)
@@ -129,11 +125,9 @@ def _visibility_text(page: Page) -> str:
 
 def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> PublishResumeResult:
     """Inspect one config resume and optionally click its publish button."""
-    url = f"{HH_BASE_URL}/resume/{resume.resume_id}"
-    goto_hh(page, url)
-    if has_login_form(page):
-        raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
-    if not _identity_matches(page, resume.resume_id):
+    try:
+        open_confirmed_resume(page, resume.resume_id)
+    except ValueError:
         return PublishResumeResult(resume.id, False, "identity резюме не подтверждён")
 
     state = parse_resume_state(page.content(), resume.resume_id)
@@ -251,7 +245,8 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         # One read-only reload revalidates server state before we report failure.
         try:
             page.reload(wait_until="domcontentloaded")
-            if not _identity_matches(page, resume.resume_id):
+            require_authenticated_page(page)
+            if not resume_identity_matches(page, resume.resume_id):
                 return PublishResumeResult(
                     resume.id,
                     False,
@@ -259,7 +254,12 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
                     uncertain=True,
                 )
             after = parse_resume_state(page.content(), resume.resume_id)
-        except PlaywrightError as exc:
+        except (PlaywrightError, NotAuthenticated) as exc:
+            # После клика сессия могла быть отвергнута при reload (страница
+            # вернула форму входа). Клик уже ушёл, поэтому это серая зона —
+            # uncertain, а не утечка NotAuthenticated наружу (иначе команда
+            # вышла бы [FAIL] без записи uncertain-аудита и позволила бы
+            # бездумный повтор --force поверх уже состоявшейся публикации).
             return PublishResumeResult(
                 resume.id,
                 False,

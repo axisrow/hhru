@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.publish_resume as publish
+from hhru_bot.browser import NotAuthenticated
 from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.publish_resume import parse_resume_state
 
@@ -55,6 +58,7 @@ class _Page:
         self.clicked = 0
         self.reloaded = 0
         self.url = f"https://hh.ru/resume/{RESUME_ID}"
+        self.context = SimpleNamespace(cookies=lambda: [{"name": "hhtoken"}])
 
     def content(self):
         return self.markup
@@ -86,8 +90,13 @@ def _markup(**overrides):
 
 def _run(page, monkeypatch, *, preserve_url=False):
     goto = (lambda page, url: None) if preserve_url else lambda page, url: setattr(page, "url", url)
-    monkeypatch.setattr(publish, "goto_hh", goto)
-    monkeypatch.setattr(publish, "has_login_form", lambda page: False)
+
+    def open_confirmed(page, resume_id):
+        goto(page, f"https://hh.ru/resume/{resume_id}")
+        if preserve_url:
+            raise ValueError("identity резюме не подтверждён")
+
+    monkeypatch.setattr(publish, "open_confirmed_resume", open_confirmed)
     return publish.publish_resume_on_hh(page, _resume(), dry_run=False)
 
 
@@ -204,8 +213,11 @@ def test_publish_rejects_missing_or_ambiguous_button(monkeypatch):
 
 def test_publish_dry_run_never_clicks(monkeypatch):
     page = _Page(_markup())
-    monkeypatch.setattr(publish, "goto_hh", lambda page, url: setattr(page, "url", url))
-    monkeypatch.setattr(publish, "has_login_form", lambda page: False)
+    monkeypatch.setattr(
+        publish,
+        "open_confirmed_resume",
+        lambda page, resume_id: setattr(page, "url", f"https://hh.ru/resume/{resume_id}"),
+    )
     result = publish.publish_resume_on_hh(page, _resume(), dry_run=True)
     assert result.success
     assert page.clicked == 0
@@ -256,3 +268,26 @@ def test_publish_pre_click_rejection_is_not_uncertain(monkeypatch):
     result = _run(page, monkeypatch)
     assert not result.success
     assert result.uncertain is False
+
+
+def test_publish_reload_session_rejection_after_click_is_uncertain(monkeypatch):
+    # #308: клик по кнопке публикации состоялся, но read-only reload после
+    # клика выявил, что сессия отвергнута (страница отдала форму входа).
+    # require_authenticated_page поднимает NotAuthenticated (RuntimeError),
+    # который раньше утекал мимо `except PlaywrightError` наружу, и команда
+    # выходила без записи uncertain-аудита — повторный --force мог бы
+    # опубликовать поверх уже состоявшейся публикации. Теперь это fail-closed
+    # серая зона: uncertain=True, а не необработанное исключение.
+    class _AuthRejectedPage(_Page):
+        def reload(self, wait_until=None):
+            super().reload(wait_until=wait_until)
+            raise NotAuthenticated("сессия отвергнута сервером")
+
+    page = _AuthRejectedPage(_markup(status="not_finished"))
+    page.after_markup = _markup(status="not_finished", isSearchable=False)
+    monkeypatch.setattr(publish, "PUBLISH_TIMEOUT_MS", 1)
+    result = _run(page, monkeypatch)
+    assert not result.success
+    assert result.uncertain is True
+    assert "не подтверждён" in result.reason
+    assert page.clicked == 1

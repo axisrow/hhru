@@ -12,13 +12,11 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, has_login_form
-from .responses import NotAuthenticated
+from .browser import open_confirmed_resume, resume_identity_matches
 from .selector_groups.resume_experience import (
     EXPERIENCE_ADD_BUTTON,
     EXPERIENCE_CANCEL,
@@ -187,11 +185,6 @@ def _merge_fill_plan(
     return merged
 
 
-def _identity_matches(page: Page, resume_id: str) -> bool:
-    parts = [part for part in urlsplit(page.url).path.split("/") if part]
-    return len(parts) >= 2 and parts[-2] == "resume" and parts[-1] == resume_id
-
-
 def _fill(locator, value: str) -> None:
     if locator.count() != 1:
         raise ValueError(f"поле определяется неоднозначно ({locator.count()})")
@@ -206,11 +199,7 @@ def _read(locator) -> str:
 
 def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
     """Read existing rows through their confirmed editor fields, without save."""
-    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
-    if has_login_form(page):
-        raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
-    if not _identity_matches(page, resume_id):
-        raise ValueError("identity резюме не подтверждён")
+    open_confirmed_resume(page, resume_id)
     count = 0
     while page.locator(EXPERIENCE_EDIT_BUTTON.format(index=count)).count() == 1:
         count += 1
@@ -242,10 +231,9 @@ def edit_experience_on_hh(
     page: Page, resume_id: str, plan: ExperiencePlan, *, dry_run: bool, indexes=None
 ):
     """Apply a plan to one or more rows; return a list of textual results."""
-    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
-    if has_login_form(page):
-        raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
-    if not _identity_matches(page, resume_id):
+    try:
+        open_confirmed_resume(page, resume_id)
+    except ValueError:
         return ["identity резюме не подтверждён"]
     if plan.used_fallback and not plan.entries:
         return [plan.reason or "LLM не предложил безопасных изменений"]
@@ -293,7 +281,7 @@ def edit_experience_on_hh(
                     )
                 except PlaywrightError as exc:
                     return results + [f"строка {index}: сохранение не подтверждено: {exc}"]
-                if not _identity_matches(page, resume_id):
+                if not resume_identity_matches(page, resume_id):
                     return results + [f"строка {index}: после save identity резюме не подтверждён"]
                 results.append(f"строка {index}: сохранено")
         except (PlaywrightError, ValueError) as exc:
