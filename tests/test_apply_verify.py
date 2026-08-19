@@ -34,6 +34,18 @@ pytestmark = pytest.mark.integration
 _V1, _V2 = "111111", "222222"
 
 
+@pytest.fixture(autouse=True)
+def _mock_navigation_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep retry semantics while skipping production backoff sleeps.
+
+    The fake pages deliberately exhaust ``goto_hh`` retries in several
+    fail-closed cases.  Sleeping for the real 2s + 4s backoff per attempt adds
+    no coverage here: the navigation/retry assertions still execute with a
+    no-op clock.
+    """
+    monkeypatch.setattr("hhru_bot.browser.time.sleep", lambda _seconds: None)
+
+
 @pytest.mark.parametrize(
     ("reads", "expected"),
     [
