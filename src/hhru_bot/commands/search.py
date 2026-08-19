@@ -81,6 +81,7 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 salary_to=salary.salary_to if salary else None,
                 salary_currency=salary.currency if salary else None,
                 employer_tier=tier,
+                vacancy_text=card.vacancy_text,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)

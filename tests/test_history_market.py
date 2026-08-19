@@ -98,6 +98,12 @@ def test_upsert_accepts_null_salary(tmp_path):
     assert row["salary_currency"] is None
 
 
+def test_upsert_persists_vacancy_text_for_learning_report(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen("1", "python", vacancy_text="Python and Docker")
+    assert h.list_vacancy_texts() == ["Python and Docker"]
+
+
 # --- employer_tier (#93) -----------------------------------------------------
 
 

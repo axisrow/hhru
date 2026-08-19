@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     employer_tier TEXT,
+    vacancy_text TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -323,6 +324,7 @@ class History:
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "vacancy_text", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -959,6 +961,7 @@ class History:
         salary_to: int | None = None,
         salary_currency: str | None = None,
         employer_tier: str | None = None,
+        vacancy_text: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -991,8 +994,8 @@ class History:
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
                      salary_currency, search_query, first_seen_at,
-                     last_seen_at, employer_tier)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_seen_at, employer_tier, vacancy_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -1000,6 +1003,7 @@ class History:
                     salary_to = excluded.salary_to,
                     salary_currency = excluded.salary_currency,
                     employer_tier = excluded.employer_tier,
+                    vacancy_text = excluded.vacancy_text,
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1013,6 +1017,7 @@ class History:
                     now,
                     now,
                     employer_tier,
+                    vacancy_text,
                 ),
             )
 
@@ -1025,10 +1030,19 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "search_query, first_seen_at, last_seen_at, employer_tier "
+                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_vacancy_texts(self) -> list[str]:
+        """Возвращает непустые тексты собранных вакансий для read-only отчётов."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT vacancy_text FROM vacancies_seen "
+                "WHERE vacancy_text IS NOT NULL AND vacancy_text != ''"
+            ).fetchall()
+        return [row["vacancy_text"] for row in rows]
 
     # --- Профиль аккаунта для внешних форм (#282/#284) -----------------------
 
