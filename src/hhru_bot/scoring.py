@@ -655,6 +655,15 @@ def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[
         if info.reviews_count is not None:
             parts.append(f"отзывов: {info.reviews_count}")
         lines.append("Работодатель: " + ", ".join(parts) + ".")
+    # VacancyCard.__post_init__ (search.py) already populates this from
+    # vacancy_text whenever it is set, so no fallback recomputation is needed
+    # here — a card with vacancy_text always has a non-None requirement.
+    requirement = getattr(card, "portfolio_evidence_requirement", None)
+    if requirement is not None and requirement.level != "none":
+        lines.append(
+            "Требование портфолио/проектов: "
+            f"{requirement.level}; источник: " + " | ".join(requirement.evidence)
+        )
 
     if profile is not None:
         if profile.summary:

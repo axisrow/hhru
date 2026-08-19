@@ -278,6 +278,7 @@ def test_lists_cards_with_status_from_ssr(monkeypatch):
     assert len(cards) == 2
     assert cards[0].status == "not_finished"
     assert cards[1].status == "modified"
+    assert not any(card.ssr_unavailable for card in cards)
 
 
 def test_missing_ssr_does_not_fail(monkeypatch):
@@ -289,6 +290,47 @@ def test_missing_ssr_does_not_fail(monkeypatch):
 
     assert len(cards) == 1
     assert cards[0].status is None
+    assert cards[0].ssr_unavailable
+
+
+@pytest.mark.parametrize(
+    "resumes",
+    [
+        [],
+        [{"_attributes": {"hash": ID_A}}],
+        [{"_attributes": {"status": "modified"}}],
+        [{"_attributes": {"hash": ID_A, "status": None}}],
+        [{"_attributes": None}],
+        ["not a resume"],
+    ],
+)
+def test_schema_drift_marks_ssr_unavailable(monkeypatch, resumes):
+    """A malformed or empty SSR payload must not look like a valid status read."""
+    state = json.dumps({"applicantResumes": resumes}, ensure_ascii=False)
+    html = (
+        f"<html><body><template id='HH-Lux-InitialState'>{escape(state)}</template></body></html>"
+    )
+    page = StubPage([StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+    monkeypatch.setattr(page, "content", lambda: html)
+
+    cards = cr.list_resume_cards(page)
+
+    assert cards[0].status is None
+    assert cards[0].ssr_unavailable
+
+
+@pytest.mark.parametrize("raw_state", ["null", "[1, 2]", '"string"'])
+def test_non_dict_ssr_state_marks_unavailable(monkeypatch, raw_state):
+    html = f"<html><body><template id='HH-Lux-InitialState'>{raw_state}</template></body></html>"
+    page = StubPage([StubCard(ID_A, title_text="Backend developer")])
+    _patch_goto(monkeypatch, page)
+    monkeypatch.setattr(page, "content", lambda: html)
+
+    cards = cr.list_resume_cards(page)
+
+    assert cards[0].status is None
+    assert cards[0].ssr_unavailable
 
 
 # --- resolve_numeric_resume_ids (#212) ----------------------------------------

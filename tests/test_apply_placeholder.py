@@ -18,6 +18,7 @@ import sqlite3
 
 import pytest
 
+from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.commands import _common
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.history import History
@@ -135,3 +136,37 @@ def test_real_url_still_reaches_apply(tmp_path, monkeypatch):
 
     assert failed is False
     assert applied_resume_ids == ["AAA111"]
+
+
+def test_search_challenge_escapes_per_resume_indeterminate_handling(tmp_path, monkeypatch):
+    """#344: a challenged search stops all resumes instead of returning True."""
+
+    from hhru_bot.search import VacancySearchIndeterminate
+
+    def _indeterminate(*_args, **_kwargs):
+        raise VacancySearchIndeterminate("search did not render")
+
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+
+    def _raise_antibot(_page):
+        raise AntiBotChallengeDetected(detection)
+
+    monkeypatch.setattr(_common, "search_vacancies", _indeterminate)
+    monkeypatch.setattr(_common, "raise_for_antibot", _raise_antibot)
+    monkeypatch.setattr(
+        _common,
+        "apply_to_vacancy",
+        lambda *_args, **_kwargs: pytest.fail("challenge must stop before apply"),
+    )
+
+    history_db = tmp_path / "history.db"
+    history = History(history_db)
+    config = _config(tmp_path, _resume("https://hh.ru/resume/AAA111"))
+    throttle = Throttle(config.throttle, history)
+
+    with pytest.raises(AntiBotChallengeDetected):
+        _common.run_apply_for_resume(
+            object(), config, config.resumes[0], history, throttle, _apply_args()
+        )
+
+    assert _row_count(history_db, "actions") == 0

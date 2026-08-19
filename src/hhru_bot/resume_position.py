@@ -13,7 +13,9 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from .browser import HH_BASE_URL, goto_hh, has_login_form
@@ -232,15 +234,31 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
     if has_login_form(page):
         raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
     current = read_display_position(page)
+    edit_path = f"/resume/edit/{resume.resume_id}/position"
     if page.locator(FORM).count() == 0:
-        if page.locator(EDIT).count() != 1:
-            raise RuntimeError("кнопка редактирования позиции не подтверждена")
-        page.locator(EDIT).click()
-        # This is a client-side route change, not an inline editor.  Waiting
-        # for the route before the form prevents inspecting the old DOM during
-        # the transition (#328).
-        page.wait_for_url(f"**/resume/edit/{resume.resume_id}/position", wait_until="commit")
-        page.locator(FORM).wait_for(state="visible", timeout=10_000)
+        # The server-rendered trigger is visible before React attaches its
+        # click handler.  A click in that window is a no-op on live hh.ru, so
+        # retry once only when the positive form marker did not appear (#337).
+        profile_path = f"/resume/{resume.resume_id}"
+        for attempt in range(2):
+            trigger = page.locator(EDIT)
+            if trigger.count() != 1:
+                raise RuntimeError("кнопка редактирования позиции не подтверждена")
+            trigger.click()
+            try:
+                page.locator(FORM).wait_for(state="visible", timeout=30_000)
+                break
+            except PlaywrightError as exc:
+                if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
+                    raise RuntimeError("форма редактирования позиции не открылась") from exc
+    # A visible FORM alone does not prove it belongs to `resume.resume_id` —
+    # hh.ru always routes this editor to its own dedicated edit route (never
+    # mounts inline, confirmed by the #328 live audit), so require that route
+    # as a post-condition unconditionally, including when the form was
+    # already mounted before this call (#337 follow-up: the pre-#337
+    # wait_for_url enforced this binding and must not be dropped with it).
+    if urlsplit(page.url).path.rstrip("/") != edit_path:
+        raise RuntimeError("форма редактирования позиции открыта не для того резюме")
     form_values = read_position(page)
     return PositionValues(
         title=form_values.title or current.title,

@@ -127,6 +127,25 @@ config/
 ./scripts/run.sh run
 ```
 
+### Профиль для внешних форм
+
+После успешного `login`/`login-code` подтверждённые контактные данные аккаунта
+автоматически сохраняются в history-БД аккаунта (при работе через `--account`
+это `data/accounts/<name>/history.db`, а не общий `data/history.db`). Для
+данных, которых нет на hh.ru (например, Telegram), используйте локальную
+команду — с тем же `--account`, что и `login`/`fill-form`, иначе значения
+уйдут в другую БД и не будут видны при заполнении форм:
+
+```bash
+./scripts/run.sh --account default profile set "Telegram" "@username"
+./scripts/run.sh --account default profile show
+./scripts/run.sh --account default profile unset "Telegram"
+```
+
+Выпуск с `account_profile` заменяет прежний `resume.form_profile.answers` в YAML.
+Если этот блок был в вашем `data/config.yaml`, перенесите значения вручную через
+`profile set`; старый YAML-источник больше не читается.
+
 Добавь `--headless`, если не нужно видеть окно браузера (не рекомендуется
 на первых запусках — полезно наблюдать, что происходит).
 
@@ -435,10 +454,8 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 
 ### `login-code`
 
-- `--request` — Запросить код
-- `--submit` — Отклонить: поле кода не подтверждено
-- `--login` — Email или телефон (только с --request)
-- `--code` — Одноразовый код (только с --submit)
+- `--login` — Email или телефон
+- `--code-file CODE_FILE` — Файл с одноразовым кодом; без него код читается из stdin
 
 ### `mark`
 
@@ -612,6 +629,10 @@ Account-wide ответы в чатах: план из локальной ист
   Python + Playwright. Ценно: паттерн персистентной сессии (`state.json`)
   — ручной вход в видимом браузере один раз, затем headless (обход
   блокировки после закрытия API).
+- [semernyakov/hh-auto-apply](https://github.com/semernyakov/hh-auto-apply) —
+  Python + синхронный Playwright, MIT. Ценно: парсер cooldown поднятия
+  резюме из текстов hh.ru («через N ч M мин», «сегодня/завтра в HH:MM»),
+  который можно адаптировать для точного вывода времени в `bump`.
 - [beatwad/XX_Auto_Jobs_Applier](https://github.com/beatwad/XX_Auto_Jobs_Applier)
   — Python + Playwright, MIT. Ценно: config-driven архитектура (YAML) и
   приём решения капчи через Telegram.

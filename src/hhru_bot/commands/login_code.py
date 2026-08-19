@@ -1,30 +1,26 @@
-"""Команда login-code: запрос и отправка одноразового кода hh.ru."""
+"""Command for one-process login by an hh.ru email or SMS code."""
 
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser("login-code", help="Запрос кода; отправка пока недоступна")
-    phase = p.add_mutually_exclusive_group(required=True)
-    phase.add_argument("--request", action="store_true", help="Запросить код")
-    phase.add_argument("--submit", action="store_true", help="Отклонить: поле кода не подтверждено")
-    p.add_argument("--login", help="Email или телефон (только с --request)")
-    p.add_argument("--code", help="Одноразовый код (только с --submit)")
+    p = subparsers.add_parser("login-code", help="Войти по коду hh.ru в одном процессе")
+    p.add_argument("--login", required=True, help="Email или телефон")
+    p.add_argument(
+        "--code-file",
+        type=Path,
+        help="Файл с одноразовым кодом; без него код читается из stdin",
+    )
     p.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> None:
-    from ..auth_code import request_code, submit_code
+    from ..auth_code import login_with_code
     from ..config import load_config_or_exit
 
-    if args.request == (args.login is None) or args.submit == (args.code is None):
-        raise ValueError("Для --request нужен --login, для --submit нужен --code")
     config = load_config_or_exit(args.config)
-    if args.request:
-        request_code(config, args.login)
-        print("[OK] Код запрошен; отправка через CLI пока недоступна, используйте ручной login")
-    else:
-        submit_code(config, args.code)
-        print("[OK] Сессия сохранена")
+    login_with_code(config, args.login, code_file=args.code_file)
+    print("[OK] Сессия сохранена")

@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Callable
 
 from playwright.sync_api import Page
 
@@ -101,7 +102,9 @@ SUCCESS_CONFIRMATION_TIMEOUT_MS = 30_000
 
 
 def wait_success_confirmation(
-    page: Page, timeout_ms: int = SUCCESS_CONFIRMATION_TIMEOUT_MS
+    page: Page,
+    timeout_ms: int = SUCCESS_CONFIRMATION_TIMEOUT_MS,
+    terminal_check: Callable[[], None] | None = None,
 ) -> bool:
     """Подтверждает успех отклика по позитивным сигналам.
 
@@ -121,6 +124,10 @@ def wait_success_confirmation(
     """
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
+        # #344: a challenge may be the submit response itself. Check on every
+        # poll so we stop immediately instead of waiting 30s and navigating on.
+        if terminal_check is not None:
+            terminal_check()
         if which := _any_positive_signal(page):
             logger.debug("Success подтверждён: %s", which)
             return True

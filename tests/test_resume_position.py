@@ -70,14 +70,29 @@ def test_fill_mode_preserves_existing_values():
     assert merged.salary == 100000
 
 
-def test_open_position_form_waits_for_dedicated_editor_route(monkeypatch):
-    """#328: the edit click leaves /resume/<id> before the form is mounted."""
+def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
+    """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     edit = MagicMock()
     edit.count.return_value = 1
     form = MagicMock()
     form.count.return_value = 0
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    form.wait_for.side_effect = [
+        PlaywrightTimeoutError("not hydrated"),
+        None,
+    ]
+
+    def click_side_effect():
+        # The second attempt's click is the one that actually hydrates and
+        # commits the dedicated edit route.
+        if edit.click.call_count == 2:
+            page.url = "https://hh.ru/resume/edit/resume-id/position"
+
+    edit.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
         resume_position.EDIT: edit,
         resume_position.FORM: form,
@@ -89,8 +104,103 @@ def test_open_position_form_waits_for_dedicated_editor_route(monkeypatch):
 
     resume_position.open_position_form(page, resume)
 
-    edit.click.assert_called_once_with()
-    page.wait_for_url.assert_called_once_with(
-        "**/resume/edit/resume-id/position", wait_until="commit"
-    )
-    form.wait_for.assert_called_once_with(state="visible", timeout=10_000)
+    assert edit.click.call_count == 2
+    assert form.wait_for.call_count == 2
+    form.wait_for.assert_called_with(state="visible", timeout=30_000)
+    page.wait_for_url.assert_not_called()
+
+
+def test_open_position_form_rejects_form_on_wrong_resume_route(monkeypatch):
+    """#337 follow-up: a visible form must belong to the requested resume_id.
+
+    The pre-#337 code enforced this via ``wait_for_url`` before querying the
+    form. Dropping that wait must not drop the invariant it protected: a
+    visible ``FORM`` on an unexpected edit route (e.g. hh.ru routed the click
+    to a different resume) must still fail closed instead of being read as
+    the requested resume's position.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    # The form is visible, but the committed route belongs to a different resume.
+    page.url = "https://hh.ru/resume/edit/other-resume-id/position"
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    form.wait_for.return_value = None
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    read_position = MagicMock(return_value=PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", read_position)
+
+    with pytest.raises(
+        RuntimeError, match="форма редактирования позиции открыта не для того резюме"
+    ):
+        resume_position.open_position_form(page, resume)
+    read_position.assert_not_called()
+
+
+def test_open_position_form_accepts_correct_edit_route_on_first_attempt(monkeypatch):
+    """Positive counterpart: the post-condition must accept the real edit route.
+
+    Pins the check against `edit_path` specifically — a check comparing
+    against `profile_path` (or any other constant) instead would either
+    reject this legitimate first-attempt success or accept the wrong-route
+    cases the tests above cover, so this test and those must both pass only
+    together with the correct comparison.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/position"
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    form.wait_for.return_value = None
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+
+    resume_position.open_position_form(page, resume)
+
+    assert edit.click.call_count == 1
+    assert form.wait_for.call_count == 1
+
+
+def test_open_position_form_rejects_already_mounted_form_on_wrong_route(monkeypatch):
+    """The route post-condition must not be bypassable via a pre-mounted form.
+
+    When ``FORM.count() != 0`` the whole click/retry block is skipped
+    entirely. If the page happens to already show a position form for a
+    different resume (stale editor state, unexpected redirect), that form
+    must still be rejected, not read as the requested resume's position.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/other-resume-id/position"
+    form = MagicMock()
+    form.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    read_position = MagicMock(return_value=PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", read_position)
+
+    with pytest.raises(
+        RuntimeError, match="форма редактирования позиции открыта не для того резюме"
+    ):
+        resume_position.open_position_form(page, resume)
+    read_position.assert_not_called()
