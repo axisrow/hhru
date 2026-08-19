@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -17,6 +18,7 @@ from .selector_groups import resume_page
 logger = logging.getLogger("hhru_bot.skills")
 
 LEVELS = frozenset(("basic", "intermediate", "advanced"))
+EDITOR_MOUNT_TIMEOUT_MS = 30_000
 
 
 @dataclass(frozen=True)
@@ -134,17 +136,28 @@ def edit_skills_on_hh(
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
-    trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
-    if trigger.count() != 1:
-        return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
-    trigger.click()
-    # #328: wait for the dedicated keySkills route before querying the editor.
     editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
-    try:
-        page.wait_for_url(f"**/resume/edit/{resume.resume_id}/keySkills", wait_until="commit")
-        editor.wait_for(state="visible")
-    except PlaywrightError:
-        return SkillsResult(False, reason="форма навыков не открылась после перехода")
+    profile_path = f"/resume/{resume.resume_id}"
+    edit_path = f"/resume/edit/{resume.resume_id}/keySkills"
+    # As with position (#337), the visible SSR trigger can precede React event
+    # hydration.  Only the editor becoming visible confirms that a click worked.
+    for attempt in range(2):
+        trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
+        if trigger.count() != 1:
+            return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
+        trigger.click()
+        try:
+            editor.wait_for(state="visible", timeout=EDITOR_MOUNT_TIMEOUT_MS)
+            break
+        except PlaywrightError:
+            if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
+                return SkillsResult(False, reason="форма навыков не открылась")
+    # A visible editor alone does not prove it belongs to `resume.resume_id` —
+    # hh.ru routes the editor to its own dedicated edit route, so require that
+    # route as a post-condition (#337 follow-up: the pre-#337 wait_for_url
+    # enforced this binding and must not be dropped with it).
+    if urlsplit(page.url).path.rstrip("/") != edit_path:
+        return SkillsResult(False, reason="форма навыков открыта не для того резюме")
     existing = read_skills(page)
     existing_keys = {skill.casefold() for skill in existing}
     additions = tuple(skill for skill in skills if skill.name.casefold() not in existing_keys)
