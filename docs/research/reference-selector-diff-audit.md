@@ -129,10 +129,50 @@ result: PROVEN
 
 Пять независимых проектов, ни один не использует `resume-topic-title`.
 
-**Оговорка.** Наш дамп снят на форме с **одним** резюме (`resume-title` встречается
-1 раз), поэтому он подтверждает отсутствие `resume-topic-title`, но **не** доказывает,
-какой именно селектор верен для мульти-резюме. Точный якорь обязан быть подтверждён
-на живой форме аккаунта с несколькими резюме до правки.
+### Разбор якорей: какой из пяти кандидатов верен
+
+Сверка **каждого** кандидата с нашим живым дампом:
+
+| Кандидат | Источник | Вхождений в дампе |
+|---|---|---|
+| `resume-topic-title` | **наш текущий** | **0** |
+| `data-magritte-select-option` | AgentShekel | 0 |
+| `[data-qa^="magritte-select-option-"]` | RumyantsevQa, kavotavochavo1 | 0 |
+| `vacancy-response-popup-form-resume-dropdown` / `-option` | YAMAKAYAMACO | 0 |
+| `resume-select-item` | Steev193 | 0 |
+| **`resume-title`** | AgentShekel (fallback) | **1** |
+| **`resume-detail`** | AgentShekel, RumyantsevQa | **1** |
+
+Полный список `data-qa` внутри `<form name="vacancy_response">`: `cell`,
+`cell-left-side`, `cell-text-content`, `employer-asking-for-test`, `resume-detail`,
+`resume-title`, `task-body`, `task-question`, `test-description`,
+`textarea-native-wrapper`, `textarea-wrapper`, `title`,
+`vacancy-response-letter-toggle`, `vacancy-response-submit-popup`.
+Контрола `select`/`dropdown` с собственным `data-qa` в форме нет.
+
+Разбор дерева даёт цепочку предков `resume-title`:
+
+```
+<div role="button" tabindex="0" aria-disabled="false">   <-- НЕТ data-qa
+  └ <div data-qa="cell">
+      └ <div data-qa="cell-left-side">
+          └ <div data-qa="resume-title">
+          └ <div data-qa="resume-detail">
+```
+
+Карточка резюме **обёрнута в интерактивный `role="button"` без `data-qa`** — это
+кликабельный пикер, ровно как описывает AgentShekel (`hh_client.py:1050-1155`).
+
+**Вывод:** `resume-title` — единственный якорь, подтверждённый нашим живым DOM.
+Но прямая подстановка вместо `resume-topic-title` **недостаточна и сломает семантику**:
+`resume-title` это **схлопнутый заголовок**, а не коллекция опций, поэтому
+`count()` (`apply/steps.py:257`) вернёт 1 и при одном резюме, и при пяти.
+
+**Оговорка.** Дамп снят на форме с **одним** резюме: он доказывает разметку
+схлопнутого состояния, но разметку **развёрнутого** списка опций мы не видели ни разу.
+Якорь опции обязан быть подтверждён probe на аккаунте с несколькими резюме.
+Порядок работ для исполнителя зафиксирован в #340: сначала fail-closed на моках
+(не отправлять при неподтверждённом контроле), затем probe, затем сам выбор.
 
 ---
 
