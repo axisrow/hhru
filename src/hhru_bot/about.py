@@ -127,6 +127,13 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
             trigger_selector=resume_page.RESUME_EDIT_ABOUT_BUTTON,
             editor_selector=resume_page.RESUME_ABOUT_EDITOR,
             profile_path=f"/resume/{resume.resume_id}",
+            # Pre-#339 behavior clicked unconditionally: the editor marker can
+            # be present in the DOM before React hydrates it, so count() == 1
+            # does not mean it is visible/functional yet. Without this, a
+            # hidden-but-present field skips both the click and the
+            # wait_for(visible), and input_value() silently reads "" from an
+            # unhydrated textarea instead of the real "Обо мне" text.
+            click_trigger=True,
             trigger_error="кнопка редактирования «Обо мне» не найдена однозначно",
             open_error="форма «Обо мне» не открылась",
             wrong_route_error="форма «Обо мне» открыта не для того резюме",

@@ -115,3 +115,29 @@ def test_open_about_editor_retries_pre_hydration_noop_click(monkeypatch):
     assert open_about_editor(page, bare_resume("resume-id")) == ""
     assert trigger.click.call_count == 2
     assert field.wait_for.call_count == 2
+
+
+def test_open_about_editor_waits_for_hidden_but_present_field(monkeypatch):
+    """A pre-hydration editor already in the DOM (count==1, not visible) must
+    still be clicked and waited on, not returned unread (#339)."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    field = MagicMock()
+    # Present in the DOM before hydration — count() == 1, but not yet visible.
+    field.count.return_value = 1
+    field.input_value.return_value = "Реальный текст, который уже был в поле."
+    field.wait_for.return_value = None
+
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    result = open_about_editor(page, bare_resume("resume-id"))
+
+    assert trigger.click.call_count == 1
+    assert field.wait_for.call_count == 1
+    assert result == "Реальный текст, который уже был в поле."
