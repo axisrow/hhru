@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from ..ai.questions import AIQuestionAnswerer, extract_questions
 from ..browser import goto_hh, has_login_form
 from ..history import SKIP_REASONS
 from ..search import VacancyCard
@@ -95,6 +96,8 @@ class ApplyContext:
     verifier: ResponseVerifier | None = None
     # #245: durable audit marker immediately before entering the submit path.
     before_submit: Callable[[], None] | None = None
+    question_answerer: AIQuestionAnswerer | None = None
+    force: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -142,6 +145,8 @@ def apply_to_vacancy(
     letter_provider: CoverLetterProvider | None = None,
     verifier: ResponseVerifier | None = None,
     before_submit: Callable[[], None] | None = None,
+    question_answerer: AIQuestionAnswerer | None = None,
+    force: bool = False,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -153,6 +158,8 @@ def apply_to_vacancy(
         letter_provider=letter_provider,
         verifier=verifier,
         before_submit=before_submit,
+        question_answerer=question_answerer,
+        force=force,
     )
     return _run(ctx)
 
@@ -255,9 +262,11 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
         ctx.letter_variant = VARIANT_TEMPLATE
 
-    if ctx.dry_run:
+    if ctx.dry_run and ctx.question_answerer is None:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
         return ctx.ok("dry-run")
+    if ctx.question_answerer is not None and not ctx.dry_run and not ctx.force:
+        return ctx.fail("LLM-ответы на вопросы требуют явного --force")
 
     # #247: ревалидация маркера «уже откликались» ДО клика по кнопке отклика.
     # Маркеры — vacancy-page селекторы (dedup.py), их нет в DOM формы
@@ -286,8 +295,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return _finalize_post_click_failure(ctx, reason)
     ctx.probe("form_loaded")
 
-    # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
-    # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).
+    # #95/#97: detect questions before any form write. #97 is opt-in and keeps
+    # the old detect-only skip path when no answerer is configured.
     questions = detect_questions(ctx.page)
     if questions.indeterminate:
         # round-2 fix: границы формы не резолвились — блокируем отправку, но НЕ
@@ -295,9 +304,29 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         # навсегда исключать вакансию из is_skipped (#87).
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, questions.reason)
         return _finalize_post_click_failure(ctx, questions.reason)
-    if questions.has_questions:
+    if questions.has_questions and ctx.question_answerer is None:
         logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
         return ctx.skip(questions.reason)
+    if ctx.question_answerer is not None:
+        extracted = extract_questions(ctx.page) if questions.has_questions else []
+        proposals = ctx.question_answerer.propose_all(extracted)
+        for proposal in proposals:
+            logger.info(
+                "[DRY-RUN] Вопрос: %s | Ответ: %s | confidence=%.2f",
+                proposal.question.text,
+                proposal.answer or "(пропущен: низкая уверенность)",
+                proposal.confidence,
+            )
+        low_confidence = [proposal for proposal in proposals if proposal.low_confidence]
+        if low_confidence:
+            reason = (
+                f"пропущен вопрос с низкой уверенностью ({len(low_confidence)}): "
+                + low_confidence[0].question.text
+            )
+            return ctx.skip(reason, skip_reason=SKIP_REASONS.QUESTION_LOW_CONFIDENCE)
+        if ctx.dry_run:
+            return ctx.ok("dry-run: предложенные ответы на вопросы показаны")
+        ctx.question_answerer.apply(ctx.page, proposals)
 
     # #176: окно действия. Submit-клик — единственный необратимый шаг формы;
     # исключение в момент/сразу после него (navigation timeout после POST,

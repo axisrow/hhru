@@ -48,6 +48,11 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Показать, что будет сделано, без реальных действий",
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Разрешить реальную отправку отклика с LLM-ответами на вопросы",
+    )
     p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
 
 
@@ -139,6 +144,22 @@ def _build_letter_provider(
         resume_profile=profile,
         fallback_template=cover_letter_template,
     )
+
+
+def _build_question_answerer(config: AppConfig, resume: ResumeConfig):
+    """Build the opt-in LLM question answerer, if configured."""
+    ai_config = getattr(config, "ai", None)
+    if ai_config is None or not ai_config.answer_questions:
+        return None
+    from ..ai.llm_client import LLMClient
+    from ..ai.questions import AIQuestionAnswerer
+
+    try:
+        client = LLMClient(ai_config)
+    except ImportError as exc:
+        logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+        return None
+    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None))
 
 
 def _build_scoring_provider(
@@ -385,6 +406,17 @@ def run_apply_for_resume(
 
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+    question_answerer = _build_question_answerer(config, resume)
+    if question_answerer is not None and not args.dry_run and not getattr(args, "force", False):
+        print(
+            "[FAIL] LLM-ответы на тест-вопросы требуют --force; без него разрешён только --dry-run"
+        )
+        return True
+    if question_answerer is not None and not args.dry_run:
+        print(
+            "[WARNING] --force включён: LLM-ответы на тест-вопросы будут заполнены "
+            "и отправлены без дополнительного подтверждения"
+        )
 
     # #212: атрибуция резюме в верификаторе. Конфиг знает хэш резюме, SSR
     # /applicant/negotiations — только числовой resumeId; без маппинга found
@@ -427,6 +459,9 @@ def run_apply_for_resume(
             # внешней проверкой /applicant/negotiations до записи в history.
             "verifier": _verifier,
         }
+        if question_answerer is not None:
+            apply_kwargs["question_answerer"] = question_answerer
+            apply_kwargs["force"] = getattr(args, "force", False)
         if not args.dry_run:
             apply_kwargs["before_submit"] = _before_submit
         try:

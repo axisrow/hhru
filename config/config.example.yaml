@@ -31,7 +31,9 @@ account:
 # (auth.json + конфиг Hermes), hhru их не задаёт и не переопределяет. Поля
 # provider/model/base_url устарели и игнорируются — оставьте секцию пустой:
 #
-# ai: {}
+# ai:
+#   # Issue #97: dry-run previews proposed answers; real form filling requires --force.
+#   answer_questions: false
 
 
 throttle:

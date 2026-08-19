@@ -39,6 +39,7 @@ class AiConfig:
     provider: str | None = None
     model: str | None = None
     base_url: str | None = None
+    answer_questions: bool = False
 
 
 _LEGACY_ROUTING_FIELDS = ("provider", "model", "base_url")
@@ -72,7 +73,10 @@ def parse_ai(raw, context: str) -> AiConfig | None:
         )
     # После fail-closed guard'а legacy-поля не могут быть не-None — AiConfig
     # всегда строится без них (маршрутизация Hermes-owned).
-    return AiConfig()
+    answer_questions = raw.get("answer_questions", False)
+    if not isinstance(answer_questions, bool):
+        raise ConfigError(f"Поле '{context}.answer_questions' должно быть boolean")
+    return AiConfig(answer_questions=answer_questions)
 
 
 # ai — корневая секция (как account), не resume-подсекция, поэтому в resume-реестр
