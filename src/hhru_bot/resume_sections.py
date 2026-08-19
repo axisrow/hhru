@@ -211,7 +211,7 @@ def _apply_rows(
             if resume_id:
                 open_hydrated_resume_editor(
                     page,
-                    trigger_selector=f"{RESUME_EDIT_BUTTON[block]} >> nth={index}",
+                    trigger_selector=trigger.nth(index),
                     editor_selector=ready_selector,
                     profile_path=f"/resume/{resume_id}",
                     edit_path=SECTION_ROUTES[block],
