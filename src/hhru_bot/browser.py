@@ -78,6 +78,46 @@ class NotAuthenticated(PageStateIndeterminate):
     """The current page does not prove that the hh.ru session is valid."""
 
 
+def open_hydrated_resume_editor(
+    page: Page,
+    *,
+    trigger_selector: str,
+    editor_selector: str,
+    profile_path: str,
+    edit_path: str | None = None,
+    click_trigger: bool = False,
+    timeout: int = 30_000,
+    trigger_error: str = "кнопка редактирования не подтверждена",
+    open_error: str = "форма редактирования не открылась",
+    wrong_route_error: str = "форма редактирования открыта не для того резюме",
+):
+    """Open a resume editor only after its hydrated DOM marker appears.
+
+    Resume pages render edit triggers before React attaches their handlers. A
+    click can therefore succeed at the DOM level while doing nothing. Retry
+    only while still on the profile page and require the editor marker as the
+    positive result; callers may additionally bind the editor to a dedicated
+    edit route.
+    """
+    editor = page.locator(editor_selector)
+    if click_trigger or editor.count() == 0:
+        for attempt in range(2):
+            trigger = page.locator(trigger_selector)
+            if trigger.count() != 1:
+                raise RuntimeError(trigger_error)
+            try:
+                trigger.click()
+                editor.wait_for(state="visible", timeout=timeout)
+                break
+            except PlaywrightError as exc:
+                if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
+                    raise RuntimeError(open_error) from exc
+    expected_path = edit_path or profile_path
+    if urlsplit(page.url).path.rstrip("/") != expected_path:
+        raise RuntimeError(wrong_route_error)
+    return editor
+
+
 def require_authenticated_page(
     page: Page,
     *,
