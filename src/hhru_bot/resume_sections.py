@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
 from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from .config_sections.resume_sections import ResumeSectionsConfig
 
 logger = logging.getLogger("hhru_bot.resume_sections")
+FORM_TIMEOUT_MS = 10_000
 
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
@@ -170,16 +172,35 @@ def _apply_rows(
     errors: list[str] = []
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
     for index, item in enumerate(items):
-        if index >= trigger.count():
-            errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
-            continue
-        trigger.nth(index).click()
-        save = fill_row(page, item)
-        if not dry_run:
-            if save.count() != 1:
-                errors.append(f"{block}: неоднозначная кнопка сохранения")
+        ready_selector = (
+            f"[data-qa='{ATTESTATION_FIELDS[0]}']"
+            if block == "attestations"
+            else "input[name='company']"
+        )
+        try:
+            # trigger.count() itself can raise on iterations after a previous
+            # row's save.click() already succeeded (#352/codex round 3) — the
+            # whole per-row body must stay inside this guard, not just the
+            # click/wait_for, so no browser call here can escape apply_plan
+            # uncaught and hide which earlier rows already saved.
+            if index >= trigger.count():
+                errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
-            save.click()
+            trigger.nth(index).click()
+            page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            save = fill_row(page, item)
+            if not dry_run:
+                if save.count() != 1:
+                    errors.append(f"{block}: неоднозначная кнопка сохранения")
+                    continue
+                save.click()
+        except PlaywrightError as exc:
+            # A hydration timeout here may follow an already-successful save.click()
+            # on a previous row (#352/codex): fail closed with an explicit error for
+            # this row and stop the block instead of letting the exception escape
+            # apply_plan and hide which earlier rows already saved.
+            errors.append(f"{block}: строка {index} не подтверждена: {exc}")
+            break
     return errors
 
 

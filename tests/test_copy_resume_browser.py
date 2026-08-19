@@ -191,7 +191,8 @@ class StubPage:
         if selector == DUP_SEL and self._url_after_click:
             self.url = self._url_after_click
 
-    def wait_for_url(self, pattern, timeout=None):
+    def wait_for_url(self, pattern, wait_until=None, timeout=None):
+        assert wait_until == "commit"
         if not pattern.search(self.url):
             raise PlaywrightTimeoutError("wait_for_url timeout")
 
