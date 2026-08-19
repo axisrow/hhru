@@ -21,7 +21,11 @@ def register(subparsers) -> None:
             "показывает dry-run-предложение; сохранение требует --force или подтверждения."
         ),
     )
-    parser.add_argument("--resume", required=True, help="ID резюме из конфига")
+    parser.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Показать предложение без сохранения"
     )
@@ -41,13 +45,16 @@ def run(args: argparse.Namespace) -> None:
     from ..config import ConfigError, load_config_or_exit
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
+    # needs='ai_profile': точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume, needs=("ai_profile",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    if config.ai is None or resume.ai_profile is None:
-        print("[FAIL] Для команды about нужны секция ai и ai_profile у резюме")
+    if config.ai is None:
+        print("[FAIL] Для команды about нужна секция ai в config.yaml")
         sys.exit(1)
     # ResumeConfig.ai_profile is typed as a neutral `object | None` placeholder
     # (see CLAUDE.md config_sections) shared across unrelated features; #17

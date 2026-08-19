@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -37,7 +38,10 @@ logger = logging.getLogger("hhru_bot.cli")
 
 def add_common_args(p: argparse.ArgumentParser) -> None:
     """Общие аргументы для команд, работающих по резюме/поиску."""
-    p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
+    p.add_argument(
+        "--resume",
+        help="Slug из конфига или resume_id HH.ru (по умолчанию — все)",
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -54,6 +58,42 @@ def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[Res
 
 def resumes_from_args(config: AppConfig, args: argparse.Namespace) -> list[ResumeConfig]:
     return resolve_resumes(config, [args.resume] if args.resume else None)
+
+
+# #319: реальный resume_id HH.ru — hex-хэш (в тестах укороченный), slug'и конфига
+# под паттерн не попадают (это слова в нижнем регистре с дефисами).
+_RESUME_HASH_RE = re.compile(r"[0-9a-f]{6,}")
+
+
+def resolve_resume(config: AppConfig, key: str, needs: tuple[str, ...] = ()) -> ResumeConfig:
+    """Резолв ``--resume`` по slug из конфига, реальному resume_id HH.ru или bare (#319).
+
+    Порядок: запись конфига (slug или hash) → если не найдено и ключ похож на
+    hex-хэш HH.ru — bare-резюме без настроек. ``needs`` — имена секций
+    (``ai_profile``, ``education``, ...), без которых команда не имеет смысла:
+    для их отсутствия поднимается точечная ConfigError про недостающую настройку,
+    а не вводящая в заблуждение «резюме не найдено в конфиге».
+
+    Массовый apply-путь (``resolve_resumes``) намеренно НЕ использует bare:
+    отклик/поиск без настроек конфига не имеют смысла и должны требовать явной
+    регистрации резюме.
+    """
+    from ..config import ConfigError, bare_resume
+
+    try:
+        resume = config.get_resume(key)
+    except ConfigError:
+        if _RESUME_HASH_RE.fullmatch(key):
+            resume = bare_resume(key)
+        else:
+            raise
+    for field_name in needs:
+        if getattr(resume, field_name) is None:
+            raise ConfigError(
+                f"Для резюме '{key}' требуется настройка '{field_name}' в config.yaml "
+                "(резюме не зарегистрировано в конфиге или секция не задана)."
+            )
+    return resume
 
 
 def _build_letter_provider(

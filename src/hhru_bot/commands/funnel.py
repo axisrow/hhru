@@ -26,7 +26,7 @@ def register(subparsers) -> None:
         "funnel",
         help="Воронка откликов: отправлено → просмотрено → приглашение → оффер",
     )
-    p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
+    p.add_argument("--resume", help="Slug из конфига или resume_id HH.ru (по умолчанию — все)")
     p.add_argument(
         "--format",
         choices=FORMATS,
@@ -54,14 +54,15 @@ def register(subparsers) -> None:
 
 
 def _resolve_resume_id(args: argparse.Namespace):
-    """Резолвит --resume (slug) → resume.resume_id (как stats). None = все."""
+    """Резолвит --resume (slug или resume_id HH.ru, #319) → resume.resume_id. None = все."""
     from ..config import ConfigError, load_config_or_exit
+    from ._common import resolve_resume
 
     if args.resume is None:
         return None
     config = load_config_or_exit(args.config)
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as e:
         print(f"Резюме не найдено: {e}", file=sys.stderr)
         sys.exit(1)

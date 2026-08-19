@@ -26,7 +26,11 @@ def register(subparsers) -> None:
             "или интерактивного подтверждения; --dry-run ничего не отправляет."
         ),
     )
-    p.add_argument("--resume", required=True, help="ID резюме из конфига")
+    p.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -77,8 +81,10 @@ def run(args: argparse.Namespace) -> None:
     from ._audit import action_status, record_resume_action
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as e:
         print(f"[FAIL] {e}")
         sys.exit(1)

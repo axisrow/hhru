@@ -15,6 +15,10 @@ logger = logging.getLogger("hhru_bot.config")
 # Keep this recognition narrow: arbitrary resume ids remain valid config values.
 _RESUME_PLACEHOLDER_RE = re.compile(r"^(?:X{8,}|Y{8,})$")
 
+# URL-вид резюме HH.ru для записи, которой нет в конфиге (#319): тот же формат,
+# что печатает format_config_snippet (commands/copy_resume.py).
+_RESUME_URL_PREFIX = "https://hh.ru/resume/"
+
 
 def is_resume_url_placeholder(resume_url: str) -> bool:
     """Return whether ``resume_url`` contains the example-config placeholder."""
@@ -69,6 +73,22 @@ class ResumeConfig:
         return self.resume_url.rstrip("/").split("/")[-1]
 
 
+def bare_resume(resume_id: str) -> ResumeConfig:
+    """ResumeConfig для резюме HH.ru без записи в config.yaml (#319).
+
+    Канонический источник списка резюме — аккаунт HH.ru; конфиг — опциональный
+    overlay настроек. bare-резюме адресуемо на hh.ru (``resume_url``/
+    ``resume_id``), все секции настроек — None, search — пустая заглушка
+    (нужна только как обязательное поле дата-класса; команды поиска получают
+    bare-резюме только через точечный отказ, не через пустой запрос).
+    """
+    return ResumeConfig(
+        id=resume_id,
+        resume_url=f"{_RESUME_URL_PREFIX}{resume_id}",
+        search=SearchFilters(text=""),
+    )
+
+
 @dataclass
 class AppConfig:
     storage_state_file: Path
@@ -82,8 +102,14 @@ class AppConfig:
     ai: AiConfig | None = None
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
+        # #319: ключ адресации — slug из конфига ИЛИ реальный resume_id HH.ru
+        # (числовой хвост resume_url). Slug проверяется первым, чтобы коллизия
+        # slug/hash всегда решалась в пользу явного локального имени.
         for resume in self.resumes:
             if resume.id == resume_id:
+                return resume
+        for resume in self.resumes:
+            if resume.resume_id == resume_id:
                 return resume
         available = ", ".join(r.id for r in self.resumes)
         raise ConfigError(f"Резюме '{resume_id}' не найдено в конфиге. Доступные: {available}")

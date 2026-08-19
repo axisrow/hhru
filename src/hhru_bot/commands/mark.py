@@ -28,7 +28,7 @@ def register(subparsers) -> None:
         "mark",
         help="Ручная пометка статуса вакансии (напр. оффер, который hh.ru не отдаёт)",
     )
-    p.add_argument("--resume", help="ID резюме из конфига (обязательно)")
+    p.add_argument("--resume", help="Slug из конфига или resume_id HH.ru (обязательно)")
     p.add_argument("--vacancy", help="ID вакансии (число из URL https://hh.ru/vacancy/<id>)")
     p.add_argument(
         "--status",
@@ -60,8 +60,10 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume)
     except ConfigError as e:
         print(f"Резюме не найдено: {e}", file=sys.stderr)
         sys.exit(1)

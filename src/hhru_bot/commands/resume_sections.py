@@ -21,7 +21,11 @@ def register(subparsers) -> None:
             "аттестаций и рекомендаций. Сертификаты, портфолио и ссылки пока пропускаются."
         ),
     )
-    parser.add_argument("--resume", required=True, help="ID резюме из конфига")
+    parser.add_argument(
+        "--resume",
+        required=True,
+        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Показать план без изменений на hh.ru"
     )
@@ -36,18 +40,19 @@ def run(args: argparse.Namespace) -> None:
     from ..resume_sections import apply_plan, generate_plan
 
     config = load_config_or_exit(args.config)
+    from ._common import resolve_resume
+
+    # needs: точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = config.get_resume(args.resume)
+        resume = resolve_resume(config, args.resume, needs=("resume_sections", "ai_profile"))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    sections = getattr(resume, "resume_sections", None)
-    if sections is None:
-        print("[FAIL] Добавьте resume_sections в конфиг резюме")
+    if config.ai is None:
+        print("[FAIL] Для resume-sections нужна секция ai в config.yaml")
         sys.exit(1)
-    if config.ai is None or resume.ai_profile is None:
-        print("[FAIL] Для resume-sections нужны секции ai и ai_profile")
-        sys.exit(1)
+
+    sections = resume.resume_sections
     # See commands/about.py for why this cast is needed: ResumeConfig.ai_profile
     # is a neutral `object | None` placeholder shared across unrelated features.
     ai_profile = cast("AIProfile", resume.ai_profile)
