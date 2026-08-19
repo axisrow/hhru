@@ -478,11 +478,10 @@ def run_apply_for_resume(
             # verifier=None short-circuit here means a dry-run answerer's
             # post-click grey-zone failure can't accidentally record acted).
             apply_kwargs["verifier"] = _verifier
+            apply_kwargs["before_submit"] = _before_submit
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = getattr(args, "force", False)
-        if not args.dry_run:
-            apply_kwargs["before_submit"] = _before_submit
         try:
             result = apply_to_vacancy(
                 page,
