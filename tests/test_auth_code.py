@@ -22,14 +22,16 @@ class _Locator:
         self.kind = kind
 
     def count(self):
-        return self._count
+        return self._count() if callable(self._count) else self._count
 
     @property
     def first(self):
         return self
 
     def wait_for(self, **_kwargs):
-        if self._count != 1:
+        if self.kind == "code" and self.page.show_code_on_wait:
+            self.page.stage = "code"
+        if self.count() != 1:
             raise PlaywrightError("not visible")
 
     def click(self):
@@ -81,6 +83,7 @@ class _Page:
         self.email_selected = False
         self.code = None
         self.context = None
+        self.show_code_on_wait = False
 
     def locator(self, selector):
         if selector == "[data-qa='submit-button']":
@@ -90,7 +93,7 @@ class _Page:
         if selector == "[data-qa='applicant-login-input-email']":
             return _Locator(self)
         if selector == "[data-qa='magritte-pincode-input-field']":
-            return _Locator(self, count=int(self.stage == "code"), kind="code")
+            return _Locator(self, count=lambda: int(self.stage == "code"), kind="code")
         if selector == "[data-qa='account-login-form']":
             return _Locator(self, count=0 if self.context and self.context._cookies else 1)
         if selector == "body":
@@ -124,6 +127,21 @@ def test_login_with_code_keeps_one_context_and_saves_after_auth(
     assert "person@example.com" not in caplog.text
     assert "1234" not in caplog.text
     assert "person@example.com" not in capsys.readouterr().out
+
+
+def test_login_with_code_waits_for_delayed_code_form(monkeypatch, tmp_path):
+    page = _Page()
+    page.show_code_on_wait = True
+    context = _Context(page)
+    monkeypatch.setattr("hhru_bot.auth_code.launch_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr("hhru_bot.auth_code.goto_hh", lambda *_args: None)
+    code_file = tmp_path / "code.txt"
+    code_file.write_text("1234", encoding="utf-8")
+
+    login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
+
+    assert page.code == "1234"
+    assert context.saved == str(tmp_path / "state.json")
 
 
 def test_login_with_code_wrong_code_is_fail_closed(monkeypatch, tmp_path):
