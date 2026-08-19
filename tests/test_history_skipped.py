@@ -161,3 +161,33 @@ def test_clear_skipped_unknown_reason_returns_zero(tmp_path):
     h.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
     assert h.clear_skipped(SKIP_REASONS.ALREADY_APPLIED) == 0
     assert h.is_skipped("r1", "v1")  # stopword_title не задет
+
+
+def test_list_skipped_joins_vacancy_details_without_duplicates(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen("v1", "python", "Python developer", "Acme")
+    h.upsert_vacancy_seen("v1", "backend", "Python developer", "Acme")
+    h.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
+    h.record_skip("r2", "missing", SKIP_REASONS.HAS_QUESTIONS)
+
+    rows = h.list_skipped()
+
+    assert len(rows) == 2
+    assert rows[0]["vacancy_id"] == "missing"
+    assert rows[0]["title"] is None
+    joined = next(row for row in rows if row["vacancy_id"] == "v1")
+    assert joined["title"] == "Python developer"
+    assert joined["company"] == "Acme"
+    assert set(joined["search_query"].split(",")) == {"python", "backend"}
+
+
+def test_list_skipped_filters_reason(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
+    h.record_skip("r1", "v2", SKIP_REASONS.HAS_QUESTIONS)
+
+    rows = h.list_skipped(SKIP_REASONS.HAS_QUESTIONS)
+
+    assert [(row["vacancy_id"], row["reason"]) for row in rows] == [
+        ("v2", SKIP_REASONS.HAS_QUESTIONS)
+    ]
