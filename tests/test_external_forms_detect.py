@@ -226,4 +226,7 @@ def test_bare_and_explicit_text_inputs_share_selector_base():
         True,
         [],
     )
-    assert page.locator("form input:not([type]), form input[type='text'] >> nth=1").nodes[0].value == "second"
+    assert (
+        page.locator("form input:not([type]), form input[type='text'] >> nth=1").nodes[0].value
+        == "second"
+    )
