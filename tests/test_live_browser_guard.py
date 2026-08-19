@@ -34,6 +34,7 @@ F. `async_playwright` — отдельный контекст-менеджер �
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,10 @@ def test_engine_is_blocked_during_collection(tmp_path: Path) -> None:
 
     marker = tmp_path / "outcome.txt"
     sample = Path(__file__).parent / "test_zz_collection_sample_tmp.py"
+    env = os.environ.copy()
+    # The child only needs pytest core + this repository's conftest.  Avoid
+    # loading unrelated third-party plugins for every collection-guard check.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     sample.write_text(
         textwrap.dedent(
             f"""
@@ -245,6 +250,7 @@ def test_engine_is_blocked_during_collection(tmp_path: Path) -> None:
             cwd=Path(__file__).parent.parent,
             capture_output=True,
             timeout=180,
+            env=env,
             check=False,
         )
     finally:
