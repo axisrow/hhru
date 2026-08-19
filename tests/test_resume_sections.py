@@ -68,7 +68,7 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
 
 
 def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> None:
-    """#331 (codex+claude): an uncaught wait_for_url after save must not abort apply_plan."""
+    """#331 (codex+claude): an uncaught wait for editor close after save must not abort apply_plan."""
     page = MagicMock()
     trigger = MagicMock()
     trigger.count.return_value = 1
@@ -76,11 +76,11 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
     no_recommendations.count.return_value = 0
     save = MagicMock()
     save.count.return_value = 1
+    save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
     page.locator.side_effect = lambda selector: {
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
     }[selector]
-    page.wait_for_url.side_effect = PlaywrightError("timeout waiting for navigation")
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -98,6 +98,41 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
     assert len(errors) == 1
     assert "сохранение" in errors[0] or "attestations" in errors[0]
     save.click.assert_called_once_with()
+
+
+def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> None:
+    """#331 (codex): apply_plan already navigated to /resume/{resume_id} before any
+    row save, so waiting on that same URL after save.click() would resolve
+    immediately regardless of whether the save actually persisted. The fix must
+    wait for a signal specific to this save (the editor closing), not the URL."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    no_attestations = MagicMock()
+    no_attestations.count.return_value = 0
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_recommendation_row", lambda *_args: save)
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(recommendations=[Recommendation("Text", "Acme")]),
+        dry_run=False,
+    )
+
+    assert errors == []
+    # The confirmation must be driven by the save locator itself (the editor
+    # closing), never by page.wait_for_url — the URL never changes here.
+    save.wait_for.assert_called_once_with(state="hidden", timeout=resume_sections.SAVE_TIMEOUT_MS)
+    page.wait_for_url.assert_not_called()
 
 
 def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkeypatch) -> None:

@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hhru_bot.resume_sections")
 FORM_TIMEOUT_MS = 10_000
 
+# Потолок ожидания закрытия inline-редактора после save (#331).
+SAVE_TIMEOUT_MS = 30_000
+
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
@@ -168,7 +171,6 @@ def _apply_rows(
     fill_row,
     *,
     dry_run: bool,
-    resume_id: str,
 ) -> list[str]:
     errors: list[str] = []
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
@@ -197,7 +199,15 @@ def _apply_rows(
                     # next trigger against it would be unreliable (#331).
                     break
                 save.click()
-                page.wait_for_url(f"**/resume/{resume_id}", wait_until="commit")
+                # The page is already on /resume/{resume_id} before this click
+                # (see apply_plan below), and a successful save closes the
+                # inline editor in place without changing the URL — so
+                # page.wait_for_url() against that same URL would resolve
+                # immediately regardless of whether the save actually
+                # succeeded (#331: false-positive success). The editor
+                # closing (the save button disappearing) is the positive,
+                # save-specific signal instead.
+                save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
             else:
                 # Leave the row editor before moving to the next row.  Otherwise
                 # the next trigger is queried while the previous form is still open.
@@ -215,7 +225,7 @@ def _apply_rows(
                 cancel.click()
         except PlaywrightError as exc:
             # A hydration timeout here may follow an already-successful save.click()
-            # on a previous row (#352/codex round 3), including a wait_for_url
+            # on a previous row (#352/codex round 3), including a save.wait_for
             # timeout right after save.click() (#331/codex+claude): fail closed
             # with an explicit error for this row and stop the block instead of
             # letting the exception escape apply_plan and hide which earlier
@@ -239,7 +249,6 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         plan.attestations,
         _fill_attestation_row,
         dry_run=dry_run,
-        resume_id=resume_id,
     )
     errors += _apply_rows(
         page,
@@ -247,6 +256,5 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         plan.recommendations,
         _fill_recommendation_row,
         dry_run=dry_run,
-        resume_id=resume_id,
     )
     return errors
