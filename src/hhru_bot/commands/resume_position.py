@@ -54,7 +54,11 @@ def register(subparsers) -> None:
         choices=("true", "false"),
         help="Готовность к командировкам",
     )
-    p.add_argument("--mode", choices=("from-scratch", "fill"))
+    p.add_argument(
+        "--mode",
+        choices=("from-scratch", "fill"),
+        help="Режим LLM-планирования (по умолчанию fill); не сочетается с ручными полями",
+    )
     p.add_argument("--dry-run", action="store_true", help="Показать план без изменения hh.ru")
     p.add_argument("--force", action="store_true", help="Подтвердить запись без prompt")
     p.set_defaults(func=run)
