@@ -45,6 +45,22 @@ class NoReplyForm(RuntimeError):
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}>\"'»"
 _HH_DOMAINS = ("hh.ru", "hhcdn.ru")
+_TEST_PLATFORM_DOMAINS = (
+    "codeforces.com",
+    "coderbyte.com",
+    "codility.com",
+    "devskiller.com",
+    "forms.gle",
+    "hackerrank.com",
+    "mettl.com",
+    "testdome.com",
+    "testgorilla.com",
+    "typeform.com",
+)
+_TEST_CONTEXT_RE = re.compile(
+    r"(?:тест\w*|задан\w*|assignment|assessment|coding\s+challenge|technical\s+task|case\s+study)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -136,12 +152,21 @@ def _is_hh_domain(hostname: str | None) -> bool:
     return any(host == domain or host.endswith(f".{domain}") for domain in _HH_DOMAINS)
 
 
+def _is_test_platform(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    host = hostname.rstrip(".").lower()
+    return any(host == domain or host.endswith(f".{domain}") for domain in _TEST_PLATFORM_DOMAINS)
+
+
 def extract_external_test_link(message_text: str) -> str | None:
-    """Return the first non-hh.ru HTTP(S) URL in an employer message.
+    """Return a likely external test URL in an employer message.
 
     ``hh.ru`` and ``hhcdn.ru`` (including their subdomains) are internal links
-    and are ignored.  If a message contains multiple links, the first external
-    one is returned.  The function only parses text; it never makes a request.
+    and are ignored.  Known testing platforms are accepted without further
+    context; other domains require a nearby test-assignment phrase.  This
+    avoids treating a company homepage or tracking link as a test assignment.
+    The function only parses text; it never makes a request.
     """
     for match in _URL_RE.finditer(message_text):
         url = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
@@ -149,7 +174,15 @@ def extract_external_test_link(message_text: str) -> str | None:
             parsed = urlsplit(url)
         except ValueError:
             continue
-        if parsed.scheme.lower() in {"http", "https"} and not _is_hh_domain(parsed.hostname):
+        if parsed.scheme.lower() not in {"http", "https"} or _is_hh_domain(parsed.hostname):
+            continue
+        if _is_test_platform(parsed.hostname):
+            return url
+        # Keep the context on the URL's left side.  Looking arbitrarily far
+        # past the URL can associate a company link with a test phrase that
+        # belongs to a later, separate link in the same message.
+        context_start = max(0, match.start() - 120)
+        if _TEST_CONTEXT_RE.search(message_text[context_start : match.start()]):
             return url
     return None
 
