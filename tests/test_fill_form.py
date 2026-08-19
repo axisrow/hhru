@@ -8,8 +8,45 @@ from types import SimpleNamespace
 import pytest
 
 from hhru_bot.commands import fill_form
+from hhru_bot.external_forms.detect import FormField, FormScan, match_answer_llm, resolve_answers
 
 pytestmark = pytest.mark.unit
+
+
+def test_match_answer_llm_can_only_select_a_known_fact():
+    class FakeLLM:
+        def __init__(self, content):
+            self.content = content
+
+        def chat(self, _messages, **_kwargs):
+            return SimpleNamespace(content=self.content)
+
+    facts = {"город": "Москва", "имя": "Ada Lovelace"}
+    assert (
+        match_answer_llm(
+            "В каком городе вы живёте?", facts, FakeLLM('{"key":"город","confidence":0.91}')
+        )
+        == "Москва"
+    )
+    assert (
+        match_answer_llm("Ваш телефон?", facts, FakeLLM('{"key":"телефон","confidence":0.99}'))
+        is None
+    )
+    assert (
+        match_answer_llm("Ваш город?", facts, FakeLLM('{"key":"город","confidence":0.5}')) is None
+    )
+
+
+def test_resolve_answers_adds_only_confident_semantic_matches():
+    class FakeLLM:
+        def chat(self, messages, **_kwargs):
+            assert "Ваш город?" in messages[0]["content"]
+            return SimpleNamespace(content='{"key":"город","confidence":0.9}')
+
+    scan = FormScan([FormField("text", "#city", "Ваш город?", True)])
+    assert resolve_answers(scan, {}, known_data={"город": "Москва"}, client=FakeLLM()) == {
+        "Ваш город?": "Москва"
+    }
 
 
 def test_run_uses_account_profile_answers(monkeypatch, tmp_path):

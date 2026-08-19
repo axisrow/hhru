@@ -6,6 +6,7 @@ labels and control types, and never clicks a button or submits a form.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -161,3 +162,62 @@ def apply_answers(page: Page, scan: FormScan, answers: dict[str, str]) -> tuple[
         else:
             missing.append(form_field.label)
     return not missing, missing
+
+
+def match_answer_llm(question: str, known_data: dict[str, str], client) -> str | None:
+    """Return a known value whose meaning matches *question*, or ``None``.
+
+    The model is only a classifier: it must select a key from the supplied
+    facts and report a high confidence.  The selected value is then looked up
+    locally, so a generated answer can never reach a form.
+    """
+    if not known_data:
+        return None
+    prompt = (
+        "Сопоставь вопрос анкеты с одним из известных фактов кандидата. "
+        "Не придумывай ответ и не исправляй значения. Верни только JSON вида "
+        '{"key": "точный ключ или null", "confidence": 0.0}. '
+        "Выбирай ключ только если факт действительно отвечает на вопрос; "
+        "иначе key=null. Уверенный порог: confidence >= 0.85.\n"
+        + json.dumps({"question": question, "known_data": known_data}, ensure_ascii=False)
+    )
+    try:
+        response = client.chat([{"role": "user", "content": prompt}], temperature=0)
+        raw = response.content if response else None
+        if not raw:
+            return None
+        data = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+        key = data.get("key") if isinstance(data, dict) else None
+        confidence = data.get("confidence") if isinstance(data, dict) else None
+        if (
+            isinstance(key, str)
+            and key in known_data
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and confidence >= 0.85
+        ):
+            return known_data[key]
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def resolve_answers(
+    scan: FormScan,
+    answers: dict[str, str],
+    *,
+    known_data: dict[str, str] | None = None,
+    client=None,
+) -> dict[str, str]:
+    """Merge exact profile answers with safe semantic matches from known data."""
+    resolved = dict(answers)
+    normalized = {normalize(key) for key in resolved}
+    facts = known_data or {}
+    for form_field in getattr(scan, "fields", []):
+        if not form_field.label or normalize(form_field.label) in normalized or client is None:
+            continue
+        value = match_answer_llm(form_field.label, facts, client)
+        if value is not None:
+            resolved[form_field.label] = value
+            normalized.add(normalize(form_field.label))
+    return resolved

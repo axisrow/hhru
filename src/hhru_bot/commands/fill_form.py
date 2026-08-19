@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..external_forms import scan_form
-from ..external_forms.detect import apply_answers
+from ..external_forms.detect import apply_answers, resolve_answers
 from ..history import History
 from ..logging_setup import LOG_DIR
 
@@ -54,7 +54,19 @@ def run(args: argparse.Namespace) -> bool:
         if scan.indeterminate:
             print(f"[FAIL] [indeterminate] {scan.reason}")
             return True
-        ok, missing = apply_answers(page, scan, answers)
+        # Account-profile rows are already structured facts (manual rows win
+        # over hh.ru rows).  Keep the LLM optional and let it select only from
+        # these facts; it must never generate a new form answer.
+        llm = None
+        if getattr(config, "ai", None) is not None and answers:
+            try:
+                from ..ai.llm_client import LLMClient
+
+                llm = LLMClient(config.ai)
+            except (ImportError, RuntimeError, ValueError) as exc:
+                print(f"[WARN] LLM-сопоставление отключено: {exc}")
+        resolved_answers = resolve_answers(scan, answers, known_data=answers, client=llm)
+        ok, missing = apply_answers(page, scan, resolved_answers)
         out = Path(LOG_DIR)
         out.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -71,5 +83,5 @@ def run(args: argparse.Namespace) -> bool:
                 + ", ".join(missing)
             )
             return True
-        print("[DRY-RUN] Поля заполнены по точному совпадению профиля. Submit не выполнялся.")
+        print("[DRY-RUN] Поля заполнены по профилю. Submit не выполнялся.")
         return False
