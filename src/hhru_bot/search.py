@@ -321,7 +321,7 @@ def search_vacancies(
                     # по innerHTML пропускал такие ЗП (5/15 → 19/20 ловится по тексту).
                     # extract_salary_text корректно работает и с HTML, и с голым текстом
                     # (удаление тегов на тексте = no-op), поэтому кормим её textContent.
-                    salary_text = extract_salary_text(card.inner_text())
+                    salary_text = extract_salary_text(card_text)
                 except Exception:
                     logger.warning("Не удалось получить inner_text для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
