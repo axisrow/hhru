@@ -33,6 +33,7 @@ logger = logging.getLogger("hhru_bot.auth_code")
 _LOGIN_URL = f"{HH_BASE_URL}/account/login"
 _CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
 CODE_TIMEOUT_SECONDS = 300
+CODE_FORM_TIMEOUT_MS = 15_000
 
 
 def mask_login(value: str) -> str:
@@ -126,6 +127,10 @@ def login_with_code(
             page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
             _raise_for_captcha_or_timeout(page)
             code_field = page.locator(_CODE_INPUT)
+            try:
+                code_field.first.wait_for(state="visible", timeout=CODE_FORM_TIMEOUT_MS)
+            except (PlaywrightError, PlaywrightTimeoutError) as exc:
+                raise RuntimeError("форма ввода кода не отрисовалась") from exc
             if code_field.count() != 1:
                 raise RuntimeError("поле одноразового кода не подтверждено")
             print(

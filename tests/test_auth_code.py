@@ -24,6 +24,14 @@ class _Locator:
     def count(self):
         return self._count
 
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, **_kwargs):
+        if self._count != 1:
+            raise PlaywrightError("not visible")
+
     def click(self):
         if self.kind == "continue":
             self.page.stage = "credentials"
