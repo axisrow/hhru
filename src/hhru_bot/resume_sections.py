@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
 from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
@@ -180,13 +181,21 @@ def _apply_rows(
             if block == "attestations"
             else "input[name='company']"
         )
-        page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
-        save = fill_row(page, item)
-        if not dry_run:
-            if save.count() != 1:
-                errors.append(f"{block}: неоднозначная кнопка сохранения")
-                continue
-            save.click()
+        try:
+            page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            save = fill_row(page, item)
+            if not dry_run:
+                if save.count() != 1:
+                    errors.append(f"{block}: неоднозначная кнопка сохранения")
+                    continue
+                save.click()
+        except PlaywrightError as exc:
+            # A hydration timeout here may follow an already-successful save.click()
+            # on a previous row (#352/codex): fail closed with an explicit error for
+            # this row and stop the block instead of letting the exception escape
+            # apply_plan and hide which earlier rows already saved.
+            errors.append(f"{block}: строка {index} не подтверждена: {exc}")
+            break
     return errors
 
 
