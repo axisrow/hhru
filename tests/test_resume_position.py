@@ -5,6 +5,7 @@ import pytest
 import hhru_bot.resume_position as resume_position
 from hhru_bot.config import bare_resume
 from hhru_bot.resume_position import (
+    TITLE,
     PositionValues,
     build_position_prompt,
     fill_only_missing,
@@ -64,10 +65,23 @@ def test_fill_mode_preserves_existing_values():
         business_trips=True,
     )
     merged = fill_only_missing(current, plan)
-    assert merged.title == ""
+    assert merged.title is None
     assert merged.employment is None
     assert merged.business_trips is None
     assert merged.salary == 100000
+
+
+def test_apply_position_explicit_empty_title_clears_but_none_leaves_unchanged():
+    page = MagicMock()
+    title = MagicMock()
+    page.locator.side_effect = lambda selector: title if selector == TITLE else MagicMock()
+
+    resume_position.apply_position(page, PositionValues(title=""))
+    title.fill.assert_called_once_with("")
+
+    title.reset_mock()
+    resume_position.apply_position(page, PositionValues(title=None))
+    title.fill.assert_not_called()
 
 
 def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):

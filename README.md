@@ -537,7 +537,7 @@ Account-wide ответы в чатах: план из локальной ист
 
 - `--resume` — Slug из конфига или реальный resume_id HH.ru (#319)
 - `--attestation` — Готовая аттестация JSON без LLM (#326), можно несколько: '{"name":..., "organization":..., "specialty":..., "year":...}'
-- `--recommendation` — Готовая рекомендация JSON без LLM (#326), можно несколько: '{"text":..., "company":..., "name":..., "position":...}'
+- `--recommendation` — Готовая рекомендация JSON без LLM (#326), можно несколько: '{"text":..., "company":..., "name":..., "position":...}'. text не поддерживается текущей формой HH.ru и приведёт к [FAIL] для этой строки, если непустой (#367).
 - `--dry-run` — Показать план без изменений на hh.ru
 - `--force` — Подтвердить WRITE без prompt
 

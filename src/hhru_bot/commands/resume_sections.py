@@ -42,7 +42,9 @@ def register(subparsers) -> None:
         metavar="JSON",
         help=(
             "Готовая рекомендация JSON без LLM (#326), можно несколько: "
-            '\'{"text":..., "company":..., "name":..., "position":...}\''
+            '\'{"text":..., "company":..., "name":..., "position":...}\'. '
+            "text не поддерживается текущей формой HH.ru и приведёт к [FAIL] "
+            "для этой строки, если непустой (#367)."
         ),
     )
     parser.add_argument(

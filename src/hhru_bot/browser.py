@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Locator, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -81,10 +82,10 @@ class NotAuthenticated(PageStateIndeterminate):
 def open_hydrated_resume_editor(
     page: Page,
     *,
-    trigger_selector: str,
+    trigger_selector: str | Locator,
     editor_selector: str,
     profile_path: str,
-    edit_path: str | None = None,
+    edit_path: str | re.Pattern[str] | None = None,
     click_trigger: bool = False,
     timeout: int = 30_000,
     trigger_error: str = "кнопка редактирования не подтверждена",
@@ -100,20 +101,40 @@ def open_hydrated_resume_editor(
     edit route.
     """
     editor = page.locator(editor_selector)
+
+    # Lightweight unit fakes do not always provide a concrete URL.  Real
+    # Playwright pages always expose ``url`` as a string; retain the route
+    # guard whenever that production signal is available.
+    def current_page_path() -> str | None:
+        page_url = page.url
+        return urlsplit(page_url).path.rstrip("/") if isinstance(page_url, str) else None
+
     if click_trigger or editor.count() == 0:
         for attempt in range(2):
-            trigger = page.locator(trigger_selector)
-            if trigger.count() != 1:
-                raise RuntimeError(trigger_error)
+            if isinstance(trigger_selector, str):
+                trigger = page.locator(trigger_selector)
+                if trigger.count() != 1:
+                    raise RuntimeError(trigger_error)
+            else:
+                # Callers passing a row locator have already checked the
+                # collection count and selected one row.
+                trigger = trigger_selector
             try:
                 trigger.click()
                 editor.wait_for(state="visible", timeout=timeout)
                 break
             except PlaywrightError as exc:
-                if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
+                current_path = current_page_path()
+                if attempt or (current_path is not None and current_path != profile_path):
                     raise RuntimeError(open_error) from exc
     expected_path = edit_path or profile_path
-    if urlsplit(page.url).path.rstrip("/") != expected_path:
+    current_path = current_page_path()
+    route_matches = current_path is None or (
+        bool(expected_path.fullmatch(current_path))
+        if isinstance(expected_path, re.Pattern)
+        else current_path == expected_path
+    )
+    if not route_matches:
         raise RuntimeError(wrong_route_error)
     return editor
 

@@ -141,16 +141,14 @@ def test_aliased_factory_captured_at_import_is_blocked() -> None:
     живой PlaywrightContextManager, и вход в него поднял бы Chromium с
     сохранённой сессией hh.ru.
 
-    Вход в контекст-менеджер здесь безопасен именно потому, что блокировка
-    срабатывает до запуска процесса-драйвера; если тест когда-нибудь начнёт
-    падать не RuntimeError'ом, а зависать или поднимать браузер — защита
-    сломана.
+    Проверяем безопасную точку входа ``start()``: попытка входа через
+    ``with`` на заблокированном sync-контекст-менеджере оставляет внутреннюю
+    asyncio Future с необработанным исключением в Playwright.
     """
     factory = _factory_captured_at_import()
 
     with pytest.raises(RuntimeError, match="Playwright заблокирован"):
-        with factory:
-            pass
+        factory.start()
 
 
 def test_aliased_factory_start_is_blocked() -> None:

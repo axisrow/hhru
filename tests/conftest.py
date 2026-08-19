@@ -11,6 +11,7 @@ from pathlib import Path
 import playwright._impl._driver
 import playwright._impl._transport
 import pytest
+from playwright.sync_api._context_manager import PlaywrightContextManager
 
 from hhru_bot import logging_setup
 from hhru_bot.apply import probe
@@ -29,6 +30,7 @@ _BLOCKED_MESSAGE = (
 _DRIVER_MODULES = (playwright._impl._driver, playwright._impl._transport)
 
 _real_compute_driver_executable = playwright._impl._driver.compute_driver_executable
+_real_sync_context_enter = PlaywrightContextManager.__enter__
 
 # Снимается ровно на время исполнения теста с live-маркером (см. _allow_live_browser).
 _live_allowed = False
@@ -38,6 +40,21 @@ def _guarded_compute_driver_executable() -> tuple[str, str]:
     if not _live_allowed:
         raise RuntimeError(_BLOCKED_MESSAGE)
     return _real_compute_driver_executable()
+
+
+def _guarded_sync_context_enter(self):
+    """Reject sync Playwright before its greenlet creates a background Future.
+
+    Raising only from ``compute_driver_executable`` is a strong shared
+    boundary, but Playwright's sync context manager records that exception in
+    an internal asyncio Future when ``__enter__`` starts its dispatcher fiber.
+    The Future is later reported as ``Future exception was never retrieved``.
+    Keep the driver boundary below for async/direct entry points, while making
+    the ordinary sync path fail before that noisy background task exists.
+    """
+    if not _live_allowed:
+        raise RuntimeError(_BLOCKED_MESSAGE)
+    return _real_sync_context_enter(self)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -62,6 +79,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """
     for module in _DRIVER_MODULES:
         module.compute_driver_executable = _guarded_compute_driver_executable
+    PlaywrightContextManager.__enter__ = _guarded_sync_context_enter
 
 
 @pytest.fixture(autouse=True)

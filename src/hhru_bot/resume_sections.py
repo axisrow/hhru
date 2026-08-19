@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    open_hydrated_resume_editor,
+)
 
 if TYPE_CHECKING:
     from .config_sections.ai_profile import AIProfile
@@ -26,6 +33,21 @@ RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
 }
+SECTION_ROUTES = {
+    "attestations": re.compile(r"/profile/edit/attestationEducation/[^/?#]+"),
+    # The attestation route has no resume id in it (only an attestation id),
+    # so its pattern is static. The recommendations route embeds the resume id
+    # itself — bind it per-call via _recommendation_route() so a stale or
+    # misdirected edit link for a DIFFERENT resume cannot pass the route guard
+    # (#368 cycle-review round 1, codex finding: the previous static pattern
+    # matched any resume id here despite wrong_route_error's identity claim).
+}
+
+
+def _recommendation_route(resume_id: str) -> re.Pattern[str]:
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation/[^/?#]+")
+
+
 ATTESTATION_FIELDS = (
     "profile-education-attestation-name",
     "profile-education-attestation-organization",
@@ -78,7 +100,8 @@ def build_messages(config: ResumeSectionsConfig, profile: AIProfile | None) -> l
         "Сформируй дополнительные разделы резюме. Ответь только JSON-объектом с "
         "массивами attestations и recommendations. Не выдумывай факты: неизвестное "
         "оставляй пустым. Каждая аттестация: name, organization, specialty, year. "
-        "Каждая рекомендация: text, company, name, position."
+        "Каждая рекомендация: company, name, position. Поле text не поддерживается "
+        "текущей формой HH.ru и не будет сохранено (#367) — не заполняй его."
     )
     user = (
         f"Режим: {config.mode}. Нужные блоки: {', '.join(config.blocks)}.\n"
@@ -148,19 +171,23 @@ def _fill_attestation_row(page: Page, item: Attestation) -> Locator:
 
 
 def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
-    scope = (
-        page.locator("input[name='company']")
-        .first.locator("xpath=..")
-        .locator("xpath=..")
-        .locator("xpath=..")
-    )
-    _fill(scope.locator("input[name='company']"), item.company)
-    inputs = scope.locator("input")
-    if inputs.count() > 1:
-        _fill(inputs.nth(0), item.name)
-    if inputs.count() > 2:
-        _fill(inputs.nth(1), item.position)
-    _fill(scope.locator("textarea"), item.text)
+    if item.text:
+        raise PlaywrightError(
+            "текущая форма рекомендации не содержит поля текста; запись остановлена"
+        )
+
+    def labelled(label: str):
+        field = page.get_by_label(label, exact=True)
+        if field.count() != 1:
+            raise PlaywrightError(f"поле рекомендации {label!r} не найдено однозначно")
+        return field
+
+    _fill(labelled("Имя человека"), item.name)
+    _fill(labelled("Должность"), item.position)
+    company = page.locator("input[name='company']")
+    if company.count() != 1:
+        raise PlaywrightError("поле рекомендации 'Организация' не найдено однозначно")
+    _fill(company, item.company)
     return page.locator("[data-qa='resume-partial-edit-save']")
 
 
@@ -170,6 +197,7 @@ def _apply_rows(
     items: list[Attestation] | list[Recommendation],
     fill_row,
     *,
+    resume_id: str = "",
     dry_run: bool,
 ) -> list[str]:
     errors: list[str] = []
@@ -192,8 +220,30 @@ def _apply_rows(
             if index >= trigger.count():
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
-            trigger.nth(index).click()
-            page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            if resume_id:
+                edit_path = (
+                    _recommendation_route(resume_id)
+                    if block == "recommendations"
+                    else SECTION_ROUTES[block]
+                )
+                open_hydrated_resume_editor(
+                    page,
+                    trigger_selector=trigger.nth(index),
+                    editor_selector=ready_selector,
+                    profile_path=f"/resume/{resume_id}",
+                    edit_path=edit_path,
+                    click_trigger=True,
+                    timeout=FORM_TIMEOUT_MS,
+                    trigger_error=f"{block}: строка {index} не найдена однозначно",
+                    open_error=f"{block}: строка {index} не открылась",
+                    wrong_route_error=f"{block}: строка {index} открыта не для того резюме",
+                )
+            else:
+                # Keep the pure unit fake focused on row-level error handling;
+                # live callers always provide resume_id and use the hydrated
+                # editor helper above.
+                trigger.nth(index).click()
+                page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             save = fill_row(page, item)
             if not dry_run:
                 if save.count() != 1:
@@ -231,7 +281,7 @@ def _apply_rows(
                     # so stop this block instead of leaving it open (#331).
                     break
                 cancel.click()
-        except PlaywrightError as exc:
+        except (PlaywrightError, RuntimeError) as exc:
             # A hydration timeout here may follow an already-successful save.click()
             # on a previous row (#352/codex round 3), including a save.wait_for
             # timeout right after save.click() (#331/codex+claude): fail closed
@@ -256,6 +306,7 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         "attestations",
         plan.attestations,
         _fill_attestation_row,
+        resume_id=resume_id,
         dry_run=dry_run,
     )
     errors += _apply_rows(
@@ -263,6 +314,7 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         "recommendations",
         plan.recommendations,
         _fill_recommendation_row,
+        resume_id=resume_id,
         dry_run=dry_run,
     )
     return errors
