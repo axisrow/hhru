@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from urllib.parse import urlsplit
 
 from .copy_resume import confirm_write
 
@@ -96,6 +97,8 @@ def run(args: argparse.Namespace) -> None:
                 goto_hh(page, goto)
                 if not has_auth_cookie(page) or has_login_form(page):
                     raise RuntimeError("сессия hh.ru не подтверждена")
+                if urlsplit(page.url).path != f"/resume/{resume.resume_id}":
+                    raise RuntimeError("страница нужного резюме не подтверждена")
                 existing = read_skills(page)
                 response = LLMClient(config.ai).chat(
                     build_skills_prompt(page.locator("body").inner_text(), existing, args.mode),
