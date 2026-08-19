@@ -154,3 +154,39 @@ def test_edit_skills_rejects_editor_on_wrong_resume_route(monkeypatch) -> None:
 
     assert result.success is False
     assert result.reason == "форма навыков открыта не для того резюме"
+
+
+def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) -> None:
+    """Positive counterpart: the post-condition must accept the real edit route.
+
+    Pins the check against the resume's ``keySkills`` edit path specifically
+    — a check comparing against the profile path (or any other constant)
+    instead would either reject this legitimate first-attempt success or
+    accept the wrong-route case above, so this test and that one must both
+    pass only together with the correct comparison.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/keySkills"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    cancel = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "read_skills", lambda _page: ())
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is True
+    assert trigger.click.call_count == 1
+    assert editor.wait_for.call_count == 1

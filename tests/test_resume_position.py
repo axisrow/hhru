@@ -141,3 +141,62 @@ def test_open_position_form_rejects_form_on_wrong_resume_route(monkeypatch):
         RuntimeError, match="форма редактирования позиции открыта не для того резюме"
     ):
         resume_position.open_position_form(page, resume)
+
+
+def test_open_position_form_accepts_correct_edit_route_on_first_attempt(monkeypatch):
+    """Positive counterpart: the post-condition must accept the real edit route.
+
+    Pins the check against `edit_path` specifically — a check comparing
+    against `profile_path` (or any other constant) instead would either
+    reject this legitimate first-attempt success or accept the wrong-route
+    cases the tests above cover, so this test and those must both pass only
+    together with the correct comparison.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/position"
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    form.wait_for.return_value = None
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+
+    resume_position.open_position_form(page, resume)
+
+    assert edit.click.call_count == 1
+    assert form.wait_for.call_count == 1
+
+
+def test_open_position_form_rejects_already_mounted_form_on_wrong_route(monkeypatch):
+    """The route post-condition must not be bypassable via a pre-mounted form.
+
+    When ``FORM.count() != 0`` the whole click/retry block is skipped
+    entirely. If the page happens to already show a position form for a
+    different resume (stale editor state, unexpected redirect), that form
+    must still be rejected, not read as the requested resume's position.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/other-resume-id/position"
+    form = MagicMock()
+    form.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+
+    with pytest.raises(
+        RuntimeError, match="форма редактирования позиции открыта не для того резюме"
+    ):
+        resume_position.open_position_form(page, resume)
