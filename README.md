@@ -454,10 +454,8 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 
 ### `login-code`
 
-- `--request` — Запросить код
-- `--submit` — Отправить код
-- `--login` — Email или телефон (только с --request)
-- `--code` — Одноразовый код (только с --submit)
+- `--login` — Email или телефон
+- `--code-file CODE_FILE` — Файл с одноразовым кодом; без него код читается из stdin
 
 ### `mark`
 

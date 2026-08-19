@@ -49,13 +49,15 @@ LOGIN_CODE_REQUEST_BUTTON = "[data-qa='submit-button']"
 LOGIN_EMAIL_TYPE = "input[data-qa='credential-type-email']"
 LOGIN_EMAIL_INPUT = "[data-qa='applicant-login-input-email']"
 LOGIN_PHONE_INPUT = "[data-qa='magritte-phone-input-national-number-input']"
-# Поле одноразового кода не видно в анонимном состоянии страницы — НЕ подтверждено.
+# Подтверждено live DOM после запроса кода (2026-08-19); ввод запускает авто-submit.
+LOGIN_CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
 
 __all__ = [
     "LOGIN_CODE_REQUEST_BUTTON",
     "LOGIN_EMAIL_TYPE",
     "LOGIN_EMAIL_INPUT",
     "LOGIN_PHONE_INPUT",
+    "LOGIN_CODE_INPUT",
     "APPLY_COVER_LETTER_TEXTAREA",
     "APPLY_COVER_LETTER_TOGGLE",
     "APPLY_RESUME_SELECT",
