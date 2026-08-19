@@ -52,7 +52,9 @@ DISPLAY_WORK = {**WORK_LABELS, "office": "На месте работодател
 
 @dataclass
 class PositionValues:
-    title: str = ""
+    # ``None`` means leave the title unchanged; an empty string is an explicit
+    # request to clear it (needed by baseline/restore flows).
+    title: str | None = None
     salary: int | None = None
     currency: str | None = None
     specializations: list[str] | None = None
@@ -135,7 +137,7 @@ def parse_position_response(content: str | None) -> PositionValues:
     if trips is not None and not isinstance(trips, bool):
         raise ValueError("business_trips должен быть boolean или null")
     return PositionValues(
-        title=(title or "").strip(),
+        title=title.strip() if title is not None else None,
         salary=salary,
         currency=currency,
         specializations=strings("specializations"),
@@ -216,7 +218,7 @@ def read_display_position(page: Page) -> PositionValues:
 def fill_only_missing(current: PositionValues, plan: PositionValues) -> PositionValues:
     """Apply the fill-mode invariant outside the model: existing values win."""
     return PositionValues(
-        title="" if current.title else plan.title,
+        title=None if current.title else plan.title,
         salary=None if current.salary is not None else plan.salary,
         currency=None if current.currency is not None else plan.currency,
         specializations=plan.specializations,
@@ -277,7 +279,7 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     """Fill fields only. Caller owns confirmation and must click SAVE explicitly."""
     if plan.specializations:
         raise RuntimeError("селектор specializations не подтверждён на форме hh.ru")
-    if plan.title:
+    if plan.title is not None:
         page.locator(TITLE).fill(plan.title)
     if plan.salary is not None:
         page.locator(SALARY).fill(str(plan.salary))

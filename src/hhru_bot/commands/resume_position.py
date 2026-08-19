@@ -133,7 +133,7 @@ def run(args: argparse.Namespace) -> bool:
             current = open_position_form(page, resume)
             if manual:
                 plan = PositionValues(
-                    title=getattr(args, "title", None) or "",
+                    title=getattr(args, "title", None),
                     salary=getattr(args, "salary", None),
                     currency=getattr(args, "currency", None),
                     specializations=getattr(args, "specialization", None),
