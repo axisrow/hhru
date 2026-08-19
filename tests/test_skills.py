@@ -48,14 +48,17 @@ def test_prompt_mentions_existing_skills_and_mode() -> None:
     assert "до-заполнения" in prompt[1]["content"]
 
 
-def test_edit_skills_waits_for_dedicated_editor_route(monkeypatch) -> None:
-    """#328: skills editor is mounted only after the keySkills route commits."""
+def test_edit_skills_retries_pre_hydration_noop_click(monkeypatch) -> None:
+    """#337: a visible SSR trigger can receive a no-op click before hydration."""
     resume = bare_resume("resume-id")
     page = MagicMock()
     trigger = MagicMock()
     trigger.count.return_value = 1
     editor = MagicMock()
     editor.input_value.return_value = ""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    editor.wait_for.side_effect = [PlaywrightTimeoutError("not hydrated"), None]
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
@@ -72,7 +75,6 @@ def test_edit_skills_waits_for_dedicated_editor_route(monkeypatch) -> None:
     )
 
     assert result.success is True
-    page.wait_for_url.assert_called_once_with(
-        "**/resume/edit/resume-id/keySkills", wait_until="commit"
-    )
-    editor.wait_for.assert_called_once_with(state="visible")
+    assert trigger.click.call_count == 2
+    assert editor.wait_for.call_count == 2
+    page.wait_for_url.assert_not_called()

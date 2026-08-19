@@ -70,14 +70,17 @@ def test_fill_mode_preserves_existing_values():
     assert merged.salary == 100000
 
 
-def test_open_position_form_waits_for_dedicated_editor_route(monkeypatch):
-    """#328: the edit click leaves /resume/<id> before the form is mounted."""
+def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
+    """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")
     page = MagicMock()
     edit = MagicMock()
     edit.count.return_value = 1
     form = MagicMock()
     form.count.return_value = 0
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    form.wait_for.side_effect = [PlaywrightTimeoutError("not hydrated"), None]
     page.locator.side_effect = lambda selector: {
         resume_position.EDIT: edit,
         resume_position.FORM: form,
@@ -89,8 +92,6 @@ def test_open_position_form_waits_for_dedicated_editor_route(monkeypatch):
 
     resume_position.open_position_form(page, resume)
 
-    edit.click.assert_called_once_with()
-    page.wait_for_url.assert_called_once_with(
-        "**/resume/edit/resume-id/position", wait_until="commit"
-    )
-    form.wait_for.assert_called_once_with(state="visible", timeout=10_000)
+    assert edit.click.call_count == 2
+    assert form.wait_for.call_count == 2
+    page.wait_for_url.assert_not_called()

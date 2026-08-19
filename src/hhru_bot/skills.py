@@ -134,17 +134,20 @@ def edit_skills_on_hh(
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
-    trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
-    if trigger.count() != 1:
-        return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
-    trigger.click()
-    # #328: wait for the dedicated keySkills route before querying the editor.
     editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
-    try:
-        page.wait_for_url(f"**/resume/edit/{resume.resume_id}/keySkills", wait_until="commit")
-        editor.wait_for(state="visible")
-    except PlaywrightError:
-        return SkillsResult(False, reason="форма навыков не открылась после перехода")
+    # As with position (#337), the visible SSR trigger can precede React event
+    # hydration.  Only the editor becoming visible confirms that a click worked.
+    for attempt in range(2):
+        trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
+        if trigger.count() != 1:
+            return SkillsResult(False, reason="кнопка редактирования навыков не найдена однозначно")
+        trigger.click()
+        try:
+            editor.wait_for(state="visible", timeout=10_000)
+            break
+        except PlaywrightError:
+            if attempt:
+                return SkillsResult(False, reason="форма навыков не открылась")
     existing = read_skills(page)
     existing_keys = {skill.casefold() for skill in existing}
     additions = tuple(skill for skill in skills if skill.name.casefold() not in existing_keys)
