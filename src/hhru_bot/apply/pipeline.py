@@ -261,7 +261,13 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
-    if not apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id):
+    navigation_result = apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
+    if isinstance(navigation_result, str):
+        # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный,
+        # неисполнимый пропуск; не форма не отрисовалась, а hh.ru дал определённый
+        # ответ прямо на странице вакансии.
+        return ctx.skip(navigation_result, skip_reason=SKIP_REASONS.RESUME_VISIBILITY)
+    if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
         return _finalize_post_click_failure(ctx, reason)

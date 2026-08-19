@@ -185,7 +185,12 @@ def probe_vacancy(
             return ProbeResult(vacancy, False, reason, skipped=True)
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
-    if not apply_steps.navigate_to_response_form(page, vacancy.vacancy_id):
+    navigation_result = apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
+    if isinstance(navigation_result, str):
+        # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный
+        # пропуск, без дампа (hh.ru дал определённый ответ прямо на странице).
+        return ProbeResult(vacancy, False, navigation_result, skipped=True)
+    if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         partial_ctx = ProbeContext(
             vacancy_id=vacancy.vacancy_id,

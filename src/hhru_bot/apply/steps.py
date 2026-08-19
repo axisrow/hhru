@@ -30,6 +30,10 @@ APPLY_TIMEOUT_MS = 10_000
 # отсутствовать — это нормально, а не ошибка). Ждать полной APPLY_TIMEOUT_MS тут
 # бессмысленно: отсутствие поля детерминировано почти сразу.
 OPTIONAL_FIELD_TIMEOUT_MS = 1_500
+# The response modal is rendered on the vacancy page in this failure mode, so
+# do not spend the full navigation timeout waiting for a URL that will never
+# change.
+RESUME_WARNING_TIMEOUT_MS = 1_500
 # Таймаут ожидания селектора выбора резюме. Это НЕ опциональное поле вроде
 # cover-letter: если на multi-resume аккаунте селектор резюме не успел отрисоваться
 # за короткий OPTIONAL_FIELD_TIMEOUT_MS (медленный JS-рендер залогиненной формы),
@@ -108,12 +112,36 @@ def wait_apply_button(page: Page) -> bool:
     return apply_button.count() > 0
 
 
-def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> bool:
+def _hidden_resume_warning_is_expanded(page: Page) -> bool:
+    """Return whether hh.ru has expanded the resume-visibility warning."""
+    try:
+        page.wait_for_function(
+            """selector => [...document.querySelectorAll(selector)].some(el => {
+                const style = getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden'
+                    && style.maxHeight !== '0px';
+            })""",
+            vacancy_page.VACANCY_HIDDEN_RESUME_WARNING,
+            timeout=RESUME_WARNING_TIMEOUT_MS,
+        )
+    except (PlaywrightError, AttributeError):
+        return False
+    return True
+
+
+def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> str | bool:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
-    Возвращает ``True``, если submit-кнопка формы стала видимой, иначе ``False``.
+    Возвращает:
+    - ``str`` — причина недвусмысленного, неисполнимого пропуска (#350: развёрнутое
+      предупреждение о видимости резюме прямо на странице вакансии вместо перехода
+      на форму отклика);
+    - ``True`` — submit-кнопка формы стала видимой;
+    - ``False`` — рендер формы не подтверждён (навигация/рендер не удались).
+
     Это различие важно: pipeline не должен запускать детекцию вопросов для формы,
-    рендер которой не подтверждён.
+    рендер которой не подтверждён, и не должен ждать полный таймаут навигации,
+    если hh.ru уже дал определённый ответ прямо на странице вакансии.
 
     ``vacancy_id`` (опционален — probe.py его тоже передаёт, но не обязан) даёт
     диагностическим дампам таймаутов отдельное имя на вакансию, чтобы не терять
@@ -170,6 +198,12 @@ def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> bool
         # нет, не крашим цикл откликов необработанным исключением.
         logger.warning("Клик по кнопке отклика упал с ошибкой (%s) — вакансия пропущена", exc)
         return False
+    # #350: some accounts receive a modal on the vacancy URL instead of a form
+    # navigation.  Its expanded warning is a definitive, non-actionable skip.
+    if _hidden_resume_warning_is_expanded(page):
+        reason = "видимость резюме недостаточна для отклика"
+        logger.info("Вакансия пропущена: %s", reason)
+        return reason
     # #179: таймаут/ошибка ожидания URL сама по себе не означает, что клик не
     # сработал — не крашим весь pipeline необработанным исключением, а
     # логируем и отдаём управление дальше. fill_response_form (через

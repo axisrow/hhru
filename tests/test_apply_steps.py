@@ -196,6 +196,7 @@ class FakeStepsPage:
         self.wait_for_url_error: Exception | None = None
         self.screenshot_calls = 0
         self.content_calls = 0
+        self.wait_for_function_calls: list[tuple[str, str | None, int | None]] = []
 
     def screenshot(self, **_kwargs) -> bytes:
         self.screenshot_calls += 1
@@ -204,6 +205,11 @@ class FakeStepsPage:
     def content(self) -> str:
         self.content_calls += 1
         return "<html>diagnostic</html>"
+
+    def wait_for_function(self, _expression, arg=None, timeout=None):
+        self.wait_for_function_calls.append(("function", arg, timeout))
+        if not self._state(arg).visible:
+            raise PlaywrightTimeoutError("condition not met")
 
     def _state(self, selector: str) -> _SelectorState:
         return self.states.setdefault(selector, _SelectorState())
@@ -276,6 +282,17 @@ def test_navigate_clicks_apply_button_and_waits_submit():
     # Клик по apply-кнопке + ожидание URL через wait_for_url (#179).
     assert page.navigation_entered == 1
     assert page._state(vacancy_page.VACANCY_APPLY_BUTTON).clicks == 1
+
+
+def test_navigate_skips_expanded_hidden_resume_warning_without_url_wait():
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(vacancy_page.VACANCY_HIDDEN_RESUME_WARNING, True)
+
+    reason = steps.navigate_to_response_form(page, "136173988")
+
+    assert reason == "видимость резюме недостаточна для отклика"
+    assert page.navigation_entered == 0
 
 
 def test_navigate_does_not_raise_when_form_never_renders():
