@@ -206,3 +206,23 @@ def test_id_addressed_control_keeps_nth_index_for_later_control():
     ) == (True, [])
     assert page.locator("#first").nodes[0].value == "first@example.test"
     assert page.locator("form input[type='email'] >> nth=1").nodes[0].value == "second@example.test"
+
+
+def test_bare_and_explicit_text_inputs_share_selector_base():
+    page = _Page(
+        """
+        <form>
+          <input aria-label="Bare text">
+          <input type="text" aria-label="Explicit text">
+        </form>
+        """
+    )
+
+    scan = scan_form(page)
+
+    assert scan.fields[1].selector == "form input:not([type]), form input[type='text'] >> nth=1"
+    assert apply_answers(page, scan, {"bare text": "first", "explicit text": "second"}) == (
+        True,
+        [],
+    )
+    assert page.locator("form input:not([type]), form input[type='text'] >> nth=1").nodes[0].value == "second"

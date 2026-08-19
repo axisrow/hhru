@@ -144,9 +144,9 @@ def scan_form(page: Page) -> FormScan:
                 elif tag == "select":
                     selector_key = "select"
                     selector_base = "form select"
-                elif kind == "text" and control.get_attribute("type") is None:
-                    # A missing input[type] is equivalent to type=text, but
-                    # must remain in the same selector family for nth.
+                elif kind == "text":
+                    # Missing input[type] is equivalent to type=text. Both
+                    # forms share this selector family and its nth index.
                     selector_key = "input:text"
                     selector_base = "form input:not([type]), form input[type='text']"
                 else:
