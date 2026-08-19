@@ -48,6 +48,7 @@ def launch_browser(playwright, *, headless: bool) -> Browser:
             ) from exc
         raise
 
+
 HH_BASE_URL = "https://hh.ru"
 # /applicant/resumes redirects to the profile shell; the dedicated list at
 # /applicant/my_resumes is the stable read-only surface used by both
