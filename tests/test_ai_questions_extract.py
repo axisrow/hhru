@@ -128,7 +128,13 @@ class _Loc:
         return _Loc(nodes)
 
     def evaluate(self, _js):
-        """Emulates _control_text's closest('label')/parentElement.innerText/.value."""
+        """Emulates _control_text's closest('label')/parentElement.innerText fallback.
+
+        M7 round 2 (#373): the real JS's ``|| el.value`` fallback was removed
+        (opaque control ids are not readable labels) — this fake mirrors that,
+        returning '' when there is no <label> ancestor and no text in the
+        immediate parent, same as production.
+        """
         if not self._n:
             return ""
         node = self._n[0]
@@ -138,10 +144,8 @@ class _Loc:
                 return _inner_text(cur).strip()
             cur = cur.parent
         if node.parent is not None:
-            text = _inner_text(node.parent).strip()
-            if text:
-                return text
-        return node.attrs.get("value", "")
+            return _inner_text(node.parent).strip()
+        return ""
 
 
 class _Page:
@@ -212,6 +216,31 @@ def test_extract_drops_question_with_duplicate_option_labels():
                 <div data-qa='task-question'>Вопрос без подписей</div>
                 <input type='radio' value='0'>
                 <input type='radio' value='1'>
+            </div>
+        </form>
+    """
+    questions = extract_questions(_Page(html))
+
+    assert questions == []
+
+
+def test_extract_drops_question_when_option_has_no_readable_text():
+    """M7 cycle-review round 2 (#373): _control_text() previously fell back to
+    ``el.value`` when no <label>/parent text existed. hh.ru's control ``value``
+    attributes are opaque ids (verified on live Chromium: a radio with no text
+    in its ancestry returns its raw value, e.g. '42'), which are non-blank AND
+    distinct per option — so they used to pass the blank/duplicate guard and
+    let the LLM answer against ids it cannot read. The ``el.value`` fallback
+    was removed; this radio (wrapped only in an empty <span>, no <label>, no
+    text anywhere in its parent chain) must now resolve to '' and be dropped
+    by the existing blank-option guard — no separate value-specific check
+    needed."""
+    html = f"""
+        {_FORM_OPEN}
+            <div data-qa='task-body'>
+                <div data-qa='task-question'>Вопрос без текстовых меток</div>
+                <span><input type='radio' value='42'></span>
+                <span><input type='radio' value='77'></span>
             </div>
         </form>
     """

@@ -11,7 +11,7 @@ import argparse
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..apply import apply_to_vacancy
 from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
@@ -424,7 +424,7 @@ def run_apply_for_resume(
     # enforcement lives in pipeline.py.
     if question_answerer is not None and not args.dry_run and getattr(args, "force", False):
         print(
-            "[WARNING] --force включён: LLM-ответы на тест-вопросы будут заполнены "
+            "[WARN] --force включён: LLM-ответы на тест-вопросы будут заполнены "
             "и отправлены без дополнительного подтверждения"
         )
 
@@ -463,12 +463,21 @@ def run_apply_for_resume(
             # confirmed pre-submit exits.
             action_id = history.begin_action(resume.resume_id, vacancy_id, "apply")
 
-        apply_kwargs = {
+        # dict value type intentionally broad — **apply_kwargs spreads several
+        # unrelated kwarg types (provider/verifier/callable/bool) into
+        # apply_to_vacancy's distinct typed parameters below.
+        apply_kwargs: dict[str, Any] = {
             "letter_provider": letter_provider,
+        }
+        if not args.dry_run:
             # #207: fail-вердикты после клика по кнопке отклика подтверждаются
             # внешней проверкой /applicant/negotiations до записи в history.
-            "verifier": _verifier,
-        }
+            # cycle-review round 2 (#373): defence-in-depth — dry-run must
+            # never reach the external verifier at all (pipeline.py's
+            # _finalize_post_click_failure also guards on ctx.dry_run, but a
+            # verifier=None short-circuit here means a dry-run answerer's
+            # post-click grey-zone failure can't accidentally record acted).
+            apply_kwargs["verifier"] = _verifier
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = getattr(args, "force", False)

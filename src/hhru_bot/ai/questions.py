@@ -41,13 +41,24 @@ class AnswerProposal:
 
 
 def _control_text(control: Locator) -> str:
-    """Read the visible label without relying on an unconfirmed selector."""
+    """Read the visible label without relying on an unconfirmed selector.
+
+    cycle-review round 2 (#373): the fallback used to end with ``|| el.value``.
+    hh.ru's option ``value`` attributes are opaque ids (verified against live
+    Chromium: a radio with no text in its ancestry returns its raw value, e.g.
+    '42'), not human-readable labels. That fallback is non-blank AND distinct
+    per option, so it passed the blank/duplicate guard in extract_questions()
+    below and let the LLM answer against ids it cannot actually read — the
+    same "wrong answer worse than skip" failure mode #97/M7 exists to prevent,
+    just reached through a different branch of this same function. Falling
+    back to '' instead relies entirely on the existing blank-option guard.
+    """
     try:
         return str(
             control.evaluate(
                 """el => {
                     const label = el.closest('label');
-                    return (label || el.parentElement || el).innerText || el.value || '';
+                    return (label || el.parentElement || el).innerText || '';
                 }"""
             )
         ).strip()

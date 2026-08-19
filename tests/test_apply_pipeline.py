@@ -1069,3 +1069,44 @@ def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):
     assert "предпросмотр" in result.reason or "показаны" in result.reason
     assert answerer.applied is None  # dry-run must not reach apply()
     assert result.acted is False
+
+
+def test_apply_dry_run_grey_zone_failure_never_sets_acted(monkeypatch):
+    """Round-2 cycle-review #373 (regression this fix series introduced): with
+    an answerer configured, dry-run still clicks VACANCY_APPLY_BUTTON to
+    preview questions (#97 contract) and can reach the #207 post-click
+    grey-zone finalizer on a navigation failure. Without the ctx.dry_run guard
+    in _finalize_post_click_failure, a verifier.found/indeterminate verdict
+    would set acted=True on a dry-run result — commands/_common.py's
+    `elif result.acted:` branch (no action_id reserved in dry-run) would then
+    unconditionally call history.record_action(), burning daily_apply_limit
+    and has_applied() dedup on a request that never submitted anything.
+    A dry-run must never reach the external verifier at all."""
+    monkeypatch.setattr(
+        pipeline_module.apply_steps, "_dump_navigation_diagnostics", lambda *_args: None
+    )
+    verifier_calls = []
+
+    def _verifier(page, vacancy_id, resume_id):  # noqa: ARG001
+        verifier_calls.append(vacancy_id)
+        return SimpleNamespace(found=True, indeterminate=False, detail="stub")
+
+    # success=False -> APPLY_SUBMIT_BUTTON never becomes visible ->
+    # navigate_to_response_form returns False -> _finalize_post_click_failure
+    # is reached before detect_questions() ever runs.
+    page = FakePage(apply_button=True, success=False)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        question_answerer=_StubAnswerer(),
+        verifier=_verifier,
+    )
+
+    assert result.acted is False
+    assert result.success is False
+    assert result.skipped is False
+    assert verifier_calls == []
