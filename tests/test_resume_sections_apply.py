@@ -45,8 +45,15 @@ class FakeTrigger:
     def __init__(self, page, count):
         self._page = page
         self._count = count
+        self._calls = 0
 
     def count(self):
+        # nth-й вызов count() (0-indexed) соответствует итерации цикла с тем же
+        # индексом, т.к. _apply_rows зовёт trigger.count() ровно раз за строку.
+        call_index = self._calls
+        self._calls += 1
+        if call_index in self._page._count_fails:
+            raise PlaywrightTimeoutError("count() недоступен")
         return self._count
 
     def nth(self, index):
@@ -76,10 +83,12 @@ class FakePage:
         trigger_count: int,
         ready_by_index: dict[int, bool] | None = None,
         click_fails: set[int] | None = None,
+        count_fails: set[int] | None = None,
     ):
         self._trigger_count = trigger_count
         self._ready_by_index = ready_by_index or {}
         self._click_fails = click_fails or set()
+        self._count_fails = count_fails or set()
         self.saved_rows: list[int] = []
         self.current_index = -1
 
@@ -118,6 +127,20 @@ def test_trigger_click_failure_after_prior_save_is_reported_not_raised():
     успешного save строки 0 — должно вернуться как элемент errors, а не всплыть
     исключением из _apply_rows (клик был вне try/except до этого фикса)."""
     page = FakePage(trigger_count=2, click_fails={1})
+    items = [Attestation("A", "Org", "Spec", "2020"), Attestation("B", "Org", "Spec", "2021")]
+
+    errors = _apply_rows(page, "attestations", items, _fill_row, dry_run=False)
+
+    assert page.saved_rows == [0]
+    assert len(errors) == 1
+    assert "строка 1" in errors[0]
+
+
+def test_trigger_count_failure_after_prior_save_is_reported_not_raised():
+    """cycle 3 (advisor review): trigger.count() строки 1 падает ПОСЛЕ успешного
+    save строки 0 — тот же класс необработанного исключения; count() тоже должен
+    быть внутри try/except, не только click()/wait_for()."""
+    page = FakePage(trigger_count=2, count_fails={1})
     items = [Attestation("A", "Org", "Spec", "2020"), Attestation("B", "Org", "Spec", "2021")]
 
     errors = _apply_rows(page, "attestations", items, _fill_row, dry_run=False)

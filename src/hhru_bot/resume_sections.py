@@ -172,15 +172,20 @@ def _apply_rows(
     errors: list[str] = []
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
     for index, item in enumerate(items):
-        if index >= trigger.count():
-            errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
-            continue
         ready_selector = (
             f"[data-qa='{ATTESTATION_FIELDS[0]}']"
             if block == "attestations"
             else "input[name='company']"
         )
         try:
+            # trigger.count() itself can raise on iterations after a previous
+            # row's save.click() already succeeded (#352/codex round 3) — the
+            # whole per-row body must stay inside this guard, not just the
+            # click/wait_for, so no browser call here can escape apply_plan
+            # uncaught and hide which earlier rows already saved.
+            if index >= trigger.count():
+                errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
+                continue
             trigger.nth(index).click()
             page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             save = fill_row(page, item)
