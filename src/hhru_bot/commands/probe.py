@@ -180,7 +180,7 @@ def check_selectors(page, spec, page_loader=None):
         if is_resume_url_placeholder(url):
             logger.warning(
                 "healthcheck: страница '%s' не проверялась: resume_url содержит "
-                "плейсхолдер; укажите реальный URL (получить можно через list-resumes --remote)",
+                "плейсхолдер; укажите реальный URL (получить можно через list-resumes)",
                 name,
             )
             pages.append(PageCheck(name=name, url=url, results=[], placeholder=True))
@@ -387,7 +387,7 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
         if placeholders:
             parts.append(
                 f"плейсхолдеров resume_url: {placeholders} "
-                "(заполните resume_url; получить реальный можно через list-resumes --remote)"
+                "(заполните resume_url; получить реальный можно через list-resumes)"
             )
         print(
             f"[FAIL] обязательных найдено {required_ok}; "

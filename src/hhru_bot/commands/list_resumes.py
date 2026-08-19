@@ -1,29 +1,30 @@
-"""Команда list-resumes (#57, --remote — #135): список резюме (READ, #21).
+"""Команда list-resumes (#57, live-дефолт — #320): список резюме (READ, #21).
 
-Top-level команда ``hhru_bot list-resumes [--status] [--remote]`` —
+Top-level команда ``hhru_bot list-resumes [--status] [--local]`` —
 регистрируется автоматически через pkgutil.iter_modules (cli.py не трогается).
 
-READ-команда: по умолчанию читает ``config.resumes`` локально из config.yaml
-и печатает ASCII-таблицу (``report._ascii_table``). hh.ru НЕ дёргается.
+READ-команда. По умолчанию (#320) печатает канонический список резюме аккаунта
+HH.ru: открывает /applicant/my_resumes под сохранённой сессией
+(``copy_resume.list_resume_cards``) — реальный ``resume_id``, название, статус
+(черновик/опубликовано), локальный alias из конфига (настройки-overlay).
+Конфиг больше не реестр: его записи — только alias/настройки, отсутствие записи
+не скрывает резюме (#319/#320). Флаг ``--local`` — офлайн-просмотр overlay из
+``config.yaml`` без похода на hh.ru (hh.ru НЕ дёргается).
 
-Флаг ``--status`` дополнительно показывает статус поднятия резюме, читая ЛОКАЛЬНУЮ
-историю (без обращения к аккаунту):
-  - «можно bump» — ``throttle.can_bump_now()`` (кулдаун 4ч сверх дневного лимита);
-  - «последний bump» — ``history.last_action_at(resume_id, 'bump')`` (дата
-    последнего успешного поднятия из actions, или «—» если не поднимали).
+Один стабильный формат live-вывода: ``resume_id | alias | название | статус``;
+``--status`` добавляет колонки «можно bump»/«последний bump» из ЛОКАЛЬНОЙ истории
+(``throttle.can_bump_now``, ``history.last_action_at`` — keyed by resume_id,
+поэтому работают для любых live-карточек, не только конфигурированных).
+``--local`` печатает таблицу ``id | resume_id`` (+bump-колонки с ``--status``).
 
-Флаг ``--remote`` (#135, #315) — read-only поход на hh.ru: открывает
-/applicant/my_resumes под сохранённой сессией (``copy_resume.list_resume_cards``)
-и печатает реальные резюме аккаунта (хэш, название, статус, подключено ли в конфиге).
-Черновики (status=not_finished) показываются отдельно от опубликованных.
-Разблокирует ``copy-resume`` (#116), в конфиге которого resume_url — плейсхолдеры.
-Только ``goto`` + чтение DOM/SSR — ничего не кликается и не отправляется, поэтому
-подтверждение WRITE (``--force``) не требуется. Совместим с ``--status``
-(тот читает локальную историю — конфликта источников данных нет).
+Никакого молчаливого fallback на локальный список при сбое live-чтения (#320):
+невалидная сессия, отсутствующий cookie ``hhtoken``, форма входа при живом
+cookie или indeterminate-состояние списка — каждое даёт явный ``[FAIL]``
+и выход, иначе неполный локальный список выглядел бы достоверным.
 
 ``whoami._check_storage_state`` проверяет только формат файла сессии (валидный
 JSON с cookies), НЕ факт актуальной авторизации на hh.ru — истёкшие cookies его
-пройдут. Поэтому после открытия страницы ``--remote`` дополнительно зовёт
+пройдут. Поэтому после открытия страницы дополнительно зовётся
 ``browser.has_auth_cookie(page)`` (наличие cookie ``hhtoken``); без этой
 проверки истёкшая сессия и вправду пустой аккаунт неотличимы (оба дают
 0 карточек), и команда напечатала бы обманчивое «резюме не найдено» вместо
@@ -44,13 +45,14 @@ Cookie в jar не гарантирует, что сервер принял её
 карточки, при этом карточки есть, — печатается предупреждение о ненадёжности
 колонки «название», а не молчаливый прочерк, выдаваемый за подтверждённые данные.
 
-Контракт вывода — docs/cli-spec.md §list-resumes: базовые колонки
-``id | resume_id | можно bump | последний bump`` (последние две — только с
-``--status``); ``--remote`` печатает отдельную таблицу
-``resume_id | название | статус | в конфиге``. Статус читается из SSR
+Сироты overlay: записи ``config.resumes``, чей ``resume_id`` не встретился
+среди live-карточек (резюме удалено на hh.ru) — ``[WARN]`` со списком, а не
+молчаливое исчезновение настроек из виду.
+
+Контракт вывода — docs/cli-spec.md §list-resumes. Статус читается из SSR
 /applicant/my_resumes: ``not_finished`` → ``черновик``, остальные известные
-значения → ``опубликовано``. ``id`` — slug из конфига; ``resume_id`` —
-числовой хвост ``resume_url`` (``ResumeConfig.resume_id``). Только текст/ASCII,
+значения → ``опубликовано``. ``alias`` — slug из конфига (настройки есть) или
+«—» (remote-only, команды работают по resume_id — #319). Только текст/ASCII,
 без эмодзи.
 """
 
@@ -66,7 +68,7 @@ from ..report import _ascii_table
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "list-resumes",
-        help="Список резюме (READ; --status — из истории, --remote — с hh.ru)",
+        help="Список резюме аккаунта с hh.ru (READ; --local — офлайн из конфига)",
     )
     p.add_argument(
         "--status",
@@ -74,9 +76,9 @@ def register(subparsers) -> None:
         help="Дополнительно: можно ли поднять (кулдаун) и дата последнего поднятия",
     )
     p.add_argument(
-        "--remote",
+        "--local",
         action="store_true",
-        help="Показать реальные резюме аккаунта с hh.ru (read-only, требует сессии)",
+        help="Без похода на hh.ru: только записи config.yaml (overlay настроек)",
     )
     p.set_defaults(func=run)
 
@@ -104,7 +106,7 @@ def _format_last_bump_cell(last_at: datetime | None) -> str:
 
 
 def _format_status(status: str | None) -> str:
-    """Колонка «статус»: ``черновик`` / ``опубликовано`` / ``—``."""
+    """Колонка «статус»: ``черновик`` / ``опубликовано`` / «—»."""
     if status == "not_finished":
         return "черновик"
     if status in ("modified", "approved", "new", "finished"):
@@ -114,16 +116,28 @@ def _format_status(status: str | None) -> str:
     return "—"
 
 
-def _remote_rows(cards, configured_ids: set[str]) -> list[list[str]]:
-    """Строки таблицы --remote: resume_id | название | статус | в конфиге.
+def _live_rows(cards, alias_by_hash: dict[str, str], with_status: bool, throttle, history):
+    """Строки live-таблицы: resume_id | alias | название | статус (| bump-колонки).
 
-    «в конфиге» — id резюме из config.resumes, если resume_id карточки совпал
-    с ResumeConfig.resume_id какого-то элемента (передаётся отдельно, т.к.
-    сама функция чистая — тестируется без браузера/конфига)."""
+    ``alias_by_hash`` — {resume_id: slug} из config.resumes; «—» = remote-only
+    (настроек нет, команды адресуются по resume_id — #319). Чистая функция
+    по данным (тестируется без браузера/конфига); throttle/history — только
+    для опциональных bump-колонок.
+    """
     rows: list[list[str]] = []
     for card in cards:
-        in_config = "да" if card.resume_id in configured_ids else "—"
-        rows.append([card.resume_id, card.title or "—", _format_status(card.status), in_config])
+        row = [
+            card.resume_id,
+            alias_by_hash.get(card.resume_id, "—"),
+            card.title or "—",
+            _format_status(card.status),
+        ]
+        if with_status:
+            can_bump, wait_left = throttle.can_bump_now(card.resume_id)
+            last_at = history.last_action_at(card.resume_id, "bump")
+            row.append(_format_bump_cell(can_bump, wait_left))
+            row.append(_format_last_bump_cell(last_at))
+        rows.append(row)
     return rows
 
 
@@ -137,26 +151,26 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
     throttle = Throttle(config.throttle, history)
 
-    if args.status:
-        header = ["id", "resume_id", "можно bump", "последний bump"]
-    else:
-        header = ["id", "resume_id"]
-
-    rows: list[list[str]] = []
-    for resume in config.resumes:
-        row = [resume.id, resume.resume_id]
+    if args.local:
+        # Офлайн-просмотр overlay из конфига (hh.ru не дёргается). Явный режим:
+        # по умолчанию список каноничен на hh.ru (#320).
         if args.status:
-            can_bump, wait_left = throttle.can_bump_now(resume.resume_id)
-            last_at = history.last_action_at(resume.resume_id, "bump")
-            row.append(_format_bump_cell(can_bump, wait_left))
-            row.append(_format_last_bump_cell(last_at))
-        rows.append(row)
-
-    print(_ascii_table(header, rows))
-
-    if not args.remote:
+            header = ["id", "resume_id", "можно bump", "последний bump"]
+        else:
+            header = ["id", "resume_id"]
+        rows: list[list[str]] = []
+        for resume in config.resumes:
+            row = [resume.id, resume.resume_id]
+            if args.status:
+                can_bump, wait_left = throttle.can_bump_now(resume.resume_id)
+                last_at = history.last_action_at(resume.resume_id, "bump")
+                row.append(_format_bump_cell(can_bump, wait_left))
+                row.append(_format_last_bump_cell(last_at))
+            rows.append(row)
+        print(_ascii_table(header, rows))
         return
 
+    # Дефолт (#320): канонический список резюме аккаунта с hh.ru.
     ok, detail, _ = _check_storage_state(Path(config.storage_state_file))
     if not ok:
         print(f"[FAIL] Сессия недействительна: {detail}. Выполните login.")
@@ -205,7 +219,9 @@ def run(args: argparse.Namespace) -> None:
             cards = list_resume_cards(page, navigate=False)
         except ResumeListIndeterminate as e:
             # Timeout/интерстишл/дрейф селектора — не подтверждённо пустой
-            # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py).
+            # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py);
+            # локального fallback тоже нет (#320) — неполный список не должен
+            # выглядеть достоверным.
             print(f"[FAIL] {e}")
             return
 
@@ -227,19 +243,30 @@ def run(args: argparse.Namespace) -> None:
             "Колонка «статус» может быть неточной для некоторых резюме."
         )
 
-    configured_ids = {r.resume_id for r in config.resumes}
+    alias_by_hash = {r.resume_id: r.id for r in config.resumes}
+    header = ["resume_id", "alias", "название", "статус"]
+    if args.status:
+        header += ["можно bump", "последний bump"]
     print()
-    print(
-        _ascii_table(
-            ["resume_id", "название", "статус", "в конфиге"], _remote_rows(cards, configured_ids)
-        )
-    )
+    print(_ascii_table(header, _live_rows(cards, alias_by_hash, args.status, throttle, history)))
 
-    not_configured = [c for c in cards if c.resume_id not in configured_ids]
+    # Сироты overlay: настройка есть, резюме на hh.ru нет (удалено?) — не молча.
+    live_ids = {c.resume_id for c in cards}
+    orphans = [(r.id, r.resume_id) for r in config.resumes if r.resume_id not in live_ids]
+    if orphans:
+        print()
+        print("[WARN] Записи конфига без резюме на hh.ru (настройки не применяются):")
+        for slug, resume_hash in orphans:
+            print(f"  - {slug} = {resume_hash}")
+
+    not_configured = [c for c in cards if c.resume_id not in alias_by_hash]
     if not_configured:
         from .copy_resume import format_config_snippet
 
         print()
-        print("[INFO] Резюме не в конфиге — добавьте вручную:")
+        print(
+            "[INFO] Резюме без настроек в конфиге — команды адресуются по resume_id "
+            "(#319); overlay-настройки (search/ai_profile/...) опциональны:"
+        )
         for card in not_configured:
             print(format_config_snippet(card.resume_id))

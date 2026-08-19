@@ -239,6 +239,52 @@ def test_load_config_account_user_agent_wrong_type(tmp_path):
         load_config(path)
 
 
+def test_load_config_resumes_explicit_falsy_non_list_raises(tmp_path):
+    # cycle-review PR #322: raw.get("resumes") or [] раньше маскировал явное
+    # resumes: 0 (falsy, но не отсутствующее значение) под «раздела нет» и
+    # тихо давал пустой список вместо ошибки валидации типа (#320 разрешил
+    # отсутствие/пустой список как валидный overlay, но НЕ произвольный
+    # falsy-но-не-list тип).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes: 0
+        """,
+    )
+    with pytest.raises(ConfigError, match="resumes"):
+        load_config(path)
+
+
+def test_load_config_resumes_missing_key_is_valid_empty_overlay(tmp_path):
+    # #320: отсутствие раздела resumes — валидный пустой overlay, НЕ ошибка.
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        """,
+    )
+    config = load_config(path)
+    assert config.resumes == []
+
+
+def test_load_config_resumes_explicit_null_is_valid_empty_overlay(tmp_path):
+    # resumes: (пустое значение, YAML null) — тоже валидный пустой overlay,
+    # отличается от resumes: 0/false, которые являются ошибкой типа.
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+        """,
+    )
+    config = load_config(path)
+    assert config.resumes == []
+
+
 def _shipped_storage_state_path() -> str:
     """Берёт storage_state_file прямо из config.example.yaml — shipped контракт."""
     import yaml

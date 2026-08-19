@@ -63,5 +63,5 @@ def run(args: argparse.Namespace) -> bool:
             "[WARN] account.user_agent не задан. Скопируйте User-Agent из chrome://version "
             "в config.yaml: account.user_agent; без этого hh.ru может отвергнуть сессию."
         )
-    print("[INFO] Следующий шаг: запустите list-resumes --remote для проверки сессии.")
+    print("[INFO] Следующий шаг: запустите list-resumes для проверки сессии.")
     return False

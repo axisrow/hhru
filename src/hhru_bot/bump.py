@@ -45,7 +45,7 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             resume.id,
             False,
             "В конфиге указан плейсхолдер resume_url; укажите реальный URL "
-            "(получить можно через list-resumes --remote)",
+            "(получить можно через list-resumes)",
         )
     url = (
         resume.resume_url

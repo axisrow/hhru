@@ -166,14 +166,28 @@ def test_multiple_cards_each_title_scoped_to_own_card(monkeypatch):
     assert [c.title for c in cards] == ["Backend developer", "Data analyst"]
 
 
-def test_card_without_hash_link_is_skipped(monkeypatch):
+def test_card_without_hash_link_raises_indeterminate(monkeypatch):
+    """Codex adversarial review (PR #322): раньше карточка без хэша молча
+    пропускалась (continue) — дрейф вложенного селектора ссылки-хэша мог дать
+    частичный список, который list_resumes.py (#320) выдал бы за полный
+    (ложные orphans / заниженное «резюме не найдено»). Теперь — как честный
+    timeout: список не подтверждён, ResumeListIndeterminate, а не тихая потеря
+    карточки."""
     page = StubPage([StubCard(None), StubCard(ID_A, title_text="Backend developer")])
     _patch_goto(monkeypatch, page)
 
-    cards = cr.list_resume_cards(page)
+    with pytest.raises(cr.ResumeListIndeterminate):
+        cr.list_resume_cards(page)
 
-    assert len(cards) == 1
-    assert cards[0].resume_id == ID_A
+
+def test_all_cards_without_hash_link_raises_indeterminate(monkeypatch):
+    """Тот же дрейф, но затронувший ВСЕ карточки — тоже indeterminate, а не
+    пустой список, который list_resumes.py выдал бы за честно пустой аккаунт."""
+    page = StubPage([StubCard(None), StubCard(None)])
+    _patch_goto(monkeypatch, page)
+
+    with pytest.raises(cr.ResumeListIndeterminate):
+        cr.list_resume_cards(page)
 
 
 def test_missing_title_selector_does_not_fail(monkeypatch):
