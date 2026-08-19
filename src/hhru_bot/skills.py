@@ -138,6 +138,7 @@ def edit_skills_on_hh(
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
     editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
     profile_path = f"/resume/{resume.resume_id}"
+    edit_path = f"/resume/edit/{resume.resume_id}/keySkills"
     # As with position (#337), the visible SSR trigger can precede React event
     # hydration.  Only the editor becoming visible confirms that a click worked.
     for attempt in range(2):
@@ -151,6 +152,12 @@ def edit_skills_on_hh(
         except PlaywrightError:
             if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
                 return SkillsResult(False, reason="форма навыков не открылась")
+    # A visible editor alone does not prove it belongs to `resume.resume_id` —
+    # hh.ru routes the editor to its own dedicated edit route, so require that
+    # route as a post-condition (#337 follow-up: the pre-#337 wait_for_url
+    # enforced this binding and must not be dropped with it).
+    if urlsplit(page.url).path.rstrip("/") != edit_path:
+        return SkillsResult(False, reason="форма навыков открыта не для того резюме")
     existing = read_skills(page)
     existing_keys = {skill.casefold() for skill in existing}
     additions = tuple(skill for skill in skills if skill.name.casefold() not in existing_keys)

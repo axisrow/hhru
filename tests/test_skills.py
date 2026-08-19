@@ -61,6 +61,14 @@ def test_edit_skills_retries_pre_hydration_noop_click(monkeypatch) -> None:
 
     editor.wait_for.side_effect = [PlaywrightTimeoutError("not hydrated"), None]
     cancel = MagicMock()
+
+    def click_side_effect():
+        # The second attempt's click is the one that actually hydrates and
+        # commits the dedicated edit route.
+        if trigger.click.call_count == 2:
+            page.url = "https://hh.ru/resume/edit/resume-id/keySkills"
+
+    trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
@@ -111,3 +119,38 @@ def test_edit_skills_does_not_retry_after_navigation_to_editor(monkeypatch) -> N
 
     assert result.success is False
     assert trigger.click.call_count == 1
+
+
+def test_edit_skills_rejects_editor_on_wrong_resume_route(monkeypatch) -> None:
+    """#337 follow-up: a visible editor must belong to the requested resume_id.
+
+    The pre-#337 code enforced this via ``wait_for_url`` before querying the
+    editor. Dropping that wait must not drop the invariant it protected: a
+    visible editor on an unexpected edit route must still fail closed instead
+    of reading/writing skills into the wrong resume.
+    """
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    # The editor is visible, but the committed route belongs to a different resume.
+    page.url = "https://hh.ru/resume/edit/other-resume-id/keySkills"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    cancel = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "read_skills", lambda _page: ())
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert result.reason == "форма навыков открыта не для того резюме"
