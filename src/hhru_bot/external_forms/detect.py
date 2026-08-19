@@ -15,6 +15,14 @@ from playwright.sync_api import Page
 
 _SPACE = re.compile(r"\s+")
 
+# Fields the LLM must never auto-select, even at high confidence (#280 review
+# round 3): a confident-but-mismatched guess on these is the costliest failure
+# mode. They remain fillable only via an exact form_profile.answers match —
+# the same, already-accepted disclosure boundary from #276/#277/#280.
+_LLM_DENIED_KEY_PATTERN = re.compile(
+    r"телефон|phone|email|e-mail|почта|паспорт|passport|снилс|инн", re.IGNORECASE
+)
+
 
 def normalize(text: str) -> str:
     return _SPACE.sub(" ", text).strip().casefold()
@@ -196,6 +204,7 @@ def match_answer_llm(question: str, known_data: dict[str, str], client) -> str |
         if (
             isinstance(key, str)
             and key in known_data
+            and not _LLM_DENIED_KEY_PATTERN.search(key)
             and isinstance(confidence, (int, float))
             and not isinstance(confidence, bool)
             and confidence >= 0.85

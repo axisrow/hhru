@@ -66,12 +66,42 @@ def test_match_answer_llm_sends_only_keys_not_pii_values():
             content = messages[0]["content"]
             # The model is only a key-classifier: it needs to know the field
             # names exist, never the underlying contact data.
-            assert "+7 900 123-45-67" not in content
+            assert "Москва" not in content
             assert "ada@example.test" not in content
-            return SimpleNamespace(content='{"key":"телефон","confidence":0.9}')
+            return SimpleNamespace(content='{"key":"город","confidence":0.9}')
 
-    facts = {"телефон": "+7 900 123-45-67", "email": "ada@example.test"}
-    assert match_answer_llm("Ваш телефон?", facts, FakeLLM()) == "+7 900 123-45-67"
+    # "город" is not a denied (sensitive) key — see
+    # test_match_answer_llm_never_selects_high_sensitivity_keys for phone/email.
+    facts = {"город": "Москва", "email": "ada@example.test"}
+    assert match_answer_llm("В каком городе вы живёте?", facts, FakeLLM()) == "Москва"
+
+
+def test_match_answer_llm_never_selects_high_sensitivity_keys():
+    """#280 review round 3: even a confident LLM match must not auto-select
+    phone/email/passport-like fields — those require an exact configured
+    match instead, so a mismatched-but-confident guess can't disclose them."""
+
+    class FakeLLM:
+        def __init__(self, content):
+            self.content = content
+
+        def chat(self, _messages, **_kwargs):
+            return SimpleNamespace(content=self.content)
+
+    facts = {"телефон": "+7 900 123-45-67", "email": "ada@example.test", "город": "Москва"}
+    assert (
+        match_answer_llm("Ваш контакт?", facts, FakeLLM('{"key":"телефон","confidence":0.99}'))
+        is None
+    )
+    assert (
+        match_answer_llm("Как связаться?", facts, FakeLLM('{"key":"email","confidence":0.99}'))
+        is None
+    )
+    # Low-sensitivity fields remain matchable.
+    assert (
+        match_answer_llm("Ваш город?", facts, FakeLLM('{"key":"город","confidence":0.9}'))
+        == "Москва"
+    )
 
 
 def test_match_answer_llm_degrades_on_transport_error():
