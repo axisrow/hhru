@@ -1,20 +1,25 @@
-"""Two-phase, non-interactive login by a one-time hh.ru code.
-
-The pending browser state is deliberately separate from the final session.  A
-new browser is started for ``submit``; this is useful for callers which cannot
-keep a process alive, but depends on hh.ru persisting the challenge in cookies.
-"""
+"""One-process login by an hh.ru email or SMS code."""
 
 from __future__ import annotations
 
 import logging
 import re
+import select
+import sys
+import time
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh, launch_context
+from .browser import (
+    HH_BASE_URL,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    launch_context,
+    require_authenticated_page,
+)
 from .config import AppConfig
 from .selectors import (
     LOGIN_CODE_REQUEST_BUTTON,
@@ -26,7 +31,8 @@ from .selectors import (
 logger = logging.getLogger("hhru_bot.auth_code")
 
 _LOGIN_URL = f"{HH_BASE_URL}/account/login"
-_PENDING_SUFFIX = ".login-code.pending.json"
+_CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
+CODE_TIMEOUT_SECONDS = 300
 
 
 def mask_login(value: str) -> str:
@@ -41,86 +47,101 @@ def mask_login(value: str) -> str:
     return "***"
 
 
-def _pending_path(config: AppConfig) -> Path:
-    return config.storage_state_file.with_name(config.storage_state_file.name + _PENDING_SUFFIX)
-
-
-def request_code(config: AppConfig, login: str) -> None:
-    """Ask hh.ru to send a code and persist the intermediate browser state."""
-    if not login.strip():
-        raise ValueError("Логин не должен быть пустым")
-    pending = _pending_path(config)
-    pending.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with launch_context(pending, headless=True, user_agent=config.user_agent) as context:
-            page = context.new_page()
-            goto_hh(page, _LOGIN_URL)
-            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
-            if "@" in login:
-                page.locator(LOGIN_EMAIL_TYPE).check(force=True)
-                field = page.locator(LOGIN_EMAIL_INPUT)
-            else:
-                field = page.locator(LOGIN_PHONE_INPUT)
-            if field.count() == 0:
-                raise RuntimeError("Не найдено поле логина на странице hh.ru")
-            field.fill(login)
-            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
-            _raise_for_captcha_or_timeout(page)
-            _raise_unless_login_field_gone(field)
-            context.storage_state(path=str(pending))
-    except (PlaywrightError, PlaywrightTimeoutError) as exc:
-        raise RuntimeError(
-            "Не удалось запросить код из-за таймаута браузера; повторите --request"
-        ) from exc
-    logger.info("Запрошен код для %s; промежуточная сессия сохранена", mask_login(login))
-
-
-def submit_code(config: AppConfig, code: str) -> None:
-    """Submit a code using the pending state and save the authenticated state."""
-    if not code.strip():
+def _read_code(code_file: Path | None, timeout_seconds: int) -> str:
+    if code_file is not None:
+        try:
+            code = code_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"Не удалось прочитать --code-file: {exc}") from exc
+    else:
+        print(f"[WAIT] Введите код (таймаут {timeout_seconds} сек):", flush=True)
+        ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+        if not ready:
+            raise RuntimeError(f"Ввод кода истёк через {timeout_seconds} секунд")
+        code = sys.stdin.readline().strip()
+    if not code:
         raise ValueError("Код не должен быть пустым")
-    pending = _pending_path(config)
-    if not pending.exists():
-        raise RuntimeError("Промежуточная сессия не найдена: сначала выполните --request")
-    # TODO(#167, #285): once authenticated code login is implemented, reuse
-    # account_profile.read_account_profile here after positive auth confirmation.
-    # hh.ru did not expose the code input in the anonymous live dump.  Failing
-    # explicitly is safer than guessing a selector and silently timing out.
-    raise RuntimeError(
-        "Поле одноразового кода не подтверждено анонимным дампом hh.ru; "
-        "выполните ручной login (обход капчи запрещён)"
-    )
+    return code
 
 
 def _raise_for_captcha_or_timeout(page) -> None:
     try:
-        text = page.locator("body").inner_text().lower()
+        text = page.locator("body").inner_text().casefold()
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
-        raise RuntimeError("Не удалось дождаться ответа hh.ru; повторите --request") from exc
+        raise RuntimeError("Не удалось дождаться ответа hh.ru; вход отменён") from exc
     if "captcha" in text or "капч" in text:
-        raise RuntimeError("hh.ru требует капчу; выполните ручной login")
+        raise RuntimeError("hh.ru требует капчу; сессия не сохранена")
 
 
-def _raise_unless_login_field_gone(field) -> None:
-    """Позитивно подтвердить, что hh.ru принял отправку формы.
+def _wait_for_authenticated_page(page, timeout_seconds: int) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            if has_auth_cookie(page) and not has_login_form(page):
+                require_authenticated_page(page)
+                return
+            page.wait_for_timeout(250)
+        except (PlaywrightError, PlaywrightTimeoutError) as exc:
+            raise RuntimeError("Ошибка проверки входа; сессия не сохранена") from exc
+    raise RuntimeError("hh.ru не подтвердил вход по коду; сессия не сохранена")
 
-    Поле подтверждения ввода кода не подтверждено живым дампом (см.
-    submit_code), поэтому вместо него используем единственный доступный
-    позитивный сигнал прогресса: поле логина, которое мы только что
-    заполнили, должно исчезнуть с экрана после отправки. Если оно всё ещё
-    там (задержка/ошибка валидации/троттлинг), значит hh.ru не перешёл
-    дальше — ошибка вместо молчаливого "[OK]" без подтверждения (#170 round 2).
-    """
+
+def login_with_code(
+    config: AppConfig,
+    login: str,
+    *,
+    code_file: Path | None = None,
+    timeout_seconds: int = CODE_TIMEOUT_SECONDS,
+) -> None:
+    """Complete login in one browser process and save only confirmed state."""
+    if not login.strip():
+        raise ValueError("Логин не должен быть пустым")
+    if timeout_seconds <= 0:
+        raise ValueError("Таймаут должен быть положительным")
+    config.storage_state_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary_state = config.storage_state_file.with_name(
+        config.storage_state_file.name + ".login-code.tmp.json"
+    )
     try:
-        field.wait_for(state="detached", timeout=10_000)
+        with launch_context(
+            temporary_state, headless=True, user_agent=config.user_agent
+        ) as context:
+            page = context.new_page()
+            goto_hh(page, _LOGIN_URL)
+            continue_button = page.locator(LOGIN_CODE_REQUEST_BUTTON)
+            if continue_button.count() != 1:
+                raise RuntimeError("кнопка продолжения login не подтверждена")
+            continue_button.click()
+            if "@" in login:
+                email_type = page.locator(LOGIN_EMAIL_TYPE)
+                if email_type.count() != 1:
+                    raise RuntimeError("переключатель email не подтверждён")
+                email_type.check(force=True)
+                field = page.locator(LOGIN_EMAIL_INPUT)
+            else:
+                field = page.locator(LOGIN_PHONE_INPUT)
+            if field.count() != 1:
+                raise RuntimeError("поле логина не подтверждено")
+            field.fill(login)
+            page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
+            _raise_for_captcha_or_timeout(page)
+            code_field = page.locator(_CODE_INPUT)
+            if code_field.count() != 1:
+                raise RuntimeError("поле одноразового кода не подтверждено")
+            print(
+                f"[WAIT] Код отправлен на {mask_login(login)}. "
+                f"Введите код (таймаут {timeout_seconds} сек):",
+                flush=True,
+            )
+            code = _read_code(code_file, timeout_seconds)
+            code_field.fill(code)
+            _wait_for_authenticated_page(page, timeout_seconds)
+            context.storage_state(path=str(config.storage_state_file))
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
-        raise RuntimeError(
-            "hh.ru не подтвердил приём запроса кода (поле логина осталось на экране); "
-            "повторите --request"
-        ) from exc
-
-
-# NOTE: успех --submit должен подтверждаться ТОЛЬКО позитивно —
-# has_auth_cookie(page) and not has_login_form(page) (см. browser.py) — как
-# только поле кода будет подтверждено живым дампом и submit_code() перестанет
-# быть заглушкой (follow-up к #167).
+        raise RuntimeError("Ошибка браузера при входе; сессия не сохранена") from exc
+    finally:
+        try:
+            temporary_state.unlink()
+        except FileNotFoundError:
+            pass
+    logger.info("Вход по одноразовому коду подтверждён; сессия сохранена")
