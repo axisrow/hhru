@@ -85,13 +85,28 @@ def scan_form(page: Page) -> FormScan:
         fields: list[FormField] = []
         controls = form.locator("input, textarea, select")
         seen_radio_names: set[str] = set()
+        selector_indexes: dict[str, int] = {}
         for i in range(controls.count()):
             control = controls.nth(i)
-            kind = (control.get_attribute("type") or "text").casefold()
+            tag = control.evaluate("e => e.tagName").lower()
+            kind = (
+                "select"
+                if tag == "select"
+                else (control.get_attribute("type") or "text").casefold()
+            )
             if kind in {"hidden", "submit", "button", "reset"}:
                 continue
-            if kind not in {"text", "email", "tel", "number", "radio", "checkbox", "file"}:
-                kind = "select" if control.evaluate("e => e.tagName") == "SELECT" else "unknown"
+            if kind not in {
+                "text",
+                "email",
+                "tel",
+                "number",
+                "radio",
+                "checkbox",
+                "file",
+                "select",
+            }:
+                kind = "unknown"
             options: tuple[str, ...] = ()
             if kind == "radio":
                 name = control.get_attribute("name") or ""
@@ -115,13 +130,31 @@ def scan_form(page: Page) -> FormScan:
                     control.get_attribute("aria-required") or ""
                 ).casefold() == "true" or control.get_attribute("required") is not None
                 control_id = control.get_attribute("id")
-                tag = control.evaluate("e => e.tagName").lower()
-                if control_id:
-                    selector = f"#{control_id}"
-                elif tag == "textarea":
-                    selector = f"form textarea >> nth={i}"
+                if tag == "select":
+                    options = tuple(
+                        normalize(option)
+                        for option in control.locator("option").all_inner_texts()
+                        if normalize(option)
+                    )
+                if tag == "textarea":
+                    selector_key = "textarea"
+                    selector_base = "form textarea"
+                elif tag == "select":
+                    selector_key = "select"
+                    selector_base = "form select"
+                elif kind == "text":
+                    # Missing input[type] is equivalent to type=text. Both
+                    # forms share this selector family and its nth index.
+                    selector_key = "input:text"
+                    selector_base = "form input:not([type]), form input[type='text']"
                 else:
-                    selector = f"form input[type='{kind}'] >> nth={i}"
+                    selector_key = f"input:{kind}"
+                    selector_base = f"form input[type='{kind}']"
+                local_index = selector_indexes.get(selector_key, 0)
+                selector_indexes[selector_key] = local_index + 1
+                selector = (
+                    f"#{control_id}" if control_id else f"{selector_base} >> nth={local_index}"
+                )
             clean_label = _question_text(label)
             state = "confirmed" if clean_label else "indeterminate"
             fields.append(
@@ -165,6 +198,22 @@ def apply_answers(page: Page, scan: FormScan, answers: dict[str, str]) -> tuple[
                         break
         elif form_field.kind in {"text", "email", "tel", "number"}:
             loc.fill(value)
+        elif form_field.kind == "select":
+            if normalize(value) not in form_field.options:
+                missing.append(form_field.label)
+            else:
+                option_label = next(
+                    (
+                        option
+                        for option in loc.locator("option").all_inner_texts()
+                        if normalize(option) == normalize(value)
+                    ),
+                    None,
+                )
+                if option_label is None:
+                    missing.append(form_field.label)
+                else:
+                    loc.select_option(label=option_label)
         else:
             missing.append(form_field.label)
     return not missing, missing

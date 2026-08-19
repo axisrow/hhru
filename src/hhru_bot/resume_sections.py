@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hhru_bot.resume_sections")
 FORM_TIMEOUT_MS = 10_000
 
+# Потолок ожидания закрытия inline-редактора после save (#331).
+SAVE_TIMEOUT_MS = 30_000
+
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
@@ -182,7 +185,10 @@ def _apply_rows(
             # row's save.click() already succeeded (#352/codex round 3) — the
             # whole per-row body must stay inside this guard, not just the
             # click/wait_for, so no browser call here can escape apply_plan
-            # uncaught and hide which earlier rows already saved.
+            # uncaught and hide which earlier rows already saved. This also
+            # covers save.click()/cancel.click() themselves (#331 cycle-review
+            # round 3): an element-detached or navigation error from either
+            # must not propagate and crash apply_plan.
             if index >= trigger.count():
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
@@ -192,13 +198,46 @@ def _apply_rows(
             if not dry_run:
                 if save.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка сохранения")
-                    continue
+                    # The row editor is left open in this state; querying the
+                    # next trigger against it would be unreliable (#331).
+                    break
                 save.click()
+                # The page is already on /resume/{resume_id} before this click
+                # (see apply_plan below), and a successful save closes the
+                # inline editor in place without changing the URL — so
+                # page.wait_for_url() against that same URL would resolve
+                # immediately regardless of whether the save actually
+                # succeeded (#331: false-positive success). The editor
+                # closing (the save button disappearing) is the positive,
+                # save-specific signal instead. A timeout here means the
+                # editor is likely still open (same rationale as the ambiguous
+                # save/cancel branches below), so it falls through to the
+                # shared except below and stops the block, rather than
+                # clicking the next row's trigger against an unresolved
+                # editor state (#331, codex+claude cycle-review round 2).
+                save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+            else:
+                # Leave the row editor before moving to the next row.  Otherwise
+                # the next trigger is queried while the previous form is still open.
+                cancel_qa = (
+                    "resume-partial-edit-cancel"
+                    if block == "recommendations"
+                    else "profile-layout-cancel-button"
+                )
+                cancel = page.locator(f"[data-qa='{cancel_qa}']")
+                if cancel.count() != 1:
+                    errors.append(f"{block}: неоднозначная кнопка отмены")
+                    # Same reasoning as the save branch: the editor stays open,
+                    # so stop this block instead of leaving it open (#331).
+                    break
+                cancel.click()
         except PlaywrightError as exc:
             # A hydration timeout here may follow an already-successful save.click()
-            # on a previous row (#352/codex): fail closed with an explicit error for
-            # this row and stop the block instead of letting the exception escape
-            # apply_plan and hide which earlier rows already saved.
+            # on a previous row (#352/codex round 3), including a save.wait_for
+            # timeout right after save.click() (#331/codex+claude): fail closed
+            # with an explicit error for this row and stop the block instead of
+            # letting the exception escape apply_plan and hide which earlier
+            # rows already saved.
             errors.append(f"{block}: строка {index} не подтверждена: {exc}")
             break
     return errors
@@ -213,9 +252,17 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         return ["hh.ru показал форму входа"]
     errors = list(plan.skipped)
     errors += _apply_rows(
-        page, "attestations", plan.attestations, _fill_attestation_row, dry_run=dry_run
+        page,
+        "attestations",
+        plan.attestations,
+        _fill_attestation_row,
+        dry_run=dry_run,
     )
     errors += _apply_rows(
-        page, "recommendations", plan.recommendations, _fill_recommendation_row, dry_run=dry_run
+        page,
+        "recommendations",
+        plan.recommendations,
+        _fill_recommendation_row,
+        dry_run=dry_run,
     )
     return errors

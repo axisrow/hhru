@@ -252,6 +252,7 @@ def edit_experience_on_hh(
             try:
                 add.click()
                 trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
+                trigger.first.wait_for(state="visible", timeout=SAVE_TIMEOUT_MS)
             except PlaywrightError as exc:
                 return results + [f"строка опыта {index}: не удалось открыть новую запись: {exc}"]
         if trigger.count() != 1:
