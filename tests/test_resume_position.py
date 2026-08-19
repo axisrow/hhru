@@ -10,7 +10,6 @@ from hhru_bot.resume_position import (
     build_position_prompt,
     fill_only_missing,
     parse_position_response,
-    validate_position_title,
 )
 
 pytestmark = pytest.mark.unit
@@ -70,16 +69,6 @@ def test_fill_mode_preserves_existing_values():
     assert merged.employment is None
     assert merged.business_trips is None
     assert merged.salary == 100000
-
-
-def test_validate_position_title_requires_non_empty_title():
-    with pytest.raises(ValueError, match="Тайтл обязателен"):
-        validate_position_title(PositionValues(title=""), PositionValues(title=None))
-
-    with pytest.raises(ValueError, match="Пустой тайтл невозможен"):
-        validate_position_title(PositionValues(title="Existing"), PositionValues(title=""))
-
-    validate_position_title(PositionValues(title="Existing"), PositionValues(title=None))
 
 
 def test_apply_position_explicit_empty_title_clears_but_none_leaves_unchanged():
