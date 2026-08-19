@@ -22,6 +22,7 @@ from ..browser import goto_hh, has_login_form
 from ..history import SKIP_REASONS
 from ..search import VacancyCard
 from . import steps as apply_steps
+from .antibot import AntiBotChallengeDetected, detect_antibot_on_page
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
@@ -173,10 +174,17 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     * indeterminate — список не прочитан: fail-closed uncertain+acted —
       has_applied видит запись, троттл ждёт (как у #176).
     """
+    # Inspect the page that failed before the verifier navigates away. A submit
+    # navigation may render a challenge and still raise SubmitClickUncertain.
+    _halt_if_antibot(ctx)
     if ctx.verifier is None:
         return ctx.fail(reason)
     try:
         verdict = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    except AntiBotChallengeDetected:
+        # A confirmed challenge is terminal, unlike an arbitrary verifier
+        # crash. The pre-submit audit reservation remains fail-closed uncertain.
+        raise
     except Exception as exc:  # noqa: BLE001
         # #207: сбой самой внешней проверки не должен обрывать apply до записи
         # в history и паузы троттлинга — иначе следующий запуск не увидит запись
@@ -217,11 +225,15 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
 def _run(ctx: ApplyContext) -> ApplyResult:
     logger.info("Открываю вакансию: %s (%s)", ctx.vacancy.title, ctx.vacancy.url)
     goto_hh(ctx.page, ctx.vacancy.url)
+    _halt_if_antibot(ctx)
     if has_login_form(ctx.page):
         return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
     apply_button_found = apply_steps.wait_apply_button(ctx.page)
+    # A challenge can render asynchronously while wait_apply_button is waiting.
+    # Recheck before turning the missing button into an ordinary per-vacancy fail.
+    _halt_if_antibot(ctx)
     # The combined wait can observe both markers during a transitional SPA
     # render. Re-check independently after it completes so the apply button
     # cannot win over an already-responded marker. #241 cycle-review round 2
@@ -262,6 +274,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
     navigation_result = apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
+    _halt_if_antibot(ctx)
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный,
         # неисполнимый пропуск; не форма не отрисовалась, а hh.ru дал определённый
@@ -295,6 +308,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     #     чистый fail с acted=False: на hh.ru следа нет, как у остальных
     #     ранних выходов #163, но traceback больше не рвёт цикл откликов.
     try:
+        # Last pre-submit barrier: a challenge rendered after the form checks
+        # terminates the whole command before the irreversible click/audit marker.
+        _halt_if_antibot(ctx)
         if ctx.before_submit is not None:
             ctx.before_submit()
         reason = apply_steps.fill_response_form(ctx.page, ctx.resume_id, letter)
@@ -328,7 +344,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     try:
         ctx.probe("submitted", vacancy_title=ctx.vacancy.title)
 
-        if not wait_success_confirmation(ctx.page):
+        if not wait_success_confirmation(ctx.page, terminal_check=lambda: _halt_if_antibot(ctx)):
             # Честный union-poll до таймаута БЕЗ сигнала — локально успеха не
             # нашли (#163). Но это всё ещё «после действия»: вердикт финализируется
             # внешней проверкой (#207) — found → success, неопределённость чтения
@@ -354,3 +370,13 @@ def _run(ctx: ApplyContext) -> ApplyResult:
 
     logger.info("Отклик отправлен: %s", ctx.vacancy.title)
     return ctx.ok("success")
+
+
+def _halt_if_antibot(ctx: ApplyContext) -> None:
+    """Raise the terminal signal without creating a per-vacancy action record."""
+
+    detection = detect_antibot_on_page(ctx.page)
+    if detection is None:
+        return
+    logger.error("[FAIL] %s — %s", ctx.vacancy.title, detection.detail)
+    raise AntiBotChallengeDetected(detection)

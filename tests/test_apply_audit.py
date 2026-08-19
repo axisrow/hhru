@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.commands import _common
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.history import History
@@ -127,3 +128,41 @@ def test_apply_finalizes_the_pre_submit_marker_in_place(tmp_path, monkeypatch):
         rows = conn.execute("SELECT resume_id, vacancy_id, action, status FROM actions").fetchall()
 
     assert [tuple(row) for row in rows] == [("AAA111", "123", "apply", "success")]
+
+
+def test_post_submit_challenge_finalizes_uncertain_marker_before_stopping(tmp_path, monkeypatch):
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(dry_run=False, headless=True, max_pages=1, limit=1)
+    card = VacancyCard("123", "Python developer", "Acme", "https://hh.ru/vacancy/123")
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+
+    def challenge_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
+        kwargs["before_submit"]()
+        raise AntiBotChallengeDetected(detection)
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", challenge_after_reservation)
+
+    with pytest.raises(AntiBotChallengeDetected):
+        _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    with history._connect() as conn:
+        row = conn.execute("SELECT status, reason FROM actions").fetchone()
+
+    assert row is not None
+    assert row["status"] == "uncertain"
+    assert "обнаружена анти-бот проверка" in row["reason"]

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
+from .apply.antibot import AntiBotChallengeDetected
 from .browser import BrowserLaunchError
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
@@ -171,6 +172,11 @@ def _execute(args: argparse.Namespace) -> None:
             sys.exit(1)
     except BrowserLaunchError as exc:
         print(f"[ENVIRONMENT] {exc}", file=sys.stderr)
+        sys.exit(1)
+    except AntiBotChallengeDetected as exc:
+        # #344: terminal apply/run state.  Do not render a traceback or continue
+        # with another vacancy/resume (or bump in the combined ``run`` command).
+        print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")

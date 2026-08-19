@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.cli import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_HISTORY_PATH,
@@ -406,3 +407,25 @@ def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch, capsys)
         # (root.handlers.clear() внутри setup_logging), но если assert выше упадёт,
         # handler останется висеть на последующие тесты — чистим в любом случае.
         logging.getLogger("hhru_bot").handlers.clear()
+
+
+def test_antibot_terminal_state_prints_fail_without_traceback(monkeypatch, capsys):
+    """#344: terminal challenge stops the command with a human-readable failure."""
+
+    def _challenge(_args: argparse.Namespace) -> bool:
+        raise AntiBotChallengeDetected(
+            AntiBotDetection("captcha_data_qa", "виден маркер captcha_data_qa")
+        )
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _challenge)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["whoami"])
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "[FAIL] обнаружена анти-бот проверка" in stderr
+    assert "решите её вручную" in stderr
+    assert "Traceback" not in stderr
+    logging.getLogger("hhru_bot").handlers.clear()

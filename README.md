@@ -631,6 +631,10 @@ Account-wide ответы в чатах: план из локальной ист
   Python + Playwright. Ценно: паттерн персистентной сессии (`state.json`)
   — ручной вход в видимом браузере один раз, затем headless (обход
   блокировки после закрытия API).
+- [semernyakov/hh-auto-apply](https://github.com/semernyakov/hh-auto-apply) —
+  Python + синхронный Playwright, MIT. Ценно: парсер cooldown поднятия
+  резюме из текстов hh.ru («через N ч M мин», «сегодня/завтра в HH:MM»),
+  который можно адаптировать для точного вывода времени в `bump`.
 - [beatwad/XX_Auto_Jobs_Applier](https://github.com/beatwad/XX_Auto_Jobs_Applier)
   — Python + Playwright, MIT. Ценно: config-driven архитектура (YAML) и
   приём решения капчи через Telegram.
