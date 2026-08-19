@@ -107,7 +107,9 @@ def run(args: argparse.Namespace) -> bool:
             )
         )
     )
-    if manual and args.mode is not None:
+    # "fill" совпадает с неявным дефолтом ручного режима — не считаем конфликтом,
+    # чтобы явная передача дефолтного значения не наказывалась (#327).
+    if manual and args.mode not in (None, "fill"):
         print("[FAIL] --mode относится к LLM-планированию и не сочетается с ручными полями (#326)")
         return True
     mode = args.mode or "fill"

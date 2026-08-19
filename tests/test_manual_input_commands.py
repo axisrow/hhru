@@ -142,6 +142,44 @@ def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
     assert "--career" in capsys.readouterr().out
 
 
+def test_edit_experience_manual_entry_appends_after_existing_rows(tmp_path, capsys, monkeypatch):
+    """Manual --entry must not overwrite an existing row by reusing index 0 (#327).
+
+    Regression guard: a boevoy manual --entry run on a resume that already has
+    experience must append a new row (index len(existing)), never reuse an
+    existing index — reusing an index blanks any field the manual JSON omitted.
+    """
+    from hhru_bot.experience import ExperienceEntry
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.experience.read_experience_on_hh",
+        lambda page, resume_id: [
+            ExperienceEntry(company="Старая компания", position="Старая должность")
+        ],
+    )
+    captured = {}
+
+    def fake_edit_experience_on_hh(page, resume_id, plan, *, dry_run, indexes=None):
+        captured["indexes"] = indexes
+        captured["plan"] = plan
+        return ["строка 1: сохранено"]
+
+    monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fake_edit_experience_on_hh)
+    edit_experience_cmd.run(
+        _args(
+            tmp_path,
+            mode="fill",
+            dry_run=False,
+            force=True,
+            career=None,
+            existing=None,
+            entry=['{"company": "Новая компания", "position": "Новая должность"}'],
+        )
+    )
+    assert captured["indexes"] == [1]
+
+
 # --- about --text ------------------------------------------------------------
 
 
@@ -196,9 +234,23 @@ def test_resume_position_manual_title_dry_run_without_ai(tmp_path, capsys, monke
 
 
 def test_resume_position_manual_conflicts_with_mode(tmp_path, capsys):
-    result = resume_position_cmd.run(_args(tmp_path, title="x", mode="fill"))
+    result = resume_position_cmd.run(_args(tmp_path, title="x", mode="from-scratch"))
     assert result is True
     assert "LLM-планированию" in capsys.readouterr().out
+
+
+def test_resume_position_manual_allows_explicit_fill_mode(tmp_path, capsys, monkeypatch):
+    """--mode fill matches the implicit manual default and must not be rejected (#327)."""
+    from hhru_bot.resume_position import PositionValues
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda page, resume: PositionValues(title="старая"),
+    )
+    result = resume_position_cmd.run(_args(tmp_path, title="新职位", mode="fill"))
+    assert result is False
+    assert "新职位" in capsys.readouterr().out
 
 
 # --- edit-education ручные записи -------------------------------------------

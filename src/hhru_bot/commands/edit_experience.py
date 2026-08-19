@@ -178,8 +178,16 @@ def run(args: argparse.Namespace) -> None:
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
+            page = context.new_page()
+            indexes = None
+            if manual:
+                # Manual entries have no protected-field merge (#327): reusing an
+                # existing row's index would silently blank any field the manual
+                # JSON omitted. Always append after the live row count instead.
+                existing_count = len(read_experience_on_hh(page, resume.resume_id))
+                indexes = list(range(existing_count, existing_count + len(plan.entries)))
             results = edit_experience_on_hh(
-                context.new_page(), resume.resume_id, plan, dry_run=False
+                page, resume.resume_id, plan, dry_run=False, indexes=indexes
             )
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback contract
         print(f"[FAIL] {resume.id} — {exc}")
