@@ -280,7 +280,7 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     if plan.title == "":
         raise ValueError(
             "Пустой title отклоняется hh.ru. Укажите значение, например: "
-            '--title "Python-разработчик", или не передавайте --title.'
+            '--title "Python-разработчик". Если title не нужно менять, не передавайте --title.'
         )
     if plan.specializations:
         raise RuntimeError("селектор specializations не подтверждён на форме hh.ru")
