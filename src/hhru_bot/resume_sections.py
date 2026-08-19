@@ -159,19 +159,23 @@ def _fill_attestation_row(page: Page, item: Attestation) -> Locator:
 
 
 def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
-    scope = (
-        page.locator("input[name='company']")
-        .first.locator("xpath=..")
-        .locator("xpath=..")
-        .locator("xpath=..")
-    )
-    _fill(scope.locator("input[name='company']"), item.company)
-    inputs = scope.locator("input")
-    if inputs.count() > 1:
-        _fill(inputs.nth(0), item.name)
-    if inputs.count() > 2:
-        _fill(inputs.nth(1), item.position)
-    _fill(scope.locator("textarea"), item.text)
+    if item.text:
+        raise PlaywrightError(
+            "текущая форма рекомендации не содержит поля текста; запись остановлена"
+        )
+
+    def labelled(label: str):
+        field = page.get_by_label(label, exact=True)
+        if field.count() != 1:
+            raise PlaywrightError(f"поле рекомендации {label!r} не найдено однозначно")
+        return field
+
+    _fill(labelled("Имя человека"), item.name)
+    _fill(labelled("Должность"), item.position)
+    company = page.locator("input[name='company']")
+    if company.count() != 1:
+        raise PlaywrightError("поле рекомендации 'Организация' не найдено однозначно")
+    _fill(company, item.company)
     return page.locator("[data-qa='resume-partial-edit-save']")
 
 
@@ -260,7 +264,7 @@ def _apply_rows(
                     # so stop this block instead of leaving it open (#331).
                     break
                 cancel.click()
-        except PlaywrightError as exc:
+        except (PlaywrightError, RuntimeError) as exc:
             # A hydration timeout here may follow an already-successful save.click()
             # on a previous row (#352/codex round 3), including a save.wait_for
             # timeout right after save.click() (#331/codex+claude): fail closed

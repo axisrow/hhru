@@ -38,6 +38,36 @@ def test_malformed_llm_output_is_fail_closed() -> None:
     assert plan.skipped
 
 
+def test_recommendation_mapping_uses_current_semantic_labels() -> None:
+    page = MagicMock()
+    name = MagicMock()
+    position = MagicMock()
+    company = MagicMock()
+    page.get_by_label.side_effect = lambda label, exact: {
+        "Имя человека": name,
+        "Должность": position,
+    }[label]
+    name.count.return_value = 1
+    position.count.return_value = 1
+    company.count.return_value = 1
+    page.locator.return_value = company
+
+    resume_sections._fill_recommendation_row(
+        page, Recommendation(text="", company="Acme", name="Ada", position="Reviewer")
+    )
+
+    name.fill.assert_called_once_with("Ada")
+    position.fill.assert_called_once_with("Reviewer")
+    company.fill.assert_called_once_with("Acme")
+
+
+def test_recommendation_text_fails_closed_when_current_form_has_no_text_field():
+    with pytest.raises(PlaywrightError, match="не содержит поля текста"):
+        resume_sections._fill_recommendation_row(
+            MagicMock(), Recommendation(text="unsupported", company="Acme")
+        )
+
+
 def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
     page = MagicMock()
     trigger = MagicMock()
