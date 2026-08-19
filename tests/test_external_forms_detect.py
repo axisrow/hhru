@@ -18,6 +18,7 @@ class _Node:
         self.children: list[_Node] = []
         self.text = ""
         self.value: str | None = None
+        self.write_method: str | None = None
 
 
 class _Parser(HTMLParser):
@@ -98,9 +99,11 @@ class _Locator:
 
     def fill(self, value):
         self.nodes[0].value = value
+        self.nodes[0].write_method = "fill"
 
     def select_option(self, *, label):
         self.nodes[0].value = label
+        self.nodes[0].write_method = "select_option"
 
     def all(self):
         return [_Locator(self.page, [node]) for node in self.nodes]
@@ -116,24 +119,11 @@ class _Page:
         nodes = list(_descendants(self.root))
         if selector == "form":
             return _Locator(self, [node for node in nodes if node.tag == "form"])
-        if selector == "label[for='name']":
+        if selector.startswith("label[for='") and selector.endswith("']"):
+            control_id = selector.removeprefix("label[for='").removesuffix("']")
             return _Locator(
                 self,
-                [node for node in nodes if node.tag == "label" and node.attrs.get("for") == "name"],
-            )
-        if selector == "label[for='details']":
-            return _Locator(
-                self,
-                [
-                    node
-                    for node in nodes
-                    if node.tag == "label" and node.attrs.get("for") == "details"
-                ],
-            )
-        if selector == "label[for='role']":
-            return _Locator(
-                self,
-                [node for node in nodes if node.tag == "label" and node.attrs.get("for") == "role"],
+                [node for node in nodes if node.tag == "label" and node.attrs.get("for") == control_id],
             )
         if selector.startswith("#"):
             return _Locator(self, [node for node in nodes if node.attrs.get("id") == selector[1:]])
@@ -190,3 +180,23 @@ def test_mixed_controls_keep_type_specific_indexes_and_selects():
         scan,
         {"name": "Ada", "details": "Experience", "role": "Developer", "email": "ada@example.test"},
     ) == (True, [])
+    assert page.locator("#role").nodes[0].write_method == "select_option"
+    assert page.locator("#role").nodes[0].value == "Developer"
+
+
+def test_id_addressed_control_keeps_nth_index_for_later_control():
+    page = _Page(
+        """
+        <form>
+          <label for="first">First email</label><input id="first" type="email">
+          <input type="email" aria-label="Second email">
+        </form>
+        """
+    )
+
+    scan = scan_form(page)
+
+    assert scan.fields[1].selector == "form input[type='email'] >> nth=1"
+    assert apply_answers(page, scan, {"first email": "first@example.test", "second email": "second@example.test"}) == (True, [])
+    assert page.locator("#first").nodes[0].value == "first@example.test"
+    assert page.locator("form input[type='email'] >> nth=1").nodes[0].value == "second@example.test"
