@@ -18,32 +18,46 @@
 Без шага 2 аудит выдал бы «у них 150 селекторов, которых нет у нас» — список без
 диагностической ценности.
 
+**Отличие от #334** (аудит копируемости модулей): там вопрос «что можно буквально
+скопировать» и ответ упирается в лицензии и совместимость стека. Здесь вопрос другой —
+«где чужой код показывает, что наш неправ», и копирование не предполагается вовсе.
+
 ## Корпус (13 репозиториев, закреплены по коммитам)
 
 Клоны лежат в `/private/tmp` и **волатильны**; воспроизводить по коммиту.
 
 | Репозиторий | Коммит | Лицензия | Стек | Уник. `data-qa` |
 |---|---|---|---|---|
-| `Vadtop/hh-mcp-server` | `91b7eea9` | — | Python, Playwright | 82 |
-| `YAMAKAYAMACO/hh-autoresponder` | `bfb46696` | — | Python, Playwright | 47 |
+| `Vadtop/hh-mcp-server` | `91b7eea9` | MIT | Python, Playwright | 82 |
+| `YAMAKAYAMACO/hh-autoresponder` | `bfb46696` | MIT | Python, Playwright | 47 |
 | `konard/hh-job-application-automation` | `58ca4401` | Unlicense | Bun, Playwright/Puppeteer | 38 |
-| `AgentShekel/hh-bot` | `3a12421e` | — | Python, Playwright | 37 |
-| `semernyakov/hh-auto-apply` | `8bec8cc9` | — | Python, Playwright | 30 |
+| `AgentShekel/hh-bot` | `3a12421e` | NOASSERTION | Python, Playwright | 37 |
+| `semernyakov/hh-auto-apply` | `8bec8cc9` | MIT | Python, Playwright | 30 |
 | `tgeruzov/hh-auto-responder` | `3e30d854` | MIT | Tampermonkey userscript | 27 |
-| `RumyantsevQa/hh-ai-auto-apply-assistant` | `b1136448` | — | Python | 22 |
+| `RumyantsevQa/hh-ai-auto-apply-assistant` | `b1136448` | MIT | Python | 22 |
 | `fikstt2/hh-ai-agent` | `c675c166` | MIT | Python, Playwright | 18 |
-| `kavotavochavo1-ctrl/hh-ai-job-bot` | `3ded46fd` | — | Python, Playwright | 16 |
+| `kavotavochavo1-ctrl/hh-ai-job-bot` | `3ded46fd` | MIT | Python, Playwright | 16 |
 | `Steev193/hh-ru-apply` | `7a56af1e` | MIT | Node.js, Playwright | 15 |
-| `lil-zon/hh-auto-apply` | `19dd68c2` | — | Python | 14 |
-| `Vlad9572324/hh.ru-clicker` | `bd3d5262` | — | Python, HTTP | 5 (+ карта роутов) |
-| `s3rgeym/hh-applicant-tool` | `63210bcc` | Non-Commercial | Python, REST API | 8 |
+| `lil-zon/hh-auto-apply` | `19dd68c2` | **нет LICENSE** | Python | 14 |
+| `Vlad9572324/hh.ru-clicker` | `bd3d5262` | **нет LICENSE** | Python, HTTP | 5 (+ карта роутов) |
+| `s3rgeym/hh-applicant-tool` | `63210bcc` | **нет LICENSE** | Python, REST API | 8 |
 
 Всего у референсов 178 уникальных `data-qa`, у нас 125.
 
-**Лицензии.** Читаем чужой код ради **поведения**; строки селекторов переносим как
-**факты о DOM hh.ru** (`data-qa`-атрибуты — это разметка hh.ru, а не авторское
-выражение референса). Исходный код ни из одного репозитория не копируется. Отдельно
-для `s3rgeym` (Non-Commercial): он и так REST-only и для DOM-диффа бесполезен.
+**Лицензии** (сверено через GitHub API на дату аудита). Три репозитория —
+`s3rgeym/hh-applicant-tool`, `Vlad9572324/hh.ru-clicker`, `lil-zon/hh-auto-apply` —
+**не имеют LICENSE вообще** (`license: null`, то есть all rights reserved);
+у `AgentShekel/hh-bot` GitHub возвращает `NOASSERTION`. Это уточняет более раннее
+указание «Non-Commercial» для `s3rgeym`: текущим репозиторием оно не подтверждается
+(см. также аудит копируемости #334).
+
+**Для этой работы ограничение не является блокирующим:** мы читаем чужой код ради
+**поведения** и переносим строки селекторов как **факты о DOM hh.ru** —
+`data-qa`-атрибуты являются разметкой hh.ru, а не авторским выражением референса.
+**Исходный код ни из одного репозитория не копируется**, в том числе из
+MIT/Unlicense-репозиториев. Если из какой-то находки вырастет буквальный перенос кода,
+лицензию нужно перепроверить отдельно по критериям #334, а из репозиториев без
+LICENSE не копировать вовсе.
 
 **Оговорка о качестве источников.** Наличие селектора в референсе ≠ подтверждение.
 Часть проектов написана слабо (голый `count() > 0`, отсутствие hydration-ожиданий,
