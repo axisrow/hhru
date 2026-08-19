@@ -220,13 +220,15 @@ def validate_position_title(current: PositionValues, plan: PositionValues) -> No
     """Reject title states that HH.ru cannot save."""
     if plan.title is not None and not plan.title.strip():
         raise ValueError(
-            "Пустой тайтл невозможен: укажите непустую желаемую должность "
-            "через --title или в LLM-плане."
+            "Пустой тайтл невозможен. Укажите, например, "
+            "--title 'Python-разработчик' или заполните желаемую должность "
+            "в AI-профиле для LLM-режима."
         )
     if not (current.title or "").strip() and not (plan.title or "").strip():
         raise ValueError(
-            "Тайтл обязателен: текущее поле пустое, укажите непустую желаемую "
-            "должность через --title или в LLM-плане."
+            "Тайтл обязателен: текущее поле пустое. Укажите, например, "
+            "--title 'Python-разработчик' или заполните желаемую должность "
+            "в AI-профиле для LLM-режима."
         )
 
 
