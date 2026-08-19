@@ -906,3 +906,166 @@ def test_apply_verifier_antibot_signal_remains_terminal(monkeypatch):
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     with pytest.raises(AntiBotChallengeDetected):
         apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=_challenge)
+
+
+# --- #97 cycle-review (PR #373): LLM-ответы на вопросы формы отклика -----------
+
+
+class _StubAnswerer:
+    """Fake AIQuestionAnswerer: propose_all()/apply() без реального LLM/DOM."""
+
+    def __init__(self, proposals_by_text=None):
+        self._proposals_by_text = proposals_by_text or {}
+        self.applied = None
+
+    def propose_all(self, questions):
+        return [self._proposals_by_text[q.text] for q in questions]
+
+    def apply(self, page, proposals):  # noqa: ARG002
+        self.applied = proposals
+        return [p for p in proposals if p.low_confidence]
+
+
+def _question_detection(has_questions=True, reason="anketa"):
+    from hhru_bot.apply.questions import QuestionDetection
+
+    return QuestionDetection.yes(reason) if has_questions else QuestionDetection.no()
+
+
+def test_apply_force_gate_is_per_vacancy_not_whole_run(monkeypatch):
+    """M6 cycle-review #373: --force must gate only vacancies where a
+    questionnaire was actually detected, not the answerer merely being
+    configured. A vacancy with no questions must submit normally even with
+    force=False, once an answerer is set."""
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(False)
+    )
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=_StubAnswerer(), force=False
+    )
+
+    assert result.success is True
+    assert result.skipped is False
+
+
+def test_apply_force_gate_blocks_when_questions_found_without_force(monkeypatch):
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=_StubAnswerer(), force=False
+    )
+
+    assert result.success is False
+    assert result.skipped is False
+    assert "--force" in result.reason
+
+
+def test_apply_extracted_mismatch_skips_instead_of_blank_submit(monkeypatch):
+    """B1 cycle-review #373: detect_questions() (task-body OR heuristic
+    radio/checkbox/textarea) can say has_questions=True while extract_questions()
+    (task-body-only structure) parses zero questions — e.g. the heuristic
+    fallback fired, or a body's options were dropped as unrecognisable (M7).
+    Falling through here would submit the form with the questionnaire
+    untouched; pipeline must skip instead."""
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [])
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    answerer = _StubAnswerer()
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=answerer, force=True
+    )
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+    assert answerer.applied is None  # apply() must never be reached
+
+
+def test_apply_extract_questions_playwright_error_is_clean_fail(monkeypatch):
+    """M5 cycle-review #373: extract_questions() re-reads live DOM after a
+    React render with no bounded wait of its own; a raw PlaywrightError here
+    must not escape apply_to_vacancy and abort the caller's per-vacancy loop
+    (commands/_common.py only catches AntiBotChallengeDetected)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+
+    def _raise(_page):
+        raise PlaywrightError("detached frame")
+
+    monkeypatch.setattr(pipeline_module, "extract_questions", _raise)
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+
+    result = apply_to_vacancy(
+        page,
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer(),
+        force=True,
+    )
+
+    assert result.success is False
+    assert result.skipped is False
+    assert result.acted is False
+    assert "Playwright" in result.reason
+
+
+def test_apply_dry_run_low_confidence_does_not_persist_skip(monkeypatch):
+    """B2 cycle-review #373: LLM confidence is non-deterministic between runs
+    (unlike stopword/exclude filters) — a dry-run preview of a low-confidence
+    proposal must not permanently bury the vacancy via record_skip (#87), same
+    reasoning as the indeterminate-scope fail path. skipped=False here means
+    commands/_common.py will not call history.record_skip for this result."""
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Готовы к переезду?", "text")
+    low_confidence = AnswerProposal(question, "", 0.1)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [question])
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    answerer = _StubAnswerer({"Готовы к переезду?": low_confidence})
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=True, question_answerer=answerer
+    )
+
+    assert result.success is False
+    assert result.skipped is False
+
+
+def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):
+    """#97: dry-run previews high-confidence proposals but never calls
+    apply()/submits — the defining contract of the issue."""
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Опыт с Python?", "text")
+    proposal = AnswerProposal(question, "3 года", 0.9)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [question])
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    answerer = _StubAnswerer({"Опыт с Python?": proposal})
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=True, question_answerer=answerer
+    )
+
+    assert result.success is True
+    assert "предпросмотр" in result.reason or "показаны" in result.reason
+    assert answerer.applied is None  # dry-run must not reach apply()
+    assert result.acted is False

@@ -68,6 +68,27 @@ def extract_questions(page: Page) -> list[Question]:
         if radios.count() or checkboxes.count():
             controls = radios if radios.count() else checkboxes
             options = tuple(_control_text(controls.nth(i)) for i in range(controls.count()))
+            # M7 cycle-review #373: _control_text() fails closed to "" when the
+            # label lookup errors or is missing entirely. But when a radio has
+            # no <label> wrapper (unconfirmed Bloko markup — #97 selectors are
+            # confirmed for task-body/task-question, NOT for label structure),
+            # `parentElement.innerText` falls back to task-body's full text,
+            # verified against live Chromium: every option in that body then
+            # gets the SAME (non-empty) text — the question's own text, not a
+            # per-option label. A blank OR non-unique option set both mean the
+            # LLM would answer against labels it cannot actually distinguish —
+            # "wrong answer worse than skip" (#97). Dropping the question here
+            # (not appending it) makes it absent from extracted, which
+            # pipeline.py's has_questions/extracted mismatch check already
+            # treats as a fail-closed skip.
+            if any(not option for option in options) or (
+                len(options) > 1 and len(set(options)) != len(options)
+            ):
+                logger.warning(
+                    "Анкета: не распознаны отдельные тексты опций в вопросе %r — вопрос пропущен",
+                    text,
+                )
+                continue
             questions.append(Question(body_index, text, "choice", options))
         elif textareas.count():
             questions.append(Question(body_index, text, "text"))

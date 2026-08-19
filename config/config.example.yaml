@@ -29,7 +29,8 @@ account:
 # Наличие секции включает AI. Маршрутизация, provider/model и credentials
 # принадлежат hermes-agent-axisrow (Responses API): они читаются из ~/.hermes
 # (auth.json + конфиг Hermes), hhru их не задаёт и не переопределяет. Поля
-# provider/model/base_url устарели и игнорируются — оставьте секцию пустой:
+# provider/model/base_url устарели и игнорируются — можно оставить секцию
+# пустой (# ai: {}) либо задать опциональный answer_questions (#97):
 #
 # ai:
 #   # Issue #97: dry-run previews proposed answers; real form filling requires --force.

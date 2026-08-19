@@ -48,12 +48,21 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Показать, что будет сделано, без реальных действий",
     )
+    p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
+
+
+def add_force_arg(p: argparse.ArgumentParser) -> None:
+    """``--force`` — только для команд, реально вызывающих run_apply_for_resume.
+
+    #97 cycle-review: жить в add_common_args означало бы протечь на search/bump/
+    probe с чужим (apply-специфичным) help-текстом и no-op эффектом на bump —
+    отдельная функция для apply.py/run.py.
+    """
     p.add_argument(
         "--force",
         action="store_true",
         help="Разрешить реальную отправку отклика с LLM-ответами на вопросы",
     )
-    p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
 
 
 def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[ResumeConfig]:
@@ -407,12 +416,13 @@ def run_apply_for_resume(
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
     question_answerer = _build_question_answerer(config, resume)
-    if question_answerer is not None and not args.dry_run and not getattr(args, "force", False):
-        print(
-            "[FAIL] LLM-ответы на тест-вопросы требуют --force; без него разрешён только --dry-run"
-        )
-        return True
-    if question_answerer is not None and not args.dry_run:
+    # M6 cycle-review #373: no longer blocks the whole run when
+    # ai.answer_questions=true but --force is missing — pipeline.py gates
+    # --force per vacancy, only once a questionnaire is actually detected, so
+    # an ordinary apply against vacancies without questions still works. This
+    # is only an upfront heads-up for the --force case; the real fail-closed
+    # enforcement lives in pipeline.py.
+    if question_answerer is not None and not args.dry_run and getattr(args, "force", False):
         print(
             "[WARNING] --force включён: LLM-ответы на тест-вопросы будут заполнены "
             "и отправлены без дополнительного подтверждения"
