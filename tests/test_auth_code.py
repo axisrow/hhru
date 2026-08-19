@@ -30,6 +30,8 @@ class _Locator:
         return self
 
     def wait_for(self, **_kwargs):
+        if self.kind == "email-type" and self.page.show_credentials_on_wait:
+            self.page.stage = "credentials"
         if self.kind == "code" and self.page.show_code_on_wait:
             self.page.stage = "code"
         if self.count() != 1:
@@ -37,7 +39,8 @@ class _Locator:
 
     def click(self):
         if self.kind == "continue":
-            self.page.stage = "credentials"
+            if not self.page.show_credentials_on_wait:
+                self.page.stage = "credentials"
         elif self.kind == "submit":
             self.page.stage = "code"
 
@@ -86,14 +89,15 @@ class _Page:
         self.code = None
         self.context = None
         self.show_code_on_wait = False
+        self.show_credentials_on_wait = False
 
     def locator(self, selector):
         if selector == "[data-qa='submit-button']":
             return _Locator(self, kind="continue" if self.stage == "start" else "submit")
         if selector == "input[data-qa='credential-type-email']":
-            return _Locator(self)
+            return _Locator(self, count=lambda: int(self.stage == "credentials"), kind="email-type")
         if selector == "[data-qa='applicant-login-input-email']":
-            return _Locator(self)
+            return _Locator(self, count=lambda: int(self.stage == "credentials"))
         if selector == "[data-qa='magritte-pincode-input-field']":
             return _Locator(self, count=lambda: int(self.stage == "code"), kind="code")
         if selector == "[data-qa='account-login-form']":
@@ -147,6 +151,21 @@ def test_login_with_code_waits_for_delayed_code_form(monkeypatch, tmp_path):
     assert page.code == "1234"
     assert context.saved is True
     assert (tmp_path / "state.json").exists()
+
+
+def test_login_with_code_waits_for_delayed_credentials_pane(monkeypatch, tmp_path):
+    page = _Page()
+    page.show_credentials_on_wait = True
+    context = _Context(page)
+    monkeypatch.setattr("hhru_bot.auth_code.launch_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr("hhru_bot.auth_code.goto_hh", lambda *_args: None)
+    code_file = tmp_path / "code.txt"
+    code_file.write_text("1234", encoding="utf-8")
+
+    login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
+
+    assert page.email_selected
+    assert context.saved is True
 
 
 def test_login_with_code_wrong_code_is_fail_closed(monkeypatch, tmp_path):

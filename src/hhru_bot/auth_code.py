@@ -75,6 +75,16 @@ def _raise_for_captcha_or_timeout(page) -> None:
         raise RuntimeError("hh.ru требует капчу; сессия не сохранена")
 
 
+def _wait_for_one_visible(locator, name: str) -> None:
+    """Wait for SPA hydration, then require one unambiguous control."""
+    try:
+        locator.first.wait_for(state="visible", timeout=CODE_FORM_TIMEOUT_MS)
+    except (PlaywrightError, PlaywrightTimeoutError) as exc:
+        raise RuntimeError(f"{name} не отрисовался") from exc
+    if locator.count() != 1:
+        raise RuntimeError(f"{name} не подтверждён")
+
+
 def _wait_for_authenticated_page(page, timeout_seconds: int) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -111,29 +121,21 @@ def login_with_code(
             page = context.new_page()
             goto_hh(page, _LOGIN_URL)
             continue_button = page.locator(LOGIN_CODE_REQUEST_BUTTON)
-            if continue_button.count() != 1:
-                raise RuntimeError("кнопка продолжения login не подтверждена")
+            _wait_for_one_visible(continue_button, "кнопка продолжения login")
             continue_button.click()
             if "@" in login:
                 email_type = page.locator(LOGIN_EMAIL_TYPE)
-                if email_type.count() != 1:
-                    raise RuntimeError("переключатель email не подтверждён")
+                _wait_for_one_visible(email_type, "переключатель email")
                 email_type.check(force=True)
                 field = page.locator(LOGIN_EMAIL_INPUT)
             else:
                 field = page.locator(LOGIN_PHONE_INPUT)
-            if field.count() != 1:
-                raise RuntimeError("поле логина не подтверждено")
+            _wait_for_one_visible(field, "поле логина")
             field.fill(login)
             page.locator(LOGIN_CODE_REQUEST_BUTTON).click()
             _raise_for_captcha_or_timeout(page)
             code_field = page.locator(_CODE_INPUT)
-            try:
-                code_field.first.wait_for(state="visible", timeout=CODE_FORM_TIMEOUT_MS)
-            except (PlaywrightError, PlaywrightTimeoutError) as exc:
-                raise RuntimeError("форма ввода кода не отрисовалась") from exc
-            if code_field.count() != 1:
-                raise RuntimeError("поле одноразового кода не подтверждено")
+            _wait_for_one_visible(code_field, "поле одноразового кода")
             print(
                 f"[WAIT] Код отправлен на {mask_login(login)}. "
                 f"Введите код (таймаут {timeout_seconds} сек):",
