@@ -84,10 +84,11 @@ def test_account_wide_rejects_non_positive_max_pages(bad_max_pages, tmp_path):
 
 
 class _Locator:
-    def __init__(self, count=1, *, clicked=None, children=None):
+    def __init__(self, count=1, *, clicked=None, children=None, click_error=None):
         self._count = count
         self.clicked = clicked
         self.children = children or {}
+        self.click_error = click_error
 
     @property
     def first(self):
@@ -97,6 +98,8 @@ class _Locator:
         return self._count
 
     def click(self):
+        if self.click_error is not None:
+            raise self.click_error
         if self.clicked is not None:
             self.clicked.append(True)
 
@@ -114,9 +117,9 @@ class _Page:
     test can distinguish a card-scoped read from an unscoped page-wide one.
     """
 
-    def __init__(self, *, control_count=1, confirm_count=0, success_count=1):
+    def __init__(self, *, control_count=1, confirm_count=0, success_count=1, click_error=None):
         self.clicked = []
-        self._control = _Locator(control_count, clicked=self.clicked)
+        self._control = _Locator(control_count, clicked=self.clicked, click_error=click_error)
         self._confirm = _Locator(confirm_count)
         self._success = _Locator(success_count)
         self._card = _Locator(
@@ -161,7 +164,7 @@ def test_successful_withdraw_is_audited(tmp_path, monkeypatch):
     assert page.clicked == [True]
 
 
-def test_withdraw_without_positive_confirmation_is_failed(tmp_path, monkeypatch):
+def test_withdraw_without_positive_confirmation_is_uncertain(tmp_path, monkeypatch):
     _patch_withdraw_page(monkeypatch)
     page = _Page(success_count=0)
     history = History(tmp_path / "history.db")
@@ -170,7 +173,19 @@ def test_withdraw_without_positive_confirmation_is_failed(tmp_path, monkeypatch)
     )
     assert failed is True
     with history._connect() as conn:
-        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "failed"
+        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "uncertain"
+
+
+def test_withdraw_click_error_is_recorded_as_uncertain(tmp_path, monkeypatch):
+    _patch_withdraw_page(monkeypatch)
+    page = _Page(click_error=RuntimeError("connection reset"))
+    history = History(tmp_path / "history.db")
+    failed = command._run_topics(
+        _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+    )
+    assert failed is True
+    with history._connect() as conn:
+        assert conn.execute("SELECT status FROM actions").fetchone()[0] == "uncertain"
 
 
 def test_withdraw_without_unique_button_does_not_click(tmp_path, monkeypatch):

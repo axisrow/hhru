@@ -23,6 +23,7 @@ from ..selector_groups.negotiations import (
     NEGOTIATION_WITHDRAW_CONFIRM,
     NEGOTIATION_WITHDRAW_SUCCESS,
 )
+from ._audit import action_status
 from .copy_resume import confirm_write
 
 ACCOUNT_SCOPE = "__account__"
@@ -78,7 +79,7 @@ def _validate(args: argparse.Namespace) -> None:
         _fail(f"--max-pages должен быть >= 1 (получено {args.max_pages}).")
 
 
-def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
+def _withdraw_topic(page, topic: str) -> tuple[bool, str, bool]:
     """Withdraw one topic with an identity-bound UI click.
 
     This is deliberately conservative.  The topic must be present exactly once
@@ -88,6 +89,7 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
     each be unique, and success requires a positive post-click marker scoped
     to that same card.  Disappearance of a card is not evidence of success.
     """
+    acted = False
     try:
         url = f"{HH_BASE_URL}/applicant/negotiations?topic={quote(str(topic), safe='')}"
         goto_hh(page, url)
@@ -95,9 +97,13 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         all_refs = topic_refs(page.content())
         refs = [ref for ref in all_refs if ref.topic_id == str(topic)]
         if len(refs) != 1:
-            return False, (
-                f"topic={topic} не подтверждён на открытой странице "
-                f"(совпадений в SSR: {len(refs)}) — не кликаю"
+            return (
+                False,
+                (
+                    f"topic={topic} не подтверждён на открытой странице "
+                    f"(совпадений в SSR: {len(refs)}) — не кликаю"
+                ),
+                acted,
             )
 
         # Whether ?topic= actually filters the SSR list server-side is
@@ -108,27 +114,39 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         # scope the page, so a single DOM card can no longer be trusted as
         # this topic's card — refuse rather than click on an unproven match.
         if len(all_refs) != 1:
-            return False, (
-                f"topic={topic}: страница ?topic= вернула {len(all_refs)} "
-                "переговоров вместо одной — фильтр по topic не подтверждён, "
-                "однозначность карточки нельзя доказать — не кликаю"
+            return (
+                False,
+                (
+                    f"topic={topic}: страница ?topic= вернула {len(all_refs)} "
+                    "переговоров вместо одной — фильтр по topic не подтверждён, "
+                    "однозначность карточки нельзя доказать — не кликаю"
+                ),
+                acted,
             )
 
         cards = page.locator(NEGOTIATION_ITEM)
         card_count = cards.count()
         if card_count != 1:
-            return False, (
-                f"карточка topic={topic} определяется неоднозначно "
-                f"(совпадений: {card_count}) — не кликаю"
+            return (
+                False,
+                (
+                    f"карточка topic={topic} определяется неоднозначно "
+                    f"(совпадений: {card_count}) — не кликаю"
+                ),
+                acted,
             )
 
         card = cards.first
         controls = card.locator(NEGOTIATION_WITHDRAW)
         control_count = controls.count()
         if control_count != 1:
-            return False, (
-                f"кнопка отзыва topic={topic} не подтверждена "
-                f"(совпадений: {control_count}) — не кликаю"
+            return (
+                False,
+                (
+                    f"кнопка отзыва topic={topic} не подтверждена "
+                    f"(совпадений: {control_count}) — не кликаю"
+                ),
+                acted,
             )
 
         # Any confirmation dialog already present means the page is not in a
@@ -138,11 +156,16 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         confirmation = card.locator(NEGOTIATION_WITHDRAW_CONFIRM)
         confirmation_count = confirmation.count()
         if confirmation_count > 0:
-            return False, (
-                f"подтверждение отзыва topic={topic} уже присутствует на странице "
-                f"(совпадений: {confirmation_count}) — не кликаю"
+            return (
+                False,
+                (
+                    f"подтверждение отзыва topic={topic} уже присутствует на странице "
+                    f"(совпадений: {confirmation_count}) — не кликаю"
+                ),
+                acted,
             )
 
+        acted = True
         controls.first.click()
 
         # Some UI revisions show an explicit confirmation control after the
@@ -150,9 +173,13 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         # scoped to the same card so a stale dialog elsewhere can't be hit.
         confirmation_count = confirmation.count()
         if confirmation_count > 1:
-            return False, (
-                f"подтверждение отзыва topic={topic} неоднозначно "
-                f"(совпадений: {confirmation_count}) — не продолжаю"
+            return (
+                False,
+                (
+                    f"подтверждение отзыва topic={topic} неоднозначно "
+                    f"(совпадений: {confirmation_count}) — не продолжаю"
+                ),
+                acted,
             )
         if confirmation_count == 1:
             confirmation.first.click()
@@ -166,18 +193,30 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str]:
         try:
             success.first.wait_for(state="visible", timeout=10_000)
         except (PlaywrightTimeoutError, PlaywrightError):
-            return False, (
-                f"hh.ru не подтвердил отзыв topic={topic} позитивным маркером "
-                "— не считаю операцию успешной"
+            return (
+                False,
+                (
+                    f"hh.ru не подтвердил отзыв topic={topic} позитивным маркером "
+                    "— не считаю операцию успешной"
+                ),
+                acted,
             )
         if success.count() != 1:
-            return False, (
-                f"маркер успешного отзыва topic={topic} неоднозначен "
-                f"(совпадений: {success.count()})"
+            return (
+                False,
+                (
+                    f"маркер успешного отзыва topic={topic} неоднозначен "
+                    f"(совпадений: {success.count()})"
+                ),
+                acted,
             )
-        return True, ""
+        return True, "", acted
     except (PlaywrightTimeoutError, PlaywrightError, ValueError) as exc:
-        return False, f"состояние отзыва topic={topic} не подтверждено: {exc}"
+        return False, f"состояние отзыва topic={topic} не подтверждено: {exc}", acted
+    except Exception as exc:
+        # A failure after the destructive click is not safe to retry: the
+        # request may already have reached hh.ru even when the client raised.
+        return False, f"состояние отзыва topic={topic} не подтверждено: {exc}", acted
 
 
 def run(args: argparse.Namespace) -> bool:
@@ -297,11 +336,12 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
 
     failed = False
     for topic in topics:
+        acted = False
         try:
-            success, reason = _withdraw_topic(page, topic)
+            success, reason, acted = _withdraw_topic(page, topic)
         except Exception as exc:
             success, reason = False, str(exc)
-        status = "success" if success else "failed"
+        status = action_status(dry_run=False, success=success, uncertain=acted and not success)
         # history is only ever None on the empty-discovery path (no topics
         # means the loop never runs); with real topics the callers above
         # always supply it, so it cannot be None here.
@@ -309,9 +349,10 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
         history.record_action(ACCOUNT_SCOPE, topic, "withdraw", status, reason or None)
         if success:
             print(f"[OK] Отозван отклик topic={topic}")
-            if throttle is not None:
-                throttle.wait(f"после отзыва topic={topic}")
         else:
-            print(f"[FAIL] topic={topic} — {reason}")
+            prefix = "[FAIL] (uncertain)" if acted else "[FAIL]"
+            print(f"{prefix} topic={topic} — {reason}")
             failed = True
+        if acted and throttle is not None:
+            throttle.wait(f"после отзыва topic={topic}")
     return failed
