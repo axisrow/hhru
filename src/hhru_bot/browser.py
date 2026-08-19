@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -84,7 +85,7 @@ def open_hydrated_resume_editor(
     trigger_selector: str,
     editor_selector: str,
     profile_path: str,
-    edit_path: str | None = None,
+    edit_path: str | re.Pattern[str] | None = None,
     click_trigger: bool = False,
     timeout: int = 30_000,
     trigger_error: str = "кнопка редактирования не подтверждена",
@@ -113,7 +114,13 @@ def open_hydrated_resume_editor(
                 if attempt or urlsplit(page.url).path.rstrip("/") != profile_path:
                     raise RuntimeError(open_error) from exc
     expected_path = edit_path or profile_path
-    if urlsplit(page.url).path.rstrip("/") != expected_path:
+    current_path = urlsplit(page.url).path.rstrip("/")
+    route_matches = (
+        bool(expected_path.fullmatch(current_path))
+        if isinstance(expected_path, re.Pattern)
+        else current_path == expected_path
+    )
+    if not route_matches:
         raise RuntimeError(wrong_route_error)
     return editor
 

@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    open_hydrated_resume_editor,
+)
 
 if TYPE_CHECKING:
     from .config_sections.ai_profile import AIProfile
@@ -25,6 +32,10 @@ SAVE_TIMEOUT_MS = 30_000
 RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
+}
+SECTION_ROUTES = {
+    "attestations": re.compile(r"/profile/edit/attestationEducation/[^/?#]+"),
+    "recommendations": re.compile(r"/resume/edit/[^/?#]+/recommendation/[^/?#]+"),
 }
 ATTESTATION_FIELDS = (
     "profile-education-attestation-name",
@@ -170,6 +181,7 @@ def _apply_rows(
     items: list[Attestation] | list[Recommendation],
     fill_row,
     *,
+    resume_id: str = "",
     dry_run: bool,
 ) -> list[str]:
     errors: list[str] = []
@@ -192,8 +204,25 @@ def _apply_rows(
             if index >= trigger.count():
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
-            trigger.nth(index).click()
-            page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            if resume_id:
+                open_hydrated_resume_editor(
+                    page,
+                    trigger_selector=f"{RESUME_EDIT_BUTTON[block]} >> nth={index}",
+                    editor_selector=ready_selector,
+                    profile_path=f"/resume/{resume_id}",
+                    edit_path=SECTION_ROUTES[block],
+                    click_trigger=True,
+                    timeout=FORM_TIMEOUT_MS,
+                    trigger_error=f"{block}: строка {index} не найдена однозначно",
+                    open_error=f"{block}: строка {index} не открылась",
+                    wrong_route_error=f"{block}: строка {index} открыта не для того резюме",
+                )
+            else:
+                # Keep the pure unit fake focused on row-level error handling;
+                # live callers always provide resume_id and use the hydrated
+                # editor helper above.
+                trigger.nth(index).click()
+                page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             save = fill_row(page, item)
             if not dry_run:
                 if save.count() != 1:
@@ -256,6 +285,7 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         "attestations",
         plan.attestations,
         _fill_attestation_row,
+        resume_id=resume_id,
         dry_run=dry_run,
     )
     errors += _apply_rows(
@@ -263,6 +293,7 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
         "recommendations",
         plan.recommendations,
         _fill_recommendation_row,
+        resume_id=resume_id,
         dry_run=dry_run,
     )
     return errors

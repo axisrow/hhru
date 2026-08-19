@@ -16,7 +16,13 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .browser import goto_hh, has_auth_cookie, has_login_form, resume_identity_matches
+from .browser import (
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    open_hydrated_resume_editor,
+    resume_identity_matches,
+)
 from .config_sections.education import EducationRecord
 from .responses import NotAuthenticated
 
@@ -190,11 +196,18 @@ def _edit_block(
                 )
         save_clicked = False
         try:
-            button.click()
-            page.wait_for_url(route, wait_until="commit")
-            # The route can commit before React has mounted the editor.
-            page.locator(next(iter(fields.values()))).wait_for(
-                state="visible", timeout=FORM_TIMEOUT_MS
+            open_hydrated_resume_editor(
+                page,
+                trigger_selector=(
+                    trigger.format(index=index) if button_count == 1 else add_selector
+                ),
+                editor_selector=next(iter(fields.values())),
+                profile_path=f"/resume/{resume_id}",
+                edit_path=route,
+                timeout=FORM_TIMEOUT_MS,
+                trigger_error=f"триггер образования {index} не найден однозначно",
+                open_error=f"форма образования {index} не открылась",
+                wrong_route_error=f"форма образования {index} открыта не для того резюме",
             )
             for name, selector in fields.items():
                 value = getattr(record, name)
