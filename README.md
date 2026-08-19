@@ -127,6 +127,22 @@ config/
 ./scripts/run.sh run
 ```
 
+### Профиль для внешних форм
+
+После успешного `login`/`login-code` подтверждённые контактные данные аккаунта
+автоматически сохраняются в `data/history.db`. Для данных, которых нет на hh.ru
+(например, Telegram), используйте локальную команду:
+
+```bash
+./scripts/run.sh profile set "Telegram" "@username"
+./scripts/run.sh profile show
+./scripts/run.sh profile unset "Telegram"
+```
+
+Выпуск с `account_profile` заменяет прежний `resume.form_profile.answers` в YAML.
+Если этот блок был в вашем `data/config.yaml`, перенесите значения вручную через
+`profile set`; старый YAML-источник больше не читается.
+
 Добавь `--headless`, если не нужно видеть окно браузера (не рекомендуется
 на первых запусках — полезно наблюдать, что происходит).
 
