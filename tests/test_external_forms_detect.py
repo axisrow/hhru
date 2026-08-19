@@ -123,7 +123,11 @@ class _Page:
             control_id = selector.removeprefix("label[for='").removesuffix("']")
             return _Locator(
                 self,
-                [node for node in nodes if node.tag == "label" and node.attrs.get("for") == control_id],
+                [
+                    node
+                    for node in nodes
+                    if node.tag == "label" and node.attrs.get("for") == control_id
+                ],
             )
         if selector.startswith("#"):
             return _Locator(self, [node for node in nodes if node.attrs.get("id") == selector[1:]])
@@ -197,6 +201,8 @@ def test_id_addressed_control_keeps_nth_index_for_later_control():
     scan = scan_form(page)
 
     assert scan.fields[1].selector == "form input[type='email'] >> nth=1"
-    assert apply_answers(page, scan, {"first email": "first@example.test", "second email": "second@example.test"}) == (True, [])
+    assert apply_answers(
+        page, scan, {"first email": "first@example.test", "second email": "second@example.test"}
+    ) == (True, [])
     assert page.locator("#first").nodes[0].value == "first@example.test"
     assert page.locator("form input[type='email'] >> nth=1").nodes[0].value == "second@example.test"

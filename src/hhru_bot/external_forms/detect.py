@@ -155,9 +155,7 @@ def scan_form(page: Page) -> FormScan:
                 local_index = selector_indexes.get(selector_key, 0)
                 selector_indexes[selector_key] = local_index + 1
                 selector = (
-                    f"#{control_id}"
-                    if control_id
-                    else f"{selector_base} >> nth={local_index}"
+                    f"#{control_id}" if control_id else f"{selector_base} >> nth={local_index}"
                 )
             clean_label = _question_text(label)
             state = "confirmed" if clean_label else "indeterminate"
