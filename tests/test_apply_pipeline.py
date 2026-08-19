@@ -669,6 +669,34 @@ def test_apply_submit_click_error_is_uncertain_acted():
     assert "неопределён" in result.reason
 
 
+def test_submit_click_challenge_is_checked_before_verifier_navigation(monkeypatch):
+    """A timed-out submit may already have rendered the challenge page."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    from hhru_bot.apply.steps import SubmitClickUncertain
+
+    state = {"challenged": False}
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+
+    def _submit(*_args, **_kwargs):
+        state["challenged"] = True
+        raise SubmitClickUncertain(PlaywrightError("navigation timed out"))
+
+    def _halt(_ctx):
+        if state["challenged"]:
+            raise AntiBotChallengeDetected(detection)
+
+    verifier = _verifier("not_found")
+    monkeypatch.setattr(pipeline_module.apply_steps, "fill_response_form", _submit)
+    monkeypatch.setattr(pipeline_module, "_halt_if_antibot", _halt)
+
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    with pytest.raises(AntiBotChallengeDetected):
+        apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+
+    assert verifier.calls == []
+
+
 def test_apply_confirmation_error_after_submit_keeps_acted(monkeypatch):
     """#177 round 3 (Codex): submit-клик прошёл, но wait_success_confirmation
     упал с PlaywrightError (не вернул False, а бросил). Это НЕ то же самое,

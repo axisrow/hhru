@@ -185,6 +185,21 @@ def test_verifier_challenge_stops_before_retry(monkeypatch):
     assert page.wait_for_timeout_calls == []
 
 
+def test_verifier_checks_challenge_after_failed_navigation(monkeypatch):
+    page = FakeNegotiationsPage(goto_error=PlaywrightError("navigation timed out"))
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+    monkeypatch.setattr(
+        verify_module,
+        "raise_for_antibot",
+        lambda _page: (_ for _ in ()).throw(AntiBotChallengeDetected(detection)),
+    )
+
+    with pytest.raises(AntiBotChallengeDetected):
+        verify_response_in_negotiations(page, _V1)
+
+    assert page.wait_for_timeout_calls == []
+
+
 # DOM-разметка без SSR-состояния: карточка с span-вакансией внутри <a> (#44).
 _DOM_HTML = """
 <div data-qa="negotiations-item">
@@ -481,6 +496,47 @@ def test_indeterminate_when_page1_goto_fails():
     result = verify_response_in_negotiations(page, _V2)
     assert result.indeterminate
     assert "goto" in result.detail
+
+
+def test_challenge_after_failed_pagination_navigation_is_terminal(monkeypatch):
+    page0 = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
+    page = _Page1FailsPage({NEGOTIATIONS_URL: page0})
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+    checks = 0
+
+    def _check(_page):
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise AntiBotChallengeDetected(detection)
+
+    monkeypatch.setattr(verify_module, "raise_for_antibot", _check)
+
+    with pytest.raises(AntiBotChallengeDetected):
+        verify_response_in_negotiations(page, _V2)
+
+    assert checks == 2
+
+
+def test_challenge_after_successful_pagination_navigation_is_terminal(monkeypatch):
+    page0 = _ssr_html([_topic(7, "999999")], extra="<a data-qa='pager-next'>далее</a>")
+    page1 = _ssr_html([_topic(8, "888888")])
+    page = FakeNegotiationsPage({NEGOTIATIONS_URL: page0, f"{NEGOTIATIONS_URL}?page=1": page1})
+    detection = AntiBotDetection("url_path", "URL содержит /captcha")
+    checks = 0
+
+    def _check(_page):
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise AntiBotChallengeDetected(detection)
+
+    monkeypatch.setattr(verify_module, "raise_for_antibot", _check)
+
+    with pytest.raises(AntiBotChallengeDetected):
+        verify_response_in_negotiations(page, _V2)
+
+    assert checks == 2
 
 
 def test_indeterminate_when_pagination_cap_reached_with_next_page():

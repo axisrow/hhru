@@ -161,6 +161,8 @@ def verify_response_in_negotiations(
         try:
             goto_hh(page, NEGOTIATIONS_URL)
         except PlaywrightError as exc:
+            # A navigation timeout may still leave a rendered challenge behind.
+            raise_for_antibot(page)
             problem = f"goto списка откликов не прошёл ({exc})"
             logger.warning("[VERIFY] %s", problem)
         else:
@@ -259,12 +261,17 @@ def _scan_negotiations(
             try:
                 goto_hh(page, f"{NEGOTIATIONS_URL}?page={page_num}")
             except PlaywrightError as exc:
+                # Inspect a page rendered before the navigation timeout before
+                # treating it as an ordinary incomplete scan.
+                raise_for_antibot(page)
                 # Пагинация была подтверждена на странице 0 (мы сюда дошли) —
                 # страница 1 не дочитана: целевая вакансия могла быть на ней.
                 problem = f"goto страницы {page_num} списка не прошёл ({exc})"
                 confirmed_incomplete = True
                 reads.append(PageRead(PageSource.SSR, (), Partial(problem)))
                 break
+            else:
+                raise_for_antibot(page)
         found_detail, page_clean, page_problem, page_attribution_incomparable = _scan_single_page(
             page, wanted, resume_id, account_resume_ids, seen_vacancy_ids
         )

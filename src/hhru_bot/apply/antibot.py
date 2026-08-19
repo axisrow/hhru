@@ -22,15 +22,9 @@ _CHALLENGE_PATH_SEGMENTS = frozenset({"captcha", "checkpoint", "nocaptcha"})
 # excluded: dormant templates and unrelated vacancy markup could otherwise halt
 # a healthy run (the failure mode is still only a hypothesis, #344).
 ANTIBOT_MARKER_SELECTORS: tuple[tuple[str, str], ...] = (
-    ("recaptcha_iframe", 'iframe[src*="recaptcha" i]'),
-    ("hcaptcha_iframe", 'iframe[src*="hcaptcha" i]'),
-    ("captcha_iframe", 'iframe[src*="captcha" i]'),
-    ("captcha_iframe_title", 'iframe[title*="captcha" i]'),
     ("captcha_data_qa", "[data-qa='captcha']"),
     ("account_captcha_input", "[data-qa='account-captcha-input']"),
     ("account_captcha_picture", "[data-qa='account-captcha-picture']"),
-    ("google_recaptcha", ".g-recaptcha"),
-    ("hcaptcha", ".h-captcha"),
 )
 
 

@@ -174,6 +174,9 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     * indeterminate — список не прочитан: fail-closed uncertain+acted —
       has_applied видит запись, троттл ждёт (как у #176).
     """
+    # Inspect the page that failed before the verifier navigates away. A submit
+    # navigation may render a challenge and still raise SubmitClickUncertain.
+    _halt_if_antibot(ctx)
     if ctx.verifier is None:
         return ctx.fail(reason)
     try:
