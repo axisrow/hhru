@@ -43,7 +43,7 @@ def register(subparsers) -> None:
         metavar="JSON",
         help=(
             "Готовая запись основного образования JSON без LLM (#326), можно несколько: "
-            "'{\"institution\":..., \"faculty\":..., \"specialty\":..., \"year\":...}'"
+            '\'{"institution":..., "faculty":..., "specialty":..., "year":...}\''
         ),
     )
     parser.add_argument(
@@ -52,7 +52,7 @@ def register(subparsers) -> None:
         metavar="JSON",
         help=(
             "Готовая запись доп. образования JSON без LLM (#326), можно несколько: "
-            "'{\"institution\":..., \"organization\":..., \"specialty\":..., \"year\":...}'"
+            '\'{"institution":..., "organization":..., "specialty":..., "year":...}\''
         ),
     )
     parser.add_argument(

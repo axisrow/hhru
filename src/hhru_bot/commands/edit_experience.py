@@ -32,8 +32,8 @@ def register(subparsers) -> None:
         metavar="JSON",
         help=(
             "Готовая запись опыта JSON без LLM (#326), можно несколько: "
-            "'{\"company\":..., \"position\":..., \"start_year\":..., \"end_year\":..., "
-            "\"current\":..., \"duties\":..., \"achievements\":[...], \"company_url\":...}'"
+            '\'{"company":..., "position":..., "start_year":..., "end_year":..., '
+            '"current":..., "duties":..., "achievements":[...], "company_url":...}\''
         ),
     )
     parser.add_argument(

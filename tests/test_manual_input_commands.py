@@ -108,7 +108,9 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
 
 def test_edit_experience_manual_entry_invalid_json_fails_closed(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
-        edit_experience_cmd.run(_args(tmp_path, mode="fill", career=None, existing=None, entry=["{"]))
+        edit_experience_cmd.run(
+            _args(tmp_path, mode="fill", career=None, existing=None, entry=["{"])
+        )
     assert exc.value.code == 1
     assert "валидный JSON" in capsys.readouterr().out
 
@@ -125,7 +127,9 @@ def test_edit_experience_manual_entry_requires_company_and_position(tmp_path, ca
 def test_edit_experience_entry_conflicts_with_career(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         edit_experience_cmd.run(
-            _args(tmp_path, career="факты", existing=None, entry=['{"company": "a", "position": "b"}'])
+            _args(
+                tmp_path, career="факты", existing=None, entry=['{"company": "a", "position": "b"}']
+            )
         )
     assert exc.value.code == 1
     assert "LLM-планированию" in capsys.readouterr().out
@@ -145,7 +149,9 @@ def test_about_manual_text_saves_without_ai(tmp_path, capsys, monkeypatch):
     saved = {}
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr("hhru_bot.about.open_about_editor", lambda page, resume: "старый текст")
-    monkeypatch.setattr("hhru_bot.about.save_about", lambda page, text: saved.setdefault("text", text))
+    monkeypatch.setattr(
+        "hhru_bot.about.save_about", lambda page, text: saved.setdefault("text", text)
+    )
     about_cmd.run(_args(tmp_path, dry_run=False, force=True, text="готовый перевод"))
     out = capsys.readouterr().out
     assert saved["text"] == "готовый перевод"
@@ -157,7 +163,9 @@ def test_about_manual_text_dry_run_does_not_save(tmp_path, capsys, monkeypatch):
     saved = {}
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr("hhru_bot.about.open_about_editor", lambda page, resume: "старый текст")
-    monkeypatch.setattr("hhru_bot.about.save_about", lambda page, text: saved.setdefault("text", text))
+    monkeypatch.setattr(
+        "hhru_bot.about.save_about", lambda page, text: saved.setdefault("text", text)
+    )
     about_cmd.run(_args(tmp_path, dry_run=True, text="черновик"))
     assert "text" not in saved
     assert "Ничего не сохранено" in capsys.readouterr().out
@@ -245,4 +253,6 @@ def test_resume_sections_parse_manual_plan_empty_record():
 
 def test_resume_sections_parse_manual_plan_requires_any():
     with pytest.raises(ValueError, match="хотя бы один"):
-        resume_sections_cmd._parse_manual_sections(SimpleNamespace(attestation=None, recommendation=None))
+        resume_sections_cmd._parse_manual_sections(
+            SimpleNamespace(attestation=None, recommendation=None)
+        )
