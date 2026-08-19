@@ -7,7 +7,14 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from .account_profile import read_account_profile
-from .browser import GOTO_TIMEOUT_MS, HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    GOTO_TIMEOUT_MS,
+    HH_BASE_URL,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    launch_browser,
+)
 from .config import AppConfig
 
 logger = logging.getLogger("hhru_bot.auth")
@@ -29,10 +36,7 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
     storage_state_file.parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        browser = launch_browser(p, headless=False)
         context_kwargs: dict = {
             "viewport": {"width": 1366, "height": 900},
             "locale": "ru-RU",
