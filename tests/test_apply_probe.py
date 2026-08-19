@@ -225,6 +225,8 @@ def test_probe_does_not_click_submit(tmp_path: Path):
     assert page.goto_calls == ["https://hh.ru/vacancy/42"]
     assert page.screenshot_calls >= 1
     assert page.content_calls >= 1
+    # #340: исходный DOM сохраняется до попытки выбора резюме/заполнения письма.
+    assert (tmp_path / "probe_42_form_initial.html").exists()
 
 
 def test_probe_fills_cover_letter(tmp_path: Path):

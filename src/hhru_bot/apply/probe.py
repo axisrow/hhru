@@ -186,7 +186,25 @@ def probe_vacancy(
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
     apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
-    logger.info("[PROBE] Дошёл до формы отклика, заполняю письмо (без отправки)")
+    logger.info("[PROBE] Дошёл до формы отклика, сохраняю исходный DOM")
+
+    # Сохраняем форму до любых взаимодействий с её полями. В частности, не
+    # пропускаем DOM через _fill_cover_letter_only(): его проверка resume-select
+    # использует тот же якорь, который probe диагностирует в #340. Этот снимок
+    # является источником истины для подтверждения актуального multi-resume
+    # селектора; последующий form-дамп сохраняет прежний контракт с письмом.
+    initial_ctx = ProbeContext(
+        vacancy_id=vacancy.vacancy_id,
+        vacancy_url=vacancy.url,
+        stage="form_initial",
+        logs_dir=ctx_dir.logs_dir,
+    )
+    initial_dump_paths = dump_probe_snapshot(page, initial_ctx)
+    logger.info(
+        "[PROBE] Исходный дамп формы сохранён: %s",
+        ", ".join(str(path) for path in initial_dump_paths.values()),
+    )
+    logger.info("[PROBE] Заполняю письмо локально (без отправки)")
 
     # #95: detect-only. Если форма требует анкеты — НЕ заполняем и НЕ дампим вопросы,
     # возвращаем skip (record_skip делает apply-цикл, у которого есть history).
