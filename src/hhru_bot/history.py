@@ -247,6 +247,7 @@ class _SkipReasons:
     LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
     LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
     HAS_QUESTIONS = "has_questions"  # #84 идея №7 (зарезервирован)
+    RESUME_VISIBILITY = "resume_visibility"  # отклик заблокирован видимостью резюме
     DUPLICATE = "duplicate"  # дубликат вакансии в одном сборе
 
 
@@ -264,6 +265,7 @@ SKIP_REASON_VALUES = (
     _SkipReasons.LOW_EMPLOYER_SIGNAL,
     _SkipReasons.LOW_LLM_SCORE,
     _SkipReasons.HAS_QUESTIONS,
+    _SkipReasons.RESUME_VISIBILITY,
     _SkipReasons.DUPLICATE,
 )
 

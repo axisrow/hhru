@@ -7,6 +7,9 @@ VACANCY_APPLY_BUTTON = "[data-qa='vacancy-response-link-top']"
 # The "again" control opens a modal with a separate repeat-submit action.
 VACANCY_ALREADY_RESPONDED_AGAIN = "[data-qa='vacancy-response-link-top-again']"
 VACANCY_ALREADY_RESPONDED_CHAT = "[data-qa='vacancy-response-link-view-topic']"
+# Rendered in the response modal when the selected resume is not visible to
+# client companies.  This can appear while the URL remains the vacancy URL.
+VACANCY_HIDDEN_RESUME_WARNING = "[data-qa='hidden-resume-warning']"
 VACANCY_TITLE = "[data-qa='vacancy-title']"
 VACANCY_COMPANY_NAME = "[data-qa='vacancy-company-name']"
 
