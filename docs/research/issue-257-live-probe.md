@@ -66,16 +66,35 @@ The command is read-only: it navigates to the vacancy and response form and
 never clicks the submit control. The HTML dump is a diagnostic artifact and
 must not be committed.
 
-## Probe follow-up (2026-08-20)
+## Representative live sample (2026-08-20)
 
-The live run initially stopped before the form on every new candidate because
+The selector evidence was expanded to ten distinct vacancy IDs. All ten
+contained a rendered `form[name="vacancy_response"]` and at least one
+`[data-qa="task-body"]`; the counts below are from the question-bearing
+controls in each saved form dump.
+
+| Vacancy | URL | `task-body` | Radio | Checkbox | Textarea | Dump |
+|---|---|---:|---:|---:|---:|---|
+| `133801099` | `https://hh.ru/vacancy/133801099` | 5 | 4 | 0 | 3 | `probe_133801099_form.html` |
+| `136230351` | `https://hh.ru/vacancy/136230351` | 3 | 0 | 0 | 3 | `probe_136230351_questions_live.html` |
+| `130637097` | `https://hh.ru/vacancy/130637097` | 10 | 6 | 0 | 7 | `probe_130637097_form_initial.html` |
+| `136098899` | `https://hh.ru/vacancy/136098899` | 6 | 2 | 0 | 6 | `probe_136098899_form_initial.html` |
+| `136230349` | `https://hh.ru/vacancy/136230349` | 3 | 0 | 0 | 3 | `probe_136230349_form_initial.html` |
+| `136230350` | `https://hh.ru/vacancy/136230350` | 3 | 0 | 0 | 3 | `probe_136230350_form_initial.html` |
+| `136348378` | `https://hh.ru/vacancy/136348378` | 11 | 11 | 25 | 3 | `probe_136348378_form_initial.html` |
+| `136401145` | `https://hh.ru/vacancy/136401145` | 7 | 0 | 0 | 7 | `probe_136401145_form_initial.html` |
+| `135397152` | `https://hh.ru/vacancy/135397152` | 5 | 0 | 20 | 0 | `probe_135397152_form_initial.html` |
+| `135046068` | `https://hh.ru/vacancy/135046068` | 3 | 0 | 4 | 3 | `probe_135046068_form_initial.html` |
+
+The sample confirms all requested control families: radio-only and
+radio-plus-text forms, checkbox questionnaires (including multi-select
+groups), textarea-only questionnaires, and mixed checkbox-plus-text forms.
+The repeated PostgreSQL questionnaire on vacancies `136230349`–`136230351`
+is retained as three separate live vacancy examples, but the mixed-control
+cases provide the broader selector coverage.
+
+The live run initially stopped before some forms because
 `_hidden_resume_warning_is_expanded()` passed the selector positionally to
 Playwright Python. That call now uses `arg=selector`; a real Chromium
 regression test covers the same JavaScript visibility check in
 `tests/test_apply_steps.py::test_hidden_resume_warning_uses_playwright_named_arg`.
-
-The first follow-up candidate (`136190066`) reached a clean response form but
-had no `task-body` questions. Subsequent candidates were stopped by the
-authenticated session/browser challenge before a reliable form dump could be
-captured. Therefore this document deliberately still reports **two** confirmed
-question-bearing vacancies, not ten; no unobserved combinations are inferred.
