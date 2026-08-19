@@ -100,6 +100,74 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
     save.click.assert_called_once_with()
 
 
+def test_save_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> None:
+    """#331 cycle-review round 3: save.click() itself must be guarded too, not
+    only the subsequent wait_for — an element-detached/navigation error from
+    the click must not propagate out of _apply_rows/apply_plan."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    no_recommendations = MagicMock()
+    no_recommendations.count.return_value = 0
+    save = MagicMock()
+    save.count.return_value = 1
+    save.click.side_effect = PlaywrightError("element is not attached to the DOM")
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: save)
+
+    from hhru_bot.resume_sections import Attestation
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(attestations=[Attestation("AWS", "Amazon", "Cloud", "2024")]),
+        dry_run=False,
+    )
+
+    assert len(errors) == 1
+    assert "сохранение" in errors[0] or "attestations" in errors[0]
+    save.wait_for.assert_not_called()
+
+
+def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> None:
+    """#331 cycle-review round 3: cancel.click() in the dry-run branch must be
+    guarded too, matching the fail-closed convention used for every other
+    Playwright action in this loop."""
+    page = MagicMock()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    no_attestations = MagicMock()
+    no_attestations.count.return_value = 0
+    partial_cancel = MagicMock()
+    partial_cancel.count.return_value = 1
+    partial_cancel.click.side_effect = PlaywrightError("element is not attached to the DOM")
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
+        "[data-qa='resume-partial-edit-cancel']": partial_cancel,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_recommendation_row", lambda *_args: MagicMock())
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(recommendations=[Recommendation("Text", "Acme")]),
+        dry_run=True,
+    )
+
+    assert len(errors) == 1
+    assert "отмена" in errors[0] or "recommendations" in errors[0]
+
+
 def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> None:
     """#331 (codex): apply_plan already navigated to /resume/{resume_id} before any
     row save, so waiting on that same URL after save.click() would resolve

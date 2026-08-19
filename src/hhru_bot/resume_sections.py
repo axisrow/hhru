@@ -185,7 +185,10 @@ def _apply_rows(
             # row's save.click() already succeeded (#352/codex round 3) — the
             # whole per-row body must stay inside this guard, not just the
             # click/wait_for, so no browser call here can escape apply_plan
-            # uncaught and hide which earlier rows already saved.
+            # uncaught and hide which earlier rows already saved. This also
+            # covers save.click()/cancel.click() themselves (#331 cycle-review
+            # round 3): an element-detached or navigation error from either
+            # must not propagate and crash apply_plan.
             if index >= trigger.count():
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
