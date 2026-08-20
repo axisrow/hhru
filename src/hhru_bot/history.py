@@ -1039,8 +1039,9 @@ class History:
         """Возвращает непустые тексты собранных вакансий для read-only отчётов."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT vacancy_text FROM vacancies_seen "
-                "WHERE vacancy_text IS NOT NULL AND vacancy_text != ''"
+                "SELECT MAX(vacancy_text) AS vacancy_text FROM vacancies_seen "
+                "WHERE vacancy_text IS NOT NULL AND vacancy_text != '' "
+                "GROUP BY vacancy_id"
             ).fetchall()
         return [row["vacancy_text"] for row in rows]
 
