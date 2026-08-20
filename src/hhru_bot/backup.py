@@ -295,12 +295,15 @@ def restore_backup(
                 and previous_storage != desired_storage
                 and previous_storage.is_file()
             ):
-                saved = originals / "previous-configured-session"
-                copyfile(previous_storage, saved)
-                os.chmod(saved, stat.S_IMODE(previous_storage.stat().st_mode))
-                original_keys[previous_storage] = saved
-                previous_storage.unlink()
-                replaced.append(previous_storage)
+                previous_name = _storage_archive_name(previous_storage, root)
+                previous_is_archived = previous_storage == (root / previous_name).resolve()
+                if not (previous_is_archived and previous_name in archived):
+                    saved = originals / "previous-configured-session"
+                    copyfile(previous_storage, saved)
+                    os.chmod(saved, stat.S_IMODE(previous_storage.stat().st_mode))
+                    original_keys[previous_storage] = saved
+                    previous_storage.unlink()
+                    replaced.append(previous_storage)
             for configured_storage in (previous_storage, desired_storage):
                 if configured_storage is not None:
                     managed.add(_storage_archive_name(configured_storage, root))
