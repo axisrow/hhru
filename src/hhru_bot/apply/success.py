@@ -30,6 +30,7 @@ Multi-signal success: один отклик может подтверждать�
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 from collections.abc import Callable
@@ -96,14 +97,16 @@ def _sleep(page: Page, ms: float) -> None:
 # async-рендер, больше — меньше накладных. 80 мс — баланс для ручного CLI.
 _POLL_INTERVAL_MS = 80
 # Success UI is rendered asynchronously after the submit/navigation completes.
-# Keep this bounded, but allow the same slow hh.ru/DDoS-Guard responses that
-# motivated the 90-second navigation timeout to finish rendering their signal.
-SUCCESS_CONFIRMATION_TIMEOUT_MS = 30_000
+# It is only a fast-path: when the marker does not appear, the pipeline checks
+# /applicant/negotiations, which is the authoritative post-submit source. Keep
+# this interval short and varied without increasing the request rate to hh.ru.
+SUCCESS_CONFIRMATION_MIN_TIMEOUT_MS = 3_000
+SUCCESS_CONFIRMATION_MAX_TIMEOUT_MS = 8_000
 
 
 def wait_success_confirmation(
     page: Page,
-    timeout_ms: int = SUCCESS_CONFIRMATION_TIMEOUT_MS,
+    timeout_ms: int | None = None,
     terminal_check: Callable[[], None] | None = None,
 ) -> bool:
     """Подтверждает успех отклика по позитивным сигналам.
@@ -115,13 +118,18 @@ def wait_success_confirmation(
     (основной data-qa может не появиться или задержаться на непроверенной
     JS-форме). Отрицательный признак (исчезновение submit) успехом НЕ считается.
 
-    Таймаут возвращает False (сигналов нет — локально успех не подтверждён),
+    Если timeout_ms не задан, ожидание выбирается случайно в диапазоне 3–8
+    секунд. Таймаут возвращает False (сигналов нет — локально успех не подтверждён),
     но с #207 это НЕ финальный вердикт: pipeline перед записью 'failed'
     перепроверяет отклик внешним источником (/applicant/negotiations, см.
-    apply/verify.py) — найденный там отклик финализируется как success.
-    Окно подтверждения — 30 секунд: это снижает false-negative на медленном
-    hh.ru, оставаясь ограниченным и не меняя fail-closed правило для сигналов.
+    apply/verify.py) — найденный там отклик финализируется как success. Короткое
+    окно не меняет fail-closed правило для сигналов и не повышает частоту submit.
     """
+    if timeout_ms is None:
+        timeout_ms = random.randint(
+            SUCCESS_CONFIRMATION_MIN_TIMEOUT_MS,
+            SUCCESS_CONFIRMATION_MAX_TIMEOUT_MS,
+        )
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
         # #344: a challenge may be the submit response itself. Check on every

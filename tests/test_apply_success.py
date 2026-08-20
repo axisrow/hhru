@@ -9,8 +9,6 @@
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -20,10 +18,24 @@ from hhru_bot.apply.locators import first_locator
 pytestmark = pytest.mark.integration
 
 
-def test_default_confirmation_timeout_is_bounded_and_explicit():
-    """Медленный UI получает больше времени, но не неограниченное ожидание."""
-    default = inspect.signature(success.wait_success_confirmation).parameters["timeout_ms"].default
-    assert default == success.SUCCESS_CONFIRMATION_TIMEOUT_MS == 30_000
+def test_default_confirmation_timeout_is_short_and_randomized(monkeypatch):
+    """Локальный UI — быстрый путь перед авторитетной внешней проверкой."""
+    chosen: list[tuple[int, int]] = []
+
+    def _randint(lower: int, upper: int) -> int:
+        chosen.append((lower, upper))
+        return lower
+
+    monkeypatch.setattr(success.random, "randint", _randint)
+    page = _FakePage(markers={success.APPLY_SUCCESS_MARKER})
+
+    assert success.wait_success_confirmation(page) is True
+    assert chosen == [
+        (
+            success.SUCCESS_CONFIRMATION_MIN_TIMEOUT_MS,
+            success.SUCCESS_CONFIRMATION_MAX_TIMEOUT_MS,
+        )
+    ]
 
 
 class _FakeLocator:

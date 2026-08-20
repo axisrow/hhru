@@ -90,7 +90,6 @@ def scan_questionnaire(
         form_state = navigate_to_response_form(
             page,
             vacancy.vacancy_id,
-            navigation_timeout_ms=timeout_ms,
             form_timeout_ms=form_timeout_ms,
             dump_diagnostics=False,
         )

@@ -13,12 +13,12 @@
 from __future__ import annotations
 
 import logging
+import random
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from ..browser import GOTO_TIMEOUT_MS
 from ..logging_setup import LOG_DIR
 from ..selector_groups import vacancy_page
 from .blockers import PostClickBlocker, handle_post_click_blockers, raise_if_post_submit_limit
@@ -26,6 +26,10 @@ from .blockers import PostClickBlocker, handle_post_click_blockers, raise_if_pos
 logger = logging.getLogger("hhru_bot.apply.steps")
 
 APPLY_TIMEOUT_MS = 10_000
+# The response page may be rendered as a SPA modal, so waiting for its URL can
+# block for the global 90s navigation timeout even when the form is ready.
+RESPONSE_READY_MIN_TIMEOUT_MS = 5_000
+RESPONSE_READY_MAX_TIMEOUT_MS = 15_000
 # Короткий таймаут для проверки опциональных полей формы (резюме/письмо могут
 # отсутствовать — это нормально, а не ошибка). Ждать полной APPLY_TIMEOUT_MS тут
 # бессмысленно: отсутствие поля детерминировано почти сразу.
@@ -138,8 +142,7 @@ def navigate_to_response_form(
     page: Page,
     vacancy_id: str | None = None,
     *,
-    navigation_timeout_ms: int = GOTO_TIMEOUT_MS,
-    form_timeout_ms: int = APPLY_TIMEOUT_MS,
+    form_timeout_ms: int | None = None,
     dump_diagnostics: bool = True,
     allow_relocation: bool = False,
 ) -> str | bool | PostClickBlocker:
@@ -165,7 +168,11 @@ def navigate_to_response_form(
     Клик вызывает обычную навигацию — дожидаемся её перед поиском полей формы.
 
     Фиксированный sleep после навигации заменён на явное ожидание готовности DOM:
-    ждём любого индикатора формы (кнопка отправки), максимум APPLY_TIMEOUT_MS.
+    ждём любого индикатора формы (кнопка отправки). ``form_timeout_ms`` управляет
+    этим ожиданием напрямую — если не задан явно (``None``), таймаут выбирается
+    случайно в диапазоне ``RESPONSE_READY_MIN_TIMEOUT_MS``..``RESPONSE_READY_MAX_TIMEOUT_MS``
+    для обычного apply-цикла; probe/questionnaire передают явное значение для
+    своих быстрых режимов (см. ``FAST_FORM_TIMEOUT_MS`` в questionnaire.py).
 
     #179: раньше ожидание было ``page.expect_navigation(wait_until="domcontentloaded")``.
     Живая диагностика (боевой аккаунт, vacancy_id 136221532) показала: кнопка
@@ -220,26 +227,17 @@ def navigate_to_response_form(
         reason = "видимость резюме недостаточна для отклика"
         logger.info("Вакансия пропущена: %s", reason)
         return reason
-    # #179: таймаут/ошибка ожидания URL сама по себе не означает, что клик не
-    # сработал — не крашим весь pipeline необработанным исключением, а
-    # логируем и отдаём управление дальше. fill_response_form (через
-    # отсутствие APPLY_SUBMIT_BUTTON) и последующая проверка рендера формы
-    # различат навигационный сбой и реально загрузившуюся форму.
-    try:
-        page.wait_for_url(
-            "**/applicant/vacancy_response**", wait_until="commit", timeout=navigation_timeout_ms
-        )
-    except PlaywrightError as exc:
-        if dump_diagnostics:
-            _dump_navigation_diagnostics(page, "navigation_timeout", vacancy_id)
-        logger.warning(
-            "Навигация на форму отклика не подтвердилась (%s) — "
-            "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
-            exc,
-        )
-    # Второй проход: модалка могла отрисоваться уже после навигации. Ждать
-    # повторно не нужно — первый проход выше уже отдал ей render-таймаут, а
-    # штатный путь без модалки не должен платить его дважды на каждой вакансии.
+    # URL не является обязательным: hh.ru может оставить нас на vacancy URL и
+    # открыть форму модалкой. В обычном apply-цикле используем bounded jitter;
+    # probe/questionnaire могут передать явный form_timeout_ms для своих
+    # быстрых режимов — `is not None`, а не truthy-проверка: 0 валидное
+    # значение таймаута в этом файле (см. render_timeout_ms=0 ниже).
+    ready_timeout_ms = (
+        form_timeout_ms
+        if form_timeout_ms is not None
+        else random.randint(RESPONSE_READY_MIN_TIMEOUT_MS, RESPONSE_READY_MAX_TIMEOUT_MS)
+    )
+    logger.debug("Ожидание формы отклика: %d мс", ready_timeout_ms)
     blocker = handle_post_click_blockers(
         page,
         allow_relocation=allow_relocation,
@@ -248,10 +246,10 @@ def navigate_to_response_form(
     )
     if blocker is not None:
         return blocker
-    # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
+    # Форма рендерится после клика — ждём её индикатор, а не URL и не sleep.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(
-            state="visible", timeout=form_timeout_ms
+            state="visible", timeout=ready_timeout_ms
         )
     except PlaywrightError as exc:
         if dump_diagnostics:
