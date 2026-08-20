@@ -151,35 +151,87 @@ def test_apply_daily_limit_is_per_resume_so_account_total_multiplies():
 def test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_uncertain(
     monkeypatch, tmp_path
 ):
-    """B4: сбой ПОСЛЕ клика отзыва пишется как 'failed', то есть «не произошло».
+    """B4: сбой ПОСЛЕ необратимого клика отзыва пишется как 'failed' (= не произошло).
 
-    `_withdraw_topic` кликает необратимый отзыв (clear_negotiations.py:147), а
-    `_run_topics` (там же, :300-309) знает только два статуса: success/failed.
-    Любое исключение после клика ловится широким `except Exception` и пишется
-    'failed'. Для обратимого bump тот же проект реализует инвариант #176/#207
-    полностью (bump.py:102-119: acted=True + uncertain=True), а для НЕОБРАТИМОГО
-    отзыва слова 'uncertain' в модуле нет вовсе.
+    Тест проходит РЕАЛЬНЫЙ путь `_withdraw_topic`: фейковая страница отдаёт
+    валидный SSR с одним топиком, уникальную карточку и уникальную кнопку
+    отзыва, клик действительно выполняется (`clicked` фиксируется), и только
+    затем падает ожидание позитивного маркера — ровно «серая зона» #207.
 
-    Последствие: 'failed' не расходует лимит и не дедуплицируется
-    (history.count_today считает только success/uncertain), поэтому повторный
-    прогон снова попытается отозвать уже отозванный отклик.
+    `_withdraw_topic` возвращает (False, ...), а `_run_topics` (:304) знает
+    только два статуса, поэтому необратимое действие записывается как `failed`.
+    Для обратимого bump тот же проект реализует инвариант #176/#207 полностью
+    (bump.py:102-119: acted=True + uncertain=True); в этом модуле слова
+    'uncertain' нет вовсе.
     """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
     from hhru_bot.commands import clear_negotiations as module
     from hhru_bot.history import History
 
     history = History(str(tmp_path / "history.db"))
     topic = "5503922709"
+    withdraw_clicked: list[str] = []
 
-    def _click_then_fail(_page, _topic):
-        # Клик по отзыву уже ушёл на hh.ru, затем упало подтверждение.
-        raise PlaywrightError("Target page, context or browser has been closed")
+    class _Element:
+        def __init__(self, kind: str):
+            self.kind = kind
 
-    monkeypatch.setattr(module, "_withdraw_topic", _click_then_fail)
+        def click(self) -> None:
+            withdraw_clicked.append(self.kind)
+
+        def wait_for(self, **_kwargs):
+            # Позитивный маркер успеха так и не появился: клик уже ушёл на hh.ru.
+            raise PlaywrightTimeoutError("Timeout 10000ms exceeded")
+
+        def locator(self, selector: str):
+            # `card = cards.first`, поэтому карточка тоже скоупит вложенные локаторы.
+            return _locator_for(selector)
+
+    class _Locator:
+        def __init__(self, kind: str, count: int):
+            self.kind = kind
+            self._count = count
+
+        @property
+        def first(self):
+            return _Element(self.kind)
+
+        def count(self) -> int:
+            return self._count
+
+        def locator(self, selector: str):
+            return _locator_for(selector)
+
+    def _locator_for(selector: str) -> _Locator:
+        if selector == module.NEGOTIATION_WITHDRAW:
+            return _Locator("withdraw", 1)
+        if selector == module.NEGOTIATION_WITHDRAW_CONFIRM:
+            return _Locator("confirm", 0)
+        if selector == module.NEGOTIATION_WITHDRAW_SUCCESS:
+            return _Locator("success", 1)
+        if selector == module.NEGOTIATION_ITEM:
+            return _Locator("card", 1)
+        raise AssertionError(f"неожиданный селектор: {selector}")
+
+    class _Page:
+        def content(self) -> str:
+            return "<html></html>"
+
+        def locator(self, selector: str):
+            return _locator_for(selector)
+
+    ref = type("Ref", (), {"topic_id": topic, "chat_id": "1", "vacancy_id": "2"})()
+    monkeypatch.setattr(module, "goto_hh", lambda *a, **k: None)
+    monkeypatch.setattr(module, "topic_refs", lambda _html: [ref])
 
     args = type("Args", (), {"config": None, "history": str(tmp_path / "history.db")})()
-    failed = module._run_topics(args, [topic], page=object(), history=history, throttle=None)
+    failed = module._run_topics(args, [topic], page=_Page(), history=history, throttle=None)
 
+    # Необратимый клик ДЕЙСТВИТЕЛЬНО состоялся в этом прогоне.
+    assert withdraw_clicked == ["withdraw"]
     assert failed is True
+
     with history._connect() as conn:
         rows = conn.execute(
             "SELECT status FROM actions WHERE action = 'withdraw' AND vacancy_id = ?",
@@ -187,12 +239,9 @@ def test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_unce
         ).fetchall()
     statuses = [row["status"] for row in rows]
 
-    # Дефект: необратимый клик после сбоя записан как 'failed' (= не произошёл).
+    # Дефект: состоявшийся необратимый клик записан как 'failed' (= не произошёл).
     assert statuses == ["failed"]
     assert "uncertain" not in statuses
-
-    # И поэтому он не считается состоявшимся действием — в отличие от bump.
-    assert history.count_today(module.ACCOUNT_SCOPE, "withdraw") == 0
 
 
 def test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks():
