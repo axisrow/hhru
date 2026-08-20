@@ -103,7 +103,7 @@ class _FakePage:
             return _FakeLocator(count_value=1)
         return _FakeLocator(count_value=0)
 
-    def get_by_text(self, text, exact: bool = False):  # noqa: ARG002
+    def get_by_text(self, text, *, exact: bool = False):  # noqa: ARG002
         # Playwright get_by_text принимает str | Pattern. Для Pattern ищем
         # по множеству заготовленных фраз (как делает реальный regex-поиск).
         import re

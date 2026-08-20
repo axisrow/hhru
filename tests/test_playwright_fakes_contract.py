@@ -38,7 +38,9 @@ PLAYWRIGHT_CLASSES = (Page, Locator, ElementHandle, Frame)
 # Playwright API и не плодить шум по несвязанным именам. Список сверен grep'ом
 # по src/hhru_bot/ на методы Page/Locator с keyword-only параметрами в реальном
 # API; expect_navigation оставлен несмотря на #179 (заменён на wait_for_url) —
-# держим на случай регрессии обратно на него.
+# держим на случай регрессии обратно на него. get_by_text/reload добавлены
+# после cycle-review PR #410 (Codex): оба реально используются в src/ с
+# keyword-only параметрами (exact/wait_until) и были пропущены исходным grep'ом.
 RELEVANT_METHODS = {
     "check",
     "click",
@@ -46,10 +48,12 @@ RELEVANT_METHODS = {
     "expect_navigation",
     "fill",
     "get_attribute",
+    "get_by_text",
     "goto",
     "inner_text",
     "input_value",
     "press",
+    "reload",
     "screenshot",
     "select_option",
     "text_content",

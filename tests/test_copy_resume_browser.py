@@ -208,7 +208,7 @@ class StubPage:
         if self.tick_actions:
             self.tick_actions.pop(0)()
 
-    def reload(self, wait_until=None):
+    def reload(self, *, wait_until=None):
         self.reloads.append(wait_until)
         if self.reload_action is not None:
             self.reload_action()
