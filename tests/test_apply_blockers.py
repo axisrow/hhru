@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.apply.blockers import (
     PostSubmitLimitExceeded,
@@ -30,6 +31,16 @@ class _Locator:
     def inner_text(self) -> str:
         return self.page.elements.get(self.selector, (False, ""))[1]
 
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
+        self.page.waited.append(self.selector)
+        # Совокупный селектор ждёт первый видимый якорь; в фикстурах DOM
+        # синхронный, поэтому достаточно проверить любую из частей.
+        if not any(
+            self.page.elements.get(part.strip(), (False, ""))[0]
+            for part in self.selector.split(",")
+        ):
+            raise PlaywrightError("locator.wait_for: Timeout exceeded")
+
     def click(self) -> None:
         self.page.clicked.append(self.selector)
         self.page.elements[self.selector] = (False, self.inner_text())
@@ -39,6 +50,7 @@ class _Page:
     def __init__(self, *elements: tuple[str, str]) -> None:
         self.elements = {selector: (True, text) for selector, text in elements}
         self.clicked: list[str] = []
+        self.waited: list[str] = []
 
     def locator(self, selector: str) -> _Locator:
         return _Locator(self, selector)
@@ -108,3 +120,13 @@ def test_response_warning_is_a_terminal_skip():
 
     assert result is not None
     assert result.skip_reason == SKIP_REASONS.RESPONSE_REJECTED
+
+
+def test_blockers_wait_for_render_before_strict_checks():
+    # CLAUDE.md п.4: без явного ожидания проверка читает ещё не отрисованный
+    # React-DOM и систематически не видит модалку.
+    page = _Page((vacancy_page.VACANCY_LIMIT_ERROR, "Лимит откликов"))
+
+    handle_post_click_blockers(page, allow_relocation=False)
+
+    assert page.waited, "терминальные проверки выполнены без ожидания рендера"

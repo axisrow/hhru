@@ -16,6 +16,13 @@ from playwright.sync_api import Page
 from ..history import SKIP_REASONS
 from ..selector_groups import vacancy_page
 
+# CLAUDE.md п.4: клик по кнопке отклика запускает асинхронный React-рендер,
+# поэтому сразу после него DOM ещё пуст.  Терминальные модалки проверяем только
+# после короткого явного ожидания — иначе проверка систематически ничего не
+# видит.  Таймаут намеренно мал: отсутствие модалки — штатный (частый) случай,
+# и ждать её полный APPLY_TIMEOUT_MS на каждой вакансии нельзя.
+BLOCKER_RENDER_TIMEOUT_MS = 1_500
+
 
 @dataclass(frozen=True)
 class PostClickBlocker:
@@ -53,13 +60,43 @@ def _close_specific(page: Page, selector: str) -> None:
         return
 
 
-def handle_post_click_blockers(page: Page, *, allow_relocation: bool) -> PostClickBlocker | None:
+def _wait_for_any_blocker(page: Page, timeout_ms: int) -> None:
+    """Даёт модалке отрисоваться до строгих проверок видимости.
+
+    Ждём первый попавшийся из терминальных якорей; отсутствие всех — штатный
+    исход (форма отрисовалась нормально), поэтому таймаут проглатывается.
+    """
+
+    selector = ", ".join(
+        (
+            vacancy_page.VACANCY_RELOCATION_CONFIRM,
+            vacancy_page.VACANCY_LIMIT_ERROR,
+            vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL,
+            vacancy_page.VACANCY_RESPONSE_REJECT_WARNING,
+            vacancy_page.VACANCY_RESPONSE_ERROR,
+            vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE,
+        )
+    )
+    try:
+        page.locator(selector).first.wait_for(state="visible", timeout=timeout_ms)
+    except (PlaywrightError, AttributeError):
+        return
+
+
+def handle_post_click_blockers(
+    page: Page,
+    *,
+    allow_relocation: bool,
+    render_timeout_ms: int = BLOCKER_RENDER_TIMEOUT_MS,
+) -> PostClickBlocker | None:
     """Handle one post-click DOM state and return a terminal blocker if any.
 
     ``None`` means the caller may continue to form detection.  Similar-vacancy
     overlays are non-terminal and are closed using only their dedicated
     selectors.  Every terminal state is fail-closed and performs no submit.
     """
+
+    _wait_for_any_blocker(page, render_timeout_ms)
 
     if _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM):
         if allow_relocation:
@@ -88,6 +125,9 @@ def handle_post_click_blockers(page: Page, *, allow_relocation: bool) -> PostCli
                 SKIP_REASONS.DIRECT_APPLICATION,
             )
 
+    # В отличие от direct-application, здесь текстовый гейт не нужен: оба
+    # data-qa специфичны для отклика, тогда как ``magritte-alert`` выше —
+    # generic-контейнер дизайн-системы и без проверки текста дал бы ложный скип.
     if _visible(page, vacancy_page.VACANCY_RESPONSE_REJECT_WARNING) or _visible(
         page, vacancy_page.VACANCY_RESPONSE_ERROR
     ):
