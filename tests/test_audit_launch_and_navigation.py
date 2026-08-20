@@ -82,49 +82,47 @@ def test_headed_sandbox_failure_is_classified():
 # --- B3: дневной лимит apply считается ПО РЕЗЮМЕ, а не по аккаунту -----------
 
 
-def test_apply_daily_limit_is_per_resume_so_account_total_multiplies():
-    """B3: `apply` без --resume идёт по всем резюме, и каждое имеет свой лимит.
+def test_apply_daily_limit_is_account_wide_across_resumes():
+    """B3: `apply` uses one account-wide daily counter for every resume.
 
-    check_reply_limit в том же классе (throttle.py:57-62) намеренно считает
-    аккаунт целиком ("account-wide replies"), а check_apply_limit — нет.
-    При 3 резюме в конфиге и daily_apply_limit=40 аккаунт отправляет до 120
-    откликов в день, что расходится с антифрод-замыслом дневного лимита
-    (CLAUDE.md: «ограничена дневными лимитами ... чтобы не выглядеть как
-    подозрительная автоматизация»).
+    The apply command can iterate over all configured resumes, so checking
+    each resume independently would multiply the configured allowance.  The
+    same account-wide scope is already used by the reply limit.
     """
     from hhru_bot.throttle import LimitReached, Throttle
 
     class _History:
-        """Каждое резюме уже исчерпало свой лимит; аккаунт суммарно — втрое больше."""
+        """Record both the requested scope and the configured account count."""
 
-        def __init__(self, per_resume: int):
-            self.per_resume = per_resume
+        def __init__(self, account_count: int):
+            self.account_count = account_count
             self.asked: list[tuple[str, str]] = []
 
         def count_today(self, resume_id: str, action: str) -> int:
             self.asked.append((resume_id, action))
-            # Аккаунт-wide счёт (resume_id == "") не ведётся для apply вовсе.
-            return 0 if resume_id == "" else self.per_resume
+            return self.account_count if resume_id == "" else 0
 
     class _Config:
         daily_apply_limit = 40
         daily_bump_limit = 10
 
     limit = _Config.daily_apply_limit
-    history = _History(per_resume=limit - 1)
+    history = _History(account_count=limit - 1)
     throttle = Throttle(_Config(), history)
 
     resumes = ["6b85a5a1", "b3236ebb", "a6c9aec0"]
     for resume_id in resumes:
-        # Каждое резюме на 39/40 — ни одно не упирается в лимит.
+        # Every resume consults the same account-wide counter.
         throttle.check_apply_limit(resume_id, dry_run=False)
 
-    # Дефект: лимит спрашивают по resume_id, аккаунт целиком не спрашивают ни разу.
-    assert history.asked == [(r, "apply") for r in resumes]
-    assert ("", "apply") not in history.asked
+    assert history.asked == [("", "apply") for _ in resumes]
 
-    # Суммарно по аккаунту уже 117 откликов при заявленном дневном лимите 40.
-    assert len(resumes) * (limit - 1) > limit
+    # Once the account reaches the limit, another resume cannot get a fresh
+    # allowance of its own.
+    at_limit = _History(account_count=limit)
+    with pytest.raises(LimitReached, match="account"):
+        Throttle(_Config(), at_limit).check_apply_limit(resumes[0], dry_run=False)
+    assert at_limit.asked == [("", "apply")]
 
     # Контроль: reply-лимит в том же классе считается по аккаунту (resume_id == "").
     history.asked.clear()
