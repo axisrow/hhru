@@ -655,12 +655,15 @@ def _run_apply_for_resume(
     account_resume_ids = identity.account_resume_ids
 
     approved_item = None
+    approved_duplicate = False
     if getattr(args, "approved", None) is not None:
         if not getattr(args, "permit", None):
-            raise ValueError("для --approved требуется --permit из review approve")
+            print("[FAIL] для --approved требуется --permit из review approve")
+            return True
         candidates = [item for item in history.review_items() if item["id"] == args.approved]
         if not candidates or candidates[0]["resume_id"] != resume.resume_id:
-            raise ValueError("approved-запись принадлежит другому резюме")
+            print("[FAIL] approved-запись принадлежит другому резюме")
+            return True
         approved_item = history.claim_review(args.approved, args.permit)
         cards = [
             VacancyCard(
@@ -670,6 +673,11 @@ def _run_apply_for_resume(
                 url=approved_item["vacancy_url"],
             )
         ]
+        # --approved bypasses the normal search/filter plan, so preserve the
+        # history-based deduplication barrier on this explicit route too.
+        if history.has_applied(resume.resume_id, approved_item["vacancy_id"]):
+            history.finish_review(args.approved, "skipped")
+            approved_duplicate = True
     elif cards_override is None:
         try:
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
@@ -692,7 +700,11 @@ def _run_apply_for_resume(
         )
     )
     plan = (
-        ApplyPlan([(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))])
+        ApplyPlan([], skipped=[], total=len(cards), after_filter=0)
+        if approved_duplicate
+        else ApplyPlan(
+            [(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))]
+        )
         if approved_item
         else build_apply_plan(
             cards,
@@ -766,6 +778,8 @@ def _run_apply_for_resume(
             throttle.check_apply_limit(resume.resume_id, args.dry_run)
         except LimitReached as e:
             print(f"Дневной лимит достигнут, останавливаюсь: {e}")
+            if approved_item:
+                history.finish_review(args.approved, "skipped")
             break
 
         action_id = None
@@ -837,6 +851,14 @@ def _run_apply_for_resume(
             # the generic crash reason before terminating the whole command.
             if action_id is not None:
                 history.finalize_action(action_id, "uncertain", str(exc))
+            if approved_item:
+                history.finish_review(args.approved, "failed")
+            raise
+        except Exception:
+            # A claimed review must never remain permanently in ``applying``
+            # when the browser/pipeline fails before returning a result.
+            if approved_item:
+                history.finish_review(args.approved, "failed")
             raise
 
         if result.skipped:
