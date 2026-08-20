@@ -125,9 +125,10 @@ def run(args: argparse.Namespace) -> None:
         )
 
     # 2) Счётчики из локальной истории (НЕ с hh.ru).
-    # Откликов сегодня — сумма по выбранным резюме, под resume.resume_id
-    # (числовой id hh.ru — тот же ключ, что apply/bump пишут в БД).
-    applied_today = sum(history.count_today(r.resume_id, "apply") for r in resumes)
+    # Лимит откликов account-wide: не сужаем счётчик по --resume, иначе
+    # summary может показать запас, хотя следующий отклик уже заблокирован
+    # throttle после откликов другого резюме.
+    applied_today = history.count_today("", "apply")
     apply_limit = config.throttle.daily_apply_limit
 
     # Responses — account-scope (#12): страница /applicant/negotiations общая,

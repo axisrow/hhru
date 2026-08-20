@@ -22,7 +22,7 @@ import pytest
 
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
 from hhru_bot.search import VacancyCard
-from hhru_bot.throttle import Throttle
+from hhru_bot.throttle import LimitReached, Throttle
 
 pytestmark = pytest.mark.integration
 
@@ -185,6 +185,19 @@ def test_non_success_rows_do_not_affect_limits(tmp_path):
     throttle = Throttle(ThrottleConfig(), history)
     assert history.count_today("AAA111", "bump") == 0
     assert throttle.can_bump_now("AAA111") == (True, None)
+
+
+def test_apply_limit_is_account_wide_across_resumes(tmp_path):
+    """The daily apply allowance must not multiply with configured resumes."""
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "history.db")
+    history.record_action("AAA111", "1", "apply", "success")
+    history.record_action("BBB222", "2", "apply", "uncertain")
+    throttle = Throttle(ThrottleConfig(daily_apply_limit=2), history)
+
+    with pytest.raises(LimitReached, match="account"):
+        throttle.check_apply_limit("CCC333", dry_run=False)
 
 
 # --- apply: командный цикл ---------------------------------------------------

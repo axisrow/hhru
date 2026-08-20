@@ -418,15 +418,20 @@ class History:
     def count_today(self, resume_id: str, action: str) -> int:
         # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
         # на hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
+        # Пустой resume_id — account-wide sentinel (так replies не привязаны к
+        # конкретному резюме). Для apply это также важно: дневной лимит
+        # относится к аккаунту, даже если действия в истории привязаны к
+        # отдельным резюме.
         today = datetime.now().date().isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS cnt FROM actions
-                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
+                WHERE (? = '' OR resume_id = ?) AND action = ?
+                  AND status IN ('success', 'uncertain')
                   AND created_at >= ?
                 """,
-                (resume_id, action, today),
+                (resume_id, resume_id, action, today),
             ).fetchone()
             return row["cnt"] if row else 0
 
