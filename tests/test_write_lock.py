@@ -56,6 +56,8 @@ def test_lock_covers_all_hhru_write_commands():
         "settings",
         "reject",
         "config",
+        "backup",
+        "restore",
     }
 
 

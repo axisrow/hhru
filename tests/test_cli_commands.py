@@ -119,6 +119,8 @@ def test_all_commands_registered():
         "settings",
         "refresh-token",
         "reject",
+        "backup",
+        "restore",
     }
 
 
@@ -176,6 +178,7 @@ def test_register_commands_returns_names():
         "settings",
         "refresh_token",
         "reject",
+        "backup",
     }
 
 
