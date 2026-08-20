@@ -36,6 +36,10 @@ def run(args: argparse.Namespace) -> bool:
     from ..history import History
     from ..throttle import LimitReached, Throttle
 
+    if getattr(args, "approved", None) is not None and args.dry_run:
+        print("[FAIL] --approved нельзя использовать вместе с --dry-run")
+        return True
+
     config = load_config_or_exit(args.config)
     history = History(args.history)
     resumes = resumes_from_args(config, args)

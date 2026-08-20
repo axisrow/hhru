@@ -475,16 +475,6 @@ def run_apply_for_resume(
             "и отправлены без дополнительного подтверждения"
         )
 
-    # #414: dry-run is also the review boundary. Persist the exact candidate,
-    # score and rendered letter so a later approved run never re-searches or
-    # silently regenerates a different payload.
-    if args.dry_run:
-        from ..apply.letter import render_cover_letter
-
-        for card, score, breakdown in plan.ranked:
-            letter = render_cover_letter(cover_letter_template, card, letter_provider)
-            history.enqueue_review(resume.resume_id, card, score, breakdown, letter)
-
     # #212: атрибуция резюме в верификаторе. Конфиг знает хэш резюме, SSR
     # /applicant/negotiations — только числовой resumeId; без маппинга found
     # недостижим (false negative #3, 135170581). Один read-only goto за запуск;
@@ -508,6 +498,26 @@ def run_apply_for_resume(
             break
 
         action_id = None
+        effective_letter_provider = letter_provider
+        if args.dry_run:
+            from ..apply.letter import LetterOutcome, TemplateCoverLetterProvider
+
+            snapshot_source = letter_provider or TemplateCoverLetterProvider(cover_letter_template)
+            snapshot_outcome = snapshot_source.render(card)
+            snapshot_letter = snapshot_outcome.text
+            history.enqueue_review(resume.resume_id, card, _score, _breakdown, snapshot_letter)
+
+            class _DryRunLetter:
+                def render(
+                    self,
+                    vacancy,
+                    resume_profile=None,
+                    letter=snapshot_letter,
+                    variant=snapshot_outcome.variant,
+                ):  # noqa: ANN001, ARG002
+                    return LetterOutcome(letter, variant)
+
+            effective_letter_provider = _DryRunLetter()
 
         def _before_submit(vacancy_id: str = card.vacancy_id) -> None:
             nonlocal action_id
@@ -524,7 +534,7 @@ def run_apply_for_resume(
         # unrelated kwarg types (provider/verifier/callable/bool) into
         # apply_to_vacancy's distinct typed parameters below.
         apply_kwargs: dict[str, Any] = {
-            "letter_provider": letter_provider,
+            "letter_provider": effective_letter_provider,
         }
         if not args.dry_run:
             # #207: fail-вердикты после клика по кнопке отклика подтверждаются
@@ -567,6 +577,8 @@ def run_apply_for_resume(
             # ApplyContext.skip(), чей дефолт — HAS_QUESTIONS; новый skip-путь
             # обязан передать здесь собственный skip_reason явно.
             history.record_skip(resume.resume_id, card.vacancy_id, result.skip_reason)
+            if approved_item:
+                history.finish_review(args.approved, "skipped")
             if action_id is not None:
                 history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
