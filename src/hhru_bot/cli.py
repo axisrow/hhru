@@ -54,7 +54,6 @@ WRITE_COMMANDS = frozenset(
         "edit-languages",
         "settings",
         "config",
-        "edit-languages",
         "reject",
         "backup",
         "restore",
