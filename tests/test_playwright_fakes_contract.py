@@ -39,8 +39,10 @@ PLAYWRIGHT_CLASSES = (Page, Locator, ElementHandle, Frame)
 # по src/hhru_bot/ на методы Page/Locator с keyword-only параметрами в реальном
 # API; expect_navigation оставлен несмотря на #179 (заменён на wait_for_url) —
 # держим на случай регрессии обратно на него. get_by_text/reload добавлены
-# после cycle-review PR #410 (Codex): оба реально используются в src/ с
+# после cycle-review PR #410 round 1 (Codex): оба реально используются в src/ с
 # keyword-only параметрами (exact/wait_until) и были пропущены исходным grep'ом.
+# get_by_label/get_by_role добавлены после round 2 (Codex) по той же причине —
+# оба вызываются в src/ с exact/name как keyword-only.
 RELEVANT_METHODS = {
     "check",
     "click",
@@ -48,6 +50,8 @@ RELEVANT_METHODS = {
     "expect_navigation",
     "fill",
     "get_attribute",
+    "get_by_label",
+    "get_by_role",
     "get_by_text",
     "goto",
     "inner_text",
