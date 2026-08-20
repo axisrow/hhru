@@ -336,17 +336,36 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
 
     failed = False
     for topic in topics:
+        assert history is not None
+        previous_status = history.last_action_status(ACCOUNT_SCOPE, topic, "withdraw")
+        if previous_status is not None:
+            if previous_status == "uncertain":
+                print(
+                    f"[FAIL] (uncertain) Уже есть неподтверждённая попытка отзыва "
+                    f"topic={topic} — не кликаю"
+                )
+                failed = True
+            else:
+                print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
+            continue
+        # #245-style durable barrier: reserve the row as `uncertain` BEFORE
+        # entering the irreversible click. If the process dies between the
+        # click and the outcome being known (browser crash, OOM, kill -9),
+        # this row survives and blocks a retry on restart — waiting to
+        # record the outcome only after `_withdraw_topic` returns would
+        # leave that crash window with zero history and let a restarted run
+        # click the same, already-withdrawn topic again.
+        # history is only ever None on the empty-discovery path (no topics
+        # means the loop never runs); with real topics the callers above
+        # always supply it, so it cannot be None here.
+        action_id = history.begin_action(ACCOUNT_SCOPE, topic, "withdraw")
         acted = False
         try:
             success, reason, acted = _withdraw_topic(page, topic)
         except Exception as exc:
             success, reason = False, str(exc)
         status = action_status(dry_run=False, success=success, uncertain=acted and not success)
-        # history is only ever None on the empty-discovery path (no topics
-        # means the loop never runs); with real topics the callers above
-        # always supply it, so it cannot be None here.
-        assert history is not None
-        history.record_action(ACCOUNT_SCOPE, topic, "withdraw", status, reason or None)
+        history.finalize_action(action_id, status, reason or None)
         if success:
             print(f"[OK] Отозван отклик topic={topic}")
         else:

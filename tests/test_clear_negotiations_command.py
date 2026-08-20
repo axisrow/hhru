@@ -188,6 +188,56 @@ def test_withdraw_click_error_is_recorded_as_uncertain(tmp_path, monkeypatch):
         assert conn.execute("SELECT status FROM actions").fetchone()[0] == "uncertain"
 
 
+def test_withdraw_reserves_a_durable_barrier_before_the_destructive_click(tmp_path, monkeypatch):
+    """A process crash between the destructive click and the audit write
+    committing must not clear the retry barrier — the same class of gap
+    #245 closed for ``apply`` via ``begin_action``/``finalize_action``
+    (reserve an ``uncertain`` row *before* the browser side effect, then
+    finalize it in place).  ``clear_negotiations`` must reserve that barrier
+    before ``_withdraw_topic`` runs, not only write history after it
+    returns — otherwise a crash right after the click (browser vanishes,
+    process killed, OOM) leaves zero history rows and a restarted run
+    re-clicks the same, already-withdrawn topic.
+
+    This test proves the barrier is durable *before* the click: it makes
+    the browser side hang/crash unrecoverably (raises a bare ``BaseException``
+    subclass that a defensive ``except Exception`` around the click cannot
+    swallow, standing in for "the process died here") and then asserts the
+    reserved row is already visible in history — i.e. it must have been
+    written before ``_withdraw_topic`` was ever called, not after.
+    """
+    _patch_withdraw_page(monkeypatch)
+    history = History(tmp_path / "history.db")
+
+    class _ProcessKilled(BaseException):
+        pass
+
+    def _crash_during_click(page, topic):
+        # Simulate the process dying mid-click: no return value, no
+        # exception an `except Exception` handler could observe.
+        raise _ProcessKilled("simulated crash during the destructive click")
+
+    monkeypatch.setattr(command, "_withdraw_topic", _crash_during_click)
+    page = _Page()
+    with pytest.raises(_ProcessKilled):
+        command._run_topics(
+            _args(force=True), ["77"], page=page, history=history, throttle=_Throttle()
+        )
+
+    # The barrier must already be durable in history — reserved BEFORE
+    # `_withdraw_topic` ran, not written only after it returns.
+    with history._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM actions WHERE vacancy_id = ? AND action = 'withdraw'",
+            ("77",),
+        ).fetchone()
+    assert row is not None, (
+        "no audit row was reserved before the destructive click — a crash here "
+        "leaves no retry barrier, so a restarted run will click the same topic again"
+    )
+    assert row[0] == "uncertain"
+
+
 def test_withdraw_without_unique_button_does_not_click(tmp_path, monkeypatch):
     _patch_withdraw_page(monkeypatch)
     page = _Page(control_count=0)

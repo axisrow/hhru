@@ -141,21 +141,20 @@ def test_apply_daily_limit_is_account_wide_across_resumes():
 # --- B4: необратимый отзыв отклика не умеет статус 'uncertain' ---------------
 
 
-def test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_uncertain(
+def test_withdraw_failure_after_destructive_click_is_uncertain_and_not_retried(
     monkeypatch, tmp_path
 ):
-    """B4: сбой ПОСЛЕ необратимого клика отзыва пишется как 'failed' (= не произошло).
+    """B4: post-click failure is uncertain and history blocks a second click.
 
     Тест проходит РЕАЛЬНЫЙ путь `_withdraw_topic`: фейковая страница отдаёт
     валидный SSR с одним топиком, уникальную карточку и уникальную кнопку
     отзыва, клик действительно выполняется (`clicked` фиксируется), и только
     затем падает ожидание позитивного маркера — ровно «серая зона» #207.
 
-    `_withdraw_topic` возвращает (False, ...), а `_run_topics` (:304) знает
-    только два статуса, поэтому необратимое действие записывается как `failed`.
-    Для обратимого bump тот же проект реализует инвариант #176/#207 полностью
-    (bump.py:102-119: acted=True + uncertain=True); в этом модуле слова
-    'uncertain' нет вовсе.
+    `_withdraw_topic` returns ``acted=True`` after the destructive click, so
+    `_run_topics` must record ``uncertain``.  A separate history guard must
+    then refuse a retry before inspecting/clicking the DOM: changing the
+    status alone does not provide deduplication.
     """
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -232,13 +231,23 @@ def test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_unce
         ).fetchall()
     statuses = [row["status"] for row in rows]
 
-    # Дефект: состоявшийся необратимый клик записан как 'failed' (= не произошёл).
-    assert statuses == ["failed"]
-    assert "uncertain" not in statuses
+    assert statuses == ["uncertain"]
+
+    # The uncertain row is also a deduplication barrier.  A second run must
+    # not click based only on the still-present SSR/DOM state.
+    second_page = _Page()
+    assert module._run_topics(args, [topic], page=second_page, history=history, throttle=None)
+    assert withdraw_clicked == ["withdraw"]
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT status FROM actions WHERE action = 'withdraw' AND vacancy_id = ?",
+            (topic,),
+        ).fetchall()
+    assert [row["status"] for row in rows] == ["uncertain"]
 
 
-def test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks():
-    """Контроль: инвариант в проекте есть — он просто не применён к отзыву."""
+def test_bump_and_withdraw_implement_the_uncertain_invariant():
+    """Контроль: bump and withdraw share the uncertain status vocabulary."""
     from pathlib import Path as _Path
 
     from hhru_bot import bump as bump_module
@@ -249,7 +258,7 @@ def test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks():
     ).read_text(encoding="utf-8")
 
     assert "uncertain=True" in bump_source
-    assert "uncertain" not in withdraw_source
+    assert "uncertain" in withdraw_source
 
 
 # --- B5: save_about теряет факт состоявшегося клика сохранения ---------------
