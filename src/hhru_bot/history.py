@@ -341,6 +341,11 @@ class History:
             # если оно отличается от желаемого (иначе КАЖДЫЙ CLI-вызов делал бы
             # лишнюю write-миграцию с захватом schema-lock — cycle-review #177).
             _ensure_apply_index(conn)
+            # #431: старые apply dry-run могли успеть закэшировать
+            # ALREADY_APPLIED в skipped. Удаляем только такие записи, когда
+            # для пары нет success/uncertain-действия; skip без dry-run или с
+            # реальным действием сохраняется.
+            _purge_legacy_dry_run_applied_skips(conn)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)
@@ -2176,6 +2181,38 @@ _APPLY_INDEX_SQL = (
     "ON actions(resume_id, vacancy_id) "
     "WHERE action = 'apply' AND status IN ('success', 'uncertain')"
 )
+
+
+def _purge_legacy_dry_run_applied_skips(conn: sqlite3.Connection) -> None:
+    """Remove stale ALREADY_APPLIED skips created solely by old dry-runs.
+
+    Before #431, apply dry-runs wrote an ``actions(status='dry_run')`` row and
+    ``filter_candidates`` subsequently cached ``ALREADY_APPLIED`` in
+    ``skipped``. The latter cache is checked before ``has_applied()``, so
+    changing deduplication alone would leave those vacancies blocked forever.
+    Rows without that exact legacy signature are intentionally untouched: they
+    may represent a real site-side duplicate detection or another skip cause.
+    """
+    conn.execute(
+        """
+        DELETE FROM skipped AS s
+        WHERE s.reason = 'already_applied'
+          AND EXISTS (
+                SELECT 1 FROM actions AS a
+                WHERE a.resume_id = s.resume_id
+                  AND a.vacancy_id = s.vacancy_id
+                  AND a.action = 'apply'
+                  AND a.status = 'dry_run'
+          )
+          AND NOT EXISTS (
+                SELECT 1 FROM actions AS a
+                WHERE a.resume_id = s.resume_id
+                  AND a.vacancy_id = s.vacancy_id
+                  AND a.action = 'apply'
+                  AND a.status IN ('success', 'uncertain')
+          )
+        """
+    )
 
 
 def _ensure_apply_index(conn: sqlite3.Connection) -> None:

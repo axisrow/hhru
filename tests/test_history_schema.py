@@ -13,7 +13,7 @@ import sqlite3
 
 import pytest
 
-from hhru_bot.history import SCHEMA, History
+from hhru_bot.history import SCHEMA, SKIP_REASONS, History
 
 pytestmark = pytest.mark.unit
 
@@ -117,6 +117,29 @@ def test_history_works_after_schema_creation(tmp_path):
     # повторное открытие того же файла не падает и данные на месте
     h2 = History(tmp_path / "h.db")
     assert h2.has_applied("r1", "v1") is False
+
+
+def test_history_migration_removes_skip_created_only_by_legacy_dry_run(tmp_path):
+    db = tmp_path / "h.db"
+    h = History(db)
+    h.record_action("r1", "v1", "apply", "dry_run")
+    h.record_skip("r1", "v1", SKIP_REASONS.ALREADY_APPLIED)
+
+    History(db)
+
+    assert not h.is_skipped("r1", "v1")
+
+
+def test_history_migration_preserves_skip_backed_by_real_apply(tmp_path):
+    db = tmp_path / "h.db"
+    h = History(db)
+    h.record_action("r1", "v1", "apply", "dry_run")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_skip("r1", "v1", SKIP_REASONS.ALREADY_APPLIED)
+
+    History(db)
+
+    assert h.is_skipped("r1", "v1")
 
 
 def test_record_test_assignment_persists_and_reads_history(tmp_path):
