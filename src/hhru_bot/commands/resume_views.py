@@ -45,12 +45,16 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("limit и max-pages должны быть >= 1")
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    resumes = (
-        config.resumes
-        if args.resume is None
-        else [next((r for r in config.resumes if r.id == args.resume), None)]
-    )
-    resumes = [r for r in resumes if r is not None]
+    if args.resume is None:
+        resumes = config.resumes
+    else:
+        from ._common import resolve_resume
+
+        try:
+            resumes = [resolve_resume(config, args.resume)]
+        except Exception as exc:
+            print(f"[FAIL] резюме не найдено: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
     if not resumes:
         print("[FAIL] резюме не найдено", file=sys.stderr)
         raise SystemExit(1)
@@ -84,7 +88,7 @@ def run(args: argparse.Namespace) -> None:
                     break
 
     inserted = history.record_resume_views(fetched)
-    stored = history.resume_views(args.resume)
+    stored = history.resume_views(resumes[0].resume_id if args.resume is not None else None)
     print(f"Просмотры резюме: всего {len(stored)}, новых {inserted}")
     if not stored:
         print("(нет подтверждённых просмотров)")

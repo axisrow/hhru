@@ -59,15 +59,29 @@ def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = 
 
 
 def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = None) -> list[dict]:
-    """Small DOM fallback for pages where SSR is absent but view rows are rendered."""
+    """Parse only DOM rows with independently exposed date and employer fields."""
     rows = page.locator("[data-qa*='resume-view'], [data-qa*='view-history']").all()
     result = []
     for row in rows:
-        text = row.inner_text().strip()
-        if not text:
+        viewed_at = row.get_attribute("data-viewed-at")
+        employer = row.get_attribute("data-employer-name")
+        if not viewed_at:
+            times = row.locator("time").all()
+            if len(times) == 1:
+                viewed_at = times[0].get_attribute("datetime") or times[0].inner_text().strip()
+        if not employer:
+            employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
+            if len(employers) == 1:
+                employer = employers[0].inner_text().strip()
+        if not viewed_at or not employer:
             continue
         result.append(
-            {"resume_id": resume_id, "employer_id": None, "employer": text, "viewed_at": text}
+            {
+                "resume_id": resume_id,
+                "employer_id": None,
+                "employer": employer,
+                "viewed_at": viewed_at,
+            }
         )
         if limit is not None and len(result) >= limit:
             break
