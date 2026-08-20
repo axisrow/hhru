@@ -28,6 +28,27 @@ class BackupError(ValueError):
 _MAX_MEMBER_SIZE = 512 * 1024 * 1024  # 512 MiB
 
 
+def _unique_stamped_path(root: Path, prefix: str) -> Path:
+    """Build a ``root/<prefix>-<stamp>.tar.gz`` path that does not collide.
+
+    A second-resolution timestamp alone can repeat within one process run
+    (e.g. two ``backup``/``restore`` calls completed in the same wall-clock
+    second), and the caller replaces the destination atomically — a repeat
+    would silently overwrite the previous archive/rollback snapshot
+    (#426 review finding). Microsecond resolution already makes a same-tick
+    repeat astronomically unlikely for this single-user CLI; the counter
+    suffix is a belt-and-braces fallback for a coarser clock or two calls
+    landing in the same microsecond.
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    candidate = root / f"{prefix}-{stamp}.tar.gz"
+    counter = 1
+    while candidate.exists():
+        candidate = root / f"{prefix}-{stamp}-{counter}.tar.gz"
+        counter += 1
+    return candidate
+
+
 def _root(config: Path, history: Path) -> Path:
     if config.parent != history.parent:
         raise BackupError("config и history должны находиться в одной директории")
@@ -227,8 +248,7 @@ def restore_backup(
     names = inspect_backup(archive_path)
     if dry_run:
         return names
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    rollback = root / f".before-restore-{stamp}.tar.gz"
+    rollback = _unique_stamped_path(root, ".before-restore")
     with tempfile.TemporaryDirectory(prefix="hhru-restore-", dir=root.parent) as tmp:
         staging = Path(tmp) / root.name
         staging.mkdir()
@@ -245,7 +265,8 @@ def restore_backup(
                 target = staging / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source = archive.extractfile(member)
-                assert source is not None
+                if source is None:
+                    raise BackupError(f"Не удалось прочитать содержимое файла в архиве: {name!r}")
                 target.write_bytes(source.read())
                 os.chmod(target, 0o600)
         desired_storage = None
@@ -311,7 +332,10 @@ def restore_backup(
             # archive payload blindly, and reject malformed databases.
             with tempfile.NamedTemporaryFile(dir=tmp, suffix=".db") as checked:
                 checked_path = Path(checked.name)
-            _sqlite_snapshot(staged_history, checked_path)
+            try:
+                _sqlite_snapshot(staged_history, checked_path)
+            except sqlite3.DatabaseError as exc:
+                raise BackupError("Некорректный history.db в архиве") from exc
             checked_path.replace(staged_history)
             os.chmod(staged_history, 0o600)
         originals = Path(tmp) / "originals"

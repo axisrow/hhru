@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from hhru_bot.backup import BackupError, create_backup, inspect_backup, restore_backup
+from hhru_bot.backup import (
+    BackupError,
+    _unique_stamped_path,
+    create_backup,
+    inspect_backup,
+    restore_backup,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -44,6 +50,28 @@ def test_restore_rejects_path_traversal_and_symlinks(tmp_path):
         tar.addfile(info)
     with pytest.raises(BackupError, match="Небезопасный путь"):
         inspect_backup(archive)
+
+
+def test_restore_rejects_malformed_history_db_with_backup_error(tmp_path):
+    # A malformed history.db in the archive (not a valid SQLite file) must
+    # surface as BackupError, matching the adjacent code comment ("reject
+    # malformed databases") — not a raw sqlite3.DatabaseError leaking out of
+    # _sqlite_snapshot's re-materialization step.
+    config, history = _state(tmp_path)
+    archive = tmp_path / "bad-history.tar"
+    with tarfile.open(archive, "w") as tar:
+        config_payload = config.read_bytes()
+        config_info = tarfile.TarInfo("config.yaml")
+        config_info.size = len(config_payload)
+        tar.addfile(config_info, io.BytesIO(config_payload))
+
+        garbage = b"not a sqlite database at all"
+        history_info = tarfile.TarInfo("history.db")
+        history_info.size = len(garbage)
+        tar.addfile(history_info, io.BytesIO(garbage))
+
+    with pytest.raises(BackupError, match="[Нн]екорректн"):
+        restore_backup(archive, config, history, dry_run=False)
 
 
 def test_restore_uses_staged_files(tmp_path):
@@ -138,6 +166,69 @@ def test_restore_routes_archived_member_by_snapshot_not_by_previous_config_alias
         member = tar.extractfile("storage_state/old.json")
         assert member is not None
         assert member.read().decode("utf-8") == "STALE-EXTERNAL-TOKEN"
+
+
+def test_two_restores_within_the_same_second_keep_both_rollback_archives(tmp_path, monkeypatch):
+    # Rollback filenames used to carry only second-resolution timestamps
+    # (datetime.now().strftime("%Y%m%d-%H%M%S")). Two restores completed
+    # within the same wall-clock second wrote the identical
+    # .before-restore-<stamp>.tar.gz path, and create_backup()'s os.replace
+    # silently destroyed the first restore's recovery point. Freeze the
+    # clock to exercise exactly that same-second collision.
+    import hhru_bot.backup as backup_module
+
+    class _FrozenDatetime(backup_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return backup_module.datetime(2026, 1, 1, 12, 0, 0)
+
+    monkeypatch.setattr(backup_module, "datetime", _FrozenDatetime)
+
+    config, history = _state(tmp_path)
+    archive = tmp_path / "state.tar.gz"
+    create_backup(config, history, archive)
+
+    restore_backup(archive, config, history, dry_run=False)
+    rollbacks_after_first = list(config.parent.glob(".before-restore-*.tar.gz"))
+    assert len(rollbacks_after_first) == 1
+
+    restore_backup(archive, config, history, dry_run=False)
+    rollbacks_after_second = list(config.parent.glob(".before-restore-*.tar.gz"))
+
+    # Both restores happened at the identical frozen timestamp — the second
+    # rollback archive must not overwrite the first.
+    assert len(rollbacks_after_second) == 2
+
+
+def test_unique_stamped_path_avoids_collision_at_identical_timestamp(tmp_path):
+    # commands/backup.py's _backup() default --output naming shares this same
+    # collision class as the rollback archive: a plain second-resolution
+    # timestamp repeats when two calls land in the same wall-clock second (or
+    # the same frozen instant in a test), and the CLI's create_backup() call
+    # replaces the destination atomically — silently destroying the first
+    # backup archive.
+    first = _unique_stamped_path(tmp_path, "backup")
+    first.write_bytes(b"first archive")
+
+    second = _unique_stamped_path(tmp_path, "backup")
+
+    assert second != first
+    # The first archive must still be there and unmodified.
+    assert first.read_bytes() == b"first archive"
+
+
+def test_restore_reports_backup_error_when_extractfile_returns_none(tmp_path, monkeypatch):
+    # extractfile() returning None for a member that passed the file/dir
+    # type checks should surface as a BackupError, not an AssertionError
+    # (stripped under `python -O`) or an uncontrolled AttributeError.
+    config, history = _state(tmp_path)
+    archive = tmp_path / "state.tar.gz"
+    create_backup(config, history, archive)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda self, member: None)
+
+    with pytest.raises(BackupError, match="Не удалось прочитать содержимое"):
+        restore_backup(archive, config, history, dry_run=False)
 
 
 def test_restore_rejects_oversized_archive_member(tmp_path, monkeypatch):

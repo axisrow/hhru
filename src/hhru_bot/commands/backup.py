@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 from pathlib import Path
 
-from ..backup import create_backup, restore_backup
+from ..backup import _unique_stamped_path, create_backup, restore_backup
 
 
 def register(subparsers) -> None:
@@ -25,9 +24,7 @@ def register(subparsers) -> None:
 
 
 def _backup(args: argparse.Namespace) -> None:
-    output = args.output or Path(args.config).parent / (
-        f"backup-{datetime.now():%Y%m%d-%H%M%S}.tar.gz"
-    )
+    output = args.output or _unique_stamped_path(Path(args.config).parent, "backup")
     print(f"[OK] Резервная копия: {create_backup(args.config, args.history, output)}")
 
 
