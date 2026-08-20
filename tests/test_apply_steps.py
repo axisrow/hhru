@@ -42,49 +42,43 @@ class _FakeLocator:
         state: _SelectorState,
         *,
         strict: bool = True,
-        href_filter: str | None = None,
+        option_resume_id: str | None = None,
     ) -> None:
         self.selector = selector
         self._state = state
         self._strict = strict
-        # href_filter: селектор уточнён [href='...'] — strict-локатор, привязанный к
-        # identity. click()/count() резолвятся по живым href с учётом reorder (cycle-3).
-        self._href_filter = href_filter
+        # option_resume_id: селектор — [data-qa='magritte-select-option-{id}'],
+        # адресует конкретную опцию по resume_id напрямую (живой DOM —
+        # опция несёт identity в самом data-qa, а не в href, которого на форме нет).
+        self._option_resume_id = option_resume_id
 
-    def _live_hrefs(self) -> list[str]:
-        # Текущие «живые» href опций. href-локатор моделирует «момент клика» — после
-        # scan, поэтому при заданном reorder он всегда отражает post-scan DOM. Обычный
-        # nth-доступ активирует reorder после полного scan (nth_calls > match_count).
-        hrefs = self._state.option_hrefs
-        if self._href_filter is not None:
-            if self._state.reorder_to:
-                hrefs = self._state.reorder_to
-        elif self._state.reorder_to and self._state._nth_calls > self._state.match_count:
-            hrefs = self._state.reorder_to
-        return hrefs
+    def _live_option_ids(self) -> list[str]:
+        # Текущие «живые» resume_id опций. option-локатор моделирует «момент клика» —
+        # после открытия dropdown, поэтому при заданном reorder всегда отражает
+        # post-scan DOM (тот же принцип, что раньше был у href, TOCTOU-тесты сохранены).
+        ids = self._state.option_resume_ids
+        if self._option_resume_id is not None and self._state.reorder_to:
+            ids = self._state.reorder_to
+        return ids
 
     def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
-        # Моделируем реальное поведение Playwright: в strict mode для коллекции
-        # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
-        # Через .first strict mode снимается — тогда ждём готовность коллекции.
         if self._state.wait_error:
             # Cycle-5: имитация не-timeout PlaywrightError (runtime/selector failure).
             raise Error(f"runtime error waiting for {self.selector}")
-        if self._state.is_collection and self._strict and self._href_filter is None:
-            raise Error(  # noqa: TRY002 — имитация playwright._impl._errors.Error
-                f"strict mode violation: {self.selector} resolved to "
-                f"{self._state.match_count} elements"
-            )
         if state == "attached":
-            # state='attached' — наличие в DOM (match_count>0 для коллекции), без
-            # требования видимости. Моделирует cycle-4 фикс: скрытый первый элемент
-            # всё равно «прикреплён», и count() решает, есть ли выбор.
-            if self._state.is_collection:
-                if self._state.match_count == 0:
-                    raise PlaywrightTimeoutError(f"{self.selector} not attached")
-                return
+            # Триггер (APPLY_RESUME_SELECT) — единственный элемент, ждётся как attached
+            # перед открытием dropdown; не коллекция.
             if not self._state.visible:
                 raise PlaywrightTimeoutError(f"{self.selector} not attached")
+            return
+        if self._option_resume_id is not None:
+            # живой DOM: опция резюме — data-qa-локатор, видимость появляется после клика
+            # по триггеру (React-рендер dropdown), не сразу. disappear_after_wait НЕ
+            # проверяется здесь — это TOCTOU для count() ПОСЛЕ успешного wait_for
+            # (тот же принцип, что раньше был у триггера #340).
+            matches = [i for i in self._live_option_ids() if i == self._option_resume_id]
+            if len(matches) == 0:
+                raise PlaywrightTimeoutError(f"{self.selector} not visible")
             return
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
@@ -102,47 +96,36 @@ class _FakeLocator:
         # после POST, target closed) — действие могло уйти на hh.ru.
         if self._state.click_error is not None:
             raise self._state.click_error
-        if self._href_filter is not None:
-            # Strict href-локатор: ровно одна живая опция с этим href, иначе Error
-            # (как реальный Playwright strict mode при != 1 совпадении).
-            matches = [h for h in self._live_hrefs() if h == self._href_filter]
+        if self._state.trigger_click_error is not None and self._option_resume_id is None:
+            raise self._state.trigger_click_error
+        if self._option_resume_id is not None:
+            # Strict data-qa-локатор: ровно одна живая опция с этим resume_id,
+            # иначе Error (как реальный Playwright strict mode при != 1 совпадении).
+            matches = [i for i in self._live_option_ids() if i == self._option_resume_id]
             if len(matches) != 1:
                 raise Error(  # noqa: TRY002
                     f"strict mode violation: {self.selector} resolved to {len(matches)} "
-                    f"elements (href={self._href_filter!r})"
+                    f"elements (resume_id={self._option_resume_id!r})"
                 )
-            self._state.current_href = matches[0]
+            self._state.selected_resume_id = matches[0]
+        else:
+            # Клик по триггеру — раскрывает dropdown (опции становятся живыми).
+            self._state.dropdown_opened = True
         self._state.clicks += 1
 
     def fill(self, value: str) -> None:
         self._state.fills.append(value)
 
     def count(self) -> int:
-        # Для коллекции (резюме, set_match_count) count() = число совпадений в DOM.
-        # Иначе — одиночный элемент: 1 если visible, иначе 0.
-        if self._state.is_collection:
+        # Для опции резюме (option_resume_id) — число живых совпадений по resume_id.
+        # disappear_after_wait: TOCTOU — опция была видна в wait_for, но пропала
+        # к моменту финальной проверки count() (transient re-render/drift).
+        if self._option_resume_id is not None:
             if self._state.disappear_after_wait:
-                return 0  # TOCTOU: селектор исчез между wait_for и count
-            return self._state.match_count
+                return 0
+            matches = [i for i in self._live_option_ids() if i == self._option_resume_id]
+            return len(matches)
         return 1 if self._state.visible else 0
-
-    def get_attribute(self, _name: str) -> str | None:
-        return self._state.current_href
-
-    def nth(self, i: int) -> _FakeLocator:
-        # Каждая опция резюме — свой href; _select_resume_in_form ищет resume_id в нём.
-        self._state._nth_calls += 1
-        if self._state.option_hrefs:
-            hrefs = self._state.option_hrefs
-            # reorder_to: после того как scan прочитал все опции один раз
-            # (_nth_calls > match_count), DOM «меняется» и последующие nth() берут
-            # href из reorder_to. Старый код кликал по сохранённому индексу скана →
-            # попадал на WRONG опцию; identity-bound фикс пере-сканирует и кликает верно.
-            if self._state.reorder_to and self._state._nth_calls > self._state.match_count:
-                hrefs = self._state.reorder_to
-            self._state.current_href = hrefs[i]
-        self._state.clicks += 1  # клик по выбранной опции
-        return self
 
     def or_(self, other: _FakeLocator) -> _FakeLocator:
         # #226 cycle-review: wait_apply_button() объединяет apply-button и
@@ -165,23 +148,29 @@ class _SelectorState:
         self.clicks = 0
         self.click_kwargs: list[dict] = []
         self.fills: list[str] = []
-        # Для коллекции резюме: href каждой опции (current_href ставится в nth()).
-        self.option_hrefs: list[str] = []
-        self.current_href: str | None = None
         # Имитация TOCTOU: селектор был видим в wait_for, но исчез к count().
         # Моделирует transient re-render/drift между двумя вызовами Playwright.
         self.disappear_after_wait = False
-        # Имитация reorder-TOCTOU (cycle-3): после того как scan прочитал все опции
-        # один раз, последующие nth() берут href из reorder_to. Моделирует
-        # переупорядочивание/вставку опций JS между scan и click.
+        # живой DOM: resume_id опций резюме — то, что видно в момент открытия dropdown
+        # (сразу после клика по триггеру). Заменяет старые option_hrefs — опция
+        # теперь адресуется по resume_id прямо в data-qa, href на форме нет вовсе.
+        self.option_resume_ids: list[str] = []
+        # Имитация reorder-TOCTOU (cycle-3, сохранена под новую модель): DOM
+        # «меняется» между открытием dropdown и кликом по опции — reorder_to
+        # отражает live-состояние в момент click()/wait_for() опции.
         self.reorder_to: list[str] | None = None
-        self._nth_calls = 0
         # Имитация не-timeout PlaywrightError в wait_for (cycle-5): runtime/selector
         # failure, который НЕ должен маскироваться под «выбора нет».
         self.wait_error = False
         # #176: PlaywrightError в момент click() — клик мог уйти (POST отправлен,
         # но ожидание после клика упало). None = обычный успешный клик.
         self.click_error: Exception | None = None
+        # живой DOM: PlaywrightError в момент клика по триггеру резюме (открытие
+        # dropdown) — отдельно от click_error (submit) и от опций.
+        self.trigger_click_error: Exception | None = None
+        # живой DOM: какой resume_id реально был кликнут (заменяет current_href).
+        self.selected_resume_id: str | None = None
+        self.dropdown_opened = False
 
 
 class FakeStepsPage:
@@ -232,13 +221,16 @@ class FakeStepsPage:
         return st
 
     def locator(self, selector: str) -> _FakeLocator:
-        # Селектор опции резюме по точному href: BASE[href='...']. Резолвится к тому же
-        # состоянию коллекции APPLY_RESUME_SELECT, но с href_filter для strict-клика
-        # в момент действия (cycle-3 identity-bound выбор).
-        m = re.match(r"^(.+?)\[href='(.*)'\]$", selector)
+        # живой DOM: опция резюме — [data-qa='magritte-select-option-{resume_id}'],
+        # адресует конкретный resume_id напрямую (не href, которого нет на форме).
+        # Резолвится к тому же состоянию, что триггер APPLY_RESUME_SELECT, — обе
+        # части одного и того же dropdown в реальном DOM.
+        m = re.match(rf"^\[data-qa='{apply_form.APPLY_RESUME_OPTION_PREFIX}(.*)'\]$", selector)
         if m:
-            base, href = m.group(1), m.group(2).replace("\\'", "'")
-            return _FakeLocator(selector, self._state(base), href_filter=href)
+            resume_id = m.group(1)
+            return _FakeLocator(
+                selector, self._state(apply_form.APPLY_RESUME_SELECT), option_resume_id=resume_id
+            )
         return _FakeLocator(selector, self._state(selector))
 
     def wait_for_url(
@@ -507,8 +499,8 @@ def test_navigate_clicks_apply_button_with_no_wait_after():
 
 def test_fill_form_only_submit_present_clicks_submit_returns_none():
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -525,8 +517,8 @@ def test_fill_form_only_submit_present_clicks_submit_returns_none():
 
 def test_fill_form_missing_submit_returns_reason_no_click():
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
     # Submit отсутствует.
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -543,8 +535,8 @@ def test_fill_form_submit_click_error_raises_uncertain_marker():
     Раньше исключение пробрасывалось сырым и валило цикл откликов до
     record_action/throttle.wait."""
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
     submit = page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
     submit.click_error = Error("Target page, context or browser has been closed")
 
@@ -557,8 +549,8 @@ def test_fill_form_submit_click_error_raises_uncertain_marker():
 
 def test_fill_form_with_letter_fills_textarea():
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
     page.set_visible(apply_form.APPLY_COVER_LETTER_TOGGLE, True)
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -574,8 +566,8 @@ def test_fill_form_with_letter_fills_textarea():
 def test_fill_form_letter_toggle_absent_skips_textarea():
     # Toggle отсутствует → его не кличем; textarea тоже отсутствует → не заполняем.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -586,21 +578,19 @@ def test_fill_form_letter_toggle_absent_skips_textarea():
 
 
 def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
-    # Регрессия #6 (cycle-2 review): APPLY_RESUME_SELECT — коллекция (несколько резюме).
-    # wait_for в strict mode при >1 совпадении кидает обычный Error. Проверка «есть ли
-    # поле резюме» НЕ должна идти через _is_visible/wait_for — иначе выбор резюме
-    # пропускается и submit отправляет резюме по умолчанию (не запрошенный resume_id).
-    # Оракул: при двух резюме с разными href должна кликнуться опция, содержащая resume_id.
+    # Регрессия #6 (cycle-2 review): несколько резюме в dropdown —
+    # клик по триггеру раскрывает опции; должна кликнуться опция с нужным resume_id,
+    # а не первая попавшаяся. Оракул: среди [OTHER, RID] выбирается именно RID.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
-    # Выбор резюме вызвался и кликнул именно опцию с RID (current_href = 2-я опция).
     assert result is None
-    assert st.current_href == "/resume/RID"
+    assert st.selected_resume_id == "RID"
+    assert st.dropdown_opened is True
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
@@ -609,30 +599,17 @@ def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
 # Регрессия #33: ранее при отсутствии опции с совпадающим resume_id форма всё равно
 # отправлялась (fail-open — submit кликался, уходило резюме по умолчанию). Теперь
 # неоднозначность/отсутствие нужного резюме = отказ: submit НЕ нажимается, возвращается
-# причина. Совпадение resume_id проверяется как сегмент пути (/resume/{id} или
-# resume_id={id}), не как голая подстрока href — снижает случайные лжесовпадения.
+# причина. живой DOM: сопоставление больше не парсит href (его на форме нет) — опция
+# резюме адресуется напрямую по resume_id в data-qa, поэтому лжесовпадения по
+# префиксу/суффиксу структурно невозможны (были актуальны только для href-парсинга).
 
 
 def test_fill_form_resume_no_match_does_not_submit_returns_reason():
-    # Коллекция резюме есть, но ни одна опция не содержит запрошенный resume_id.
+    # Опции есть, но ни одна не содержит запрошенный resume_id.
     # Оракул: submit НЕ нажат, возвращена причина отказа (а не None).
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER1", "/resume/OTHER2"]
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-
-    result = steps.fill_response_form(page, "RID", "письмо")
-
-    assert result is not None
-    assert "резюме" in result.lower()
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
-
-
-def test_fill_form_resume_ambiguous_match_does_not_submit_returns_reason():
-    # Две опции совпадают по resume_id — неоднозначность = отказ, а не «кликни первое».
-    page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/RID", "/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER1", "OTHER2"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -645,75 +622,14 @@ def test_fill_form_resume_ambiguous_match_does_not_submit_returns_reason():
 def test_fill_form_resume_single_match_submits_and_returns_none():
     # Ровно одна опция с совпадающим resume_id → выбор успешен, submit нажат, None.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 3)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID", "/resume/THIRD"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID", "THIRD"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
-    assert st.current_href == "/resume/RID"
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
-
-
-def test_fill_form_resume_match_requires_path_segment_not_bare_substring():
-    # resume_id должен совпасть как сегмент пути, а не как подстрока где попало.
-    # Здесь "RID" — лишь подстрока чужого href /resume/PONDERING, сегмента /resume/RID нет.
-    page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/PONDERING"]
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-
-    result = steps.fill_response_form(page, "RID", "письмо")
-
-    assert result is not None
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
-
-
-# --- fill_response_form: точное совпадение сегмента (cycle-2 review, Codex) ---
-#
-# Codex cycle-1: совпадение как сегмент всё ещё подстрока — /resume/RID2 и
-# other_resume_id=RID ложно матчат resume_id=RID → клик неверной опции → submit.
-# Оракул: точное равенство сегмента пути/значения query, без префиксных/суффиксных
-# лжесовпадений.
-
-
-def test_fill_form_resume_match_rejects_suffix_in_path_segment():
-    # /resume/RID2 НЕ должно совпадать с resume_id="RID": это чужое резюме.
-    page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/resume/RID2"]
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-
-    result = steps.fill_response_form(page, "RID", "письмо")
-
-    assert result is not None
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
-
-
-def test_fill_form_resume_match_rejects_similarly_named_query_param():
-    # ?other_resume_id=RID НЕ должно совпадать: совпадает только resume_id=RID.
-    page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/app/applicant/vacancy_response?other_resume_id=RID"]
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-
-    result = steps.fill_response_form(page, "RID", "письмо")
-
-    assert result is not None
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
-
-
-def test_fill_form_resume_match_accepts_resume_id_query_param():
-    # Позитивный контроль: ?resume_id=RID (точное значение) → выбор успешен.
-    page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 1)
-    st.option_hrefs = ["/app/applicant/vacancy_response?resume_id=RID&topic=1"]
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-
-    result = steps.fill_response_form(page, "RID", "письмо")
-
-    assert result is None
+    assert st.selected_resume_id == "RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
@@ -733,7 +649,7 @@ def test_resume_select_uses_full_timeout_not_optional():
 
 
 def test_fill_form_resume_select_absent_does_not_submit():
-    # Красный тест #340: отсутствие подтверждённого селектора нельзя трактовать
+    # Красный тест #340: отсутствие подтверждённого триггера нельзя трактовать
     # как «у аккаунта одно резюме» — иначе hh.ru прикладывает default-резюме.
     page = FakeStepsPage()
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -746,14 +662,13 @@ def test_fill_form_resume_select_absent_does_not_submit():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
-def test_fill_form_resume_selector_disappears_after_detect_does_not_submit():
-    # TOCTOU (Codex cycle-2): селектор выбора резюме был видим в wait_for, но исчез
-    # к count() (transient re-render/drift). Оракул: submit НЕ нажат, возвращена
-    # причина отказа — не отправляем резюме по умолчанию при нестабильном селекторе.
+def test_fill_form_resume_option_not_visible_after_open_does_not_submit():
+    # живой DOM: single-resume аккаунт (или resume_id не входит в форму этой вакансии) —
+    # триггер есть, но после клика опция с нужным resume_id не появляется. Оракул:
+    # fail-closed отказ (#33 инвариант) — не тихий submit дефолтного резюме.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/RID", "/resume/OTHER"]
-    st.disappear_after_wait = True  # wait_for проходит, count() → 0
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = []  # dropdown раскрылся, но нужной опции нет
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -763,31 +678,48 @@ def test_fill_form_resume_selector_disappears_after_detect_does_not_submit():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
-def test_fill_form_resume_reorder_after_scan_clicks_correct_resume():
-    # TOCTOU (Codex cycle-3): JS переупорядочил опции между scan и click. Scan видит
-    # [OTHER, RID] (RID на индексе 1); к моменту клика DOM = [RID, OTHER] (RID на 0).
-    # Оракул: identity-bound выбор пере-сканирует href в момент клика и кликает RID
-    # (а не сохранённый индекс 1, который теперь = OTHER).
+def test_fill_form_resume_reorder_after_open_clicks_correct_resume():
+    # TOCTOU (Codex cycle-3 принцип, живой DOM): JS переупорядочил опции между
+    # открытием dropdown и кликом. Оракул: identity-bound выбор адресует опцию по
+    # resume_id напрямую (не по индексу), поэтому reorder не влияет на результат.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # порядок на scan
-    st.reorder_to = ["/resume/RID", "/resume/OTHER"]  # порядок к моменту клика
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID"]  # порядок на открытии
+    st.reorder_to = ["RID", "OTHER"]  # порядок к моменту клика — резолвится тем же ID
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
-    assert st.current_href == "/resume/RID"  # кликнули RID, не OTHER
+    assert st.selected_resume_id == "RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
-def test_fill_form_resume_dup_appears_at_click_time_does_not_submit():
-    # TOCTOU (Codex cycle-3): к моменту клика href резюме задвоился (JS вставил дубль).
-    # href-локатор strict → >1 совпадение → Error → отказ, submit не нажат.
+def test_fill_form_resume_option_disappears_after_wait_does_not_submit():
+    # TOCTOU: опция была видима в wait_for(state="visible"), но исчезла к
+    # финальной проверке count()==1 (transient re-render/drift между двумя
+    # вызовами Playwright — тот же принцип, что #340 применял к триггеру).
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # одна RID на scan
-    st.reorder_to = ["/resume/RID", "/resume/RID"]  # две RID к моменту клика
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    st.disappear_after_wait = True  # wait_for(visible) проходит, count() → 0
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    assert "резюме" in result.lower()
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_resume_dup_appears_at_click_time_does_not_submit():
+    # TOCTOU (Codex cycle-3 принцип, живой DOM): к моменту клика JS вставил дубль
+    # опции с тем же resume_id (аномалия разметки). Strict-локатор → >1 совпадение →
+    # Error → отказ, submit не нажат.
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID"]  # одна RID на открытии
+    st.reorder_to = ["RID", "RID"]  # две RID к моменту клика
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -797,12 +729,12 @@ def test_fill_form_resume_dup_appears_at_click_time_does_not_submit():
 
 
 def test_fill_form_resume_target_disappears_at_click_time_does_not_submit():
-    # TOCTOU (Codex cycle-3 verify): target-href исчез между scan и click.
-    # href-локатор strict → 0 совпадений → Error → отказ, submit не нажат.
+    # TOCTOU (Codex cycle-3 verify принцип, живой DOM): нужная опция исчезла
+    # между открытием и кликом. Оракул: fail-closed отказ, submit не нажат.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]  # RID есть на scan
-    st.reorder_to = ["/resume/OTHER", "/resume/THIRD"]  # RID исчез к моменту клика
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID"]  # RID есть при открытии
+    st.reorder_to = ["OTHER", "THIRD"]  # RID исчез к моменту клика
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
@@ -811,34 +743,29 @@ def test_fill_form_resume_target_disappears_at_click_time_does_not_submit():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
-def test_fill_form_resume_hidden_first_match_still_selects_not_submit_default():
-    # Codex cycle-4: .first.wait_for(state='visible') видел только первый DOM-матч.
-    # Если первый скрыт, а другой видим — старый код таймаутил → «выбора нет» → submit
-    # дефолтного резюме. Фикс: wait_for(state='attached') + решающая проверка по count().
-    # Оракул: коллекция прикреплена (count=2) → выбор вызывается → клик по RID.
+def test_fill_form_resume_wait_runtime_error_does_not_submit():
+    # Codex cycle-5 принцип: не-timeout PlaywrightError на ожидании ТРИГГЕРА не
+    # должен маскироваться под «выбора нет» — ловится только PlaywrightTimeoutError,
+    # прочие PlaywrightError → отказ. Оракул: submit НЕ нажат.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.visible = False  # первый элемент скрыт → wait_for(state='visible') таймаутил бы
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["OTHER", "RID"]
+    st.wait_error = True  # wait_for(attached) на триггере кидает generic PlaywrightError
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
-    # С фиксом: count()==2 → выбор → клик RID, submit нажат.
-    assert result is None
-    assert st.current_href == "/resume/RID"
-    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+    assert result is not None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
 
 
-def test_fill_form_resume_wait_runtime_error_does_not_submit():
-    # Codex cycle-5: except ловил ЛЮБОЙ PlaywrightError → options_count=0. Не-timeout
-    # runtime/selector failure маскировался под «выбора нет» → skip count()/выбор →
-    # submit дефолтного резюме. Фикс: ловим только PlaywrightTimeoutError; прочие
-    # PlaywrightError → отказ. Оракул: submit НЕ нажат.
+def test_fill_form_resume_trigger_click_error_does_not_submit():
+    # живой DOM: клик по триггеру (раскрытие dropdown) сам может упасть — тот же
+    # ранний-отказ принцип, что и у apply-кнопки (#163): submit не нажат.
     page = FakeStepsPage()
-    st = page.set_match_count(apply_form.APPLY_RESUME_SELECT, 2)
-    st.option_hrefs = ["/resume/OTHER", "/resume/RID"]
-    st.wait_error = True  # wait_for кидает generic PlaywrightError (НЕ timeout)
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    st.trigger_click_error = Error("detached")
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
