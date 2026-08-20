@@ -571,6 +571,10 @@ Account-wide ответы в чатах: план из локальной ист
 - `--dry-run` — Показать план без изменений на hh.ru
 - `--force` — Подтвердить WRITE без prompt
 
+### `robot-queue`
+
+- `--limit LIMIT` —  (по умолчанию: 50)
+
 ### `run`
 
 - `--resume` — Slug из конфига или resume_id HH.ru (по умолчанию — все)
