@@ -174,8 +174,11 @@ class FakePage:
             return _FakeLocator(present=self._success and self._submit_in_form)
         if selector == apply_form.APPLY_RESUME_DROPDOWN:
             # Панель выбора резюме: шаг закрывает её повторным кликом по
-            # триггеру и ждёт state="hidden". Фейк не моделирует open/closed —
-            # wait_for здесь игнорирует state, поэтому «панель закрылась».
+            # триггеру и ждёт state="hidden". Фейк статичен — present=False
+            # сразу удовлетворяет ожиданию «скрыта» (см. _FakeLocator.wait_for,
+            # который state="hidden" обрабатывает явно), то есть здесь всегда
+            # моделируется закрывшаяся панель. Ветка «панель залипла» покрыта в
+            # tests/test_apply_steps.py (dropdown_stays_open).
             return _FakeLocator(present=False)
         if selector in (
             apply_form.APPLY_COVER_LETTER_TEXTAREA,

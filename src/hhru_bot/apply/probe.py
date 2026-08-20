@@ -113,8 +113,8 @@ def dump_probe_snapshot(
     return paths
 
 
-def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> None:
-    """Заполняет письмо в форме отклика, БЕЗ submit.
+def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> str | None:
+    """Заполняет письмо в форме отклика, БЕЗ submit. None — заполнено.
 
     Аналог блока заполнения `apply/steps.fill_response_form`, но намеренно без
     блока `submit_button.click()` — атомарность probe. Селекторы те же (shared,
@@ -130,15 +130,23 @@ def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> None:
     (запрещены докстрингом steps.py) здесь больше нет.
     """
     if _is_visible(page, apply_form.APPLY_RESUME_SELECT, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS):
-        apply_steps._select_resume_in_form(page, resume_id)
+        if not apply_steps._select_resume_in_form(page, resume_id):
+            # Боевой apply на этом же отказе отменяет отправку. probe обязан
+            # сообщить тот же вердикт: молчаливое продолжение печатало бы [OK]
+            # прямо перед боевым прогоном (ложное подтверждение, #139).
+            return (
+                f"резюме '{resume_id}' не подтверждено в форме отклика — "
+                "боевой отклик был бы отменён (см. лог выше)"
+            )
 
     # Переиспользуем ту же функцию, что и боевой fill_response_form, вместо
     # собственной копии: копия отстала от изменений (в ней остался только
     # тоггл полной формы, которого в модалке нет), и probe молча не заполнял
     # письмо — то есть не воспроизводил боевой путь, ради чего и существует.
-    # Причину отказа probe не эскалирует: он диагностический и обязан сдампить
-    # DOM в любом случае — она видна в дампе и в логе fill_cover_letter.
-    apply_steps.fill_cover_letter(page, letter)
+    # Причину отказа возвращаем наверх: probe всё равно сдампит DOM (артефакт
+    # диагностики), но success=False — иначе отказ немой (fill_cover_letter
+    # ничего не логирует, только возвращает строку).
+    return apply_steps.fill_cover_letter(page, letter)
 
 
 def probe_vacancy(
@@ -248,9 +256,16 @@ def probe_vacancy(
         letter = letter_provider.render(vacancy).text
     else:
         letter = render_cover_letter(cover_letter_template, vacancy)
-    _fill_cover_letter_only(page, resume_id, letter)
+    fill_reason = _fill_cover_letter_only(page, resume_id, letter)
 
+    # Дамп снимаем в любом случае — он и есть диагностический артефакт probe,
+    # в том числе (особенно) при отказе.
     dump_paths = dump_probe_snapshot(page, ctx_dir)
+    if fill_reason is not None:
+        # Не skipped: skipped печатается как [INFO] (вердикт hh.ru, не проблема),
+        # а здесь боевой apply отказался бы отправлять — это [FAIL].
+        logger.warning("[PROBE] Форма не заполнена как в боевом пути: %s", fill_reason)
+        return ProbeResult(vacancy, False, fill_reason, dump_paths)
     logger.info("[PROBE] Дамп формы готов для вакансии '%s'. Отправка НЕ выполнена.", vacancy.title)
     return ProbeResult(vacancy, True, "probe dump saved", dump_paths)
 

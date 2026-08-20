@@ -121,8 +121,12 @@ class FakeProbePage:
         textarea: bool = True,
         submit: bool = True,
         textarea_render_delayed: bool = False,
+        resume_select: bool = False,
+        resume_options: tuple[str, ...] = (),
     ):
         self.url = ""
+        self._resume_select = resume_select
+        self._resume_options = resume_options
         self.goto_calls: list[str] = []
         self.screenshot_calls = 0
         self.content_calls = 0
@@ -172,6 +176,12 @@ class FakeProbePage:
             # Если probe вообще запросит submit — любой click будет зафиксирован.
             return _ClickTrackingLocator(present=self._submit, submit_clicks=self.submit_clicks)
         if selector == apply_form.APPLY_RESUME_SELECT:
+            return _FakeLocator(present=self._resume_select)
+        if selector.startswith(f"[data-qa='{apply_form.APPLY_RESUME_OPTION_PREFIX}"):
+            resume_id = selector.split(apply_form.APPLY_RESUME_OPTION_PREFIX, 1)[1].rstrip("']")
+            return _FakeLocator(present=resume_id in self._resume_options)
+        if selector == apply_form.APPLY_RESUME_DROPDOWN:
+            # Панель закрыта — тесты этого файла не моделируют её залипание.
             return _FakeLocator(present=False)
         return _FakeLocator(present=False)
 
@@ -252,6 +262,43 @@ def test_probe_fills_cover_letter(tmp_path: Path):
 
     assert page._textarea_locator is not None
     assert page._textarea_locator.fill_calls == ["Здравствуйте, Acme"]
+
+
+def test_probe_reports_missing_letter_field_and_still_dumps(tmp_path: Path):
+    """Отказ заполнить письмо не должен выглядеть как успешный probe.
+
+    probe существует, чтобы воспроизводить боевой путь: fill_cover_letter —
+    fail-closed (без textarea боевой apply отменяет отправку), и в докстринге
+    самого probe (#139) зафиксировано, что «дамп выглядел валидным, хотя письмо
+    не заполнено» — это ложная уверенность перед боевым запуском. Дамп при этом
+    обязателен: он и есть диагностический артефакт.
+    """
+    page = FakeProbePage(textarea=False)
+
+    result = probe_vacancy(page, _vacancy(), "RID", "письмо", tmp_path)
+
+    assert result.success is False
+    assert result.skipped is False
+    assert "письм" in result.reason.lower()
+    # Дамп сохранён несмотря на отказ — иначе диагностировать нечего.
+    assert result.dump_paths
+    assert (tmp_path / "probe_42_form.html").exists()
+
+
+def test_probe_reports_resume_selection_failure(tmp_path: Path):
+    """Резюме не найдено среди опций — боевой apply отказал бы до submit.
+
+    probe обязан сообщить тот же отказ, а не печатать [OK]: иначе диагностика
+    даёт ложное подтверждение ровно перед боевым прогоном.
+    """
+    page = FakeProbePage(textarea=True, resume_select=True, resume_options=())
+
+    result = probe_vacancy(page, _vacancy(), "RID", "письмо", tmp_path)
+
+    assert result.success is False
+    assert result.skipped is False
+    assert "резюме" in result.reason.lower()
+    assert result.dump_paths
 
 
 def test_probe_no_apply_button_fails(tmp_path: Path):
