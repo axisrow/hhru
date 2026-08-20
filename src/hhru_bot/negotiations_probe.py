@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from html import unescape
 
+from playwright.sync_api import Error as PlaywrightError
+
 logger = logging.getLogger("hhru_bot.negotiations_probe")
 
 _STATE_RE = re.compile(
@@ -173,7 +175,13 @@ def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[Remindable
     if max_pages < 1:
         raise ValueError("max_pages must be >= 1")
     from .browser import goto_hh, require_authenticated_page
-    from .responses import NEGOTIATIONS_URL, _has_next_page
+    from .responses import (
+        NEGOTIATIONS_URL,
+        RENDER_TIMEOUT_MS,
+        ResponsesIndeterminate,
+        _has_next_page,
+    )
+    from .selector_groups import negotiations as ns
 
     refs: list[RemindableTopicRef] = []
     for page_num in range(max_pages):
@@ -181,6 +189,19 @@ def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[Remindable
         goto_hh(page, url)
         require_authenticated_page(page)
         refs.extend(remindable_topic_refs(page.content()))
+        # SSR arrives before the client-side pager.  Do not interpret a
+        # temporarily absent pager as the final page, or later reminders are
+        # silently omitted.
+        if hasattr(page, "locator"):
+            try:
+                page.locator(ns.NEGOTIATION_ITEM).first.wait_for(
+                    state="attached", timeout=RENDER_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                raise ResponsesIndeterminate(
+                    f"страницы {page_num} не подтверждена: карточки переписки "
+                    f"не появились за {RENDER_TIMEOUT_MS} мс"
+                ) from None
         if not _has_next_page(page, page_num):
             break
     return refs
