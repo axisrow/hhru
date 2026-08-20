@@ -14,7 +14,7 @@ def register(subparsers) -> None:
     )
     p.add_argument("--resume", help="ID резюме (по умолчанию — все резюме)")
     p.add_argument(
-        "--limit", type=int, default=100, help="Максимум новых snapshots (по умолчанию 100)"
+        "--limit", type=int, default=100, help="Максимум snapshots на резюме (по умолчанию 100)"
     )
     p.add_argument(
         "--max-pages", type=int, default=5, help="Максимум страниц истории (по умолчанию 5)"
@@ -65,8 +65,6 @@ def run(args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         for resume in resumes:
-            if len(fetched) >= args.limit:
-                break
             # Route accepts resume_id as a query parameter on current hh.ru; no
             # direct HTTP request is made, preserving the browser boundary.
             for page_num in range(args.max_pages):
@@ -74,17 +72,17 @@ def run(args: argparse.Namespace) -> None:
                 require_authenticated_page(page)
                 try:
                     rows = parse_resume_view_history(
-                        page.content(), resume.resume_id, limit=max(1, args.limit - len(fetched))
+                        page.content(), resume.resume_id, limit=args.limit
                     )
                 except (ValueError, TypeError) as exc:
                     rows = parse_resume_view_history_dom(
-                        page, resume.resume_id, limit=max(1, args.limit - len(fetched))
+                        page, resume.resume_id, limit=args.limit
                     )
                     if not rows:
                         print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
                         raise SystemExit(1) from exc
                 fetched.extend(rows)
-                if not rows or len(fetched) >= args.limit:
+                if not rows or len(rows) < args.limit:
                     break
 
     inserted = history.record_resume_views(fetched)
