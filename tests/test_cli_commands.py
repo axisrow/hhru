@@ -227,6 +227,23 @@ def test_run_has_limit():
     assert "--limit" in opts
 
 
+@pytest.mark.parametrize("command", ["apply", "run"])
+def test_negative_limit_rejected(command):
+    # #441 review: --limit парсился обычным int без нижней границы — при
+    # --limit -1 target_limit становился -1, applied_count>=-1 истинно
+    # сразу, запуск тихо не делал ни одного отклика без явной ошибки.
+    parser = _build()
+    with pytest.raises(SystemExit):
+        parser.parse_args([command, "--limit", "-1"])
+
+
+@pytest.mark.parametrize("command", ["apply", "run"])
+def test_zero_limit_still_allowed(command):
+    parser = _build()
+    args = parser.parse_args([command, "--limit", "0"])
+    assert args.limit == 0
+
+
 def test_bump_no_limit():
     opts = _opts_for("bump")
     assert "--resume" in opts

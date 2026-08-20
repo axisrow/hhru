@@ -99,13 +99,16 @@ def test_limit_zero_processes_all_candidates(tmp_path, monkeypatch):
     assert calls == ["0", "1", "2"]
 
 
-def test_limit_reports_fewer_when_candidates_run_out(tmp_path, monkeypatch):
+def test_limit_reports_fewer_when_candidates_run_out(tmp_path, monkeypatch, capsys):
     cards = _cards(2)
     results = [ApplyResult(card, True, "success") for card in cards]
 
     calls = _run(monkeypatch, tmp_path, results, 3, cards=cards)
 
     assert calls == ["0", "1"]
+    # #441 review: недобор цели из-за реального исчерпания выдачи (has_next
+    # ложный, а не потолок страниц) не должен предлагать поднять --max-pages.
+    assert "--max-pages" not in capsys.readouterr().out
 
 
 def test_uncertain_stops_batch_and_does_not_count(tmp_path, monkeypatch):
@@ -246,3 +249,72 @@ def test_apply_auto_page_cap_uses_target_and_reserve():
     assert _common.apply_search_page_limit(argparse.Namespace(limit=5, max_pages=None)) == 2
     assert _common.apply_search_page_limit(argparse.Namespace(limit=10, max_pages=None)) == 3
     assert _common.apply_search_page_limit(argparse.Namespace(limit=10, max_pages=1)) == 1
+
+
+def test_warns_when_page_cap_hit_short_of_target_with_more_pages_available(
+    tmp_path, monkeypatch, capsys
+):
+    """#441 review: auto page-cap heuristic (ceil(limit/5)+1) can end the run
+    short of --limit while has_next=True still holds — the user only sees the
+    final count, with nothing pointing at "raise --max-pages" as the fix.
+    """
+    config, resume, history, throttle = _setup(tmp_path)
+    # limit=10 -> auto cap is 3 pages (ceil(10/5)+1); each page yields only
+    # 1 success (low per-page success rate) and still reports has_next=True,
+    # so the run ends 7 short of the target while more results exist.
+    loaded: list[int] = []
+
+    def load(_page, _filters, page_num):  # noqa: ANN001
+        loaded.append(page_num)
+        return _cards(1), True
+
+    monkeypatch.setattr(_common, "_load_apply_page", load)
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(
+        _common,
+        "apply_to_vacancy",
+        lambda _page, card, *_args, **_kwargs: ApplyResult(card, True, "success"),
+    )
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+
+    args = _args(10)
+    args.max_pages = None
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    assert loaded == [0, 1, 2]
+    out = capsys.readouterr().out
+    assert "--max-pages" in out
+
+
+class _PageWithoutLocator:
+    """A plain command-level test double: no Playwright ``.locator`` at all."""
+
+
+class _PageThatRaisesAttributeErrorFromDom:
+    """Has ``.locator`` (looks like a real Page) but a downstream DOM bug in
+    it raises AttributeError for a reason unrelated to test-double shape —
+    #441 review: the old bare ``except AttributeError`` swallowed this and
+    silently guessed has_next from card count instead of surfacing the bug.
+    """
+
+    def locator(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AttributeError("'NoneType' object has no attribute 'count'")
+
+
+def test_load_apply_page_fallback_only_for_missing_locator(tmp_path, monkeypatch):
+    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: _cards(21))
+
+    cards, has_next = _common._load_apply_page(
+        _PageWithoutLocator(), SearchFilters(text="python"), 0
+    )
+    assert has_next is True  # 21 >= 20 cards -> fallback heuristic kicks in
+    assert len(cards) == 21
+
+
+def test_load_apply_page_does_not_mask_real_attribute_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: _cards(3))
+
+    with pytest.raises(AttributeError):
+        _common._load_apply_page(
+            _PageThatRaisesAttributeErrorFromDom(), SearchFilters(text="python"), 0
+        )

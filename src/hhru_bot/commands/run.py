@@ -6,7 +6,7 @@ import argparse
 
 from . import apply as apply_cmd
 from . import bump as bump_cmd
-from ._common import add_common_args, add_force_arg
+from ._common import add_common_args, add_force_arg, add_limit_arg
 
 
 def register(subparsers) -> None:
@@ -14,14 +14,7 @@ def register(subparsers) -> None:
     add_common_args(p, max_pages_default=None)
     # apply_cmd.run(args) reuses this Namespace — apply's --force must exist here.
     add_force_arg(p)
-    p.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help=(
-            "Целевое число успешных откликов за запуск (0 = без ограничения кроме дневного лимита)"
-        ),
-    )
+    add_limit_arg(p)
     p.set_defaults(func=run)
 
 

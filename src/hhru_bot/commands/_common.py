@@ -75,6 +75,30 @@ def add_common_args(p: argparse.ArgumentParser, *, max_pages_default: int | None
     )
 
 
+def _nonnegative_limit(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("--limit не может быть отрицательным")
+    return parsed
+
+
+def add_limit_arg(p: argparse.ArgumentParser) -> None:
+    """``--limit`` — только для apply/run (то же обоснование, что add_force_arg).
+
+    #441 review: голый ``type=int`` пропускал отрицательные значения —
+    ``--limit -1`` делал target_limit=-1, applied_count>=-1 истинно сразу
+    же, запуск тихо завершался без единого отклика и без явной ошибки.
+    """
+    p.add_argument(
+        "--limit",
+        type=_nonnegative_limit,
+        default=0,
+        help=(
+            "Целевое число успешных откликов за запуск (0 = без ограничения кроме дневного лимита)"
+        ),
+    )
+
+
 def add_force_arg(p: argparse.ArgumentParser) -> None:
     """``--force`` — только для команд, реально вызывающих run_apply_for_resume.
 
@@ -374,14 +398,15 @@ def _load_apply_page(page, filters: SearchFilters, page_num: int) -> tuple[list[
     cards = search_vacancies(page, filters, **kwargs)
     if not cards:
         return [], False
-    try:
-        has_next = _has_next_page(page, page_num)
-    except AttributeError:
+    if not hasattr(page, "locator"):
         # Lightweight command tests replace search_vacancies and use a plain
         # object instead of a Playwright Page.  A short fixture is terminal;
-        # production always takes the confirmed DOM branch above.
-        has_next = len(cards) >= 20
-    return cards, has_next
+        # production always takes the confirmed DOM branch below. #441 review:
+        # a bare `except AttributeError` here would also swallow a real DOM
+        # bug inside `_has_next_page` on a genuine Page — fail-closed by
+        # checking the test-double shape up front instead of catching broadly.
+        return cards, len(cards) >= 20
+    return cards, _has_next_page(page, page_num)
 
 
 def build_apply_plan(
@@ -489,6 +514,7 @@ def run_apply_for_resume(
     failed = False
     page_limit = apply_search_page_limit(args)
     target_limit = getattr(args, "limit", 0) or None
+    has_next = False
     for page_num in range(page_limit):
         try:
             cards, has_next = _load_apply_page(page, resume.search, page_num)
@@ -498,6 +524,7 @@ def run_apply_for_resume(
             return True
         raise_for_antibot(page)
         if not cards:
+            has_next = False
             break
         failed = (
             _run_apply_for_resume(
@@ -519,6 +546,16 @@ def run_apply_for_resume(
         )
         if progress.reached(target_limit) or not has_next:
             break
+    if target_limit is not None and not progress.reached(target_limit) and has_next:
+        # page_limit (auto-cap ceil(limit/5)+1 или явный --max-pages)
+        # оборвал поиск раньше, чем цель была достигнута, хотя дальше по
+        # выдаче ещё есть страницы — недобор неотличим от "выдача
+        # кончилась" без явного сигнала, отсюда предупреждение.
+        print(
+            f"[INFO] Достигнут потолок в {page_limit} страниц(ы) поиска, "
+            f"цель ({target_limit}) не достигнута — попробуйте явный "
+            "--max-pages с большим значением"
+        )
     if show_summary:
         print(f"Итого откликов за этот запуск: {progress.applied_count}")
     return failed
