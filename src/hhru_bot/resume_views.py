@@ -71,7 +71,22 @@ def parse_resume_view_history(
     *,
     limit: int | None = None,
 ) -> list[dict]:
-    """Parse SSR history; raise instead of treating schema drift as empty data."""
+    """Parse SSR history; raise instead of treating schema drift as empty data.
+
+    NOT verified against live DOM (#428 review, round 13): this trusts the
+    caller's `resume_id` for every parsed entry without cross-checking it
+    against a resume identity signal inside the SSR payload itself. Codex
+    flagged the risk (route drift / a stale page returning a different
+    resume's history could get recorded under the wrong resume_id) at 0.9
+    confidence, but implementing a check now would mean guessing an SSR
+    field name with no live dump to confirm it exists — exactly the
+    `_form_scope()` trap CLAUDE.md documents (a wrong guess either fails
+    closed on every run, or never fires and gives false confidence). Before
+    the first live `resume-views` run: open the page in a real browser
+    (F12 → Elements/Network), confirm whether `applicantResumeViewHistory`
+    carries a resume identity field, and wire the check here if it does —
+    same convention as the pending `bump` selector check in CLAUDE.md.
+    """
     state = parse_initial_state(html)
     history = _find_history(state)
     if history is None or not isinstance(history.get("historyViews"), list):

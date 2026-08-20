@@ -112,6 +112,16 @@ def run(args: argparse.Namespace) -> None:
                     file=sys.stderr,
                 )
 
+    # Truncated pages (see [WARN] above) are still persisted — deliberately,
+    # not an oversight (#428 review, round 13). record_resume_views uses
+    # INSERT OR IGNORE against the accumulated resume_views table, and
+    # resume_views() below reads that whole table, not a per-run snapshot:
+    # a later run with a higher --max-pages backfills the missing rows and
+    # dedups the overlap with the already-stored ones. The undercount from a
+    # truncated run is transient, not permanent — the [WARN] plus this
+    # self-healing union is what CLAUDE.md decision #5 asks for here; adding
+    # a separate "incomplete" status column would be new schema for a
+    # problem the next run already fixes on its own.
     inserted = history.record_resume_views(fetched)
     stored = history.resume_views(resumes[0].resume_id if args.resume is not None else None)
     print(f"Просмотры резюме: всего {len(stored)}, новых {inserted}")
