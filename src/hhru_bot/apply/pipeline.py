@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -24,6 +24,7 @@ from ..history import SKIP_REASONS
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .antibot import AntiBotChallengeDetected, detect_antibot_on_page
+from .blockers import PostClickBlocker, PostSubmitLimitExceeded
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
@@ -66,6 +67,7 @@ class ApplyResult:
     # (дедупликация has_applied его видит — без этого возможен повторный
     # отклик на ту же вакансию) и выдерживал троттл-паузу.
     uncertain: bool = False
+    stop_run: bool = False
 
 
 @dataclass
@@ -98,6 +100,7 @@ class ApplyContext:
     before_submit: Callable[[], None] | None = None
     question_answerer: AIQuestionAnswerer | None = None
     force: bool = False
+    allow_relocation: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -107,6 +110,17 @@ class ApplyContext:
             letter_variant=self.letter_variant,
             acted=self.acted,
             uncertain=self.uncertain,
+        )
+
+    def stop(self, reason: str) -> ApplyResult:
+        return ApplyResult(
+            self.vacancy,
+            False,
+            reason,
+            letter_variant=self.letter_variant,
+            acted=self.acted,
+            uncertain=self.uncertain,
+            stop_run=True,
         )
 
     def ok(self, reason: str) -> ApplyResult:
@@ -147,6 +161,7 @@ def apply_to_vacancy(
     before_submit: Callable[[], None] | None = None,
     question_answerer: AIQuestionAnswerer | None = None,
     force: bool = False,
+    allow_relocation: bool = False,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -160,8 +175,82 @@ def apply_to_vacancy(
         before_submit=before_submit,
         question_answerer=question_answerer,
         force=force,
+        allow_relocation=allow_relocation,
     )
     return _run(ctx)
+
+
+def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResult:
+    """Финализирует терминальный post-click блокер (#342) с учётом #207.
+
+    Блокер, найденный ДО навигации на форму, отклик отправить не мог — его
+    вердикт терминален сам по себе (как #350). Блокер, найденный ПОСЛЕ
+    навигации, попадает в «серую зону» #207: hh.ru мог принять отклик и
+    одновременно показать модалку, поэтому сначала спрашиваем внешний источник
+    истины. Отклик найден — это success, а не потерянный skip; иначе вердикт
+    блокера сохраняется.
+    """
+
+    def _verdict() -> ApplyResult:
+        if blocker.stop_run:
+            return ctx.stop(blocker.reason)
+        return ctx.skip(
+            blocker.reason,
+            skip_reason=blocker.skip_reason or SKIP_REASONS.RESPONSE_REJECTED,
+        )
+
+    def _keep_stop(result: ApplyResult) -> ApplyResult:
+        """Сохраняет остановку прогона независимо от вердикта проверки.
+
+        Лимит откликов аккаунта — свойство аккаунта, а не конкретной вакансии:
+        подтверждённый отклик (found) или неудавшаяся проверка не отменяют его.
+        Без этого прогон продолжил бы долбиться в исчерпанный лимит — ровно тот
+        сценарий, ради которого #342 и заводился.
+        """
+        if blocker.stop_run and not result.stop_run:
+            return replace(result, stop_run=True)
+        return result
+
+    if not blocker.post_navigation or ctx.dry_run or ctx.verifier is None:
+        return _verdict()
+    try:
+        verified = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    except AntiBotChallengeDetected:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Как и в _finalize_post_click_failure: сбой самой проверки — это
+        # «не смогли проверить», а не «отклика нет». Fail-closed.
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка упала: %s", ctx.vacancy.title, exc)
+        return _keep_stop(
+            ctx.fail(f"{blocker.reason}; внешняя проверка упала ({exc}) — исход неопределён")
+        )
+    if verified.found:
+        ctx.acted = True
+        ctx.uncertain = False
+        logger.info(
+            "[OK] %s — блокер показан, но внешний источник подтвердил отклик: %s",
+            ctx.vacancy.title,
+            verified.detail,
+        )
+        return _keep_stop(
+            ctx.ok(
+                f"{blocker.reason}; внешняя проверка: отклик присутствует "
+                f"в /applicant/negotiations ({verified.detail})"
+            )
+        )
+    if verified.indeterminate:
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка недоступна: %s", ctx.vacancy.title, verified.detail)
+        return _keep_stop(
+            ctx.fail(
+                f"{blocker.reason}; внешняя проверка недоступна ({verified.detail}) — "
+                "исход неопределён"
+            )
+        )
+    return _verdict()
 
 
 def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
@@ -289,13 +378,19 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
-    navigation_result = apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
+    navigation_result = apply_steps.navigate_to_response_form(
+        ctx.page,
+        ctx.vacancy.vacancy_id,
+        allow_relocation=ctx.allow_relocation,
+    )
     _halt_if_antibot(ctx)
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный,
         # неисполнимый пропуск; не форма не отрисовалась, а hh.ru дал определённый
         # ответ прямо на странице вакансии.
         return ctx.skip(navigation_result, skip_reason=SKIP_REASONS.RESUME_VISIBILITY)
+    if isinstance(navigation_result, PostClickBlocker):
+        return _finalize_blocker(ctx, navigation_result)
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
@@ -427,6 +522,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return _finalize_post_click_failure(
             ctx, "submit-клик упал с исключением — отправка могла уйти, исход неопределён"
         )
+    except PostSubmitLimitExceeded as exc:
+        ctx.acted = True
+        return ctx.stop(str(exc))
     except PlaywrightError as exc:
         logger.warning(
             "[FAIL] %s — ошибка Playwright при заполнении формы (%s)", ctx.vacancy.title, exc

@@ -60,6 +60,7 @@ resumes:
       salary_from: 200000
       experience: "between3And6"
       schedule: "remote"
+      allow_relocation: false
       exclude_employers:
         - "Компания А"
         - "Компания Б"
@@ -142,6 +143,7 @@ resumes:
       salary_from: null
       experience: null
       schedule: null
+      allow_relocation: false
       exclude_employers: []
       # По умолчанию стоп-слова не включены: задайте их отдельно для каждого
       # резюме в поле exclude_keywords (пример выше).

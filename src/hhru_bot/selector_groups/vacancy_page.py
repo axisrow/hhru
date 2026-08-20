@@ -10,6 +10,13 @@ VACANCY_ALREADY_RESPONDED_CHAT = "[data-qa='vacancy-response-link-view-topic']"
 # Rendered in the response modal when the selected resume is not visible to
 # client companies.  This can appear while the URL remains the vacancy URL.
 VACANCY_HIDDEN_RESUME_WARNING = "[data-qa='hidden-resume-warning']"
+VACANCY_RELOCATION_CONFIRM = '[data-qa="relocation-warning-confirm"]'
+VACANCY_SIMILAR_VACANCIES_CLOSE = '[data-qa="vacancy-response-similar-vacancies-close"]'
+VACANCY_DIRECT_APPLICATION_CANCEL = '[data-qa="vacancy-response-link-advertising-cancel"]'
+VACANCY_DIRECT_APPLICATION_ALERT = '[data-qa="magritte-alert"]'
+VACANCY_LIMIT_ERROR = '[data-qa-popup-error-code="negotiations-limit-exceeded"]'
+VACANCY_RESPONSE_REJECT_WARNING = '[data-qa="response-reject-warning"]'
+VACANCY_RESPONSE_ERROR = '[data-qa="vacancy-response-error-notification"]'
 VACANCY_TITLE = "[data-qa='vacancy-title']"
 VACANCY_COMPANY_NAME = "[data-qa='vacancy-company-name']"
 

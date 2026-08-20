@@ -22,6 +22,7 @@ def parse_search(raw, context: str) -> SearchFilters:
         salary_from=raw.get("salary_from"),
         experience=raw.get("experience"),
         schedule=raw.get("schedule"),
+        allow_relocation=bool(raw.get("allow_relocation", False)),
         exclude_employers=raw.get("exclude_employers") or [],
         exclude_keywords=raw.get("exclude_keywords") or [],
         must_have=raw.get("must_have") or [],

@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hhru_bot.cli")
 
 
+class ApplyRunStopped(RuntimeError):
+    """Terminal account-level condition requiring the whole apply run to stop."""
+
+
 def add_common_args(p: argparse.ArgumentParser) -> None:
     """Общие аргументы для команд, работающих по резюме/поиску."""
     p.add_argument(
@@ -536,6 +540,8 @@ def run_apply_for_resume(
         apply_kwargs: dict[str, Any] = {
             "letter_provider": effective_letter_provider,
         }
+        if resume.search.allow_relocation:
+            apply_kwargs["allow_relocation"] = True
         if not args.dry_run:
             # #207: fail-вердикты после клика по кнопке отклика подтверждаются
             # внешней проверкой /applicant/negotiations до записи в history.
@@ -582,6 +588,12 @@ def run_apply_for_resume(
             if action_id is not None:
                 history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
+            # #342: сегодня терминальные блокеры приходят через ctx.stop()
+            # (skipped=False) и до сюда не доходят. Проверка стоит и здесь,
+            # чтобы будущий skip-путь с stop_run не проглотился этим continue.
+            if getattr(result, "stop_run", False):
+                print(f"  [STOP] {card.title} — {result.reason}")
+                raise ApplyRunStopped(result.reason)
             continue
 
         # #163: actions — журнал реальных взаимодействий с hh.ru. Запись только
@@ -631,6 +643,15 @@ def run_apply_for_resume(
         # защищает; после submit (включая неподтверждённый успех) — обязательна.
         if result.acted:
             throttle.wait(f"после отклика на '{card.title}'")
+
+        # #342: остановка прогона выполняется ПОСЛЕДНЕЙ. Терминальный лимит
+        # аккаунта может сопровождаться реально ушедшим откликом (внешняя
+        # проверка #207 вернула found), поэтому сначала учитываем его в
+        # счётчике и выдерживаем анти-бан-паузу, и только потом прерываем
+        # прогон — иначе после submit паузы не будет вовсе.
+        if getattr(result, "stop_run", False):
+            print(f"  [STOP] {card.title} — {result.reason}")
+            raise ApplyRunStopped(result.reason)
 
     print(f"Итого откликов за этот запуск: {applied_count}")
     return False

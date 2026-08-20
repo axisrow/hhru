@@ -55,6 +55,8 @@ WRITE_COMMANDS = frozenset(
         "settings",
         "config",
         "reject",
+        "backup",
+        "restore",
         "review",
     }
 )
