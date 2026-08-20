@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 
 from .negotiations_probe import parse_initial_state
@@ -50,15 +49,13 @@ def _value(entry: dict, *names):
 def _canonicalize_viewed_at(raw: str) -> str:
     """Normalize a view timestamp to one canonical ISO spelling.
 
-    SSR and DOM sources render the same instant differently (e.g. trailing
-    ``Z`` vs ``+00:00``, the same instant in a different UTC offset, or one
-    source omitting the offset entirely); without this, the same event
-    dedups as two rows depending on which source captured it first, or
-    which offset/timezone-awareness it was rendered in (#428 review).
-    A naive value (no offset at all, e.g. bare SSR "2026-08-20T10:00:00")
-    is treated as UTC — the DOM fallback's ``Z``-suffixed values are UTC,
-    so this keeps both sources landing on the same canonical string for
-    the same instant instead of only normalizing already-aware ones.
+    SSR can render the same instant differently across entries (e.g.
+    trailing ``Z`` vs ``+00:00``, the same instant in a different UTC
+    offset, or an offset omitted entirely); without this, the same event
+    could dedup as two rows depending on which spelling was present
+    (#428 review). A naive value (no offset at all, e.g. bare
+    "2026-08-20T10:00:00") is treated as UTC, matching hh.ru's
+    Z-suffixed timestamps.
     """
     parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -118,65 +115,4 @@ def parse_resume_view_history(
         )
         if limit is not None and len(result) >= limit:
             break
-    return result
-
-
-def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = None) -> list[dict]:
-    """Parse only DOM rows with independently exposed date and employer fields."""
-    rows = page.locator("[data-qa*='resume-view'], [data-qa*='view-history']").all()
-    result = []
-    invalid = False
-    for row in rows:
-        viewed_at = row.get_attribute("data-viewed-at")
-        employer = row.get_attribute("data-employer-name")
-        if not viewed_at:
-            times = row.locator("time").all()
-            if len(times) == 1:
-                viewed_at = times[0].get_attribute("datetime")
-        # Queried once and reused below for employer_id extraction (#428
-        # review): a second identical locator call was wasteful, and the
-        # original guard that skipped it whenever data-employer-name was set
-        # left employer_id NULL, letting a later SSR scrape of the same view
-        # insert a duplicate row under the resume_views dedup key.
-        employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
-        if not employer and len(employers) == 1:
-            employer = employers[0].inner_text().strip()
-        employer_id = None
-        if not employer:
-            invalid = True
-            continue
-        if not viewed_at:
-            invalid = True
-            continue
-        try:
-            viewed_at = _canonicalize_viewed_at(viewed_at)
-        except ValueError:
-            invalid = True
-            continue
-        if len(employers) == 1:
-            href = employers[0].get_attribute("href") or ""
-            match = re.search(r"/employer/([^/?#]+)", href)
-            employer_id = match.group(1) if match else None
-        # DOM has no per-view source_id (unlike SSR), so when employer_id
-        # can't be extracted (no confirmed /employer/ link), fall back to the
-        # employer name as the dedup identity instead of leaving view_key
-        # empty (#428 review, round 10): an empty view_key collides across
-        # ANY two same-day DOM rows lacking a link, silently dropping the
-        # second regardless of which employer it's for. Falling back to the
-        # name narrows the collision to two same-day views of the SAME named
-        # employer without a confirmed link — a real but much smaller risk,
-        # and one already accepted for the SSR path via employer_id.
-        result.append(
-            {
-                "resume_id": resume_id,
-                "employer_id": employer_id,
-                "employer": employer,
-                "source_id": None if employer_id is not None else employer,
-                "viewed_at": viewed_at,
-            }
-        )
-        if limit is not None and len(result) >= limit:
-            break
-    if invalid:
-        raise ValueError("DOM history contains an unparseable view row")
     return result

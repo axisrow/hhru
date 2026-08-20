@@ -39,11 +39,7 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import goto_hh, launch_context, require_authenticated_page
     from ..config import load_config_or_exit
     from ..history import History
-    from ..resume_views import (
-        has_next_page,
-        parse_resume_view_history,
-        parse_resume_view_history_dom,
-    )
+    from ..resume_views import has_next_page, parse_resume_view_history
 
     if args.limit < 1 or args.max_pages < 1:
         raise ValueError("limit и max-pages должны быть >= 1")
@@ -83,25 +79,16 @@ def run(args: argparse.Namespace) -> None:
                         limit=args.limit - resume_fetched,
                     )
                 except (ValueError, TypeError) as exc:
-                    try:
-                        rows = parse_resume_view_history_dom(
-                            page, resume.resume_id, limit=args.limit - resume_fetched
-                        )
-                    except ValueError as dom_exc:
-                        print(
-                            f"[FAIL] история просмотров не подтверждена: {dom_exc}", file=sys.stderr
-                        )
-                        raise SystemExit(1) from dom_exc
-                    if not rows:
-                        # DOM fallback succeeded but confirmed zero rows — report
-                        # that, not the earlier SSR exception that triggered the
-                        # fallback in the first place (#428 review, round 10).
-                        print(
-                            f"[FAIL] история просмотров не подтверждена: SSR недоступен"
-                            f" ({exc}), DOM fallback не нашёл ни одной строки",
-                            file=sys.stderr,
-                        )
-                        raise SystemExit(1) from exc
+                    # No DOM fallback (#428 review, round 11): the DOM path's
+                    # employer_id/link-based identity was structurally
+                    # incompatible with SSR's source_id-based identity — any
+                    # view_key priority between the two either lost data or
+                    # duplicated it when the source switched between runs.
+                    # SSR is the confirmed, curl-verified source (selectors.py);
+                    # a parse failure fails closed instead of falling back to
+                    # an unconfirmed DOM scrape.
+                    print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
+                    raise SystemExit(1) from exc
                 fetched.extend(rows)
                 resume_fetched += len(rows)
                 if not rows or resume_fetched >= args.limit:

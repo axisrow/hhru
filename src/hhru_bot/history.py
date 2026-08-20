@@ -89,26 +89,27 @@ CREATE TABLE IF NOT EXISTS responses (
 -- resume_views — реальные просмотры резюме работодателями (#415).
 -- Один snapshot на (резюме, событие просмотра, момент просмотра): повторный
 -- scrape не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
+-- Источник данных — только SSR (applicantResumeViewHistory.historyViews),
+-- см. resume_views.py::parse_resume_view_history; DOM-fallback намеренно
+-- убран (#428 review, round 11) — его identity-модель (employer_id/link)
+-- была структурно несовместима с SSR-моделью (source_id), и оба порядка
+-- приоритета в view_key либо теряли данные, либо плодили дубликаты при
+-- переключении между источниками между прогонами. Один источник истины
+-- устраняет противоречие, а не откладывает его очередным гейтом.
 -- Идентичность события — view_key (NOT NULL): source_id, если он есть,
 -- иначе employer_id, иначе '' (оба поля пусты — дедуп по (resume_id, '',
--- viewed_at), как раньше). source_id — это стабильный per-view SSR id
--- (id/viewId/eventId) для SSR-строк; DOM не отдаёт такой ID, поэтому DOM
--- fallback кладёт туда employer name, КОГДА employer_id не удалось
--- извлечь из ссылки (#428 review, round 10) — иначе пустой view_key
--- сталкивал бы ЛЮБЫЕ два DOM-просмотра без ссылки за один день, даже
--- разных работодателей. source_id в приоритете над employer_id: SSR-дата
+-- viewed_at), как раньше). source_id — стабильный per-view SSR id
+-- (id/viewId/eventId). source_id в приоритете над employer_id: SSR-дата
 -- часто без времени суток, и два разных просмотра ОДНОГО работодателя в
 -- один день иначе получили бы одинаковый (employer_id, viewed_at) и
 -- второй был бы молча отброшен INSERT OR IGNORE (#428 review). Ключ НЕ
--- включает employer напрямую — это mutable presentation-строка (имя
--- могло смениться, SSR/DOM по-разному форматируют), и раньше её участие
--- в UNIQUE плодило дубликаты одного и того же просмотра (#428 review);
--- сюда employer name попадает только через source_id, и только как
--- fallback-идентичность, когда более стабильного ID нет вовсе.
--- employer_id/source_id — NOT NULL пустой строкой, а не NULL: SQLite
--- считает несколько NULL различными значениями, и вернувшись к NULL
--- здесь дедуп скрытых просмотров снова сломался бы (#428 review:
--- "preserve hidden resume view events").
+-- включает employer — это mutable presentation-строка (имя могло
+-- смениться, разное форматирование), и раньше её участие в UNIQUE плодило
+-- дубликаты одного и того же просмотра (#428 review). employer_id/
+-- source_id — NOT NULL пустой строкой, а не NULL: SQLite считает
+-- несколько NULL различными значениями, и вернувшись к NULL здесь дедуп
+-- скрытых просмотров снова сломался бы (#428 review: "preserve hidden
+-- resume view events").
 CREATE TABLE IF NOT EXISTS resume_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resume_id TEXT NOT NULL,
@@ -467,9 +468,7 @@ class History:
         inserted = 0
         with self._connect() as conn:
             for row in rows:
-                # view_key: source_id when known (SSR per-view id, or the DOM
-                # fallback's employer-name substitute when employer_id
-                # couldn't be extracted — see resume_views.py), else
+                # view_key: the SSR per-view source_id when known, else
                 # employer_id, else '' — never the mutable `employer` display
                 # string on its own (#428 review).
                 view_key = row.get("source_id") or row.get("employer_id") or ""
