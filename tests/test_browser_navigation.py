@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot import browser
@@ -24,6 +25,39 @@ from hhru_bot.browser import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("headless", [True, False])
+def test_sandbox_failure_is_classified_for_headless_and_headed(headless):
+    """Chromium sandbox diagnostics must keep the CLI output structured."""
+    playwright = MagicMock(name="Playwright")
+    playwright.chromium.launch.side_effect = PlaywrightError(
+        "FATAL:base/apple/mach_port_rendezvous_mac.cc:159 "
+        "Check failed: kr == KERN_SUCCESS. "
+        "bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.13682: "
+        "Permission denied (1100)"
+    )
+
+    with pytest.raises(browser.BrowserLaunchError, match="CODEX_SANDBOX_BROWSER_FAILURE"):
+        browser.launch_browser(playwright, headless=headless)
+
+
+def test_non_sandbox_launch_failure_is_not_reclassified():
+    playwright = MagicMock(name="Playwright")
+    playwright.chromium.launch.side_effect = PlaywrightError("browser executable missing")
+
+    with pytest.raises(PlaywrightError, match="browser executable missing"):
+        browser.launch_browser(playwright, headless=True)
+
+
+def test_generic_permission_denied_launch_failure_is_not_reclassified():
+    playwright = MagicMock(name="Playwright")
+    playwright.chromium.launch.side_effect = PlaywrightError(
+        "Permission denied opening browser profile"
+    )
+
+    with pytest.raises(PlaywrightError, match="Permission denied opening"):
+        browser.launch_browser(playwright, headless=True)
 
 
 def test_goto_timeout_constant_is_90_seconds():

@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS account_profile (
     UNIQUE (question_key, source)
 );
 
+-- settings — произвольные пользовательские настройки CLI (#383).
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- vacancies_seen — собранные карточки вакансий (#66, Этап 1: рынок).
 -- search СОБИРАЕТ VacancyCard с зарплатой/датой (#34), но НЕ писал их в БД —
 -- рынок-анализ (сравнение сфер по медианной ЗП) был не из чего строить. Эта
@@ -118,6 +124,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     employer_tier TEXT,
+    vacancy_text TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -247,6 +254,7 @@ class _SkipReasons:
     LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
     LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
     HAS_QUESTIONS = "has_questions"  # #84 идея №7 (зарезервирован)
+    QUESTION_LOW_CONFIDENCE = "question_skipped_low_confidence"
     RESUME_VISIBILITY = "resume_visibility"  # отклик заблокирован видимостью резюме
     DUPLICATE = "duplicate"  # дубликат вакансии в одном сборе
 
@@ -265,6 +273,7 @@ SKIP_REASON_VALUES = (
     _SkipReasons.LOW_EMPLOYER_SIGNAL,
     _SkipReasons.LOW_LLM_SCORE,
     _SkipReasons.HAS_QUESTIONS,
+    _SkipReasons.QUESTION_LOW_CONFIDENCE,
     _SkipReasons.RESUME_VISIBILITY,
     _SkipReasons.DUPLICATE,
 )
@@ -321,6 +330,7 @@ class History:
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "vacancy_text", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -347,6 +357,36 @@ class History:
                 (resume_id, vacancy_id),
             ).fetchone()
             return row is not None
+
+    def last_action_status(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        action: str,
+        *,
+        statuses: tuple[str, ...] = ("success", "uncertain"),
+    ) -> str | None:
+        """Return the latest status if it is one of the deduplicating statuses.
+
+        Callers use this as a fail-closed guard before repeating an external
+        mutation: ``uncertain`` must block a retry, since the browser may have
+        completed the action even when confirmation failed. A later ordinary
+        ``failed`` row means the earlier uncertain action was resolved before
+        the retry, so it must not keep blocking a new attempt.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status FROM actions
+                WHERE resume_id = ? AND vacancy_id = ? AND action = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (resume_id, vacancy_id, action),
+            ).fetchone()
+            if row is None or row[0] not in statuses:
+                return None
+            return row[0]
 
     def record_action(
         self,
@@ -416,15 +456,20 @@ class History:
     def count_today(self, resume_id: str, action: str) -> int:
         # #176: 'uncertain' расходует дневной лимит — действие могло выполниться
         # на hh.ru, fail-closed считает его состоявшимся (dry_run/failed — нет).
+        # Пустой resume_id — account-wide sentinel (так replies не привязаны к
+        # конкретному резюме). Для apply это также важно: дневной лимит
+        # относится к аккаунту, даже если действия в истории привязаны к
+        # отдельным резюме.
         today = datetime.now().date().isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS cnt FROM actions
-                WHERE resume_id = ? AND action = ? AND status IN ('success', 'uncertain')
+                WHERE (? = '' OR resume_id = ?) AND action = ?
+                  AND status IN ('success', 'uncertain')
                   AND created_at >= ?
                 """,
-                (resume_id, action, today),
+                (resume_id, resume_id, action, today),
             ).fetchone()
             return row["cnt"] if row else 0
 
@@ -952,6 +997,7 @@ class History:
         salary_to: int | None = None,
         salary_currency: str | None = None,
         employer_tier: str | None = None,
+        vacancy_text: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -984,8 +1030,8 @@ class History:
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
                      salary_currency, search_query, first_seen_at,
-                     last_seen_at, employer_tier)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_seen_at, employer_tier, vacancy_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -993,6 +1039,7 @@ class History:
                     salary_to = excluded.salary_to,
                     salary_currency = excluded.salary_currency,
                     employer_tier = excluded.employer_tier,
+                    vacancy_text = excluded.vacancy_text,
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1006,6 +1053,7 @@ class History:
                     now,
                     now,
                     employer_tier,
+                    vacancy_text,
                 ),
             )
 
@@ -1018,10 +1066,20 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "search_query, first_seen_at, last_seen_at, employer_tier "
+                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_vacancy_texts(self) -> list[str]:
+        """Возвращает непустые тексты собранных вакансий для read-only отчётов."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT MAX(vacancy_text) AS vacancy_text FROM vacancies_seen "
+                "WHERE vacancy_text IS NOT NULL AND vacancy_text != '' "
+                "GROUP BY vacancy_id"
+            ).fetchall()
+        return [row["vacancy_text"] for row in rows]
 
     # --- Профиль аккаунта для внешних форм (#282/#284) -----------------------
 
@@ -1087,6 +1145,31 @@ class History:
                 (normalize(question_key), source),
             )
         return cursor.rowcount > 0
+
+    # --- Произвольные настройки CLI (#383) -----------------------------------
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Создаёт или обновляет локальную настройку."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+
+    def get_setting(self, key: str) -> str | None:
+        """Возвращает настройку или ``None``, если ключ не найден."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def list_settings(self) -> list[dict[str, str]]:
+        """Возвращает настройки в стабильном порядке ключей."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+        return [dict(row) for row in rows]
 
     # --- Pre-LLM фильтр работодателя (#85) -----------------------------------
     # Новый метод в конец файла (паттерн with self._connect(), существующие
@@ -1623,6 +1706,39 @@ class History:
             else:
                 cur = conn.execute("DELETE FROM skipped WHERE reason = ?", (reason,))
             return cur.rowcount
+
+    def list_skipped(self, reason: str | None = None) -> list[dict]:
+        """Возвращает журнал отсева с данными вакансий, свежие первыми.
+
+        ``vacancies_seen`` может содержать несколько строк одной вакансии (по
+        разным поисковым запросам), поэтому JOIN агрегирует её до одной строки
+        на запись ``skipped`` и не дублирует результаты команды.
+        ``LEFT JOIN`` сохраняет старые записи отсева, для которых карточка ещё
+        не была сохранена.
+        """
+        where = "WHERE s.reason = ?" if reason is not None else ""
+        params = (reason,) if reason is not None else ()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "WITH latest_vacancy AS ("
+                "SELECT vacancy_id, title, company FROM ("
+                "SELECT v.*, ROW_NUMBER() OVER ("
+                "PARTITION BY vacancy_id ORDER BY last_seen_at DESC, id DESC"
+                ") AS rn FROM vacancies_seen v"
+                ") WHERE rn = 1"
+                "), seen_queries AS ("
+                "SELECT vacancy_id, GROUP_CONCAT(DISTINCT search_query) AS search_query "
+                "FROM vacancies_seen GROUP BY vacancy_id"
+                ") SELECT s.created_at, s.resume_id, s.vacancy_id, s.reason, "
+                "v.title, v.company, q.search_query "
+                "FROM skipped s LEFT JOIN latest_vacancy v "
+                "ON v.vacancy_id = s.vacancy_id LEFT JOIN seen_queries q "
+                "ON q.vacancy_id = s.vacancy_id "
+                f"{where} "
+                "ORDER BY s.created_at DESC, s.id DESC",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def count_skipped(self, reason: str | None = None) -> int:
         """Число записей отсева (для dry-run/подтверждения clear-skipped).

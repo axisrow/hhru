@@ -121,7 +121,7 @@ def _hidden_resume_warning_is_expanded(page: Page) -> bool:
                 return style.display !== 'none' && style.visibility !== 'hidden'
                     && style.maxHeight !== '0px';
             })""",
-            vacancy_page.VACANCY_HIDDEN_RESUME_WARNING,
+            arg=vacancy_page.VACANCY_HIDDEN_RESUME_WARNING,
             timeout=RESUME_WARNING_TIMEOUT_MS,
         )
     except (PlaywrightError, AttributeError):

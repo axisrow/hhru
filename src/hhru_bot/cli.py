@@ -52,6 +52,8 @@ WRITE_COMMANDS = frozenset(
         "resume-sections",
         "edit-skills",
         "edit-languages",
+        "settings",
+        "config",
     }
 )
 
@@ -107,7 +109,7 @@ def main(argv: list[str] | None = None) -> None:
     if not _is_write_command(args):
         return _execute(args)
 
-    lock_path = Path(args.history).expanduser().resolve().parent / ".hhru.lock"
+    lock_path = _write_lock_path(args)
     try:
         with acquire_write_lock(lock_path):
             return _execute(args)
@@ -118,14 +120,25 @@ def main(argv: list[str] | None = None) -> None:
 
 def _is_write_command(args: argparse.Namespace) -> bool:
     """Whether this parsed command needs the write lock."""
+    if args.command == "config":
+        # Reading config must remain usable while an unrelated local write is
+        # in progress.  The editor is included because it commits a mutation.
+        return bool(args.set is not None or args.unset or args.edit)
     return (
         args.command in WRITE_COMMANDS
+        or (args.command == "refresh-token" and getattr(args, "force", False))
         or (
             args.command,
             getattr(args, "account_command", None),
         )
         in WRITE_SUBCOMMANDS
     )
+
+
+def _write_lock_path(args: argparse.Namespace) -> Path:
+    """Return the lock location for the state mutated by a write command."""
+    lock_root = Path(args.config if args.command == "config" else args.history)
+    return lock_root.expanduser().resolve().parent / ".hhru.lock"
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:

@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Error
+from playwright.sync_api import Error, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
@@ -293,6 +293,24 @@ def test_navigate_skips_expanded_hidden_resume_warning_without_url_wait():
 
     assert reason == "видимость резюме недостаточна для отклика"
     assert page.navigation_entered == 0
+
+
+@pytest.mark.live_read
+def test_hidden_resume_warning_uses_playwright_named_arg():
+    """The visibility probe must pass its selector through Playwright's ``arg=`` API."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.set_content(
+            """
+            <div data-qa="hidden-resume-warning"
+                 style="display:block;visibility:visible;max-height:100px"></div>
+            """
+        )
+
+        assert steps._hidden_resume_warning_is_expanded(page) is True
+
+        browser.close()
 
 
 def test_navigate_does_not_raise_when_form_never_renders():

@@ -202,12 +202,18 @@ def run(args: argparse.Namespace) -> bool:
             apply_position(page, plan)
             if page.locator(SAVE).count() != 1:
                 raise RuntimeError("кнопка сохранения формы не подтверждена")
-            page.locator(SAVE).click()
-            page.locator("[data-qa='resume-edit-position-form']").wait_for(
-                state="hidden", timeout=10_000
-            )
+            try:
+                page.locator(SAVE).click()
+                page.locator("[data-qa='resume-edit-position-form']").wait_for(
+                    state="hidden", timeout=10_000
+                )
+            except Exception as exc:  # click already landed; result is uncertain
+                raise RuntimeError(
+                    f"сохранение не подтверждено (uncertain) после клика: {exc}"
+                ) from exc
             print(f"[OK] Раздел желаемой работы резюме '{resume.id}' обновлён.")
             return False
     except Exception as exc:
-        print(f"[FAIL] {exc}")
+        prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
+        print(f"{prefix} {exc}")
         return True

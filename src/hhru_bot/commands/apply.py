@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 
-from ._common import add_common_args, resumes_from_args, run_apply_for_resume
+from ._common import add_common_args, add_force_arg, resumes_from_args, run_apply_for_resume
 
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("apply", help="Найти и откликнуться на подходящие вакансии")
     add_common_args(p)
+    add_force_arg(p)
     p.add_argument(
         "--limit",
         type=int,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from hhru_bot import cli
-from hhru_bot.cli import WRITE_COMMANDS, main
+from hhru_bot.cli import WRITE_COMMANDS, _is_write_command, _write_lock_path, main
 from hhru_bot.write_lock import WriteLockBusy, acquire_write_lock
 
 pytestmark = pytest.mark.unit
@@ -53,7 +53,38 @@ def test_lock_covers_all_hhru_write_commands():
         "resume-sections",
         "edit-skills",
         "edit-languages",
+        "settings",
+        "config",
     }
+
+
+def test_config_read_commands_are_not_write_locked():
+    parser = cli.build_parser()
+    for argv in (["config"], ["config", "-p"], ["config", "-k", "account"]):
+        args = parser.parse_args(argv)
+        assert not _is_write_command(args)
+
+    for argv in (["config", "-e"], ["config", "-s", "a", "b"], ["config", "-u", "a"]):
+        args = parser.parse_args(argv)
+        assert _is_write_command(args)
+
+
+def test_config_write_lock_uses_config_directory(tmp_path):
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "--config",
+            str(tmp_path / "settings" / "config.yaml"),
+            "--history",
+            str(tmp_path / "other" / "history.db"),
+            "config",
+            "-s",
+            "a",
+            "b",
+        ]
+    )
+    cli._resolve_paths(args)
+    assert _write_lock_path(args) == (tmp_path / "settings" / ".hhru.lock").resolve()
 
 
 def test_account_list_is_read_only_and_bypasses_lock_and_logging(tmp_path, monkeypatch, capsys):

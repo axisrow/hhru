@@ -93,6 +93,7 @@ def test_all_commands_registered():
         "list-resumes",
         "log",
         "clear-skipped",
+        "skipped",
         "market",
         "copy-resume",
         "publish-resume",
@@ -111,6 +112,11 @@ def test_all_commands_registered():
         "edit-education",
         "fill-form",
         "profile",
+        "config",
+        "call-api",
+        "learn",
+        "settings",
+        "refresh-token",
     }
 
 
@@ -142,6 +148,7 @@ def test_register_commands_returns_names():
         "list_resumes",
         "log_cmd",
         "clear_skipped",
+        "skipped",
         "market",
         "copy_resume",
         "publish_resume",
@@ -160,6 +167,11 @@ def test_register_commands_returns_names():
         "edit_education",
         "fill_form",
         "profile",
+        "config_cmd",
+        "call_api",
+        "learn",
+        "settings",
+        "refresh_token",
     }
 
 

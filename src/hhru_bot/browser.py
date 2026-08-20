@@ -40,12 +40,18 @@ def launch_browser(playwright, *, headless: bool) -> Browser:
             "NSApplication",
             "NSMenuBarPresentationInstance",
         )
-        if not headless and any(marker in details for marker in sandbox_markers):
+        apple_mach_port_failure = "Permission denied" in details and any(
+            marker in details
+            for marker in (
+                "mach_port_rendezvous_mac",
+                "MachPortRendezvousServer",
+            )
+        )
+        if apple_mach_port_failure or any(marker in details for marker in sandbox_markers):
             raise BrowserLaunchError(
-                "CODEX_SANDBOX_BROWSER_FAILURE: headed Chromium was blocked by "
-                "the execution sandbox (macOS GUI/Crashpad permission). "
-                "Retry this same command with elevated system permission; "
-                "for read-only work, use 'hhru --headless ...'."
+                "CODEX_SANDBOX_BROWSER_FAILURE: Chromium was blocked by the "
+                "execution sandbox (macOS/Crashpad permission). Retry this same "
+                "command with elevated system permission."
             ) from exc
         raise
 

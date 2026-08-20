@@ -257,6 +257,7 @@ def edit_experience_on_hh(
                 return results + [f"строка опыта {index}: не удалось открыть новую запись: {exc}"]
         if trigger.count() != 1:
             return results + [f"строка опыта {index}: триггер не найден однозначно"]
+        save_attempted = False
         try:
             trigger.click()
             page.locator(EXPERIENCE_COMPANY.format(index=index)).wait_for(
@@ -277,6 +278,7 @@ def edit_experience_on_hh(
                 save = page.locator(EXPERIENCE_SAVE)
                 if save.count() != 1:
                     return results + [f"строка {index}: save-кнопка не подтверждена"]
+                save_attempted = True
                 save.click()
                 try:
                     page.wait_for_url(
@@ -285,10 +287,15 @@ def edit_experience_on_hh(
                         timeout=SAVE_TIMEOUT_MS,
                     )
                 except PlaywrightError as exc:
-                    return results + [f"строка {index}: сохранение не подтверждено: {exc}"]
+                    return results + [
+                        f"строка {index}: сохранение не подтверждено (uncertain) после клика: {exc}"
+                    ]
                 if not resume_identity_matches(page, resume_id):
-                    return results + [f"строка {index}: после save identity резюме не подтверждён"]
+                    return results + [
+                        f"строка {index}: после save identity резюме не подтверждён (uncertain)"
+                    ]
                 results.append(f"строка {index}: сохранено")
         except (PlaywrightError, ValueError) as exc:
-            return results + [f"строка {index}: {exc}"]
+            suffix = " (uncertain: клик сохранения уже был выполнен)" if save_attempted else ""
+            return results + [f"строка {index}: {exc}{suffix}"]
     return results

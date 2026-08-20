@@ -45,6 +45,25 @@ class NoReplyForm(RuntimeError):
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}>\"'»"
 _HH_DOMAINS = ("hh.ru", "hhcdn.ru")
+_TEST_PLATFORM_DOMAINS = (
+    "codeforces.com",
+    "coderbyte.com",
+    "codility.com",
+    "devskiller.com",
+    "forms.gle",
+    "hackerrank.com",
+    "mettl.com",
+    "testdome.com",
+    "testgorilla.com",
+    "typeform.com",
+)
+_TEST_CONTEXT_RE = re.compile(
+    r"(?:тест(?:а|е|ом|у|ы)?|тестов(?:ое|ого|ому|ым|ые|ых|ыми)?|"
+    r"задан(?:ие|ия|ию|ием|ии|иями|иях)|assignment|assessment|"
+    r"coding\s+challenge|technical\s+task|case\s+study)\b",
+    re.IGNORECASE,
+)
+_CONTEXT_BOUNDARY_RE = re.compile(r"[.!?;\n]")
 
 
 @dataclass(frozen=True)
@@ -136,12 +155,21 @@ def _is_hh_domain(hostname: str | None) -> bool:
     return any(host == domain or host.endswith(f".{domain}") for domain in _HH_DOMAINS)
 
 
+def _is_test_platform(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    host = hostname.rstrip(".").lower()
+    return any(host == domain or host.endswith(f".{domain}") for domain in _TEST_PLATFORM_DOMAINS)
+
+
 def extract_external_test_link(message_text: str) -> str | None:
-    """Return the first non-hh.ru HTTP(S) URL in an employer message.
+    """Return a likely external test URL in an employer message.
 
     ``hh.ru`` and ``hhcdn.ru`` (including their subdomains) are internal links
-    and are ignored.  If a message contains multiple links, the first external
-    one is returned.  The function only parses text; it never makes a request.
+    and are ignored.  Known testing platforms are accepted without further
+    context; other domains require a nearby test-assignment phrase.  This
+    avoids treating a company homepage or tracking link as a test assignment.
+    The function only parses text; it never makes a request.
     """
     for match in _URL_RE.finditer(message_text):
         url = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
@@ -149,7 +177,29 @@ def extract_external_test_link(message_text: str) -> str | None:
             parsed = urlsplit(url)
         except ValueError:
             continue
-        if parsed.scheme.lower() in {"http", "https"} and not _is_hh_domain(parsed.hostname):
+        if parsed.scheme.lower() not in {"http", "https"} or _is_hh_domain(parsed.hostname):
+            continue
+        if _is_test_platform(parsed.hostname):
+            return url
+        # Look left, plus a bounded right-hand fragment for messages such as
+        # "перейдите по ссылке <URL> и выполните тестовое задание".  Do not
+        # inspect right-hand context when another URL comes first: the phrase
+        # may belong to that later link rather than this one.
+        context_start = max(0, match.start() - 120)
+        left_context = message_text[context_start : match.start()]
+        right_start = match.end()
+        next_url = _URL_RE.search(message_text, right_start)
+        sentence_boundary = _CONTEXT_BOUNDARY_RE.search(message_text, right_start)
+        right_end = min(
+            len(message_text),
+            right_start + 120,
+            next_url.start() if next_url else len(message_text),
+            sentence_boundary.start() if sentence_boundary else len(message_text),
+        )
+        right_context = message_text[right_start:right_end]
+        if _TEST_CONTEXT_RE.search(left_context) or (
+            next_url is None and _TEST_CONTEXT_RE.search(right_context)
+        ):
             return url
     return None
 

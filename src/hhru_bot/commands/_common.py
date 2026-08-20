@@ -11,7 +11,7 @@ import argparse
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..apply import apply_to_vacancy
 from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
@@ -49,6 +49,20 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
         help="Показать, что будет сделано, без реальных действий",
     )
     p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
+
+
+def add_force_arg(p: argparse.ArgumentParser) -> None:
+    """``--force`` — только для команд, реально вызывающих run_apply_for_resume.
+
+    #97 cycle-review: жить в add_common_args означало бы протечь на search/bump/
+    probe с чужим (apply-специфичным) help-текстом и no-op эффектом на bump —
+    отдельная функция для apply.py/run.py.
+    """
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Разрешить реальную отправку отклика с LLM-ответами на вопросы",
+    )
 
 
 def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[ResumeConfig]:
@@ -139,6 +153,24 @@ def _build_letter_provider(
         resume_profile=profile,
         fallback_template=cover_letter_template,
     )
+
+
+def _build_question_answerer(
+    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
+):
+    """Build the opt-in LLM question answerer, if configured."""
+    ai_config = getattr(config, "ai", None)
+    if ai_config is None or not ai_config.answer_questions:
+        return None
+    from ..ai.llm_client import LLMClient
+    from ..ai.questions import AIQuestionAnswerer
+
+    try:
+        client = LLMClient(ai_config)
+    except ImportError as exc:
+        logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+        return None
+    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data)
 
 
 def _build_scoring_provider(
@@ -385,6 +417,18 @@ def run_apply_for_resume(
 
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+    question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
+    # M6 cycle-review #373: no longer blocks the whole run when
+    # ai.answer_questions=true but --force is missing — pipeline.py gates
+    # --force per vacancy, only once a questionnaire is actually detected, so
+    # an ordinary apply against vacancies without questions still works. This
+    # is only an upfront heads-up for the --force case; the real fail-closed
+    # enforcement lives in pipeline.py.
+    if question_answerer is not None and not args.dry_run and getattr(args, "force", False):
+        print(
+            "[WARN] --force включён: LLM-ответы на тест-вопросы будут заполнены "
+            "и отправлены без дополнительного подтверждения"
+        )
 
     # #212: атрибуция резюме в верификаторе. Конфиг знает хэш резюме, SSR
     # /applicant/negotiations — только числовой resumeId; без маппинга found
@@ -421,14 +465,25 @@ def run_apply_for_resume(
             # confirmed pre-submit exits.
             action_id = history.begin_action(resume.resume_id, vacancy_id, "apply")
 
-        apply_kwargs = {
+        # dict value type intentionally broad — **apply_kwargs spreads several
+        # unrelated kwarg types (provider/verifier/callable/bool) into
+        # apply_to_vacancy's distinct typed parameters below.
+        apply_kwargs: dict[str, Any] = {
             "letter_provider": letter_provider,
-            # #207: fail-вердикты после клика по кнопке отклика подтверждаются
-            # внешней проверкой /applicant/negotiations до записи в history.
-            "verifier": _verifier,
         }
         if not args.dry_run:
+            # #207: fail-вердикты после клика по кнопке отклика подтверждаются
+            # внешней проверкой /applicant/negotiations до записи в history.
+            # cycle-review round 2 (#373): defence-in-depth — dry-run must
+            # never reach the external verifier at all (pipeline.py's
+            # _finalize_post_click_failure also guards on ctx.dry_run, but a
+            # verifier=None short-circuit here means a dry-run answerer's
+            # post-click grey-zone failure can't accidentally record acted).
+            apply_kwargs["verifier"] = _verifier
             apply_kwargs["before_submit"] = _before_submit
+        if question_answerer is not None:
+            apply_kwargs["question_answerer"] = question_answerer
+            apply_kwargs["force"] = getattr(args, "force", False)
         try:
             result = apply_to_vacancy(
                 page,
