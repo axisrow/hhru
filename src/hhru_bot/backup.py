@@ -63,6 +63,16 @@ def _configured_storage_path(config: Path, root: Path) -> Path | None:
     return _configured_storage_from_raw(config, root, raw)
 
 
+def _storage_archive_name(path: Path, root: Path) -> str:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return f"storage_state/{path.name}"
+    if relative.parts and relative.parts[0] == "storage_state":
+        return relative.as_posix()
+    return f"storage_state/{path.name}"
+
+
 def create_backup(
     config: str | Path,
     history: str | Path,
@@ -132,7 +142,7 @@ def create_backup(
                         and configured_storage.is_file()
                         and configured_storage not in included
                     ):
-                        canonical_name = f"storage_state/{configured_storage.name}"
+                        canonical_name = _storage_archive_name(configured_storage, root)
                         if canonical_name in included_names:
                             raise BackupError("Имя настроенной сессии конфликтует с storage_state")
                         archive.add(
@@ -218,7 +228,7 @@ def restore_backup(
             desired_storage = _configured_storage_from_raw(config, root, raw)
 
         storage_targets = {
-            f"storage_state/{path.name}": path
+            _storage_archive_name(path, root): path
             for path in (previous_storage, desired_storage)
             if path is not None
         }
@@ -281,7 +291,7 @@ def restore_backup(
                 )
             for configured_storage in (previous_storage, desired_storage):
                 if configured_storage is not None:
-                    managed.add(f"storage_state/{configured_storage.name}")
+                    managed.add(_storage_archive_name(configured_storage, root))
             for name in sorted(managed - archived):
                 target = target_for(name)
                 if not target.exists() and not target.is_symlink():
