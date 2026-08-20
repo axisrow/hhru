@@ -42,9 +42,12 @@ class Throttle:
     def check_apply_limit(self, resume_id: str, dry_run: bool) -> None:
         if dry_run:
             return
-        done = self.history.count_today(resume_id, "apply")
+        # The limit protects the whole account.  Apply may iterate over every
+        # configured resume, so checking each resume independently multiplies
+        # the configured allowance by the number of resumes.
+        done = self.history.count_today("", "apply")
         if done >= self.config.daily_apply_limit:
-            raise LimitReached(resume_id, "apply", self.config.daily_apply_limit)
+            raise LimitReached("account", "apply", self.config.daily_apply_limit)
 
     def check_bump_limit(self, resume_id: str, dry_run: bool) -> None:
         if dry_run:
