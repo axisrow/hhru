@@ -381,6 +381,26 @@ def test_group_questions_normalizes_whitespace_and_case():
     assert groups[0].vacancy_ids == ("1", "2")
 
 
+def test_group_questions_merges_same_options_in_different_order():
+    # cycle-review PR #444: same text, same OPTION SET, but different order —
+    # the key must canonicalize (sort) options, otherwise identical questions
+    # split into separate groups whenever hh.ru renders options in a
+    # different order across vacancies (undercounting duplicate questions).
+    q1 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
+    q2 = Question(0, "Готовы к переезду?", "choice", ("Нет", "Да"), is_radio=True)
+    results = [
+        questionnaire.QuestionnaireScanResult(
+            _card("1"), questionnaire.QUESTIONNAIRE, "", (q1,), 1
+        ),
+        questionnaire.QuestionnaireScanResult(
+            _card("2"), questionnaire.QUESTIONNAIRE, "", (q2,), 1
+        ),
+    ]
+    groups = questionnaire.group_questions(results)
+    assert len(groups) == 1
+    assert groups[0].vacancy_ids == ("1", "2")
+
+
 def test_group_questions_keeps_same_text_with_different_options_separate():
     # Same wording, different answer choices for two different employers —
     # merging would falsely claim both vacancies accept the same options.

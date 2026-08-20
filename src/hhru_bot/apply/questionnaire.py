@@ -87,7 +87,14 @@ def group_questions(results: list[QuestionnaireScanResult]) -> list[QuestionGrou
         if result.status != QUESTIONNAIRE:
             continue
         for question in result.questions:
-            normalized_options = tuple(normalize(option) for option in question.options)
+            # #444 cycle-review: sort the normalized options for the key — the
+            # key must match on the SET of options, not their on-page order
+            # (the docstring's own contract). hh.ru can render the same
+            # option set in a different order across vacancies; without
+            # sorting, that alone would split one duplicate question into two
+            # groups and undercount it. Display order (`question.options`) is
+            # kept as-is in `display`, only the matching key is canonicalized.
+            normalized_options = tuple(sorted(normalize(option) for option in question.options))
             key = (normalize(question.text), question.kind, question.is_radio, normalized_options)
             if key not in vacancy_ids:
                 vacancy_ids[key] = []
