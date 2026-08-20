@@ -51,17 +51,17 @@ class _FakeLocator:
             return 0
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
         self._waited = True
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self, **_kwargs) -> None:
+    def click(self, *, timeout=None, no_wait_after=None) -> None:
         self.click_calls += 1
 
-    def fill(self, value: str) -> None:
+    def fill(self, value: str, *, timeout=None, no_wait_after=None, force=None) -> None:
         self.fill_calls.append(value)
 
     def get_attribute(self, name: str) -> str | None:
@@ -96,7 +96,7 @@ class _ClickTrackingLocator(_FakeLocator):
         super().__init__(present=present)
         self._submit_clicks = submit_clicks
 
-    def click(self, **_kwargs) -> None:
+    def click(self, *, timeout=None, no_wait_after=None) -> None:
         self._submit_clicks.append(1)
         super().click()
 
@@ -124,11 +124,11 @@ class FakeProbePage:
         self.submit_clicks: list[int] = []
         self._textarea_locator: _FakeLocator | None = None
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         self.url = url
 
-    def screenshot(self, **_kwargs) -> bytes:
+    def screenshot(self, *, full_page: bool | None = None, path=None) -> bytes:
         self.screenshot_calls += 1
         return b"\x89PNG probe-bytes"
 
@@ -165,7 +165,7 @@ class FakeProbePage:
             return _FakeLocator(present=False)
         return _FakeLocator(present=False)
 
-    def wait_for_url(self, _url_pattern, **_kwargs):
+    def wait_for_url(self, _url_pattern, *, wait_until=None, timeout=None):
         # #179: navigate_to_response_form больше не использует expect_navigation.
         return None
 

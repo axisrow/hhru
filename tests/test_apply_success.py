@@ -58,7 +58,7 @@ class _FakeLocator:
             return 1 if self._page._probe_count > self._appear_after else 0
         return self._count
 
-    def wait_for(self, timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0) -> None:  # noqa: ARG002
         if self.count() == 0:
             raise PlaywrightTimeoutError("not present")
 
@@ -103,7 +103,7 @@ class _FakePage:
             return _FakeLocator(count_value=1)
         return _FakeLocator(count_value=0)
 
-    def get_by_text(self, text, exact: bool = False):  # noqa: ARG002
+    def get_by_text(self, text, *, exact: bool = False):  # noqa: ARG002
         # Playwright get_by_text принимает str | Pattern. Для Pattern ищем
         # по множеству заготовленных фраз (как делает реальный regex-поиск).
         import re

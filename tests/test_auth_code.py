@@ -29,7 +29,7 @@ class _Locator:
     def first(self):
         return self
 
-    def wait_for(self, **_kwargs):
+    def wait_for(self, *, timeout: float | None = None, state: str | None = None):  # noqa: ARG002
         if self.kind == "email-type" and self.page.show_credentials_on_wait:
             self.page.stage = "credentials"
         if self.kind == "code" and self.page.show_code_on_wait:
@@ -44,7 +44,15 @@ class _Locator:
         elif self.kind == "submit":
             self.page.stage = "code"
 
-    def check(self, **_kwargs):
+    def check(
+        self,
+        *,
+        position=None,
+        timeout: float | None = None,
+        force: bool | None = None,
+        no_wait_after: bool | None = None,
+        trial: bool | None = None,
+    ):  # noqa: ARG002
         self.page.email_selected = True
 
     def fill(self, value):

@@ -138,13 +138,13 @@ def test_run_degrades_when_llm_client_construction_raises_any_exception(monkeypa
     class FakePage:
         url = "https://forms.example.test/application"
 
-        def goto(self, _url, wait_until):
+        def goto(self, _url, *, wait_until):
             pass
 
         def content(self):
             return "<html></html>"
 
-        def screenshot(self, **_kwargs):
+        def screenshot(self, *, path=None, full_page: bool | None = None):
             pass
 
     class FakeContext:
@@ -206,14 +206,15 @@ def test_run_uses_account_profile_answers(monkeypatch, tmp_path):
     class FakePage:
         url = "https://forms.example.test/application"
 
-        def goto(self, url, wait_until):
+        def goto(self, url, *, wait_until):
             captured["url"] = url
             captured["wait_until"] = wait_until
 
         def content(self):
             return "<html></html>"
 
-        def screenshot(self, **kwargs):
+        def screenshot(self, *, path=None, full_page: bool | None = None):
+            kwargs = {"path": path, "full_page": full_page}
             captured["screenshot"] = kwargs
 
     class FakeContext:
@@ -276,13 +277,13 @@ def test_run_reports_llm_matched_fields_in_dry_run_output(monkeypatch, tmp_path,
     class FakePage:
         url = "https://forms.example.test/application"
 
-        def goto(self, _url, wait_until):
+        def goto(self, _url, *, wait_until):
             pass
 
         def content(self):
             return "<html></html>"
 
-        def screenshot(self, **_kwargs):
+        def screenshot(self, *, path=None, full_page: bool | None = None):
             pass
 
     class FakeContext:

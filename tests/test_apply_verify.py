@@ -128,7 +128,7 @@ class FakeNegotiationsPage:
         self.goto_calls: list[str] = []
         self.wait_for_timeout_calls: list[int] = []
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         if self._goto_error is not None:
             raise self._goto_error
@@ -148,7 +148,7 @@ class FakeNegotiationsPage:
     def wait_for_timeout(self, ms: int) -> None:
         self.wait_for_timeout_calls.append(ms)
 
-    def screenshot(self, full_page: bool = True) -> bytes:  # noqa: ARG002
+    def screenshot(self, *, full_page: bool = True) -> bytes:  # noqa: ARG002
         return b"<png>"
 
 
@@ -480,7 +480,7 @@ class _Page1FailsPage(FakeNegotiationsPage):
     """Страница 0 грузится, переход на страницу 1 падает (goto_hh ретраит и
     пробрасывает PlaywrightError на последней попытке)."""
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         if "?page=1" in url:
             raise PlaywrightError("net::ERR_TIMED_OUT")
@@ -637,7 +637,7 @@ class _AlternatingPaginationPage(FakeNegotiationsPage):
         self._unconfirmed = page0_unconfirmed
         self._page0_gotos = 0
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         if "?page=1" in url:
             raise PlaywrightError("net::ERR_TIMED_OUT")
@@ -674,7 +674,7 @@ class _IncomparableSecondAttemptPage(FakeNegotiationsPage):
         self._incomparable = page0_incomparable
         self._page0_gotos = 0
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         if url == NEGOTIATIONS_URL:
             self._page0_gotos += 1
@@ -736,13 +736,19 @@ class _SimpleLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self, **_kwargs) -> None:
+    def click(
+        self,
+        *,
+        timeout: float | None = None,
+        force: bool | None = None,
+        no_wait_after: bool | None = None,
+    ) -> None:  # noqa: ARG002
         return None
 
     def get_attribute(self, _name: str) -> str | None:
@@ -770,7 +776,7 @@ class _ApplyPipelineFakePage:
     def __init__(self):
         self.goto_calls: list[str] = []
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
 
     def locator(self, selector: str) -> _SimpleLocator:  # noqa: ARG002
@@ -780,13 +786,15 @@ class _ApplyPipelineFakePage:
             return _SimpleLocator(True)
         return _SimpleLocator(False)
 
-    def wait_for_url(self, _url_pattern, **_kwargs) -> None:
+    def wait_for_url(
+        self, _url_pattern, *, wait_until: str | None = None, timeout: float | None = None
+    ) -> None:  # noqa: ARG002
         return None
 
     def content(self) -> str:
         return "<html></html>"
 
-    def screenshot(self, full_page: bool = True) -> bytes:  # noqa: ARG002
+    def screenshot(self, *, full_page: bool = True) -> bytes:  # noqa: ARG002
         return b""
 
 

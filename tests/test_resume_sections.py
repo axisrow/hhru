@@ -43,7 +43,11 @@ def test_recommendation_mapping_uses_current_semantic_labels() -> None:
     name = MagicMock()
     position = MagicMock()
     company = MagicMock()
-    page.get_by_label.side_effect = lambda label, exact: {
+    # exact — keyword-only в реальном Page.get_by_label; лямбда повторяет это,
+    # чтобы MagicMock не маскировал позиционный вызов (cycle-review PR #410
+    # round 2, Codex: AST-контракт не видит MagicMock-фейки, здесь сигнатура
+    # держится вручную).
+    page.get_by_label.side_effect = lambda label, *, exact: {
         "Имя человека": name,
         "Должность": position,
     }[label]

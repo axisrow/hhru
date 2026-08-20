@@ -103,7 +103,7 @@ class _Locator:
         if self.clicked is not None:
             self.clicked.append(True)
 
-    def wait_for(self, **kwargs):
+    def wait_for(self, *, timeout: float | None = None, state: str | None = None):  # noqa: ARG002
         return None
 
     def locator(self, selector):

@@ -144,7 +144,7 @@ class _Loc:
         loc._wait_error = self._wait_error
         return loc
 
-    def wait_for(self, state="visible", timeout=0):  # noqa: ARG002
+    def wait_for(self, *, state="visible", timeout=0):  # noqa: ARG002
         if self._wait_error:
             raise PlaywrightError("runtime error waiting for locator")
         self._state["waited"] = True

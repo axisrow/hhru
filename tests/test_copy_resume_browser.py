@@ -80,12 +80,12 @@ class StubLocator:
             )
         self._count = n
 
-    def wait_for(self, timeout=None):
+    def wait_for(self, *, timeout=None):
         if self._page is not None:
             self._page.wait_timeouts.append((self._scope, self.selector, timeout))
         self._resolve()
 
-    def click(self, timeout=None):
+    def click(self, *, timeout=None):
         self._resolve()
         self._page.clicks.append((self._scope, self.selector))
         self._page.on_click(self._scope, self.selector)
@@ -191,7 +191,7 @@ class StubPage:
         if selector == DUP_SEL and self._url_after_click:
             self.url = self._url_after_click
 
-    def wait_for_url(self, pattern, wait_until=None, timeout=None):
+    def wait_for_url(self, pattern, *, wait_until=None, timeout=None):
         assert wait_until == "commit"
         if not pattern.search(self.url):
             raise PlaywrightTimeoutError("wait_for_url timeout")
@@ -208,7 +208,7 @@ class StubPage:
         if self.tick_actions:
             self.tick_actions.pop(0)()
 
-    def reload(self, wait_until=None):
+    def reload(self, *, wait_until=None):
         self.reloads.append(wait_until)
         if self.reload_action is not None:
             self.reload_action()
@@ -263,7 +263,7 @@ def test_duplicate_click_error_is_uncertain(monkeypatch):
         def first(self):
             return self
 
-        def click(self, timeout=None):
+        def click(self, *, timeout=None):
             raise PlaywrightError("navigation interrupted")
 
     page = StubPage(
