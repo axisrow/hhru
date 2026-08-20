@@ -673,3 +673,73 @@ def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
 
     assert "прерван пользователем" in output
     assert "[FAIL] сессия истекла во время прогона" in output
+
+
+def test_limit_still_drains_pending_retries_before_stopping(monkeypatch, capsys):
+    # cycle-review PR #450: лимит — условие «не начинать новые вакансии», а не
+    # повод бросить уже накопленную неопределённость. Без слива retry_ids
+    # вакансия с транзиентным unknown навсегда репортится как unknown, хотя
+    # перепроверка подтвердила бы анкету (#448: unknown не выдавать за
+    # отсутствие анкеты).
+    cards = [_card("941"), _card("942")]
+    scanned = []
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        scanned.append((vacancy.vacancy_id, timeout_ms))
+        if vacancy.vacancy_id == "941":
+            if timeout_ms == questionnaire.FAST_TIMEOUT_MS:
+                return questionnaire.QuestionnaireScanResult(
+                    vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+                )
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+            )
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    probe.run_questionnaires(_bulk_args(limit_questionnaires=1))
+    output = capsys.readouterr().out
+
+    assert ("941", 90_000) in scanned, "накопленный retry не выполнен из-за лимита"
+    assert "unknown 0" in output
+
+
+def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
+    # cycle-review PR #450 (Codex): прерывание не должно давать exit 0, если в
+    # обработанной части остались неразрешённые unknown — иначе неполный скан
+    # неотличим от полного. Fail-closed тот же, что и для потери авторизации.
+    cards = [_card("951"), _card("952")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "952":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args()) is True
+    output = capsys.readouterr().out
+
+    assert "прерван пользователем" in output
+    assert "[FAIL]" in output
+
+
+def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys):
+    # Обратная сторона: намеренная остановка чистого частичного прогона — не
+    # провал (#448 требует корректного частичного итога), иначе Ctrl-C всегда
+    # был бы ошибкой.
+    cards = [_card("961"), _card("962")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "962":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args()) is False
+    assert "[FAIL]" not in capsys.readouterr().out

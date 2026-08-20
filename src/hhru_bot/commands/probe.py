@@ -601,6 +601,11 @@ def _questionnaire_counts(results) -> dict[str, int]:
     }
 
 
+def _limit_reached(results, limit: int) -> bool:
+    """True when --limit-questionnaires is set and already satisfied."""
+    return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
+
+
 def run_questionnaires(args: argparse.Namespace) -> bool:
     """Scan raw search cards in one context/page, without local history."""
     from ..apply.questionnaire import (
@@ -662,7 +667,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
                     if result.status == UNKNOWN and result.retryable:
                         retry_ids.append(vacancy.vacancy_id)
-                    if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
+                    if _limit_reached(all_results, limit):
                         break
                     time.sleep(
                         random.uniform(
@@ -671,8 +676,11 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                         )
                     )
 
-                if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
-                    break
+                # cycle-review PR #450: лимит — условие «не начинать новые
+                # вакансии», а не повод бросить уже накопленную неопределённость.
+                # retry_ids сливается до выхода, иначе транзиентный unknown
+                # навсегда репортится как unknown (#448: unknown не выдавать за
+                # отсутствие анкеты).
                 for vacancy_id in retry_ids:
                     vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
                     print(f"[INFO] retry вакансии {vacancy_id}: долгий повтор", flush=True)
@@ -689,15 +697,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
                     _print_questionnaire_progress(result, result_index + 1, len(vacancies))
-                    if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
-                        break
                     time.sleep(
                         random.uniform(
                             config.throttle.min_delay_seconds,
                             config.throttle.max_delay_seconds,
                         )
                     )
-                if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
+                if _limit_reached(all_results, limit):
                     break
     except KeyboardInterrupt:
         interrupted = True
@@ -721,6 +727,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
         # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
         # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
+        return True
+    if interrupted and unknown:
+        # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
+        # неразрешённый unknown в частичном прогоне делает результат
+        # неотличимым от полного скана, если выйти с успехом. Retry этих
+        # вакансий не состоялся именно из-за остановки.
+        print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
         return True
     if interrupted:
         # Осознанное прерывание пользователем — не провал: частичный отчёт уже
