@@ -80,7 +80,7 @@ def create_backup(
 def _member_name(member: tarfile.TarInfo) -> str:
     name = member.name
     path = PurePosixPath(name)
-    if not name or path.is_absolute() or ".." in path.parts:
+    if not name or "\\" in name or path.is_absolute() or ".." in path.parts:
         raise BackupError(f"Небезопасный путь в архиве: {name!r}")
     if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
         raise BackupError(f"Недопустимый тип записи в архиве: {name!r}")
@@ -149,6 +149,10 @@ def restore_backup(
             for name in names:
                 source = staging / name
                 target = root / name
+                try:
+                    target.resolve(strict=False).relative_to(root.resolve())
+                except ValueError as exc:
+                    raise BackupError(f"Путь назначения выходит за пределы data: {name!r}") from exc
                 if not source.is_file():
                     continue
                 # Never follow a pre-existing symlink while constructing the
