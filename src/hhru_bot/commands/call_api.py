@@ -14,6 +14,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from ..browser import HH_BASE_URL
 
 ALLOWED_HOSTS = frozenset({"hh.ru", "api.hh.ru"})
+API_BASE_URL = "https://api.hh.ru"
 
 
 class CallApiError(ValueError):
@@ -70,7 +71,10 @@ def _endpoint_url(endpoint: str, params: list[str]) -> str:
         query += urlencode({key: value})
 
     if not parts.scheme:
-        parts = urlsplit(f"{HH_BASE_URL}{endpoint}")
+        # The documented shorthand is an API endpoint (e.g. /employers), not
+        # a web route on hh.ru.  Keep the browser session validation on hh.ru,
+        # while sending the actual API request to api.hh.ru.
+        parts = urlsplit(f"{API_BASE_URL}{endpoint}")
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.integration
 
 def test_endpoint_defaults_to_hh_and_encodes_params():
     assert _endpoint_url("/employers", ["text=IT", "only_with_vacancies=true"]) == (
-        "https://hh.ru/employers?text=IT&only_with_vacancies=true"
+        "https://api.hh.ru/employers?text=IT&only_with_vacancies=true"
     )
 
 
@@ -92,5 +92,5 @@ def test_run_uses_authenticated_browser_request_and_prints_body(monkeypatch, cap
         )
     )
 
-    assert context.request.urls == ["https://hh.ru/employers?text=IT"]
+    assert context.request.urls == ["https://api.hh.ru/employers?text=IT"]
     assert capsys.readouterr().out == '{"items": []}\n'
