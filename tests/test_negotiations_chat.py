@@ -71,6 +71,7 @@ def test_repeated_question_punctuation_counts_as_one_question():
     assert not is_robot_questionnaire(
         [ChatMessage("employer", "1", "Вы ещё рассматриваете вакансию??")]
     )
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "Вы готовы?!?!")])
 
 
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):

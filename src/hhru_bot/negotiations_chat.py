@@ -88,7 +88,7 @@ class ReplyDecision:
 _ROBOT_AUTHOR_RE = re.compile(
     r"(?<!\w)(?:автоматический(?:\s+бот)?|автобот|робот|robot|bot)(?!\w)", re.I
 )
-_QUESTION_RE = re.compile(r"\?+")
+_QUESTION_RE = re.compile(r"[?!]+")
 
 
 def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
