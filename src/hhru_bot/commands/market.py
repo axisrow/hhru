@@ -37,3 +37,7 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
     rows = history.market_salary_by_query(include_estimates=args.estimates)
     print(market_summary(rows))
+    ages = history.vacancy_age_distribution()
+    print("\nВозраст вакансий:")
+    for bucket, count in ages.items():
+        print(f"{bucket}: {count}")

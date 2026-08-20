@@ -9,6 +9,7 @@ search СОБИРАЕТ карточки с зарплатой (#34), но ра�
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -432,3 +433,116 @@ def test_market_salary_with_estimates_marks_estimated_flag(tmp_path):
     est = h.market_salary_by_query(include_estimates=True)[0]
     # все вакансии с ЗП — оценки не понадобились, estimated=False.
     assert est["estimated"] is False
+
+
+# --- свежесть вакансий: published_at (issue #429) ----------------------------
+
+
+def test_upsert_stores_published_at(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at="2026-08-19T00:00:00",
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["published_at"] == "2026-08-19T00:00:00"
+
+
+def test_upsert_missing_published_at_preserves_previous_value(tmp_path):
+    """Регрессия (code review PR #430): дата публикации неизменна, повторный
+    scrape без даты (селектор не сработал/отсутствует) не должен затирать
+    уже известное значение NULL'ом."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at="2026-08-19T00:00:00",
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at=None,
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["published_at"] == "2026-08-19T00:00:00"
+
+
+def test_upsert_new_published_at_overwrites_previous_value(tmp_path):
+    """Селектор снова сработал со свежим значением — новое значение побеждает."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at="2026-08-19T00:00:00",
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at="2026-08-20T00:00:00",
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["published_at"] == "2026-08-20T00:00:00"
+
+
+def test_vacancy_age_distribution_counts_each_vacancy_once(tmp_path):
+    """Регрессия (code review PR #430): UNIQUE — (vacancy_id, search_query),
+    одна и та же вакансия по нескольким запросам не должна считаться дважды."""
+    h = History(tmp_path / "h.db")
+    now = datetime(2026, 8, 20, 12, 0, 0)
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at=now.isoformat(),
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="1",
+        title="T",
+        company="C",
+        search_query="django",
+        published_at=now.isoformat(),
+    )
+    dist = h.vacancy_age_distribution(now=now)
+    assert dist["<1 дня"] == 1
+    assert sum(dist.values()) == 1
+
+
+def test_vacancy_age_distribution_buckets_by_age(tmp_path):
+    h = History(tmp_path / "h.db")
+    now = datetime(2026, 8, 20, 12, 0, 0)
+    ages_days = {"a": 0, "b": 3, "c": 15, "d": 45}
+    for vacancy_id, days_ago in ages_days.items():
+        h.upsert_vacancy_seen(
+            vacancy_id=vacancy_id,
+            title="T",
+            company="C",
+            search_query="python",
+            published_at=(now - timedelta(days=days_ago)).isoformat(),
+        )
+    h.upsert_vacancy_seen(
+        vacancy_id="e",
+        title="T",
+        company="C",
+        search_query="python",
+        published_at=None,
+    )
+    dist = h.vacancy_age_distribution(now=now)
+    assert dist == {
+        "<1 дня": 1,
+        "1-7 дней": 1,
+        "7-30 дней": 1,
+        "30+ дней": 1,
+        "неизвестно": 1,
+    }

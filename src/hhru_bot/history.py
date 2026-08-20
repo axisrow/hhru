@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     last_seen_at TEXT NOT NULL,
     employer_tier TEXT,
     vacancy_text TEXT,
+    published_at TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -391,6 +392,7 @@ class History:
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
             _ensure_column(conn, "vacancies_seen", "vacancy_text", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "published_at", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -1364,6 +1366,7 @@ class History:
         salary_currency: str | None = None,
         employer_tier: str | None = None,
         vacancy_text: str | None = None,
+        published_at: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1384,6 +1387,11 @@ class History:
         сборе для группировки медианы в ``estimate_salary``. При обновлении
         существующей строки tier тоже освежается (компания могла накопить
         отзывов между scrape'ами; trusted-бейдж hh.ru на tier не влияет — #118).
+
+        ``published_at`` — дата публикации вакансии на hh.ru, неизменна по
+        своей природе. Селектор для неё опционален (см. ``selector_groups/
+        search_page.py``), поэтому при повторном scrape без даты уже известное
+        значение сохраняется (``COALESCE``), а не затирается NULL'ом.
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1396,8 +1404,8 @@ class History:
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
                      salary_currency, search_query, first_seen_at,
-                     last_seen_at, employer_tier, vacancy_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_seen_at, employer_tier, vacancy_text, published_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -1406,6 +1414,7 @@ class History:
                     salary_currency = excluded.salary_currency,
                     employer_tier = excluded.employer_tier,
                     vacancy_text = excluded.vacancy_text,
+                    published_at = COALESCE(excluded.published_at, published_at),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1420,6 +1429,7 @@ class History:
                     now,
                     employer_tier,
                     vacancy_text,
+                    published_at,
                 ),
             )
 
@@ -1432,7 +1442,8 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text "
+                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
+                "published_at "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1446,6 +1457,37 @@ class History:
                 "GROUP BY vacancy_id"
             ).fetchall()
         return [row["vacancy_text"] for row in rows]
+
+    def vacancy_age_distribution(self, now: datetime | None = None) -> dict[str, int]:
+        """Count observed vacancies by age of hh.ru publication date.
+
+        UNIQUE-индекс — (vacancy_id, search_query), поэтому одна и та же
+        вакансия, встреченная под несколькими поисковыми запросами, даёт
+        несколько строк. Группируем по vacancy_id, чтобы посчитать каждую
+        вакансию один раз (как list_vacancy_texts/estimate_salary).
+        """
+        now = now or datetime.now()
+        result = {"<1 дня": 0, "1-7 дней": 0, "7-30 дней": 0, "30+ дней": 0, "неизвестно": 0}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT MAX(published_at) AS published_at FROM vacancies_seen GROUP BY vacancy_id"
+            ).fetchall()
+        for row in rows:
+            value = row["published_at"]
+            try:
+                age = (now - datetime.fromisoformat(value)).total_seconds() / 86400
+            except (TypeError, ValueError):
+                result["неизвестно"] += 1
+                continue
+            if age < 1:
+                result["<1 дня"] += 1
+            elif age < 7:
+                result["1-7 дней"] += 1
+            elif age < 30:
+                result["7-30 дней"] += 1
+            else:
+                result["30+ дней"] += 1
+        return result
 
     # --- Профиль аккаунта для внешних форм (#282/#284) -----------------------
 
