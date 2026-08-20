@@ -79,11 +79,20 @@ def create_backup(
     output: str | Path,
     *,
     require_config: bool = True,
+    extra_storage: Path | None = None,
 ) -> Path:
-    """Create a gzip tar archive with config, session state and a consistent DB."""
+    """Create a gzip tar archive with config, session state and a consistent DB.
+
+    ``extra_storage`` optionally names one more session file to snapshot that
+    is not discoverable from ``config`` (e.g. it names a session path already
+    removed together with the config itself during a disaster-recovery
+    restore). It is included the same way as a configured session file.
+    """
     config, history, output = Path(config), Path(history), Path(output)
     root = _root(config, history)
     configured_storage = _configured_storage_path(config, root) if config.is_file() else None
+    if extra_storage is not None and configured_storage is None:
+        configured_storage = extra_storage
     output_resolved = output.resolve()
     managed = {
         config.resolve(),
@@ -202,8 +211,6 @@ def restore_backup(
         return names
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     rollback = root / f".before-restore-{stamp}.tar.gz"
-    if config.exists() or history.exists() or (root / "storage_state").is_dir():
-        create_backup(config, history, rollback, require_config=False)
     with tempfile.TemporaryDirectory(prefix="hhru-restore-", dir=root.parent) as tmp:
         staging = Path(tmp) / root.name
         staging.mkdir()
@@ -227,11 +234,44 @@ def restore_backup(
                 raise BackupError("Некорректный config.yaml в архиве") from exc
             desired_storage = _configured_storage_from_raw(config, root, raw)
 
-        storage_targets = {
-            _storage_archive_name(path, root): path
-            for path in (previous_storage, desired_storage)
-            if path is not None
-        }
+        # Snapshot the current state before touching anything. When the live
+        # config is already gone (e.g. a disaster-recovery restore where
+        # config.yaml and history.db were both lost), `previous_storage` is
+        # unknown, but the destination this restore is about to overwrite —
+        # `desired_storage`, read from the archive's own config.yaml above —
+        # may still survive on disk with unsaved changes. Pass it through so
+        # the rollback snapshot captures it too, instead of losing it silently.
+        if (
+            config.exists()
+            or history.exists()
+            or (root / "storage_state").is_dir()
+            or (previous_storage is not None and previous_storage.is_file())
+            or (desired_storage is not None and desired_storage.is_file())
+        ):
+            create_backup(
+                config,
+                history,
+                rollback,
+                require_config=False,
+                extra_storage=desired_storage,
+            )
+
+        # Only `desired_storage` — the session path named by the archive's own
+        # config.yaml — legitimately owns the canonical "storage_state/<basename>"
+        # alias: create_backup() is what put it there under that name. Routing
+        # by `previous_storage`'s alias too would be a guess: nothing ties an
+        # ordinary in-tree archive member to the *previous* live config's
+        # session path, only to the snapshot being restored. Using the live
+        # config's alias here previously caused an archived member to be
+        # misrouted to the previous external session file, silently dropping
+        # the real member and overwriting stale bearer-token content instead
+        # of removing it (see restore_backup's cleanup block below, which
+        # handles `previous_storage` by its actual path, not by name).
+        storage_targets = (
+            {_storage_archive_name(desired_storage, root): desired_storage}
+            if desired_storage is not None
+            else {}
+        )
 
         def target_for(name: str) -> Path:
             if name == "config.yaml":
