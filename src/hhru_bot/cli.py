@@ -120,6 +120,7 @@ def _is_write_command(args: argparse.Namespace) -> bool:
     """Whether this parsed command needs the write lock."""
     return (
         args.command in WRITE_COMMANDS
+        or (args.command == "refresh-token" and getattr(args, "force", False))
         or (
             args.command,
             getattr(args, "account_command", None),
