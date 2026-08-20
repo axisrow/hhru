@@ -37,10 +37,11 @@ python3 -m playwright install chromium
 
 # Общие флаги: --headless, --verbose, --config <path>, --history <path>, --max-pages <n>
 # --resume опционален — без него команда идёт по всем резюме из конфига
+# --max-pages по умолчанию адаптивный; --limit apply — целевое число УСПЕШНЫХ откликов (#441)
 ```
 
-Тестов, линтера и системы сборки в проекте **нет** — это простой скрипт с `requirements.txt`
-и запуском через установленный entry point `hhru` (editable install `pip install -e .`).
+Система сборки — `pip install -e .` (editable install, entry point `hhru`), линтер — `ruff`
+(`check` + `format --check`), тесты — `pytest`; все три гоняются в CI (см. «Тестирование и TDD»).
 
 ## Архитектура
 
@@ -48,8 +49,8 @@ python3 -m playwright install chromium
 (`search_vacancies`, живёт в `search.py`) → **фильтрация/отсев** (`filter_candidates`
 + pre-LLM-префильтр #85 + таблица skipped #87, живёт в `search.py`/`history.py`) →
 **планирование** (`run_apply_for_resume` — ранжирование/скоринг #74 + дневной лимит,
-живёт в `commands/_common.py`) → **действие** (`apply_to_vacancy`/`bump_resume`, живёт в
-`apply/`/`bump.py`) → **запись результата** (`history`, живёт в `history.py`). Каждая
+живёт в `commands/_common.py`) → **действие** (`apply_to_vacancy` в `apply/pipeline.py`,
+`bump_resume` в `bump.py`) → **запись результата** (`history`, живёт в `history.py`). Каждая
 ответственность — отдельный модуль с чистыми переиспользуемыми функциями (см. `apply/`
 ниже); имена файлов — это «где живёт», а не суть шага. Все браузерные модули
 используют **синхронный** Playwright API (`playwright.sync_api`).
@@ -96,7 +97,7 @@ python3 -m playwright install chromium
 
 4. **Форма отклика — двухшаговая навигация.** `VACANCY_APPLY_BUTTON` на странице вакансии
    это `<a href="/applicant/vacancy_response?...">`, а НЕ триггер модалки на той же
-   странице. `apply.py`/`apply/steps.py::navigate_to_response_form` кликает и ждёт
+   странице. `apply/steps.py::navigate_to_response_form` кликает и ждёт
    `page.wait_for_url(..., wait_until="commit")`, и только потом ищет поля формы.
    Не переписывай на «клик → искать модалку сразу». **Не `page.expect_navigation()`**
    (#179): у залогиненного пользователя переход на `/applicant/vacancy_response`
@@ -145,71 +146,61 @@ python3 -m playwright install chromium
    а флаговые результаты (`questions.indeterminate`, `probe.unreachable`) используют
    тот же словарь состояний `browser.PAGE_STATE`.
 
-### `selectors.py` — статус проверки селекторов (критично)
+### Селекторы — статус проверки (критично)
 
-Все CSS/`data-qa` селекторы hh.ru собраны в одном файле `selectors.py`; остальной код их
-не дублирует. Их статус разный, и это отражено в комментариях файла:
+Канонический источник селекторов — пакет `selector_groups/` (по страницам);
+`selectors.py` — тонкий shim для обратной совместимости, новый код импортирует
+из конкретной группы. Статус подтверждённости живёт в комментариях **того модуля,
+где определён селектор** — не дублируется здесь построчно, только сводка:
 
 - **Подтверждено curl-дампом** (без логина): селекторы страницы поиска (`/search/vacancy`)
   и страницы вакансии (`/vacancy/{id}`).
-- **Подтверждено живым DOM / боевыми дампами** (2026-08-20, multi-resume аккаунт):
-  `APPLY_RESUME_SELECT` (`resume-title` — свёрнутый ТРИГГЕР выбора резюме, не коллекция
-  опций; клик по нему раскрывает `<label data-qa="magritte-select-option-{resume_id}"
-  role="option">` — resume_id уже в самом `data-qa`, атрибута `href` на форме нет вовсе),
-  `APPLY_COVER_LETTER_TEXTAREA`, `APPLY_SUBMIT_BUTTON`, `APPLY_COVER_LETTER_TOGGLE_POPUP`
-  (`add-cover-letter` — тоггл письма МОДАЛКИ). `APPLY_COVER_LETTER_TOGGLE`
-  (`vacancy-response-letter-toggle`) относится к ПОЛНОЙ форме и в модалке не совпадает
-  (см. `apply_form.py` и разбор двух shape ниже).
+- **Подтверждено живым DOM / боевыми дампами** (`apply_form.py`): вся форма отклика —
+  выбор резюме, оба варианта letter-toggle, textarea письма, submit, dropdown-панель.
+- **Подтверждено konard reference, НЕ сверено собственным дампом** (`apply_form.py`):
+  детекция тест-вопросов (`task-body`/`task-question`).
+- **Заимствовано из reference-проектов, НЕ подтверждено живым DOM** (`vacancy_page.py`,
+  #342/PR #435, waiver владельца репозитория): семь пост-кликовых блокеров hh.ru
+  (relocation-confirm, похожие вакансии, внешний отклик, `negotiations-limit-exceeded`,
+  reject/error-уведомления) — недостижимо подтвердить в read-only режиме без мутации
+  аккаунта. Риск асимметричен: несовпавший селектор безвреден (код просто не видит
+  блокер), опасность только в ложном совпадении, поэтому все терминальные вердикты
+  fail-closed и ни один не выполняет submit. При странном поведении `apply` эти
+  селекторы — первый подозреваемый вместе с формой отклика.
 - **НЕ подтверждено** (рендерится только залогиненному через JS): страница резюме с кнопкой
   поднятия, маркер «уже откликались».
 
-Перед первым боевым `bump` (форма отклика уже сверена, см. выше): пройти `login`, открыть
-страницу резюме в обычном браузере (F12 → Elements), сверить `data-qa` и поправить прямо в
-`selectors.py`/`selector_groups/`. При отладке падений на этом шаге первый подозреваемый —
-устаревший непроверенный селектор, а не логика модуля.
+Перед первым боевым `bump` (форма отклика уже сверена): пройти `login`, открыть страницу
+резюме в обычном браузере (F12 → Elements), сверить `data-qa` и поправить прямо в
+`selector_groups/`. При отладке падений на этом шаге первый подозреваемый — устаревший
+непроверенный селектор, а не логика модуля.
 
 **hh.ru рендерит форму отклика в ДВУХ shape с похожим, но не идентичным DOM:** МОДАЛКА
 на самой странице вакансии (`form#RESPONSE_MODAL_FORM_ID`, letter-toggle `add-cover-letter`,
 textarea `vacancy-response-popup-form-letter-input`) и полноценная страница
 `/applicant/vacancy_response` (letter-toggle `vacancy-response-letter-toggle`, textarea
-`vacancy-response-form-letter-input`).
+`vacancy-response-form-letter-input`). Кнопка отклика — всегда
+`<a href="/applicant/vacancy_response…">`, но hh.ru обычно перехватывает клик JS и
+рендерит МОДАЛКУ без навигации (`<link rel="canonical">` остаётся `/vacancy/{id}`);
+надёжный маркер shape в дампе — `form="RESPONSE_MODAL_FORM_ID"`, не `add-cover-letter`
+(его нет в DOM, когда hh.ru отрендерил textarea уже развёрнутой). По всем 95 дампам
+`data/logs/` letter-toggle ПОЛНОЙ формы (`vacancy-response-letter-toggle`) тоже
+встречается внутри модалки в части случаев — hh.ru рендерит оба варианта тоггла, и
+ни один по отдельности не покрывает все наблюдавшиеся случаи. `fill_response_form`
+адресует оба shape через `Locator.or_`, а отсутствие textarea — **fail-closed отказ
+до submit** (отклик без письма не отправляем). Full-page селекторы НЕ удалять — оба
+shape наблюдались в дампах одного дня.
 
-**Прежнее утверждение «бот всегда использует ВТОРУЮ» ОПРОВЕРГНУТО (2026-08-20).** Во всех
-дампах `data/logs/apply_*` начиная с 2026-08-16 `<link rel="canonical">` остаётся
-`/vacancy/{id}` — навигации не происходит, фактически работает МОДАЛКА. Кнопка отклика
-по-прежнему `<a href="/applicant/vacancy_response…">`, но hh.ru перехватывает клик JS.
-Надёжный маркер shape в дампе — `form="RESPONSE_MODAL_FORM_ID"`; `add-cover-letter`
-маркером НЕ является (его нет в DOM, когда hh.ru отрендерил textarea уже развёрнутой).
-
-Цена ошибки была измерена: селектор letter-toggle полной формы в модалке не совпадает
-ни разу, поэтому письмо молча терялось — по SSR `topicList[].hasResponseLetter` из 18
-откликов аккаунта с письмом ушли 2, без письма 16. Теперь `fill_response_form` адресует
-оба shape через `Locator.or_`, а отсутствие textarea — **fail-closed отказ до submit**
-(отклик без письма не отправляем). Full-page селекторы НЕ удалять: оба shape наблюдались
-в дампах одного дня (08-16).
-
-**Панель выбора резюме не закрывается сама — её надо закрыть явно.** Боевой случай
-2026-08-20 (`136190065`/`136190066`): клик по опции резюме выбирает её
-(`aria-selected="true"`), но всплывающая панель `[data-qa='drop-base']` остаётся
-открытой. Она спозиционирована абсолютно (`z-index: 2250`, высота ~281px) и физически
-перекрывает submit в футере модалки → клик ретраил 30 с
-(`subtree intercepts pointer events`) и падал в `SubmitClickUncertain` — ложная
-«неопределённость» при НЕотправленном отклике.
-
-Закрывается повторным кликом по триггеру `APPLY_RESUME_SELECT` (стандартный toggle
-селекта; проверено probe-прогоном на живой форме). Escape не используем: в модалке он
-может закрыть всю форму отклика.
-
-Ждать надо скрытия **самой панели**, а не опции: опции внутри неё — постоянно видимые
-карточки, они остаются `visible`, пока панель открыта, поэтому ожидание скрытия опции
-не выполнилось бы никогда (проверено: такой вариант отказывал в 100% случаев).
-`[data-qa='drop-base']` — single-match. Источник подтверждения — **боевой лог**
-(`data/logs/hhru_bot.log`): Playwright в сообщении об интерсепте печатает ровно один
-`<div role="listbox" data-qa="drop-base">`. На probe-HTML-дампы в этом вопросе
-ссылаться **нельзя**: атрибута `data-qa="drop-base"` в них нет вовсе, а встречающиеся
-там вхождения `drop-base` — это CSS-классы/атрибуты Magritte
-(`data-magritte-drop-base-direction`). Прежнее утверждение «подтверждён probe-дампами:
-0 до, 1 после» опиралось именно на них и было неверным по источнику (сам селектор верен).
+**Панель выбора резюме не закрывается сама — её надо закрыть явно.** Клик по опции
+резюме выбирает её (`aria-selected="true"`), но всплывающая панель `[data-qa='drop-base']`
+остаётся открытой, спозиционирована абсолютно и физически перекрывает submit в футере
+модалки — без явного закрытия клик по submit ретраит 30с и падает в
+`SubmitClickUncertain` (ложная «неопределённость» при НЕотправленном отклике).
+Закрывается повторным кликом по триггеру `APPLY_RESUME_SELECT` (Escape не используем:
+в модалке он может закрыть всю форму отклика). Ждать надо скрытия **самой панели**,
+а не опции — опции внутри неё остаются `visible`, пока панель открыта.
+На probe-HTML-дампы для подтверждения `data-qa='drop-base'` ссылаться **нельзя** —
+атрибута там нет вовсе (источник подтверждения — боевой лог Playwright-интерсепта).
 
 ### Граница браузерных действий
 
@@ -265,17 +256,15 @@ non-dry-run `apply` — диагностировать по `[WARN indeterminate
   `config_sections/<name>.py`, `ResumeConfig` не трогается (для scoring/ai_profile там
   пред-добавлены нейтральные `Optional`-поля `= None`).
 - **Схема SQLite — одна константа `SCHEMA` в `history.py`** (а не пакет `migrations/`):
-  `CREATE TABLE IF NOT EXISTS` для всех таблиц (actions, responses, manual_offers),
-  применяется `_init_schema()` через `conn.executescript(SCHEMA)` в `History.__init__`.
+  `CREATE TABLE IF NOT EXISTS` для всех таблиц (`actions`, `responses`, `manual_offers`,
+  `skipped`, `replies` и другие — полный список см. `history.py`), применяется
+  `_init_schema()` через `conn.executescript(SCHEMA)` в `History.__init__`.
   Системы миграций в проекте нет намеренно (оверинжиниринг для такого размера) — при
   сильных изменениях схемы базу пересоздают заново (данных мало). Не заводи DDL в `.sql`
   и не вводи таблицу `schema_migrations`; новые таблицы дописывай в `SCHEMA`.
 - **`selector_groups/`** — селекторы по страницам. `selectors.py` — тонкий shim
   (`sel.VACANCY_CARD`...) для обратной совместимости; новый код импортирует из группы.
-- **`tests/`** — characterization-тесты на чистую логику (без браузера): `filter_candidates`,
-  `build_search_url`, `render_cover_letter`, `load_config`, `_init_schema` идемпотентность
-  (создание таблиц + повторный запуск через `IF NOT EXISTS`),
-  `register_commands` + `--help`. Покрывают реструктуризацию от регрессий.
+- **`tests/`** — правила маркеров и запуска см. «Тестирование и TDD» ниже.
 
 Конвенция репортов: **один report-топик на файл** (напр. `report.py` vs `report_funnel.py`),
 чтобы параллельные ишью статистики/воронки не конфликтовали.
@@ -287,7 +276,7 @@ non-dry-run `apply` — диагностировать по `[WARN indeterminate
   `resume_url`. Ошибки конфига бросают `ConfigError`, а `load_config_or_exit()` печатает их
   и делает `sys.exit(1)`.
 - Сопроводительное письмо: `cover_letter` резюме, иначе `cover_letter_default`. Плейсхолдеры
-  `{vacancy_title}` и `{company_name}` подставляются в `render_cover_letter()` (apply.py).
+  `{vacancy_title}` и `{company_name}` подставляются в `render_cover_letter()` (`apply/letter.py`).
 - **Все изменяемые данные живут в `data/`, вся папка целиком в `.gitignore` одной строкой**
   (#133). Новый изменяемый артефакт кладётся туда же и правки `.gitignore` не требует —
   точечные правила («забыли строку → секрет в коммите») сознательно убраны.
@@ -340,3 +329,8 @@ config/
 - Не создавай новые live-тесты для проверки обычной логики: используй моки и
   HTML-фикстуры. Перед изменением тестовой инфраструктуры проверь
   `pytest --collect-only -q` и убедись, что live-категории не собраны.
+- CI гоняет сюиту под `pytest-xdist` (`-n 4 --dist worksteal`) и проверяет её через
+  `scripts/check_pytest_budget.py` (порог `SUITE_BUDGET_SECONDS = 60.0`, гейт меряет
+  время шага на общем раннере, а не свойство кода — см. комментарий в файле). Отдельно
+  CI сверяет `ruff check`, `ruff format --check` и актуальность `README` командной
+  справки (`scripts/gen_cli_docs.py --check`).
