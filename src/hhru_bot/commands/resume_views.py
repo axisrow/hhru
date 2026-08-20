@@ -75,9 +75,7 @@ def run(args: argparse.Namespace) -> None:
                         page.content(), resume.resume_id, limit=args.limit
                     )
                 except (ValueError, TypeError) as exc:
-                    rows = parse_resume_view_history_dom(
-                        page, resume.resume_id, limit=args.limit
-                    )
+                    rows = parse_resume_view_history_dom(page, resume.resume_id, limit=args.limit)
                     if not rows:
                         print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
                         raise SystemExit(1) from exc
