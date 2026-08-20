@@ -167,6 +167,7 @@ def test_list_skipped_joins_vacancy_details_without_duplicates(tmp_path):
     h = History(tmp_path / "h.db")
     h.upsert_vacancy_seen("v1", "python", "Python developer", "Acme")
     h.upsert_vacancy_seen("v1", "backend", "Python developer", "Acme")
+    h.upsert_vacancy_seen("v1", "python", "Updated title", "Updated Acme")
     h.record_skip("r1", "v1", SKIP_REASONS.STOPWORD_TITLE)
     h.record_skip("r2", "missing", SKIP_REASONS.HAS_QUESTIONS)
 
@@ -176,8 +177,8 @@ def test_list_skipped_joins_vacancy_details_without_duplicates(tmp_path):
     assert rows[0]["vacancy_id"] == "missing"
     assert rows[0]["title"] is None
     joined = next(row for row in rows if row["vacancy_id"] == "v1")
-    assert joined["title"] == "Python developer"
-    assert joined["company"] == "Acme"
+    assert joined["title"] == "Updated title"
+    assert joined["company"] == "Updated Acme"
     assert set(joined["search_query"].split(",")) == {"python", "backend"}
 
 

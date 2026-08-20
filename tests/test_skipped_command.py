@@ -28,6 +28,7 @@ def test_skipped_run_prints_joined_rows_and_filter(capsys, tmp_path):
 
     out = capsys.readouterr().out
     assert "Вакансия" in out
+    assert "https://hh.ru/vacancy/v2" in out
     assert "v2" in out
     assert "v1" not in out
     assert "has_questions" in out
