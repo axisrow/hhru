@@ -3,31 +3,61 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-# CI runners have variable startup/load time.  A tight 20s threshold made a
-# passing suite fail intermittently (the suite itself is normally ~10-15s).
-# Raised 30s -> 90s (#428): the suite grew to 1500+ tests and a loaded shared
-# runner took 50-67s wall time with zero failing tests two runs in a row —
-# not a regression in test cost (local wall time stayed ~9s), just less
-# headroom against runner variance.
-# Raised 90s -> 240s (#428, same day): with many PRs/sessions queuing CI
-# concurrently on this repo, a single shared runner hit 143s wall time with
-# zero failing tests — local wall time stayed ~10s throughout. The dominant
-# variable here is runner queue contention, not test cost, and that
-# contention scales with how many PRs are active at once rather than with
-# anything this suite controls. 240s keeps a real regression (e.g. a
-# introduced O(n^2) or a hung fixture) clearly detectable — that would blow
-# past it by many multiples — while giving CI-queue variance real headroom
-# instead of chasing it fix-by-fix.
-SUITE_BUDGET_SECONDS = 240.0
+# The suite runs under xdist (see the argv below), which puts CI wall time at
+# 12-15s and local wall time at ~4s.
+#
+# The budget is deliberately far above that. This gate measures wall time on a
+# shared GitHub runner, so it also captures queue contention: #428 recorded a
+# 143s run with zero failing tests while local wall time stayed ~10s. That is
+# why the threshold was escalated 20 -> 30 -> 90 -> 240 fix-by-fix.
+#
+# 60s is the middle ground: a real regression (an accidental O(n^2), a hung
+# fixture) blows past it by multiples and is caught far earlier than 240s would
+# catch it, while ordinary runner variance stays under it. The gate still
+# measures runner noise rather than a property of the code — that design flaw
+# is tracked in #438, not worked around here.
+SUITE_BUDGET_SECONDS = 60.0
+
+
+def run_suite(cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
+    """Запустить сюиту под xdist так, чтобы гейт был исполним в любом окружении.
+
+    `-p xdist.plugin` обязателен при выключенном autoload и приводит к
+    повторной регистрации плагина при включённом (`ValueError: Plugin already
+    registered`). Раньше autoload выключался переменной окружения в шаге
+    `ci.yml`, поэтому вне этого шага скрипт падал всегда. Переменная выставляется
+    здесь же, в окружении подпроцесса, — гейт больше не зависит от того, кто и
+    откуда его вызвал.
+    """
+    env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "xdist.plugin",
+            "-n",
+            "4",
+            "--dist",
+            "worksteal",
+        ],
+        check=False,
+        env=env,
+        cwd=cwd,
+    )
 
 
 def main() -> int:
     started = time.monotonic()
-    result = subprocess.run([sys.executable, "-m", "pytest", "-q"], check=False)
+    result = run_suite()
     elapsed = time.monotonic() - started
 
     print(f"pytest suite wall time: {elapsed:.2f}s (budget: {SUITE_BUDGET_SECONDS:.0f}s)")
