@@ -101,8 +101,25 @@ def run(args: argparse.Namespace) -> bool:
                 )
                 for resume in resumes
             }
+            ranked_by_resume = {
+                resume.id: sorted(
+                    [
+                        (
+                            item.card,
+                            routed[item.card.vacancy_id].score,
+                            routed[item.card.vacancy_id].breakdown,
+                        )
+                        for item in merged
+                        if routed.get(item.card.vacancy_id, None)
+                        and routed[item.card.vacancy_id].resume is resume
+                    ],
+                    key=lambda item: -item[1],
+                )
+                for resume in resumes
+            }
         else:
             cards_by_resume = None
+            ranked_by_resume = None
         for resume in resumes:
             if cards_by_resume is None:
                 result = run_apply_for_resume(page, config, resume, history, throttle, args)
@@ -116,6 +133,7 @@ def run(args: argparse.Namespace) -> bool:
                     args,
                     cards_by_resume[resume.id],
                     True,
+                    ranked_by_resume[resume.id],
                 )
             failed = result or failed
     return failed

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from ..config import ResumeConfig, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringConfig, ScoringWeights
-from ..scoring import _normalize_heuristic_score
 from ..search import VacancyCard, filter_candidates, rank_candidates
 
 if TYPE_CHECKING:
@@ -73,6 +72,14 @@ def _selection_reason(resume: ResumeConfig, score: float, breakdown: dict[str, f
     factors = [name for name, value in breakdown.items() if value]
     detail = ", ".join(factors) if factors else "profile score"
     return f"selected resume {resume.id}: score={score:g} ({detail})"
+
+
+def _comparable_heuristic_score(raw: float) -> float:
+    """Map an unbounded heuristic score onto the provider's 0..100 scale."""
+
+    if raw <= 0:
+        return 0.0
+    return 100.0 * raw / (raw + 1.0)
 
 
 def route_vacancies(
@@ -157,10 +164,11 @@ def route_vacancies(
                 llm_shortlist=shortlist,
             )
             card, score, breakdown = ranked[0]
-            if provider is not None and shortlist:
+            used_provider = provider is not None and bool(shortlist)
+            if used_provider:
                 remaining -= 1
-            elif provider is None:
-                score = _normalize_heuristic_score(score)
+            else:
+                score = _comparable_heuristic_score(score)
             selection = ResumeSelection(
                 resume=resume,
                 score=score,

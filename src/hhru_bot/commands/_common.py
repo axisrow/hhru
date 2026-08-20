@@ -305,6 +305,7 @@ def run_apply_for_resume(
     args: argparse.Namespace,
     cards_override=None,
     skip_scoring: bool = False,
+    ranked_override=None,
 ) -> bool:
     """Цикл откликов по одному резюме (search → filter → apply с троттлингом).
 
@@ -416,6 +417,18 @@ def run_apply_for_resume(
         scoring_provider=scoring_provider,
         limit=args.limit,
     )
+    if ranked_override is not None:
+        allowed = {card.vacancy_id for card, _score, _breakdown in plan.ranked}
+        routed_ranked = [item for item in ranked_override if item[0].vacancy_id in allowed]
+        effective_limit = args.limit if args.limit else len(routed_ranked)
+        routed_ranked = routed_ranked[:effective_limit]
+        plan = ApplyPlan(
+            ranked=routed_ranked,
+            skipped=plan.skipped,
+            total=plan.total,
+            after_filter=plan.after_filter,
+            after_limit=len(routed_ranked),
+        )
 
     for card, reason in plan.skipped:
         logger.debug("Пропуск вакансии %s: %s", card.title, reason)
