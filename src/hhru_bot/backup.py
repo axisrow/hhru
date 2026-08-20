@@ -161,6 +161,26 @@ def restore_backup(
                     copyfile(target, saved)
                 source.replace(target)
                 replaced.append(target)
+            archived = set(names)
+            managed = {"config.yaml", "history.db"}
+            storage = root / "storage_state"
+            if storage.is_dir() and not storage.is_symlink():
+                managed.update(
+                    item.relative_to(root).as_posix()
+                    for item in storage.rglob("*")
+                    if item.is_file() and not item.is_symlink()
+                )
+            for name in sorted(managed - archived):
+                target = root / name
+                if not target.exists() and not target.is_symlink():
+                    continue
+                if target.is_symlink() or not target.is_file():
+                    raise BackupError(f"Файл назначения имеет небезопасный тип: {target}")
+                saved = originals / name
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                copyfile(target, saved)
+                target.unlink()
+                replaced.append(target)
         except Exception:
             # A multi-file restore cannot rename one directory without also
             # replacing unrelated logs. Roll back every file already replaced.
