@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import tarfile
 import tempfile
@@ -32,28 +33,44 @@ def _sqlite_snapshot(source: Path, destination: Path) -> None:
         src.close()
 
 
-def create_backup(config: str | Path, history: str | Path, output: str | Path) -> Path:
+def create_backup(
+    config: str | Path,
+    history: str | Path,
+    output: str | Path,
+    *,
+    require_config: bool = True,
+) -> Path:
     """Create a gzip tar archive with config, session state and a consistent DB."""
     config, history, output = Path(config), Path(history), Path(output)
     root = _root(config, history)
-    if not config.is_file():
+    if require_config and not config.is_file():
         raise BackupError(f"Файл конфига не найден: {config}")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hhru-backup-") as tmp:
         snapshot = Path(tmp) / "history.db"
         if history.exists():
             _sqlite_snapshot(history, snapshot)
-        with tarfile.open(output, "w:gz") as archive:
-            archive.add(config, arcname="config.yaml", recursive=False)
-            if snapshot.exists():
-                archive.add(snapshot, arcname="history.db", recursive=False)
-            storage = root / "storage_state"
-            if storage.is_dir() and not storage.is_symlink():
-                for item in sorted(storage.rglob("*")):
-                    if item.is_file() and not item.is_symlink():
-                        archive.add(
-                            item, arcname=item.relative_to(root).as_posix(), recursive=False
-                        )
+        fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+        os.close(fd)
+        temporary = Path(temp_name)
+        try:
+            os.chmod(temporary, 0o600)
+            with tarfile.open(temporary, "w:gz") as archive:
+                if config.is_file():
+                    archive.add(config, arcname="config.yaml", recursive=False)
+                if snapshot.exists():
+                    archive.add(snapshot, arcname="history.db", recursive=False)
+                storage = root / "storage_state"
+                if storage.is_dir() and not storage.is_symlink():
+                    for item in sorted(storage.rglob("*")):
+                        if item.is_file() and not item.is_symlink():
+                            archive.add(
+                                item, arcname=item.relative_to(root).as_posix(), recursive=False
+                            )
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, output)
+        finally:
+            temporary.unlink(missing_ok=True)
     return output
 
 
@@ -95,9 +112,9 @@ def restore_backup(
     if dry_run:
         return names
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    rollback = root.parent / f"{root.name}.before-restore-{stamp}.tar.gz"
-    if config.exists():
-        create_backup(config, history, rollback)
+    rollback = root / f".before-restore-{stamp}.tar.gz"
+    if config.exists() or history.exists() or (root / "storage_state").is_dir():
+        create_backup(config, history, rollback, require_config=False)
     with tempfile.TemporaryDirectory(prefix="hhru-restore-", dir=root.parent) as tmp:
         staging = Path(tmp) / root.name
         staging.mkdir()
@@ -111,6 +128,7 @@ def restore_backup(
                 source = archive.extractfile(member)
                 assert source is not None
                 target.write_bytes(source.read())
+                os.chmod(target, 0o600)
         staged_history = staging / "history.db"
         if staged_history.exists():
             # Re-materialize via SQLite's backup API instead of replacing an
