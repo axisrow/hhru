@@ -309,6 +309,9 @@ class _SkipReasons:
     QUESTION_LOW_CONFIDENCE = "question_skipped_low_confidence"
     RESUME_VISIBILITY = "resume_visibility"  # отклик заблокирован видимостью резюме
     DUPLICATE = "duplicate"  # дубликат вакансии в одном сборе
+    RELOCATION_NOT_ALLOWED = "relocation_not_allowed"
+    DIRECT_APPLICATION = "direct_application"
+    RESPONSE_REJECTED = "response_rejected"
 
 
 #: Enum-объект причин отсева. Используется как ``SKIP_REASONS.STOPWORD_TITLE``
@@ -328,6 +331,9 @@ SKIP_REASON_VALUES = (
     _SkipReasons.QUESTION_LOW_CONFIDENCE,
     _SkipReasons.RESUME_VISIBILITY,
     _SkipReasons.DUPLICATE,
+    _SkipReasons.RELOCATION_NOT_ALLOWED,
+    _SkipReasons.DIRECT_APPLICATION,
+    _SkipReasons.RESPONSE_REJECTED,
 )
 
 
