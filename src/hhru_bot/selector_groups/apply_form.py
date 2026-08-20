@@ -20,6 +20,7 @@ APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"
 # аккаунте НЕ сверялись живым дампом, но konard использует их в боевом коде.
 APPLY_QUESTION_BODY = "[data-qa='task-body']"  # подтверждено (konard)
 APPLY_QUESTION_TEXT = "[data-qa='task-question']"  # подтверждено (konard), внутри task-body
+APPLY_QUESTION_FORM_BODY = "form[name='vacancy_response'] [data-qa='task-body']"
 
 # Второй (full-page) вариант textarea сопроводительного письма — нужен heuristic-фильтру,
 # чтобы не принять cover-letter textarea за ответ на вопрос. konard: coverLetterTextareaForm.

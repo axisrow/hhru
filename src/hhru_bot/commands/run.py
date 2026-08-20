@@ -6,12 +6,14 @@ import argparse
 
 from . import apply as apply_cmd
 from . import bump as bump_cmd
-from ._common import add_common_args
+from ._common import add_common_args, add_force_arg
 
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("run", help="Полный цикл: apply + bump для указанных резюме")
     add_common_args(p)
+    # apply_cmd.run(args) reuses this Namespace — apply's --force must exist here.
+    add_force_arg(p)
     p.add_argument(
         "--limit",
         type=int,

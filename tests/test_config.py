@@ -684,6 +684,12 @@ def test_parse_ai_empty_dict_enables_ai_without_fields():
     assert cfg.base_url is None
 
 
+def test_parse_ai_question_answers_are_explicitly_opt_in():
+    assert parse_ai({"answer_questions": True}, "ai").answer_questions is True
+    with pytest.raises(ConfigError, match="answer_questions"):
+        parse_ai({"answer_questions": "yes"}, "ai")
+
+
 def test_parse_ai_absent_returns_none():
     assert parse_ai(None, "ai") is None
 

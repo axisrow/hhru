@@ -125,8 +125,13 @@ def test_ai_api_key_not_parsed_from_yaml(tmp_path):
     )
     config = load_config(path)
     assert config.ai is not None
-    # AiConfig — frozen-датакласс ровно с тремя полями; api_key там нет.
-    assert {f.name for f in fields(config.ai)} == {"provider", "model", "base_url"}
+    # AiConfig содержит только routing metadata и explicit feature flags; api_key там нет.
+    assert {f.name for f in fields(config.ai)} == {
+        "provider",
+        "model",
+        "base_url",
+        "answer_questions",
+    }
 
 
 def test_ai_section_empty_value_is_legacy_fail_closed(tmp_path):

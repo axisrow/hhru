@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from ..ai.questions import AIQuestionAnswerer, extract_questions
 from ..browser import goto_hh, has_login_form
 from ..history import SKIP_REASONS
 from ..search import VacancyCard
@@ -95,6 +96,8 @@ class ApplyContext:
     verifier: ResponseVerifier | None = None
     # #245: durable audit marker immediately before entering the submit path.
     before_submit: Callable[[], None] | None = None
+    question_answerer: AIQuestionAnswerer | None = None
+    force: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -142,6 +145,8 @@ def apply_to_vacancy(
     letter_provider: CoverLetterProvider | None = None,
     verifier: ResponseVerifier | None = None,
     before_submit: Callable[[], None] | None = None,
+    question_answerer: AIQuestionAnswerer | None = None,
+    force: bool = False,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -153,6 +158,8 @@ def apply_to_vacancy(
         letter_provider=letter_provider,
         verifier=verifier,
         before_submit=before_submit,
+        question_answerer=question_answerer,
+        force=force,
     )
     return _run(ctx)
 
@@ -174,6 +181,20 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     * indeterminate — список не прочитан: fail-closed uncertain+acted —
       has_applied видит запись, троттл ждёт (как у #176).
     """
+    # cycle-review round 2 (#373): dry-run with an answerer configured still
+    # clicks VACANCY_APPLY_BUTTON to preview questions (#97 contract), so it
+    # CAN reach this grey-zone finalizer despite never submitting. Without this
+    # guard, a verifier.found/indeterminate verdict sets ctx.acted=True on a
+    # dry-run result; commands/_common.py's `elif result.acted:` branch (no
+    # action_id reserved in dry-run — before_submit is only wired for real
+    # runs) then unconditionally calls history.record_action(), which
+    # daily_apply_limit/has_applied() count exactly like a real submission —
+    # a dry-run would silently burn quota and permanently mark a vacancy as
+    # already-applied. A dry-run never sends anything: fail-closed here means
+    # "not verified", never "acted", regardless of what the external verifier
+    # would have said.
+    if ctx.dry_run:
+        return ctx.fail(reason)
     # Inspect the page that failed before the verifier navigates away. A submit
     # navigation may render a challenge and still raise SubmitClickUncertain.
     _halt_if_antibot(ctx)
@@ -255,7 +276,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
         ctx.letter_variant = VARIANT_TEMPLATE
 
-    if ctx.dry_run:
+    if ctx.dry_run and ctx.question_answerer is None:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
         return ctx.ok("dry-run")
 
@@ -286,8 +307,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return _finalize_post_click_failure(ctx, reason)
     ctx.probe("form_loaded")
 
-    # #95: detect-only проверка на вопросы/анкету. Делается ДО fill_response_form:
-    # форма с вопросами НЕ заполняется и НЕ отправляется (fail-closed по submit).
+    # #95/#97: detect questions before any form write. #97 is opt-in and keeps
+    # the old detect-only skip path when no answerer is configured.
     questions = detect_questions(ctx.page)
     if questions.indeterminate:
         # round-2 fix: границы формы не резолвились — блокируем отправку, но НЕ
@@ -295,9 +316,96 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         # навсегда исключать вакансию из is_skipped (#87).
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, questions.reason)
         return _finalize_post_click_failure(ctx, questions.reason)
-    if questions.has_questions:
+    if questions.has_questions and ctx.question_answerer is None:
         logger.info("[skip] %s — %s", ctx.vacancy.title, questions.reason)
         return ctx.skip(questions.reason)
+    # M6 cycle-review #373: gate --force on questions actually found in THIS
+    # vacancy, not on the answerer merely being configured. The old gate lived
+    # before detect_questions() (and a duplicate copy in _common.py fired
+    # before the per-vacancy loop even started) — both blocked an entire
+    # `apply` run whenever ai.answer_questions: true was set, even for
+    # vacancies with no questionnaire at all. real submit of a questionnaire
+    # still requires explicit --force.
+    needs_force = questions.has_questions and ctx.question_answerer is not None
+    if needs_force and not ctx.dry_run and not ctx.force:
+        return ctx.fail("LLM-ответы на вопросы требуют явного --force")
+    if ctx.question_answerer is not None:
+        try:
+            if questions.has_questions:
+                extracted, total_bodies = extract_questions(ctx.page)
+            else:
+                extracted, total_bodies = [], 0
+        except PlaywrightError as exc:
+            # M5 cycle-review #373: extract_questions() re-reads live DOM after
+            # a React render (navigate_to_response_form only guarantees
+            # wait_until="commit" — see CLAUDE.md) and previously ran outside
+            # any try/except here; a raw PlaywrightError would abort the whole
+            # apply loop for the remaining vacancies/resumes with a traceback,
+            # same class of bug as fill_response_form below (#163).
+            reason = f"ошибка Playwright при извлечении вопросов анкеты ({exc})"
+            logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
+            return ctx.fail(reason)
+        # cycle-review #373 (B1) + codex review round 2 (P1): detect_questions()
+        # has_questions=True can come from either the confirmed task-body path
+        # or the unconfirmed heuristic fallback (radio/checkbox/textarea
+        # without task-body — see apply/questions.py). extract_questions()
+        # only recognises the task-body structure, and even within that
+        # structure a specific body can be dropped (unrecognisable
+        # radio/checkbox layout, or blank/duplicate option labels — M7).
+        # A bare `not extracted` check only catches a FULLY empty result — a
+        # PARTIAL mismatch (e.g. 2 bodies detected, 1 parses, 1 dropped) would
+        # leave `extracted` non-empty and slip through, submitting the form
+        # with one question silently unanswered. Comparing counts catches
+        # both: the heuristic-only case (extracted=[], total_bodies=0, still
+        # a mismatch against questions.has_questions) and any partial drop.
+        # "Wrong/skipped answer is safer than a silent blank submit" (#97):
+        # treat this the same as the no-answerer skip path.
+        if questions.has_questions and (not extracted or len(extracted) != total_bodies):
+            reason = (
+                "анкета обнаружена, но не распознана полностью для LLM-ответа "
+                "(расхождение эвристики и парсера вопросов)"
+            )
+            logger.warning("[skip] %s — %s", ctx.vacancy.title, reason)
+            return ctx.skip(reason, skip_reason=SKIP_REASONS.HAS_QUESTIONS)
+        proposals = ctx.question_answerer.propose_all(extracted)
+        prefix = "[DRY-RUN]" if ctx.dry_run else "[FORCE]"
+        for proposal in proposals:
+            logger.info(
+                "%s Вопрос: %s | Ответ: %s | confidence=%.2f",
+                prefix,
+                proposal.question.text,
+                proposal.answer or "(пропущен: низкая уверенность)",
+                proposal.confidence,
+            )
+        low_confidence = [proposal for proposal in proposals if proposal.low_confidence]
+        if low_confidence:
+            reason = (
+                f"пропущен вопрос с низкой уверенностью ({len(low_confidence)}): "
+                + low_confidence[0].question.text
+            )
+            # #87 cycle-review: LLM confidence is non-deterministic between
+            # runs (unlike stopword/exclude filters), so a dry-run preview
+            # must not permanently bury the vacancy via record_skip — same
+            # reasoning as the indeterminate-scope path above (line ~301),
+            # which uses fail() rather than skip() for the same reason.
+            # ctx.skip() always persists via _common.py's unconditional
+            # record_skip(result.skip_reason), so only a real (non-dry-run)
+            # low-confidence outcome may use it.
+            if ctx.dry_run:
+                return ctx.fail(reason + " (dry-run — предпросмотр, не сохраняется)")
+            return ctx.skip(reason, skip_reason=SKIP_REASONS.QUESTION_LOW_CONFIDENCE)
+        if ctx.dry_run:
+            return ctx.ok("dry-run: предложенные ответы на вопросы показаны")
+        try:
+            ctx.question_answerer.apply(ctx.page, proposals)
+        except PlaywrightError as exc:
+            # M5 cycle-review #373: same reasoning as extract_questions() above
+            # — this happens before the submit click (acted stays False), so a
+            # clean fail here (no on-site trace) matches the fill_response_form
+            # PlaywrightError branch below rather than treating it as uncertain.
+            reason = f"ошибка Playwright при заполнении ответов на вопросы ({exc})"
+            logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
+            return ctx.fail(reason)
 
     # #176: окно действия. Submit-клик — единственный необратимый шаг формы;
     # исключение в момент/сразу после него (navigation timeout после POST,
