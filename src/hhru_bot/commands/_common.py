@@ -304,6 +304,7 @@ def run_apply_for_resume(
     throttle: Throttle,
     args: argparse.Namespace,
     cards_override=None,
+    skip_scoring: bool = False,
 ) -> bool:
     """Цикл откликов по одному резюме (search → filter → apply с троттлингом).
 
@@ -406,7 +407,7 @@ def run_apply_for_resume(
         raise_for_antibot(page)
     else:
         cards = cards_override
-    scoring_provider = _build_scoring_provider(config, resume)
+    scoring_provider = None if skip_scoring else _build_scoring_provider(config, resume)
     plan = build_apply_plan(
         cards,
         resume.search,

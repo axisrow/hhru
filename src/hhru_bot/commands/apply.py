@@ -112,6 +112,7 @@ def run(args: argparse.Namespace) -> bool:
                     throttle,
                     args,
                     cards_by_resume[resume.id],
+                    True,
                 )
             failed = result or failed
     return failed
