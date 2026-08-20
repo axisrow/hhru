@@ -50,3 +50,75 @@ def test_out_of_range_choice_is_low_confidence():
     proposal = AIQuestionAnswerer(llm).propose(question)
 
     assert proposal.low_confidence is True
+
+
+def test_multiple_indices_for_radio_question_is_low_confidence():
+    """codex review #373 (P1): a radio group allows exactly ONE selection.
+    Before this guard, kind="choice" treated radio and checkbox identically —
+    the prompt/validation allowed "one or several indices" for both — so a
+    model returning multiple indices for a radio question passed validation;
+    apply() then checked them sequentially and the browser kept only the
+    LAST radio, silently submitting a different answer than what was
+    proposed/logged/previewed in dry-run."""
+    llm = _LLM({"answer": "?", "confidence": 0.95, "indices": [0, 1]})
+    question = Question(0, "Выбор", "choice", ("A", "B"), is_radio=True)
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is True
+
+
+def test_single_index_for_radio_question_is_accepted():
+    """Regression guard: the is_radio check must not reject the normal case."""
+    llm = _LLM({"answer": "A", "confidence": 0.95, "indices": [0]})
+    question = Question(0, "Выбор", "choice", ("A", "B"), is_radio=True)
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is False
+    assert proposal.option_indices == (0,)
+
+
+def test_multiple_indices_for_checkbox_question_is_accepted():
+    """Regression guard: checkboxes still allow several selections."""
+    llm = _LLM({"answer": "A, B", "confidence": 0.95, "indices": [0, 1]})
+    question = Question(0, "Выбор", "choice", ("A", "B"), is_radio=False)
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is False
+    assert proposal.option_indices == (0, 1)
+
+
+def test_nan_confidence_is_fail_closed_not_high_confidence():
+    """codex review #373 (P1): float() accepts the JSON literal NaN without
+    raising, and `nan < CONFIDENCE_THRESHOLD` is False in Python — a
+    malformed confidence would read as HIGH-confidence and could be filled/
+    submitted under --force instead of being skipped."""
+    llm = _LLM({"answer": "5 лет", "confidence": float("nan"), "indices": []})
+    question = Question(0, "Опыт", "text")
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is True
+    assert proposal.answer == ""
+
+
+def test_out_of_range_confidence_is_fail_closed():
+    llm = _LLM({"answer": "5 лет", "confidence": 1.5, "indices": []})
+    question = Question(0, "Опыт", "text")
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is True
+    assert proposal.answer == ""
+
+
+def test_negative_confidence_is_fail_closed():
+    llm = _LLM({"answer": "5 лет", "confidence": -0.1, "indices": []})
+    question = Question(0, "Опыт", "text")
+
+    proposal = AIQuestionAnswerer(llm).propose(question)
+
+    assert proposal.low_confidence is True
+    assert proposal.answer == ""

@@ -178,12 +178,14 @@ def test_extract_choice_question_with_labelled_radios():
             </div>
         </form>
     """
-    questions = extract_questions(_Page(html))
+    questions, total_bodies = extract_questions(_Page(html))
 
     assert len(questions) == 1
+    assert total_bodies == 1
     q = questions[0]
     assert q.kind == "choice"
     assert q.options == ("Да", "Нет")
+    assert q.is_radio is True
 
 
 def test_extract_text_question_from_textarea():
@@ -195,9 +197,10 @@ def test_extract_text_question_from_textarea():
             </div>
         </form>
     """
-    questions = extract_questions(_Page(html))
+    questions, total_bodies = extract_questions(_Page(html))
 
     assert len(questions) == 1
+    assert total_bodies == 1
     assert questions[0].kind == "text"
     assert questions[0].options == ()
 
@@ -219,9 +222,14 @@ def test_extract_drops_question_with_duplicate_option_labels():
             </div>
         </form>
     """
-    questions = extract_questions(_Page(html))
+    questions, total_bodies = extract_questions(_Page(html))
 
     assert questions == []
+    # codex review #373 (P1): total_bodies stays 1 (a task-body WAS detected)
+    # even though it produced zero recognisable Questions — pipeline.py's
+    # mismatch check (len(extracted) != total_bodies) relies on this to catch
+    # a dropped body even when it's the only one in the form.
+    assert total_bodies == 1
 
 
 def test_extract_drops_question_when_option_has_no_readable_text():
@@ -244,9 +252,10 @@ def test_extract_drops_question_when_option_has_no_readable_text():
             </div>
         </form>
     """
-    questions = extract_questions(_Page(html))
+    questions, total_bodies = extract_questions(_Page(html))
 
     assert questions == []
+    assert total_bodies == 1
 
 
 def test_extract_outside_form_name_vacancy_response_is_ignored():
@@ -260,9 +269,10 @@ def test_extract_outside_form_name_vacancy_response_is_ignored():
             </div>
         </form>
     """
-    questions = extract_questions(_Page(html))
+    questions, total_bodies = extract_questions(_Page(html))
 
     assert questions == []
+    assert total_bodies == 0
 
 
 def test_apply_fills_textarea_and_checks_radio_by_index():
@@ -281,7 +291,7 @@ def test_apply_fills_textarea_and_checks_radio_by_index():
     """
     page = _Page(html)
     text_q = Question(0, "Опыт", "text")
-    choice_q = Question(1, "Готовы к переезду?", "choice", ("Да", "Нет"))
+    choice_q = Question(1, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
     proposals = [
         AnswerProposal(text_q, "5 лет с Python", 0.9),
         AnswerProposal(choice_q, "Да", 0.95, option_indices=(0,)),

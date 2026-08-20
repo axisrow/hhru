@@ -331,7 +331,10 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return ctx.fail("LLM-ответы на вопросы требуют явного --force")
     if ctx.question_answerer is not None:
         try:
-            extracted = extract_questions(ctx.page) if questions.has_questions else []
+            if questions.has_questions:
+                extracted, total_bodies = extract_questions(ctx.page)
+            else:
+                extracted, total_bodies = [], 0
         except PlaywrightError as exc:
             # M5 cycle-review #373: extract_questions() re-reads live DOM after
             # a React render (navigate_to_response_form only guarantees
@@ -342,18 +345,24 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             reason = f"ошибка Playwright при извлечении вопросов анкеты ({exc})"
             logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
             return ctx.fail(reason)
-        # cycle-review #373: detect_questions() has_questions=True can come from
-        # either the confirmed task-body path or the unconfirmed heuristic
-        # fallback (radio/checkbox/textarea without task-body — see
-        # apply/questions.py). extract_questions() only recognises the
-        # task-body structure. A mismatch here means "a questionnaire was
-        # detected but we could not parse it into answerable questions" —
-        # falling through would submit the form with the questionnaire
-        # untouched. "Wrong/skipped answer is safer than a silent blank
-        # submit" (#97): treat this the same as the no-answerer skip path.
-        if questions.has_questions and not extracted:
+        # cycle-review #373 (B1) + codex review round 2 (P1): detect_questions()
+        # has_questions=True can come from either the confirmed task-body path
+        # or the unconfirmed heuristic fallback (radio/checkbox/textarea
+        # without task-body — see apply/questions.py). extract_questions()
+        # only recognises the task-body structure, and even within that
+        # structure a specific body can be dropped (unrecognisable
+        # radio/checkbox layout, or blank/duplicate option labels — M7).
+        # A bare `not extracted` check only catches a FULLY empty result — a
+        # PARTIAL mismatch (e.g. 2 bodies detected, 1 parses, 1 dropped) would
+        # leave `extracted` non-empty and slip through, submitting the form
+        # with one question silently unanswered. Comparing counts catches
+        # both: the heuristic-only case (extracted=[], total_bodies=0, still
+        # a mismatch against questions.has_questions) and any partial drop.
+        # "Wrong/skipped answer is safer than a silent blank submit" (#97):
+        # treat this the same as the no-answerer skip path.
+        if questions.has_questions and (not extracted or len(extracted) != total_bodies):
             reason = (
-                "анкета обнаружена, но не распознана для LLM-ответа "
+                "анкета обнаружена, но не распознана полностью для LLM-ответа "
                 "(расхождение эвристики и парсера вопросов)"
             )
             logger.warning("[skip] %s — %s", ctx.vacancy.title, reason)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,15 @@ class Question:
     text: str
     kind: str
     options: tuple[str, ...] = ()
+    # codex review #373 (P1): radio allows exactly ONE selection; checkbox
+    # allows several. Before this field both were flattened into kind="choice"
+    # with no way for propose()/apply() to tell them apart, so an LLM
+    # returning multiple indices for a radio question passed validation and
+    # apply() would check() them sequentially — the browser keeps only the
+    # last radio, silently submitting a different answer than what was
+    # proposed/logged. False for non-radio choice questions (checkboxes) and
+    # for kind="text" (unused there).
+    is_radio: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,18 +76,33 @@ def _control_text(control: Locator) -> str:
         return ""
 
 
-def extract_questions(page: Page) -> list[Question]:
-    """Extract questions using selectors confirmed by the live probe (#257)."""
+def extract_questions(page: Page) -> tuple[list[Question], int]:
+    """Extract questions using selectors confirmed by the live probe (#257).
+
+    Returns ``(questions, total_bodies)``. codex review #373 (P1): a single
+    ``len(extracted) == 0`` check in pipeline.py could not catch a PARTIAL
+    mismatch — e.g. 2 task-body elements where one parses fine and the other
+    is dropped below (unrecognisable structure or blank/duplicate options,
+    M7): ``extracted`` stays non-empty, so a truthy check alone would let the
+    form submit with one question silently unanswered. ``total_bodies`` is
+    read from the SAME locator pass used to build ``questions`` (not a second
+    ``.count()`` call in pipeline.py, which would be a fresh — and
+    unnecessary — DOM read), so the caller can compare
+    ``len(questions) != total_bodies`` to detect any dropped body, not just
+    a fully empty result.
+    """
     bodies = page.locator(apply_form.APPLY_QUESTION_FORM_BODY)
+    total_bodies = bodies.count()
     questions: list[Question] = []
-    for body_index in range(bodies.count()):
+    for body_index in range(total_bodies):
         body = bodies.nth(body_index)
         text = body.locator(apply_form.APPLY_QUESTION_TEXT).first.inner_text().strip()
         radios = body.locator("input[type='radio']")
         checkboxes = body.locator("input[type='checkbox']")
         textareas = body.locator("textarea")
         if radios.count() or checkboxes.count():
-            controls = radios if radios.count() else checkboxes
+            is_radio = bool(radios.count())
+            controls = radios if is_radio else checkboxes
             options = tuple(_control_text(controls.nth(i)) for i in range(controls.count()))
             # M7 cycle-review #373: _control_text() fails closed to "" when the
             # label lookup errors or is missing entirely. But when a radio has
@@ -100,10 +125,10 @@ def extract_questions(page: Page) -> list[Question]:
                     text,
                 )
                 continue
-            questions.append(Question(body_index, text, "choice", options))
+            questions.append(Question(body_index, text, "choice", options, is_radio=is_radio))
         elif textareas.count():
             questions.append(Question(body_index, text, "text"))
-    return questions
+    return questions, total_bodies
 
 
 def _profile_context(profile: AIProfile | None) -> str:
@@ -150,6 +175,16 @@ class AIQuestionAnswerer:
             response = self._llm.chat(_prompt(question, self._profile), temperature=0.2)
             payload: Any = json.loads((response.content or "").strip())
             confidence = float(payload.get("confidence", 0))
+            # codex review #373 (P1): float() accepts "NaN"/"Infinity" JSON
+            # literals and values outside [0, 1] without raising, and
+            # `nan < CONFIDENCE_THRESHOLD` is False in Python — a malformed
+            # confidence would read as HIGH-confidence and could be submitted
+            # under --force. Route it through the existing low-confidence
+            # fallback instead, same as any other malformed model output.
+            if not (math.isfinite(confidence) and 0.0 <= confidence <= 1.0):
+                raise ValueError(
+                    f"LLM returned a non-finite/out-of-range confidence: {confidence!r}"
+                )
             indices = tuple(int(i) for i in payload.get("indices", []))
             answer = str(payload.get("answer", "")).strip()
             if question.kind == "choice" and not indices:
@@ -157,6 +192,17 @@ class AIQuestionAnswerer:
             invalid_index = any(i < 0 or i >= len(question.options) for i in indices)
             if question.kind == "choice" and invalid_index:
                 raise ValueError("LLM returned an out-of-range choice index")
+            # codex review #373 (P1): a radio group allows exactly ONE
+            # selected control. The prompt/validation used to treat radio and
+            # checkbox questions identically ("one or several indices"), so a
+            # model returning multiple indices for a radio passed validation
+            # here; apply() then checked them sequentially and the browser
+            # kept only the LAST radio — silently submitting a different
+            # answer than what was proposed/logged/previewed in dry-run.
+            if question.kind == "choice" and question.is_radio and len(indices) != 1:
+                raise ValueError(
+                    f"LLM returned {len(indices)} indices for a radio question (expected 1)"
+                )
             if question.kind == "text" and not answer:
                 raise ValueError("LLM returned an empty text answer")
             return AnswerProposal(question, answer, confidence, indices)
@@ -178,8 +224,15 @@ class AIQuestionAnswerer:
             if proposal.question.kind == "text":
                 body.locator("textarea").first.fill(proposal.answer)
                 continue
-            radios = body.locator("input[type='radio']")
-            controls = radios if radios.count() else body.locator("input[type='checkbox']")
+            # codex review #373 (P1): use the control type recorded at
+            # extraction time (question.is_radio), not a fresh count() here —
+            # propose() already enforces exactly one index for a radio
+            # question, so this is belt-and-suspenders consistency, not a
+            # second decision point that could disagree with extraction.
+            if proposal.question.is_radio:
+                controls = body.locator("input[type='radio']")
+            else:
+                controls = body.locator("input[type='checkbox']")
             for index in proposal.option_indices:
                 controls.nth(index).check()
         return [proposal for proposal in proposals if proposal.low_confidence]

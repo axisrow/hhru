@@ -975,9 +975,38 @@ def test_apply_extracted_mismatch_skips_instead_of_blank_submit(monkeypatch):
     monkeypatch.setattr(
         pipeline_module, "detect_questions", lambda _page: _question_detection(True)
     )
-    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [])
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([], 0))
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     answerer = _StubAnswerer()
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=answerer, force=True
+    )
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.HAS_QUESTIONS
+    assert answerer.applied is None  # apply() must never be reached
+
+
+def test_apply_partial_extraction_mismatch_skips_instead_of_blank_submit(monkeypatch):
+    """codex review round 2 #373 (P1): a bare `not extracted` check only
+    catches a FULLY empty extraction. If detect_questions() sees 2 task-body
+    elements but extract_questions() only parses 1 (the other dropped as
+    unrecognisable — M7), `extracted` stays non-empty and a truthy check
+    alone would let the form submit with one question silently unanswered.
+    Comparing len(extracted) against total_bodies catches this partial case."""
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    parsed_question = Question(0, "Опыт", "text")
+    proposal = AnswerProposal(parsed_question, "5 лет", 0.9)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    # 2 bodies detected, only 1 survived extraction -> mismatch.
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([parsed_question], 2))
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    answerer = _StubAnswerer({"Опыт": proposal})
 
     result = apply_to_vacancy(
         page, _vacancy(), "RID", "x", dry_run=False, question_answerer=answerer, force=True
@@ -1035,7 +1064,7 @@ def test_apply_dry_run_low_confidence_does_not_persist_skip(monkeypatch):
     monkeypatch.setattr(
         pipeline_module, "detect_questions", lambda _page: _question_detection(True)
     )
-    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [question])
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     answerer = _StubAnswerer({"Готовы к переезду?": low_confidence})
 
@@ -1057,7 +1086,7 @@ def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):
     monkeypatch.setattr(
         pipeline_module, "detect_questions", lambda _page: _question_detection(True)
     )
-    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: [question])
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
     page = FakePage(apply_button=True, success=True, submit_in_form=True)
     answerer = _StubAnswerer({"Опыт с Python?": proposal})
 
