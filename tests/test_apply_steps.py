@@ -67,7 +67,8 @@ class _FakeLocator:
             ids = self._state.reorder_to
         return ids
 
-    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
+        self._state.wait_for_timeout = timeout
         if self._state.wait_error:
             # Cycle-5: имитация не-timeout PlaywrightError (runtime/selector failure).
             raise Error(f"runtime error waiting for {self.selector}")
@@ -214,6 +215,10 @@ class _SelectorState:
         # (`subtree intercepts pointer events`) и падал в SubmitClickUncertain.
         # True → wait_for(state="hidden") на опции не дождётся закрытия.
         self.dropdown_stays_open = False
+        # #442 cycle-review (F6): последний timeout, переданный в wait_for() —
+        # проверяет, что вызывающий контролирует ожидание submit-кнопки через
+        # form_timeout_ms, а не через jitter/другой параметр.
+        self.wait_for_timeout: float | None = None
 
 
 class FakeStepsPage:
@@ -368,16 +373,59 @@ def test_navigate_does_not_raise_when_form_never_renders():
     assert page.navigation_entered == 0
 
 
-def test_navigate_uses_bounded_random_dom_timeout(monkeypatch):
-    monkeypatch.setattr(steps.random, "randint", lambda minimum, maximum: maximum)
+def test_navigate_uses_bounded_random_dom_timeout_by_default(monkeypatch):
+    # form_timeout_ms не передан -> должен выбираться jitter, а не фиксированный
+    # APPLY_TIMEOUT_MS (обычный apply-цикл использует bounded random, не detect).
+    randint_calls: list[tuple[int, int]] = []
+
+    def _randint(minimum: int, maximum: int) -> int:
+        randint_calls.append((minimum, maximum))
+        return maximum
+
+    monkeypatch.setattr(steps.random, "randint", _randint)
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     steps.navigate_to_response_form(page)
 
-    assert steps.RESPONSE_READY_MIN_TIMEOUT_MS == 5_000
-    assert steps.RESPONSE_READY_MAX_TIMEOUT_MS == 15_000
+    assert randint_calls == [
+        (steps.RESPONSE_READY_MIN_TIMEOUT_MS, steps.RESPONSE_READY_MAX_TIMEOUT_MS)
+    ]
+
+
+def test_navigate_honors_explicit_form_timeout_ms_without_jitter(monkeypatch):
+    # #442 cycle-review (F6): form_timeout_ms ранее принимался, но игнорировался
+    # в теле функции — только navigation_timeout_ms реально влиял на ожидание
+    # submit-кнопки. questionnaire.py/probe.py передают form_timeout_ms=5_000/
+    # 10_000 рассчитывая управлять именно этим ожиданием — регрессия должна
+    # провалить этот тест, если jitter снова перекроет явное значение.
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("random.randint не должен вызываться при явном form_timeout_ms")
+
+    monkeypatch.setattr(steps.random, "randint", _fail_if_called)
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    assert steps.navigate_to_response_form(page, form_timeout_ms=5_000) is True
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == 5_000
+
+
+def test_navigate_form_timeout_ms_zero_is_honored_not_treated_as_falsy(monkeypatch):
+    # 0 — валидное значение таймаута в этом файле (см. render_timeout_ms=0);
+    # `form_timeout_ms or random.randint(...)` молча подменил бы 0 на jitter.
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("random.randint не должен вызываться при form_timeout_ms=0")
+
+    monkeypatch.setattr(steps.random, "randint", _fail_if_called)
+    page = FakeStepsPage()
+    page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    steps.navigate_to_response_form(page, form_timeout_ms=0)
+
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).wait_for_timeout == 0
 
 
 def test_navigate_uses_wait_for_url_not_expect_navigation():

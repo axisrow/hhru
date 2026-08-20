@@ -142,8 +142,7 @@ def navigate_to_response_form(
     page: Page,
     vacancy_id: str | None = None,
     *,
-    navigation_timeout_ms: int | None = None,
-    form_timeout_ms: int = APPLY_TIMEOUT_MS,
+    form_timeout_ms: int | None = None,
     dump_diagnostics: bool = True,
     allow_relocation: bool = False,
 ) -> str | bool | PostClickBlocker:
@@ -169,7 +168,11 @@ def navigate_to_response_form(
     Клик вызывает обычную навигацию — дожидаемся её перед поиском полей формы.
 
     Фиксированный sleep после навигации заменён на явное ожидание готовности DOM:
-    ждём любого индикатора формы (кнопка отправки), максимум APPLY_TIMEOUT_MS.
+    ждём любого индикатора формы (кнопка отправки). ``form_timeout_ms`` управляет
+    этим ожиданием напрямую — если не задан явно (``None``), таймаут выбирается
+    случайно в диапазоне ``RESPONSE_READY_MIN_TIMEOUT_MS``..``RESPONSE_READY_MAX_TIMEOUT_MS``
+    для обычного apply-цикла; probe/questionnaire передают явное значение для
+    своих быстрых режимов (см. ``FAST_FORM_TIMEOUT_MS`` в questionnaire.py).
 
     #179: раньше ожидание было ``page.expect_navigation(wait_until="domcontentloaded")``.
     Живая диагностика (боевой аккаунт, vacancy_id 136221532) показала: кнопка
@@ -226,9 +229,13 @@ def navigate_to_response_form(
         return reason
     # URL не является обязательным: hh.ru может оставить нас на vacancy URL и
     # открыть форму модалкой. В обычном apply-цикле используем bounded jitter;
-    # probe/questionnaire могут передать явный timeout для своих быстрых режимов.
-    ready_timeout_ms = navigation_timeout_ms or random.randint(
-        RESPONSE_READY_MIN_TIMEOUT_MS, RESPONSE_READY_MAX_TIMEOUT_MS
+    # probe/questionnaire могут передать явный form_timeout_ms для своих
+    # быстрых режимов — `is not None`, а не truthy-проверка: 0 валидное
+    # значение таймаута в этом файле (см. render_timeout_ms=0 ниже).
+    ready_timeout_ms = (
+        form_timeout_ms
+        if form_timeout_ms is not None
+        else random.randint(RESPONSE_READY_MIN_TIMEOUT_MS, RESPONSE_READY_MAX_TIMEOUT_MS)
     )
     logger.debug("Ожидание формы отклика: %d мс", ready_timeout_ms)
     blocker = handle_post_click_blockers(
