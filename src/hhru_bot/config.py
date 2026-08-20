@@ -47,6 +47,9 @@ class SearchFilters:
     salary_from: int | None = None
     experience: str | None = None
     schedule: str | None = None
+    # Explicitly permit confirming HH's relocation warning.  The safe default
+    # is false; remote-only profiles must never silently accept relocation.
+    allow_relocation: bool = False
     exclude_employers: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     # Опциональные поля ранжирования (#15): буст за совпадение в title.

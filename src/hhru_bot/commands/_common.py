@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hhru_bot.cli")
 
 
+class ApplyRunStopped(RuntimeError):
+    """Terminal account-level condition requiring the whole apply run to stop."""
+
+
 def add_common_args(p: argparse.ArgumentParser) -> None:
     """Общие аргументы для команд, работающих по резюме/поиску."""
     p.add_argument(
@@ -536,6 +540,8 @@ def run_apply_for_resume(
         apply_kwargs: dict[str, Any] = {
             "letter_provider": effective_letter_provider,
         }
+        if resume.search.allow_relocation:
+            apply_kwargs["allow_relocation"] = True
         if not args.dry_run:
             # #207: fail-вердикты после клика по кнопке отклика подтверждаются
             # внешней проверкой /applicant/negotiations до записи в history.
@@ -617,6 +623,9 @@ def run_apply_for_resume(
                 result.reason,
                 letter_variant=result.letter_variant,
             )
+        if getattr(result, "stop_run", False):
+            print(f"  [STOP] {card.title} — {result.reason}")
+            raise ApplyRunStopped(result.reason)
         if result.success:
             applied_count += 1
             print(f"  [OK] {card.title} — {card.company}")

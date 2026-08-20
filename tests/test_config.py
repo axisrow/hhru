@@ -96,6 +96,7 @@ def test_load_config_full_search_filters(tmp_path):
               salary_from: 200000
               experience: "between3And6"
               schedule: "remote"
+              allow_relocation: true
               exclude_employers: ["BadCorp"]
               exclude_keywords: ["1С"]
     """,
@@ -106,6 +107,7 @@ def test_load_config_full_search_filters(tmp_path):
     assert search.salary_from == 200000
     assert search.experience == "between3And6"
     assert search.schedule == "remote"
+    assert search.allow_relocation is True
     assert search.exclude_employers == ["BadCorp"]
     assert search.exclude_keywords == ["1С"]
 

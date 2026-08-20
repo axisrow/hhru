@@ -21,6 +21,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from ..browser import GOTO_TIMEOUT_MS
 from ..logging_setup import LOG_DIR
 from ..selector_groups import vacancy_page
+from .blockers import PostClickBlocker, handle_post_click_blockers, raise_if_post_submit_limit
 
 logger = logging.getLogger("hhru_bot.apply.steps")
 
@@ -135,7 +136,8 @@ def navigate_to_response_form(
     navigation_timeout_ms: int = GOTO_TIMEOUT_MS,
     form_timeout_ms: int = APPLY_TIMEOUT_MS,
     dump_diagnostics: bool = True,
-) -> str | bool:
+    allow_relocation: bool = False,
+) -> str | bool | PostClickBlocker:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
     Возвращает:
@@ -204,6 +206,9 @@ def navigate_to_response_form(
         # нет, не крашим цикл откликов необработанным исключением.
         logger.warning("Клик по кнопке отклика упал с ошибкой (%s) — вакансия пропущена", exc)
         return False
+    blocker = handle_post_click_blockers(page, allow_relocation=allow_relocation)
+    if blocker is not None:
+        return blocker
     # #350: some accounts receive a modal on the vacancy URL instead of a form
     # navigation.  Its expanded warning is a definitive, non-actionable skip.
     if _hidden_resume_warning_is_expanded(page):
@@ -227,6 +232,9 @@ def navigate_to_response_form(
             "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
             exc,
         )
+    blocker = handle_post_click_blockers(page, allow_relocation=allow_relocation)
+    if blocker is not None:
+        return blocker
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(
@@ -340,6 +348,7 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     except PlaywrightError as exc:
         logger.warning("Submit-клик упал с исключением (%s) — отправка могла уйти", exc)
         raise SubmitClickUncertain(exc) from exc
+    raise_if_post_submit_limit(page)
     return None
 
 

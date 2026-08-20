@@ -24,6 +24,7 @@ from ..history import SKIP_REASONS
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .antibot import AntiBotChallengeDetected, detect_antibot_on_page
+from .blockers import PostClickBlocker, PostSubmitLimitExceeded
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
@@ -66,6 +67,7 @@ class ApplyResult:
     # (дедупликация has_applied его видит — без этого возможен повторный
     # отклик на ту же вакансию) и выдерживал троттл-паузу.
     uncertain: bool = False
+    stop_run: bool = False
 
 
 @dataclass
@@ -98,6 +100,7 @@ class ApplyContext:
     before_submit: Callable[[], None] | None = None
     question_answerer: AIQuestionAnswerer | None = None
     force: bool = False
+    allow_relocation: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -107,6 +110,17 @@ class ApplyContext:
             letter_variant=self.letter_variant,
             acted=self.acted,
             uncertain=self.uncertain,
+        )
+
+    def stop(self, reason: str) -> ApplyResult:
+        return ApplyResult(
+            self.vacancy,
+            False,
+            reason,
+            letter_variant=self.letter_variant,
+            acted=self.acted,
+            uncertain=self.uncertain,
+            stop_run=True,
         )
 
     def ok(self, reason: str) -> ApplyResult:
@@ -147,6 +161,7 @@ def apply_to_vacancy(
     before_submit: Callable[[], None] | None = None,
     question_answerer: AIQuestionAnswerer | None = None,
     force: bool = False,
+    allow_relocation: bool = False,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -160,6 +175,7 @@ def apply_to_vacancy(
         before_submit=before_submit,
         question_answerer=question_answerer,
         force=force,
+        allow_relocation=allow_relocation,
     )
     return _run(ctx)
 
@@ -289,13 +305,24 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # #207: с клика по кнопке отклика начинается «серая зона» — дальнейшие
     # fail-исходы финализируются через _finalize_post_click_failure (внешняя
     # проверка /applicant/negotiations), а не сразу ctx.fail.
-    navigation_result = apply_steps.navigate_to_response_form(ctx.page, ctx.vacancy.vacancy_id)
+    navigation_result = apply_steps.navigate_to_response_form(
+        ctx.page,
+        ctx.vacancy.vacancy_id,
+        allow_relocation=ctx.allow_relocation,
+    )
     _halt_if_antibot(ctx)
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный,
         # неисполнимый пропуск; не форма не отрисовалась, а hh.ru дал определённый
         # ответ прямо на странице вакансии.
         return ctx.skip(navigation_result, skip_reason=SKIP_REASONS.RESUME_VISIBILITY)
+    if isinstance(navigation_result, PostClickBlocker):
+        if navigation_result.stop_run:
+            return ctx.stop(navigation_result.reason)
+        return ctx.skip(
+            navigation_result.reason,
+            skip_reason=navigation_result.skip_reason or SKIP_REASONS.RESPONSE_REJECTED,
+        )
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
@@ -427,6 +454,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         return _finalize_post_click_failure(
             ctx, "submit-клик упал с исключением — отправка могла уйти, исход неопределён"
         )
+    except PostSubmitLimitExceeded as exc:
+        ctx.acted = True
+        return ctx.stop(str(exc))
     except PlaywrightError as exc:
         logger.warning(
             "[FAIL] %s — ошибка Playwright при заполнении формы (%s)", ctx.vacancy.title, exc

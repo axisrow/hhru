@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ._common import (
+    ApplyRunStopped,
     _build_scoring_provider,
     add_common_args,
     add_force_arg,
@@ -139,20 +140,23 @@ def run(args: argparse.Namespace) -> bool:
         else:
             cards_by_resume = None
             ranked_by_resume = None
-        for resume in resumes:
-            if cards_by_resume is None:
-                result = run_apply_for_resume(page, config, resume, history, throttle, args)
-            else:
-                result = run_apply_for_resume(
-                    page,
-                    config,
-                    resume,
-                    history,
-                    throttle,
-                    args,
-                    cards_by_resume[resume.id],
-                    True,
-                    ranked_by_resume[resume.id],
-                )
-            failed = result or failed
+        try:
+            for resume in resumes:
+                if cards_by_resume is None:
+                    result = run_apply_for_resume(page, config, resume, history, throttle, args)
+                else:
+                    result = run_apply_for_resume(
+                        page,
+                        config,
+                        resume,
+                        history,
+                        throttle,
+                        args,
+                        cards_by_resume[resume.id],
+                        True,
+                        ranked_by_resume[resume.id],
+                    )
+                failed = result or failed
+        except ApplyRunStopped:
+            failed = True
     return failed
