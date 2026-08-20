@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import difflib
 import logging
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -42,6 +44,21 @@ CREATE TABLE IF NOT EXISTS actions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
     ON actions(resume_id, vacancy_id)
     WHERE action = 'apply' AND status IN ('success', 'uncertain');
+
+-- feedback — ручная обратная связь по вакансии (#417). Это отдельная таблица,
+-- а не payload approval queue: reject можно записать до появления очереди и
+-- не смешивать пользовательский текст с общей историей действий.
+CREATE TABLE IF NOT EXISTS vacancy_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    edited_snippet TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vacancy_feedback_created_at
+    ON vacancy_feedback(created_at);
 
 -- responses — мониторинг ответов работодателей (#12, account-scope).
 -- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
@@ -310,6 +327,15 @@ REPLY_STATUS_VALUES = ("success", "failed", "dry_run", "uncertain")
 
 
 class History:
+    # Feedback is deliberately bounded: it is prompt context, not an archive
+    # of potentially sensitive letters.
+    FEEDBACK_REASON_MAX = 500
+    # SequenceMatcher can be quadratic for adversarial/repetitive input. Keep
+    # the CLI bounded before doing any matching; the stored context is smaller
+    # still (FEEDBACK_SNIPPET_MAX below).
+    FEEDBACK_LETTER_MAX = 4000
+    FEEDBACK_SNIPPET_MAX = 2000
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,6 +459,70 @@ class History:
             )
             assert cursor.lastrowid is not None
             return cursor.lastrowid
+
+    @classmethod
+    def _feedback_snippet(cls, generated: str | None, edited: str | None) -> str | None:
+        """Return a bounded, redacted diff instead of storing whole letters."""
+        if generated is None or edited is None or generated == edited:
+            return None
+        generated = generated[: cls.FEEDBACK_LETTER_MAX]
+        edited = edited[: cls.FEEDBACK_LETTER_MAX]
+        matcher = difflib.SequenceMatcher(a=generated, b=edited, autojunk=False)
+        chunks = []
+        for tag, a1, a2, b1, b2 in matcher.get_opcodes():
+            if tag != "equal":
+                chunks.append(f"-{generated[a1:a2]}\n+{edited[b1:b2]}")
+        snippet = "\n".join(chunks)
+        # Do not persist common direct identifiers from manually edited letters.
+        snippet = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted-email]", snippet)
+        snippet = re.sub(r"(?<!\d)(?:\+?\d[\d ()-]{8,}\d)(?!\d)", "[redacted-phone]", snippet)
+        return snippet[: cls.FEEDBACK_SNIPPET_MAX] or None
+
+    def record_reject(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        reason: str,
+        *,
+        generated_letter: str | None = None,
+        edited_letter: str | None = None,
+    ) -> int:
+        """Record one explicit manual rejection and an optional letter diff."""
+        reason = " ".join(reason.split()).strip()
+        if not reason:
+            raise ValueError("Причина отклонения не может быть пустой")
+        reason = reason[: self.FEEDBACK_REASON_MAX]
+        snippet = self._feedback_snippet(generated_letter, edited_letter)
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO vacancy_feedback
+                   (resume_id, vacancy_id, action, reason, edited_snippet, created_at)
+                   VALUES (?, ?, 'reject', ?, ?, ?)""",
+                (resume_id, vacancy_id, reason, snippet, now),
+            )
+            # Keep the action visible to existing action/history consumers while
+            # retaining the letter-specific payload in vacancy_feedback.
+            conn.execute(
+                """INSERT INTO actions
+                   (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
+                   VALUES (?, ?, 'reject', 'success', ?, NULL, ?)""",
+                (resume_id, vacancy_id, reason, now),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+    def list_feedback(self, *, resume_id: str | None = None, limit: int = 20) -> list[dict]:
+        """Return newest manual feedback rows for future prompt consumers."""
+        query = "SELECT * FROM vacancy_feedback"
+        params: list[object] = []
+        if resume_id is not None:
+            query += " WHERE resume_id = ?"
+            params.append(resume_id)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(query, params).fetchall()]
 
     def begin_action(self, resume_id: str, vacancy_id: str, action: str) -> int:
         """Durably reserve a potentially external action before browser work.

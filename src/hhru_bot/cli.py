@@ -54,6 +54,7 @@ WRITE_COMMANDS = frozenset(
         "edit-languages",
         "settings",
         "config",
+        "reject",
     }
 )
 

@@ -54,6 +54,7 @@ def test_lock_covers_all_hhru_write_commands():
         "edit-skills",
         "edit-languages",
         "settings",
+        "reject",
         "config",
     }
 
