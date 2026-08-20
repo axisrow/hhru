@@ -39,7 +39,11 @@ def run(args: argparse.Namespace) -> None:
     from ..browser import goto_hh, launch_context, require_authenticated_page
     from ..config import load_config_or_exit
     from ..history import History
-    from ..resume_views import parse_resume_view_history, parse_resume_view_history_dom
+    from ..resume_views import (
+        has_next_page,
+        parse_resume_view_history,
+        parse_resume_view_history_dom,
+    )
 
     if args.limit < 1 or args.max_pages < 1:
         raise ValueError("limit и max-pages должны быть >= 1")
@@ -80,7 +84,7 @@ def run(args: argparse.Namespace) -> None:
                         print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
                         raise SystemExit(1) from exc
                 fetched.extend(rows)
-                if not rows or len(rows) < args.limit:
+                if not rows or not has_next_page(page, page_num):
                     break
 
     inserted = history.record_resume_views(fetched)

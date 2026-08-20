@@ -5,6 +5,21 @@ from __future__ import annotations
 from .negotiations_probe import parse_initial_state
 
 
+def has_next_page(page, page_num: int) -> bool:
+    """Return whether the rendered history pager confirms another page."""
+    next_link = page.locator("[data-qa*='pager-next'], [data-qa*='pagination-next'], a[rel='next']")
+    if next_link.count() > 0:
+        return True
+    pages = page.locator("[data-qa*='pager-page'], [data-qa*='pagination-page']")
+    for index in range(pages.count()):
+        try:
+            if int(pages.nth(index).inner_text().strip()) > page_num + 1:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _find_history(value):
     if isinstance(value, dict):
         for key, child in value.items():

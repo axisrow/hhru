@@ -5,7 +5,7 @@ import json
 import pytest
 
 from hhru_bot.history import History
-from hhru_bot.resume_views import parse_resume_view_history
+from hhru_bot.resume_views import has_next_page, parse_resume_view_history
 
 pytestmark = pytest.mark.unit
 
@@ -33,6 +33,38 @@ def test_parse_resume_view_history_reads_ssr_and_limit():
 def test_parse_resume_view_history_fails_closed_on_schema_drift():
     with pytest.raises(ValueError):
         parse_resume_view_history(_html({"applicantResumeViewHistory": {}}), "r1")
+
+
+def test_has_next_page_uses_confirmed_numeric_pager():
+    class Locator:
+        def __init__(self, values):
+            self.values = values
+
+        def count(self):
+            return len(self.values)
+
+        def nth(self, index):
+            return self.values[index]
+
+    class Text:
+        def __init__(self, value):
+            self.value = value
+
+        def inner_text(self):
+            return self.value
+
+    class Page:
+        def locator(self, selector):
+            if (
+                "pager-next" in selector
+                or "pagination-next" in selector
+                or "rel='next'" in selector
+            ):
+                return Locator([])
+            return Locator([Text("1"), Text("2")])
+
+    assert has_next_page(Page(), 0)
+    assert not has_next_page(Page(), 1)
 
 
 def test_history_deduplicates_resume_view_snapshots(tmp_path):
