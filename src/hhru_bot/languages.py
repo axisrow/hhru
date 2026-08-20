@@ -113,30 +113,38 @@ def build_languages_prompt(
 def edit_languages_on_hh(
     page, resume: ResumeConfig, languages: tuple[Language, ...], *, dry_run: bool, mode: str
 ) -> LanguagesResult:
-    """Apply confirmed language rows through the live modal, or plan only."""
+    """Apply confirmed language rows through the live modal, or plan only.
+
+    Languages are a profile-level entity on hh.ru, not a resume-level one:
+    ``/resume/{id}`` never renders a languages block (confirmed on an empty
+    draft and on a published resume with real language data).  The editor
+    lives on ``/applicant/profile/me`` and a saved language applies to every
+    resume on the account.  ``resume`` is accepted for interface symmetry
+    with the other ``edit_*_on_hh`` functions and for the ``resume.id`` used
+    in the caller's logging/confirmation prompts — the write itself does not
+    read any resume-specific field from it, since ``page`` already carries
+    the account session and there is no per-resume target to select.
+    """
     if dry_run:
         return LanguagesResult(True, languages)
     try:
-        goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
+        goto_hh(page, f"{HH_BASE_URL}/applicant/profile/me")
         if not has_auth_cookie(page) or has_login_form(page):
             return LanguagesResult(False, languages, "сессия hh.ru не подтверждена")
-        if urlsplit(page.url).path != f"/resume/{resume.resume_id}":
-            return LanguagesResult(False, languages, "страница нужного резюме не подтверждена")
+        if urlsplit(page.url).path != "/applicant/profile/me":
+            return LanguagesResult(False, languages, "страница профиля не подтверждена")
         card = page.locator(resume_page.RESUME_LANGUAGE_CARD)
-        edit = card.locator(resume_page.RESUME_LANGUAGE_EDIT_BUTTON)
-        if card.count() != 1 or edit.count() != 1:
+        add_button = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
+        if card.count() != 1 or add_button.count() != 1:
             return LanguagesResult(False, languages, "карточка языков не найдена однозначно")
         existing = tuple(
-            tag.inner_text().split(",", 1)[0].strip()
-            for tag in card.locator(resume_page.RESUME_LANGUAGE_TAG).all()
+            row.locator(resume_page.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
+            for row in card.locator(resume_page.RESUME_LANGUAGE_ROW).all()
         )
         existing_keys = {value.casefold() for value in existing}
         if mode == "fresh" and existing:
             return LanguagesResult(False, languages, "режим с нуля требует пустого раздела")
         additions = tuple(item for item in languages if item.name.casefold() not in existing_keys)
-        edit.click()
-        dialog = page.get_by_role("dialog", name="Язык").last()
-        dialog.wait_for(state="visible")
         for item in additions:
             if item.level is None:
                 return LanguagesResult(
@@ -144,18 +152,14 @@ def edit_languages_on_hh(
                     languages,
                     f"уровень CEFR для языка '{item.name}' не подтверждён",
                 )
-            add = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
-            if add.count() != 1:
-                return LanguagesResult(
-                    False, languages, "кнопка добавления языка не найдена однозначно"
-                )
-            add.click()
-            form = page.locator(resume_page.RESUME_LANGUAGE_ADD_FORM)
+            add_button.click()
+            dialog = page.get_by_role("dialog", name="Язык").last()
+            dialog.wait_for(state="visible")
+            form = dialog.locator(resume_page.RESUME_LANGUAGE_ADD_FORM)
             form.wait_for(state="visible")
             _choose_language(page, form, item.name)
             _choose_degree(page, form, item.level)
-            _save_language(page)
-            dialog = page.get_by_role("dialog", name="Язык").last()
+            _save_language(dialog)
             dialog.wait_for(state="hidden")
         return LanguagesResult(True, languages, acted=bool(additions))
     except (PlaywrightError, RuntimeError) as exc:
@@ -165,25 +169,27 @@ def edit_languages_on_hh(
 
 
 def _choose_language(page, form, name: str) -> None:
-    selectors = form.locator(resume_page.RESUME_LANGUAGE_SELECT)
-    if selectors.count() != 2:
-        raise PlaywrightError("поля языка/уровня не найдены однозначно")
-    selectors.nth(0).click()
-    picker = page.get_by_role("dialog", name="Язык").last()
-    picker.get_by_role("option", name=name, exact=True).click()
+    selector = form.locator(resume_page.RESUME_LANGUAGE_FORM_LANGUAGE_SELECT)
+    if selector.count() != 1:
+        raise PlaywrightError("поле выбора языка не найдено однозначно")
+    selector.click()
+    dialog = page.get_by_role("dialog", name="Язык").last()
+    dialog.get_by_role("option", name=name, exact=True).click()
 
 
 def _choose_degree(page, form, level: str) -> None:
-    selectors = form.locator(resume_page.RESUME_LANGUAGE_SELECT)
-    if selectors.count() != 2:
-        raise PlaywrightError("поля языка/уровня не найдены однозначно")
-    selectors.nth(1).click()
-    picker = page.get_by_role("dialog", name="Уровень владения").last()
-    picker.get_by_role("option", name=CEFR_LABELS[level], exact=True).click()
-
-
-def _save_language(page) -> None:
+    selector = form.locator(resume_page.RESUME_LANGUAGE_FORM_DEGREE_SELECT)
+    if selector.count() != 1:
+        raise PlaywrightError("поле выбора уровня не найдено однозначно")
+    selector.click()
     dialog = page.get_by_role("dialog", name="Язык").last()
+    option = dialog.locator(resume_page.RESUME_LANGUAGE_DEGREE_OPTION.format(level.lower()))
+    if option.count() != 1:
+        raise PlaywrightError(f"опция уровня '{level}' не найдена однозначно")
+    option.click()
+
+
+def _save_language(dialog) -> None:
     save = dialog.locator(resume_page.RESUME_LANGUAGE_SAVE)
     if save.count() != 1:
         raise PlaywrightError("кнопка сохранения языка не найдена однозначно")
