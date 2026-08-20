@@ -260,7 +260,6 @@ def _apply_rows(
                     # The row editor is left open in this state; querying the
                     # next trigger against it would be unreliable (#331).
                     break
-                save.click()
                 # The page is already on /resume/{resume_id} before this click
                 # (see apply_plan below), and a successful save closes the
                 # inline editor in place without changing the URL — so
@@ -274,7 +273,13 @@ def _apply_rows(
                 # shared except below and stops the block, rather than
                 # clicking the next row's trigger against an unresolved
                 # editor state (#331, codex+claude cycle-review round 2).
-                save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+                try:
+                    save.click()
+                    save.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
+                except (PlaywrightError, RuntimeError) as exc:
+                    raise PlaywrightError(
+                        f"сохранение не подтверждено (uncertain) после клика: {exc}"
+                    ) from exc
             else:
                 # Leave the row editor before moving to the next row.  Otherwise
                 # the next trigger is queried while the previous form is still open.

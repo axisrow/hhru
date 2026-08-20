@@ -192,15 +192,17 @@ def run(args: argparse.Namespace) -> None:
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback contract
         print(f"[FAIL] {resume.id} — {exc}")
         raise SystemExit(1) from exc
+    uncertain = any("uncertain" in item for item in results)
     success = bool(results) and all("сохранено" in item for item in results)
     history.record_action(
         resume.resume_id,
         resume.resume_id,
         "edit_experience",
-        "success" if success else "failed",
+        "uncertain" if uncertain else ("success" if success else "failed"),
         "; ".join(results),
     )
     for item in results:
-        print(f"[OK] {resume.id} — {item}" if success else f"[FAIL] {resume.id} — {item}")
+        prefix = "[FAIL] (uncertain)" if uncertain else ("[OK]" if success else "[FAIL]")
+        print(f"{prefix} {resume.id} — {item}")
     if not success:
         raise SystemExit(1)

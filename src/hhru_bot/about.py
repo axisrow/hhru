@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .config_sections.ai_profile import AIProfile
 
 logger = logging.getLogger("hhru_bot.about")
+SAVE_TIMEOUT_MS = 30_000
 
 
 class AboutGenerationError(RuntimeError):
@@ -150,8 +151,10 @@ def save_about(page: Page, text: str) -> None:
     save = page.locator(resume_page.RESUME_PARTIAL_EDIT_SAVE)
     if save.count() != 1:
         raise AboutGenerationError("кнопка сохранения «Обо мне» не найдена однозначно")
-    save.click()
     try:
-        field.wait_for(state="hidden")
+        save.click()
+        field.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
     except PlaywrightError as exc:
-        raise AboutGenerationError("сохранение не подтверждено: inline-форма не закрылась") from exc
+        raise AboutGenerationError(
+            "сохранение не подтверждено (uncertain): inline-форма не закрылась после клика"
+        ) from exc

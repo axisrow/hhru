@@ -156,7 +156,8 @@ def run(args: argparse.Namespace) -> None:
         errors = apply_plan(context.new_page(), resume.resume_id, plan, dry_run=args.dry_run)
     if errors:
         for error in errors:
-            print(f"[FAIL] {error}")
+            prefix = "[FAIL] (uncertain)" if "uncertain" in error else "[FAIL]"
+            print(f"{prefix} {error}")
         sys.exit(1)
     print(
         "[OK] Дополнительные разделы обработаны." if not args.dry_run else "[INFO] План корректен."
