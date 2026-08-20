@@ -56,6 +56,17 @@ def test_robot_questionnaire_does_not_count_our_questions():
     )
 
 
+def test_robot_author_match_is_not_a_substring():
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "", "Работодатель")])
+    assert is_robot_questionnaire([ChatMessage("employer", "1", "", "Автобот")])
+
+
+def test_robot_questionnaire_counts_adjacent_questions_in_one_message():
+    assert is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Какой у вас опыт? Когда готовы приступить?")]
+    )
+
+
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):
     # An unmapped topic returns before ``page`` is touched, so a typed stand-in
     # is enough — no real Playwright Page is needed for this branch.
