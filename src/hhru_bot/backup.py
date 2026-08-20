@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from shutil import copyfile
 
+import yaml
+
 
 class BackupError(ValueError):
     """The backup archive or destination is not safe to use."""
@@ -32,6 +34,29 @@ def _sqlite_snapshot(source: Path, destination: Path) -> None:
     finally:
         dst.close()
         src.close()
+
+
+def _configured_storage_path(config: Path, root: Path) -> Path | None:
+    try:
+        raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise BackupError(f"Не удалось прочитать конфиг для backup: {config}") from exc
+    if not isinstance(raw, dict):
+        return None
+    account = raw.get("account", {})
+    if not isinstance(account, dict):
+        return None
+    value = account.get("storage_state_file")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise BackupError("Некорректный account.storage_state_file")
+    path = (config.parent / value).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise BackupError("storage_state_file выходит за пределы data") from exc
+    return path
 
 
 def create_backup(
@@ -85,12 +110,27 @@ def create_backup(
                     if snapshot.exists():
                         archive.add(snapshot, arcname="history.db", recursive=False)
                     storage_dir = root / "storage_state"
+                    configured_storage = (
+                        _configured_storage_path(config, root) if config.is_file() else None
+                    )
+                    included: set[Path] = set()
                     if storage_dir.is_dir() and not storage_dir.is_symlink():
                         for item in sorted(storage_dir.rglob("*")):
                             if item.is_file() and not item.is_symlink():
+                                included.add(item.resolve())
                                 archive.add(
                                     item, arcname=item.relative_to(root).as_posix(), recursive=False
                                 )
+                    if (
+                        configured_storage is not None
+                        and configured_storage.is_file()
+                        and configured_storage not in included
+                    ):
+                        archive.add(
+                            configured_storage,
+                            arcname=f"storage_state/{configured_storage.name}",
+                            recursive=False,
+                        )
             os.replace(temporary, output)
         finally:
             if fd != -1:
@@ -141,6 +181,13 @@ def restore_backup(
             return config
         if name == "history.db":
             return history
+        configured_storage = _configured_storage_path(config, root) if config.exists() else None
+        if (
+            configured_storage is not None
+            and name == f"storage_state/{configured_storage.name}"
+            and configured_storage != root / name
+        ):
+            return configured_storage
         return root / name
 
     names = inspect_backup(archive_path)
