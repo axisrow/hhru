@@ -29,8 +29,8 @@ jobs:
       - name: Ruff format check
         run: ruff format --check src tests
 
-      - name: Pytest
-        run: pytest
+      - name: Pytest suite budget
+        run: python scripts/check_pytest_budget.py
 
       - name: CLI docs in sync with argparse
         # Справочник команд в README автогенерируется из argparse. Если кто-то
