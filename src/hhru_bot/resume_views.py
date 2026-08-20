@@ -44,7 +44,13 @@ def _value(entry: dict, *names):
     return None
 
 
-def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = None) -> list[dict]:
+def parse_resume_view_history(
+    html: str,
+    resume_id: str,
+    *,
+    limit: int | None = None,
+    hidden_offsets: dict[str, int] | None = None,
+) -> list[dict]:
     """Parse SSR history; raise instead of treating schema drift as empty data."""
     state = parse_initial_state(html)
     history = _find_history(state)
@@ -52,7 +58,7 @@ def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = 
         raise ValueError("SSR applicantResumeViewHistory.historyViews недоступен")
 
     result = []
-    hidden_by_date: dict[str, int] = {}
+    hidden_by_date = hidden_offsets if hidden_offsets is not None else {}
     for entry in history["historyViews"]:
         if not isinstance(entry, dict):
             continue

@@ -69,6 +69,7 @@ def run(args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         for resume in resumes:
+            hidden_offsets: dict[str, int] = {}
             # Route accepts resume_id as a query parameter on current hh.ru; no
             # direct HTTP request is made, preserving the browser boundary.
             for page_num in range(args.max_pages):
@@ -76,7 +77,10 @@ def run(args: argparse.Namespace) -> None:
                 require_authenticated_page(page)
                 try:
                     rows = parse_resume_view_history(
-                        page.content(), resume.resume_id, limit=args.limit
+                        page.content(),
+                        resume.resume_id,
+                        limit=args.limit,
+                        hidden_offsets=hidden_offsets,
                     )
                 except (ValueError, TypeError) as exc:
                     rows = parse_resume_view_history_dom(page, resume.resume_id, limit=args.limit)

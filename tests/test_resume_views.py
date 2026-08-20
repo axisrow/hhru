@@ -42,6 +42,15 @@ def test_parse_resume_view_history_preserves_hidden_same_date_events():
     assert [row["employer"] for row in rows] == ["(скрыт #1)", "(скрыт #2)"]
 
 
+def test_parse_resume_view_history_carries_hidden_offsets_across_pages():
+    offsets = {}
+    html = _html({"applicantResumeViewHistory": {"historyViews": [{"date": "2026-08-20"}]}})
+    first = parse_resume_view_history(html, "r1", hidden_offsets=offsets)
+    second = parse_resume_view_history(html, "r1", hidden_offsets=offsets)
+    assert first[0]["employer"] == "(скрыт #1)"
+    assert second[0]["employer"] == "(скрыт #2)"
+
+
 def test_parse_resume_view_history_fails_closed_on_schema_drift():
     with pytest.raises(ValueError):
         parse_resume_view_history(_html({"applicantResumeViewHistory": {}}), "r1")
