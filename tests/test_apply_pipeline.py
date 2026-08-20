@@ -846,6 +846,66 @@ def test_apply_submit_click_error_external_found_upgrades_to_success():
     assert result.uncertain is False
 
 
+def test_apply_submit_click_error_external_not_found_clears_uncertain():
+    """SubmitClickUncertain пред-ставит uncertain=True ДО внешней проверки, но
+    verify вынес not_found — список ПОДТВЕРЖДЁННО прочитан и вакансии в нём нет,
+    то есть отклик точно не ушёл. Флаг обязан сброситься: иначе в actions уходит
+    'uncertain' при доказанном отсутствии отклика, а он расходует дневной лимит
+    (count_today) и навсегда блокирует вакансию (has_applied).
+
+    Боевой случай 2026-08-20, vacancy_id=136190065: verify залогировал «список
+    прочитан, вакансии нет», а в history легло status='uncertain'."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    verifier = _verifier("not_found")
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError(
+            "Locator.click: Timeout 30000ms exceeded ... subtree intercepts pointer events"
+        ),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.uncertain is False
+    # acted не трогаем: клик по кнопке отклика был, пауза троттлинга заслужена.
+    assert result.acted is True
+
+
+def test_apply_confirmation_error_external_not_found_clears_uncertain(monkeypatch):
+    """Тот же дефект достижим из post-submit PlaywrightError — он тоже
+    пред-ставит uncertain=True перед вызовом верификатора."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _raise(_page, **_kwargs):
+        raise PlaywrightError("Page closed while polling success markers")
+
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
+    verifier = _verifier("not_found")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.uncertain is False
+    assert result.acted is True
+
+
+def test_apply_verifier_absent_keeps_uncertain_after_submit_click_error():
+    """Регресс-страховка #176: без верификатора сброс НЕ действует — исход
+    честно неизвестен, uncertain сохраняется и has_applied блокирует дубликат."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError("Target closed"),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=None)
+    assert result.uncertain is True
+    assert result.acted is True
+
+
 def test_apply_confirmation_error_external_found_upgrades_to_success(monkeypatch):
     """#177+#207: PlaywrightError при подтверждении + найденный отклик —
     тоже апгрейд до success."""
