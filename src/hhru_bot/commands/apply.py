@@ -42,6 +42,17 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
+    if getattr(args, "approved", None) is not None and args.resume is None:
+        items = [item for item in history.review_items() if item["id"] == args.approved]
+        matches = [
+            resume
+            for resume in config.resumes
+            if items and resume.resume_id == items[0]["resume_id"]
+        ]
+        if not matches:
+            print("[FAIL] approved-запись не связана с резюме из текущего конфига")
+            return True
+        args.resume = matches[0].id
     resumes = resumes_from_args(config, args)
     throttle = Throttle(config.throttle, history)
 
