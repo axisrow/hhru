@@ -682,7 +682,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                         page, vacancy, timeout_ms=GOTO_TIMEOUT_MS, form_timeout_ms=10_000
                     )
                     result_index = next(
-                        index for index, item in enumerate(resume_results)
+                        index
+                        for index, item in enumerate(resume_results)
                         if item.vacancy.vacancy_id == vacancy_id
                     )
                     resume_results[result_index] = result
