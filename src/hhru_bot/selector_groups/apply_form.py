@@ -9,7 +9,32 @@ toggle/textarea, submit), которые #3 и #7 не трогают. Селе�
 
 from __future__ import annotations
 
-APPLY_RESUME_SELECT = "[data-qa='resume-topic-title']"
+# сверено живым DOM (F12, /applicant/vacancy_response,
+# multi-resume аккаунт, 2026-08-20). APPLY_RESUME_SELECT был непроверенной
+# заглушкой и не существует на реальной форме (`resume-topic-title` не
+# найден вообще). APPLY_COVER_LETTER_TOGGLE проверен и совпал с уже бывшим
+# значением (сверено на вакансии с опциональным письмом на ПОЛНОЙ форме —
+# см. предупреждение ниже про то, какая форма имеется в виду).
+#
+# Реальная структура выбора резюме (multi-resume): свёрнутый триггер —
+# первый `[data-qa='resume-title']` внутри `role=button`-контейнера без
+# собственного data-qa; клик по нему раскрывает список опций, каждая —
+# `<label data-qa="magritte-select-option-{resume_id}" role="option">`
+# (resume_id — «голый» id резюме, тот же хвост, что в resume_url, БЕЗ href
+# у самого label — атрибута href на форме нет вовсе, старое сопоставление
+# по href было в принципе нерабочим). APPLY_RESUME_SELECT ниже — это
+# ТРИГГЕР (для открытия), а не коллекция опций — см. новую сигнатуру
+# _select_resume_in_form() в apply/steps.py.
+#
+# ВАЖНО: hh.ru рендерит форму отклика в ДВУХ разных местах с похожим, но не
+# идентичным DOM — компактный попап на карточке поиска (там letter-toggle
+# называется `add-cover-letter`) и полноценная страница
+# `/applicant/vacancy_response` (letter-toggle — `vacancy-response-letter-
+# toggle`, как ниже). Бот использует ВТОРУЮ (двухшаговая навигация,
+# CLAUDE.md п.4) — все селекторы этого файла сверены именно на ней, не
+# на попапе.
+APPLY_RESUME_SELECT = "[data-qa='resume-title']"
+APPLY_RESUME_OPTION_PREFIX = "magritte-select-option-"
 APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
 APPLY_COVER_LETTER_TEXTAREA = "textarea[data-qa='vacancy-response-popup-form-letter-input']"
 APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"

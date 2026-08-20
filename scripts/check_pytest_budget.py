@@ -7,7 +7,9 @@ import subprocess
 import sys
 import time
 
-SUITE_BUDGET_SECONDS = 20.0
+# CI runners have variable startup/load time.  A tight 20s threshold made a
+# passing suite fail intermittently (the suite itself is normally ~10-15s).
+SUITE_BUDGET_SECONDS = 30.0
 
 
 def main() -> int:

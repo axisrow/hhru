@@ -270,8 +270,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
         ctx.letter_variant = VARIANT_TEMPLATE
 
-    if ctx.dry_run and ctx.question_answerer is None:
+    if ctx.dry_run:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)
+    if ctx.dry_run and ctx.question_answerer is None:
         return ctx.ok("dry-run")
 
     # #247: ревалидация маркера «уже откликались» ДО клика по кнопке отклика.

@@ -42,6 +42,11 @@ def register(subparsers) -> None:
         action="store_true",
         help="Прочитать последние сообщения работодателей и записать внешние тесты (#180)",
     )
+    p.add_argument(
+        "--remindable",
+        action="store_true",
+        help="Показать переписки, для которых hh.ru явно разрешает напоминание",
+    )
     p.set_defaults(func=run)
 
 
@@ -105,7 +110,8 @@ def run(args: argparse.Namespace) -> None:
     # «Что нового» меряется по status_changed_at. since = now - since-hours.
     # since-hours<=0 → пользователь явно просит НЕ ходить на hh.ru, а показать
     # всё из истории (быстрый read-only дашборд без обхода).
-    fresh_only = args.since_hours <= 0
+    remindable_only = getattr(args, "remindable", False)
+    fresh_only = args.since_hours <= 0 and not remindable_only
     since_fetch = datetime.now() - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
     # окно since-fetch. datetime.min — «любая status_changed_at подходит».
@@ -136,8 +142,20 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             page = context.new_page()
             try:
+                if remindable_only:
+                    from ..negotiations_probe import paginated_remindable_topic_refs
+
+                    refs = paginated_remindable_topic_refs(page, max_pages=args.max_pages)
+                    print(f"Переписки с разрешённым напоминанием: {len(refs)}")
+                    for ref in refs:
+                        print(
+                            f"topic={ref.topic_id} chat={ref.chat_id} "
+                            f"работодатель={ref.employer or '-'} "
+                            f"вакансия={ref.vacancy} vacancy_id={ref.vacancy_id}"
+                        )
+                    return
                 cards = fetch_responses(page, max_pages=args.max_pages)
-            except (NotAuthenticated, ResponsesIndeterminate) as e:
+            except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
                 print(f"Ошибка: {e}", file=sys.stderr)

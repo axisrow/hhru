@@ -12,6 +12,7 @@ import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from _fakes import NegotiationsPage
+from hhru_bot.negotiations_probe import remindable_topic_refs
 from hhru_bot.responses import (
     ResponseItem,
     ResponseStatus,
@@ -22,6 +23,30 @@ from hhru_bot.responses import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _reminder_html(topics: str) -> str:
+    return f'<template id="HH-Lux-InitialState">{{"applicantNegotiations":{{"topicList":[{topics}]}}}}</template>'
+
+
+def test_remindable_topic_refs_filters_explicitly_allowed_topics():
+    refs = remindable_topic_refs(
+        _reminder_html(
+            '{"id":1,"chatId":2,"vacancyId":3,"employerName":"ACME",'
+            '"vacancyName":"Python","responseReminderState":{"allowed":true}},'
+            '{"id":4,"chatId":5,"vacancyId":6,"responseReminderState":{"allowed":false}}'
+        )
+    )
+    assert refs[0].topic_id == "1"
+    assert refs[0].chat_id == "2"
+    assert refs[0].vacancy_id == "3"
+    assert refs[0].employer == "ACME"
+    assert refs[0].vacancy == "Python"
+
+
+def test_remindable_topic_refs_fails_closed_on_missing_state():
+    with pytest.raises(ValueError, match="responseReminderState"):
+        remindable_topic_refs(_reminder_html('{"id":1,"chatId":2,"vacancyId":3}'))
 
 
 def test_fetch_responses_uses_auth_cookie_not_login_url(monkeypatch):

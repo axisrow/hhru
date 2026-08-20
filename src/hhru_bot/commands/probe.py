@@ -24,8 +24,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 
 from playwright.sync_api import Error as PlaywrightError
@@ -81,6 +83,11 @@ def register(subparsers) -> None:
     p.add_argument(
         "--topic",
         help="ID topic из SSR-дампа negotiations для открытия чата (только чтение)",
+    )
+    p.add_argument(
+        "--questionnaires-only",
+        action="store_true",
+        help=("Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit и PNG/HTML"),
     )
     p.set_defaults(func=run)
 
@@ -434,6 +441,8 @@ def run(args: argparse.Namespace) -> bool | None:
         return run_healthcheck(args)
     if getattr(args, "negotiations", False):
         return run_negotiations(args)
+    if getattr(args, "questionnaires_only", False):
+        return run_questionnaires(args)
 
     from ..apply.probe import probe_vacancy
     from ..browser import launch_context
@@ -485,6 +494,155 @@ def run(args: argparse.Namespace) -> bool | None:
             print(f"  html:       {html}")
     else:
         print(f"[FAIL] {result.reason}")
+
+
+def _dedupe_vacancies(vacancies):
+    """Keep raw search order while removing duplicate vacancy IDs."""
+    seen: set[str] = set()
+    unique = []
+    for vacancy in vacancies:
+        if vacancy.vacancy_id in seen:
+            continue
+        seen.add(vacancy.vacancy_id)
+        unique.append(vacancy)
+    return unique
+
+
+def _format_questionnaire_report(results) -> str:
+    from ..apply.questionnaire import QUESTIONNAIRE
+    from ..report import _ascii_table
+
+    rows = [
+        [
+            result.vacancy.vacancy_id,
+            result.vacancy.title.replace("\n", " "),
+            result.vacancy.company.replace("\n", " ") or "-",
+            result.status,
+            str(len(result.questions) if result.status == QUESTIONNAIRE else 0),
+        ]
+        for result in results
+    ]
+    report = _ascii_table(["vacancy", "title", "company", "status", "questions"], rows)
+    for result in results:
+        if result.status != QUESTIONNAIRE:
+            continue
+        report += f"\n\n[{result.vacancy.vacancy_id}] {result.vacancy.title}"
+        for index, question in enumerate(result.questions, start=1):
+            report += f"\n  {index}. {question.text}"
+            if question.options:
+                report += "\n     options: " + " | ".join(question.options)
+    return report
+
+
+def run_questionnaires(args: argparse.Namespace) -> bool:
+    """Scan all raw search cards in one context/page, without local history."""
+    from ..apply.questionnaire import (
+        FAST_FORM_TIMEOUT_MS,
+        FAST_TIMEOUT_MS,
+        UNAUTHENTICATED,
+        UNKNOWN,
+        QuestionnaireScanResult,
+        scan_questionnaire,
+    )
+    from ..browser import GOTO_TIMEOUT_MS, launch_context
+    from ..config import load_config_or_exit
+    from ..search import VacancySearchIndeterminate, search_vacancies
+
+    if args.vacancy_id or args.vacancy_url:
+        print(
+            "Ошибка: --questionnaires-only работает по поиску; уберите --vacancy-id/--vacancy-url.",
+            file=sys.stderr,
+        )
+        return True
+
+    config = load_config_or_exit(args.config)
+    resumes = resolve_resumes(config, [args.resume] if args.resume else None)
+    if not resumes:
+        print("Ошибка: не выбрано резюме для bulk probe.", file=sys.stderr)
+        return True
+
+    all_results: list[QuestionnaireScanResult] = []
+    print("[INFO] questionnaires-only: read-only поиск анкет (без истории и артефактов)")
+    with launch_context(config.storage_state_file, headless=args.headless) as context:
+        page = context.new_page()
+        for resume in resumes:
+            try:
+                vacancies = _dedupe_vacancies(
+                    search_vacancies(page, resume.search, max_pages=args.max_pages)
+                )
+            except VacancySearchIndeterminate as exc:
+                print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
+                return True
+            print(f"[INFO] {resume.id}: найдено уникальных вакансий: {len(vacancies)}")
+
+            by_id = {}
+            retry_ids = []
+            for vacancy in vacancies:
+                result = scan_questionnaire(
+                    page,
+                    vacancy,
+                    timeout_ms=FAST_TIMEOUT_MS,
+                    form_timeout_ms=FAST_FORM_TIMEOUT_MS,
+                )
+                by_id[vacancy.vacancy_id] = result
+                if result.status == UNKNOWN and result.retryable:
+                    retry_ids.append(vacancy.vacancy_id)
+                # #433 cycle-review: клик по кнопке отклика на каждой вакансии
+                # выдачи подряд без пауз выглядит для анти-фрод системы hh.ru
+                # как автоматизация (базовый принцип CLAUDE.md — не убирать
+                # троттлинг). Пауза та же, что и у обычных действий: случайная
+                # min..max из throttle-конфига, без записи в history (это не
+                # отклик, а read-only сканирование).
+                time.sleep(
+                    random.uniform(
+                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+                    )
+                )
+
+            for vacancy_id in retry_ids:
+                vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
+                by_id[vacancy_id] = scan_questionnaire(
+                    page,
+                    vacancy,
+                    timeout_ms=GOTO_TIMEOUT_MS,
+                    form_timeout_ms=10_000,
+                )
+                time.sleep(
+                    random.uniform(
+                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+                    )
+                )
+            all_results.extend(by_id[v.vacancy_id] for v in vacancies)
+
+    from ..apply.questionnaire import ALREADY_RESPONDED, QUESTIONNAIRE
+
+    print(_format_questionnaire_report(all_results))
+    unauthenticated = sum(r.status == UNAUTHENTICATED for r in all_results)
+    unknown = sum(r.status == UNKNOWN for r in all_results)
+    already_responded = sum(r.status == ALREADY_RESPONDED for r in all_results)
+    print(
+        f"[INFO] итог: вакансий {len(all_results)}, "
+        f"анкет {sum(r.status == QUESTIONNAIRE for r in all_results)}, "
+        f"не подтверждено {unknown}, "
+        f"уже откликались {already_responded}, "
+        f"требует авторизации {unauthenticated}"
+    )
+    if unauthenticated:
+        # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
+        # как успешный полный скан — часть вакансий не проверена.
+        print("[FAIL] сессия истекла во время прогона — скан неполный")
+        return True
+    if all_results and unknown == len(all_results):
+        # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
+        # вакансии (timeout, drift, частично распознанная анкета) — часть
+        # нормального разброса на реальной выдаче, не провал прогона (виден
+        # в таблице/счётчике выше). Провал уровня прогона — это когда ВСЕ
+        # вакансии unknown (массовый timeout/drift, скан не состоялся), как и
+        # run_healthcheck не валит здоровый аккаунт по одной NOT_FOUND
+        # строке, а только когда обязательные селекторы не найдены системно.
+        print("[FAIL] все вакансии вернули неподтверждённый результат — скан не состоялся")
+        return True
+    return False
 
 
 def _resolve_vacancy_url(args: argparse.Namespace) -> str:

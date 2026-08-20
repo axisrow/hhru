@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import logging
 import re
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -144,6 +147,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     last_seen_at TEXT NOT NULL,
     employer_tier TEXT,
     vacancy_text TEXT,
+    published_at TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -164,6 +168,25 @@ CREATE TABLE IF NOT EXISTS skipped (
     created_at TEXT NOT NULL,
     UNIQUE (resume_id, vacancy_id, reason)
 );
+
+-- review_queue — immutable, per-vacancy approval snapshots (#414).
+CREATE TABLE IF NOT EXISTS review_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    vacancy_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    company TEXT NOT NULL,
+    score REAL NOT NULL,
+    breakdown TEXT NOT NULL,
+    letter TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    permit_hash TEXT,
+    permit_expires_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status, id);
 
 -- replies — журнал НАШИХ ответов работодателям в переписках (#108, решение #55).
 -- ОТДЕЛЬНО от responses (#12) по той же причине, что manual_offers (#13):
@@ -369,6 +392,7 @@ class History:
             # поэтому ALTER'ом идемпотентно доводим старые базы.
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
             _ensure_column(conn, "vacancies_seen", "vacancy_text", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "published_at", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -400,6 +424,102 @@ class History:
                 (resume_id, vacancy_id),
             ).fetchone()
             return row is not None
+
+    def enqueue_review(self, resume_id, card, score, breakdown, letter) -> int:
+        """Store the exact dry-run candidate and letter for later approval."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO review_queue
+                (resume_id,vacancy_id,vacancy_url,title,company,score,breakdown,letter,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    resume_id,
+                    card.vacancy_id,
+                    card.url,
+                    card.title,
+                    card.company,
+                    score,
+                    json.dumps(breakdown, sort_keys=True),
+                    letter,
+                    now,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def review_items(self, status=None):
+        with self._connect() as conn:
+            query = "SELECT * FROM review_queue"
+            params = ()
+            if status:
+                query += " WHERE status = ?"
+                params = (status,)
+            query += " ORDER BY id"
+            return [dict(row) for row in conn.execute(query, params)]
+
+    def edit_review_letter(self, item_id: int, letter: str) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE review_queue SET letter=?, updated_at=? WHERE id=? AND status='pending'",
+                (letter, datetime.now().isoformat(), item_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись очереди не найдена или уже обработана")
+
+    def approve_review(self, item_id: int, ttl_seconds: int = 900) -> str:
+        permit = secrets.token_urlsafe(32)
+        now = datetime.now()
+        expires = now + timedelta(seconds=ttl_seconds)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE review_queue SET status='approved', permit_hash=?,
+                   permit_expires_at=?, updated_at=?
+                   WHERE id=? AND status='pending'""",
+                (
+                    hashlib.sha256(permit.encode()).hexdigest(),
+                    expires.isoformat(),
+                    now.isoformat(),
+                    item_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись очереди не найдена или уже обработана")
+        return permit
+
+    def claim_review(self, item_id: int, permit: str | None = None) -> dict:
+        """Atomically claim an approved item; expired permits cannot run."""
+        now = datetime.now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT permit_hash FROM review_queue WHERE id=?", (item_id,)
+            ).fetchone()
+            if (
+                row is None
+                or permit is None
+                or not secrets.compare_digest(
+                    row[0] or "", hashlib.sha256(permit.encode()).hexdigest()
+                )
+            ):
+                raise ValueError("неверный permit")
+            cur = conn.execute(
+                """UPDATE review_queue SET status='applying', updated_at=?
+                   WHERE id=? AND status='approved' AND permit_expires_at > ?""",
+                (now.isoformat(), item_id, now.isoformat()),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись не approved или её permit истёк")
+            row = conn.execute("SELECT * FROM review_queue WHERE id=?", (item_id,)).fetchone()
+            return dict(row)
+
+    def finish_review(self, item_id: int, status: str) -> None:
+        if status not in {"applied", "failed", "skipped"}:
+            raise ValueError(f"недопустимый статус очереди: {status}")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE review_queue SET status=?, updated_at=? WHERE id=?",
+                (status, datetime.now().isoformat(), item_id),
+            )
 
     def last_action_status(
         self,
@@ -1246,6 +1366,7 @@ class History:
         salary_currency: str | None = None,
         employer_tier: str | None = None,
         vacancy_text: str | None = None,
+        published_at: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1266,6 +1387,11 @@ class History:
         сборе для группировки медианы в ``estimate_salary``. При обновлении
         существующей строки tier тоже освежается (компания могла накопить
         отзывов между scrape'ами; trusted-бейдж hh.ru на tier не влияет — #118).
+
+        ``published_at`` — дата публикации вакансии на hh.ru, неизменна по
+        своей природе. Селектор для неё опционален (см. ``selector_groups/
+        search_page.py``), поэтому при повторном scrape без даты уже известное
+        значение сохраняется (``COALESCE``), а не затирается NULL'ом.
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1278,8 +1404,8 @@ class History:
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
                      salary_currency, search_query, first_seen_at,
-                     last_seen_at, employer_tier, vacancy_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_seen_at, employer_tier, vacancy_text, published_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -1288,6 +1414,7 @@ class History:
                     salary_currency = excluded.salary_currency,
                     employer_tier = excluded.employer_tier,
                     vacancy_text = excluded.vacancy_text,
+                    published_at = COALESCE(excluded.published_at, published_at),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1302,6 +1429,7 @@ class History:
                     now,
                     employer_tier,
                     vacancy_text,
+                    published_at,
                 ),
             )
 
@@ -1314,7 +1442,8 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
-                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text "
+                "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
+                "published_at "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1328,6 +1457,37 @@ class History:
                 "GROUP BY vacancy_id"
             ).fetchall()
         return [row["vacancy_text"] for row in rows]
+
+    def vacancy_age_distribution(self, now: datetime | None = None) -> dict[str, int]:
+        """Count observed vacancies by age of hh.ru publication date.
+
+        UNIQUE-индекс — (vacancy_id, search_query), поэтому одна и та же
+        вакансия, встреченная под несколькими поисковыми запросами, даёт
+        несколько строк. Группируем по vacancy_id, чтобы посчитать каждую
+        вакансию один раз (как list_vacancy_texts/estimate_salary).
+        """
+        now = now or datetime.now()
+        result = {"<1 дня": 0, "1-7 дней": 0, "7-30 дней": 0, "30+ дней": 0, "неизвестно": 0}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT MAX(published_at) AS published_at FROM vacancies_seen GROUP BY vacancy_id"
+            ).fetchall()
+        for row in rows:
+            value = row["published_at"]
+            try:
+                age = (now - datetime.fromisoformat(value)).total_seconds() / 86400
+            except (TypeError, ValueError):
+                result["неизвестно"] += 1
+                continue
+            if age < 1:
+                result["<1 дня"] += 1
+            elif age < 7:
+                result["1-7 дней"] += 1
+            elif age < 30:
+                result["7-30 дней"] += 1
+            else:
+                result["30+ дней"] += 1
+        return result
 
     # --- Профиль аккаунта для внешних форм (#282/#284) -----------------------
 

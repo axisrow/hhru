@@ -22,3 +22,9 @@ __all__ = [
     "detect_questions",
     "render_cover_letter",
 ]
+
+# Cross-resume routing (#418) remains pure and optional for callers that want
+# account-wide planning without changing the existing submit pipeline.
+from .router import MergedVacancy, ResumeSelection, merge_vacancies, route_vacancies
+
+__all__ += ["MergedVacancy", "ResumeSelection", "merge_vacancies", "route_vacancies"]
