@@ -8,6 +8,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..external_forms.detect import match_answer_llm, normalize
 from ..selector_groups import apply_form
 
 if TYPE_CHECKING:
@@ -166,11 +167,40 @@ def _prompt(question: Question, profile: AIProfile | None) -> list[dict[str, str
 
 
 class AIQuestionAnswerer:
-    def __init__(self, llm: LLMClient, profile: AIProfile | None = None):
+    def __init__(
+        self,
+        llm: LLMClient,
+        profile: AIProfile | None = None,
+        known_data: dict[str, str] | None = None,
+    ):
         self._llm = llm
         self._profile = profile
+        self._known_data = known_data or {}
+
+    def _profile_answer(self, question: Question) -> str | None:
+        """Resolve a question from account facts before asking the generator."""
+        if not self._known_data:
+            return None
+        normalized = {normalize(key): value for key, value in self._known_data.items()}
+        value = normalized.get(normalize(question.text))
+        if isinstance(value, str) and value.strip():
+            return value
+        # This classifier receives field names only; values stay local.  The
+        # external-form matcher owns the sensitive-field denylist (#361).
+        value = match_answer_llm(question.text, self._known_data, self._llm)
+        return value if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _choice_indices(question: Question, value: str) -> tuple[int, ...]:
+        wanted = normalize(value)
+        return tuple(i for i, option in enumerate(question.options) if normalize(option) == wanted)
 
     def propose(self, question: Question) -> AnswerProposal:
+        profile_answer = self._profile_answer(question)
+        if profile_answer is not None:
+            indices = self._choice_indices(question, profile_answer)
+            if question.kind != "choice" or indices:
+                return AnswerProposal(question, profile_answer, 1.0, indices)
         try:
             response = self._llm.chat(_prompt(question, self._profile), temperature=0.2)
             payload: Any = json.loads((response.content or "").strip())

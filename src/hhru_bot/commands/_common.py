@@ -155,7 +155,9 @@ def _build_letter_provider(
     )
 
 
-def _build_question_answerer(config: AppConfig, resume: ResumeConfig):
+def _build_question_answerer(
+    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
+):
     """Build the opt-in LLM question answerer, if configured."""
     ai_config = getattr(config, "ai", None)
     if ai_config is None or not ai_config.answer_questions:
@@ -168,7 +170,7 @@ def _build_question_answerer(config: AppConfig, resume: ResumeConfig):
     except ImportError as exc:
         logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None))
+    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data)
 
 
 def _build_scoring_provider(
@@ -415,7 +417,7 @@ def run_apply_for_resume(
 
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-    question_answerer = _build_question_answerer(config, resume)
+    question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
     # M6 cycle-review #373: no longer blocks the whole run when
     # ai.answer_questions=true but --force is missing — pipeline.py gates
     # --force per vacancy, only once a questionnaire is actually detected, so
