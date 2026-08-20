@@ -66,9 +66,42 @@ def test_gate_command_runs_without_external_env(tmp_path: Path) -> None:
     pytest бросает `ValueError: Plugin already registered`. Здесь команда
     исполняется по-настоящему на игрушечной сюите, поэтому тест держит
     инвариант «гейт работает в любом окружении», а не «argv выглядит верно».
+
+    Игрушечная сюита — 4 теста, каждый пишет id своего xdist-воркера
+    (`PYTEST_XDIST_WORKER`) в отдельный файл-маркер. Под реальным
+    `-n 4 --dist worksteal` появится больше одного различного worker id; при
+    серийном запуске (флаги параллелизма потеряны в регрессии) переменной
+    окружения не будет вовсе — воркеров ровно 0. Число маркеров и их
+    отличность друг от друга не зависит от абсолютного тайминга раннера,
+    поэтому не флейкает так, как сравнение с порогом по wall time.
     """
-    (tmp_path / "test_toy.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    markers_dir = tmp_path / "workers"
+    markers_dir.mkdir()
+    toy = tmp_path / "test_toy.py"
+    toy.write_text(
+        "import os\nimport uuid\nfrom pathlib import Path\n\n\n"
+        f"MARKERS_DIR = Path({str(markers_dir)!r})\n\n\n"
+        + "\n\n".join(
+            f"def test_marks_worker_{i}():\n"
+            f"    worker = os.environ.get('PYTEST_XDIST_WORKER', 'none')\n"
+            f'    (MARKERS_DIR / f"{{worker}}-{{uuid.uuid4().hex}}").write_text("")\n'
+            for i in range(4)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     completed = check_pytest_budget.run_suite(cwd=tmp_path)
 
     assert completed.returncode == 0, completed
+    marker_names = [p.name for p in markers_dir.iterdir()]
+    workers_seen = {name.split("-", 1)[0] for name in marker_names}
+    assert len(marker_names) == 4, marker_names
+    assert workers_seen != {"none"}, (
+        "no PYTEST_XDIST_WORKER seen — parallelism flags (-n 4 --dist worksteal) "
+        "may have been dropped from run_suite()"
+    )
+    assert len(workers_seen) > 1, (
+        f"only one xdist worker handled all 4 tests ({workers_seen}) — "
+        "parallel distribution may be broken"
+    )
