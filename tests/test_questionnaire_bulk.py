@@ -28,7 +28,7 @@ def test_scan_extracts_task_body_without_artifacts_or_submit(monkeypatch):
     page = Page()
     card = _card("101")
     monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: calls.append(("goto", url)))
-    monkeypatch.setattr(questionnaire, "has_login_form", lambda page: False)
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
     monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: True)
 
     def navigate(page, vacancy_id, **kwargs):
@@ -65,7 +65,7 @@ def test_timeout_is_unknown_and_retryable_not_no_questionnaire(monkeypatch):
             pass
 
     monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
-    monkeypatch.setattr(questionnaire, "has_login_form", lambda page: False)
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
     monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: False)
 
     result = questionnaire.scan_questionnaire(Page(), _card("102"))
@@ -73,6 +73,28 @@ def test_timeout_is_unknown_and_retryable_not_no_questionnaire(monkeypatch):
     assert result.status == questionnaire.UNKNOWN
     assert result.retryable is True
     assert result.status != questionnaire.NO_QUESTIONNAIRE
+
+
+def test_scan_uses_two_signal_auth_check_not_bare_login_form(monkeypatch):
+    from hhru_bot.browser import NotAuthenticated
+
+    class Page:
+        def set_default_navigation_timeout(self, timeout):
+            pass
+
+    monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
+
+    def fail_auth(page):
+        # #433 cycle-review: has_login_form в одиночку не доказывает валидную
+        # сессию (см. её собственный докстринг) — контракт require_authenticated_page
+        # (cookie + отсутствие login-формы) обязателен здесь, как и в остальном проекте.
+        raise NotAuthenticated("cookie hhtoken не найден")
+
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", fail_auth)
+
+    result = questionnaire.scan_questionnaire(Page(), _card("103"))
+
+    assert result.status == questionnaire.UNAUTHENTICATED
 
 
 def _config(resumes):
@@ -188,3 +210,46 @@ def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
     assert probe.run_questionnaires(args) is True
     output = capsys.readouterr().out
     assert "unauthenticated" in output
+
+
+def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
+    card = _card("401")
+    resume = SimpleNamespace(id="python", search=object())
+    config = _config([resume])
+    page = object()
+
+    @contextmanager
+    def context_manager(*args, **kwargs):
+        class Context:
+            def new_page(self):
+                return page
+
+        yield Context()
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr(
+        "hhru_bot.apply.questionnaire.scan_questionnaire",
+        lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNKNOWN, "ошибка проверки", retryable=False
+        ),
+    )
+    monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
+    from hhru_bot.commands import probe
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        resume="python",
+        max_pages=10,
+        headless=True,
+        vacancy_id=None,
+        vacancy_url=None,
+    )
+    # #433 cycle-review: массово неподтверждённые (unknown) результаты — это
+    # неполный скан, не «анкет нет»; молчаливый success замаскировал бы это
+    # (как и у unauthenticated), в отличие от run_healthcheck, где unreachable
+    # тоже считается провалом.
+    assert probe.run_questionnaires(args) is True
+    output = capsys.readouterr().out
+    assert "unknown" in output

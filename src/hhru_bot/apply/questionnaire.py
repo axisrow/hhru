@@ -2,6 +2,12 @@
 
 This module deliberately does not use the apply pipeline: it never fills a
 field, invokes an LLM, writes history, or clicks the final submit button.
+
+#433 cycle-review: session liveness is checked with ``require_authenticated_page``
+(the same cookie+login-form contract used elsewhere in the project — see
+``browser.has_login_form`` docstring), not a bare ``has_login_form`` call —
+the absence of the login form alone does not prove an authenticated page
+(the page may still be rendering, or the selector may have drifted).
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..ai.questions import Question, extract_questions
-from ..browser import goto_hh, has_login_form
+from ..browser import NotAuthenticated, goto_hh, require_authenticated_page
 from ..search import VacancyCard
 from .questions import detect_questions
 from .steps import navigate_to_response_form, wait_apply_button
@@ -59,8 +65,10 @@ def scan_questionnaire(
             vacancy, UNKNOWN, f"страница вакансии недоступна: {exc}", retryable=True
         )
 
-    if has_login_form(page):
-        return QuestionnaireScanResult(vacancy, UNAUTHENTICATED, "требуется авторизация")
+    try:
+        require_authenticated_page(page)
+    except NotAuthenticated as exc:
+        return QuestionnaireScanResult(vacancy, UNAUTHENTICATED, str(exc))
 
     try:
         if not wait_apply_button(page, timeout_ms=form_timeout_ms):
@@ -81,8 +89,10 @@ def scan_questionnaire(
                 str(form_state) if isinstance(form_state, str) else "форма отклика не подтверждена",
                 retryable=form_state is False,
             )
-        if has_login_form(page):
-            return QuestionnaireScanResult(vacancy, UNAUTHENTICATED, "форма требует авторизацию")
+        try:
+            require_authenticated_page(page)
+        except NotAuthenticated as exc:
+            return QuestionnaireScanResult(vacancy, UNAUTHENTICATED, str(exc))
         detection = detect_questions(page)
         if detection.indeterminate:
             return QuestionnaireScanResult(vacancy, UNKNOWN, detection.reason, retryable=True)

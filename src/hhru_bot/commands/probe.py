@@ -618,16 +618,25 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
 
     print(_format_questionnaire_report(all_results))
     unauthenticated = sum(r.status == UNAUTHENTICATED for r in all_results)
+    unknown = sum(r.status == UNKNOWN for r in all_results)
     print(
         f"[INFO] итог: вакансий {len(all_results)}, "
         f"анкет {sum(r.status == QUESTIONNAIRE for r in all_results)}, "
-        f"не подтверждено {sum(r.status == UNKNOWN for r in all_results)}, "
+        f"не подтверждено {unknown}, "
         f"требует авторизации {unauthenticated}"
     )
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
+        return True
+    if unknown:
+        # #433 cycle-review: UNKNOWN (массовый timeout, drift селектора,
+        # неотрендерившаяся форма — даже после retry) — это неподтверждённый
+        # результат, а не «анкет нет». Молчаливый success здесь замаскировал
+        # бы неполный скан под достоверный (CLAUDE.md: «пустой результат
+        # требует подтверждения состояния страницы»), как и в run_healthcheck.
+        print("[FAIL] часть вакансий не подтверждена (см. status=unknown выше)")
         return True
     return False
 
