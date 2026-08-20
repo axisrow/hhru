@@ -775,3 +775,30 @@ def test_throttle_pause_precedes_every_scan_including_retry_after_limit(monkeypa
         assert any(events[index][0] == "sleep" for index in range(previous + 1, current)), (
             f"нет паузы между сканами {events[previous]} и {events[current]}"
         )
+
+
+def test_retry_pass_also_honours_the_limit(monkeypatch, capsys):
+    # cycle-review PR #450 round 3: слив retry не должен игнорировать лимит.
+    # Если перепроверка сама подтверждает анкеты, цикл обязан остановиться на
+    # N-й, иначе --limit-questionnaires 1 прокликает все накопленные retry и
+    # вернёт N анкет вместо одной.
+    cards = [_card("981"), _card("982"), _card("983")]
+    calls = []
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        calls.append((vacancy.vacancy_id, timeout_ms))
+        if timeout_ms == questionnaire.FAST_TIMEOUT_MS:
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    probe.run_questionnaires(_bulk_args(limit_questionnaires=1))
+    output = capsys.readouterr().out
+
+    retries = [call for call in calls if call[1] != questionnaire.FAST_TIMEOUT_MS]
+    assert len(retries) == 1, f"retry продолжился после достижения лимита: {retries}"
+    assert "анкет 1" in output

@@ -710,6 +710,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
                     _print_questionnaire_progress(result, result_index + 1, len(vacancies))
+                    # cycle-review PR #450 round 3: сама перепроверка тоже
+                    # подтверждает анкеты, поэтому лимит проверяется и здесь —
+                    # иначе --limit-questionnaires 1 прокликает весь накопленный
+                    # retry и вернёт N анкет вместо одной. Пауза ниже — только
+                    # перед следующим реальным действием, а не перед выходом.
+                    if _limit_reached(all_results, limit):
+                        break
                     time.sleep(
                         random.uniform(
                             config.throttle.min_delay_seconds,
