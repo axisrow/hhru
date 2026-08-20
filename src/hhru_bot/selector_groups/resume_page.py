@@ -38,6 +38,21 @@ RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
 
+# Language block and modal selectors confirmed in authenticated read-only DOM
+# on 2026-08-20 (issue #265).  The profile card is the identity anchor: the
+# same data-qa names can appear in responsive duplicate markup elsewhere.
+RESUME_LANGUAGE_CARD = "[data-qa='profile-language-card']"
+RESUME_LANGUAGE_TAG = "[data-qa^='profile-language-tag-']"
+RESUME_LANGUAGE_EDIT_BUTTON = "[data-qa='profile-language-viewAll']"
+RESUME_LANGUAGE_ADD_BUTTON = "[data-qa='profile-language-add']"
+RESUME_LANGUAGE_EDIT_FORM = "[data-qa='profile-language-edit-form']"
+RESUME_LANGUAGE_ADD_FORM = "[data-qa='profile-language-add-form']"
+RESUME_LANGUAGE_FORM_LANGUAGE = "[data-qa$='-form-language']"
+RESUME_LANGUAGE_FORM_DEGREE = "[data-qa$='-form-degree']"
+RESUME_LANGUAGE_SELECT = "[data-qa='magritte-select-activator']"
+RESUME_LANGUAGE_SAVE = "[data-qa='profile-modal-button-save']"
+RESUME_LANGUAGE_CLOSE = "[data-qa='profile-modal-button-close']"
+
 # Live read-only research for issue #293 (2026-08-18).  These controls are
 # rendered on the resume list card, but are kept here with the resume-page
 # controls because they address one resume and the dialog is shared by both
