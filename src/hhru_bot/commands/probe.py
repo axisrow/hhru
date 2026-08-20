@@ -24,8 +24,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 
 from playwright.sync_api import Error as PlaywrightError
@@ -85,10 +87,7 @@ def register(subparsers) -> None:
     p.add_argument(
         "--questionnaires-only",
         action="store_true",
-        help=(
-            "Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit "
-            "и PNG/HTML"
-        ),
+        help=("Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit и PNG/HTML"),
     )
     p.set_defaults(func=run)
 
@@ -510,6 +509,7 @@ def _dedupe_vacancies(vacancies):
 
 
 def _format_questionnaire_report(results) -> str:
+    from ..apply.questionnaire import QUESTIONNAIRE
     from ..report import _ascii_table
 
     rows = [
@@ -518,13 +518,13 @@ def _format_questionnaire_report(results) -> str:
             result.vacancy.title.replace("\n", " "),
             result.vacancy.company.replace("\n", " ") or "-",
             result.status,
-            str(len(result.questions) if result.status == "questionnaire" else 0),
+            str(len(result.questions) if result.status == QUESTIONNAIRE else 0),
         ]
         for result in results
     ]
     report = _ascii_table(["vacancy", "title", "company", "status", "questions"], rows)
     for result in results:
-        if result.status != "questionnaire":
+        if result.status != QUESTIONNAIRE:
             continue
         report += f"\n\n[{result.vacancy.vacancy_id}] {result.vacancy.title}"
         for index, question in enumerate(result.questions, start=1):
@@ -539,6 +539,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
         FAST_TIMEOUT_MS,
+        UNAUTHENTICATED,
         UNKNOWN,
         QuestionnaireScanResult,
         scan_questionnaire,
@@ -549,8 +550,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
 
     if args.vacancy_id or args.vacancy_url:
         print(
-            "Ошибка: --questionnaires-only работает по поиску; "
-            "уберите --vacancy-id/--vacancy-url.",
+            "Ошибка: --questionnaires-only работает по поиску; уберите --vacancy-id/--vacancy-url.",
             file=sys.stderr,
         )
         return True
@@ -587,6 +587,17 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                 by_id[vacancy.vacancy_id] = result
                 if result.status == UNKNOWN and result.retryable:
                     retry_ids.append(vacancy.vacancy_id)
+                # #433 cycle-review: клик по кнопке отклика на каждой вакансии
+                # выдачи подряд без пауз выглядит для анти-фрод системы hh.ru
+                # как автоматизация (базовый принцип CLAUDE.md — не убирать
+                # троттлинг). Пауза та же, что и у обычных действий: случайная
+                # min..max из throttle-конфига, без записи в history (это не
+                # отклик, а read-only сканирование).
+                time.sleep(
+                    random.uniform(
+                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+                    )
+                )
 
             for vacancy_id in retry_ids:
                 vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
@@ -596,14 +607,28 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     timeout_ms=GOTO_TIMEOUT_MS,
                     form_timeout_ms=10_000,
                 )
+                time.sleep(
+                    random.uniform(
+                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+                    )
+                )
             all_results.extend(by_id[v.vacancy_id] for v in vacancies)
 
+    from ..apply.questionnaire import QUESTIONNAIRE
+
     print(_format_questionnaire_report(all_results))
+    unauthenticated = sum(r.status == UNAUTHENTICATED for r in all_results)
     print(
         f"[INFO] итог: вакансий {len(all_results)}, "
-        f"анкет {sum(r.status == 'questionnaire' for r in all_results)}, "
-        f"не подтверждено {sum(r.status == 'unknown' for r in all_results)}"
+        f"анкет {sum(r.status == QUESTIONNAIRE for r in all_results)}, "
+        f"не подтверждено {sum(r.status == UNKNOWN for r in all_results)}, "
+        f"требует авторизации {unauthenticated}"
     )
+    if unauthenticated:
+        # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
+        # как успешный полный скан — часть вакансий не проверена.
+        print("[FAIL] сессия истекла во время прогона — скан неполный")
+        return True
     return False
 
 

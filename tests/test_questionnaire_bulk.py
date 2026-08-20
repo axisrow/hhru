@@ -13,7 +13,9 @@ pytestmark = pytest.mark.unit
 
 
 def _card(vacancy_id: str) -> VacancyCard:
-    return VacancyCard(vacancy_id, f"Python {vacancy_id}", "ACME", f"https://hh.ru/vacancy/{vacancy_id}")
+    return VacancyCard(
+        vacancy_id, f"Python {vacancy_id}", "ACME", f"https://hh.ru/vacancy/{vacancy_id}"
+    )
 
 
 def test_scan_extracts_task_body_without_artifacts_or_submit(monkeypatch):
@@ -73,13 +75,22 @@ def test_timeout_is_unknown_and_retryable_not_no_questionnaire(monkeypatch):
     assert result.status != questionnaire.NO_QUESTIONNAIRE
 
 
+def _config(resumes):
+    from hhru_bot.config import ThrottleConfig
+
+    return SimpleNamespace(
+        storage_state_file="state",
+        resumes=resumes,
+        get_resume=lambda key: resumes[0],
+        throttle=ThrottleConfig(min_delay_seconds=1, max_delay_seconds=2),
+    )
+
+
 def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, capsys):
     card1 = _card("201")
     card2 = _card("202")
     resume = SimpleNamespace(id="python", search=object())
-    config = SimpleNamespace(
-        storage_state_file="state", resumes=[resume], get_resume=lambda key: resume
-    )
+    config = _config([resume])
     page = object()
     pages = []
     scan_calls = []
@@ -108,6 +119,11 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
         return questionnaire.QuestionnaireScanResult(vacancy, questionnaire.NO_QUESTIONNAIRE)
 
     monkeypatch.setattr("hhru_bot.apply.questionnaire.scan_questionnaire", fake_scan)
+    sleep_calls = []
+    monkeypatch.setattr(
+        "hhru_bot.commands.probe.time.sleep", lambda seconds: sleep_calls.append(seconds)
+    )
+    monkeypatch.setattr("hhru_bot.commands.probe.random.uniform", lambda lo, hi: 1.5)
     from hhru_bot.commands import probe
 
     args = SimpleNamespace(
@@ -126,3 +142,49 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
     assert scan_calls[-1][2:] == (90_000, 10_000)
     output = capsys.readouterr().out
     assert "no_questionnaire" in output
+    # #433 cycle-review: клик по кнопке отклика на каждой вакансии подряд без
+    # паузы выглядит для анти-фрод системы hh.ru как автоматизация (нарушает
+    # базовый принцип CLAUDE.md). Пауза должна быть между каждым сканом.
+    assert len(sleep_calls) == len(scan_calls)
+    assert all(delay == 1.5 for delay in sleep_calls)
+
+
+def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
+    card = _card("301")
+    resume = SimpleNamespace(id="python", search=object())
+    config = _config([resume])
+    page = object()
+
+    @contextmanager
+    def context_manager(*args, **kwargs):
+        class Context:
+            def new_page(self):
+                return page
+
+        yield Context()
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr(
+        "hhru_bot.apply.questionnaire.scan_questionnaire",
+        lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+        ),
+    )
+    monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
+    from hhru_bot.commands import probe
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        resume="python",
+        max_pages=10,
+        headless=True,
+        vacancy_id=None,
+        vacancy_url=None,
+    )
+    # #433 cycle-review: потеря аутентификации посреди прогона должна давать
+    # [FAIL] и ненулевой exit-статус, а не тихий success с неполным сканом.
+    assert probe.run_questionnaires(args) is True
+    output = capsys.readouterr().out
+    assert "unauthenticated" in output
