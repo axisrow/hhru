@@ -318,6 +318,10 @@ class History:
     # Feedback is deliberately bounded: it is prompt context, not an archive
     # of potentially sensitive letters.
     FEEDBACK_REASON_MAX = 500
+    # SequenceMatcher can be quadratic for adversarial/repetitive input. Keep
+    # the CLI bounded before doing any matching; the stored context is smaller
+    # still (FEEDBACK_SNIPPET_MAX below).
+    FEEDBACK_LETTER_MAX = 4000
     FEEDBACK_SNIPPET_MAX = 2000
 
     def __init__(self, db_path: str | Path):
@@ -444,6 +448,8 @@ class History:
         """Return a bounded, redacted diff instead of storing whole letters."""
         if generated is None or edited is None or generated == edited:
             return None
+        generated = generated[: cls.FEEDBACK_LETTER_MAX]
+        edited = edited[: cls.FEEDBACK_LETTER_MAX]
         matcher = difflib.SequenceMatcher(a=generated, b=edited, autojunk=False)
         chunks = []
         for tag, a1, a2, b1, b2 in matcher.get_opcodes():

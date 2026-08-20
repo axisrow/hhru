@@ -34,6 +34,13 @@ def test_record_reject_rejects_empty_reason(tmp_path):
         history.record_reject("r", "v", "  \n")
 
 
+def test_record_reject_bounds_letter_diff_input(tmp_path):
+    history = History(tmp_path / "history.db")
+    history.record_reject("r", "v", "reason", generated_letter="x" * 100_000, edited_letter="y")
+    row = history.list_feedback()[0]
+    assert len(row["edited_snippet"]) <= History.FEEDBACK_SNIPPET_MAX
+
+
 def test_reject_command_records_feedback(tmp_path, capsys):
     result = reject_cmd.run(
         argparse.Namespace(
