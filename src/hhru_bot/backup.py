@@ -44,6 +44,15 @@ def create_backup(
     """Create a gzip tar archive with config, session state and a consistent DB."""
     config, history, output = Path(config), Path(history), Path(output)
     root = _root(config, history)
+    output_resolved = output.resolve()
+    managed = {config.resolve(), history.resolve()}
+    storage = (root / "storage_state").resolve()
+    if (
+        output_resolved in managed
+        or output_resolved == storage
+        or storage in output_resolved.parents
+    ):
+        raise BackupError("Путь архива совпадает с управляемым файлом состояния")
     if require_config and not config.is_file():
         raise BackupError(f"Файл конфига не найден: {config}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -63,9 +72,9 @@ def create_backup(
                     archive.addfile(tarfile.TarInfo("config.missing"))
                 if snapshot.exists():
                     archive.add(snapshot, arcname="history.db", recursive=False)
-                storage = root / "storage_state"
-                if storage.is_dir() and not storage.is_symlink():
-                    for item in sorted(storage.rglob("*")):
+                storage_dir = root / "storage_state"
+                if storage_dir.is_dir() and not storage_dir.is_symlink():
+                    for item in sorted(storage_dir.rglob("*")):
                         if item.is_file() and not item.is_symlink():
                             archive.add(
                                 item, arcname=item.relative_to(root).as_posix(), recursive=False
