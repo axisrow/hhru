@@ -110,6 +110,7 @@ def test_all_commands_registered():
         "edit-education",
         "fill-form",
         "profile",
+        "call-api",
     }
 
 
@@ -158,6 +159,7 @@ def test_register_commands_returns_names():
         "edit_education",
         "fill_form",
         "profile",
+        "call_api",
     }
 
 
