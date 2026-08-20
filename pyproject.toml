@@ -23,6 +23,7 @@ hhru = "hhru_bot.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-xdist>=3",
     "ruff>=0.6",
 ]
 # AI/LLM-функциональность (issue #230). Не входит в базовые dependencies —

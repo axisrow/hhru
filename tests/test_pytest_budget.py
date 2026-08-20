@@ -24,11 +24,27 @@ def test_main_runs_full_suite_and_accepts_budget(monkeypatch: pytest.MonkeyPatch
         "run",
         lambda command, check: calls.append((command, check)) or SimpleNamespace(returncode=0),
     )
-    clock = iter((10.0, 239.9))
+    clock = iter((10.0, 69.9))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 0
-    assert calls == [([check_pytest_budget.sys.executable, "-m", "pytest", "-q"], False)]
+    assert calls == [
+        (
+            [
+                check_pytest_budget.sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "xdist.plugin",
+                "-n",
+                "4",
+                "--dist",
+                "worksteal",
+            ],
+            False,
+        )
+    ]
 
 
 def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,7 +53,7 @@ def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -
         "run",
         lambda _command, check: SimpleNamespace(returncode=0),
     )
-    clock = iter((10.0, 250.1))
+    clock = iter((10.0, 70.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 1
