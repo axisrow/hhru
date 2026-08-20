@@ -69,6 +69,7 @@ def create_backup(
     """Create a gzip tar archive with config, session state and a consistent DB."""
     config, history, output = Path(config), Path(history), Path(output)
     root = _root(config, history)
+    configured_storage = _configured_storage_path(config, root) if config.is_file() else None
     output_resolved = output.resolve()
     managed = {
         config.resolve(),
@@ -78,6 +79,8 @@ def create_backup(
             for suffix in ("-wal", "-shm", "-journal")
         ),
     }
+    if configured_storage is not None:
+        managed.add(configured_storage)
     storage = (root / "storage_state").resolve()
     output_key = str(output_resolved).casefold()
     managed_keys = {str(path).casefold() for path in managed}
@@ -110,14 +113,13 @@ def create_backup(
                     if snapshot.exists():
                         archive.add(snapshot, arcname="history.db", recursive=False)
                     storage_dir = root / "storage_state"
-                    configured_storage = (
-                        _configured_storage_path(config, root) if config.is_file() else None
-                    )
                     included: set[Path] = set()
+                    included_names: set[str] = set()
                     if storage_dir.is_dir() and not storage_dir.is_symlink():
                         for item in sorted(storage_dir.rglob("*")):
                             if item.is_file() and not item.is_symlink():
                                 included.add(item.resolve())
+                                included_names.add(item.relative_to(root).as_posix())
                                 archive.add(
                                     item, arcname=item.relative_to(root).as_posix(), recursive=False
                                 )
@@ -126,9 +128,12 @@ def create_backup(
                         and configured_storage.is_file()
                         and configured_storage not in included
                     ):
+                        canonical_name = f"storage_state/{configured_storage.name}"
+                        if canonical_name in included_names:
+                            raise BackupError("Имя настроенной сессии конфликтует с storage_state")
                         archive.add(
                             configured_storage,
-                            arcname=f"storage_state/{configured_storage.name}",
+                            arcname=canonical_name,
                             recursive=False,
                         )
             os.replace(temporary, output)
@@ -258,6 +263,9 @@ def restore_backup(
                     for item in storage.rglob("*")
                     if item.is_file() and not item.is_symlink()
                 )
+            configured_storage = _configured_storage_path(config, root) if config.exists() else None
+            if configured_storage is not None:
+                managed.add(f"storage_state/{configured_storage.name}")
             for name in sorted(managed - archived):
                 target = target_for(name)
                 if not target.exists() and not target.is_symlink():
