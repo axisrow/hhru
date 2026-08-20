@@ -51,3 +51,11 @@ def test_route_fails_closed_for_invalid_identity(tmp_path):
         [MergedVacancy(card("v1", "Python"), ())], [invalid], History(tmp_path / "history.db")
     )
     assert selected == {}
+
+
+def test_route_skips_vacancy_applied_with_another_resume(tmp_path):
+    first, second = resume("first"), resume("second")
+    history = History(tmp_path / "history.db")
+    history.record_action(first.resume_id, "v1", "apply", "success", "sent")
+    item = MergedVacancy(card("v1", "Python developer"), (first.resume_id, second.resume_id))
+    assert route_vacancies([item], [first, second], history) == {}

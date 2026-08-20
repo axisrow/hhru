@@ -97,6 +97,14 @@ def route_vacancies(
     routed: dict[str, ResumeSelection] = {}
 
     for item in merged:
+        if any(
+            _resume_identity_is_confirmed(resume)
+            and history.has_applied(resume.resume_id, item.card.vacancy_id)
+            for resume in resume_list
+        ):
+            # Application history is account-wide for routing.  Do not move a
+            # previously submitted vacancy to another resume variant.
+            continue
         best: ResumeSelection | None = None
         for resume in resume_list:
             if not _resume_identity_is_confirmed(resume):

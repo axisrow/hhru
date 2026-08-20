@@ -303,6 +303,7 @@ def run_apply_for_resume(
     history: History,
     throttle: Throttle,
     args: argparse.Namespace,
+    cards_override=None,
 ) -> bool:
     """Цикл откликов по одному резюме (search → filter → apply с троттлингом).
 
@@ -389,19 +390,22 @@ def run_apply_for_resume(
                     resume.resume_id,
                 )
 
-    try:
-        cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
-    except VacancySearchIndeterminate as e:
-        # Search timeouts are normally per-resume failures, but a confirmed
-        # challenge must escape as the terminal AntiBotChallengeDetected state.
+    if cards_override is None:
+        try:
+            cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
+        except VacancySearchIndeterminate as e:
+            # Search timeouts are normally per-resume failures, but a confirmed
+            # challenge must escape as the terminal AntiBotChallengeDetected state.
+            raise_for_antibot(page)
+            # Один сбой рендера не должен скрыться как пустой apply-план или
+            # остановить обработку остальных резюме в команде apply/run.
+            print(f"[FAIL] {e}")
+            return True
+        # Also catch challenge pages that happened to look like an empty/partial
+        # search result to the parser and therefore returned without raising.
         raise_for_antibot(page)
-        # Один сбой рендера не должен скрыться как пустой apply-план или
-        # остановить обработку остальных резюме в команде apply/run.
-        print(f"[FAIL] {e}")
-        return True
-    # Also catch challenge pages that happened to look like an empty/partial
-    # search result to the parser and therefore returned without raising.
-    raise_for_antibot(page)
+    else:
+        cards = cards_override
     scoring_provider = _build_scoring_provider(config, resume)
     plan = build_apply_plan(
         cards,
