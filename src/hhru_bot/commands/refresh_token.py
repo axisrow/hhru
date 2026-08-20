@@ -25,8 +25,10 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace) -> bool:
     from playwright.sync_api import Error as PlaywrightError
 
+    from ..apply.antibot import raise_for_antibot
     from ..browser import goto_hh, has_auth_cookie, has_login_form, launch_context
     from ..config import load_config_or_exit
+    from ..cookie_import import write_storage_state
 
     config = load_config_or_exit(args.config)
     try:
@@ -43,9 +45,12 @@ def run(args: argparse.Namespace) -> bool:
             if has_login_form(page):
                 print("[FAIL] Сессия недействительна: hh.ru показал форму входа")
                 return True
+            raise_for_antibot(page)
             if args.force:
-                config.storage_state_file.parent.mkdir(parents=True, exist_ok=True)
-                context.storage_state(path=str(config.storage_state_file))
+                write_storage_state(
+                    context.storage_state(),
+                    config.storage_state_file,
+                )
                 print(f"[OK] Сессия пересохранена в {config.storage_state_file}")
             else:
                 print("[INFO] Сессия действительна, обновление не требуется.")

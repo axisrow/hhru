@@ -25,8 +25,9 @@ class Context:
     def new_page(self):
         return self.page
 
-    def storage_state(self, *, path):
-        self.saved.append(path)
+    def storage_state(self):
+        self.saved.append(True)
+        return {"cookies": [{"name": "hhtoken", "value": "new"}], "origins": []}
 
 
 def _args(force=False, headless=False):
@@ -80,7 +81,7 @@ def test_force_resaves_only_after_authenticated_page(monkeypatch, capsys, tmp_pa
     )
 
     assert refresh_token.run(_args(force=True)) is False
-    assert context.saved == [str(destination)]
+    assert context.saved == [True]
     assert "Сессия пересохранена" in capsys.readouterr().out
 
 
@@ -96,3 +97,28 @@ def test_invalid_session_is_fail_closed_and_not_saved(monkeypatch, capsys):
     assert refresh_token.run(_args(force=True)) is True
     assert context.saved == []
     assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_antibot_page_is_not_reported_valid_or_saved(monkeypatch, tmp_path):
+    from hhru_bot.apply.antibot import (
+        AntiBotChallengeDetected,
+        AntiBotDetection,
+    )
+
+    context = Context(object())
+    _patch_browser(monkeypatch, context)
+    destination = tmp_path / "session.json"
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: SimpleNamespace(storage_state_file=destination, user_agent=None),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.apply.antibot.raise_for_antibot",
+        lambda page: (_ for _ in ()).throw(
+            AntiBotChallengeDetected(AntiBotDetection("url_path", "URL содержит /checkpoint"))
+        ),
+    )
+
+    with pytest.raises(AntiBotChallengeDetected):
+        refresh_token.run(_args(force=True))
+    assert context.saved == []
