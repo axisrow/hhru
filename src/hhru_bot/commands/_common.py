@@ -799,7 +799,12 @@ def _run_apply_for_resume(
             # would make the next run send a duplicate. Keeping this hook after
             # navigation/questions preserves the old no-action semantics for
             # confirmed pre-submit exits.
-            action_id = history.begin_action(resume.resume_id, vacancy_id, "apply")
+            action_id = history.begin_action(
+                resume.resume_id,
+                vacancy_id,
+                "apply",
+                search_query=resume.search.text,
+            )
 
         # dict value type intentionally broad — **apply_kwargs spreads several
         # unrelated kwarg types (provider/verifier/callable/bool) into
@@ -895,6 +900,7 @@ def _run_apply_for_resume(
                 "uncertain" if result.uncertain else ("success" if result.success else "failed"),
                 result.reason,
                 letter_variant=result.letter_variant,
+                search_query=resume.search.text,
             )
         if result.success:
             applied_count += 1

@@ -74,6 +74,16 @@ def test_history_creates_letter_variant_column(tmp_path):
     assert "letter_variant" in cols
 
 
+def test_history_creates_search_query_column(tmp_path):
+    History(tmp_path / "h.db")
+    conn = sqlite3.connect(tmp_path / "h.db")
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(actions)")}
+    finally:
+        conn.close()
+    assert "search_query" in cols
+
+
 def test_letter_variant_added_idempotently_on_reopen(tmp_path):
     # CAVEAT #51: повторное открытие той же БД не падает на 'duplicate column'.
     History(tmp_path / "h.db")
@@ -96,6 +106,17 @@ def test_record_action_persists_letter_variant(tmp_path):
     finally:
         conn.close()
     assert row[0] == "ai"
+
+
+def test_record_action_persists_search_query(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success", search_query="python")
+    conn = sqlite3.connect(tmp_path / "h.db")
+    try:
+        row = conn.execute("SELECT search_query FROM actions WHERE action='apply'").fetchone()
+    finally:
+        conn.close()
+    assert row[0] == "python"
 
 
 def test_record_action_letter_variant_defaults_to_none(tmp_path):

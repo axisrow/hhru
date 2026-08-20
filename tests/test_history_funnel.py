@@ -254,6 +254,17 @@ def test_funnel_by_search_query_joins_seen_vacancies_and_sorts_by_invite_rate(tm
     assert funnel[1]["invite_rate"] == 0.0
 
 
+def test_funnel_by_search_query_uses_apply_time_attribution_without_seen_row(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success", search_query="python")
+    h.record_action("r1", "v2", "apply", "success", search_query="backend")
+
+    funnel = h.funnel_by_search_query()
+
+    assert {row["search_query"]: row["sent"] for row in funnel} == {"python": 1, "backend": 1}
+    assert h.count_unattributed_applies() == 0
+
+
 def test_funnel_by_search_query_counts_distinct_resumes_per_vacancy(tmp_path):
     """Два резюме, откликнувшиеся на одну вакансию, — два разных отклика (#411 CR).
 

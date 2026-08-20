@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS actions (
     action TEXT NOT NULL,
     status TEXT NOT NULL,
     reason TEXT,
+    search_query TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -435,6 +436,7 @@ class History:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
+            _ensure_column(conn, "actions", "search_query", "TEXT")
             # #93: employer_tier в vacancies_seen (для estimate_salary). CREATE TABLE
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
@@ -646,13 +648,14 @@ class History:
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
+        search_query: str | None = None,
     ) -> int:
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO actions
-                    (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (resume_id, vacancy_id, action, status, reason, letter_variant, search_query, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     resume_id,
@@ -661,6 +664,7 @@ class History:
                     status,
                     reason,
                     letter_variant,
+                    search_query,
                     datetime.now().isoformat(),
                 ),
             )
@@ -731,7 +735,14 @@ class History:
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(query, params).fetchall()]
 
-    def begin_action(self, resume_id: str, vacancy_id: str, action: str) -> int:
+    def begin_action(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        action: str,
+        *,
+        search_query: str | None = None,
+    ) -> int:
         """Durably reserve a potentially external action before browser work.
 
         ``uncertain`` is deliberate: if the process disappears after the browser
@@ -745,6 +756,7 @@ class History:
             action,
             "uncertain",
             reason="действие начато, результат не зафиксирован",
+            search_query=search_query,
         )
 
     def finalize_action(
@@ -1281,7 +1293,7 @@ class History:
             rows = conn.execute(
                 f"""
                 SELECT
-                    v.search_query AS search_query,
+                    COALESCE(a.search_query, v.search_query) AS search_query,
                     COUNT(DISTINCT a.resume_id || ':' || a.vacancy_id) AS sent,
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
@@ -1319,9 +1331,10 @@ class History:
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
                     ) THEN a.resume_id || ':' || a.vacancy_id END) AS replied
                 FROM actions AS a
-                JOIN vacancies_seen AS v ON v.vacancy_id = a.vacancy_id
+                LEFT JOIN vacancies_seen AS v
+                  ON v.vacancy_id = a.vacancy_id AND a.search_query IS NULL
                 {clause}
-                GROUP BY v.search_query
+                GROUP BY COALESCE(a.search_query, v.search_query)
                 """,
                 params,
             ).fetchall()
@@ -1383,6 +1396,7 @@ class History:
                 SELECT COUNT(*) AS n
                 FROM actions AS a
                 {clause}
+                AND a.search_query IS NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM vacancies_seen AS v WHERE v.vacancy_id = a.vacancy_id
                 )
