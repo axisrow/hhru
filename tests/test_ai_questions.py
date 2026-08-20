@@ -33,6 +33,17 @@ def test_exact_account_profile_answer_skips_llm_matching():
     assert llm.messages == []
 
 
+def test_blank_account_profile_answer_does_not_get_confidence_one():
+    llm = _LLM({"answer": "generated", "confidence": 0.9})
+    question = Question(0, "Ваш телефон?", "text")
+
+    proposal = AIQuestionAnswerer(llm, known_data={"Ваш телефон?": "  "}).propose(question)
+
+    assert proposal.answer == "generated"
+    assert proposal.confidence == 0.9
+    assert len(llm.messages) == 2
+
+
 def test_account_profile_semantic_match_precedes_generated_answer():
     llm = _LLM({"key": "город", "confidence": 0.99})
     question = Question(0, "В каком городе вы живёте?", "text")

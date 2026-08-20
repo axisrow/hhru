@@ -158,11 +158,12 @@ class AIQuestionAnswerer:
             return None
         normalized = {normalize(key): value for key, value in self._known_data.items()}
         value = normalized.get(normalize(question.text))
-        if value is not None:
+        if isinstance(value, str) and value.strip():
             return value
         # This classifier receives field names only; values stay local.  The
         # external-form matcher owns the sensitive-field denylist (#361).
-        return match_answer_llm(question.text, self._known_data, self._llm)
+        value = match_answer_llm(question.text, self._known_data, self._llm)
+        return value if isinstance(value, str) and value.strip() else None
 
     @staticmethod
     def _choice_indices(question: Question, value: str) -> tuple[int, ...]:
