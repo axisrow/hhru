@@ -376,18 +376,26 @@ def _prepare_apply_resume(page, resume: ResumeConfig, dry_run: bool) -> ApplyRes
     return ApplyResumeIdentity(numeric_id, set(ids_by_hash.values()))
 
 
+_DEFAULT_UNLIMITED_PAGE_CAP = 5
+
+
 def apply_search_page_limit(args: argparse.Namespace) -> int:
     """Return the safe cap for lazy apply search.
 
-    An explicit --max-pages always wins.  Without it, estimate five successful
-    responses per 20-card page and reserve one extra page for runtime skips.
-    ``--limit 0`` has no target, so it deliberately starts and ends at one page.
+    An explicit --max-pages always wins.  With a positive --limit, estimate
+    five successful responses per 20-card page and reserve one extra page for
+    runtime skips. ``--limit 0`` ("без ограничения" per --help) has no
+    success target to size a cap from — #441 round-2 review: this used to
+    return 1, silently shrinking the previous unconditional 5-page default
+    for the most common invocation (plain `apply`/`run` with no flags) down
+    to a single page with no warning. Falls back to the prior fixed default
+    instead.
     """
     explicit = getattr(args, "max_pages", None)
     if explicit is not None:
         return explicit
     limit = getattr(args, "limit", 0)
-    return 1 if not limit else math.ceil(limit / 5) + 1
+    return math.ceil(limit / 5) + 1 if limit else _DEFAULT_UNLIMITED_PAGE_CAP
 
 
 def _load_apply_page(page, filters: SearchFilters, page_num: int) -> tuple[list[VacancyCard], bool]:
@@ -887,12 +895,17 @@ def _run_apply_for_resume(
         # проверка #207 вернула found), поэтому сначала учитываем его в
         # счётчике и выдерживаем анти-бан-паузу, и только потом прерываем
         # прогон — иначе после submit паузы не будет вовсе.
+        # #441 round-2 review: a per-vacancy `uncertain` result must NOT
+        # abort the whole run via ApplyRunStopped — that class is reserved
+        # for genuine account-level terminal conditions (its own docstring).
+        # `uncertain` is also set on routine post-click fail paths (project
+        # memory hhru-uncertain-counter-overcounts / #176), not only
+        # genuine grey-zone ambiguity, and dedup via has_applied() already
+        # keeps it from being retried/counted — no extra abort needed here.
+        # Out of scope for this PR; the "[FAIL]"+"[STOP]" double-print this
+        # block also caused is the known finding noted in the PR body.
         if getattr(result, "stop_run", False):
             print(f"  [STOP] {card.title} — {result.reason}")
-            raise ApplyRunStopped(result.reason)
-
-        if getattr(result, "uncertain", False):
-            print(f"  [STOP] {card.title} — исход отклика неопределён")
             raise ApplyRunStopped(result.reason)
 
     if show_summary:

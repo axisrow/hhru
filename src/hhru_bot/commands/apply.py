@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ._common import (
+    ApplyProgress,
     ApplyRunStopped,
     _build_scoring_provider,
     add_common_args,
@@ -143,6 +144,11 @@ def run(args: argparse.Namespace) -> bool:
         else:
             cards_by_resume = None
             ranked_by_resume = None
+        # #441 round-2 review: --limit документирован как "целевое число
+        # успешных откликов ЗА ЗАПУСК", а не за резюме — общий ApplyProgress
+        # должен считать успехи по всем резюме этого прогона, иначе --limit N
+        # с M резюме может дать до N*M откликов вместо N.
+        progress = ApplyProgress()
         try:
             for resume in resumes:
                 if cards_by_resume is None:
@@ -158,6 +164,7 @@ def run(args: argparse.Namespace) -> bool:
                         cards_by_resume[resume.id],
                         True,
                         ranked_by_resume[resume.id],
+                        progress,
                     )
                 failed = result or failed
         except ApplyRunStopped:

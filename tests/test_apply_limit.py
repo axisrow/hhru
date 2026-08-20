@@ -111,18 +111,36 @@ def test_limit_reports_fewer_when_candidates_run_out(tmp_path, monkeypatch, caps
     assert "--max-pages" not in capsys.readouterr().out
 
 
-def test_uncertain_stops_batch_and_does_not_count(tmp_path, monkeypatch):
+def test_uncertain_does_not_count_but_does_not_abort_whole_run(tmp_path, monkeypatch):
+    # #441 round-2 review: a new block routed any per-vacancy `uncertain`
+    # outcome into ApplyRunStopped ("Terminal account-level condition
+    # requiring the whole apply run to stop" per its own docstring). Per
+    # project memory (hhru-uncertain-counter-overcounts / #176), uncertain is
+    # also produced by routine post-click fail paths, not only genuine
+    # account-level terminal conditions — this is out of scope for this
+    # --limit/--max-pages PR and turns an ordinary [FAIL] into a full-run
+    # abort. uncertain must still not count toward --limit (dedup via
+    # has_applied() already handles it, #176), but the batch continues.
     cards = _cards(3)
     results = [
         ApplyResult(cards[0], False, "неопределённо", acted=True, uncertain=True),
         ApplyResult(cards[1], True, "success"),
+        ApplyResult(cards[2], True, "success"),
     ]
 
-    with pytest.raises(_common.ApplyRunStopped):
-        _run(monkeypatch, tmp_path, results, 2, cards=cards)
+    calls = _run(monkeypatch, tmp_path, results, 2, cards=cards)
+
+    # uncertain (card 0) does not count -> loop continues to cards 1 and 2
+    # until 2 *successes* are reached, without raising ApplyRunStopped.
+    assert calls == ["0", "1", "2"]
 
 
-def test_limit_is_applied_separately_per_resume(tmp_path, monkeypatch):
+def test_limit_is_applied_across_all_resumes_per_run(tmp_path, monkeypatch):
+    # #441 round-2 review: README documents --limit as "целевое число
+    # успешных откликов за запуск" (per RUN), but with multiple resumes no
+    # shared ApplyProgress was created before the resume loop, so each
+    # resume independently reached its own copy of --limit — --limit 2 with
+    # 2 resumes silently produced up to 4 successes instead of 2.
     resumes = [
         ResumeConfig(
             id="python-a",
@@ -190,7 +208,8 @@ def test_limit_is_applied_separately_per_resume(tmp_path, monkeypatch):
     )
 
     assert apply_command.run(args) is False
-    assert calls == ["python-a-0", "python-a-1", "python-b-0", "python-b-1"]
+    # limit=2 must cap the TOTAL across both resumes, not each independently.
+    assert calls == ["python-a-0", "python-a-1"]
 
 
 def test_lazy_search_stops_after_first_page_when_target_is_reached(tmp_path, monkeypatch):
@@ -245,7 +264,12 @@ def test_lazy_search_opens_next_page_only_after_shortfall(tmp_path, monkeypatch)
 
 
 def test_apply_auto_page_cap_uses_target_and_reserve():
-    assert _common.apply_search_page_limit(argparse.Namespace(limit=0, max_pages=None)) == 1
+    # #441 round-2 review: limit=0 ("без ограничения" по документации) ранее
+    # жёстко капилось в 1 страницу — 5x силент-сокращение пула кандидатов
+    # для САМОГО частого вызова (plain `hhru apply`/`hhru run`). limit=0
+    # без явного --max-pages должен вести себя как прежний дефолт (5
+    # страниц), а не как "у нас нет цели — читаем минимум".
+    assert _common.apply_search_page_limit(argparse.Namespace(limit=0, max_pages=None)) == 5
     assert _common.apply_search_page_limit(argparse.Namespace(limit=5, max_pages=None)) == 2
     assert _common.apply_search_page_limit(argparse.Namespace(limit=10, max_pages=None)) == 3
     assert _common.apply_search_page_limit(argparse.Namespace(limit=10, max_pages=1)) == 1
