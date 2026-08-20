@@ -54,10 +54,13 @@ def create_backup(
         ),
     }
     storage = (root / "storage_state").resolve()
+    output_key = str(output_resolved).casefold()
+    managed_keys = {str(path).casefold() for path in managed}
+    storage_key = str(storage).casefold()
     if (
-        output_resolved in managed
-        or output_resolved == storage
-        or storage in output_resolved.parents
+        output_key in managed_keys
+        or output_key == storage_key
+        or output_key.startswith(storage_key + os.sep)
     ):
         raise BackupError("Путь архива совпадает с управляемым файлом состояния")
     if require_config and not config.is_file():
