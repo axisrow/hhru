@@ -44,28 +44,23 @@ class _FakePlaywright:
         self.chromium = _FailingChromium(message)
 
 
-def test_headless_sandbox_failure_is_not_classified_as_browser_launch_error():
-    """B1: headless-сбой песочницы уходит сырым PlaywrightError → traceback в CLI.
-
-    cli.py ловит BrowserLaunchError и печатает [ENVIRONMENT]; всё остальное
-    долетает до `raise` в cli.py:190 и печатается Python-ом как traceback.
-    """
+def test_headless_sandbox_failure_is_classified_as_browser_launch_error():
+    """B1: headless-сбой песочницы превращается в контролируемую ошибку CLI."""
     playwright = _FakePlaywright(_LIVE_HEADLESS_SANDBOX_ERROR)
 
-    with pytest.raises(PlaywrightError) as excinfo:
+    with pytest.raises(BrowserLaunchError) as excinfo:
         launch_browser(playwright, headless=True)
 
-    # Дефект: это НЕ BrowserLaunchError, поэтому cli.py напечатает traceback.
-    assert not isinstance(excinfo.value, BrowserLaunchError)
-    assert "Permission denied (1100)" in str(excinfo.value)
+    assert "CODEX_SANDBOX_BROWSER_FAILURE" in str(excinfo.value)
 
 
-def test_permission_denied_is_absent_from_sandbox_markers():
-    """B1, вторая причина: маркера живого сбоя нет в списке классификации."""
+def test_permission_denied_mach_port_failure_is_a_sandbox_marker():
+    """B1: the observed macOS permission failure is classified explicitly."""
     source = inspect.getsource(launch_browser)
 
     assert "Operation not permitted" in source, "список маркеров изменился — пересмотреть тест"
-    assert "Permission denied" not in source
+    assert '"Permission denied" in details' in source
+    assert "mach_port_rendezvous_mac" in source
 
 
 def test_headed_sandbox_failure_is_classified():
