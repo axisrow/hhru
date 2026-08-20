@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 # The suite runs under xdist (see the argv below), which puts CI wall time at
 # 12-15s and local wall time at ~4s.
@@ -23,9 +25,18 @@ import time
 SUITE_BUDGET_SECONDS = 60.0
 
 
-def main() -> int:
-    started = time.monotonic()
-    result = subprocess.run(
+def run_suite(cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
+    """Запустить сюиту под xdist так, чтобы гейт был исполним в любом окружении.
+
+    `-p xdist.plugin` обязателен при выключенном autoload и приводит к
+    повторной регистрации плагина при включённом (`ValueError: Plugin already
+    registered`). Раньше autoload выключался переменной окружения в шаге
+    `ci.yml`, поэтому вне этого шага скрипт падал всегда. Переменная выставляется
+    здесь же, в окружении подпроцесса, — гейт больше не зависит от того, кто и
+    откуда его вызвал.
+    """
+    env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -39,7 +50,14 @@ def main() -> int:
             "worksteal",
         ],
         check=False,
+        env=env,
+        cwd=cwd,
     )
+
+
+def main() -> int:
+    started = time.monotonic()
+    result = run_suite()
     elapsed = time.monotonic() - started
 
     print(f"pytest suite wall time: {elapsed:.2f}s (budget: {SUITE_BUDGET_SECONDS:.0f}s)")

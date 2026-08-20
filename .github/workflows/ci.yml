@@ -31,10 +31,6 @@ jobs:
 
       - name: Pytest suite budget
         run: python scripts/check_pytest_budget.py
-        env:
-          # Avoid loading unrelated third-party pytest plugins in every xdist
-          # worker; the suite only needs xdist itself.
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
       - name: CLI docs in sync with argparse
         # Справочник команд в README автогенерируется из argparse. Если кто-то

@@ -17,42 +17,32 @@ _SPEC.loader.exec_module(check_pytest_budget)
 pytestmark = pytest.mark.unit
 
 
-def test_main_runs_full_suite_and_accepts_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[list[str], bool]] = []
+def _fake_suite(monkeypatch: pytest.MonkeyPatch, returncode: int) -> None:
+    """Подменить сам запуск сюиты, оставив на проверку решение о бюджете.
+
+    Мокается `run_suite`, а не `subprocess.run`: раньше моки сверяли СПИСОК
+    аргументов, и это было единственной их проверкой — команда, падавшая при
+    реальном запуске, всё равно давала зелёный тест (#440). Исполнимость
+    команды теперь держит test_gate_command_runs_without_external_env, а здесь
+    остаётся только арифметика бюджета.
+    """
     monkeypatch.setattr(
-        check_pytest_budget.subprocess,
-        "run",
-        lambda command, check: calls.append((command, check)) or SimpleNamespace(returncode=0),
+        check_pytest_budget,
+        "run_suite",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=returncode),
     )
+
+
+def test_main_accepts_run_within_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_suite(monkeypatch, returncode=0)
     clock = iter((10.0, 69.9))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 0
-    assert calls == [
-        (
-            [
-                check_pytest_budget.sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                "-p",
-                "xdist.plugin",
-                "-n",
-                "4",
-                "--dist",
-                "worksteal",
-            ],
-            False,
-        )
-    ]
 
 
 def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        check_pytest_budget.subprocess,
-        "run",
-        lambda _command, check: SimpleNamespace(returncode=0),
-    )
+    _fake_suite(monkeypatch, returncode=0)
     clock = iter((10.0, 70.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
@@ -60,12 +50,25 @@ def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_main_preserves_pytest_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        check_pytest_budget.subprocess,
-        "run",
-        lambda _command, check: SimpleNamespace(returncode=pytest.ExitCode.TESTS_FAILED),
-    )
+    _fake_suite(monkeypatch, returncode=pytest.ExitCode.TESTS_FAILED)
     clock = iter((10.0, 10.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == pytest.ExitCode.TESTS_FAILED
+
+
+def test_gate_command_runs_without_external_env(tmp_path: Path) -> None:
+    """Гейт исполним сам по себе, без переменной окружения из ci.yml (#440).
+
+    Мок-тесты выше сверяют только СПИСОК аргументов и потому зелёные даже
+    тогда, когда собранная команда при реальном запуске падает: `-p
+    xdist.plugin` поверх включённого autoload регистрирует плагин повторно и
+    pytest бросает `ValueError: Plugin already registered`. Здесь команда
+    исполняется по-настоящему на игрушечной сюите, поэтому тест держит
+    инвариант «гейт работает в любом окружении», а не «argv выглядит верно».
+    """
+    (tmp_path / "test_toy.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    completed = check_pytest_budget.run_suite(cwd=tmp_path)
+
+    assert completed.returncode == 0, completed
