@@ -1362,7 +1362,11 @@ class History:
             )
         return sorted(
             funnel,
-            key=lambda row: (-row["invite_rate"], -row["offer_rate"], row["search_query"]),
+            key=lambda row: (
+                -row["invite_rate"],
+                -row["offer_rate"],
+                row["search_query"] or "",
+            ),
         )
 
     def count_unattributed_applies(
