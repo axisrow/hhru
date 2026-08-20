@@ -119,6 +119,8 @@ def test_all_commands_registered():
         "settings",
         "refresh-token",
         "reject",
+        "backup",
+        "restore",
         "review",
     }
 
@@ -177,6 +179,7 @@ def test_register_commands_returns_names():
         "settings",
         "refresh_token",
         "reject",
+        "backup",
         "review",
     }
 
@@ -202,6 +205,16 @@ def test_apply_has_limit():
     assert "--dry-run" in opts
     assert "--max-pages" in opts
     assert "--limit" in opts
+
+
+def test_restore_has_no_dead_dry_run_flag():
+    # restore's dry-run behavior is controlled entirely by --apply (absent =
+    # dry-run, present = apply); a separate --dry-run flag was parsed but
+    # never read by _restore(), making it dead/misleading — see PR #426
+    # review. Only --apply should gate the behavior.
+    opts = _opts_for("restore")
+    assert "--apply" in opts
+    assert "--dry-run" not in opts
 
 
 def test_run_has_limit():
