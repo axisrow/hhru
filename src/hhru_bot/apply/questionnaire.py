@@ -20,6 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..ai.questions import Question, extract_questions
 from ..browser import NotAuthenticated, goto_hh, require_authenticated_page
+from ..external_forms.detect import normalize
 from ..search import VacancyCard
 from .dedup import check_already_responded
 from .questions import detect_questions
@@ -43,6 +44,75 @@ class QuestionnaireScanResult:
     questions: tuple[Question, ...] = ()
     total_bodies: int = 0
     retryable: bool = False
+
+
+@dataclass(frozen=True)
+class QuestionGroup:
+    """One distinct question, merged across vacancies that ask it verbatim.
+
+    #443 Этап 2: hh.ru repeats the same questionnaire question across many
+    vacancies (screening questions are per-employer templates, not
+    per-vacancy). Without grouping, a bulk scan's report is just a flat list
+    of (vacancy, questions) pairs — every duplicate has to be spotted by eye,
+    and there is no single place that says "this question appeared in N
+    vacancies". Grouping is keyed on normalized text + kind + (for choice
+    questions) the normalized option set: two questions with the same text
+    but different answer choices are NOT the same question — merging them
+    would make the group's `options` field lie about what a candidate can
+    actually pick for any single vacancy in it.
+    """
+
+    text: str
+    kind: str
+    is_radio: bool
+    options: tuple[str, ...]
+    vacancy_ids: tuple[str, ...]
+
+
+_GroupKey = tuple[str, str, bool, tuple[str, ...]]
+
+
+def group_questions(results: list[QuestionnaireScanResult]) -> list[QuestionGroup]:
+    """Group identical questions across scan results without losing the
+    vacancy link (#443 acceptance: "повторяющиеся вопросы объединяются без
+    потери связи с вакансиями"). Pure function — no browser, no I/O.
+    """
+    order: list[_GroupKey] = []
+    # Original (non-normalized) display text/options are kept alongside the
+    # normalized key on first sight, so the report can show what a candidate
+    # actually reads on the page rather than the casefolded matching key.
+    display: dict[_GroupKey, tuple[str, tuple[str, ...]]] = {}
+    vacancy_ids: dict[_GroupKey, list[str]] = {}
+    for result in results:
+        if result.status != QUESTIONNAIRE:
+            continue
+        for question in result.questions:
+            # #444 cycle-review: sort the normalized options for the key — the
+            # key must match on the SET of options, not their on-page order
+            # (the docstring's own contract). hh.ru can render the same
+            # option set in a different order across vacancies; without
+            # sorting, that alone would split one duplicate question into two
+            # groups and undercount it. Display order (`question.options`) is
+            # kept as-is in `display`, only the matching key is canonicalized.
+            normalized_options = tuple(sorted(normalize(option) for option in question.options))
+            key = (normalize(question.text), question.kind, question.is_radio, normalized_options)
+            if key not in vacancy_ids:
+                vacancy_ids[key] = []
+                display[key] = (question.text, question.options)
+                order.append(key)
+            vacancy_id = result.vacancy.vacancy_id
+            if vacancy_id not in vacancy_ids[key]:
+                vacancy_ids[key].append(vacancy_id)
+    return [
+        QuestionGroup(
+            text=display[key][0],
+            kind=key[1],
+            is_radio=key[2],
+            options=display[key][1],
+            vacancy_ids=tuple(vacancy_ids[key]),
+        )
+        for key in order
+    ]
 
 
 def _set_page_timeout(page: Page, timeout_ms: int) -> None:

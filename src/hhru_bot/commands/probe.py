@@ -515,7 +515,7 @@ def _dedupe_vacancies(vacancies):
 
 
 def _format_questionnaire_report(results) -> str:
-    from ..apply.questionnaire import QUESTIONNAIRE
+    from ..apply.questionnaire import QUESTIONNAIRE, group_questions
     from ..report import _ascii_table
 
     rows = [
@@ -537,6 +537,23 @@ def _format_questionnaire_report(results) -> str:
             report += f"\n  {index}. {question.text}"
             if question.options:
                 report += "\n     options: " + " | ".join(question.options)
+    # #443 Этап 2: те же вопросы объединены по нормализованному тексту/типу —
+    # это то, что реально повторяется у разных вакансий (шаблон работодателя),
+    # без потери связи с исходными vacancy_id.
+    groups = group_questions(list(results))
+    if groups:
+        report += "\n\n=== Уникальные вопросы (объединены по тексту) ==="
+        group_rows = [
+            [group.kind, group.text.replace("\n", " "), str(len(group.vacancy_ids))]
+            for group in groups
+        ]
+        report += "\n" + _ascii_table(["kind", "question", "vacancies"], group_rows)
+        for group in groups:
+            if len(group.vacancy_ids) < 2:
+                continue
+            report += f"\n\n[{', '.join(group.vacancy_ids)}] {group.text}"
+            if group.options:
+                report += "\n  options: " + " | ".join(group.options)
     return report
 
 
