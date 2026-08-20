@@ -179,7 +179,8 @@ def restore_backup(
 ) -> list[str]:
     """Validate and restore an archive; dry-run is the safe default."""
     archive_path, config, history = Path(archive_path), Path(config), Path(history)
-    root = _root(config, history)
+    root = _root(config, history).resolve()
+    config, history = config.resolve(), history.resolve()
 
     def target_for(name: str) -> Path:
         if name == "config.yaml":
@@ -227,6 +228,7 @@ def restore_backup(
             os.chmod(staged_history, 0o600)
         originals = Path(tmp) / "originals"
         replaced: list[Path] = []
+        original_keys: dict[Path, Path] = {}
         try:
             for name in names:
                 source = staging / name
@@ -252,6 +254,7 @@ def restore_backup(
                         raise BackupError(f"Файл назначения имеет небезопасный тип: {target}")
                     copyfile(target, saved)
                     os.chmod(saved, stat.S_IMODE(target.stat().st_mode))
+                    original_keys[target] = saved
                 source.replace(target)
                 replaced.append(target)
             archived = set(names)
@@ -276,18 +279,14 @@ def restore_backup(
                 saved.parent.mkdir(parents=True, exist_ok=True)
                 copyfile(target, saved)
                 os.chmod(saved, stat.S_IMODE(target.stat().st_mode))
+                original_keys[target] = saved
                 target.unlink()
                 replaced.append(target)
         except Exception:
             # A multi-file restore cannot rename one directory without also
             # replacing unrelated logs. Roll back every file already replaced.
             for target in reversed(replaced):
-                if target == config:
-                    saved = originals / "config.yaml"
-                elif target == history:
-                    saved = originals / "history.db"
-                else:
-                    saved = originals / target.relative_to(root)
+                saved = original_keys.get(target, originals / target.relative_to(root))
                 if saved.exists():
                     saved.replace(target)
                 else:
