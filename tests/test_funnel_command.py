@@ -143,3 +143,25 @@ def test_funnel_run_search_query(capsys, tmp_path):
     out = capsys.readouterr().out
     assert "Поисковый запрос" in out
     assert "python" in out
+    assert "[INFO]" not in out  # все отклики атрибутированы — предупреждать не о чем
+
+
+def test_funnel_run_search_query_warns_about_unattributed_applies(capsys, tmp_path):
+    """apply/run не пишут vacancies_seen (#411 code review) — отклик без строки
+    в vacancies_seen молча выпадает из воронки; funnel обязан предупредить.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("12345", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+    h.record_action("12345", "v2", "apply", "success")  # без vacancies_seen
+
+    funnel_cmd.run(_args(config, tmp_path / "h.db", search_query=True, period=0))
+    out = capsys.readouterr().out
+    assert "[INFO]" in out
+    assert "1" in out.split("[INFO]")[1]

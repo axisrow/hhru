@@ -1035,6 +1035,48 @@ class History:
             key=lambda row: (-row["invite_rate"], -row["offer_rate"], row["search_query"]),
         )
 
+    def count_unattributed_applies(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> int:
+        """Число успешных откликов без строки в ``vacancies_seen`` (code review #411).
+
+        ``funnel_by_search_query`` INNER JOIN'ит ``actions`` к ``vacancies_seen``
+        по ``vacancy_id`` — вакансии, которых там нет, молча выпадают из воронки.
+        ``vacancies_seen`` заполняет только команда ``search`` (`upsert_vacancy_seen`
+        вызывается из ``commands/search.py``); `apply`/`run` вызывают
+        ``search_vacancies()`` напрямую и НЕ пишут в ``vacancies_seen`` — если
+        пользователь откликался через `apply`/`run` без предварительного
+        отдельного `search` по тем же вакансиям, эти отклики систематически не
+        попадут в `funnel --search-query`. Используется командой `funnel` для
+        `[INFO]`-предупреждения вместо тихой потери данных; не влияет на числа
+        самой воронки.
+        """
+        where = ["a.action = 'apply'", "a.status = 'success'"]
+        params: list = []
+        if since is not None:
+            where.append("a.created_at >= ?")
+            params.append(since)
+        if resume_id is not None:
+            where.append("a.resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS n
+                FROM actions AS a
+                {clause}
+                AND NOT EXISTS (
+                    SELECT 1 FROM vacancies_seen AS v WHERE v.vacancy_id = a.vacancy_id
+                )
+                """,
+                params,
+            ).fetchone()
+        return int(row["n"])
+
     def dead_responses(self, days: int, resume_id: str | None = None) -> dict:
         """«Мёртвая зона»: доля откликов без ответа старше N дней.
 
