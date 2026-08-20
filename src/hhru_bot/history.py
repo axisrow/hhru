@@ -86,6 +86,48 @@ CREATE TABLE IF NOT EXISTS responses (
     UNIQUE (vacancy_id, topic)
 );
 
+-- resume_views — реальные просмотры резюме работодателями (#415).
+-- Один snapshot на (резюме, событие просмотра, момент просмотра): повторный
+-- scrape не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
+-- Источник данных — только SSR (applicantResumeViewHistory.historyViews),
+-- см. resume_views.py::parse_resume_view_history; DOM-fallback намеренно
+-- убран (#428 review, round 11) — его identity-модель (employer_id/link)
+-- была структурно несовместима с SSR-моделью (source_id), и оба порядка
+-- приоритета в view_key либо теряли данные, либо плодили дубликаты при
+-- переключении между источниками между прогонами. Один источник истины
+-- устраняет противоречие, а не откладывает его очередным гейтом.
+-- Идентичность события — view_key (NOT NULL): source_id, если он есть,
+-- иначе employer_id, иначе '' — этот последний fallback (оба поля пусты)
+-- сейчас недостижим через штатный путь parse_resume_view_history (#428
+-- review, round 12: парсер требует source_id или employer_id и иначе
+-- бросает ValueError раньше вставки), но record_resume_views — отдельная
+-- публичная функция, и НЕ гарантирует, что каждый вызывающий прошёл через
+-- парсер; '' — безопасный defensive-дефолт, а не документированный
+-- нормальный путь. source_id — стабильный per-view SSR id
+-- (id/viewId/eventId). source_id в приоритете над employer_id: SSR-дата
+-- часто без времени суток, и два разных просмотра ОДНОГО работодателя в
+-- один день иначе получили бы одинаковый (employer_id, viewed_at) и
+-- второй был бы молча отброшен INSERT OR IGNORE (#428 review). Ключ НЕ
+-- включает employer — это mutable presentation-строка (имя могло
+-- смениться, разное форматирование), и раньше её участие в UNIQUE плодило
+-- дубликаты одного и того же просмотра (#428 review). employer_id/
+-- source_id — NOT NULL пустой строкой, а не NULL: SQLite считает
+-- несколько NULL различными значениями, и вернувшись к NULL здесь дедуп
+-- скрытых просмотров снова сломался бы (#428 review: "preserve hidden
+-- resume view events").
+CREATE TABLE IF NOT EXISTS resume_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    employer_id TEXT,
+    employer TEXT,
+    view_key TEXT NOT NULL,
+    viewed_at TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    UNIQUE (resume_id, view_key, viewed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_views_viewed_at ON resume_views(viewed_at);
+
 CREATE INDEX IF NOT EXISTS idx_responses_status_changed_at
     ON responses(status_changed_at);
 
@@ -430,6 +472,45 @@ class History:
                 (resume_id, vacancy_id),
             ).fetchone()
             return row is not None
+
+    def record_resume_views(self, rows: list[dict]) -> int:
+        """Persist real employer-view snapshots and return newly inserted count."""
+        if not rows:
+            return 0
+        now = datetime.now().isoformat(timespec="seconds")
+        inserted = 0
+        with self._connect() as conn:
+            for row in rows:
+                # view_key: the SSR per-view source_id when known, else
+                # employer_id, else '' — never the mutable `employer` display
+                # string on its own (#428 review).
+                view_key = row.get("source_id") or row.get("employer_id") or ""
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO resume_views
+                       (resume_id, employer_id, employer, view_key, viewed_at, first_seen_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        str(row["resume_id"]),
+                        row.get("employer_id") or "",
+                        row.get("employer") or "",
+                        str(view_key),
+                        str(row["viewed_at"]),
+                        now,
+                    ),
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def resume_views(self, resume_id: str | None = None) -> list[dict]:
+        """Return stored employer-view snapshots, newest first."""
+        with self._connect() as conn:
+            query = "SELECT * FROM resume_views"
+            params: tuple = ()
+            if resume_id is not None:
+                query += " WHERE resume_id = ?"
+                params = (resume_id,)
+            rows = conn.execute(query + " ORDER BY viewed_at DESC, id DESC", params).fetchall()
+        return [dict(row) for row in rows]
 
     def enqueue_review(self, resume_id, card, score, breakdown, letter) -> int:
         """Store the exact dry-run candidate and letter for later approval."""

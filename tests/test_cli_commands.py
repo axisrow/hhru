@@ -121,6 +121,7 @@ def test_all_commands_registered():
         "reject",
         "backup",
         "restore",
+        "resume-views",
         "review",
     }
 
@@ -180,6 +181,7 @@ def test_register_commands_returns_names():
         "refresh_token",
         "reject",
         "backup",
+        "resume_views",
         "review",
     }
 
