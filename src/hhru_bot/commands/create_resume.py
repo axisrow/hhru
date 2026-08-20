@@ -55,10 +55,16 @@ def run(args: argparse.Namespace) -> None:
                 context.new_page(), area=args.area, title=args.title, dry_run=dry_run
             )
     except Exception as exc:
-        history.record_action("account", "account", "create_resume", "failed", f"исключение: {exc}")
+        # A dry-run never changes hh.ru and therefore must not create an
+        # action-history row, including for a local/browser failure.
+        if not dry_run:
+            history.record_action(
+                "account", "account", "create_resume", "failed", f"исключение: {exc}"
+            )
         raise
-    status = action_status(dry_run=dry_run, success=result.success, uncertain=result.uncertain)
-    history.record_action("account", "account", "create_resume", status, result.reason)
+    if not dry_run:
+        status = action_status(dry_run=False, success=result.success, uncertain=result.uncertain)
+        history.record_action("account", "account", "create_resume", status, result.reason)
     if not result.success:
         prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
         print(f"{prefix} {result.reason}")

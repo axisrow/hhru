@@ -76,7 +76,7 @@ def test_history_init_schema_idempotent_on_reopen(tmp_path):
 
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "dry_run")
-    assert h.has_applied("r1", "v1")
+    assert h.has_applied("r1", "v1") is False
 
     h2 = History(tmp_path / "h.db")
-    assert h2.has_applied("r1", "v1")
+    assert h2.has_applied("r1", "v1") is False

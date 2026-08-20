@@ -182,11 +182,11 @@ def test_build_letter_provider_none_when_openai_missing(tmp_path, monkeypatch):
     assert _common._build_letter_provider(config, config.resumes[0], "x") is None
 
 
-# --- letter_variant доходит до history через run_apply_for_resume ---
+# --- dry-run не пишет letter_variant/action в history ---
 
 
-def test_apply_writes_ai_variant_to_history(tmp_path, monkeypatch):
-    # AI включён и срабатывает → variant='ai' в actions.
+def test_apply_dry_run_does_not_write_ai_variant_to_history(tmp_path, monkeypatch):
+    # AI включён и срабатывает, но письмо не отправляется → actions пуст.
     class _FakeLLM:
         def chat(self, messages, **params):  # noqa: ARG002
             return NormalizedResponse(content="AI письмо", tool_calls=None, finish_reason="stop")
@@ -209,11 +209,11 @@ def test_apply_writes_ai_variant_to_history(tmp_path, monkeypatch):
 
     _common.run_apply_for_resume(_ApplyFakePage(), config, resume, history, throttle, _apply_args())
 
-    assert _read_letter_variants(history_db) == ["ai"]
+    assert _read_letter_variants(history_db) == []
 
 
-def test_apply_writes_template_variant_without_ai(tmp_path, monkeypatch):
-    # AI выключен → статичный шаблон, variant='template'.
+def test_apply_dry_run_does_not_write_template_variant_without_ai(tmp_path, monkeypatch):
+    # AI выключен → шаблон только показывается, actions пуст.
     monkeypatch.setattr(
         "hhru_bot.commands._common.search_vacancies",
         lambda page, search, max_pages=5: [  # noqa: ARG005
@@ -237,11 +237,11 @@ def test_apply_writes_template_variant_without_ai(tmp_path, monkeypatch):
 
     _common.run_apply_for_resume(_ApplyFakePage(), config, resume, history, throttle, _apply_args())
 
-    assert _read_letter_variants(history_db) == ["template"]
+    assert _read_letter_variants(history_db) == []
 
 
-def test_apply_writes_ai_fallback_variant_when_llm_fails(tmp_path, monkeypatch):
-    # LLM падает в рантайме → провайдер откатывается на шаблон, variant='ai_fallback'.
+def test_apply_dry_run_does_not_write_ai_fallback_variant(tmp_path, monkeypatch):
+    # LLM падает в рантайме → fallback вычисляется, но отправки нет, actions пуст.
     class _FailingLLM:
         def chat(self, messages, **params):  # noqa: ARG002
             raise ConnectionError("LLM недоступен")
@@ -264,4 +264,4 @@ def test_apply_writes_ai_fallback_variant_when_llm_fails(tmp_path, monkeypatch):
 
     _common.run_apply_for_resume(_ApplyFakePage(), config, resume, history, throttle, _apply_args())
 
-    assert _read_letter_variants(history_db) == ["ai_fallback"]
+    assert _read_letter_variants(history_db) == []

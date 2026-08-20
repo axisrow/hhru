@@ -37,9 +37,11 @@ CREATE TABLE IF NOT EXISTS actions (
 -- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
 -- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
 -- иначе гонка/повтор вставит несколько uncertain-строк для одной пары.
+-- dry_run намеренно отсутствует: предпросмотр ничего не отправляет и не
+-- должен блокировать последующий боевой отклик.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
     ON actions(resume_id, vacancy_id)
-    WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain');
+    WHERE action = 'apply' AND status IN ('success', 'uncertain');
 
 -- responses — мониторинг ответов работодателей (#12, account-scope).
 -- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
@@ -351,7 +353,7 @@ class History:
                 """
                 SELECT 1 FROM actions
                 WHERE resume_id = ? AND vacancy_id = ? AND action = 'apply'
-                  AND status IN ('success', 'dry_run', 'uncertain')
+                  AND status IN ('success', 'uncertain')
                 LIMIT 1
                 """,
                 (resume_id, vacancy_id),
@@ -2172,7 +2174,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
 _APPLY_INDEX_SQL = (
     "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
     "ON actions(resume_id, vacancy_id) "
-    "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
+    "WHERE action = 'apply' AND status IN ('success', 'uncertain')"
 )
 
 
@@ -2203,19 +2205,19 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
 
     dupes = conn.execute(
         "SELECT resume_id, vacancy_id, COUNT(*) c FROM actions "
-        "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain') "
+        "WHERE action = 'apply' AND status IN ('success', 'uncertain') "
         "GROUP BY resume_id, vacancy_id HAVING c > 1"
     ).fetchall()
     if dupes:
         # #177 round 3 (Codex): старый индекс НЕ трогаем, если пересборку
         # выполнить нельзя — раньше DROP выполнялся безусловно ДО этой
         # проверки, снимая DB-уровня UNIQUE-защиту целиком (включая для
-        # success/dry_run пар, которые старый индекс ещё покрывал), даже
+        # success пар, которые старый индекс ещё покрывал), даже
         # если дубли есть только среди новых 'uncertain' записей.
         logger.warning(
             "idx_resume_vacancy_apply не пересоздан: найдено %d пар "
             "(resume_id, vacancy_id) с дублирующимися apply-записями "
-            "(success/dry_run/uncertain). UNIQUE constraint на них упал бы "
+            "(success/uncertain). UNIQUE constraint на них упал бы "
             "с IntegrityError. Дедупликация продолжает работать через "
             "has_applied(), но без обновлённой DB-уровня защиты для "
             "'uncertain' — почистите дубли в actions вручную.",
