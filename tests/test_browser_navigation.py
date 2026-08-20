@@ -38,8 +38,13 @@ def test_sandbox_failure_is_classified_for_headless_and_headed(headless):
         "Permission denied (1100)"
     )
 
-    with pytest.raises(browser.BrowserLaunchError, match="CODEX_SANDBOX_BROWSER_FAILURE"):
+    with pytest.raises(browser.BrowserLaunchError) as excinfo:
         browser.launch_browser(playwright, headless=headless)
+
+    message = str(excinfo.value)
+    assert "CODEX_SANDBOX_BROWSER_FAILURE" in message
+    assert "вне sandbox" in message
+    assert "headed/headless" in message
 
 
 def test_non_sandbox_launch_failure_is_not_reclassified():

@@ -45,13 +45,16 @@ class _FakePlaywright:
 
 
 def test_headless_sandbox_failure_is_classified_as_browser_launch_error():
-    """B1: headless-сбой песочницы превращается в контролируемую ошибку CLI."""
+    """B1: headless-сбой получает понятную общую диагностику sandbox."""
     playwright = _FakePlaywright(_LIVE_HEADLESS_SANDBOX_ERROR)
 
     with pytest.raises(BrowserLaunchError) as excinfo:
         launch_browser(playwright, headless=True)
 
-    assert "CODEX_SANDBOX_BROWSER_FAILURE" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "CODEX_SANDBOX_BROWSER_FAILURE" in message
+    assert "вне sandbox" in message
+    assert "headed/headless" in message
 
 
 def test_permission_denied_mach_port_failure_is_a_sandbox_marker():
@@ -64,11 +67,15 @@ def test_permission_denied_mach_port_failure_is_a_sandbox_marker():
 
 
 def test_headed_sandbox_failure_is_classified():
-    """Контроль: headed-путь с известным маркером работает — дефект именно в двух условиях."""
+    """Headed получает ту же общую диагностику, что и headless."""
     playwright = _FakePlaywright("Operation not permitted while starting Crashpad")
 
-    with pytest.raises(BrowserLaunchError):
+    with pytest.raises(BrowserLaunchError) as excinfo:
         launch_browser(playwright, headless=False)
+
+    message = str(excinfo.value)
+    assert "вне sandbox" in message
+    assert "headed/headless" in message
 
 
 # --- B2 ОТКЛОНЕНА -------------------------------------------------------------

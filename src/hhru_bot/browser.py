@@ -49,9 +49,11 @@ def launch_browser(playwright, *, headless: bool) -> Browser:
         )
         if apple_mach_port_failure or any(marker in details for marker in sandbox_markers):
             raise BrowserLaunchError(
-                "CODEX_SANDBOX_BROWSER_FAILURE: Chromium was blocked by the "
-                "execution sandbox (macOS/Crashpad permission). Retry this same "
-                "command with elevated system permission."
+                "CODEX_SANDBOX_BROWSER_FAILURE: Chromium заблокирован sandbox "
+                "среды выполнения (macOS/Crashpad permission). Это ограничение "
+                "среды, а не hh.ru или сессии. Повторите ту же команду вне sandbox "
+                "с системным разрешением (elevated); переключение headed/headless "
+                "причину не меняет."
             ) from exc
         raise
 
