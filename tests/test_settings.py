@@ -50,3 +50,16 @@ def test_run_lists_boolean_as_bool(tmp_path, capsys):
     capsys.readouterr()
     settings.run(_args(tmp_path / "history.db"))
     assert "bool" in capsys.readouterr().out
+
+
+def test_run_get_missing_key_reports_info_not_silence(tmp_path, capsys):
+    """cycle-review (/review, PR #394): get_setting() возвращает None для
+
+    отсутствующего ключа, и до фикса run() ничего не печатал и завершался
+    с exit-кодом 0 — опечатка в ключе выглядела неотличимо от штатного
+    (но пустого) успеха. Остальные READ-команды проекта на "не найдено"
+    печатают явный маркер (см. commands/profile.py::run_unset — "[INFO] ...
+    не найдено"), settings должна следовать тому же контракту.
+    """
+    settings.run(_args(tmp_path / "history.db", key="missing"))
+    assert capsys.readouterr().out == '[INFO] настройка "missing" не найдена\n'

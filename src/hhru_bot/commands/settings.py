@@ -38,6 +38,8 @@ def run(args: argparse.Namespace) -> None:
         value = history.get_setting(args.key)
         if value is not None:
             print(value)
+        else:
+            print(f'[INFO] настройка "{args.key}" не найдена')
     else:
         history.set_setting(args.key, args.value)
         print("[OK]")
