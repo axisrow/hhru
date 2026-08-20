@@ -91,7 +91,7 @@ def _dump_navigation_diagnostics(page: Page, stage: str, vacancy_id: str | None 
     )
 
 
-def wait_apply_button(page: Page) -> bool:
+def wait_apply_button(page: Page, *, timeout_ms: int = APPLY_TIMEOUT_MS) -> bool:
     """Ждёт появления кнопки отклика на странице вакансии. False — не дождались.
 
     #226 cycle-review: ждём кнопку ИЛИ already-responded-маркеры одним локатором
@@ -106,7 +106,7 @@ def wait_apply_button(page: Page) -> bool:
         page.locator(vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT)
     )
     try:
-        apply_button.or_(already_responded).first.wait_for(timeout=APPLY_TIMEOUT_MS)
+        apply_button.or_(already_responded).first.wait_for(timeout=timeout_ms)
     except PlaywrightTimeoutError:
         return False
     return apply_button.count() > 0
@@ -129,7 +129,14 @@ def _hidden_resume_warning_is_expanded(page: Page) -> bool:
     return True
 
 
-def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> str | bool:
+def navigate_to_response_form(
+    page: Page,
+    vacancy_id: str | None = None,
+    *,
+    navigation_timeout_ms: int = GOTO_TIMEOUT_MS,
+    form_timeout_ms: int = APPLY_TIMEOUT_MS,
+    dump_diagnostics: bool = True,
+) -> str | bool:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
     Возвращает:
@@ -211,10 +218,11 @@ def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> str 
     # различат навигационный сбой и реально загрузившуюся форму.
     try:
         page.wait_for_url(
-            "**/applicant/vacancy_response**", wait_until="commit", timeout=GOTO_TIMEOUT_MS
+            "**/applicant/vacancy_response**", wait_until="commit", timeout=navigation_timeout_ms
         )
     except PlaywrightError as exc:
-        _dump_navigation_diagnostics(page, "navigation_timeout", vacancy_id)
+        if dump_diagnostics:
+            _dump_navigation_diagnostics(page, "navigation_timeout", vacancy_id)
         logger.warning(
             "Навигация на форму отклика не подтвердилась (%s) — "
             "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
@@ -223,10 +231,11 @@ def navigate_to_response_form(page: Page, vacancy_id: str | None = None) -> str 
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.
     try:
         page.locator(apply_form.APPLY_SUBMIT_BUTTON).wait_for(
-            state="visible", timeout=APPLY_TIMEOUT_MS
+            state="visible", timeout=form_timeout_ms
         )
     except PlaywrightError as exc:
-        _dump_navigation_diagnostics(page, "form_timeout", vacancy_id)
+        if dump_diagnostics:
+            _dump_navigation_diagnostics(page, "form_timeout", vacancy_id)
         # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
         # чтобы таймаут рендера не выглядел как неверная граница <form>.
         logger.warning("Форма отклика не отрисовалась (%s)", exc)
