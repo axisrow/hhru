@@ -79,10 +79,14 @@ class _FakeLocator:
                 raise PlaywrightTimeoutError(f"{self.selector} not attached")
             return
         if state == "hidden":
-            # Живой DOM: после клика по опции React закрывает dropdown, и опция
-            # перестаёт быть видимой. dropdown_stays_open имитирует боевой случай
-            # 2026-08-20 — список остался раскрытым и перекрыл submit-кнопку.
+            # Живой DOM (probe-дампы 2026-08-20): панель drop-base появляется по
+            # клику на триггер и НЕ закрывается сама после выбора опции — её
+            # закрывает повторный клик по триггеру. Поэтому «скрыта» = панель
+            # не открыта. dropdown_stays_open имитирует случай, когда закрыть
+            # не удалось и панель перекрыла бы submit.
             if self._state.dropdown_stays_open:
+                raise PlaywrightTimeoutError(f"{self.selector} still visible")
+            if self._state.dropdown_opened:
                 raise PlaywrightTimeoutError(f"{self.selector} still visible")
             return
         if self._option_resume_id is not None:
@@ -123,8 +127,10 @@ class _FakeLocator:
                 )
             self._state.selected_resume_id = matches[0]
         else:
-            # Клик по триггеру — раскрывает dropdown (опции становятся живыми).
-            self._state.dropdown_opened = True
+            # Клик по триггеру — TOGGLE панели: первый раскрывает (опции
+            # становятся живыми), повторный закрывает. Так ведёт себя живой
+            # magritte-select (probe-дампы 2026-08-20).
+            self._state.dropdown_opened = not self._state.dropdown_opened
         if self._delegate_to is not None:
             # or_-локатор: клик засчитывается видимому операнду (реальный
             # Playwright кликает по фактически совпавшему элементу).
@@ -263,6 +269,11 @@ class FakeStepsPage:
         # адресует конкретный resume_id напрямую (не href, которого нет на форме).
         # Резолвится к тому же состоянию, что триггер APPLY_RESUME_SELECT, — обе
         # части одного и того же dropdown в реальном DOM.
+        if selector == apply_form.APPLY_RESUME_DROPDOWN:
+            # Панель списка резюме — то же состояние, что триггер: она открыта
+            # ровно тогда, когда dropdown_opened (живой DOM: 0 элементов до
+            # клика по триггеру, 1 после).
+            return _FakeLocator(selector, self._state(apply_form.APPLY_RESUME_SELECT))
         m = re.match(rf"^\[data-qa='{apply_form.APPLY_RESUME_OPTION_PREFIX}(.*)'\]$", selector)
         if m:
             resume_id = m.group(1)
@@ -714,7 +725,7 @@ def test_fill_form_open_dropdown_blocks_submit_and_refuses():
 
 
 def test_fill_form_closed_dropdown_proceeds_to_submit():
-    """Штатный путь: dropdown закрылся после выбора → submit нажимается."""
+    """Штатный путь: панель закрылась после выбора → submit нажимается."""
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
@@ -724,6 +735,32 @@ def test_fill_form_closed_dropdown_proceeds_to_submit():
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_closes_resume_panel_before_submit():
+    """Панель выбора резюме hh.ru НЕ закрывается сама после клика по опции —
+    проверено живыми probe-дампами 2026-08-20 (drop-base: 0 элементов до клика
+    по триггеру, 1 после клика по опции). Пока она открыта, её абсолютно
+    спозиционированный оверлей перекрывает submit в футере модалки.
+
+    Поэтому шаг обязан закрыть панель явно (повторный клик по триггеру:
+    стандартный toggle селекта; Escape не используем — в модалке он может
+    закрыть всю форму)."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    # 3 клика на общем состоянии триггера/опций: открыть панель, выбрать опцию,
+    # закрыть панель. Решающее — что панель в итоге закрыта.
+    assert st.clicks == 3
+    assert st.dropdown_opened is False
+    assert st.selected_resume_id == "RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
@@ -743,7 +780,9 @@ def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
 
     assert result is None
     assert st.selected_resume_id == "RID"
-    assert st.dropdown_opened is True
+    # Панель закрыта повторным кликом по триггеру: пока она открыта, её оверлей
+    # перекрывает submit (боевой случай 2026-08-20).
+    assert st.dropdown_opened is False
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 

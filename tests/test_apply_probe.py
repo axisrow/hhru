@@ -80,7 +80,17 @@ class _FakeLocator:
     def or_(self, other: _FakeLocator) -> _FakeLocator:
         # #226 cycle-review: wait_apply_button() объединяет кнопку и
         # already-responded-маркеры одним локатором.
-        return _FakeLocator(present=self._present or other._present)
+        #
+        # Письмо адресуется через or_ по двум shape формы (модалка/полная
+        # страница). Реальный Playwright click()/fill() на or_-локаторе
+        # действует на фактически совпавший элемент, поэтому возвращаем
+        # присутствующий операнд как есть — иначе fill() уходил бы в новый
+        # объект и тесты не видели бы заполненного письма.
+        if self._present:
+            return self
+        if other._present:
+            return other
+        return _FakeLocator(present=False)
 
     def filter(self, *, visible: bool | None = None) -> _FakeLocator:  # noqa: ARG002
         # #248 cycle-review round 2: dedup.check_already_responded() narrows the

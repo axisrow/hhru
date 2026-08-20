@@ -132,16 +132,13 @@ def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> None:
     if _is_visible(page, apply_form.APPLY_RESUME_SELECT, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS):
         apply_steps._select_resume_in_form(page, resume_id)
 
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).click()
-        # Клик раскрывает textarea — её готовность ждёт следующий _is_visible ниже.
-
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TEXTAREA, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).fill(letter)
+    # Переиспользуем ту же функцию, что и боевой fill_response_form, вместо
+    # собственной копии: копия отстала от изменений (в ней остался только
+    # тоггл полной формы, которого в модалке нет), и probe молча не заполнял
+    # письмо — то есть не воспроизводил боевой путь, ради чего и существует.
+    # Причину отказа probe не эскалирует: он диагностический и обязан сдампить
+    # DOM в любом случае — она видна в дампе и в логе fill_cover_letter.
+    apply_steps.fill_cover_letter(page, letter)
 
 
 def probe_vacancy(

@@ -51,12 +51,18 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:
         self._wait_for_calls.append(1)
         self._wait_for_timeouts.append(timeout)
-        if not self._present:
-            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+        if state == "hidden":
+            # Ждём ИСЧЕЗНОВЕНИЯ: отсутствующий элемент удовлетворяет сразу,
+            # присутствующий — никогда (в этом фейке состояние статично).
+            if self._present:
+                raise PlaywrightTimeoutError("still present")
+            return
+        if not self._present:
             raise PlaywrightTimeoutError("not present")
 
     def click(self, *, timeout=None, no_wait_after=None) -> None:
@@ -166,6 +172,11 @@ class FakePage:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
             return _FakeLocator(present=self._success and self._submit_in_form)
+        if selector == apply_form.APPLY_RESUME_DROPDOWN:
+            # Панель выбора резюме: шаг закрывает её повторным кликом по
+            # триггеру и ждёт state="hidden". Фейк не моделирует open/closed —
+            # wait_for здесь игнорирует state, поэтому «панель закрылась».
+            return _FakeLocator(present=False)
         if selector in (
             apply_form.APPLY_COVER_LETTER_TEXTAREA,
             apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM,

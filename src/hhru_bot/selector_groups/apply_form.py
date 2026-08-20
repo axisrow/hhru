@@ -54,6 +54,18 @@ APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
 # добавления этой константы письмо молча терялось — измерено по SSR
 # topicList[].hasResponseLetter: из 18 откликов аккаунта с письмом ушло 2, без — 16.
 APPLY_COVER_LETTER_TOGGLE_POPUP = "[data-qa='add-cover-letter']"
+# Всплывающая панель со списком резюме (Magritte drop-base). Подтверждена живыми
+# probe-дампами 2026-08-20: в form_initial (до клика по триггеру) элементов 0,
+# в form (после клика по опции) — ровно 1, то есть локатор single-match и панель
+# НЕ закрывается сама после выбора. Позиционирована абсолютно (z-index 2250,
+# height ~281px) и физически перекрывает submit в футере модалки — из-за неё
+# Locator.click по submit ретраил 30с с `subtree intercepts pointer events`.
+#
+# Список резюме внутри панели — постоянно видимые карточки-опции
+# (`magritte-select-option-{resume_id}`, выбранная несёт aria-selected="true"),
+# поэтому ждать СКРЫТИЯ ОПЦИИ нельзя: она остаётся visible, пока панель открыта.
+# Закрывать нужно саму панель, а её исчезновение — по этому селектору.
+APPLY_RESUME_DROPDOWN = "[data-qa='drop-base']"
 APPLY_COVER_LETTER_TEXTAREA = "textarea[data-qa='vacancy-response-popup-form-letter-input']"
 APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"
 
