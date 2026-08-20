@@ -74,6 +74,22 @@ def test_external_link_with_nearby_test_context_is_detected():
     )
 
 
+def test_external_link_with_following_test_context_is_detected():
+    assert (
+        extract_external_test_link(
+            "Перейдите по ссылке https://example.com/quiz и выполните тестовое задание"
+        )
+        == "https://example.com/quiz"
+    )
+
+
+def test_unrelated_word_does_not_count_as_test_context():
+    assert (
+        extract_external_test_link("В заданное время подключитесь: https://meet.example/abc")
+        is None
+    )
+
+
 def test_known_test_platform_is_detected_without_context():
     assert extract_external_test_link("https://candidate.typeform.com/to/abc") == (
         "https://candidate.typeform.com/to/abc"

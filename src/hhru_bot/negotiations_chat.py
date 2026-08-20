@@ -58,9 +58,12 @@ _TEST_PLATFORM_DOMAINS = (
     "typeform.com",
 )
 _TEST_CONTEXT_RE = re.compile(
-    r"(?:тест\w*|задан\w*|assignment|assessment|coding\s+challenge|technical\s+task|case\s+study)",
+    r"(?:тест(?:а|е|ом|у|ы)?|тестов(?:ое|ого|ому|ым|ые|ых|ыми)?|"
+    r"задан(?:ие|ия|ию|ием|ии|иями|иях)|assignment|assessment|"
+    r"coding\s+challenge|technical\s+task|case\s+study)\b",
     re.IGNORECASE,
 )
+_CONTEXT_BOUNDARY_RE = re.compile(r"[.!?;\n]")
 
 
 @dataclass(frozen=True)
@@ -178,11 +181,25 @@ def extract_external_test_link(message_text: str) -> str | None:
             continue
         if _is_test_platform(parsed.hostname):
             return url
-        # Keep the context on the URL's left side.  Looking arbitrarily far
-        # past the URL can associate a company link with a test phrase that
-        # belongs to a later, separate link in the same message.
+        # Look left, plus a bounded right-hand fragment for messages such as
+        # "перейдите по ссылке <URL> и выполните тестовое задание".  Do not
+        # inspect right-hand context when another URL comes first: the phrase
+        # may belong to that later link rather than this one.
         context_start = max(0, match.start() - 120)
-        if _TEST_CONTEXT_RE.search(message_text[context_start : match.start()]):
+        left_context = message_text[context_start : match.start()]
+        right_start = match.end()
+        next_url = _URL_RE.search(message_text, right_start)
+        sentence_boundary = _CONTEXT_BOUNDARY_RE.search(message_text, right_start)
+        right_end = min(
+            len(message_text),
+            right_start + 120,
+            next_url.start() if next_url else len(message_text),
+            sentence_boundary.start() if sentence_boundary else len(message_text),
+        )
+        right_context = message_text[right_start:right_end]
+        if _TEST_CONTEXT_RE.search(left_context) or (
+            next_url is None and _TEST_CONTEXT_RE.search(right_context)
+        ):
             return url
     return None
 
