@@ -5,7 +5,7 @@ import json
 import pytest
 
 from hhru_bot.history import History
-from hhru_bot.resume_views import has_next_page, parse_resume_view_history
+from hhru_bot.resume_views import _canonicalize_viewed_at, has_next_page, parse_resume_view_history
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +31,7 @@ def test_parse_resume_view_history_reads_ssr_and_limit():
             "employer_id": "7",
             "employer": "Acme",
             "source_id": None,
-            "viewed_at": "2026-08-20T00:00:00",
+            "viewed_at": "2026-08-20T00:00:00+00:00",
         }
     ]
 
@@ -52,6 +52,22 @@ def test_parse_resume_view_history_preserves_hidden_same_date_events():
     # dedup (history.py's view_key), never leaking into the display name (#428).
     assert [row["employer"] for row in rows] == [None, None]
     assert [row["source_id"] for row in rows] == ["v1", "v2"]
+
+
+def test_canonicalize_viewed_at_treats_naive_as_utc():
+    """A naive SSR timestamp and the equivalent Z-suffixed DOM one must
+    canonicalize identically — otherwise the same view scraped by both
+    sources dedups as two rows (#428 review)."""
+    assert _canonicalize_viewed_at("2026-08-20T10:00:00") == _canonicalize_viewed_at(
+        "2026-08-20T10:00:00Z"
+    )
+
+
+def test_canonicalize_viewed_at_normalizes_offsets_to_utc():
+    """Same instant in different UTC offsets must canonicalize identically."""
+    assert _canonicalize_viewed_at("2026-08-20T13:00:00+03:00") == _canonicalize_viewed_at(
+        "2026-08-20T10:00:00Z"
+    )
 
 
 def test_parse_resume_view_history_fails_closed_on_schema_drift():

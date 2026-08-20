@@ -119,4 +119,12 @@ def run(args: argparse.Namespace) -> None:
         by_employer[name] = by_employer.get(name, 0) + 1
     for name, count in sorted(by_employer.items(), key=lambda item: (-item[1], item[0]))[:10]:
         print(f"  {count}  {name}")
-    _table(stored[: args.limit])
+    # --limit is documented as "max snapshots per resume"; a flat slice of the
+    # combined multi-resume `stored` list would show up to `limit` rows total
+    # (most-recent-first across all resumes) and silently omit later resumes'
+    # rows entirely (#428 review). Cap each resume's rows independently instead.
+    per_resume: dict[str, list[dict]] = {}
+    for row in stored:
+        per_resume.setdefault(str(row["resume_id"]), []).append(row)
+    table_rows = [row for rows in per_resume.values() for row in rows[: args.limit]]
+    _table(table_rows)

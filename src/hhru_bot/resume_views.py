@@ -51,13 +51,19 @@ def _canonicalize_viewed_at(raw: str) -> str:
     """Normalize a view timestamp to one canonical ISO spelling.
 
     SSR and DOM sources render the same instant differently (e.g. trailing
-    ``Z`` vs ``+00:00``, or the same instant in a different UTC offset);
-    without this, the same event dedups as two rows depending on which
-    source captured it first, or which offset it was rendered in
-    (#428 review).
+    ``Z`` vs ``+00:00``, the same instant in a different UTC offset, or one
+    source omitting the offset entirely); without this, the same event
+    dedups as two rows depending on which source captured it first, or
+    which offset/timezone-awareness it was rendered in (#428 review).
+    A naive value (no offset at all, e.g. bare SSR "2026-08-20T10:00:00")
+    is treated as UTC — the DOM fallback's ``Z``-suffixed values are UTC,
+    so this keeps both sources landing on the same canonical string for
+    the same instant instead of only normalizing already-aware ones.
     """
     parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    if parsed.tzinfo is not None:
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
         parsed = parsed.astimezone(UTC)
     return parsed.isoformat()
 
@@ -127,10 +133,14 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
             times = row.locator("time").all()
             if len(times) == 1:
                 viewed_at = times[0].get_attribute("datetime")
-        if not employer:
-            employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
-            if len(employers) == 1:
-                employer = employers[0].inner_text().strip()
+        # Queried once and reused below for employer_id extraction (#428
+        # review): a second identical locator call was wasteful, and the
+        # original guard that skipped it whenever data-employer-name was set
+        # left employer_id NULL, letting a later SSR scrape of the same view
+        # insert a duplicate row under the resume_views dedup key.
+        employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
+        if not employer and len(employers) == 1:
+            employer = employers[0].inner_text().strip()
         employer_id = None
         if not employer:
             invalid = True
@@ -143,12 +153,6 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
         except ValueError:
             invalid = True
             continue
-        # Extract employer_id from the link whenever it's present, regardless of
-        # whether the name came from data-employer-name or the link's own text
-        # (#428 review): the guard used to skip this whenever data-employer-name
-        # was set, leaving employer_id NULL and letting a later SSR scrape of the
-        # same view insert a duplicate row under the resume_views dedup key.
-        employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
         if len(employers) == 1:
             href = employers[0].get_attribute("href") or ""
             match = re.search(r"/employer/([^/?#]+)", href)
