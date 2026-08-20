@@ -7,6 +7,8 @@ import pytest
 from hhru_bot.history import History
 from hhru_bot.resume_views import parse_resume_view_history
 
+pytestmark = pytest.mark.unit
+
 
 def _html(state: dict) -> str:
     return '<template id="HH-Lux-InitialState">' + json.dumps(state) + "</template>"
