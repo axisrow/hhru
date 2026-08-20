@@ -8,6 +8,7 @@ from hhru_bot.negotiations_chat import (
     CHAT_MESSAGE_MY_MARKER,
     ChatMessage,
     extract_external_test_link,
+    is_robot_questionnaire,
     needs_reply,
     read_chat,
     wait_reply_confirmation,
@@ -35,6 +36,54 @@ def test_needs_reply_is_fail_closed_for_empty_chat():
 def test_needs_reply_is_fail_closed_for_unknown_author_or_marker():
     assert needs_reply(ChatMessage(None, "message-1")).should_reply is False
     assert needs_reply(ChatMessage("employer", None)).reason == "inbound_marker_unknown"
+
+
+def test_robot_questionnaire_detects_two_employer_questions():
+    messages = [
+        ChatMessage("employer", "1", "Какой у вас опыт?"),
+        ChatMessage("employer", "2", "Когда готовы приступить?"),
+    ]
+    assert is_robot_questionnaire(messages)
+
+
+def test_robot_questionnaire_detects_explicit_bot_author():
+    assert is_robot_questionnaire([ChatMessage("employer", "1", "", "Robot HH")])
+
+
+def test_robot_questionnaire_does_not_count_our_questions():
+    assert not is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Какой у вас опыт?"), ChatMessage("me", "2", "Почему?")]
+    )
+
+
+def test_robot_author_match_is_not_a_substring():
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "", "Работодатель")])
+    assert is_robot_questionnaire([ChatMessage("employer", "1", "", "Автобот")])
+
+
+def test_robot_questionnaire_counts_adjacent_questions_in_one_message():
+    assert is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Какой у вас опыт? Когда готовы приступить?")]
+    )
+
+
+def test_repeated_question_punctuation_counts_as_one_question():
+    assert not is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Вы ещё рассматриваете вакансию??")]
+    )
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "Вы готовы?!?!")])
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "Спасибо! Ждём вас!")])
+
+
+def test_question_sentence_detection_handles_mixed_punctuation():
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "Вы готовы?!")])
+    assert is_robot_questionnaire([ChatMessage("employer", "1", "Готовы? Успеете?")])
+    assert is_robot_questionnaire(
+        [ChatMessage("employer", "1", "«Какой у вас опыт?» «Когда готовы?»")]
+    )
+    assert not is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Вы видели вопрос «Когда?»🙂 в анкете?")]
+    )
 
 
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):

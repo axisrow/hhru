@@ -201,6 +201,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_topic_marker_success
 
 CREATE INDEX IF NOT EXISTS idx_replies_created_at ON replies(created_at);
 
+CREATE TABLE IF NOT EXISTS robot_questionnaires (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL UNIQUE,
+    vacancy_id TEXT,
+    reason TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_robot_questionnaires_detected_at
+    ON robot_questionnaires(detected_at);
+
 -- test_assignments — факт назначения внешнего теста работодателем (#180).
 -- Отдельно от responses/actions: это событие чата, а не статус отклика и не
 -- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
@@ -2014,6 +2024,36 @@ class History:
             params.append(limit)
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def mark_robot_questionnaire(
+        self, topic: str, *, vacancy_id: str | None = None, reason: str = "detected"
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO robot_questionnaires "
+                "(topic, vacancy_id, reason, detected_at) VALUES (?, ?, ?, ?)",
+                (topic, vacancy_id, reason, datetime.now().isoformat()),
+            )
+
+    def is_robot_questionnaire(self, topic: str) -> bool:
+        with self._connect() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM robot_questionnaires WHERE topic = ?", (topic,)
+                ).fetchone()
+                is not None
+            )
+
+    def list_robot_questionnaires(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            return [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT topic, vacancy_id, reason, detected_at FROM robot_questionnaires "
+                    "ORDER BY detected_at DESC, id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            ]
 
     def record_reply_and_action(
         self,

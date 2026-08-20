@@ -51,6 +51,7 @@ def run(args: argparse.Namespace) -> None:
     from ..history import History
     from ..negotiations_chat import (
         NoReplyForm,
+        is_robot_questionnaire,
         needs_reply,
         read_chat,
         send_reply_current,
@@ -113,6 +114,15 @@ def run(args: argparse.Namespace) -> None:
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
             chat = read_chat(page, topic, refs)
+            if chat is not None and is_robot_questionnaire(chat.conversation or (chat,)):
+                history.mark_robot_questionnaire(
+                    topic, vacancy_id=str(candidate["vacancy_id"]), reason="robot_questionnaire"
+                )
+                print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                continue
+            if history.is_robot_questionnaire(topic):
+                print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                continue
             decision = needs_reply(chat)
             if not decision.should_reply:
                 print(f"[FAIL] {label} — {decision.reason}")
