@@ -31,12 +31,10 @@ from playwright.sync_api import Page
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
-from ..selector_groups import apply_form
 from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import CoverLetterProvider, render_cover_letter
 from .questions import detect_questions
-from .steps import OPTIONAL_FIELD_TIMEOUT_MS, _is_visible
 
 logger = logging.getLogger("hhru_bot.apply.probe")
 
@@ -118,26 +116,29 @@ def _fill_cover_letter_only(page: Page, resume_id: str, letter: str) -> str | No
 
     Аналог блока заполнения `apply/steps.fill_response_form`, но намеренно без
     блока `submit_button.click()` — атомарность probe. Селекторы те же (shared,
-    владеет apply_form), логика выбора резюме делегирована steps._select_resume_in_form.
+    владеет apply_form), выбор резюме делегирован steps.ensure_resume_selected —
+    той же функции, которую зовёт боевой fill_response_form.
 
     #139: раньше опциональные поля определялись голым ``count() > 0`` сразу
     после навигации плюс фиксированная пауза-заглушка (полсекунды сна между
     полями) — гонка рендера (поле ещё не отрисовалось) молча пропускала
     заполнение письма, и дамп выглядел валидным, хотя письмо не заполнено
-    (ложная уверенность перед боевым запуском). Переиспользуем
-    ``steps._is_visible`` — тот же приём (bounded wait_for + fail-closed на
-    «поля нет»), что и в fill_response_form. Фиксированных пауз-заглушек
+    (ложная уверенность перед боевым запуском). Фиксированных пауз-заглушек
     (запрещены докстрингом steps.py) здесь больше нет.
+
+    Round-2: проверка резюме тоже не своя. Прежний гейт (``_is_visible`` с
+    коротким ``OPTIONAL_FIELD_TIMEOUT_MS``) при неотрисовавшемся селекторе
+    молча ПРОПУСКАЛ выбор и probe печатал [OK], тогда как боевой
+    ``fill_response_form`` на том же DOM отказывает (``attached`` за
+    ``RESUME_SELECT_TIMEOUT_MS``). Теперь обе ветки зовут один
+    ``steps.ensure_resume_selected`` — семантика ожидания и текст вердикта
+    совпадают по построению, а не по договорённости.
     """
-    if _is_visible(page, apply_form.APPLY_RESUME_SELECT, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS):
-        if not apply_steps._select_resume_in_form(page, resume_id):
-            # Боевой apply на этом же отказе отменяет отправку. probe обязан
-            # сообщить тот же вердикт: молчаливое продолжение печатало бы [OK]
-            # прямо перед боевым прогоном (ложное подтверждение, #139).
-            return (
-                f"резюме '{resume_id}' не подтверждено в форме отклика — "
-                "боевой отклик был бы отменён (см. лог выше)"
-            )
+    if reason := apply_steps.ensure_resume_selected(page, resume_id):
+        # Боевой apply на этом же отказе отменяет отправку. probe обязан
+        # сообщить тот же вердикт: молчаливое продолжение печатало бы [OK]
+        # прямо перед боевым прогоном (ложное подтверждение, #139).
+        return reason
 
     # Переиспользуем ту же функцию, что и боевой fill_response_form, вместо
     # собственной копии: копия отстала от изменений (в ней остался только
@@ -260,7 +261,17 @@ def probe_vacancy(
 
     # Дамп снимаем в любом случае — он и есть диагностический артефакт probe,
     # в том числе (особенно) при отказе.
-    dump_paths = dump_probe_snapshot(page, ctx_dir)
+    #
+    # best_effort ровно на fail-пути (как на прочих failure-путях этого файла,
+    # см. form_indeterminate выше): вердикт отказа уже известен, и сбой съёмки
+    # артефакта (target closed/detached после неудачного взаимодействия с
+    # формой) не должен подменять [FAIL] пробросом исключения — CLI тогда не
+    # напечатает вердикт, а уже записанный частичный артефакт потеряет свой путь.
+    # На успешном пути режим остаётся СТРОГИМ намеренно: probe возвращает
+    # "probe dump saved" — заявление о готовом артефакте для сверки селекторов,
+    # и без файлов это было бы ложью того же сорта, ради устранения которой
+    # probe существует.
+    dump_paths = dump_probe_snapshot(page, ctx_dir, best_effort=fill_reason is not None)
     if fill_reason is not None:
         # Не skipped: skipped печатается как [INFO] (вердикт hh.ru, не проблема),
         # а здесь боевой apply отказался бы отправлять — это [FAIL].
