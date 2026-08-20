@@ -36,11 +36,7 @@ def _sqlite_snapshot(source: Path, destination: Path) -> None:
         src.close()
 
 
-def _configured_storage_path(config: Path, root: Path) -> Path | None:
-    try:
-        raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise BackupError(f"Не удалось прочитать конфиг для backup: {config}") from exc
+def _configured_storage_from_raw(config: Path, root: Path, raw: object) -> Path | None:
     if not isinstance(raw, dict):
         return None
     account = raw.get("account", {})
@@ -57,6 +53,14 @@ def _configured_storage_path(config: Path, root: Path) -> Path | None:
     except ValueError as exc:
         raise BackupError("storage_state_file выходит за пределы data") from exc
     return path
+
+
+def _configured_storage_path(config: Path, root: Path) -> Path | None:
+    try:
+        raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise BackupError(f"Не удалось прочитать конфиг для backup: {config}") from exc
+    return _configured_storage_from_raw(config, root, raw)
 
 
 def create_backup(
@@ -181,20 +185,7 @@ def restore_backup(
     archive_path, config, history = Path(archive_path), Path(config), Path(history)
     root = _root(config, history).resolve()
     config, history = config.resolve(), history.resolve()
-
-    def target_for(name: str) -> Path:
-        if name == "config.yaml":
-            return config
-        if name == "history.db":
-            return history
-        configured_storage = _configured_storage_path(config, root) if config.exists() else None
-        if (
-            configured_storage is not None
-            and name == f"storage_state/{configured_storage.name}"
-            and configured_storage != root / name
-        ):
-            return configured_storage
-        return root / name
+    previous_storage = _configured_storage_path(config, root) if config.exists() else None
 
     names = inspect_backup(archive_path)
     if dry_run:
@@ -217,6 +208,28 @@ def restore_backup(
                 assert source is not None
                 target.write_bytes(source.read())
                 os.chmod(target, 0o600)
+        desired_storage = None
+        staged_config = staging / "config.yaml"
+        if staged_config.exists():
+            try:
+                raw = yaml.safe_load(staged_config.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError as exc:
+                raise BackupError("Некорректный config.yaml в архиве") from exc
+            desired_storage = _configured_storage_from_raw(config, root, raw)
+
+        storage_targets = {
+            f"storage_state/{path.name}": path
+            for path in (previous_storage, desired_storage)
+            if path is not None
+        }
+
+        def target_for(name: str) -> Path:
+            if name == "config.yaml":
+                return config
+            if name == "history.db":
+                return history
+            return storage_targets.get(name, root / name)
+
         staged_history = staging / "history.db"
         if staged_history.exists():
             # Re-materialize via SQLite's backup API instead of replacing an
@@ -266,9 +279,9 @@ def restore_backup(
                     for item in storage.rglob("*")
                     if item.is_file() and not item.is_symlink()
                 )
-            configured_storage = _configured_storage_path(config, root) if config.exists() else None
-            if configured_storage is not None:
-                managed.add(f"storage_state/{configured_storage.name}")
+            for configured_storage in (previous_storage, desired_storage):
+                if configured_storage is not None:
+                    managed.add(f"storage_state/{configured_storage.name}")
             for name in sorted(managed - archived):
                 target = target_for(name)
                 if not target.exists() and not target.is_symlink():
