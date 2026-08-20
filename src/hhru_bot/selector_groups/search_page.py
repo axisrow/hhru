@@ -15,6 +15,9 @@ VACANCY_CARD_COMPANY = "[data-qa='vacancy-serp__vacancy-employer']"
 # search.py использует regex-fallback по innerHTML карточки когда селектор
 # пуст. Селектор оставлен для обратной совместимости (старые кэши/curl-дампы).
 VACANCY_CARD_COMPENSATION = "[data-qa='vacancy-serp__vacancy-compensation']"
+# Встречается в авторизованной выдаче; в анонимном SSR-дампе от 2026-08-20
+# поле не рендерится, поэтому парсер обязан считать его опциональным.
+VACANCY_CARD_PUBLICATION_TIME = "[data-qa='vacancy-serp__vacancy-publication-time']"
 # Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в
 # DOM-дампе (read-only, 2026-07-28): rating/trusted рендерятся в карточке
 # списка для работодателей с отзывами. Блоки опциональны.

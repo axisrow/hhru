@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
@@ -53,6 +54,44 @@ class SalaryInfo:
     salary_to: int | None
     currency: str
     raw: str
+
+
+def parse_publication_time(text: str | None, now: datetime | None = None) -> datetime | None:
+    """Parse hh.ru's relative or short Russian publication date."""
+    if not text or not text.strip():
+        return None
+    now = now or datetime.now()
+    value = " ".join(text.lower().strip().split())
+    if "сегодня" in value or value == "today":
+        return now
+    if "вчера" in value or value == "yesterday":
+        return now - timedelta(days=1)
+    match = re.search(r"(\d+)\s+(?:дн(?:я|ей)?|day|days)\s+(?:назад|ago)", value)
+    if match:
+        return now - timedelta(days=int(match.group(1)))
+    match = re.search(r"(\d{1,2})[.]\s*(\d{1,2})(?:[.]\s*(\d{2,4}))?", value)
+    if match:
+        year = int(match.group(3) or now.year)
+        if year < 100:
+            year += 2000
+        try:
+            return datetime(year, int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            return None
+    months = {
+        "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+        "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+        "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+    }
+    match = re.search(r"(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?", value)
+    if match and match.group(2) in months:
+        try:
+            return datetime(
+                int(match.group(3) or now.year), months[match.group(2)], int(match.group(1))
+            )
+        except ValueError:
+            return None
+    return None
 
 
 # --- парсер зарплаты (чистая функция, issue #14) ----------------------------
@@ -167,6 +206,7 @@ class VacancyCard:
     # Зарплата (issue #14). None — если hh.ru не отдал блок или парсер
     # не смог разобрать (т.е. «з/п не указана»).
     salary: SalaryInfo | None = None
+    published_at: datetime | None = None
     # Инфо о работодателе из карточки поиска (issue #74, Этап 1): рейтинг,
     # число отзывов, бейдж «надёжный работодатель». hh.ru показывает эти блоки
     # не для всех карточек → None/False по умолчанию. Источник факторов для
@@ -325,6 +365,9 @@ def search_vacancies(
                 except Exception:
                     logger.warning("Не удалось получить inner_text для ЗП-fallback", exc_info=True)
             salary = parse_salary(salary_text)
+            published_at = parse_publication_time(
+                _optional_text(card, sel.VACANCY_CARD_PUBLICATION_TIME)
+            )
 
             # Инфо о работодателе (issue #74, Этап 1): рейтинг/отзывы/trusted.
             # Блоки опциональны (не у всех работодателей). Парсим мягко — ни одно
@@ -348,6 +391,7 @@ def search_vacancies(
                         else f"{HH_BASE_URL}{href.split('?')[0]}"
                     ),
                     salary=salary,
+                    published_at=published_at,
                     employer_info=employer_info,
                     # VacancyCard.__post_init__ derives portfolio_evidence_requirement
                     # from vacancy_text automatically; no need to compute it twice.
