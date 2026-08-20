@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -199,6 +199,18 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
             skip_reason=blocker.skip_reason or SKIP_REASONS.RESPONSE_REJECTED,
         )
 
+    def _keep_stop(result: ApplyResult) -> ApplyResult:
+        """Сохраняет остановку прогона независимо от вердикта проверки.
+
+        Лимит откликов аккаунта — свойство аккаунта, а не конкретной вакансии:
+        подтверждённый отклик (found) или неудавшаяся проверка не отменяют его.
+        Без этого прогон продолжил бы долбиться в исчерпанный лимит — ровно тот
+        сценарий, ради которого #342 и заводился.
+        """
+        if blocker.stop_run and not result.stop_run:
+            return replace(result, stop_run=True)
+        return result
+
     if not blocker.post_navigation or ctx.dry_run or ctx.verifier is None:
         return _verdict()
     try:
@@ -211,7 +223,9 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
         ctx.acted = True
         ctx.uncertain = True
         logger.warning("%s — внешняя проверка упала: %s", ctx.vacancy.title, exc)
-        return ctx.fail(f"{blocker.reason}; внешняя проверка упала ({exc}) — исход неопределён")
+        return _keep_stop(
+            ctx.fail(f"{blocker.reason}; внешняя проверка упала ({exc}) — исход неопределён")
+        )
     if verified.found:
         ctx.acted = True
         ctx.uncertain = False
@@ -220,16 +234,21 @@ def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResu
             ctx.vacancy.title,
             verified.detail,
         )
-        return ctx.ok(
-            f"{blocker.reason}; внешняя проверка: отклик присутствует "
-            f"в /applicant/negotiations ({verified.detail})"
+        return _keep_stop(
+            ctx.ok(
+                f"{blocker.reason}; внешняя проверка: отклик присутствует "
+                f"в /applicant/negotiations ({verified.detail})"
+            )
         )
     if verified.indeterminate:
         ctx.acted = True
         ctx.uncertain = True
         logger.warning("%s — внешняя проверка недоступна: %s", ctx.vacancy.title, verified.detail)
-        return ctx.fail(
-            f"{blocker.reason}; внешняя проверка недоступна ({verified.detail}) — исход неопределён"
+        return _keep_stop(
+            ctx.fail(
+                f"{blocker.reason}; внешняя проверка недоступна ({verified.detail}) — "
+                "исход неопределён"
+            )
         )
     return _verdict()
 

@@ -588,6 +588,12 @@ def run_apply_for_resume(
             if action_id is not None:
                 history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
+            # #342: сегодня терминальные блокеры приходят через ctx.stop()
+            # (skipped=False) и до сюда не доходят. Проверка стоит и здесь,
+            # чтобы будущий skip-путь с stop_run не проглотился этим continue.
+            if getattr(result, "stop_run", False):
+                print(f"  [STOP] {card.title} — {result.reason}")
+                raise ApplyRunStopped(result.reason)
             continue
 
         # #163: actions — журнал реальных взаимодействий с hh.ru. Запись только
@@ -623,9 +629,6 @@ def run_apply_for_resume(
                 result.reason,
                 letter_variant=result.letter_variant,
             )
-        if getattr(result, "stop_run", False):
-            print(f"  [STOP] {card.title} — {result.reason}")
-            raise ApplyRunStopped(result.reason)
         if result.success:
             applied_count += 1
             print(f"  [OK] {card.title} — {card.company}")
@@ -640,6 +643,15 @@ def run_apply_for_resume(
         # защищает; после submit (включая неподтверждённый успех) — обязательна.
         if result.acted:
             throttle.wait(f"после отклика на '{card.title}'")
+
+        # #342: остановка прогона выполняется ПОСЛЕДНЕЙ. Терминальный лимит
+        # аккаунта может сопровождаться реально ушедшим откликом (внешняя
+        # проверка #207 вернула found), поэтому сначала учитываем его в
+        # счётчике и выдерживаем анти-бан-паузу, и только потом прерываем
+        # прогон — иначе после submit паузы не будет вовсе.
+        if getattr(result, "stop_run", False):
+            print(f"  [STOP] {card.title} — {result.reason}")
+            raise ApplyRunStopped(result.reason)
 
     print(f"Итого откликов за этот запуск: {applied_count}")
     return False

@@ -233,3 +233,43 @@ def test_render_wait_never_passes_zero_timeout_to_playwright():
     handle_post_click_blockers(page, allow_relocation=False)
 
     assert page.wait_timeouts and all(t > 0 for t in page.wait_timeouts)
+
+
+def test_account_limit_stops_the_run_even_when_the_response_went_out():
+    # Лимит откликов — свойство аккаунта: подтверждённый отклик его не отменяет.
+    # Без этого прогон продолжил бы долбиться в исчерпанный лимит.
+    from hhru_bot.apply.pipeline import _finalize_blocker
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    ctx = _blocker_ctx(verifier=lambda *_: NegotiationsVerifyResult("found", "topic=42"))
+    blocker = PostClickBlocker(
+        "limit_exceeded",
+        "лимит откликов исчерпан",
+        stop_run=True,
+        post_navigation=True,
+    )
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert result.success is True
+    assert result.stop_run is True
+
+
+def test_account_limit_stops_the_run_when_verification_is_unavailable():
+    from hhru_bot.apply.pipeline import _finalize_blocker
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    ctx = _blocker_ctx(
+        verifier=lambda *_: NegotiationsVerifyResult("indeterminate", "список не прочитан")
+    )
+    blocker = PostClickBlocker(
+        "limit_exceeded",
+        "лимит откликов исчерпан",
+        stop_run=True,
+        post_navigation=True,
+    )
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert result.stop_run is True
+    assert result.uncertain is True
