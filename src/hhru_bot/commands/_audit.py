@@ -22,5 +22,11 @@ def action_status(*, dry_run: bool, success: bool, uncertain: bool = False) -> s
 def record_resume_action(
     history: History, resume_id: str, action: str, status: str, reason: str
 ) -> None:
-    """Record an action whose target is exactly one configured resume."""
+    """Record a real or uncertain action for exactly one configured resume.
+
+    A dry-run is a preview, not an action.  Keep the guard here so all resume
+    mutation commands share the same no-side-effect history contract.
+    """
+    if status == "dry_run":
+        return
     history.record_action(resume_id, resume_id, action, status, reason)

@@ -1,9 +1,8 @@
 """Политика троттлинга и записи истории «до действия» (#163).
 
 #163: пауза ``throttle.wait`` и запись в ``actions`` — только после РЕАЛЬНОГО
-действия на hh.ru (клик кнопки поднятия / submit отклика, ``acted=True``) либо
-для успешной dry_run-симуляции (dry_run-строки apply читает дедупликация
-``has_applied`` — их не трогаем). Провалы до действия (плейсхолдер в конфиге,
+действия на hh.ru (клик кнопки поднятия / submit отклика, ``acted=True``).
+Dry-run ничего не отправляет и не должен считаться действием. Провалы до действия (плейсхолдер в конфиге,
 форма входа, hint «рано», кнопка не найдена) не оставляют на hh.ru следа:
 без паузы и без строки ``failed``. Прецедент — #95 (skip без отправки уже не
 ждёт паузу и не пишется в actions).
@@ -154,9 +153,8 @@ def test_bump_real_action_waits_and_records(tmp_path, monkeypatch, wait_calls, c
     assert "[OK]" in capsys.readouterr().out
 
 
-def test_bump_dry_run_success_records_without_wait(tmp_path, monkeypatch, wait_calls):
-    """Успешная dry_run-симуляция пишется (параллель семантике apply), но без
-    паузы: клика не было, анти-бан-пауза не от чего не защищает."""
+def test_bump_dry_run_success_does_not_record_without_wait(tmp_path, monkeypatch, wait_calls):
+    """Успешная dry-run-симуляция ничего не записывает и не ждёт паузу."""
     from hhru_bot.bump import BumpResult
 
     monkeypatch.setattr(
@@ -166,7 +164,7 @@ def test_bump_dry_run_success_records_without_wait(tmp_path, monkeypatch, wait_c
     _run_bump(monkeypatch, tmp_path, _config(tmp_path, _resume()), dry_run=True)
 
     assert wait_calls == []
-    assert _read_actions(tmp_path / "history.db") == [("bump", "dry_run")]
+    assert _read_actions(tmp_path / "history.db") == []
 
 
 # --- bump: записи без действия не влияют на лимиты (п.2 ишью) ----------------
@@ -266,9 +264,8 @@ def test_apply_submit_unconfirmed_waits_and_records_failed(tmp_path, monkeypatch
     assert _read_actions(tmp_path / "history.db") == [("apply", "failed")]
 
 
-def test_apply_dry_run_records_for_dedup_without_wait(tmp_path, monkeypatch, wait_calls):
-    """dry_run-строки apply НЕ убирать: их читает дедупликация has_applied
-    (CLAUDE.md п.2). Паузы при этом нет — клика не было."""
+def test_apply_dry_run_does_not_record_or_deduplicate(tmp_path, monkeypatch, wait_calls):
+    """Dry-run не отправляет отклик и не меняет локальную action-историю."""
     from hhru_bot.apply import ApplyResult
     from hhru_bot.history import History
 
@@ -276,9 +273,8 @@ def test_apply_dry_run_records_for_dedup_without_wait(tmp_path, monkeypatch, wai
     _run_apply(monkeypatch, tmp_path, dry_run=True, result=result)
 
     assert wait_calls == []
-    assert _read_actions(tmp_path / "history.db") == [("apply", "dry_run")]
-    # дедупликация видит симуляцию — повторный прогон отсечёт эту вакансию
-    assert History(tmp_path / "history.db").has_applied("AAA111", "42") is True
+    assert _read_actions(tmp_path / "history.db") == []
+    assert History(tmp_path / "history.db").has_applied("AAA111", "42") is False
 
 
 # --- #176: uncertain — клик мог уйти, запись/пауза/лимиты обязательны ---------

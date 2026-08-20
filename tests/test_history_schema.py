@@ -13,7 +13,7 @@ import sqlite3
 
 import pytest
 
-from hhru_bot.history import SCHEMA, History
+from hhru_bot.history import SCHEMA, SKIP_REASONS, History
 
 pytestmark = pytest.mark.unit
 
@@ -113,10 +113,33 @@ def test_record_action_letter_variant_defaults_to_none(tmp_path):
 def test_history_works_after_schema_creation(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "dry_run")
-    assert h.has_applied("r1", "v1")
+    assert h.has_applied("r1", "v1") is False
     # повторное открытие того же файла не падает и данные на месте
     h2 = History(tmp_path / "h.db")
-    assert h2.has_applied("r1", "v1")
+    assert h2.has_applied("r1", "v1") is False
+
+
+def test_history_migration_removes_skip_created_only_by_legacy_dry_run(tmp_path):
+    db = tmp_path / "h.db"
+    h = History(db)
+    h.record_action("r1", "v1", "apply", "dry_run")
+    h.record_skip("r1", "v1", SKIP_REASONS.ALREADY_APPLIED)
+
+    History(db)
+
+    assert not h.is_skipped("r1", "v1")
+
+
+def test_history_migration_preserves_skip_backed_by_real_apply(tmp_path):
+    db = tmp_path / "h.db"
+    h = History(db)
+    h.record_action("r1", "v1", "apply", "dry_run")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_skip("r1", "v1", SKIP_REASONS.ALREADY_APPLIED)
+
+    History(db)
+
+    assert h.is_skipped("r1", "v1")
 
 
 def test_record_test_assignment_persists_and_reads_history(tmp_path):
@@ -360,7 +383,7 @@ def test_ensure_apply_index_keeps_old_index_when_duplicates_found(tmp_path):
     # #177 round 3 (Codex): при обнаружении дублей функция раньше БЕЗУСЛОВНО
     # дропала старый индекс (DROP INDEX IF EXISTS) ДО проверки, а после —
     # не восстанавливала ничего, если дубли найдены. Это снимало DB-уровня
-    # UNIQUE-защиту ПОЛНОСТЬЮ, включая для success/dry_run пар, которые
+    # UNIQUE-защиту ПОЛНОСТЬЮ, включая для success пар, которые
     # раньше были защищены старым (более узким) индексом. Правильно: если
     # пересборку выполнить нельзя (есть дубли), старый индекс не трогать —
     # degraded (без 'uncertain' в условии), но не нулевая защита.
@@ -403,7 +426,7 @@ def test_ensure_apply_index_keeps_old_index_when_duplicates_found(tmp_path):
         ).fetchone()
         assert index_row is not None, "старый индекс должен остаться, а не исчезнуть полностью"
 
-        # старая (degraded) защита всё ещё работает для success/dry_run
+        # старая (degraded) защита всё ещё работает для success
         conn.execute(
             "INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at) "
             "VALUES ('r2','v2','apply','success','','2026-01-01')"

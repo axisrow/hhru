@@ -37,9 +37,11 @@ CREATE TABLE IF NOT EXISTS actions (
 -- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
 -- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
 -- иначе гонка/повтор вставит несколько uncertain-строк для одной пары.
+-- dry_run намеренно отсутствует: предпросмотр ничего не отправляет и не
+-- должен блокировать последующий боевой отклик.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_vacancy_apply
     ON actions(resume_id, vacancy_id)
-    WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain');
+    WHERE action = 'apply' AND status IN ('success', 'uncertain');
 
 -- responses — мониторинг ответов работодателей (#12, account-scope).
 -- Одна строка НА ПЕРЕПИСКУ: текущий «свежий» статус ответа работодателя,
@@ -339,6 +341,11 @@ class History:
             # если оно отличается от желаемого (иначе КАЖДЫЙ CLI-вызов делал бы
             # лишнюю write-миграцию с захватом schema-lock — cycle-review #177).
             _ensure_apply_index(conn)
+            # #431: старые apply dry-run могли успеть закэшировать
+            # ALREADY_APPLIED в skipped. Удаляем только такие записи, когда
+            # для пары нет success/uncertain-действия; skip без dry-run или с
+            # реальным действием сохраняется.
+            _purge_legacy_dry_run_applied_skips(conn)
 
     def has_applied(self, resume_id: str, vacancy_id: str) -> bool:
         # #176: 'uncertain' (submit мог уйти, Playwright упал в момент клика)
@@ -351,7 +358,7 @@ class History:
                 """
                 SELECT 1 FROM actions
                 WHERE resume_id = ? AND vacancy_id = ? AND action = 'apply'
-                  AND status IN ('success', 'dry_run', 'uncertain')
+                  AND status IN ('success', 'uncertain')
                 LIMIT 1
                 """,
                 (resume_id, vacancy_id),
@@ -2172,8 +2179,37 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
 _APPLY_INDEX_SQL = (
     "CREATE UNIQUE INDEX idx_resume_vacancy_apply "
     "ON actions(resume_id, vacancy_id) "
-    "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain')"
+    "WHERE action = 'apply' AND status IN ('success', 'uncertain')"
 )
+
+
+def _purge_legacy_dry_run_applied_skips(conn: sqlite3.Connection) -> None:
+    """Remove stale ALREADY_APPLIED skips created solely by old dry-runs.
+
+    Before #431, apply dry-runs wrote an ``actions(status='dry_run')`` row and
+    ``filter_candidates`` subsequently cached ``ALREADY_APPLIED`` in
+    ``skipped``. The latter cache is checked before ``has_applied()``, so
+    changing deduplication alone would leave those vacancies blocked forever.
+    Rows without that exact legacy signature are intentionally untouched: they
+    may represent a real site-side duplicate detection or another skip cause.
+    The set-based ``EXCEPT`` keeps this one-time cleanup from doing a
+    correlated actions-table scan for every skipped row.
+    """
+    conn.execute(
+        """
+        DELETE FROM skipped
+        WHERE reason = 'already_applied'
+          AND (resume_id, vacancy_id) IN (
+                SELECT resume_id, vacancy_id
+                FROM actions
+                WHERE action = 'apply' AND status = 'dry_run'
+                EXCEPT
+                SELECT resume_id, vacancy_id
+                FROM actions
+                WHERE action = 'apply' AND status IN ('success', 'uncertain')
+          )
+        """
+    )
 
 
 def _ensure_apply_index(conn: sqlite3.Connection) -> None:
@@ -2203,19 +2239,19 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
 
     dupes = conn.execute(
         "SELECT resume_id, vacancy_id, COUNT(*) c FROM actions "
-        "WHERE action = 'apply' AND status IN ('success', 'dry_run', 'uncertain') "
+        "WHERE action = 'apply' AND status IN ('success', 'uncertain') "
         "GROUP BY resume_id, vacancy_id HAVING c > 1"
     ).fetchall()
     if dupes:
         # #177 round 3 (Codex): старый индекс НЕ трогаем, если пересборку
         # выполнить нельзя — раньше DROP выполнялся безусловно ДО этой
         # проверки, снимая DB-уровня UNIQUE-защиту целиком (включая для
-        # success/dry_run пар, которые старый индекс ещё покрывал), даже
+        # success пар, которые старый индекс ещё покрывал), даже
         # если дубли есть только среди новых 'uncertain' записей.
         logger.warning(
             "idx_resume_vacancy_apply не пересоздан: найдено %d пар "
             "(resume_id, vacancy_id) с дублирующимися apply-записями "
-            "(success/dry_run/uncertain). UNIQUE constraint на них упал бы "
+            "(success/uncertain). UNIQUE constraint на них упал бы "
             "с IntegrityError. Дедупликация продолжает работать через "
             "has_applied(), но без обновлённой DB-уровня защиты для "
             "'uncertain' — почистите дубли в actions вручную.",

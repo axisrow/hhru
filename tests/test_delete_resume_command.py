@@ -63,7 +63,7 @@ def env(monkeypatch, tmp_path):
     return state
 
 
-def test_dry_run_is_audited_without_force(env, tmp_path, capsys):
+def test_dry_run_writes_nothing_to_history(env, tmp_path, capsys):
     env.result = DeleteResumeResult(RESUME_ID, True, "dry-run; кнопка удаления не нажата")
     cmd.run(_args(tmp_path, dry_run=True))
     assert "[DRY-RUN]" in capsys.readouterr().out
@@ -71,7 +71,7 @@ def test_dry_run_is_audited_without_force(env, tmp_path, capsys):
         row = conn.execute(
             "SELECT action, status FROM actions WHERE resume_id = ?", (RESUME_ID,)
         ).fetchone()
-    assert tuple(row) == ("delete_resume", "dry_run")
+    assert row is None
 
 
 def test_no_flags_is_dry_run(env, tmp_path, capsys):

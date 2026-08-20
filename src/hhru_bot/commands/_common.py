@@ -518,8 +518,8 @@ def run_apply_for_resume(
             continue
 
         # #163: actions — журнал реальных взаимодействий с hh.ru. Запись только
-        # после реального submit либо для успешной dry_run-симуляции — dry_run-
-        # строки НЕ трогаем: их читает дедупликация has_applied (CLAUDE.md п.2).
+        # после реального submit. Dry-run ничего не отправляет и не создаёт
+        # action-строку, поэтому не блокирует последующий отклик.
         # Провалы до submit (форма входа, «уже откликались», кнопка не найдена)
         # на hh.ru не отправлялись — остаются в консоли/логе, не в статистике.
         if action_id is not None:
@@ -528,9 +528,7 @@ def run_apply_for_resume(
             # откликнется на ту же вакансию вторым письмом) — «просто failed»
             # не годится. dry_run по определению без клика — uncertain там
             # невозможен.
-            if args.dry_run:
-                status = "dry_run"
-            elif result.uncertain:
+            if result.uncertain:
                 status = "uncertain"
             else:
                 status = "success" if result.success else "failed"
@@ -552,16 +550,6 @@ def run_apply_for_resume(
                 result.reason,
                 letter_variant=result.letter_variant,
             )
-        elif args.dry_run and result.success:
-            history.record_action(
-                resume.resume_id,
-                card.vacancy_id,
-                "apply",
-                "dry_run",
-                result.reason,
-                letter_variant=result.letter_variant,
-            )
-
         if result.success:
             applied_count += 1
             print(f"  [OK] {card.title} — {card.company}")

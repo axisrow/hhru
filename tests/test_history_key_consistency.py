@@ -118,17 +118,15 @@ def _read_resume_ids(history_db) -> list[tuple[str, str]]:
     return rows
 
 
-def test_apply_and_bump_record_under_same_resume_key(tmp_path, monkeypatch):
-    """apply-путь и bump-путь пишут в actions под одним resume_id = resume.resume_id.
+def test_apply_and_bump_dry_runs_do_not_record_actions(tmp_path, monkeypatch):
+    """apply и bump dry-run не пишут действий без взаимодействия с hh.ru.
 
     Симметричный энд-ту-энд сценарий:
       1) apply (dry-run) через run_apply_for_resume — подмена только браузерного
          сбора карточек (search_vacancies), фейковый page, реальная History.
       2) bump (dry-run) через bump.run — подмена launch_context и bump_resume.
-    После обоих шагов resume_id в actions должен быть единым и равен
-    resume.resume_id. На бажном коде оба пути пишут slug 'python' (через
-    resume.id) вместо числового resume.resume_id='AAA111' — это и есть симптом
-    бага: ключ истории завязан на переименуемый slug, а не на стабильный id hh.ru.
+    Реальные submit/click-пути отдельно покрываются тестами записи успешных и
+    неопределённых действий.
     """
     from hhru_bot.bump import BumpResult
     from hhru_bot.commands import _common
@@ -188,18 +186,4 @@ def test_apply_and_bump_record_under_same_resume_key(tmp_path, monkeypatch):
     )
 
     rows = _read_resume_ids(history_db)
-    apply_rows = [r for r in rows if r[1] == "apply"]
-    bump_rows = [r for r in rows if r[1] == "bump"]
-    assert apply_rows, "apply-путь ничего не записал в историю"
-    assert bump_rows, "bump-путь ничего не записал в историю"
-
-    apply_key = apply_rows[0][0]
-    bump_key = bump_rows[0][0]
-    assert apply_key == bump_key == resume.resume_id, (
-        "apply и bump должны писать в историю под resume.resume_id="
-        f"{resume.resume_id!r}, но apply={apply_key!r}, bump={bump_key!r}"
-    )
-
-    # Гарантируем, что тест осмысленен: slug и resume_id различны по построению,
-    # иначе равенство ключей доказывало бы мало.
-    assert resume.id != resume.resume_id
+    assert rows == []

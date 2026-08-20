@@ -183,16 +183,10 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     """
     # cycle-review round 2 (#373): dry-run with an answerer configured still
     # clicks VACANCY_APPLY_BUTTON to preview questions (#97 contract), so it
-    # CAN reach this grey-zone finalizer despite never submitting. Without this
-    # guard, a verifier.found/indeterminate verdict sets ctx.acted=True on a
-    # dry-run result; commands/_common.py's `elif result.acted:` branch (no
-    # action_id reserved in dry-run — before_submit is only wired for real
-    # runs) then unconditionally calls history.record_action(), which
-    # daily_apply_limit/has_applied() count exactly like a real submission —
-    # a dry-run would silently burn quota and permanently mark a vacancy as
-    # already-applied. A dry-run never sends anything: fail-closed here means
-    # "not verified", never "acted", regardless of what the external verifier
-    # would have said.
+    # CAN reach this grey-zone finalizer despite never submitting. A dry-run
+    # never sends anything: fail-closed here means "not verified", never
+    # "acted", regardless of what the external verifier would have said. The
+    # command layer also records actions only after a real submit.
     if ctx.dry_run:
         return ctx.fail(reason)
     # Inspect the page that failed before the verifier navigates away. A submit

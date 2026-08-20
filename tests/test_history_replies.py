@@ -269,7 +269,7 @@ def test_record_reply_optional_fields_default_to_none(tmp_path):
 def test_has_replied_true_only_for_successful_send(tmp_path):
     # dry_run и failed — НЕ отправка: планирование не должно считать их
     # отвеченными, иначе --dry-run навсегда заблокировал бы боевой ответ
-    # (в отличие от actions #3, где dry_run намеренно дедуплицирует отклик).
+    # actions применяют тот же контракт: dry_run не дедуплицирует отклик.
     h = History(tmp_path / "h.db")
     h.record_reply("t1", "m1", status="dry_run")
     h.record_reply("t2", "m2", status="failed")
