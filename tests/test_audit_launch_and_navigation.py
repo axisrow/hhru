@@ -44,24 +44,28 @@ class _FakePlaywright:
         self.chromium = _FailingChromium(message)
 
 
-def test_headless_sandbox_failure_is_classified_as_browser_launch_error():
-    """B1: headless sandbox failures are normalized for the CLI."""
+def test_headless_sandbox_failure_is_not_classified_as_browser_launch_error():
+    """B1: headless-сбой песочницы уходит сырым PlaywrightError → traceback в CLI.
+
+    cli.py ловит BrowserLaunchError и печатает [ENVIRONMENT]; всё остальное
+    долетает до `raise` в cli.py:190 и печатается Python-ом как traceback.
+    """
     playwright = _FakePlaywright(_LIVE_HEADLESS_SANDBOX_ERROR)
 
-    with pytest.raises(BrowserLaunchError) as excinfo:
+    with pytest.raises(PlaywrightError) as excinfo:
         launch_browser(playwright, headless=True)
 
-    assert "CODEX_SANDBOX_BROWSER_FAILURE" in str(excinfo.value)
-    assert isinstance(excinfo.value.__cause__, PlaywrightError)
+    # Дефект: это НЕ BrowserLaunchError, поэтому cli.py напечатает traceback.
+    assert not isinstance(excinfo.value, BrowserLaunchError)
+    assert "Permission denied (1100)" in str(excinfo.value)
 
 
-def test_permission_denied_mach_port_failure_is_a_sandbox_marker():
-    """B1: the observed macOS permission failure is recognized."""
+def test_permission_denied_is_absent_from_sandbox_markers():
+    """B1, вторая причина: маркера живого сбоя нет в списке классификации."""
     source = inspect.getsource(launch_browser)
 
     assert "Operation not permitted" in source, "список маркеров изменился — пересмотреть тест"
-    assert "Permission denied" in source
-    assert "mach_port_rendezvous_mac" in source
+    assert "Permission denied" not in source
 
 
 def test_headed_sandbox_failure_is_classified():
@@ -144,16 +148,18 @@ def test_apply_daily_limit_is_per_resume_so_account_total_multiplies():
 # --- B4: необратимый отзыв отклика не умеет статус 'uncertain' ---------------
 
 
-def test_withdraw_failure_after_destructive_click_is_recorded_as_uncertain(monkeypatch, tmp_path):
-    """B4: a post-click withdrawal failure is recorded as ``uncertain``.
+def test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_uncertain(
+    monkeypatch, tmp_path
+):
+    """B4: сбой ПОСЛЕ необратимого клика отзыва пишется как 'failed' (= не произошло).
 
     Тест проходит РЕАЛЬНЫЙ путь `_withdraw_topic`: фейковая страница отдаёт
     валидный SSR с одним топиком, уникальную карточку и уникальную кнопку
     отзыва, клик действительно выполняется (`clicked` фиксируется), и только
     затем падает ожидание позитивного маркера — ровно «серая зона» #207.
 
-    `_withdraw_topic` returns a failed confirmation, but the completed click
-    must make `_run_topics` record the destructive action as `uncertain`.
+    `_withdraw_topic` возвращает (False, ...), а `_run_topics` (:304) знает
+    только два статуса, поэтому необратимое действие записывается как `failed`.
     Для обратимого bump тот же проект реализует инвариант #176/#207 полностью
     (bump.py:102-119: acted=True + uncertain=True); в этом модуле слова
     'uncertain' нет вовсе.
@@ -233,11 +239,13 @@ def test_withdraw_failure_after_destructive_click_is_recorded_as_uncertain(monke
         ).fetchall()
     statuses = [row["status"] for row in rows]
 
-    assert statuses == ["uncertain"]
+    # Дефект: состоявшийся необратимый клик записан как 'failed' (= не произошёл).
+    assert statuses == ["failed"]
+    assert "uncertain" not in statuses
 
 
-def test_withdraw_module_implements_the_uncertain_invariant():
-    """B4: destructive withdrawal shares the existing uncertain invariant."""
+def test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks():
+    """Контроль: инвариант в проекте есть — он просто не применён к отзыву."""
     from pathlib import Path as _Path
 
     from hhru_bot import bump as bump_module
@@ -248,7 +256,7 @@ def test_withdraw_module_implements_the_uncertain_invariant():
     ).read_text(encoding="utf-8")
 
     assert "uncertain=True" in bump_source
-    assert "uncertain" in withdraw_source
+    assert "uncertain" not in withdraw_source
 
 
 # --- B5: save_about теряет факт состоявшегося клика сохранения ---------------
