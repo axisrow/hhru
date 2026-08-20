@@ -1162,6 +1162,11 @@ class History:
         сборе для группировки медианы в ``estimate_salary``. При обновлении
         существующей строки tier тоже освежается (компания могла накопить
         отзывов между scrape'ами; trusted-бейдж hh.ru на tier не влияет — #118).
+
+        ``published_at`` — дата публикации вакансии на hh.ru, неизменна по
+        своей природе. Селектор для неё опционален (см. ``selector_groups/
+        search_page.py``), поэтому при повторном scrape без даты уже известное
+        значение сохраняется (``COALESCE``), а не затирается NULL'ом.
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1184,7 +1189,7 @@ class History:
                     salary_currency = excluded.salary_currency,
                     employer_tier = excluded.employer_tier,
                     vacancy_text = excluded.vacancy_text,
-                    published_at = excluded.published_at,
+                    published_at = COALESCE(excluded.published_at, published_at),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1229,11 +1234,19 @@ class History:
         return [row["vacancy_text"] for row in rows]
 
     def vacancy_age_distribution(self, now: datetime | None = None) -> dict[str, int]:
-        """Count observed vacancies by age of hh.ru publication date."""
+        """Count observed vacancies by age of hh.ru publication date.
+
+        UNIQUE-индекс — (vacancy_id, search_query), поэтому одна и та же
+        вакансия, встреченная под несколькими поисковыми запросами, даёт
+        несколько строк. Группируем по vacancy_id, чтобы посчитать каждую
+        вакансию один раз (как list_vacancy_texts/estimate_salary).
+        """
         now = now or datetime.now()
         result = {"<1 дня": 0, "1-7 дней": 0, "7-30 дней": 0, "30+ дней": 0, "неизвестно": 0}
         with self._connect() as conn:
-            rows = conn.execute("SELECT published_at FROM vacancies_seen").fetchall()
+            rows = conn.execute(
+                "SELECT MAX(published_at) AS published_at FROM vacancies_seen GROUP BY vacancy_id"
+            ).fetchall()
         for row in rows:
             value = row["published_at"]
             try:
