@@ -152,12 +152,14 @@ python3 -m playwright install chromium
 
 - **Подтверждено curl-дампом** (без логина): селекторы страницы поиска (`/search/vacancy`)
   и страницы вакансии (`/vacancy/{id}`).
-- **Подтверждено живым DOM** (F12, `/applicant/vacancy_response`, 2026-08-20, multi-resume
-  аккаунт): `APPLY_RESUME_SELECT` (`resume-title` — свёрнутый ТРИГГЕР выбора резюме, не
-  коллекция опций; клик по нему раскрывает `<label data-qa="magritte-select-option-{resume_id}"
+- **Подтверждено живым DOM / боевыми дампами** (2026-08-20, multi-resume аккаунт):
+  `APPLY_RESUME_SELECT` (`resume-title` — свёрнутый ТРИГГЕР выбора резюме, не коллекция
+  опций; клик по нему раскрывает `<label data-qa="magritte-select-option-{resume_id}"
   role="option">` — resume_id уже в самом `data-qa`, атрибута `href` на форме нет вовсе),
-  `APPLY_COVER_LETTER_TOGGLE`, `APPLY_COVER_LETTER_TEXTAREA`, `APPLY_SUBMIT_BUTTON`
-  (см. `apply_form.py` — там же комментарий про попап-vs-полную-форму, см. ниже).
+  `APPLY_COVER_LETTER_TEXTAREA`, `APPLY_SUBMIT_BUTTON`, `APPLY_COVER_LETTER_TOGGLE_POPUP`
+  (`add-cover-letter` — тоггл письма МОДАЛКИ). `APPLY_COVER_LETTER_TOGGLE`
+  (`vacancy-response-letter-toggle`) относится к ПОЛНОЙ форме и в модалке не совпадает
+  (см. `apply_form.py` и разбор двух shape ниже).
 - **НЕ подтверждено** (рендерится только залогиненному через JS): страница резюме с кнопкой
   поднятия, маркер «уже откликались».
 
@@ -166,12 +168,34 @@ python3 -m playwright install chromium
 `selectors.py`/`selector_groups/`. При отладке падений на этом шаге первый подозреваемый —
 устаревший непроверенный селектор, а не логика модуля.
 
-**hh.ru рендерит форму отклика в ДВУХ местах с похожим, но не идентичным DOM:** компактный
-попап на карточке поиска (там letter-toggle называется `add-cover-letter`) и полноценная
-страница `/applicant/vacancy_response` (letter-toggle — `vacancy-response-letter-toggle`).
-Бот всегда использует ВТОРУЮ (двухшаговая навигация, см. п.4 выше) — все селекторы
-`apply_form.py` сверены именно на ней, не на попапе. Не переносить селекторы из попапа
-на полную форму и наоборот без отдельной сверки.
+**hh.ru рендерит форму отклика в ДВУХ shape с похожим, но не идентичным DOM:** МОДАЛКА
+на самой странице вакансии (`form#RESPONSE_MODAL_FORM_ID`, letter-toggle `add-cover-letter`,
+textarea `vacancy-response-popup-form-letter-input`) и полноценная страница
+`/applicant/vacancy_response` (letter-toggle `vacancy-response-letter-toggle`, textarea
+`vacancy-response-form-letter-input`).
+
+**Прежнее утверждение «бот всегда использует ВТОРУЮ» ОПРОВЕРГНУТО (2026-08-20).** Во всех
+дампах `data/logs/apply_*` начиная с 2026-08-16 `<link rel="canonical">` остаётся
+`/vacancy/{id}` — навигации не происходит, фактически работает МОДАЛКА. Кнопка отклика
+по-прежнему `<a href="/applicant/vacancy_response…">`, но hh.ru перехватывает клик JS.
+Надёжный маркер shape в дампе — `form="RESPONSE_MODAL_FORM_ID"`; `add-cover-letter`
+маркером НЕ является (его нет в DOM, когда hh.ru отрендерил textarea уже развёрнутой).
+
+Цена ошибки была измерена: селектор letter-toggle полной формы в модалке не совпадает
+ни разу, поэтому письмо молча терялось — по SSR `topicList[].hasResponseLetter` из 18
+откликов аккаунта с письмом ушли 2, без письма 16. Теперь `fill_response_form` адресует
+оба shape через `Locator.or_`, а отсутствие textarea — **fail-closed отказ до submit**
+(отклик без письма не отправляем). Full-page селекторы НЕ удалять: оба shape наблюдались
+в дампах одного дня (08-16).
+
+**`wait_for(state=...)` нужен и на ЗАКРЫТИЕ, не только на появление.** Боевой случай
+2026-08-20 (`136190065`/`136190066`): после выбора резюме React закрывал dropdown
+асинхронно, раскрытый listbox перекрывал submit-кнопку в футере модалки → клик ретраил
+30 с (`subtree intercepts pointer events`) и падал в `SubmitClickUncertain` — ложная
+«неопределённость» при НЕотправленном отклике. Ждать закрытие следует по элементу,
+подтверждённому живым DOM и single-match (здесь — сама опция
+`magritte-select-option-{resume_id}`), а не по generic-контейнеру `drop-base`, которого
+в одном дампе 22 штуки.
 
 ### Граница браузерных действий
 
@@ -189,13 +213,15 @@ python3 -m playwright install chromium
 **Отдельно:** `apply/questions.py::_form_scope()` (#95) допускает, что кнопка отправки
 формы отклика обёрнута в семантический `<form>`-тег (использует
 `xpath=ancestor::form[1]` для скоупинга heuristic-детекции вопросов) — это допущение
-о структуре DOM, а не просто про `data-qa`, и оно тоже НЕ подтверждено живым дампом.
-Если неверно, `detect_questions()` будет систематически возвращать `indeterminate`,
-и pipeline будет `fail`-ить каждый non-dry-run `apply` до заполнения формы. Перед
-первым боевым использованием прогнать `probe` на реальной вакансии и проверить лог
-на `[WARN indeterminate]` — его появление на форме без вопросов означает, что
-допущение о `<form>`-обёртке неверно и `_form_scope()` нужно поправить под реальную
-разметку.
+о структуре DOM, а не просто про `data-qa`. **Подтверждено живым дампом 2026-08-20**
+(`data/logs/apply_136190065_navigation_timeout.html`): модалка содержит
+`<form name="vacancy_response" id="RESPONSE_MODAL_FORM_ID" method="POST">`, то есть
+обёртка реально существует и `APPLY_QUESTION_FORM_BODY` (`form[name='vacancy_response']`)
+тоже валиден. Прежнее предупреждение «НЕ подтверждено живым дампом» снято.
+Если разметка снова уедет, симптом будет прежним: `detect_questions()` начнёт
+систематически возвращать `indeterminate`, и pipeline будет `fail`-ить каждый
+non-dry-run `apply` — диагностировать по `[WARN indeterminate]` в логе `probe`
+на форме без вопросов.
 
 ### Структура пакетов под распараллеливание (Wave 0)
 

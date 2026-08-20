@@ -34,7 +34,11 @@ class _FakeLocator:
         # В реальном Playwright .first снимает strict mode: wait_for на коллекции
         # через .first проходит (ждёт первый совпавший), а на всей коллекции без .first
         # кидает strict-mode Error. Возвращаем локатор с _strict=False.
-        return _FakeLocator(self.selector, self._state, strict=False)
+        loc = _FakeLocator(self.selector, self._state, strict=False)
+        # Делегирование or_ переживает .first — реальный Playwright тоже
+        # сохраняет, на какой элемент действует локатор.
+        loc._delegate_to = self._delegate_to
+        return loc
 
     def __init__(
         self,
@@ -51,6 +55,9 @@ class _FakeLocator:
         # адресует конкретную опцию по resume_id напрямую (живой DOM —
         # опция несёт identity в самом data-qa, а не в href, которого на форме нет).
         self._option_resume_id = option_resume_id
+        # or_-локатор: состояние, на которое реально действуют click()/fill()
+        # (видимый операнд). None — обычный локатор, действует на своё состояние.
+        self._delegate_to: _SelectorState | None = None
 
     def _live_option_ids(self) -> list[str]:
         # Текущие «живые» resume_id опций. option-локатор моделирует «момент клика» —
@@ -70,6 +77,13 @@ class _FakeLocator:
             # перед открытием dropdown; не коллекция.
             if not self._state.visible:
                 raise PlaywrightTimeoutError(f"{self.selector} not attached")
+            return
+        if state == "hidden":
+            # Живой DOM: после клика по опции React закрывает dropdown, и опция
+            # перестаёт быть видимой. dropdown_stays_open имитирует боевой случай
+            # 2026-08-20 — список остался раскрытым и перекрыл submit-кнопку.
+            if self._state.dropdown_stays_open:
+                raise PlaywrightTimeoutError(f"{self.selector} still visible")
             return
         if self._option_resume_id is not None:
             # живой DOM: опция резюме — data-qa-локатор, видимость появляется после клика
@@ -111,10 +125,16 @@ class _FakeLocator:
         else:
             # Клик по триггеру — раскрывает dropdown (опции становятся живыми).
             self._state.dropdown_opened = True
-        self._state.clicks += 1
+        if self._delegate_to is not None:
+            # or_-локатор: клик засчитывается видимому операнду (реальный
+            # Playwright кликает по фактически совпавшему элементу).
+            self._delegate_to.clicks += 1
+        else:
+            self._state.clicks += 1
 
     def fill(self, value: str) -> None:
-        self._state.fills.append(value)
+        target = self._delegate_to if self._delegate_to is not None else self._state
+        target.fills.append(value)
 
     def count(self) -> int:
         # Для опции резюме (option_resume_id) — число живых совпадений по resume_id.
@@ -131,11 +151,24 @@ class _FakeLocator:
         # #226 cycle-review: wait_apply_button() объединяет apply-button и
         # already-responded-маркеры одним локатором. Фейк комбинирует state:
         # visible/match_count по OR, чтобы wait_for/count отражали объединение.
+        #
+        # Письмо в модалке: тоггл/textarea тоже адресуются через or_ по двум
+        # shape (модалка vs полная форма). Реальный Playwright click()/fill()
+        # на or_-локаторе действует на тот элемент, который реально совпал,
+        # поэтому клики и заполнения ДОЛЖНЫ долетать до состояния видимого
+        # операнда, а не в комбинированную копию (иначе тест не увидит,
+        # что письмо заполнено). Приоритет — первый видимый операнд.
+        target = self._state if self._state.visible else other._state
         combined = _SelectorState(visible=self._state.visible or other._state.visible)
         combined.is_collection = self._state.is_collection or other._state.is_collection
         combined.match_count = max(self._state.match_count, other._state.match_count)
         combined.wait_error = self._state.wait_error or other._state.wait_error
-        return _FakeLocator(f"({self.selector})|({other.selector})", combined, strict=False)
+        combined.dropdown_stays_open = (
+            self._state.dropdown_stays_open or other._state.dropdown_stays_open
+        )
+        loc = _FakeLocator(f"({self.selector})|({other.selector})", combined, strict=False)
+        loc._delegate_to = target
+        return loc
 
 
 class _SelectorState:
@@ -171,6 +204,11 @@ class _SelectorState:
         # живой DOM: какой resume_id реально был кликнут (заменяет current_href).
         self.selected_resume_id: str | None = None
         self.dropdown_opened = False
+        # Боевой случай 2026-08-20: после клика по опции React не закрыл dropdown,
+        # раскрытый listbox перекрыл submit-кнопку → Locator.click ретраил 30с
+        # (`subtree intercepts pointer events`) и падал в SubmitClickUncertain.
+        # True → wait_for(state="hidden") на опции не дождётся закрытия.
+        self.dropdown_stays_open = False
 
 
 class FakeStepsPage:
@@ -497,20 +535,27 @@ def test_navigate_clicks_apply_button_with_no_wait_after():
 # --- fill_response_form: только обязательный submit ---
 
 
-def test_fill_form_only_submit_present_clicks_submit_returns_none():
+def test_fill_form_without_letter_toggle_still_fills_and_submits():
+    """Минимальная форма: тоггла письма нет, но textarea развёрнута (случай
+    136417846). Тоггл не кличем — он и не нужен; письмо заполняем, submit жмём.
+
+    Раньше тест назывался test_fill_form_only_submit_present_... и утверждал,
+    что письмо не трогается вовсе; это отражало прежний fail-open контракт,
+    при котором отклик уходил пустым."""
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
     submit = page._state(apply_form.APPLY_SUBMIT_BUTTON)
     assert submit.clicks == 1
-    # Опциональные поля не трогались.
+    # Тоггла в DOM нет — кликать нечего, но письмо всё равно попало в форму.
     assert page._state(apply_form.APPLY_COVER_LETTER_TOGGLE).clicks == 0
-    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == []
+    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == ["письмо"]
     # The confirmed single option is inspected and selected before submit.
     assert page._state(apply_form.APPLY_RESUME_SELECT).clicks > 0
 
@@ -520,6 +565,9 @@ def test_fill_form_missing_submit_returns_reason_no_click():
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
     # Submit отсутствует.
+    # Письмо теперь обязательно (fail-closed): предмет этого теста — резюме/submit,
+    # поэтому textarea делаем видимой, чтобы не срабатывал отказ по письму.
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
@@ -539,6 +587,9 @@ def test_fill_form_submit_click_error_raises_uncertain_marker():
     st.option_resume_ids = ["RID"]
     submit = page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
     submit.click_error = Error("Target page, context or browser has been closed")
+    # Письмо теперь обязательно (fail-closed): предмет этого теста — submit-клик,
+    # поэтому textarea делаем видимой, чтобы не срабатывал отказ по письму.
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     with pytest.raises(steps.SubmitClickUncertain):
         steps.fill_response_form(page, "RID", "письмо")
@@ -563,8 +614,18 @@ def test_fill_form_with_letter_fills_textarea():
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
-def test_fill_form_letter_toggle_absent_skips_textarea():
-    # Toggle отсутствует → его не кличем; textarea тоже отсутствует → не заполняем.
+def test_fill_form_no_letter_field_at_all_refuses_submit():
+    """Смена контракта (было test_fill_form_letter_toggle_absent_skips_textarea).
+
+    Раньше отсутствие и тоггла, и textarea означало «письмо опционально,
+    отправляем без него» — молчаливый fail-open. Боевое измерение 2026-08-20
+    (SSR topicList[].hasResponseLetter по всем 18 откликам аккаунта: с письмом 2,
+    без письма 16) показало, что этим путём инструмент неделю слал пустые
+    отклики: селектор тоггла (`vacancy-response-letter-toggle`) не совпадает
+    в модалке ни разу.
+
+    Письмо — смысл инструмента, а не опциональная деталь, поэтому теперь это
+    fail-closed отказ ДО submit: следа на hh.ru нет, вакансия ретраится."""
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
@@ -572,9 +633,98 @@ def test_fill_form_letter_toggle_absent_skips_textarea():
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
+    assert result is not None
+    assert "письм" in result.lower()
+    # Главное: submit НЕ нажат — пустой отклик не ушёл.
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_popup_letter_toggle_expands_and_fills_textarea():
+    """Модалка hh.ru: тоггл письма — add-cover-letter (в actions-container, ВНЕ
+    <form>), раскрывающий textarea vacancy-response-popup-form-letter-input.
+    Подтверждено дампами apply_136190065/136190066 (2026-08-20)."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "тело письма")
+
     assert result is None
-    assert page._state(apply_form.APPLY_COVER_LETTER_TOGGLE).clicks == 0
-    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == []
+    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == ["тело письма"]
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_pre_expanded_textarea_without_toggle_fills():
+    """Случай успешного отклика 136417846: hh.ru отрендерил textarea уже
+    развёрнутой (add-cover-letter отсутствует). Отсутствие тоггла легитимно —
+    решает наличие textarea, а не тоггла."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "тело письма")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA).fills == ["тело письма"]
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_full_page_letter_shape_still_supported():
+    """Регресс полной формы: vacancy-response-letter-toggle + form-letter-input
+    (обе формы наблюдались в дампах 2026-08-16, full-page ветку не удаляем)."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TOGGLE, True)
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "тело письма")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM).fills == ["тело письма"]
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_open_dropdown_blocks_submit_and_refuses():
+    """Боевой случай 2026-08-20 (136190065/136190066): после клика по опции
+    резюме React не закрыл dropdown; раскрытый listbox перекрыл submit-кнопку,
+    Locator.click ретраил 30с (`subtree intercepts pointer events`) и падал
+    в SubmitClickUncertain — ложная «неопределённость» при неотправленном
+    отклике, которая жгла дневной лимит и навсегда блокировала вакансию.
+
+    Теперь незакрывшийся список — честный отказ ДО submit."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    st.dropdown_stays_open = True
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is not None
+    # Ключевое: submit не нажат и SubmitClickUncertain не возник.
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 0
+
+
+def test_fill_form_closed_dropdown_proceeds_to_submit():
+    """Штатный путь: dropdown закрылся после выбора → submit нажимается."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
 def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
@@ -585,6 +735,9 @@ def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["OTHER", "RID"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    # Письмо теперь обязательно (fail-closed): предмет этого теста — резюме/submit,
+    # поэтому textarea делаем видимой, чтобы не срабатывал отказ по письму.
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
@@ -625,6 +778,9 @@ def test_fill_form_resume_single_match_submits_and_returns_none():
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["OTHER", "RID", "THIRD"]
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    # Письмо теперь обязательно (fail-closed): предмет этого теста — резюме/submit,
+    # поэтому textarea делаем видимой, чтобы не срабатывал отказ по письму.
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 
@@ -687,6 +843,9 @@ def test_fill_form_resume_reorder_after_open_clicks_correct_resume():
     st.option_resume_ids = ["OTHER", "RID"]  # порядок на открытии
     st.reorder_to = ["RID", "OTHER"]  # порядок к моменту клика — резолвится тем же ID
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
+    # Письмо теперь обязательно (fail-closed): предмет этого теста — резюме/submit,
+    # поэтому textarea делаем видимой, чтобы не срабатывал отказ по письму.
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
 
     result = steps.fill_response_form(page, "RID", "письмо")
 

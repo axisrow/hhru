@@ -26,16 +26,34 @@ from __future__ import annotations
 # ТРИГГЕР (для открытия), а не коллекция опций — см. новую сигнатуру
 # _select_resume_in_form() в apply/steps.py.
 #
-# ВАЖНО: hh.ru рендерит форму отклика в ДВУХ разных местах с похожим, но не
-# идентичным DOM — компактный попап на карточке поиска (там letter-toggle
-# называется `add-cover-letter`) и полноценная страница
-# `/applicant/vacancy_response` (letter-toggle — `vacancy-response-letter-
-# toggle`, как ниже). Бот использует ВТОРУЮ (двухшаговая навигация,
-# CLAUDE.md п.4) — все селекторы этого файла сверены именно на ней, не
-# на попапе.
+# ВАЖНО (пересмотрено 2026-08-20 по боевым дампам). hh.ru рендерит форму отклика
+# в ДВУХ shape с похожим, но не идентичным DOM:
+#   * МОДАЛКА на самой странице вакансии — `form#RESPONSE_MODAL_FORM_ID`,
+#     letter-toggle `add-cover-letter`, textarea `…-popup-form-letter-input`;
+#   * полная страница `/applicant/vacancy_response` — letter-toggle
+#     `vacancy-response-letter-toggle`, textarea `vacancy-response-form-letter-input`.
+#
+# Прежнее утверждение «бот использует ВТОРУЮ» ОПРОВЕРГНУТО: во всех дампах
+# `data/logs/apply_*` (начиная с 2026-08-16) `<link rel="canonical">` остаётся
+# `/vacancy/{id}` — навигации не происходит, работает МОДАЛКА. Кнопка отклика
+# по-прежнему `<a href="/applicant/vacancy_response…">`, но hh.ru перехватывает
+# клик JS. Надёжный маркер shape в дампе — `form="RESPONSE_MODAL_FORM_ID"`;
+# `add-cover-letter` маркером НЕ является (зависит от состояния письма: если
+# hh.ru отрендерил textarea уже развёрнутой, тоггла в DOM нет вовсе).
+#
+# Обе ветки поддержаны в steps.fill_response_form через Locator.or_. Full-page
+# селекторы НЕ удалять: оба shape наблюдались в дампах одного дня (08-16).
 APPLY_RESUME_SELECT = "[data-qa='resume-title']"
 APPLY_RESUME_OPTION_PREFIX = "magritte-select-option-"
 APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
+# Тоггл письма МОДАЛКИ. Подтверждён дампами 2026-08-20 (apply_136190065/136190066):
+#   <button type="button" data-qa="add-cover-letter"> внутри data-qa="actions-container"
+# Живёт ВНЕ <form>, а раскрываемая им textarea (APPLY_COVER_LETTER_TEXTAREA,
+# `…-popup-form-letter-input`) — ВНУТРИ формы, поэтому скоупить тоггл формой нельзя.
+# Критично: APPLY_COVER_LETTER_TOGGLE выше в модалке НЕ совпадает ни разу, и до
+# добавления этой константы письмо молча терялось — измерено по SSR
+# topicList[].hasResponseLetter: из 18 откликов аккаунта с письмом ушло 2, без — 16.
+APPLY_COVER_LETTER_TOGGLE_POPUP = "[data-qa='add-cover-letter']"
 APPLY_COVER_LETTER_TEXTAREA = "textarea[data-qa='vacancy-response-popup-form-letter-input']"
 APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"
 

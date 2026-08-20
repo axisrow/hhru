@@ -166,6 +166,15 @@ class FakePage:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
             return _FakeLocator(present=self._success and self._submit_in_form)
+        if selector in (
+            apply_form.APPLY_COVER_LETTER_TEXTAREA,
+            apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM,
+        ):
+            # Поле письма присутствует в реальной форме отклика (в обоих shape).
+            # Обязательно для фейка: письмо теперь fail-closed — без textarea
+            # fill_response_form отказывается отправлять, и тесты submit-путей
+            # этого файла (acted/uncertain/verify) не доходили бы до submit.
+            return _FakeLocator(present=self._success)
         # Прочие селекторы формы — считаем отсутствующими (форма не заполнена,
         # но submit присутствует в фейковом успехе через success-путь ниже).
         if selector == apply_form.APPLY_SUBMIT_BUTTON:

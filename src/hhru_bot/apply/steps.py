@@ -39,6 +39,11 @@ RESUME_WARNING_TIMEOUT_MS = 1_500
 # выбор молча пропускается и submit отправляет резюме по умолчанию (fail-open,
 # см. cycle-2 review #33). Поэтому селектор резюме ждём как обязательный элемент.
 RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
+# Закрытие раскрытого списка резюме после выбора — локальная CSS/React-анимация
+# без сетевого запроса, поэтому таймаут заметно короче RESUME_SELECT_TIMEOUT_MS
+# (там ждём рендер опций). Отдельная константа, а не переиспользование: иначе
+# каждая вакансия с незакрывшимся dropdown стоила бы лишние 10с.
+RESUME_DROPDOWN_CLOSE_TIMEOUT_MS = 3_000
 
 
 class SubmitClickUncertain(Exception):
@@ -313,17 +318,42 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
     if not _select_resume_in_form(page, resume_id):
         return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
 
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).click()
-        # Клик раскрывает textarea — ждём её готовности явно, а не слепую паузу.
+    # Письмо адресуется в ОБОИХ shape формы (см. apply_form.py): модалка
+    # (add-cover-letter + …-popup-form-letter-input) и полная страница
+    # (vacancy-response-letter-toggle + vacancy-response-form-letter-input).
+    # В каждом shape совпадает ровно один операнд, поэтому порядок or_ не важен.
+    letter_toggle = page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).or_(
+        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP)
+    )
+    try:
+        letter_toggle.first.wait_for(state="visible", timeout=OPTIONAL_FIELD_TIMEOUT_MS)
+        letter_toggle.first.click()
+        # Клик раскрывает textarea — её готовности ждём явно ниже, а не слепой паузой.
+    except PlaywrightError:
+        # Отсутствие тоггла легитимно: hh.ru может отрендерить textarea уже
+        # развёрнутой (боевой случай 136417846). Решает не тоггл, а наличие
+        # самой textarea — проверка ниже.
+        pass
 
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TEXTAREA, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).fill(letter)
-        # fill() синхронно выставляет значение — дополнительное ожидание не нужно.
+    letter_input = page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).or_(
+        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM)
+    )
+    try:
+        # CLAUDE.md: клик по тогглу запускает React-рендер — явное ожидание
+        # видимости перед fill, а не count()/слепая пауза.
+        letter_input.first.wait_for(state="visible", timeout=APPLY_TIMEOUT_MS)
+    except PlaywrightError:
+        # fail-closed: письмо — смысл этого инструмента, а не опциональная деталь.
+        # Раньше отсутствие textarea вело к submit БЕЗ письма молча: селектор
+        # тоггла полной формы в модалке не совпадает вовсе, и по SSR
+        # topicList[].hasResponseLetter из 18 откликов аккаунта 16 ушли пустыми.
+        # Отказ ДО submit: следа на hh.ru нет, вакансия ретраится.
+        return (
+            "поле сопроводительного письма не найдено в форме отклика — "
+            "отправка отменена (отклик без письма не отправляем)"
+        )
+    letter_input.first.fill(letter)
+    # fill() синхронно выставляет значение — дополнительное ожидание не нужно.
 
     # Кнопка отправки — обязательный элемент формы. Не optional: отсутствие = отказ.
     if not _is_visible(page, apply_form.APPLY_SUBMIT_BUTTON, timeout_ms=APPLY_TIMEOUT_MS):
@@ -420,6 +450,32 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
         # резюме → отказ, а не тихий submit дефолтного резюме.
         logger.warning(
             "Резюме '%s' не подтверждено при клике (%s) — отправка отменена", resume_id, exc
+        )
+        return False
+
+    # CLAUDE.md паттерн «wait_for(state=...) после React-клика», применённый к
+    # переходу ЗАКРЫТИЯ, а не открытия. Боевой случай 2026-08-20 (136190065,
+    # 136190066): выбор резюме проходил, но React закрывал dropdown асинхронно,
+    # и раскрытый listbox перекрывал submit-кнопку в футере модалки → клик по
+    # submit ретраил 30с (`subtree intercepts pointer events`) и падал в
+    # SubmitClickUncertain — ложная «неопределённость» при НЕотправленном
+    # отклике (жгла дневной лимит и навсегда блокировала вакансию).
+    #
+    # Ждём исчезновение САМОЙ ОПЦИИ, а не контейнера `drop-base`: опция
+    # single-match по построению (resume_id в data-qa) и подтверждена живым
+    # DOM, тогда как `drop-base` — generic-контейнер magritte, которого в одном
+    # дампе 22 штуки; multi-match дал бы strict-mode или ожидание не того
+    # элемента. Опция лежит внутри listbox, поэтому её скрытие И ЕСТЬ закрытие.
+    try:
+        option.wait_for(state="hidden", timeout=RESUME_DROPDOWN_CLOSE_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        # fail-closed: submit при открытом списке гарантированно упрётся в
+        # оверлей. Честный отказ ДО клика лучше ложного uncertain после него.
+        logger.warning(
+            "Список выбора резюме не закрылся после выбора '%s' (%s) — отправка отменена "
+            "(открытый dropdown перекрыл бы кнопку отправки)",
+            resume_id,
+            exc,
         )
         return False
     return True
