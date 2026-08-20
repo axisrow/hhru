@@ -84,16 +84,26 @@ CREATE TABLE IF NOT EXISTS responses (
 );
 
 -- resume_views — реальные просмотры резюме работодателями (#415).
--- Один snapshot на (резюме, работодатель, момент просмотра): повторный scrape
--- не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
+-- Один snapshot на (резюме, событие просмотра, момент просмотра): повторный
+-- scrape не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
+-- Идентичность события — view_key (NOT NULL): employer_id, если известен,
+-- иначе стабильный source_id скрытого просмотра, иначе '' (оба поля пусты —
+-- дедуп по (resume_id, '', viewed_at), как раньше). Ключ НЕ включает
+-- employer — это mutable presentation-строка (имя могло смениться, SSR/DOM
+-- по-разному форматируют), и раньше её участие в UNIQUE плодило дубликаты
+-- одного и того же просмотра (#428 review). employer_id/source_id — NOT NULL
+-- пустой строкой, а не NULL: SQLite считает несколько NULL различными
+-- значениями, и вернувшись к NULL здесь дедуп скрытых просмотров снова
+-- сломался бы (#428 review: "preserve hidden resume view events").
 CREATE TABLE IF NOT EXISTS resume_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resume_id TEXT NOT NULL,
     employer_id TEXT,
     employer TEXT,
+    view_key TEXT NOT NULL,
     viewed_at TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
-    UNIQUE (resume_id, employer_id, employer, viewed_at)
+    UNIQUE (resume_id, view_key, viewed_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_resume_views_viewed_at ON resume_views(viewed_at);
@@ -424,14 +434,18 @@ class History:
         inserted = 0
         with self._connect() as conn:
             for row in rows:
+                # view_key: employer_id when known, else the hidden-view source_id,
+                # else '' — never the mutable `employer` display string (#428 review).
+                view_key = row.get("employer_id") or row.get("source_id") or ""
                 cur = conn.execute(
                     """INSERT OR IGNORE INTO resume_views
-                       (resume_id, employer_id, employer, viewed_at, first_seen_at)
-                       VALUES (?, ?, ?, ?, ?)""",
+                       (resume_id, employer_id, employer, view_key, viewed_at, first_seen_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
                     (
                         str(row["resume_id"]),
                         row.get("employer_id") or "",
                         row.get("employer") or "",
+                        str(view_key),
                         str(row["viewed_at"]),
                         now,
                     ),

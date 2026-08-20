@@ -47,6 +47,16 @@ def _value(entry: dict, *names):
     return None
 
 
+def _canonicalize_viewed_at(raw: str) -> str:
+    """Normalize a view timestamp to one canonical ISO spelling.
+
+    SSR and DOM sources render the same instant differently (e.g. trailing
+    ``Z`` vs ``+00:00``); without this, the same event dedups as two rows
+    depending on which source captured it first (#428 review).
+    """
+    return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+
+
 def parse_resume_view_history(
     html: str,
     resume_id: str,
@@ -66,19 +76,28 @@ def parse_resume_view_history(
         viewed_at = _value(entry, "date", "viewedAt", "viewDate", "createdAt")
         if viewed_at is None:
             raise ValueError("SSR history view has no date")
+        try:
+            viewed_at = _canonicalize_viewed_at(str(viewed_at))
+        except ValueError as exc:
+            raise ValueError("SSR history view has an unparseable date") from exc
         employer_id = _value(entry, "employerId", "employer_id", "companyId")
         employer = _value(entry, "employerName", "employer", "companyName", "name")
+        source_id = None
         if employer is None:
             source_id = _value(entry, "id", "viewId", "eventId")
             if source_id is None and employer_id is None:
                 raise ValueError("SSR hidden-employer view has no stable identity")
-            employer = f"(скрыт:{source_id or employer_id})"
         result.append(
             {
                 "resume_id": str(resume_id),
                 "employer_id": None if employer_id is None else str(employer_id),
                 "employer": None if employer is None else str(employer),
-                "viewed_at": str(viewed_at),
+                # Distinct hidden-employer events share no employer_id/employer, so the
+                # DB dedup key needs a stable identity elsewhere — see history.py's
+                # resume_views.view_key. Never encode this into `employer` (#428 review):
+                # it corrupts the "Топ работодателей" aggregation and leaks internal IDs.
+                "source_id": None if source_id is None else str(source_id),
+                "viewed_at": viewed_at,
             }
         )
         if limit is not None and len(result) >= limit:
@@ -110,21 +129,26 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
             invalid = True
             continue
         try:
-            viewed_at = datetime.fromisoformat(viewed_at.replace("Z", "+00:00")).isoformat()
+            viewed_at = _canonicalize_viewed_at(viewed_at)
         except ValueError:
             invalid = True
             continue
-        if not row.get_attribute("data-employer-name"):
-            employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
-            if len(employers) == 1:
-                href = employers[0].get_attribute("href") or ""
-                match = re.search(r"/employer/([^/?#]+)", href)
-                employer_id = match.group(1) if match else None
+        # Extract employer_id from the link whenever it's present, regardless of
+        # whether the name came from data-employer-name or the link's own text
+        # (#428 review): the guard used to skip this whenever data-employer-name
+        # was set, leaving employer_id NULL and letting a later SSR scrape of the
+        # same view insert a duplicate row under the resume_views dedup key.
+        employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
+        if len(employers) == 1:
+            href = employers[0].get_attribute("href") or ""
+            match = re.search(r"/employer/([^/?#]+)", href)
+            employer_id = match.group(1) if match else None
         result.append(
             {
                 "resume_id": resume_id,
                 "employer_id": employer_id,
                 "employer": employer,
+                "source_id": None,
                 "viewed_at": viewed_at,
             }
         )

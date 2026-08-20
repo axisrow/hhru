@@ -26,7 +26,13 @@ def test_parse_resume_view_history_reads_ssr_and_limit():
         }
     )
     assert parse_resume_view_history(html, "r1", limit=1) == [
-        {"resume_id": "r1", "employer_id": "7", "employer": "Acme", "viewed_at": "2026-08-20"}
+        {
+            "resume_id": "r1",
+            "employer_id": "7",
+            "employer": "Acme",
+            "source_id": None,
+            "viewed_at": "2026-08-20T00:00:00",
+        }
     ]
 
 
@@ -42,7 +48,10 @@ def test_parse_resume_view_history_preserves_hidden_same_date_events():
         }
     )
     rows = parse_resume_view_history(html, "r1")
-    assert [row["employer"] for row in rows] == ["(скрыт:v1)", "(скрыт:v2)"]
+    # employer stays empty for hidden rows — the source_id carries identity for
+    # dedup (history.py's view_key), never leaking into the display name (#428).
+    assert [row["employer"] for row in rows] == [None, None]
+    assert [row["source_id"] for row in rows] == ["v1", "v2"]
 
 
 def test_parse_resume_view_history_fails_closed_on_schema_drift():
@@ -88,3 +97,27 @@ def test_history_deduplicates_resume_view_snapshots(tmp_path):
     assert history.record_resume_views([row, row]) == 1
     assert history.record_resume_views([row]) == 0
     assert len(history.resume_views()) == 1
+
+
+def test_history_dedup_ignores_mutable_employer_name(tmp_path):
+    """Same employer_id + viewed_at dedups even if the display name differs
+    (renamed employer, or SSR/DOM formatting drift) — #428 review."""
+    history = History(tmp_path / "history.db")
+    row_a = {"resume_id": "r1", "employer_id": "7", "employer": "Acme", "viewed_at": "2026-08-20"}
+    row_b = {
+        "resume_id": "r1",
+        "employer_id": "7",
+        "employer": "Acme Corp",
+        "viewed_at": "2026-08-20",
+    }
+    assert history.record_resume_views([row_a]) == 1
+    assert history.record_resume_views([row_b]) == 0
+    assert len(history.resume_views()) == 1
+
+
+def test_history_preserves_distinct_hidden_events_same_date(tmp_path):
+    history = History(tmp_path / "history.db")
+    row_a = {"resume_id": "r1", "source_id": "v1", "viewed_at": "2026-08-20"}
+    row_b = {"resume_id": "r1", "source_id": "v2", "viewed_at": "2026-08-20"}
+    assert history.record_resume_views([row_a, row_b]) == 2
+    assert len(history.resume_views()) == 2
