@@ -83,6 +83,21 @@ CREATE TABLE IF NOT EXISTS responses (
     UNIQUE (vacancy_id, topic)
 );
 
+-- resume_views — реальные просмотры резюме работодателями (#415).
+-- Один snapshot на (резюме, работодатель, момент просмотра): повторный scrape
+-- не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
+CREATE TABLE IF NOT EXISTS resume_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    employer_id TEXT,
+    employer TEXT,
+    viewed_at TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    UNIQUE (resume_id, employer_id, employer, viewed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resume_views_viewed_at ON resume_views(viewed_at);
+
 CREATE INDEX IF NOT EXISTS idx_responses_status_changed_at
     ON responses(status_changed_at);
 
@@ -400,6 +415,40 @@ class History:
                 (resume_id, vacancy_id),
             ).fetchone()
             return row is not None
+
+    def record_resume_views(self, rows: list[dict]) -> int:
+        """Persist real employer-view snapshots and return newly inserted count."""
+        if not rows:
+            return 0
+        now = datetime.now().isoformat(timespec="seconds")
+        inserted = 0
+        with self._connect() as conn:
+            for row in rows:
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO resume_views
+                       (resume_id, employer_id, employer, viewed_at, first_seen_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        str(row["resume_id"]),
+                        row.get("employer_id") or "",
+                        row.get("employer") or "",
+                        str(row["viewed_at"]),
+                        now,
+                    ),
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def resume_views(self, resume_id: str | None = None) -> list[dict]:
+        """Return stored employer-view snapshots, newest first."""
+        with self._connect() as conn:
+            query = "SELECT * FROM resume_views"
+            params: tuple = ()
+            if resume_id is not None:
+                query += " WHERE resume_id = ?"
+                params = (resume_id,)
+            rows = conn.execute(query + " ORDER BY viewed_at DESC, id DESC", params).fetchall()
+        return [dict(row) for row in rows]
 
     def last_action_status(
         self,

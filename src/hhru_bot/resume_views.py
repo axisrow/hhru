@@ -1,0 +1,74 @@
+"""Read-only parser for the employer resume-view history page (#415)."""
+
+from __future__ import annotations
+
+from .negotiations_probe import parse_initial_state
+
+
+def _find_history(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "applicantResumeViewHistory" and isinstance(child, dict):
+                return child
+            found = _find_history(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_history(child)
+            if found is not None:
+                return found
+    return None
+
+
+def _value(entry: dict, *names):
+    for name in names:
+        value = entry.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = None) -> list[dict]:
+    """Parse SSR history; raise instead of treating schema drift as empty data."""
+    state = parse_initial_state(html)
+    history = _find_history(state)
+    if history is None or not isinstance(history.get("historyViews"), list):
+        raise ValueError("SSR applicantResumeViewHistory.historyViews недоступен")
+
+    result = []
+    for entry in history["historyViews"]:
+        if not isinstance(entry, dict):
+            continue
+        viewed_at = _value(entry, "date", "viewedAt", "viewDate", "createdAt")
+        if viewed_at is None:
+            continue
+        employer_id = _value(entry, "employerId", "employer_id", "companyId")
+        employer = _value(entry, "employerName", "employer", "companyName", "name")
+        result.append(
+            {
+                "resume_id": str(resume_id),
+                "employer_id": None if employer_id is None else str(employer_id),
+                "employer": None if employer is None else str(employer),
+                "viewed_at": str(viewed_at),
+            }
+        )
+        if limit is not None and len(result) >= limit:
+            break
+    return result
+
+
+def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = None) -> list[dict]:
+    """Small DOM fallback for pages where SSR is absent but view rows are rendered."""
+    rows = page.locator("[data-qa*='resume-view'], [data-qa*='view-history']").all()
+    result = []
+    for row in rows:
+        text = row.inner_text().strip()
+        if not text:
+            continue
+        result.append(
+            {"resume_id": resume_id, "employer_id": None, "employer": text, "viewed_at": text}
+        )
+        if limit is not None and len(result) >= limit:
+            break
+    return result
