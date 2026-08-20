@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..config import ResumeConfig, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringConfig, ScoringWeights
+from ..scoring import _normalize_heuristic_score
 from ..search import VacancyCard, filter_candidates, rank_candidates
 
 if TYPE_CHECKING:
@@ -100,6 +101,22 @@ def route_vacancies(
         for resume in resume_list:
             if not _resume_identity_is_confirmed(resume):
                 continue
+            # A card found through another variant's search URL has not been
+            # proven to satisfy this variant's positive search constraints
+            # (area/salary/experience/schedule/text).  Do not route it across
+            # that boundary; source feeds remain a soft hint only when no
+            # positive constraints need validation.
+            has_positive_constraints = any(
+                (
+                    resume.search.text,
+                    resume.search.area is not None,
+                    resume.search.salary_from is not None,
+                    resume.search.experience is not None,
+                    resume.search.schedule is not None,
+                )
+            )
+            if has_positive_constraints and resume.resume_id not in item.source_resume_ids:
+                continue
             candidates, _skipped = filter_candidates(
                 [item.card],
                 resume.search,
@@ -121,7 +138,7 @@ def route_vacancies(
             # only this comparison uses the cheap profile heuristic.
             scoring_resume = (
                 resume
-                if provider is not None or getattr(resume, "scoring", None) is not None
+                if getattr(resume, "scoring", None) is not None
                 else replace(resume, scoring=ScoringConfig(weights=ScoringWeights()))
             )
             ranked = rank_candidates(
@@ -134,6 +151,8 @@ def route_vacancies(
             card, score, breakdown = ranked[0]
             if provider is not None and shortlist:
                 remaining -= 1
+            elif provider is None:
+                score = _normalize_heuristic_score(score)
             selection = ResumeSelection(
                 resume=resume,
                 score=score,

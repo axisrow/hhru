@@ -37,6 +37,14 @@ def test_route_chooses_best_matching_resume_and_reason(tmp_path):
     assert "selected resume go" in selected["v1"].reason
 
 
+def test_route_does_not_cross_a_positive_search_boundary(tmp_path):
+    python = resume("python", "python")
+    go = resume("go", "go")
+    item = MergedVacancy(card("v1", "Go developer"), (python.resume_id,))
+    selected = route_vacancies([item], [python, go], History(tmp_path / "history.db"))
+    assert selected["v1"].resume is python
+
+
 def test_route_fails_closed_for_invalid_identity(tmp_path):
     invalid = ResumeConfig("bad", "https://hh.ru/resume/XXXXXXXX", SearchFilters(text="python"))
     selected = route_vacancies(
