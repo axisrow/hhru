@@ -151,8 +151,8 @@ def save_about(page: Page, text: str) -> None:
     save = page.locator(resume_page.RESUME_PARTIAL_EDIT_SAVE)
     if save.count() != 1:
         raise AboutGenerationError("кнопка сохранения «Обо мне» не найдена однозначно")
-    save.click()
     try:
+        save.click()
         field.wait_for(state="hidden", timeout=SAVE_TIMEOUT_MS)
     except PlaywrightError as exc:
         raise AboutGenerationError(

@@ -202,8 +202,8 @@ def run(args: argparse.Namespace) -> bool:
             apply_position(page, plan)
             if page.locator(SAVE).count() != 1:
                 raise RuntimeError("кнопка сохранения формы не подтверждена")
-            page.locator(SAVE).click()
             try:
+                page.locator(SAVE).click()
                 page.locator("[data-qa='resume-edit-position-form']").wait_for(
                     state="hidden", timeout=10_000
                 )
