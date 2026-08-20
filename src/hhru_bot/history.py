@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import logging
 import re
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -164,6 +167,25 @@ CREATE TABLE IF NOT EXISTS skipped (
     created_at TEXT NOT NULL,
     UNIQUE (resume_id, vacancy_id, reason)
 );
+
+-- review_queue — immutable, per-vacancy approval snapshots (#414).
+CREATE TABLE IF NOT EXISTS review_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    vacancy_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    company TEXT NOT NULL,
+    score REAL NOT NULL,
+    breakdown TEXT NOT NULL,
+    letter TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    permit_hash TEXT,
+    permit_expires_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status, id);
 
 -- replies — журнал НАШИХ ответов работодателям в переписках (#108, решение #55).
 -- ОТДЕЛЬНО от responses (#12) по той же причине, что manual_offers (#13):
@@ -400,6 +422,102 @@ class History:
                 (resume_id, vacancy_id),
             ).fetchone()
             return row is not None
+
+    def enqueue_review(self, resume_id, card, score, breakdown, letter) -> int:
+        """Store the exact dry-run candidate and letter for later approval."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO review_queue
+                (resume_id,vacancy_id,vacancy_url,title,company,score,breakdown,letter,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    resume_id,
+                    card.vacancy_id,
+                    card.url,
+                    card.title,
+                    card.company,
+                    score,
+                    json.dumps(breakdown, sort_keys=True),
+                    letter,
+                    now,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def review_items(self, status=None):
+        with self._connect() as conn:
+            query = "SELECT * FROM review_queue"
+            params = ()
+            if status:
+                query += " WHERE status = ?"
+                params = (status,)
+            query += " ORDER BY id"
+            return [dict(row) for row in conn.execute(query, params)]
+
+    def edit_review_letter(self, item_id: int, letter: str) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE review_queue SET letter=?, updated_at=? WHERE id=? AND status='pending'",
+                (letter, datetime.now().isoformat(), item_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись очереди не найдена или уже обработана")
+
+    def approve_review(self, item_id: int, ttl_seconds: int = 900) -> str:
+        permit = secrets.token_urlsafe(32)
+        now = datetime.now()
+        expires = now + timedelta(seconds=ttl_seconds)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE review_queue SET status='approved', permit_hash=?,
+                   permit_expires_at=?, updated_at=?
+                   WHERE id=? AND status='pending'""",
+                (
+                    hashlib.sha256(permit.encode()).hexdigest(),
+                    expires.isoformat(),
+                    now.isoformat(),
+                    item_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись очереди не найдена или уже обработана")
+        return permit
+
+    def claim_review(self, item_id: int, permit: str | None = None) -> dict:
+        """Atomically claim an approved item; expired permits cannot run."""
+        now = datetime.now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT permit_hash FROM review_queue WHERE id=?", (item_id,)
+            ).fetchone()
+            if (
+                row is None
+                or permit is None
+                or not secrets.compare_digest(
+                    row[0] or "", hashlib.sha256(permit.encode()).hexdigest()
+                )
+            ):
+                raise ValueError("неверный permit")
+            cur = conn.execute(
+                """UPDATE review_queue SET status='applying', updated_at=?
+                   WHERE id=? AND status='approved' AND permit_expires_at > ?""",
+                (now.isoformat(), item_id, now.isoformat()),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("запись не approved или её permit истёк")
+            row = conn.execute("SELECT * FROM review_queue WHERE id=?", (item_id,)).fetchone()
+            return dict(row)
+
+    def finish_review(self, item_id: int, status: str) -> None:
+        if status not in {"applied", "failed", "skipped"}:
+            raise ValueError(f"недопустимый статус очереди: {status}")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE review_queue SET status=?, updated_at=? WHERE id=?",
+                (status, datetime.now().isoformat(), item_id),
+            )
 
     def last_action_status(
         self,

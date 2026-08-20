@@ -119,6 +119,7 @@ def test_all_commands_registered():
         "settings",
         "refresh-token",
         "reject",
+        "review",
     }
 
 
@@ -176,6 +177,7 @@ def test_register_commands_returns_names():
         "settings",
         "refresh_token",
         "reject",
+        "review",
     }
 
 
