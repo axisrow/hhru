@@ -681,6 +681,19 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                 # retry_ids сливается до выхода, иначе транзиентный unknown
                 # навсегда репортится как unknown (#448: unknown не выдавать за
                 # отсутствие анкеты).
+                if retry_ids and _limit_reached(all_results, limit):
+                    # cycle-review PR #450 round 2: выход по лимиту происходит до
+                    # паузы основного цикла, поэтому здесь она обязательна — иначе
+                    # клик последней вакансии и первый retry идут подряд без
+                    # задержки (CLAUDE.md: троттлинг не ослабляем). Пауза только
+                    # когда retry реально предстоит: в конце чистого прогона
+                    # ждать не от чего.
+                    time.sleep(
+                        random.uniform(
+                            config.throttle.min_delay_seconds,
+                            config.throttle.max_delay_seconds,
+                        )
+                    )
                 for vacancy_id in retry_ids:
                     vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
                     print(f"[INFO] retry вакансии {vacancy_id}: долгий повтор", flush=True)

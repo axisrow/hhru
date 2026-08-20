@@ -743,3 +743,35 @@ def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys)
     probe = _bulk_env(monkeypatch, cards, scan)
     assert probe.run_questionnaires(_bulk_args()) is False
     assert "[FAIL]" not in capsys.readouterr().out
+
+
+def test_throttle_pause_precedes_every_scan_including_retry_after_limit(monkeypatch, capsys):
+    # cycle-review PR #450 round 2 (Codex): выход по лимиту происходит ДО
+    # time.sleep(), а следом сразу стартует накопленный retry — два клика по
+    # hh.ru подряд без паузы. Базовый принцип CLAUDE.md: троттлинг между
+    # реальными действиями не ослабляется, в том числе на границе лимита.
+    cards = [_card("971"), _card("972")]
+    events = []
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        events.append(("scan", vacancy.vacancy_id, timeout_ms))
+        if vacancy.vacancy_id == "971":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    monkeypatch.setattr(
+        "hhru_bot.commands.probe.time.sleep", lambda seconds: events.append(("sleep", seconds))
+    )
+    probe.run_questionnaires(_bulk_args(limit_questionnaires=1))
+    capsys.readouterr()
+
+    scans = [index for index, event in enumerate(events) if event[0] == "scan"]
+    for previous, current in zip(scans, scans[1:], strict=False):
+        assert any(events[index][0] == "sleep" for index in range(previous + 1, current)), (
+            f"нет паузы между сканами {events[previous]} и {events[current]}"
+        )
