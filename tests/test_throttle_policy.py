@@ -314,7 +314,10 @@ def test_apply_uncertain_waits_and_records_uncertain(tmp_path, monkeypatch, wait
     result = ApplyResult(
         _vacancy(), False, "submit-клик упал с исключением", acted=True, uncertain=True
     )
-    _run_apply(monkeypatch, tmp_path, dry_run=False, result=result)
+    from hhru_bot.commands._common import ApplyRunStopped
+
+    with pytest.raises(ApplyRunStopped):
+        _run_apply(monkeypatch, tmp_path, dry_run=False, result=result)
 
     assert wait_calls == [f"после отклика на '{_vacancy().title}'"]
     assert _read_actions(tmp_path / "history.db") == [("apply", "uncertain")]

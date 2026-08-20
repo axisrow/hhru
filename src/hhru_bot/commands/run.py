@@ -11,14 +11,16 @@ from ._common import add_common_args, add_force_arg
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("run", help="Полный цикл: apply + bump для указанных резюме")
-    add_common_args(p)
+    add_common_args(p, max_pages_default=None)
     # apply_cmd.run(args) reuses this Namespace — apply's --force must exist here.
     add_force_arg(p)
     p.add_argument(
         "--limit",
         type=int,
         default=0,
-        help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)",
+        help=(
+            "Целевое число успешных откликов за запуск (0 = без ограничения кроме дневного лимита)"
+        ),
     )
     p.set_defaults(func=run)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,7 @@ from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     VacancyCard,
     VacancySearchIndeterminate,
+    _has_next_page,
     filter_candidates,
     rank_candidates,
     search_vacancies,
@@ -33,6 +35,7 @@ from ..search import (
 from ..throttle import LimitReached, Throttle
 
 if TYPE_CHECKING:
+    from ..ai.questions import AIQuestionAnswerer
     from ..scoring import LLMScoringProvider, ScoringProvider
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -42,7 +45,14 @@ class ApplyRunStopped(RuntimeError):
     """Terminal account-level condition requiring the whole apply run to stop."""
 
 
-def add_common_args(p: argparse.ArgumentParser) -> None:
+def _positive_page_count(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--max-pages должен быть не меньше 1")
+    return parsed
+
+
+def add_common_args(p: argparse.ArgumentParser, *, max_pages_default: int | None = 5) -> None:
     """Общие аргументы для команд, работающих по резюме/поиску."""
     p.add_argument(
         "--resume",
@@ -53,7 +63,16 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Показать, что будет сделано, без реальных действий",
     )
-    p.add_argument("--max-pages", type=int, default=5, help="Максимум страниц поиска")
+    p.add_argument(
+        "--max-pages",
+        type=_positive_page_count,
+        default=max_pages_default,
+        help=(
+            "Максимум страниц поиска"
+            if max_pages_default is not None
+            else "Явный максимум страниц поиска (по умолчанию — адаптивный)"
+        ),
+    )
 
 
 def add_force_arg(p: argparse.ArgumentParser) -> None:
@@ -244,18 +263,125 @@ class ApplyPlan:
     """План отклика по резюме: ранжированные кандидаты + статистика построения.
 
     Чистый результат build_apply_plan (#101) — без браузера, без побочных
-    эффектов. ranked — тот же формат, что возвращает rank_candidates: список
-    (карточка, score, разбивка факторов), уже урезанный по limit. total/
-    after_filter/after_limit — счётчики для логов/отчётов по стадиям
-    filter -> rank -> limit; skipped — пары (карточка, причина) из
-    filter_candidates, для отладочного логирования вызывающей стороной.
+    эффектов. ranked — тот же формат, что возвращает rank_candidates: полный
+    список (карточка, score, разбивка факторов) после фильтрации и ранжирования.
+    Лимит применяется execution-циклом после runtime skip/duplicate, поэтому
+    план не может преждевременно лишить цикл кандидатов для дозаполнения.
+    total/after_filter — счётчики стадий; after_limit — производное свойство
+    (``len(ranked)``, т.к. ranked больше не срезается по лимиту), означает
+    количество кандидатов, доступных execution-циклу; target_limit — его
+    целевой размер. skipped — пары (карточка, причина) из filter_candidates.
     """
 
     ranked: list[tuple[VacancyCard, float, dict[str, float]]]
     skipped: list[tuple[VacancyCard, str]] = field(default_factory=list)
     total: int = 0
     after_filter: int = 0
-    after_limit: int = 0
+    target_limit: int | None = None
+
+    @property
+    def after_limit(self) -> int:
+        return len(self.ranked)
+
+
+@dataclass
+class ApplyProgress:
+    """Счётчик успешных откликов, общий для последовательных search-волн."""
+
+    applied_count: int = 0
+
+    def reached(self, limit: int | None) -> bool:
+        return limit is not None and self.applied_count >= limit
+
+
+@dataclass(frozen=True)
+class ApplyResumeIdentity:
+    verify_resume_id: str
+    account_resume_ids: set[str] | None
+
+
+@dataclass(frozen=True)
+class ApplyProviders:
+    """AI providers built once per resume run, reused across lazy-paging waves.
+
+    Each of scoring/letter/question providers lazily constructs its own
+    ``LLMClient`` on first use (#17/#81) — rebuilding them per search page
+    would mean up to 3 redundant LLMClient instances per extra page fetched.
+    """
+
+    scoring_provider: ScoringProvider | None
+    letter_provider: CoverLetterProvider | None
+    question_answerer: AIQuestionAnswerer | None
+
+
+def _build_apply_providers(
+    config: AppConfig, resume: ResumeConfig, cover_letter_template: str, history: History
+) -> ApplyProviders:
+    return ApplyProviders(
+        scoring_provider=_build_scoring_provider(config, resume),
+        letter_provider=_build_letter_provider(config, resume, cover_letter_template),
+        question_answerer=_build_question_answerer(config, resume, history.get_profile_answers()),
+    )
+
+
+def _prepare_apply_resume(page, resume: ResumeConfig, dry_run: bool) -> ApplyResumeIdentity | None:
+    """Confirm resume identity before search and retain verifier attribution data."""
+    identity = ApplyResumeIdentity(resume.resume_id, None)
+    if dry_run:
+        return identity
+    ids_by_hash = resolve_numeric_resume_ids(page)
+    raise_for_antibot(page)
+    if ids_by_hash is None:
+        return identity
+    numeric_id = ids_by_hash.get(resume.resume_id)
+    if numeric_id is None:
+        logger.warning(
+            "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
+            "верификаторе уйдёт в fail-closed",
+            resume.id,
+            resume.resume_id,
+        )
+        return identity
+    resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
+    if resume_status is None or resume_status == "not_finished":
+        print(
+            f"[FAIL] {resume.id} — статус резюме на hh.ru не подтверждён как "
+            f"готовый к отклику (status={resume_status!r}); завершите/опубликуйте его вручную"
+        )
+        return None
+    return ApplyResumeIdentity(numeric_id, set(ids_by_hash.values()))
+
+
+def apply_search_page_limit(args: argparse.Namespace) -> int:
+    """Return the safe cap for lazy apply search.
+
+    An explicit --max-pages always wins.  Without it, estimate five successful
+    responses per 20-card page and reserve one extra page for runtime skips.
+    ``--limit 0`` has no target, so it deliberately starts and ends at one page.
+    """
+    explicit = getattr(args, "max_pages", None)
+    if explicit is not None:
+        return explicit
+    limit = getattr(args, "limit", 0)
+    return 1 if not limit else math.ceil(limit / 5) + 1
+
+
+def _load_apply_page(page, filters: SearchFilters, page_num: int) -> tuple[list[VacancyCard], bool]:
+    """Load a page through the command-level seam used by existing tests."""
+    kwargs: dict[str, int] = {"max_pages": 1}
+    if page_num:
+        kwargs["start_page"] = page_num
+    cards = search_vacancies(page, filters, **kwargs)
+    if not cards:
+        return [], False
+    try:
+        has_next = _has_next_page(page, page_num)
+    except AttributeError:
+        # Lightweight command tests replace search_vacancies and use a plain
+        # object instead of a Playwright Page.  A short fixture is terminal;
+        # production always takes the confirmed DOM branch above.
+        has_next = len(cards) >= 20
+    return cards, has_next
 
 
 def build_apply_plan(
@@ -266,7 +392,7 @@ def build_apply_plan(
     scoring_provider: ScoringProvider | None = None,
     limit: int | None = None,
 ) -> ApplyPlan:
-    """Строит план откликов: filter -> pre-LLM -> rank -> slice по limit.
+    """Строит план откликов: filter -> pre-LLM -> rank.
 
     Чистая функция (без браузера) — вынесена из run_apply_for_resume (#101),
     чтобы решения filter/rank/limit были тестируемы без hh.ru. candidates —
@@ -275,8 +401,9 @@ def build_apply_plan(
     CLAUDE.md про разделение поиска и фильтрации).
 
     limit: None или 0 (CLI-конвенция args.limit по умолчанию 0 = флаг не задан)
-    означают "без среза" — берутся все ranked-кандидаты, как раньше
-    (candidates[:limit] с limit=len(ranked)).
+    означают "без ограничения". Положительный limit сохраняется в
+    ``target_limit`` для execution-цикла, но ranked намеренно не срезается:
+    runtime skip/duplicate не должен занимать место успешного отклика.
     """
     prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
     filtered, skipped = filter_candidates(candidates, filters, resume.resume_id, history, prefilter)
@@ -289,15 +416,14 @@ def build_apply_plan(
         llm_shortlist=_LLM_SHORTLIST_DEFAULT,
     )
 
-    effective_limit = limit if limit else len(ranked)
-    sliced = ranked[:effective_limit]
+    effective_limit = limit if limit else None
 
     return ApplyPlan(
-        ranked=sliced,
+        ranked=ranked,
         skipped=skipped,
         total=len(candidates),
         after_filter=len(filtered),
-        after_limit=len(sliced),
+        target_limit=effective_limit,
     )
 
 
@@ -311,6 +437,107 @@ def run_apply_for_resume(
     cards_override=None,
     skip_scoring: bool = False,
     ranked_override=None,
+    progress: ApplyProgress | None = None,
+    show_summary: bool = True,
+) -> bool:
+    """Run one resume lazily, fetching a next page only after a shortfall."""
+    if cards_override is not None or getattr(args, "approved", None) is not None:
+        return _run_apply_for_resume(
+            page,
+            config,
+            resume,
+            history,
+            throttle,
+            args,
+            cards_override,
+            skip_scoring,
+            ranked_override,
+            progress,
+            show_summary,
+        )
+
+    # Плейсхолдер resume_url и дневной лимит — те же guard'ы, что и внутри
+    # _run_apply_for_resume (единственный источник истины для #165/#216 и для
+    # текста ошибок); здесь проверяются ДО первого поиска, чтобы лишний page
+    # load не уходил на hh.ru прежде, чем стало ясно, что резюме нельзя
+    # использовать вовсе. identity общая для всех волн этого резюме — резолвится
+    # один раз здесь и передаётся вниз, а не пересчитывается на каждую страницу.
+    if is_resume_url_placeholder(resume.resume_url):
+        print(
+            f"[FAIL] {resume.id} — в конфиге указан плейсхолдер resume_url; "
+            "укажите реальный URL (получить можно через list-resumes)"
+        )
+        return True
+    try:
+        throttle.check_apply_limit(resume.resume_id, args.dry_run)
+    except LimitReached as e:
+        print(f"Пропуск: {e}")
+        return False
+    identity = _prepare_apply_resume(page, resume, args.dry_run)
+    if identity is None:
+        return True
+    # Built once per resume run, not per search page (#101 execution-only loop
+    # below reuses the same providers across all lazy-paging waves).
+    cover_letter_template = config.cover_letter_for(resume)
+    providers = (
+        None
+        if skip_scoring
+        else _build_apply_providers(config, resume, cover_letter_template, history)
+    )
+
+    progress = progress or ApplyProgress()
+    failed = False
+    page_limit = apply_search_page_limit(args)
+    target_limit = getattr(args, "limit", 0) or None
+    for page_num in range(page_limit):
+        try:
+            cards, has_next = _load_apply_page(page, resume.search, page_num)
+        except VacancySearchIndeterminate as e:
+            raise_for_antibot(page)
+            print(f"[FAIL] {e}")
+            return True
+        raise_for_antibot(page)
+        if not cards:
+            break
+        failed = (
+            _run_apply_for_resume(
+                page,
+                config,
+                resume,
+                history,
+                throttle,
+                args,
+                cards,
+                False,
+                None,
+                progress,
+                False,
+                identity,
+                providers,
+            )
+            or failed
+        )
+        if progress.reached(target_limit) or not has_next:
+            break
+    if show_summary:
+        print(f"Итого откликов за этот запуск: {progress.applied_count}")
+    return failed
+
+
+def _run_apply_for_resume(
+    page,
+    config: AppConfig,
+    resume: ResumeConfig,
+    history: History,
+    throttle: Throttle,
+    args: argparse.Namespace,
+    cards_override=None,
+    skip_scoring: bool = False,
+    ranked_override=None,
+    progress: ApplyProgress | None = None,
+    show_summary: bool = True,
+    identity: ApplyResumeIdentity | None = None,
+    providers: ApplyProviders | None = None,
 ) -> bool:
     """Цикл откликов по одному резюме (search → filter → apply с троттлингом).
 
@@ -353,49 +580,11 @@ def run_apply_for_resume(
         print(f"Пропуск: {e}")
         return False
 
-    # #216: hh.ru silently substitutes another account resume when the
-    # configured one is not_finished. Check this before searching or any
-    # possible submit, and fail closed rather than creating a misleading
-    # history entry under the configured resume.
-    account_resume_ids: set[str] | None = None
-    verify_resume_id = resume.resume_id
-    if not args.dry_run:
-        ids_by_hash = resolve_numeric_resume_ids(page)
-        # #344: a challenge during the resume preflight is terminal for the
-        # whole apply/run command, not an unknown mapping to continue past.
-        raise_for_antibot(page)
-        if ids_by_hash is not None:
-            numeric_id = ids_by_hash.get(resume.resume_id)
-            if numeric_id is not None:
-                # Хэш конфига есть в маппинге аккаунта — SSR прочитан успешно
-                # именно для этого резюме. not_finished фейлится явно (#216).
-                # Отсутствие поля status в SSR для присутствующего в маппинге
-                # хэша (schema drift) трактуем так же: мы прочитали резюме
-                # аккаунта, но не можем подтвердить его готовность к откликам
-                # — здесь, в отличие от отсутствия самого хэша (#212, домен
-                # верификатора), у нас есть основания фейлиться до отправки,
-                # а не полагаться на пост-клик verify.
-                resume_status = getattr(ids_by_hash, "statuses", {}).get(resume.resume_id)
-                if resume_status is None or resume_status == "not_finished":
-                    print(
-                        f"[FAIL] {resume.id} — статус резюме на hh.ru не подтверждён как "
-                        f"готовый к отклику (status={resume_status!r}); завершите/опубликуйте "
-                        "его вручную"
-                    )
-                    return True
-                account_resume_ids = set(ids_by_hash.values())
-                verify_resume_id = numeric_id
-            else:
-                # Конфиг-хэш отсутствует в маппинге аккаунта (устаревший/
-                # неверный хэш, #212) — не наш домен: перечень НЕ заполняем,
-                # атрибуция уходит в incomparable → fail-closed indeterminate
-                # в самом верификаторе, апробировано тестами #212.
-                logger.warning(
-                    "%s — резюме конфига (%s) нет в маппинге аккаунта: атрибуция в "
-                    "верификаторе уйдёт в fail-closed",
-                    resume.id,
-                    resume.resume_id,
-                )
+    identity = identity or _prepare_apply_resume(page, resume, args.dry_run)
+    if identity is None:
+        return True
+    verify_resume_id = identity.verify_resume_id
+    account_resume_ids = identity.account_resume_ids
 
     approved_item = None
     if getattr(args, "approved", None) is not None:
@@ -426,7 +615,13 @@ def run_apply_for_resume(
     else:
         cards = cards_override
     scoring_provider = (
-        None if approved_item or skip_scoring else _build_scoring_provider(config, resume)
+        None
+        if approved_item or skip_scoring
+        else (
+            providers.scoring_provider
+            if providers is not None
+            else _build_scoring_provider(config, resume)
+        )
     )
     plan = (
         ApplyPlan([(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))])
@@ -443,21 +638,24 @@ def run_apply_for_resume(
     if ranked_override is not None:
         allowed = {card.vacancy_id for card, _score, _breakdown in plan.ranked}
         routed_ranked = [item for item in ranked_override if item[0].vacancy_id in allowed]
-        effective_limit = args.limit if args.limit else len(routed_ranked)
-        routed_ranked = routed_ranked[:effective_limit]
         plan = ApplyPlan(
             ranked=routed_ranked,
             skipped=plan.skipped,
             total=plan.total,
             after_filter=plan.after_filter,
-            after_limit=len(routed_ranked),
+            target_limit=plan.target_limit,
         )
 
     for card, reason in plan.skipped:
         logger.debug("Пропуск вакансии %s: %s", card.title, reason)
 
     cover_letter_template = config.cover_letter_for(resume)
-    letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+    if providers is not None:
+        letter_provider = providers.letter_provider
+        question_answerer = providers.question_answerer
+    else:
+        letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+        question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
     if approved_item:
         from ..apply.letter import LetterOutcome
 
@@ -466,7 +664,6 @@ def run_apply_for_resume(
                 return LetterOutcome(approved_item["letter"], "approved")
 
         letter_provider = _ApprovedLetter()
-    question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
     # M6 cycle-review #373: no longer blocks the whole run when
     # ai.answer_questions=true but --force is missing — pipeline.py gates
     # --force per vacancy, only once a questionnaire is actually detected, so
@@ -493,8 +690,10 @@ def run_apply_for_resume(
             page, vacancy_id, verify_resume_id, account_resume_ids=account_resume_ids
         )
 
-    applied_count = 0
+    applied_count = progress.applied_count if progress is not None else 0
     for card, _score, _breakdown in plan.ranked:
+        if plan.target_limit is not None and applied_count >= plan.target_limit:
+            break
         try:
             throttle.check_apply_limit(resume.resume_id, args.dry_run)
         except LimitReached as e:
@@ -631,6 +830,8 @@ def run_apply_for_resume(
             )
         if result.success:
             applied_count += 1
+            if progress is not None:
+                progress.applied_count = applied_count
             print(f"  [OK] {card.title} — {card.company}")
         else:
             print(f"  [FAIL] {card.title} — {result.reason}")
@@ -653,5 +854,10 @@ def run_apply_for_resume(
             print(f"  [STOP] {card.title} — {result.reason}")
             raise ApplyRunStopped(result.reason)
 
-    print(f"Итого откликов за этот запуск: {applied_count}")
+        if getattr(result, "uncertain", False):
+            print(f"  [STOP] {card.title} — исход отклика неопределён")
+            raise ApplyRunStopped(result.reason)
+
+    if show_summary:
+        print(f"Итого откликов за этот запуск: {applied_count}")
     return False

@@ -9,6 +9,7 @@ from ._common import (
     _build_scoring_provider,
     add_common_args,
     add_force_arg,
+    apply_search_page_limit,
     resumes_from_args,
     run_apply_for_resume,
 )
@@ -16,13 +17,15 @@ from ._common import (
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("apply", help="Найти и откликнуться на подходящие вакансии")
-    add_common_args(p)
+    add_common_args(p, max_pages_default=None)
     add_force_arg(p)
     p.add_argument(
         "--limit",
         type=int,
         default=0,
-        help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)",
+        help=(
+            "Целевое число успешных откликов за запуск (0 = без ограничения кроме дневного лимита)"
+        ),
     )
     p.add_argument(
         "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
@@ -89,12 +92,18 @@ def run(args: argparse.Namespace) -> bool:
                         not in (None, "not_finished")
                     }
                     routing_resumes = [r for r in resumes if r.resume_id in ready]
-
             feeds = []
             for resume in routing_resumes:
                 try:
                     feeds.append(
-                        (resume, search_vacancies(page, resume.search, max_pages=args.max_pages))
+                        (
+                            resume,
+                            search_vacancies(
+                                page,
+                                resume.search,
+                                max_pages=apply_search_page_limit(args),
+                            ),
+                        )
                     )
                 except VacancySearchIndeterminate as e:
                     raise_for_antibot(page)
