@@ -52,6 +52,7 @@ def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = 
         raise ValueError("SSR applicantResumeViewHistory.historyViews недоступен")
 
     result = []
+    hidden_by_date: dict[str, int] = {}
     for entry in history["historyViews"]:
         if not isinstance(entry, dict):
             continue
@@ -60,6 +61,9 @@ def parse_resume_view_history(html: str, resume_id: str, *, limit: int | None = 
             continue
         employer_id = _value(entry, "employerId", "employer_id", "companyId")
         employer = _value(entry, "employerName", "employer", "companyName", "name")
+        if employer is None:
+            hidden_by_date[str(viewed_at)] = hidden_by_date.get(str(viewed_at), 0) + 1
+            employer = f"(скрыт #{hidden_by_date[str(viewed_at)]})"
         result.append(
             {
                 "resume_id": str(resume_id),
