@@ -70,6 +70,7 @@ def run(args: argparse.Namespace) -> None:
         page = context.new_page()
         for resume in resumes:
             hidden_offsets: dict[str, int] = {}
+            resume_fetched = 0
             # Route accepts resume_id as a query parameter on current hh.ru; no
             # direct HTTP request is made, preserving the browser boundary.
             for page_num in range(args.max_pages):
@@ -79,16 +80,25 @@ def run(args: argparse.Namespace) -> None:
                     rows = parse_resume_view_history(
                         page.content(),
                         resume.resume_id,
-                        limit=args.limit,
+                        limit=args.limit - resume_fetched,
                         hidden_offsets=hidden_offsets,
                     )
                 except (ValueError, TypeError) as exc:
-                    rows = parse_resume_view_history_dom(page, resume.resume_id, limit=args.limit)
+                    try:
+                        rows = parse_resume_view_history_dom(
+                            page, resume.resume_id, limit=args.limit - resume_fetched
+                        )
+                    except ValueError as dom_exc:
+                        print(
+                            f"[FAIL] история просмотров не подтверждена: {dom_exc}", file=sys.stderr
+                        )
+                        raise SystemExit(1) from dom_exc
                     if not rows:
                         print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
                         raise SystemExit(1) from exc
                 fetched.extend(rows)
-                if not rows or not has_next_page(page, page_num):
+                resume_fetched += len(rows)
+                if not rows or resume_fetched >= args.limit or not has_next_page(page, page_num):
                     break
 
     inserted = history.record_resume_views(fetched)

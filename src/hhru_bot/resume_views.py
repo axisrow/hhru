@@ -87,6 +87,7 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
     """Parse only DOM rows with independently exposed date and employer fields."""
     rows = page.locator("[data-qa*='resume-view'], [data-qa*='view-history']").all()
     result = []
+    invalid = False
     for row in rows:
         viewed_at = row.get_attribute("data-viewed-at")
         employer = row.get_attribute("data-employer-name")
@@ -99,6 +100,7 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
             if len(employers) == 1:
                 employer = employers[0].inner_text().strip()
         if not viewed_at or not employer:
+            invalid = True
             continue
         result.append(
             {
@@ -110,4 +112,6 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
         )
         if limit is not None and len(result) >= limit:
             break
+    if invalid:
+        raise ValueError("DOM history contains an unparseable view row")
     return result
