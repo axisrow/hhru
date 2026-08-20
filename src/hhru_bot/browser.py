@@ -36,12 +36,18 @@ def launch_browser(playwright, *, headless: bool) -> Browser:
         details = str(exc)
         sandbox_markers = (
             "Operation not permitted",
-            "Permission denied",
             "Crashpad",
             "NSApplication",
             "NSMenuBarPresentationInstance",
         )
-        if any(marker in details for marker in sandbox_markers):
+        apple_mach_port_failure = "Permission denied" in details and any(
+            marker in details
+            for marker in (
+                "mach_port_rendezvous_mac",
+                "MachPortRendezvousServer",
+            )
+        )
+        if apple_mach_port_failure or any(marker in details for marker in sandbox_markers):
             raise BrowserLaunchError(
                 "CODEX_SANDBOX_BROWSER_FAILURE: Chromium was blocked by the "
                 "execution sandbox (macOS/Crashpad permission). Retry this same "

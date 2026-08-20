@@ -50,6 +50,16 @@ def test_non_sandbox_launch_failure_is_not_reclassified():
         browser.launch_browser(playwright, headless=True)
 
 
+def test_generic_permission_denied_launch_failure_is_not_reclassified():
+    playwright = MagicMock(name="Playwright")
+    playwright.chromium.launch.side_effect = PlaywrightError(
+        "Permission denied opening browser profile"
+    )
+
+    with pytest.raises(PlaywrightError, match="Permission denied opening"):
+        browser.launch_browser(playwright, headless=True)
+
+
 def test_goto_timeout_constant_is_90_seconds():
     """Эталон из исследования референсов #80: 90с под DDoS-Guard (Steev193)."""
     assert GOTO_TIMEOUT_MS == 90_000

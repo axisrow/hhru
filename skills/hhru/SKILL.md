@@ -76,17 +76,22 @@ hhru <command> [flags]
 
 ## Диагностика sandbox Codex
 
-Если запуск headed Chromium завершается с маркером
-`CODEX_SANDBOX_BROWSER_FAILURE` или в выводе есть сочетание
+Если запуск Chromium (headed или headless) завершается с маркером
+`CODEX_SANDBOX_BROWSER_FAILURE` или в выводе есть
 `Operation not permitted`, `Crashpad`, `NSApplication` или
 `NSMenuBarPresentationInstance`, это проблема разрешений sandbox среды
 исполнения Codex, а не Chromium, Playwright, hh.ru или сессии аккаунта.
+Сочетание `Permission denied` считается таким сбоем только вместе с Apple
+Mach-port диагностикой (`mach_port_rendezvous_mac` или
+`MachPortRendezvousServer`).
 
 В этом случае не переустанавливай Chromium и не объявляй багом проекта:
-повтори ту же read-only-команду с elevated/system permission. Если elevated
-запуск недоступен, используй `hhru --headless <command>` как безопасный
-обход. Сообщи пользователю, что причина классифицирована как
-`CODEX_SANDBOX_BROWSER_FAILURE`.
+повтори ту же read-only-команду с elevated/system permission. Для headed
+команды, если elevated-запуск недоступен, можно использовать
+`hhru --headless <command>` как безопасный обход. Если сбой произошёл уже в
+headless-режиме, повторять `--headless` бессмысленно — нужен elevated/system
+permission или решение проблемы разрешений среды. Сообщи пользователю, что
+причина классифицирована как `CODEX_SANDBOX_BROWSER_FAILURE`.
 
 ## Справочник команд
 
