@@ -289,6 +289,18 @@ def restore_backup(
                     for item in storage.rglob("*")
                     if item.is_file() and not item.is_symlink()
                 )
+            if (
+                previous_storage is not None
+                and desired_storage is not None
+                and previous_storage != desired_storage
+                and previous_storage.is_file()
+            ):
+                saved = originals / "previous-configured-session"
+                copyfile(previous_storage, saved)
+                os.chmod(saved, stat.S_IMODE(previous_storage.stat().st_mode))
+                original_keys[previous_storage] = saved
+                previous_storage.unlink()
+                replaced.append(previous_storage)
             for configured_storage in (previous_storage, desired_storage):
                 if configured_storage is not None:
                     managed.add(_storage_archive_name(configured_storage, root))
