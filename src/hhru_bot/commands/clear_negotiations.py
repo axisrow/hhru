@@ -336,6 +336,10 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
 
     failed = False
     for topic in topics:
+        assert history is not None
+        if history.has_action(ACCOUNT_SCOPE, topic, "withdraw"):
+            print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
+            continue
         acted = False
         try:
             success, reason, acted = _withdraw_topic(page, topic)
@@ -345,7 +349,6 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
         # history is only ever None on the empty-discovery path (no topics
         # means the loop never runs); with real topics the callers above
         # always supply it, so it cannot be None here.
-        assert history is not None
         history.record_action(ACCOUNT_SCOPE, topic, "withdraw", status, reason or None)
         if success:
             print(f"[OK] Отозван отклик topic={topic}")

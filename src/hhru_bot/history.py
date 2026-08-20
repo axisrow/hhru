@@ -350,6 +350,35 @@ class History:
             ).fetchone()
             return row is not None
 
+    def has_action(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        action: str,
+        *,
+        statuses: tuple[str, ...] = ("success", "uncertain"),
+    ) -> bool:
+        """Return whether a potentially completed action is already recorded.
+
+        Callers use this as a fail-closed guard before repeating an external
+        mutation.  In particular, ``uncertain`` must block a retry: the
+        browser may have completed the action even when confirmation failed.
+        """
+        if not statuses:
+            return False
+        placeholders = ", ".join("?" for _ in statuses)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM actions
+                WHERE resume_id = ? AND vacancy_id = ? AND action = ?
+                  AND status IN ({placeholders})
+                LIMIT 1
+                """,
+                (resume_id, vacancy_id, action, *statuses),
+            ).fetchone()
+            return row is not None
+
     def record_action(
         self,
         resume_id: str | None,
