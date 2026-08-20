@@ -936,6 +936,147 @@ class History:
             )
         return funnel
 
+    def funnel_by_search_query(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> list[dict]:
+        """Воронка отправлено → оффер с группировкой по поисковому запросу.
+
+        Отклик учитывается в каждом запросе, в котором была найдена его
+        вакансия (``vacancies_seen`` допускает несколько таких строк). Внутри
+        запроса счётчики дедуплицируются по паре (resume_id, vacancy_id), а не
+        только по vacancy_id: ``idx_resume_vacancy_apply`` — UNIQUE по этой
+        паре, поэтому два разных резюме легитимно откликаются на одну и ту же
+        вакансию отдельными строками actions (code review #411) — дедуп по
+        одному vacancy_id занижал бы sent/viewed/invited/offer/replied и искажал
+        производные *_rate при дефолтном resume_id=None (все резюме). Этапы
+        остаются кумулятивными, как в :meth:`funnel_by_resume`.
+        """
+        where = ["a.action = 'apply'", "a.status = 'success'"]
+        params: list = []
+        if since is not None:
+            where.append("a.created_at >= ?")
+            params.append(since)
+        if resume_id is not None:
+            where.append("a.resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    v.search_query AS search_query,
+                    COUNT(DISTINCT a.resume_id || ':' || a.vacancy_id) AS sent,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('read', 'response', 'invitation', 'discard', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS viewed,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('invitation', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS invited,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS offer,
+                    COUNT(DISTINCT CASE WHEN EXISTS (
+                        SELECT 1 FROM responses r
+                        JOIN replies p ON p.topic = r.topic AND p.status = 'success'
+                        WHERE r.vacancy_id = a.vacancy_id
+                          AND r.status IN ('invitation', 'offer')
+                    ) OR EXISTS (
+                        SELECT 1 FROM responses r
+                        WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
+                    ) OR EXISTS (
+                        SELECT 1 FROM manual_offers m
+                        WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS replied
+                FROM actions AS a
+                JOIN vacancies_seen AS v ON v.vacancy_id = a.vacancy_id
+                {clause}
+                GROUP BY v.search_query
+                """,
+                params,
+            ).fetchall()
+
+        funnel: list[dict] = []
+        for row in rows:
+            sent, viewed, invited = row["sent"], row["viewed"], row["invited"]
+            replied, offer = row["replied"], row["offer"]
+            funnel.append(
+                {
+                    "search_query": row["search_query"],
+                    "sent": sent,
+                    "viewed": viewed,
+                    "invited": invited,
+                    "replied": replied,
+                    "offer": offer,
+                    "view_rate": self._pct(viewed, sent),
+                    "invite_rate": self._pct(invited, viewed),
+                    "reply_rate": self._pct(replied, invited),
+                    "offer_rate": self._pct(offer, invited),
+                }
+            )
+        return sorted(
+            funnel,
+            key=lambda row: (-row["invite_rate"], -row["offer_rate"], row["search_query"]),
+        )
+
+    def count_unattributed_applies(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> int:
+        """Число успешных откликов без строки в ``vacancies_seen`` (code review #411).
+
+        ``funnel_by_search_query`` INNER JOIN'ит ``actions`` к ``vacancies_seen``
+        по ``vacancy_id`` — вакансии, которых там нет, молча выпадают из воронки.
+        ``vacancies_seen`` заполняет только команда ``search`` (`upsert_vacancy_seen`
+        вызывается из ``commands/search.py``); `apply`/`run` вызывают
+        ``search_vacancies()`` напрямую и НЕ пишут в ``vacancies_seen`` — если
+        пользователь откликался через `apply`/`run` без предварительного
+        отдельного `search` по тем же вакансиям, эти отклики систематически не
+        попадут в `funnel --search-query`. Используется командой `funnel` для
+        `[INFO]`-предупреждения вместо тихой потери данных; не влияет на числа
+        самой воронки.
+        """
+        where = ["a.action = 'apply'", "a.status = 'success'"]
+        params: list = []
+        if since is not None:
+            where.append("a.created_at >= ?")
+            params.append(since)
+        if resume_id is not None:
+            where.append("a.resume_id = ?")
+            params.append(resume_id)
+        clause = " WHERE " + " AND ".join(where)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS n
+                FROM actions AS a
+                {clause}
+                AND NOT EXISTS (
+                    SELECT 1 FROM vacancies_seen AS v WHERE v.vacancy_id = a.vacancy_id
+                )
+                """,
+                params,
+            ).fetchone()
+        return int(row["n"])
+
     def dead_responses(self, days: int, resume_id: str | None = None) -> dict:
         """«Мёртвая зона»: доля откликов без ответа старше N дней.
 

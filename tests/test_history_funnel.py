@@ -225,6 +225,144 @@ def test_funnel_since_filters_old_actions(tmp_path):
     assert funnel[0]["sent"] == 1  # только свежий v1
 
 
+def test_funnel_by_search_query_joins_seen_vacancies_and_sorts_by_invite_rate(tmp_path):
+    """Запросы считаются отдельно, включая одну вакансию, найденную дважды."""
+    h = History(tmp_path / "h.db")
+    for vacancy in ("v1", "v2", "v3"):
+        h.record_action("r1", vacancy, "apply", "success")
+    with h._connect() as conn:
+        for vacancy, query in (
+            ("v1", "python"),
+            ("v2", "python"),
+            ("v2", "backend"),
+            ("v3", "backend"),
+        ):
+            conn.execute(
+                "INSERT INTO vacancies_seen "
+                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (vacancy, query, "2026-01-01", "2026-01-01"),
+            )
+    h.upsert_response("v1", "Acme", "invitation", "/c", topic="1")
+
+    funnel = h.funnel_by_search_query()
+    assert [row["search_query"] for row in funnel] == ["python", "backend"]
+    assert funnel[0]["sent"] == 2
+    assert funnel[0]["invited"] == 1
+    assert funnel[1]["sent"] == 2
+    assert funnel[1]["invited"] == 0
+    assert funnel[0]["invite_rate"] == 100.0
+    assert funnel[1]["invite_rate"] == 0.0
+
+
+def test_funnel_by_search_query_counts_distinct_resumes_per_vacancy(tmp_path):
+    """Два резюме, откликнувшиеся на одну вакансию, — два разных отклика (#411 CR).
+
+    idx_resume_vacancy_apply — UNIQUE(resume_id, vacancy_id), не UNIQUE(vacancy_id):
+    разные резюме легитимно откликаются на одну и ту же вакансию как отдельные
+    строки actions. Дедупликация только по vacancy_id схлопывает их в один sent,
+    занижая счётчики и искажая производные *_rate.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+
+    funnel = h.funnel_by_search_query()
+    assert funnel[0]["sent"] == 2
+    assert funnel[0]["viewed"] == 0  # ни один отклик не получил ответа/оффера
+
+
+def test_funnel_by_search_query_counts_viewed_per_distinct_resume(tmp_path):
+    """Оба резюме получили ответ на одну вакансию — viewed=2, не 1 (mutation-guard).
+
+    Дополняет предыдущий тест: покрывает stage-CASE агрегаты (viewed/invited/
+    offer/replied), не только sent, чтобы регресс в любом из 4 CASE-выражений
+    к дедупу по одному vacancy_id (а не паре resume_id:vacancy_id) тоже ловился.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+    h.upsert_response("v1", "Acme", "read", "/c", topic="1")
+
+    funnel = h.funnel_by_search_query()
+    assert funnel[0]["viewed"] == 2
+
+
+# --- count_unattributed_applies ---------------------------------------------
+
+
+def test_count_unattributed_applies_counts_missing_vacancies_seen_rows(tmp_path):
+    """apply/run не пишут vacancies_seen (#411 code review) — этот счётчик
+    делает потерю видимой вместо тихого искажения funnel_by_search_query.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+
+    assert h.count_unattributed_applies() == 1  # только v2 без vacancies_seen
+
+
+def test_count_unattributed_applies_zero_when_all_attributed(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+
+    assert h.count_unattributed_applies() == 0
+
+
+def test_count_unattributed_applies_filters_resume_and_since(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")  # неатрибутирован
+    h.record_action("r2", "v2", "apply", "success")  # неатрибутирован, другое резюме
+
+    assert h.count_unattributed_applies(resume_id="r1") == 1
+    assert h.count_unattributed_applies(resume_id="nope") == 0
+
+    cutoff = (datetime.now() + timedelta(days=1)).isoformat()
+    assert h.count_unattributed_applies(since=cutoff) == 0  # всё старше cutoff
+
+
+def test_funnel_by_search_query_filters_resume_and_since(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v2", "apply", "success")
+    with h._connect() as conn:
+        for vacancy, _resume, created in (("v1", "r1", "2026-01-01"), ("v2", "r2", "2026-01-02")):
+            conn.execute(
+                "INSERT INTO vacancies_seen "
+                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (vacancy, "q", "2026-01-01", "2026-01-01"),
+            )
+            conn.execute(
+                "UPDATE actions SET created_at = ? WHERE vacancy_id = ?", (created, vacancy)
+            )
+
+    assert h.funnel_by_search_query(resume_id="r1")[0]["sent"] == 1
+    assert h.funnel_by_search_query(since="2026-01-01T12:00:00")[0]["sent"] == 1
+
+
 # --- dead_responses: отклики без ответа за N дней --------------------------
 
 

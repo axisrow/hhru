@@ -298,6 +298,7 @@ def test_responses_has_resume_max_pages_since_hours():
 def test_funnel_has_format_and_dead_flags():
     opts = _opts_for("funnel")
     assert "--resume" in opts
+    assert "--search-query" in opts
     assert "--format" in opts
     assert "--dead" in opts
     assert "--dead-days" in opts

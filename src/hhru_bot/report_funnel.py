@@ -51,6 +51,8 @@ _FUNNEL_HEADERS = {
     "offer_rate": "Оффер %",
 }
 
+_GROUP_HEADERS = {"resume_id": "Резюме", "search_query": "Поисковый запрос"}
+
 _DEAD_HEADERS = {
     "label": "Метрика",
     "value": "Значение",
@@ -62,12 +64,12 @@ def _fmt_rate(rate: float) -> str:
     return f"{rate:g}%"
 
 
-def _funnel_rows(funnel: Iterable[dict]) -> list[list[str]]:
+def _funnel_rows(funnel: Iterable[dict], group_key: str = "resume_id") -> list[list[str]]:
     out: list[list[str]] = []
     for r in funnel:
         out.append(
             [
-                str(r.get("resume_id", "")),
+                str(r.get(group_key, "")),
                 str(r.get("sent", 0)),
                 str(r.get("viewed", 0)),
                 str(r.get("invited", 0)),
@@ -82,26 +84,30 @@ def _funnel_rows(funnel: Iterable[dict]) -> list[list[str]]:
     return out
 
 
-def format_funnel(funnel: Iterable[dict], fmt: str) -> str:
-    """Отрисовать воронку по резюме в выбранном формате (table/md).
+def format_funnel(funnel: Iterable[dict], fmt: str, group_key: str = "resume_id") -> str:
+    """Отрисовать воронку в выбранном формате (table/md).
 
-    ``funnel`` — список строк из History.funnel_by_resume. Пустой список рисует
-    шапку таблицы (нечего показать — но формат стабилен, не падает).
+    ``funnel`` — список строк из History.funnel_by_resume (group_key='resume_id',
+    по умолчанию) или History.funnel_by_search_query (group_key='search_query',
+    #411). Пустой список рисует шапку таблицы (нечего показать — но формат
+    стабилен, не падает).
     """
     _check_format(fmt)
+    if group_key not in _GROUP_HEADERS:
+        raise ValueError(f"Неизвестная группировка: {group_key!r}")
     rows = list(funnel)
-    header = [_FUNNEL_HEADERS[c] for c in _FUNNEL_COLUMNS]
+    header = [_GROUP_HEADERS[group_key]] + [_FUNNEL_HEADERS[c] for c in _FUNNEL_COLUMNS[1:]]
 
     if fmt == "md":
         lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
-        for r in _funnel_rows(rows):
+        for r in _funnel_rows(rows, group_key):
             lines.append("| " + " | ".join(r) + " |")
         return "\n".join(lines)
 
     # table — ASCII (переиспользуем рендер из report.py, чтобы рамка была единая)
     from .report import _ascii_table
 
-    return _ascii_table(header, _funnel_rows(rows))
+    return _ascii_table(header, _funnel_rows(rows, group_key))
 
 
 def format_dead(dead: dict, fmt: str) -> str:
