@@ -52,6 +52,7 @@ def test_lock_covers_all_hhru_write_commands():
         "resume-position",
         "resume-sections",
         "edit-skills",
+        "edit-languages",
         "settings",
         "config",
     }

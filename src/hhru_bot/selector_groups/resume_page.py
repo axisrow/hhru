@@ -38,6 +38,32 @@ RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
 
+# Language block and modal selectors confirmed on the authenticated read-only
+# DOM of /applicant/profile/me on 2026-08-20 (issue #265).  Languages are a
+# profile-level entity, not a resume-level one: /resume/{id} never renders a
+# languages block (checked on an empty draft and on a published resume with
+# real language data) — the card only exists on /applicant/profile/me and a
+# saved language applies to every resume the account has, not to a single
+# resume.  Each row is a <button data-qa="...-row-N"> with two nested
+# [data-qa="cell-text"] elements: the first holds the language name, the
+# second the level label (e.g. "Родной" or "C1 — Продвинутый") — read them by
+# that structure, not by splitting the row's combined text.  The degree
+# select shows only the six CEFR options (A1-C2); there is no guessed CEFR for
+# an existing "Родной" (native) entry, so that value is out of scope for #265.
+RESUME_LANGUAGE_CARD = "[data-qa='profile-language-card']"
+RESUME_LANGUAGE_ROW = "[data-qa^='profile-language-card-row-']"
+RESUME_LANGUAGE_ROW_CELL_TEXT = "[data-qa='cell-text']"
+RESUME_LANGUAGE_ADD_BUTTON = "[data-qa='profile-language-add']"
+RESUME_LANGUAGE_ADD_FORM = "[data-qa='profile-language-add-form']"
+RESUME_LANGUAGE_FORM_LANGUAGE_SELECT = (
+    "[data-qa='profile-language-add-form-language'] [data-qa='magritte-select-activator']"
+)
+RESUME_LANGUAGE_FORM_DEGREE_SELECT = (
+    "[data-qa='profile-language-add-form-degree'] [data-qa='magritte-select-activator']"
+)
+RESUME_LANGUAGE_DEGREE_OPTION = "[data-qa='magritte-select-option-{}']"  # lowercase CEFR code
+RESUME_LANGUAGE_SAVE = "[data-qa='profile-modal-button-save']"
+
 # Live read-only research for issue #293 (2026-08-18).  These controls are
 # rendered on the resume list card, but are kept here with the resume-page
 # controls because they address one resume and the dialog is shared by both
