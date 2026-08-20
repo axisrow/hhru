@@ -296,7 +296,8 @@ def restore_backup(
                 and previous_storage.is_file()
             ):
                 previous_name = _storage_archive_name(previous_storage, root)
-                previous_is_archived = previous_storage == (root / previous_name).resolve()
+                previous_target = storage_targets.get(previous_name, root / previous_name)
+                previous_is_archived = previous_target == previous_storage
                 if not (previous_is_archived and previous_name in archived):
                     saved = originals / "previous-configured-session"
                     copyfile(previous_storage, saved)
