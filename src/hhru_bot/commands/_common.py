@@ -523,7 +523,21 @@ def run_apply_for_resume(
     page_limit = apply_search_page_limit(args)
     target_limit = getattr(args, "limit", 0) or None
     has_next = False
+    daily_limit_exhausted = False
     for page_num in range(page_limit):
+        # #441 round-3 review: LimitReached can also fire INSIDE a wave (per
+        # card, _run_apply_for_resume's own loop) — that function just
+        # returns False, so without this explicit re-check here the lazy-
+        # paging loop couldn't tell "daily limit hit mid-wave" from "wave
+        # finished normally, load more" and kept issuing live hh.ru page
+        # loads after the account-wide budget was already exhausted, which
+        # violates the anti-fraud throttling principle in CLAUDE.md.
+        try:
+            throttle.check_apply_limit(resume.resume_id, args.dry_run)
+        except LimitReached as e:
+            print(f"Пропуск: {e}")
+            daily_limit_exhausted = True
+            break
         try:
             cards, has_next = _load_apply_page(page, resume.search, page_num)
         except VacancySearchIndeterminate as e:
@@ -554,11 +568,20 @@ def run_apply_for_resume(
         )
         if progress.reached(target_limit) or not has_next:
             break
-    if target_limit is not None and not progress.reached(target_limit) and has_next:
+    if (
+        target_limit is not None
+        and not progress.reached(target_limit)
+        and has_next
+        and not daily_limit_exhausted
+    ):
         # page_limit (auto-cap ceil(limit/5)+1 или явный --max-pages)
         # оборвал поиск раньше, чем цель была достигнута, хотя дальше по
         # выдаче ещё есть страницы — недобор неотличим от "выдача
-        # кончилась" без явного сигнала, отсюда предупреждение.
+        # кончилась" без явного сигнала, отсюда предупреждение. Если
+        # реальная причина остановки — дневной лимит (daily_limit_exhausted),
+        # это НЕ проблема page cap и не решается --max-pages — сообщение
+        # про печатанное выше "Пропуск: Достигнут дневной лимит..." уже
+        # объясняет причину, не дублируем/не путаем её этим предупреждением.
         print(
             f"[INFO] Достигнут потолок в {page_limit} страниц(ы) поиска, "
             f"цель ({target_limit}) не достигнута — попробуйте явный "

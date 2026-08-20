@@ -342,3 +342,55 @@ def test_load_apply_page_does_not_mask_real_attribute_error(tmp_path, monkeypatc
         _common._load_apply_page(
             _PageThatRaisesAttributeErrorFromDom(), SearchFilters(text="python"), 0
         )
+
+
+def test_daily_limit_exhausted_mid_wave_stops_lazy_paging(tmp_path, monkeypatch):
+    """#441 round-3 review: the lazy-paging loop introduced by this PR had no
+    boundary checking the daily apply limit before fetching a NEXT search
+    page — if throttle.check_apply_limit raised LimitReached inside a wave
+    (_run_apply_for_resume's per-card loop), that function just returned
+    False, and the outer loop here couldn't tell "daily limit hit" from
+    "wave finished, load more" — it kept calling _load_apply_page (a live
+    hh.ru request) on subsequent iterations. This violates the project's
+    anti-fraud throttling principle (CLAUDE.md): once the daily limit is
+    exhausted, the run must issue no further page load.
+    """
+    from hhru_bot.throttle import LimitReached
+
+    config, resume, history, throttle = _setup(tmp_path)
+    loaded: list[int] = []
+
+    def load(_page, _filters, page_num):  # noqa: ANN001
+        loaded.append(page_num)
+        return _cards(1), True
+
+    # First wave's own entry check passes; the limit becomes exhausted only
+    # AFTER that first wave is processed (simulating another resume/process
+    # having consumed the daily budget concurrently, or this very wave using
+    # up the last slot) — check_apply_limit is called once at wrapper entry
+    # (page_num-independent) and once per card inside _run_apply_for_resume.
+    calls = {"n": 0}
+
+    def flaky_check(_self, _resume_id, _dry_run):
+        calls["n"] += 1
+        if calls["n"] > 2:  # entry check (1) + first card's check (2) pass
+            raise LimitReached("account", "apply", 1)
+
+    monkeypatch.setattr(_common, "_load_apply_page", load)
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(
+        _common,
+        "apply_to_vacancy",
+        lambda _page, card, *_args, **_kwargs: ApplyResult(card, True, "success"),
+    )
+    monkeypatch.setattr(Throttle, "check_apply_limit", flaky_check)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+
+    args = _args(10)
+    args.max_pages = None
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    # Only the first page's wave should have loaded — the daily-limit
+    # exhaustion inside that wave must stop the loop before a second
+    # _load_apply_page (next page) call.
+    assert loaded == [0]
