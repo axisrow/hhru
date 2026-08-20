@@ -6,6 +6,8 @@ import argparse
 import sys
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
+
 from .copy_resume import confirm_write
 
 
@@ -56,7 +58,6 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     manual = bool(args.language)
-    confirmed = False
     if manual:
         from ..languages import parse_manual_languages
 
@@ -78,7 +79,14 @@ def run(args: argparse.Namespace) -> None:
         ):
             print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
             sys.exit(1)
-        confirmed = True
+        with launch_context(
+            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        ) as context:
+            result = edit_languages_on_hh(
+                context.new_page(), resume, proposed, dry_run=False, mode=args.mode
+            )
+        _report(result, resume.id, False)
+        return
     else:
         if config.ai is None:
             print("[FAIL] Секция ai не включена; укажите --language NAME=CEFR или добавьте ai: {}")
@@ -104,12 +112,22 @@ def run(args: argparse.Namespace) -> None:
                 print("[FAIL] Страница профиля не подтверждена")
                 sys.exit(1)
             card = page.locator(selectors.RESUME_LANGUAGE_CARD)
-            existing = ()
-            if card.count() == 1:
-                existing = tuple(
-                    row.locator(selectors.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
-                    for row in card.locator(selectors.RESUME_LANGUAGE_ROW).all()
-                )
+            # #265 code-review round 1: wait past the profile SPA hydration race
+            # (same pattern as edit_languages_on_hh) before the strict count
+            # check, and fail closed on an indeterminate card instead of
+            # silently feeding the LLM a false "no existing languages" premise
+            # (PageStateIndeterminate invariant, CLAUDE.md).
+            try:
+                card.first.wait_for(state="visible", timeout=15000)
+            except PlaywrightError:
+                pass
+            if card.count() != 1:
+                print("[FAIL] Карточка языков не найдена однозначно")
+                sys.exit(1)
+            existing = tuple(
+                row.locator(selectors.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
+                for row in card.locator(selectors.RESUME_LANGUAGE_ROW).all()
+            )
             try:
                 response = LLMClient(config.ai).chat(
                     build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
@@ -138,23 +156,6 @@ def run(args: argparse.Namespace) -> None:
             result = edit_languages_on_hh(page, resume, proposed, dry_run=False, mode=args.mode)
             _report(result, resume.id, False)
             return
-
-    if not confirmed and not confirm_write(
-        args.force,
-        prompt=(
-            f"Языки — общий раздел профиля hh.ru, не части резюме '{resume.id}': "
-            "запись затронет ВСЕ резюме аккаунта. Сохранить на hh.ru?"
-        ),
-    ):
-        print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
-        sys.exit(1)
-    with launch_context(
-        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-    ) as context:
-        result = edit_languages_on_hh(
-            context.new_page(), resume, proposed, dry_run=False, mode=args.mode
-        )
-    _report(result, resume.id, False)
 
 
 def _print_plan(proposed, dry_run: bool) -> None:

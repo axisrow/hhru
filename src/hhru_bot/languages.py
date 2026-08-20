@@ -19,14 +19,6 @@ from .config import ResumeConfig
 from .selector_groups import resume_page
 
 CEFR_LEVELS = frozenset(("A1", "A2", "B1", "B2", "C1", "C2"))
-CEFR_LABELS = {
-    "A1": "A1 — Начальный",
-    "A2": "A2 — Элементарный",
-    "B1": "B1 — Средний",
-    "B2": "B2 — Средне-продвинутый",
-    "C1": "C1 — Продвинутый",
-    "C2": "C2 — В совершенстве",
-}
 
 
 @dataclass(frozen=True)
@@ -48,7 +40,17 @@ def _normalized_name(value: Any) -> str:
 
 
 def parse_language_plan(content: str) -> tuple[Language, ...]:
-    """Parse strict JSON and reject guessed/invalid CEFR levels."""
+    """Parse strict JSON from the LLM; reject any non-null level outright.
+
+    Unlike ``parse_manual_languages``, this parser never accepts a concrete
+    CEFR value — the LLM is instructed to always return ``level: null``
+    (``build_languages_prompt``), and a model that ignores that instruction
+    (a slip, or a prompt injection from the resume text) must not be able to
+    smuggle a guessed level into a write. A non-null ``level`` is therefore
+    always a parse error, even if it happens to be a syntactically valid
+    CEFR code — accepting "valid-looking" values here is exactly the gap
+    that let a guessed level reach ``edit_languages_on_hh`` unconfirmed.
+    """
     try:
         raw = json.loads(content.strip())
     except (AttributeError, json.JSONDecodeError) as exc:
@@ -64,8 +66,8 @@ def parse_language_plan(content: str) -> tuple[Language, ...]:
         level = item["level"]
         if not name:
             raise ValueError("название языка должно быть непустым")
-        if level is not None and (not isinstance(level, str) or level not in CEFR_LEVELS):
-            raise ValueError("уровень CEFR должен быть null или одним из A1-A2-B1-B2-C1-C2")
+        if level is not None:
+            raise ValueError("LLM не должен указывать уровень CEFR; поле level должно быть null")
         key = name.casefold()
         if key in seen:
             raise ValueError(f"дублирующийся язык: {name}")
@@ -135,6 +137,16 @@ def edit_languages_on_hh(
             return LanguagesResult(False, languages, "страница профиля не подтверждена")
         card = page.locator(resume_page.RESUME_LANGUAGE_CARD)
         add_button = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
+        # #265 code-review round 1: an immediate count() right after goto_hh can
+        # observe the DOM before the profile SPA finishes hydrating (the same
+        # commit-vs-render race documented in CLAUDE.md for resume_position.py /
+        # skills.py / delete_resume.py). Wait for the card to render before the
+        # strict count check; a genuinely missing card times out here and still
+        # fails closed with our own message, not a generic PlaywrightError one.
+        try:
+            card.first.wait_for(state="visible", timeout=15000)
+        except PlaywrightError:
+            pass
         if card.count() != 1 or add_button.count() != 1:
             return LanguagesResult(False, languages, "карточка языков не найдена однозначно")
         existing = tuple(
@@ -153,7 +165,7 @@ def edit_languages_on_hh(
                     f"уровень CEFR для языка '{item.name}' не подтверждён",
                 )
             add_button.click()
-            dialog = page.get_by_role("dialog", name="Язык").last()
+            dialog = page.get_by_role("dialog", name="Язык").last
             dialog.wait_for(state="visible")
             form = dialog.locator(resume_page.RESUME_LANGUAGE_ADD_FORM)
             form.wait_for(state="visible")
@@ -173,7 +185,7 @@ def _choose_language(page, form, name: str) -> None:
     if selector.count() != 1:
         raise PlaywrightError("поле выбора языка не найдено однозначно")
     selector.click()
-    dialog = page.get_by_role("dialog", name="Язык").last()
+    dialog = page.get_by_role("dialog", name="Язык").last
     dialog.get_by_role("option", name=name, exact=True).click()
 
 
@@ -182,7 +194,7 @@ def _choose_degree(page, form, level: str) -> None:
     if selector.count() != 1:
         raise PlaywrightError("поле выбора уровня не найдено однозначно")
     selector.click()
-    dialog = page.get_by_role("dialog", name="Язык").last()
+    dialog = page.get_by_role("dialog", name="Язык").last
     option = dialog.locator(resume_page.RESUME_LANGUAGE_DEGREE_OPTION.format(level.lower()))
     if option.count() != 1:
         raise PlaywrightError(f"опция уровня '{level}' не найдена однозначно")

@@ -63,7 +63,6 @@ RESUME_LANGUAGE_FORM_DEGREE_SELECT = (
 )
 RESUME_LANGUAGE_DEGREE_OPTION = "[data-qa='magritte-select-option-{}']"  # lowercase CEFR code
 RESUME_LANGUAGE_SAVE = "[data-qa='profile-modal-button-save']"
-RESUME_LANGUAGE_CLOSE = "[data-qa='profile-modal-button-close']"
 
 # Live read-only research for issue #293 (2026-08-18).  These controls are
 # rendered on the resume list card, but are kept here with the resume-page
