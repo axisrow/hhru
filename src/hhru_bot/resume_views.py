@@ -96,8 +96,15 @@ def parse_resume_view_history(
         # (SSR dates often carry no time-of-day), so relying on employer_id as
         # the sole identity would silently drop the second view (#428 review).
         source_id = _value(entry, "id", "viewId", "eventId")
-        if employer is None and source_id is None and employer_id is None:
-            raise ValueError("SSR hidden-employer view has no stable identity")
+        # Require source_id or employer_id regardless of whether `employer`
+        # (the mutable display name) is present (#428 review, round 12): an
+        # entry with only a name and neither ID would get view_key='' in
+        # history.py, and TWO SUCH entries — different employers or repeat
+        # views of the same one — would silently collapse into one row via
+        # INSERT OR IGNORE. Fail closed instead of persisting an ambiguous
+        # identity (CLAUDE.md decision #5).
+        if source_id is None and employer_id is None:
+            raise ValueError("SSR view has no stable identity (no source_id or employer_id)")
         result.append(
             {
                 "resume_id": str(resume_id),

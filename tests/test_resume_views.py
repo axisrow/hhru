@@ -79,6 +79,22 @@ def test_parse_resume_view_history_fails_closed_on_schema_drift():
         parse_resume_view_history(_html({"applicantResumeViewHistory": {}}), "r1")
 
 
+def test_parse_resume_view_history_fails_closed_on_name_only_entry():
+    """An entry with an employer name but neither source_id nor employer_id
+    must be rejected, not silently accepted with an empty view_key — two
+    such entries on the same date-only viewed_at would otherwise collapse
+    into one row in history.py (#428 review, round 12)."""
+    html = _html(
+        {
+            "applicantResumeViewHistory": {
+                "historyViews": [{"date": "2026-08-20", "employerName": "Acme"}]
+            }
+        }
+    )
+    with pytest.raises(ValueError):
+        parse_resume_view_history(html, "r1")
+
+
 def test_has_next_page_uses_confirmed_numeric_pager():
     class Locator:
         def __init__(self, values):
