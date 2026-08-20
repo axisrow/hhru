@@ -37,7 +37,7 @@ def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -
         "run",
         lambda _command, check: SimpleNamespace(returncode=0),
     )
-    clock = iter((10.0, 30.1))
+    clock = iter((10.0, 40.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 1
