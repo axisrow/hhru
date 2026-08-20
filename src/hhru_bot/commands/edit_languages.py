@@ -6,6 +6,8 @@ import argparse
 import sys
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
+
 from .copy_resume import confirm_write
 
 
@@ -129,11 +131,19 @@ def run(args: argparse.Namespace) -> None:
             # round 2 (/review): shares wait_for_language_card/
             # read_existing_languages with edit_languages_on_hh instead of
             # duplicating the wait-then-count-then-read logic here.
-            card = wait_for_language_card(page)
-            if card is None:
-                print("[FAIL] Карточка языков не найдена однозначно")
+            # round 3 (/review): both calls can raise PlaywrightError
+            # (card.count(), row.locator(...).inner_text()) — catch it here
+            # like every other failure path in this command, instead of
+            # letting a bare traceback surface.
+            try:
+                card = wait_for_language_card(page)
+                if card is None:
+                    print("[FAIL] Карточка языков не найдена однозначно")
+                    sys.exit(1)
+                existing = read_existing_languages(card)
+            except PlaywrightError as exc:
+                print(f"[FAIL] Карточка языков не подтверждена: {exc}")
                 sys.exit(1)
-            existing = read_existing_languages(card)
             try:
                 response = LLMClient(config.ai).chat(
                     build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
