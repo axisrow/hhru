@@ -654,7 +654,10 @@ class History:
             cursor = conn.execute(
                 """
                 INSERT INTO actions
-                    (resume_id, vacancy_id, action, status, reason, letter_variant, search_query, created_at)
+                    (
+                        resume_id, vacancy_id, action, status, reason,
+                        letter_variant, search_query, created_at
+                    )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
