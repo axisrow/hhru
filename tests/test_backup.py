@@ -1,3 +1,4 @@
+import io
 import sqlite3
 import tarfile
 from pathlib import Path
@@ -137,6 +138,46 @@ def test_restore_routes_archived_member_by_snapshot_not_by_previous_config_alias
         member = tar.extractfile("storage_state/old.json")
         assert member is not None
         assert member.read().decode("utf-8") == "STALE-EXTERNAL-TOKEN"
+
+
+def test_restore_rejects_oversized_archive_member(tmp_path, monkeypatch):
+    # restore_backup() must reject a member whose declared TarInfo.size
+    # exceeds the cap *before* reading its content into memory — an
+    # unbounded `source.read()` on a maliciously large member is an
+    # unbounded memory/disk gap in an otherwise defense-in-depth extraction
+    # path (path traversal, symlinks and wrong types are already rejected).
+    # A real multi-GiB member would make the test itself slow/heavy, so the
+    # cap is lowered via monkeypatch and the member is sized just above it —
+    # exercising the exact same size-check code path with tiny fixtures.
+    monkeypatch.setattr("hhru_bot.backup._MAX_MEMBER_SIZE", 1024)
+    config, history = _state(tmp_path)
+    archive = tmp_path / "bad.tar"
+    with tarfile.open(archive, "w") as tar:
+        payload = b"x" * 2048
+        info = tarfile.TarInfo("config.yaml")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+
+    with pytest.raises(BackupError, match="превышает допустимый размер"):
+        restore_backup(archive, config, history, dry_run=False)
+
+
+def test_restore_reports_rollback_archive_path(tmp_path):
+    # The rollback snapshot created before overwriting anything must be
+    # discoverable by the caller, not just written silently to disk — a
+    # crash mid-restore should still leave the user a CLI-visible pointer
+    # to the archive that can undo it.
+    config, history = _state(tmp_path)
+    archive = tmp_path / "state.tar.gz"
+    create_backup(config, history, archive)
+
+    seen: list[Path] = []
+    restore_backup(archive, config, history, dry_run=False, on_rollback=seen.append)
+
+    assert len(seen) == 1
+    rollback = seen[0]
+    assert rollback.is_file()
+    assert rollback.name.startswith(".before-restore-")
 
 
 def test_restore_maps_canonical_members_to_custom_paths(tmp_path):

@@ -7,6 +7,7 @@ import sqlite3
 import stat
 import tarfile
 import tempfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from shutil import copyfile
@@ -16,6 +17,15 @@ import yaml
 
 class BackupError(ValueError):
     """The backup archive or destination is not safe to use."""
+
+
+# A single hhru data directory (config, one SQLite history, one session
+# file) has no legitimate reason to contain a multi-gigabyte member. Without
+# a cap, restore_backup() would read a maliciously (or accidentally) huge
+# member's full decompressed content into memory via `source.read()` before
+# any content validation runs — an unbounded memory/disk gap in an otherwise
+# defense-in-depth extraction path (#426 review finding).
+_MAX_MEMBER_SIZE = 512 * 1024 * 1024  # 512 MiB
 
 
 def _root(config: Path, history: Path) -> Path:
@@ -199,8 +209,16 @@ def restore_backup(
     history: str | Path,
     *,
     dry_run: bool = True,
+    on_rollback: Callable[[Path], None] | None = None,
 ) -> list[str]:
-    """Validate and restore an archive; dry-run is the safe default."""
+    """Validate and restore an archive; dry-run is the safe default.
+
+    ``on_rollback``, when given, is called with the path of the pre-restore
+    rollback archive right after it is created — the caller's only way to
+    learn where it landed. Without this, a crash between that snapshot and
+    the function's normal return leaves a recoverable rollback archive on
+    disk with no CLI-visible pointer to it (#426 review finding).
+    """
     archive_path, config, history = Path(archive_path), Path(config), Path(history)
     root = _root(config, history).resolve()
     config, history = config.resolve(), history.resolve()
@@ -219,6 +237,11 @@ def restore_backup(
                 name = _member_name(member)
                 if member.isdir() or name == "config.missing":
                     continue
+                if member.size > _MAX_MEMBER_SIZE:
+                    raise BackupError(
+                        f"Файл {name!r} в архиве превышает допустимый размер: "
+                        f"{member.size} > {_MAX_MEMBER_SIZE} байт"
+                    )
                 target = staging / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source = archive.extractfile(member)
@@ -255,6 +278,8 @@ def restore_backup(
                 require_config=False,
                 extra_storage=desired_storage,
             )
+            if on_rollback is not None:
+                on_rollback(rollback)
 
         # Only `desired_storage` — the session path named by the archive's own
         # config.yaml — legitimately owns the canonical "storage_state/<basename>"
