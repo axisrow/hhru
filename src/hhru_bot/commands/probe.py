@@ -476,7 +476,13 @@ def run(args: argparse.Namespace) -> bool | None:
         result = probe_vacancy(
             page,
             vacancy,
-            resume_id=resume.id,
+            # resume.resume_id (хвост resume_url), а НЕ resume.id (слаг конфига):
+            # форма отклика адресует опцию как
+            # [data-qa='magritte-select-option-{resume_id}'], и слаг там не
+            # существует — _select_resume_in_form отказывал «резюме не найдено
+            # среди опций». run_apply_for_resume везде использует resume_id;
+            # probe расходился с ним и потому не воспроизводил боевой путь.
+            resume_id=resume.resume_id,
             cover_letter_template=cover_letter_template,
             letter_provider=letter_provider,
         )

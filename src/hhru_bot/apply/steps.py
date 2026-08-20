@@ -40,6 +40,11 @@ RESUME_WARNING_TIMEOUT_MS = 1_500
 # выбор молча пропускается и submit отправляет резюме по умолчанию (fail-open,
 # см. cycle-2 review #33). Поэтому селектор резюме ждём как обязательный элемент.
 RESUME_SELECT_TIMEOUT_MS = APPLY_TIMEOUT_MS
+# Закрытие раскрытого списка резюме после выбора — локальная CSS/React-анимация
+# без сетевого запроса, поэтому таймаут заметно короче RESUME_SELECT_TIMEOUT_MS
+# (там ждём рендер опций). Отдельная константа, а не переиспользование: иначе
+# каждая вакансия с незакрывшимся dropdown стоила бы лишние 10с.
+RESUME_DROPDOWN_CLOSE_TIMEOUT_MS = 3_000
 
 
 class SubmitClickUncertain(Exception):
@@ -280,8 +285,69 @@ def _is_visible(page: Page, selector: str, *, timeout_ms: int) -> bool:
     return True
 
 
-def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
-    """Заполняет форму отклика. Возвращает причину отказа или None, если заполнение OK."""
+def fill_cover_letter(page: Page, letter: str) -> str | None:
+    """Заполняет сопроводительное письмо в форме отклика. None — заполнено.
+
+    Возвращает причину отказа, если поля письма нет: письмо — смысл этого
+    инструмента, а не опциональная деталь, поэтому его отсутствие fail-closed
+    останавливает отправку (до submit, следа на hh.ru нет).
+
+    Отдельная функция, а не инлайн в fill_response_form: probe (#8) заполняет
+    письмо тем же способом, но без submit, и раньше держал СВОЮ копию этой
+    логики. Копия отстала — в ней остался только тоггл полной формы, которого
+    в модалке не существует, поэтому probe молча не заполнял письмо и не
+    воспроизводил боевой путь. Переиспользование вместо дубля — принцип проекта.
+    """
+    from ..selector_groups import apply_form
+
+    # Письмо адресуется в ОБОИХ shape формы (см. apply_form.py): модалка
+    # (add-cover-letter + …-popup-form-letter-input) и полная страница
+    # (vacancy-response-letter-toggle + vacancy-response-form-letter-input).
+    # В каждом shape совпадает ровно один операнд, поэтому порядок or_ не важен.
+    letter_toggle = page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).or_(
+        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP)
+    )
+    try:
+        letter_toggle.first.wait_for(state="visible", timeout=OPTIONAL_FIELD_TIMEOUT_MS)
+        letter_toggle.first.click()
+        # Клик раскрывает textarea — её готовности ждём явно ниже, а не слепой паузой.
+    except PlaywrightError:
+        # Отсутствие тоггла легитимно: hh.ru может отрендерить textarea уже
+        # развёрнутой (боевой случай 136417846). Решает не тоггл, а наличие
+        # самой textarea — проверка ниже.
+        pass
+
+    letter_input = page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).or_(
+        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM)
+    )
+    try:
+        # CLAUDE.md: клик по тогглу запускает React-рендер — явное ожидание
+        # видимости перед fill, а не count()/слепая пауза.
+        letter_input.first.wait_for(state="visible", timeout=APPLY_TIMEOUT_MS)
+    except PlaywrightError:
+        # По SSR topicList[].hasResponseLetter из 18 откликов аккаунта 16 ушли
+        # пустыми именно потому, что этот отказ раньше был молчаливым пропуском.
+        return (
+            "поле сопроводительного письма не найдено в форме отклика — "
+            "отправка отменена (отклик без письма не отправляем)"
+        )
+    letter_input.first.fill(letter)
+    # fill() синхронно выставляет значение — дополнительное ожидание не нужно.
+    return None
+
+
+def ensure_resume_selected(page: Page, resume_id: str) -> str | None:
+    """Подтверждает выбор резюме в форме отклика. None — подтверждено, иначе причина отказа.
+
+    Единственная реализация этого шага для ОБОИХ путей — боевого
+    (``fill_response_form``) и диагностического (``probe._fill_cover_letter_only``).
+    Отдельная функция, а не инлайн: probe держал свою копию проверки с другой
+    семантикой (``visible`` за ``OPTIONAL_FIELD_TIMEOUT_MS`` вместо ``attached``
+    за ``RESUME_SELECT_TIMEOUT_MS``) и при неотрисовавшемся селекторе МОЛЧА
+    пропускал выбор → печатал [OK] там, где боевой apply отказался бы отправлять.
+    Копия логики — та самая причина, по которой probe уже дважды расходился с
+    боевым путём; переиспользование вместо дубля — принцип проекта.
+    """
     from ..selector_groups import apply_form
 
     # Выбор резюме — особый случай: APPLY_RESUME_SELECT это коллекция (несколько резюме),
@@ -328,18 +394,18 @@ def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
         )
     if not _select_resume_in_form(page, resume_id):
         return f"не удалось однозначно выбрать резюме '{resume_id}' в форме отклика"
+    return None
 
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TOGGLE, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TOGGLE).click()
-        # Клик раскрывает textarea — ждём её готовности явно, а не слепую паузу.
 
-    if _is_visible(
-        page, apply_form.APPLY_COVER_LETTER_TEXTAREA, timeout_ms=OPTIONAL_FIELD_TIMEOUT_MS
-    ):
-        page.locator(apply_form.APPLY_COVER_LETTER_TEXTAREA).fill(letter)
-        # fill() синхронно выставляет значение — дополнительное ожидание не нужно.
+def fill_response_form(page: Page, resume_id: str, letter: str) -> str | None:
+    """Заполняет форму отклика. Возвращает причину отказа или None, если заполнение OK."""
+    from ..selector_groups import apply_form
+
+    if reason := ensure_resume_selected(page, resume_id):
+        return reason
+
+    if reason := fill_cover_letter(page, letter):
+        return reason
 
     # Кнопка отправки — обязательный элемент формы. Не optional: отсутствие = отказ.
     if not _is_visible(page, apply_form.APPLY_SUBMIT_BUTTON, timeout_ms=APPLY_TIMEOUT_MS):
@@ -437,6 +503,49 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
         # резюме → отказ, а не тихий submit дефолтного резюме.
         logger.warning(
             "Резюме '%s' не подтверждено при клике (%s) — отправка отменена", resume_id, exc
+        )
+        return False
+
+    # Панель выбора резюме НЕ закрывается сама после клика по опции — источник
+    # подтверждения боевой лог 2026-08-20 (`data/logs/hhru_bot.log`): Playwright
+    # в сообщении об интерсепте печатает ровно один `data-qa="drop-base"`
+    # (в probe-HTML-дампах этого атрибута нет вовсе — см. apply_form.py).
+    # Пока панель открыта, её абсолютно
+    # спозиционированный контейнер перекрывает submit в футере модалки: боевой
+    # прогон получал `subtree intercepts pointer events`, 30с ретраев и
+    # SubmitClickUncertain — ложную «неопределённость» при НЕотправленном
+    # отклике (жгла дневной лимит и навсегда блокировала вакансию).
+    #
+    # Поэтому закрываем панель явно повторным кликом по триггеру (стандартный
+    # toggle селекта; APPLY_RESUME_SELECT — уже подтверждённый single-match
+    # локатор этого же потока). Escape не используем: в модалке он может
+    # закрыть всю форму отклика, а не только панель.
+    #
+    # Ждём скрытия САМОЙ ПАНЕЛИ, а не опции: опции внутри панели — постоянно
+    # видимые карточки (выбранная несёт aria-selected="true"), они остаются
+    # visible, пока панель открыта, поэтому ожидание скрытия опции никогда бы
+    # не выполнилось.
+    try:
+        page.locator(apply_form.APPLY_RESUME_SELECT).first.click()
+    except PlaywrightError as exc:
+        logger.warning(
+            "Не удалось закрыть список выбора резюме после выбора '%s' (%s) — отправка отменена",
+            resume_id,
+            exc,
+        )
+        return False
+    try:
+        page.locator(apply_form.APPLY_RESUME_DROPDOWN).wait_for(
+            state="hidden", timeout=RESUME_DROPDOWN_CLOSE_TIMEOUT_MS
+        )
+    except PlaywrightError as exc:
+        # fail-closed: submit при открытой панели гарантированно упрётся в
+        # оверлей. Честный отказ ДО клика лучше ложного uncertain после него.
+        logger.warning(
+            "Список выбора резюме не закрылся после выбора '%s' (%s) — отправка отменена "
+            "(открытая панель перекрыла бы кнопку отправки)",
+            resume_id,
+            exc,
         )
         return False
     return True

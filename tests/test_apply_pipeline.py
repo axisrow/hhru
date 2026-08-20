@@ -51,12 +51,18 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:
         self._wait_for_calls.append(1)
         self._wait_for_timeouts.append(timeout)
-        if not self._present:
-            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+        if state == "hidden":
+            # Ждём ИСЧЕЗНОВЕНИЯ: отсутствующий элемент удовлетворяет сразу,
+            # присутствующий — никогда (в этом фейке состояние статично).
+            if self._present:
+                raise PlaywrightTimeoutError("still present")
+            return
+        if not self._present:
             raise PlaywrightTimeoutError("not present")
 
     def click(self, *, timeout=None, no_wait_after=None) -> None:
@@ -166,6 +172,23 @@ class FakePage:
             return _FakeLocator(present=self._success)
         if selector == f"{apply_form.APPLY_SUBMIT_BUTTON} >> xpath=ancestor::form[1]":
             return _FakeLocator(present=self._success and self._submit_in_form)
+        if selector == apply_form.APPLY_RESUME_DROPDOWN:
+            # Панель выбора резюме: шаг закрывает её повторным кликом по
+            # триггеру и ждёт state="hidden". Фейк статичен — present=False
+            # сразу удовлетворяет ожиданию «скрыта» (см. _FakeLocator.wait_for,
+            # который state="hidden" обрабатывает явно), то есть здесь всегда
+            # моделируется закрывшаяся панель. Ветка «панель залипла» покрыта в
+            # tests/test_apply_steps.py (dropdown_stays_open).
+            return _FakeLocator(present=False)
+        if selector in (
+            apply_form.APPLY_COVER_LETTER_TEXTAREA,
+            apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM,
+        ):
+            # Поле письма присутствует в реальной форме отклика (в обоих shape).
+            # Обязательно для фейка: письмо теперь fail-closed — без textarea
+            # fill_response_form отказывается отправлять, и тесты submit-путей
+            # этого файла (acted/uncertain/verify) не доходили бы до submit.
+            return _FakeLocator(present=self._success)
         # Прочие селекторы формы — считаем отсутствующими (форма не заполнена,
         # но submit присутствует в фейковом успехе через success-путь ниже).
         if selector == apply_form.APPLY_SUBMIT_BUTTON:
@@ -844,6 +867,66 @@ def test_apply_submit_click_error_external_found_upgrades_to_success():
     assert result.success is True
     assert result.acted is True
     assert result.uncertain is False
+
+
+def test_apply_submit_click_error_external_not_found_clears_uncertain():
+    """SubmitClickUncertain пред-ставит uncertain=True ДО внешней проверки, но
+    verify вынес not_found — список ПОДТВЕРЖДЁННО прочитан и вакансии в нём нет,
+    то есть отклик точно не ушёл. Флаг обязан сброситься: иначе в actions уходит
+    'uncertain' при доказанном отсутствии отклика, а он расходует дневной лимит
+    (count_today) и навсегда блокирует вакансию (has_applied).
+
+    Боевой случай 2026-08-20, vacancy_id=136190065: verify залогировал «список
+    прочитан, вакансии нет», а в history легло status='uncertain'."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    verifier = _verifier("not_found")
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError(
+            "Locator.click: Timeout 30000ms exceeded ... subtree intercepts pointer events"
+        ),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.uncertain is False
+    # acted не трогаем: клик по кнопке отклика был, пауза троттлинга заслужена.
+    assert result.acted is True
+
+
+def test_apply_confirmation_error_external_not_found_clears_uncertain(monkeypatch):
+    """Тот же дефект достижим из post-submit PlaywrightError — он тоже
+    пред-ставит uncertain=True перед вызовом верификатора."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _raise(_page, **_kwargs):
+        raise PlaywrightError("Page closed while polling success markers")
+
+    monkeypatch.setattr(pipeline_module, "wait_success_confirmation", _raise)
+    verifier = _verifier("not_found")
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=verifier)
+    assert result.success is False
+    assert result.uncertain is False
+    assert result.acted is True
+
+
+def test_apply_verifier_absent_keeps_uncertain_after_submit_click_error():
+    """Регресс-страховка #176: без верификатора сброс НЕ действует — исход
+    честно неизвестен, uncertain сохраняется и has_applied блокирует дубликат."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = FakePage(
+        apply_button=True,
+        success=True,
+        submit_in_form=True,
+        submit_click_error=PlaywrightError("Target closed"),
+    )
+    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=False, verifier=None)
+    assert result.uncertain is True
+    assert result.acted is True
 
 
 def test_apply_confirmation_error_external_found_upgrades_to_success(monkeypatch):
