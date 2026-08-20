@@ -85,10 +85,12 @@ def _funnel_rows(funnel: Iterable[dict], group_key: str = "resume_id") -> list[l
 
 
 def format_funnel(funnel: Iterable[dict], fmt: str, group_key: str = "resume_id") -> str:
-    """Отрисовать воронку по резюме в выбранном формате (table/md).
+    """Отрисовать воронку в выбранном формате (table/md).
 
-    ``funnel`` — список строк из History.funnel_by_resume. Пустой список рисует
-    шапку таблицы (нечего показать — но формат стабилен, не падает).
+    ``funnel`` — список строк из History.funnel_by_resume (group_key='resume_id',
+    по умолчанию) или History.funnel_by_search_query (group_key='search_query',
+    #411). Пустой список рисует шапку таблицы (нечего показать — но формат
+    стабилен, не падает).
     """
     _check_format(fmt)
     if group_key not in _GROUP_HEADERS:

@@ -254,6 +254,28 @@ def test_funnel_by_search_query_joins_seen_vacancies_and_sorts_by_invite_rate(tm
     assert funnel[1]["invite_rate"] == 0.0
 
 
+def test_funnel_by_search_query_counts_distinct_resumes_per_vacancy(tmp_path):
+    """Два резюме, откликнувшиеся на одну вакансию, — два разных отклика (#411 CR).
+
+    idx_resume_vacancy_apply — UNIQUE(resume_id, vacancy_id), не UNIQUE(vacancy_id):
+    разные резюме легитимно откликаются на одну и ту же вакансию как отдельные
+    строки actions. Дедупликация только по vacancy_id схлопывает их в один sent,
+    занижая счётчики и искажая производные *_rate.
+    """
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v1", "apply", "success")
+    with h._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen "
+            "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+            ("v1", "python", "2026-01-01", "2026-01-01"),
+        )
+
+    funnel = h.funnel_by_search_query()
+    assert funnel[0]["sent"] == 2
+
+
 def test_funnel_by_search_query_filters_resume_and_since(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")

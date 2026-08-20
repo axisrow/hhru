@@ -945,8 +945,13 @@ class History:
 
         Отклик учитывается в каждом запросе, в котором была найдена его
         вакансия (``vacancies_seen`` допускает несколько таких строк). Внутри
-        запроса вакансия считается один раз, а этапы остаются кумулятивными,
-        как в :meth:`funnel_by_resume`.
+        запроса счётчики дедуплицируются по паре (resume_id, vacancy_id), а не
+        только по vacancy_id: ``idx_resume_vacancy_apply`` — UNIQUE по этой
+        паре, поэтому два разных резюме легитимно откликаются на одну и ту же
+        вакансию отдельными строками actions (code review #411) — дедуп по
+        одному vacancy_id занижал бы sent/viewed/invited/offer/replied и искажал
+        производные *_rate при дефолтном resume_id=None (все резюме). Этапы
+        остаются кумулятивными, как в :meth:`funnel_by_resume`.
         """
         where = ["a.action = 'apply'", "a.status = 'success'"]
         params: list = []
@@ -963,7 +968,7 @@ class History:
                 f"""
                 SELECT
                     v.search_query AS search_query,
-                    COUNT(DISTINCT a.vacancy_id) AS sent,
+                    COUNT(DISTINCT a.resume_id || ':' || a.vacancy_id) AS sent,
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id
@@ -971,7 +976,7 @@ class History:
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.vacancy_id END) AS viewed,
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS viewed,
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id
@@ -979,14 +984,14 @@ class History:
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.vacancy_id END) AS invited,
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS invited,
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
                         WHERE r.vacancy_id = a.vacancy_id AND r.status = 'offer'
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.vacancy_id END) AS offer,
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS offer,
                     COUNT(DISTINCT CASE WHEN EXISTS (
                         SELECT 1 FROM responses r
                         JOIN replies p ON p.topic = r.topic AND p.status = 'success'
@@ -998,7 +1003,7 @@ class History:
                     ) OR EXISTS (
                         SELECT 1 FROM manual_offers m
                         WHERE m.resume_id = a.resume_id AND m.vacancy_id = a.vacancy_id
-                    ) THEN a.vacancy_id END) AS replied
+                    ) THEN a.resume_id || ':' || a.vacancy_id END) AS replied
                 FROM actions AS a
                 JOIN vacancies_seen AS v ON v.vacancy_id = a.vacancy_id
                 {clause}
