@@ -158,8 +158,8 @@ except PlaywrightError as exc:
 Побочно: `field.wait_for(state="hidden")` вызван **без** `timeout` — в отличие от соседних
 редакторов, где стоит явный `SAVE_TIMEOUT_MS`.
 
-Тесты: `test_save_about_reports_plain_failure_after_the_save_click_already_landed`,
-`test_about_module_has_no_uncertain_concept_at_all`.
+Тесты (после фикса инвертированы): `test_save_about_marks_post_click_timeout_as_uncertain`,
+`test_about_module_marks_post_click_save_failures_as_uncertain`.
 
 ---
 
@@ -175,8 +175,9 @@ except PlaywrightError as exc:
 любое исключение печатается как голый `[FAIL] {exc}` и команда возвращает `True`, хотя
 сохранение уже могло примениться.
 
-Тест: `test_write_modules_click_save_but_never_mark_the_outcome_uncertain` (параметризован по
-четырём модулям).
+Тест (после фикса инвертирован):
+`test_write_modules_mark_post_click_save_failures_as_uncertain` (параметризован по четырём
+модулям).
 
 ---
 

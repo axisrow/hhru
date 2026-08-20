@@ -112,6 +112,7 @@ def test_all_commands_registered():
         "fill-form",
         "profile",
         "call-api",
+        "learn",
     }
 
 
@@ -162,6 +163,7 @@ def test_register_commands_returns_names():
         "fill_form",
         "profile",
         "call_api",
+        "learn",
     }
 
 

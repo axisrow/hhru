@@ -59,8 +59,49 @@ def test_message_without_link_returns_none():
 
 
 def test_returns_first_external_link_when_message_has_several():
-    assert extract_external_test_link("https://example.com/a и https://other.test/b") == (
+    assert extract_external_test_link("Тест: https://example.com/a и https://other.test/b") == (
         "https://example.com/a"
+    )
+
+
+def test_company_link_without_test_context_is_ignored():
+    assert extract_external_test_link("Сайт компании: https://example.com/careers") is None
+
+
+def test_external_link_with_nearby_test_context_is_detected():
+    assert extract_external_test_link("Пройдите тест по ссылке: https://example.com/test") == (
+        "https://example.com/test"
+    )
+
+
+def test_external_link_with_following_test_context_is_detected():
+    assert (
+        extract_external_test_link(
+            "Перейдите по ссылке https://example.com/quiz и выполните тестовое задание"
+        )
+        == "https://example.com/quiz"
+    )
+
+
+def test_unrelated_word_does_not_count_as_test_context():
+    assert (
+        extract_external_test_link("В заданное время подключитесь: https://meet.example/abc")
+        is None
+    )
+
+
+def test_known_test_platform_is_detected_without_context():
+    assert extract_external_test_link("https://candidate.typeform.com/to/abc") == (
+        "https://candidate.typeform.com/to/abc"
+    )
+
+
+def test_skips_unrelated_external_link_before_test_link():
+    assert (
+        extract_external_test_link(
+            "Сайт компании https://example.com и тестовое задание https://other.example/task"
+        )
+        == "https://other.example/task"
     )
 
 
