@@ -66,7 +66,7 @@ def parse_publication_time(text: str | None, now: datetime | None = None) -> dat
         return now
     if "вчера" in value or value == "yesterday":
         return now - timedelta(days=1)
-    match = re.search(r"(\d+)\s+(?:дн(?:я|ей)?|day|days)\s+(?:назад|ago)", value)
+    match = re.search(r"(\d+)\s+(?:день|дня|дней|day|days)\s+(?:назад|ago)", value)
     if match:
         return now - timedelta(days=int(match.group(1)))
     match = re.search(r"(\d{1,2})[.]\s*(\d{1,2})(?:[.]\s*(\d{2,4}))?", value)
