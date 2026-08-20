@@ -2192,24 +2192,21 @@ def _purge_legacy_dry_run_applied_skips(conn: sqlite3.Connection) -> None:
     changing deduplication alone would leave those vacancies blocked forever.
     Rows without that exact legacy signature are intentionally untouched: they
     may represent a real site-side duplicate detection or another skip cause.
+    The set-based ``EXCEPT`` keeps this one-time cleanup from doing a
+    correlated actions-table scan for every skipped row.
     """
     conn.execute(
         """
-        DELETE FROM skipped AS s
-        WHERE s.reason = 'already_applied'
-          AND EXISTS (
-                SELECT 1 FROM actions AS a
-                WHERE a.resume_id = s.resume_id
-                  AND a.vacancy_id = s.vacancy_id
-                  AND a.action = 'apply'
-                  AND a.status = 'dry_run'
-          )
-          AND NOT EXISTS (
-                SELECT 1 FROM actions AS a
-                WHERE a.resume_id = s.resume_id
-                  AND a.vacancy_id = s.vacancy_id
-                  AND a.action = 'apply'
-                  AND a.status IN ('success', 'uncertain')
+        DELETE FROM skipped
+        WHERE reason = 'already_applied'
+          AND (resume_id, vacancy_id) IN (
+                SELECT resume_id, vacancy_id
+                FROM actions
+                WHERE action = 'apply' AND status = 'dry_run'
+                EXCEPT
+                SELECT resume_id, vacancy_id
+                FROM actions
+                WHERE action = 'apply' AND status IN ('success', 'uncertain')
           )
         """
     )
