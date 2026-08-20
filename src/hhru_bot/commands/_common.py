@@ -776,7 +776,14 @@ def _run_apply_for_resume(
             snapshot_source = letter_provider or TemplateCoverLetterProvider(cover_letter_template)
             snapshot_outcome = snapshot_source.render(card)
             snapshot_letter = snapshot_outcome.text
-            history.enqueue_review(resume.resume_id, card, _score, _breakdown, snapshot_letter)
+            history.enqueue_review(
+                resume.resume_id,
+                card,
+                _score,
+                _breakdown,
+                snapshot_letter,
+                search_query=resume.search.text,
+            )
 
             class _DryRunLetter:
                 def render(
@@ -799,18 +806,20 @@ def _run_apply_for_resume(
             # would make the next run send a duplicate. Keeping this hook after
             # navigation/questions preserves the old no-action semantics for
             # confirmed pre-submit exits.
-            # #420 follow-up (Codex adversarial-review, PR #449): review_queue
-            # (#414 schema) doesn't persist the search_query the card was found
-            # under, and the config's resume.search.text can have changed
-            # between the dry-run that queued it and this --approved run —
-            # attributing to the *current* query would silently mislabel the
-            # funnel. Provenance is unknown for approved items, so leave
-            # search_query NULL/unattributed rather than guess.
+            # #420 follow-up (Codex adversarial-review round 1+2, PR #449): the
+            # config's resume.search.text can have changed between the dry-run
+            # that queued an --approved card and this run — attributing to the
+            # *current* query would silently mislabel the funnel. Use the query
+            # review_queue recorded at enqueue time instead; a pre-fix queue row
+            # has none stored (NULL), which stays genuinely unattributed rather
+            # than falling back to an unrelated vacancies_seen query (round 2).
             action_id = history.begin_action(
                 resume.resume_id,
                 vacancy_id,
                 "apply",
-                search_query=None if approved_item else resume.search.text,
+                search_query=(
+                    approved_item["search_query"] if approved_item else resume.search.text
+                ),
             )
 
         # dict value type intentionally broad — **apply_kwargs spreads several
@@ -900,9 +909,9 @@ def _run_apply_for_resume(
             # The verifier can positively reconcile an external submit even
             # when the pre-submit hook was not reached (for example, a
             # transitional page exposed the post-click state directly).
-            # #420 follow-up: same approved-item provenance caveat as
-            # _before_submit above — review_queue doesn't record the
-            # original search_query, so don't guess it from the current config.
+            # #420 follow-up: same approved-item provenance handling as
+            # _before_submit above — use the query review_queue recorded at
+            # enqueue time, not the current config's.
             history.record_action(
                 resume.resume_id,
                 card.vacancy_id,
@@ -910,7 +919,9 @@ def _run_apply_for_resume(
                 "uncertain" if result.uncertain else ("success" if result.success else "failed"),
                 result.reason,
                 letter_variant=result.letter_variant,
-                search_query=None if approved_item else resume.search.text,
+                search_query=(
+                    approved_item["search_query"] if approved_item else resume.search.text
+                ),
             )
         if result.success:
             applied_count += 1

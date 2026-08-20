@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
     status TEXT NOT NULL DEFAULT 'pending',
     permit_hash TEXT,
     permit_expires_at TEXT,
+    search_query TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -437,6 +438,11 @@ class History:
             conn.executescript(SCHEMA)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
             _ensure_column(conn, "actions", "search_query", "TEXT")
+            # #420 follow-up (Codex adversarial-review, PR #449): review_queue
+            # rows created before this column existed have no stored search_query
+            # — they stay NULL and are legacy-attributed via the existing
+            # vacancies_seen fallback in funnel_by_search_query, same as actions.
+            _ensure_column(conn, "review_queue", "search_query", "TEXT")
             # #93: employer_tier в vacancies_seen (для estimate_salary). CREATE TABLE
             # IF NOT EXISTS не добавит колонку в уже существующую таблицу (#51) —
             # поэтому ALTER'ом идемпотентно доводим старые базы.
@@ -514,14 +520,23 @@ class History:
             rows = conn.execute(query + " ORDER BY viewed_at DESC, id DESC", params).fetchall()
         return [dict(row) for row in rows]
 
-    def enqueue_review(self, resume_id, card, score, breakdown, letter) -> int:
-        """Store the exact dry-run candidate and letter for later approval."""
+    def enqueue_review(
+        self, resume_id, card, score, breakdown, letter, *, search_query: str | None = None
+    ) -> int:
+        """Store the exact dry-run candidate and letter for later approval.
+
+        ``search_query`` (#420 follow-up, PR #449 Codex adversarial-review) is the
+        query the card was found under at enqueue time — persisted so a later
+        `apply --approved` attributes the resulting action to it, not to whatever
+        the config's search text says by the time it's approved (config drift).
+        """
         now = datetime.now().isoformat()
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO review_queue
-                (resume_id,vacancy_id,vacancy_url,title,company,score,breakdown,letter,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (resume_id,vacancy_id,vacancy_url,title,company,score,breakdown,letter,
+                 search_query,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     resume_id,
                     card.vacancy_id,
@@ -531,6 +546,7 @@ class History:
                     score,
                     json.dumps(breakdown, sort_keys=True),
                     letter,
+                    search_query,
                     now,
                     now,
                 ),
@@ -1272,7 +1288,14 @@ class History:
     ) -> list[dict]:
         """Воронка отправлено → оффер с группировкой по поисковому запросу.
 
-        Отклик учитывается в каждом запросе, в котором была найдена его
+        Атрибуция запроса (#420, PR #449) — сперва ``actions.search_query``,
+        записанный в момент самого отклика (apply/run передают текущий
+        ``resume.search.text``, approved-заявки — запрос, сохранённый в
+        ``review_queue`` на момент постановки в очередь). Если он ``NULL``
+        (строки, созданные до появления колонки — миграционное окно, а не
+        дефект — см. #420: "не бэкафилить исторические actions"), запрос
+        берётся через ``LEFT JOIN`` из ``vacancies_seen`` по ``vacancy_id`` —
+        так отклик учитывается в каждом запросе, в котором была найдена его
         вакансия (``vacancies_seen`` допускает несколько таких строк). Внутри
         запроса счётчики дедуплицируются по паре (resume_id, vacancy_id), а не
         только по vacancy_id: ``idx_resume_vacancy_apply`` — UNIQUE по этой
