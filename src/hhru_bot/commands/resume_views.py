@@ -69,7 +69,6 @@ def run(args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         for resume in resumes:
-            hidden_offsets: dict[str, int] = {}
             resume_fetched = 0
             # Route accepts resume_id as a query parameter on current hh.ru; no
             # direct HTTP request is made, preserving the browser boundary.
@@ -81,7 +80,6 @@ def run(args: argparse.Namespace) -> None:
                         page.content(),
                         resume.resume_id,
                         limit=args.limit - resume_fetched,
-                        hidden_offsets=hidden_offsets,
                     )
                 except (ValueError, TypeError) as exc:
                     try:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
+
 from .negotiations_probe import parse_initial_state
 
 
@@ -49,7 +52,6 @@ def parse_resume_view_history(
     resume_id: str,
     *,
     limit: int | None = None,
-    hidden_offsets: dict[str, int] | None = None,
 ) -> list[dict]:
     """Parse SSR history; raise instead of treating schema drift as empty data."""
     state = parse_initial_state(html)
@@ -58,18 +60,19 @@ def parse_resume_view_history(
         raise ValueError("SSR applicantResumeViewHistory.historyViews недоступен")
 
     result = []
-    hidden_by_date = hidden_offsets if hidden_offsets is not None else {}
     for entry in history["historyViews"]:
         if not isinstance(entry, dict):
-            continue
+            raise ValueError("SSR history contains an invalid view entry")
         viewed_at = _value(entry, "date", "viewedAt", "viewDate", "createdAt")
         if viewed_at is None:
-            continue
+            raise ValueError("SSR history view has no date")
         employer_id = _value(entry, "employerId", "employer_id", "companyId")
         employer = _value(entry, "employerName", "employer", "companyName", "name")
         if employer is None:
-            hidden_by_date[str(viewed_at)] = hidden_by_date.get(str(viewed_at), 0) + 1
-            employer = f"(скрыт #{hidden_by_date[str(viewed_at)]})"
+            source_id = _value(entry, "id", "viewId", "eventId")
+            if source_id is None and employer_id is None:
+                raise ValueError("SSR hidden-employer view has no stable identity")
+            employer = f"(скрыт:{source_id or employer_id})"
         result.append(
             {
                 "resume_id": str(resume_id),
@@ -94,18 +97,33 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
         if not viewed_at:
             times = row.locator("time").all()
             if len(times) == 1:
-                viewed_at = times[0].get_attribute("datetime") or times[0].inner_text().strip()
+                viewed_at = times[0].get_attribute("datetime")
         if not employer:
             employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
             if len(employers) == 1:
                 employer = employers[0].inner_text().strip()
-        if not viewed_at or not employer:
+        employer_id = None
+        if not employer:
             invalid = True
             continue
+        if not viewed_at:
+            invalid = True
+            continue
+        try:
+            viewed_at = datetime.fromisoformat(viewed_at.replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            invalid = True
+            continue
+        if not row.get_attribute("data-employer-name"):
+            employers = row.locator("[data-qa*='employer'], a[href*='/employer/']").all()
+            if len(employers) == 1:
+                href = employers[0].get_attribute("href") or ""
+                match = re.search(r"/employer/([^/?#]+)", href)
+                employer_id = match.group(1) if match else None
         result.append(
             {
                 "resume_id": resume_id,
-                "employer_id": None,
+                "employer_id": employer_id,
                 "employer": employer,
                 "viewed_at": viewed_at,
             }
