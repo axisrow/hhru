@@ -2,7 +2,7 @@
 
 Без браузера — через FakePage, имитирующий минимальный Playwright API, который
 использует steps.py: locator(...).wait_for(state='visible', timeout=...),
-click(), fill(), wait_for_url(). Страхуют поведение wait'ов: time.sleep
+click(), fill(). Страхуют поведение wait'ов: time.sleep
 убран, опциональные поля определяются ловом PlaywrightTimeoutError, обязательный
 submit даёт отказ при отсутствии.
 """
@@ -17,7 +17,6 @@ from playwright.sync_api import Error, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hhru_bot.apply import steps
-from hhru_bot.browser import GOTO_TIMEOUT_MS
 from hhru_bot.selector_groups import apply_form, vacancy_page
 
 pytestmark = pytest.mark.integration
@@ -324,8 +323,8 @@ def test_navigate_clicks_apply_button_and_waits_submit():
 
     assert steps.navigate_to_response_form(page) is True
 
-    # Клик по apply-кнопке + ожидание URL через wait_for_url (#179).
-    assert page.navigation_entered == 1
+    # Для SPA-модалки URL не обязан меняться.
+    assert page.navigation_entered == 0
     assert page._state(vacancy_page.VACANCY_APPLY_BUTTON).clicks == 1
 
 
@@ -366,21 +365,19 @@ def test_navigate_does_not_raise_when_form_never_renders():
 
     assert steps.navigate_to_response_form(page) is False
 
-    assert page.navigation_entered == 1
+    assert page.navigation_entered == 0
 
 
-def test_navigate_uses_goto_timeout_for_form_navigation():
-    # #80 регрессия: двухшаговая навигация на форму отклика (wait_for_url после
-    # клика по apply-кнопке, #179) — это сетевая навигация hh.ru, которая под
-    # DDoS-Guard грузится 33с+. Де­фолт/короткий APPLY_TIMEOUT_MS (10с) тут
-    # падает; потолок должен быть GOTO_TIMEOUT_MS, как и у всех goto в проекте.
+def test_navigate_uses_bounded_random_dom_timeout(monkeypatch):
+    monkeypatch.setattr(steps.random, "randint", lambda minimum, maximum: maximum)
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
     steps.navigate_to_response_form(page)
 
-    assert page.last_navigation_timeout == GOTO_TIMEOUT_MS
+    assert steps.RESPONSE_READY_MIN_TIMEOUT_MS == 5_000
+    assert steps.RESPONSE_READY_MAX_TIMEOUT_MS == 15_000
 
 
 def test_navigate_uses_wait_for_url_not_expect_navigation():
@@ -397,9 +394,7 @@ def test_navigate_uses_wait_for_url_not_expect_navigation():
 
     steps.navigate_to_response_form(page)
 
-    assert page.wait_for_url_calls == [
-        ("**/applicant/vacancy_response**", "commit", GOTO_TIMEOUT_MS)
-    ]
+    assert page.wait_for_url_calls == []
 
 
 def test_navigate_wait_for_url_uses_commit_not_default_load():
@@ -414,7 +409,7 @@ def test_navigate_wait_for_url_uses_commit_not_default_load():
 
     steps.navigate_to_response_form(page)
 
-    assert page.last_navigation_wait_until == "commit"
+    assert page.last_navigation_wait_until is None
 
 
 def test_navigate_wait_for_url_timeout_does_not_raise():
@@ -428,8 +423,6 @@ def test_navigate_wait_for_url_timeout_does_not_raise():
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-    page.wait_for_url_error = PlaywrightTimeoutError("Timeout 90000ms exceeded.")
-
     steps.navigate_to_response_form(page)  # не должен бросать
 
     apply_state = page._state(vacancy_page.VACANCY_APPLY_BUTTON)
@@ -439,24 +432,23 @@ def test_navigate_wait_for_url_timeout_does_not_raise():
 def test_navigate_wait_for_url_timeout_saves_diagnostics(tmp_path: Path, monkeypatch):
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-    page.wait_for_url_error = PlaywrightTimeoutError("navigation timeout")
+    # submit intentionally absent: the form readiness timeout is diagnostic.
     monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
 
     steps.navigate_to_response_form(page)
 
     assert page.screenshot_calls == 1
     assert page.content_calls == 1
-    assert (tmp_path / "apply_navigation_timeout.png").exists()
-    assert (tmp_path / "apply_navigation_timeout.html").exists()
+    assert (tmp_path / "apply_form_timeout.png").exists()
+    assert (tmp_path / "apply_form_timeout.html").exists()
 
     # Повторный таймаут БЕЗ vacancy_id перезаписывает те же файлы (идемпотентно
     # по stage, как probe.dump_probe_snapshot), а не копит файл на каждый retry.
     steps.navigate_to_response_form(page)
 
     assert page.screenshot_calls == 2
-    assert len(list(tmp_path.glob("apply_navigation_timeout*.png"))) == 1
-    assert len(list(tmp_path.glob("apply_navigation_timeout*.html"))) == 1
+    assert len(list(tmp_path.glob("apply_form_timeout*.png"))) == 1
+    assert len(list(tmp_path.glob("apply_form_timeout*.html"))) == 1
 
 
 def test_navigate_wait_for_url_timeout_keeps_diagnostics_per_vacancy(tmp_path: Path, monkeypatch):
@@ -467,15 +459,14 @@ def test_navigate_wait_for_url_timeout_keeps_diagnostics_per_vacancy(tmp_path: P
     # per-vacancy.
     page = FakeStepsPage()
     page.set_visible(vacancy_page.VACANCY_APPLY_BUTTON, True)
-    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
-    page.wait_for_url_error = PlaywrightTimeoutError("navigation timeout")
+    # submit intentionally absent: each vacancy gets its own form diagnostic.
     monkeypatch.setattr(steps, "LOG_DIR", tmp_path)
 
     steps.navigate_to_response_form(page, "111")
     steps.navigate_to_response_form(page, "222")
 
-    assert (tmp_path / "apply_111_navigation_timeout.png").exists()
-    assert (tmp_path / "apply_222_navigation_timeout.png").exists()
+    assert (tmp_path / "apply_111_form_timeout.png").exists()
+    assert (tmp_path / "apply_222_form_timeout.png").exists()
 
 
 def test_navigate_wait_for_url_non_timeout_error_does_not_raise():
