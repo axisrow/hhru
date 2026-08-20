@@ -352,22 +352,6 @@ class History:
             ).fetchone()
             return row is not None
 
-    def has_action(
-        self,
-        resume_id: str,
-        vacancy_id: str,
-        action: str,
-        *,
-        statuses: tuple[str, ...] = ("success", "uncertain"),
-    ) -> bool:
-        """Return whether a potentially completed action is already recorded.
-
-        Callers use this as a fail-closed guard before repeating an external
-        mutation.  In particular, ``uncertain`` must block a retry: the
-        browser may have completed the action even when confirmation failed.
-        """
-        return self.last_action_status(resume_id, vacancy_id, action, statuses=statuses) is not None
-
     def last_action_status(
         self,
         resume_id: str,
@@ -378,8 +362,11 @@ class History:
     ) -> str | None:
         """Return the latest status if it is one of the deduplicating statuses.
 
-        A later ordinary ``failed`` row means the earlier uncertain action was
-        resolved before the retry, so it must not keep blocking a new attempt.
+        Callers use this as a fail-closed guard before repeating an external
+        mutation: ``uncertain`` must block a retry, since the browser may have
+        completed the action even when confirmation failed. A later ordinary
+        ``failed`` row means the earlier uncertain action was resolved before
+        the retry, so it must not keep blocking a new attempt.
         """
         with self._connect() as conn:
             row = conn.execute(
