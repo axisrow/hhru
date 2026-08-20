@@ -262,14 +262,12 @@ def test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks():
 # --- B5: save_about теряет факт состоявшегося клика сохранения ---------------
 
 
-def test_save_about_reports_plain_failure_after_the_save_click_already_landed():
-    """B5: таймаут ПОСЛЕ save.click() выдаётся как «сохранение не подтверждено».
+def test_save_about_marks_post_click_timeout_as_uncertain():
+    """B5: a timeout after save.click() is explicitly uncertain.
 
-    about.py:153-156 кликает сохранение, затем ждёт закрытия формы. Таймаут в
-    этой точке — ровно «серая зона» #176/#207: клик уже ушёл на hh.ru. Модуль
-    сообщает об этом как об обычной ошибке (в about.py слова 'uncertain' нет),
-    а команда печатает [FAIL] и завершает процесс с кодом 1 — пользователь
-    делает вывод, что текст не сохранён.
+    about.py clicks save and then waits for the form to close. A timeout at
+    this point is the #176/#207 grey zone: the click may already have reached
+    hh.ru, so the error must retain the ``uncertain`` marker.
 
     Для сравнения: bump.py и reply_employers.py в тех же условиях возвращают
     acted=True + uncertain=True.
@@ -308,26 +306,27 @@ def test_save_about_reports_plain_failure_after_the_save_click_already_landed():
 
     # Клик сохранения СОСТОЯЛСЯ...
     assert save.clicked is True
-    # ...но исход подан как «не подтверждено», без признака состоявшегося действия.
+    # ...и исход явно сохраняет признак состоявшегося действия.
     assert "не подтверждено" in str(excinfo.value)
-    assert "uncertain" not in str(excinfo.value).lower()
+    assert "uncertain" in str(excinfo.value).lower()
 
 
-def test_about_module_has_no_uncertain_concept_at_all():
-    """B5, вторая половина: в about.py признака состоявшегося клика нет вовсе."""
+def test_about_module_marks_post_click_save_failures_as_uncertain():
+    """B5: about.py keeps the save click visible in the uncertain outcome."""
     from pathlib import Path as _Path
 
     from hhru_bot import about as about_module
 
     source = _Path(about_module.__file__).read_text(encoding="utf-8")
     assert "save.click()" in source
-    assert "uncertain" not in source
+    assert "uncertain" in source
+    assert "SAVE_TIMEOUT_MS" in source
 
 
 # --- B6: тот же разрыв инварианта в редакторах резюме -----------------------
 
 
-_WRITE_MODULES_WITHOUT_UNCERTAIN = (
+_WRITE_MODULES_WITH_SAVE_OUTCOME = (
     "about.py",
     "experience.py",
     "resume_position.py",
@@ -335,18 +334,15 @@ _WRITE_MODULES_WITHOUT_UNCERTAIN = (
 )
 
 
-@pytest.mark.parametrize("filename", _WRITE_MODULES_WITHOUT_UNCERTAIN)
-def test_write_modules_click_save_but_never_mark_the_outcome_uncertain(filename):
-    """B6: WRITE-модули кликают сохранение, но статуса «клик мог уйти» не имеют.
+@pytest.mark.parametrize("filename", _WRITE_MODULES_WITH_SAVE_OUTCOME)
+def test_write_modules_mark_post_click_save_failures_as_uncertain(filename):
+    """B6: every WRITE module preserves an uncertain post-click outcome.
 
-    Систематический разрыв инварианта #176/#207, а не единичный промах:
-    pipeline.py (19 упоминаний 'uncertain'), publish_resume.py (10),
-    resume_education.py (7), copy_resume.py (6), bump.py и reply_employers.py (5)
-    его соблюдают; перечисленные здесь модули — нет ни одного упоминания.
+    This is the shared #176/#207 invariant: a save click followed by an
+    exception must not be reported as an ordinary pre-click failure.
 
-    Наиболее наглядно в commands/resume_position.py:205-213: после
-    `page.locator(SAVE).click()` любое исключение печатается как голый [FAIL],
-    хотя сохранение уже могло примениться на hh.ru.
+    The source-level assertion covers all four editors, including the command
+    wrappers that turn the marker into the user-visible result.
     """
     from pathlib import Path as _Path
 
@@ -357,4 +353,4 @@ def test_write_modules_click_save_but_never_mark_the_outcome_uncertain(filename)
 
     combined = "\n".join(sources)
     assert ".click()" in combined, f"{filename}: клика нет — находка требует пересмотра"
-    assert "uncertain" not in combined
+    assert "uncertain" in combined
