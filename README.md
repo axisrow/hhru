@@ -514,6 +514,7 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 - `--healthcheck` — Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)
 - `--negotiations` — Read-only дамп списка переговоров или чата без отправки (#107)
 - `--topic` — ID topic из SSR-дампа negotiations для открытия чата (только чтение)
+- `--questionnaires-only` — Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit и PNG/HTML
 
 ### `profile`
 
