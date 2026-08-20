@@ -243,7 +243,7 @@ def test_withdraw_failure_after_destructive_click_is_uncertain_and_not_retried(
     # The uncertain row is also a deduplication barrier.  A second run must
     # not click based only on the still-present SSR/DOM state.
     second_page = _Page()
-    module._run_topics(args, [topic], page=second_page, history=history, throttle=None)
+    assert module._run_topics(args, [topic], page=second_page, history=history, throttle=None)
     assert withdraw_clicked == ["withdraw"]
     with history._connect() as conn:
         rows = conn.execute(

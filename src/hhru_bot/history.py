@@ -364,20 +364,34 @@ class History:
         mutation.  In particular, ``uncertain`` must block a retry: the
         browser may have completed the action even when confirmation failed.
         """
-        if not statuses:
-            return False
-        placeholders = ", ".join("?" for _ in statuses)
+        return self.last_action_status(resume_id, vacancy_id, action, statuses=statuses) is not None
+
+    def last_action_status(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        action: str,
+        *,
+        statuses: tuple[str, ...] = ("success", "uncertain"),
+    ) -> str | None:
+        """Return the latest status if it is one of the deduplicating statuses.
+
+        A later ordinary ``failed`` row means the earlier uncertain action was
+        resolved before the retry, so it must not keep blocking a new attempt.
+        """
         with self._connect() as conn:
             row = conn.execute(
-                f"""
-                SELECT 1 FROM actions
+                """
+                SELECT status FROM actions
                 WHERE resume_id = ? AND vacancy_id = ? AND action = ?
-                  AND status IN ({placeholders})
+                ORDER BY id DESC
                 LIMIT 1
                 """,
-                (resume_id, vacancy_id, action, *statuses),
+                (resume_id, vacancy_id, action),
             ).fetchone()
-            return row is not None
+            if row is None or row[0] not in statuses:
+                return None
+            return row[0]
 
     def record_action(
         self,

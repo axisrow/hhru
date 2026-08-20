@@ -337,8 +337,16 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
     failed = False
     for topic in topics:
         assert history is not None
-        if history.has_action(ACCOUNT_SCOPE, topic, "withdraw"):
-            print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
+        previous_status = history.last_action_status(ACCOUNT_SCOPE, topic, "withdraw")
+        if previous_status is not None:
+            if previous_status == "uncertain":
+                print(
+                    f"[FAIL] (uncertain) Уже есть неподтверждённая попытка отзыва "
+                    f"topic={topic} — не кликаю"
+                )
+                failed = True
+            else:
+                print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
             continue
         acted = False
         try:
