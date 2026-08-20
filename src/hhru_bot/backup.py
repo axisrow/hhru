@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 import tarfile
 import tempfile
 from datetime import datetime
@@ -58,6 +59,8 @@ def create_backup(
             with tarfile.open(temporary, "w:gz") as archive:
                 if config.is_file():
                     archive.add(config, arcname="config.yaml", recursive=False)
+                elif not require_config:
+                    archive.addfile(tarfile.TarInfo("config.missing"))
                 if snapshot.exists():
                     archive.add(snapshot, arcname="history.db", recursive=False)
                 storage = root / "storage_state"
@@ -83,7 +86,9 @@ def _member_name(member: tarfile.TarInfo) -> str:
         raise BackupError(f"Недопустимый тип записи в архиве: {name!r}")
     if name in {"config.yaml", "history.db"} and member.isdir():
         raise BackupError(f"Ожидался файл, получена директория: {name!r}")
-    if name not in {"config.yaml", "history.db"} and not name.startswith("storage_state/"):
+    if name not in {"config.yaml", "config.missing", "history.db"} and not name.startswith(
+        "storage_state/"
+    ):
         raise BackupError(f"Недопустимый файл в архиве: {name!r}")
     return name
 
@@ -93,7 +98,7 @@ def inspect_backup(archive_path: str | Path) -> list[str]:
         names = [_member_name(member) for member in archive.getmembers()]
     if len(names) != len(set(names)):
         raise BackupError("Архив содержит повторяющиеся записи")
-    if "config.yaml" not in names:
+    if "config.yaml" not in names and "config.missing" not in names:
         raise BackupError("В архиве отсутствует config.yaml")
     return names
 
@@ -121,7 +126,7 @@ def restore_backup(
         with tarfile.open(archive_path, "r:*") as archive:
             for member in archive.getmembers():
                 name = _member_name(member)
-                if member.isdir():
+                if member.isdir() or name == "config.missing":
                     continue
                 target = staging / name
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -137,6 +142,7 @@ def restore_backup(
                 checked_path = Path(checked.name)
             _sqlite_snapshot(staged_history, checked_path)
             checked_path.replace(staged_history)
+            os.chmod(staged_history, 0o600)
         originals = Path(tmp) / "originals"
         replaced: list[Path] = []
         try:
@@ -159,6 +165,7 @@ def restore_backup(
                     if target.is_symlink() or not target.is_file():
                         raise BackupError(f"Файл назначения имеет небезопасный тип: {target}")
                     copyfile(target, saved)
+                    os.chmod(saved, stat.S_IMODE(target.stat().st_mode))
                 source.replace(target)
                 replaced.append(target)
             archived = set(names)
@@ -179,6 +186,7 @@ def restore_backup(
                 saved = originals / name
                 saved.parent.mkdir(parents=True, exist_ok=True)
                 copyfile(target, saved)
+                os.chmod(saved, stat.S_IMODE(target.stat().st_mode))
                 target.unlink()
                 replaced.append(target)
         except Exception:
