@@ -188,7 +188,14 @@ def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[Remindable
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
         require_authenticated_page(page)
-        refs.extend(remindable_topic_refs(page.content()))
+        html = page.content()
+        refs.extend(remindable_topic_refs(html))
+        topics = parse_initial_state(html)["applicantNegotiations"]["topicList"]
+        # An explicitly empty SSR list is a confirmed empty inbox.  Waiting
+        # for a card in that case would turn a valid zero-result read into a
+        # timeout, while a non-empty list still needs the render barrier below.
+        if not topics:
+            break
         # SSR arrives before the client-side pager.  Do not interpret a
         # temporarily absent pager as the final page, or later reminders are
         # silently omitted.
