@@ -850,13 +850,26 @@ def _run_apply_for_resume(
             if action_id is not None:
                 history.finalize_action(action_id, "uncertain", str(exc))
             if approved_item:
-                history.finish_review(args.approved, "failed")
+                # #436: the underlying actions row is 'uncertain' (submit may
+                # have gone through) — finish_review has no 'uncertain' state,
+                # and review_queue is a reporting view, not the dedup barrier
+                # (that's has_applied() over actions). Map fail-closed to
+                # 'applied' rather than 'failed', so a re-review of this queue
+                # entry never looks safely retryable.
+                history.finish_review(args.approved, "applied")
             raise
         except Exception:
             # A claimed review must never remain permanently in ``applying``
             # when the browser/pipeline fails before returning a result.
             if approved_item:
-                history.finish_review(args.approved, "failed")
+                # #436: action_id may be None (crash before before_submit) —
+                # then nothing was attempted and 'failed' is correct. If
+                # action_id is set, begin_action() already reserved the
+                # actions row as 'uncertain' and it was never finalized here,
+                # so the same fail-closed mapping applies as above.
+                history.finish_review(
+                    args.approved, "applied" if action_id is not None else "failed"
+                )
             raise
 
         if result.skipped:
@@ -925,7 +938,14 @@ def _run_apply_for_resume(
             print(f"  [FAIL] {card.title} — {result.reason}")
 
         if approved_item:
-            history.finish_review(args.approved, "applied" if result.success else "failed")
+            # #436: 'uncertain' must dedup like 'applied', not read as a safe
+            # retry candidate — finish_review has no 'uncertain' state, and
+            # review_queue is a reporting view, not the dedup barrier (that's
+            # has_applied() over actions, which already treats uncertain like
+            # success). Fail-closed mapping, mirrors the except-branches above.
+            history.finish_review(
+                args.approved, "applied" if (result.success or result.uncertain) else "failed"
+            )
 
         # #163: анти-бан-пауза — только после реальной отправки отклика (submit).
         # Ранние выходы не оставляют на сайте следа, пауза там не от чего не

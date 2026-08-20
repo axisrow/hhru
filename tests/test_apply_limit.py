@@ -394,3 +394,39 @@ def test_daily_limit_exhausted_mid_wave_stops_lazy_paging(tmp_path, monkeypatch)
     # exhaustion inside that wave must stop the loop before a second
     # _load_apply_page (next page) call.
     assert loaded == [0]
+
+
+def test_approved_uncertain_result_finishes_review_as_applied_not_failed(tmp_path, monkeypatch):
+    # #436: an --approved apply that ends in an ``uncertain`` ApplyResult
+    # (submit may have gone through, Playwright failed to confirm) must NOT
+    # finish the claimed review_queue row as "failed" — finish_review has no
+    # 'uncertain' state, and a row left/reported as "failed" reads as safely
+    # retryable even though the underlying actions row (has_applied's real
+    # dedup barrier) is already 'uncertain'. Fail-closed: map to "applied".
+    config, resume, history, throttle = _setup(tmp_path)
+    card = _cards(1)[0]
+
+    item_id = history.enqueue_review(resume.resume_id, card, 10, {}, "hello")
+    permit = history.approve_review(item_id)
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+    monkeypatch.setattr(
+        _common,
+        "apply_to_vacancy",
+        lambda *a, **k: ApplyResult(card, False, "неопределённо", acted=True, uncertain=True),
+    )
+
+    args = argparse.Namespace(
+        dry_run=False,
+        limit=1,
+        max_pages=1,
+        headless=True,
+        approved=item_id,
+        permit=permit,
+        force=False,
+    )
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    row = next(r for r in history.review_items() if r["id"] == item_id)
+    assert row["status"] == "applied"
