@@ -799,11 +799,18 @@ def _run_apply_for_resume(
             # would make the next run send a duplicate. Keeping this hook after
             # navigation/questions preserves the old no-action semantics for
             # confirmed pre-submit exits.
+            # #420 follow-up (Codex adversarial-review, PR #449): review_queue
+            # (#414 schema) doesn't persist the search_query the card was found
+            # under, and the config's resume.search.text can have changed
+            # between the dry-run that queued it and this --approved run —
+            # attributing to the *current* query would silently mislabel the
+            # funnel. Provenance is unknown for approved items, so leave
+            # search_query NULL/unattributed rather than guess.
             action_id = history.begin_action(
                 resume.resume_id,
                 vacancy_id,
                 "apply",
-                search_query=resume.search.text,
+                search_query=None if approved_item else resume.search.text,
             )
 
         # dict value type intentionally broad — **apply_kwargs spreads several
@@ -893,6 +900,9 @@ def _run_apply_for_resume(
             # The verifier can positively reconcile an external submit even
             # when the pre-submit hook was not reached (for example, a
             # transitional page exposed the post-click state directly).
+            # #420 follow-up: same approved-item provenance caveat as
+            # _before_submit above — review_queue doesn't record the
+            # original search_query, so don't guess it from the current config.
             history.record_action(
                 resume.resume_id,
                 card.vacancy_id,
@@ -900,7 +910,7 @@ def _run_apply_for_resume(
                 "uncertain" if result.uncertain else ("success" if result.success else "failed"),
                 result.reason,
                 letter_variant=result.letter_variant,
-                search_query=resume.search.text,
+                search_query=None if approved_item else resume.search.text,
             )
         if result.success:
             applied_count += 1

@@ -166,3 +166,69 @@ def test_post_submit_challenge_finalizes_uncertain_marker_before_stopping(tmp_pa
     assert row is not None
     assert row["status"] == "uncertain"
     assert "обнаружена анти-бот проверка" in row["reason"]
+
+
+def test_approved_apply_does_not_attribute_to_unrelated_current_search_query(tmp_path, monkeypatch):
+    """#420 follow-up (Codex adversarial-review, PR #449): review_queue не хранит
+    search_query карточки на момент постановки в очередь (#414 schema). Между
+    dry-run (enqueue_review) и последующим `apply --approved` конфиг резюме мог
+    смениться на другой поисковый запрос — код не должен подписывать чужой
+    отклик текущим resume.search.text: это тихо искажает funnel-атрибуцию.
+    Провенанс неизвестен -> search_query обязан остаться NULL/unattributed.
+    """
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="devops"),  # запрос сменился после enqueue_review
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="Acme",
+        url="https://hh.ru/vacancy/123",
+    )
+    # dry-run под "python" поставил карточку в очередь; исходный запрос нигде не сохранён.
+    item_id = history.enqueue_review("AAA111", card, 1.0, {}, "cover letter")
+    permit = history.approve_review(item_id)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+        approved=item_id,
+        permit=permit,
+    )
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+
+    def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
+        kwargs["before_submit"]()
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="approved",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    with history._connect() as conn:
+        row = conn.execute("SELECT search_query FROM actions WHERE vacancy_id='123'").fetchone()
+
+    assert row is not None
+    assert row["search_query"] is None
