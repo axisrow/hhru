@@ -232,7 +232,15 @@ def navigate_to_response_form(
             "продолжаю, дальнейшие шаги определят, загрузилась ли форма",
             exc,
         )
-    blocker = handle_post_click_blockers(page, allow_relocation=allow_relocation)
+    # Второй проход: модалка могла отрисоваться уже после навигации. Ждать
+    # повторно не нужно — первый проход выше уже отдал ей render-таймаут, а
+    # штатный путь без модалки не должен платить его дважды на каждой вакансии.
+    blocker = handle_post_click_blockers(
+        page,
+        allow_relocation=allow_relocation,
+        render_timeout_ms=0,
+        post_navigation=True,
+    )
     if blocker is not None:
         return blocker
     # Форма рендерится после навигации — ждём её индикатор, а не слепую паузу.

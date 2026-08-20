@@ -30,6 +30,10 @@ class PostClickBlocker:
     reason: str
     skip_reason: str | None = None
     stop_run: bool = False
+    #: True, если блокер найден уже ПОСЛЕ навигации на форму отклика — там
+    #: отклик мог физически уйти, поэтому вердикт обязан пройти через
+    #: внешнюю проверку #207 (/applicant/negotiations).
+    post_navigation: bool = False
 
 
 class PostSubmitLimitExceeded(RuntimeError):
@@ -88,6 +92,7 @@ def handle_post_click_blockers(
     *,
     allow_relocation: bool,
     render_timeout_ms: int = BLOCKER_RENDER_TIMEOUT_MS,
+    post_navigation: bool = False,
 ) -> PostClickBlocker | None:
     """Handle one post-click DOM state and return a terminal blocker if any.
 
@@ -101,12 +106,17 @@ def handle_post_click_blockers(
     if _visible(page, vacancy_page.VACANCY_RELOCATION_CONFIRM):
         if allow_relocation:
             _close_specific(page, vacancy_page.VACANCY_RELOCATION_CONFIRM)
+            # Подтверждение переезда — это клик, запускающий свой ре-рендер:
+            # следующие строгие проверки нельзя делать по неотстоявшемуся DOM
+            # (CLAUDE.md п.4), иначе терминальная модалка будет пропущена.
+            _wait_for_any_blocker(page, render_timeout_ms)
         else:
             return PostClickBlocker(
                 "relocation_not_allowed",
                 "HH запросил подтверждение готовности к переезду; "
                 "подтверждение отключено настройками проекта",
                 SKIP_REASONS.RELOCATION_NOT_ALLOWED,
+                post_navigation=post_navigation,
             )
 
     if _visible(page, vacancy_page.VACANCY_LIMIT_ERROR):
@@ -114,6 +124,7 @@ def handle_post_click_blockers(
             "limit_exceeded",
             "HH.ru сообщил об исчерпанном лимите откликов; текущий прогон остановлен",
             stop_run=True,
+            post_navigation=post_navigation,
         )
 
     if _visible(page, vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL):
@@ -123,6 +134,7 @@ def handle_post_click_blockers(
                 "direct_application",
                 "вакансия требует отклика на сайте работодателя",
                 SKIP_REASONS.DIRECT_APPLICATION,
+                post_navigation=post_navigation,
             )
 
     # В отличие от direct-application, здесь текстовый гейт не нужен: оба
@@ -135,6 +147,7 @@ def handle_post_click_blockers(
             "response_rejected",
             "HH.ru показал предупреждение или ошибку отклика",
             SKIP_REASONS.RESPONSE_REJECTED,
+            post_navigation=post_navigation,
         )
 
     # This popup only covers the form; close it and let normal form detection

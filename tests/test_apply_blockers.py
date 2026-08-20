@@ -6,6 +6,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.apply.blockers import (
+    PostClickBlocker,
     PostSubmitLimitExceeded,
     handle_post_click_blockers,
     raise_if_post_submit_limit,
@@ -14,6 +15,21 @@ from hhru_bot.history import SKIP_REASONS
 from hhru_bot.selector_groups import vacancy_page
 
 pytestmark = pytest.mark.integration
+
+
+def _blocker_ctx(*, verifier):
+    """Минимальный ApplyContext для проверки финализации блокеров."""
+    from hhru_bot.apply.pipeline import ApplyContext
+    from hhru_bot.search import VacancyCard
+
+    return ApplyContext(
+        page=_Page(),
+        vacancy=VacancyCard("1", "Вакансия", "Компания", "https://hh.ru/vacancy/1"),
+        resume_id="RID",
+        cover_letter_template="письмо",
+        dry_run=False,
+        verifier=verifier,
+    )
 
 
 class _Locator:
@@ -33,6 +49,7 @@ class _Locator:
 
     def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:
         self.page.waited.append(self.selector)
+        self.page.wait_timeouts.append(timeout)
         # Совокупный селектор ждёт первый видимый якорь; в фикстурах DOM
         # синхронный, поэтому достаточно проверить любую из частей.
         if not any(
@@ -51,6 +68,7 @@ class _Page:
         self.elements = {selector: (True, text) for selector, text in elements}
         self.clicked: list[str] = []
         self.waited: list[str] = []
+        self.wait_timeouts: list[float] = []
 
     def locator(self, selector: str) -> _Locator:
         return _Locator(self, selector)
@@ -130,3 +148,77 @@ def test_blockers_wait_for_render_before_strict_checks():
     handle_post_click_blockers(page, allow_relocation=False)
 
     assert page.waited, "терминальные проверки выполнены без ожидания рендера"
+
+
+def test_post_navigation_blocker_recovers_a_response_that_actually_went_out():
+    # #207: после навигации отклик мог уйти, а модалка показаться поверх.
+    # Без внешней проверки такой исход молча стал бы skip и потерял отклик.
+    from hhru_bot.apply.pipeline import _finalize_blocker
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    ctx = _blocker_ctx(verifier=lambda *_: NegotiationsVerifyResult("found", "topic=42"))
+    blocker = PostClickBlocker(
+        "response_rejected",
+        "HH.ru показал предупреждение",
+        SKIP_REASONS.RESPONSE_REJECTED,
+        post_navigation=True,
+    )
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert result.success is True
+    assert result.acted is True
+    assert result.skipped is False
+
+
+def test_post_navigation_blocker_keeps_its_verdict_when_no_response_found():
+    from hhru_bot.apply.pipeline import _finalize_blocker
+    from hhru_bot.apply.verify import NegotiationsVerifyResult
+
+    ctx = _blocker_ctx(verifier=lambda *_: NegotiationsVerifyResult("not_found", "нет карточки"))
+    blocker = PostClickBlocker(
+        "direct_application",
+        "отклик на сайте работодателя",
+        SKIP_REASONS.DIRECT_APPLICATION,
+        post_navigation=True,
+    )
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert result.success is False
+    assert result.skip_reason == SKIP_REASONS.DIRECT_APPLICATION
+
+
+def test_pre_navigation_blocker_does_not_call_the_verifier():
+    # До навигации отклик физически невозможен — лишний поход в negotiations
+    # был бы чистой тратой запроса на каждую такую вакансию.
+    from hhru_bot.apply.pipeline import _finalize_blocker
+
+    calls = []
+
+    def verifier(*args):
+        calls.append(args)
+        raise AssertionError("verifier must not be called before navigation")
+
+    ctx = _blocker_ctx(verifier=verifier)
+    blocker = PostClickBlocker(
+        "relocation_not_allowed",
+        "переезд не разрешён",
+        SKIP_REASONS.RELOCATION_NOT_ALLOWED,
+    )
+
+    result = _finalize_blocker(ctx, blocker)
+
+    assert calls == []
+    assert result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
+
+
+def test_second_pass_does_not_pay_the_render_timeout_again():
+    # Штатный путь без модалки не должен ждать render-таймаут дважды.
+    page = _Page()
+
+    handle_post_click_blockers(
+        page, allow_relocation=False, render_timeout_ms=0, post_navigation=True
+    )
+
+    assert page.wait_timeouts == [0]

@@ -180,6 +180,60 @@ def apply_to_vacancy(
     return _run(ctx)
 
 
+def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResult:
+    """Финализирует терминальный post-click блокер (#342) с учётом #207.
+
+    Блокер, найденный ДО навигации на форму, отклик отправить не мог — его
+    вердикт терминален сам по себе (как #350). Блокер, найденный ПОСЛЕ
+    навигации, попадает в «серую зону» #207: hh.ru мог принять отклик и
+    одновременно показать модалку, поэтому сначала спрашиваем внешний источник
+    истины. Отклик найден — это success, а не потерянный skip; иначе вердикт
+    блокера сохраняется.
+    """
+
+    def _verdict() -> ApplyResult:
+        if blocker.stop_run:
+            return ctx.stop(blocker.reason)
+        return ctx.skip(
+            blocker.reason,
+            skip_reason=blocker.skip_reason or SKIP_REASONS.RESPONSE_REJECTED,
+        )
+
+    if not blocker.post_navigation or ctx.dry_run or ctx.verifier is None:
+        return _verdict()
+    try:
+        verified = ctx.verifier(ctx.page, ctx.vacancy.vacancy_id, ctx.resume_id)
+    except AntiBotChallengeDetected:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Как и в _finalize_post_click_failure: сбой самой проверки — это
+        # «не смогли проверить», а не «отклика нет». Fail-closed.
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка упала: %s", ctx.vacancy.title, exc)
+        return ctx.fail(f"{blocker.reason}; внешняя проверка упала ({exc}) — исход неопределён")
+    if verified.found:
+        ctx.acted = True
+        ctx.uncertain = False
+        logger.info(
+            "[OK] %s — блокер показан, но внешний источник подтвердил отклик: %s",
+            ctx.vacancy.title,
+            verified.detail,
+        )
+        return ctx.ok(
+            f"{blocker.reason}; внешняя проверка: отклик присутствует "
+            f"в /applicant/negotiations ({verified.detail})"
+        )
+    if verified.indeterminate:
+        ctx.acted = True
+        ctx.uncertain = True
+        logger.warning("%s — внешняя проверка недоступна: %s", ctx.vacancy.title, verified.detail)
+        return ctx.fail(
+            f"{blocker.reason}; внешняя проверка недоступна ({verified.detail}) — исход неопределён"
+        )
+    return _verdict()
+
+
 def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
     """#207: финализация fail-вердикта ПОСЛЕ клика по кнопке отклика.
 
@@ -317,12 +371,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         # ответ прямо на странице вакансии.
         return ctx.skip(navigation_result, skip_reason=SKIP_REASONS.RESUME_VISIBILITY)
     if isinstance(navigation_result, PostClickBlocker):
-        if navigation_result.stop_run:
-            return ctx.stop(navigation_result.reason)
-        return ctx.skip(
-            navigation_result.reason,
-            skip_reason=navigation_result.skip_reason or SKIP_REASONS.RESPONSE_REJECTED,
-        )
+        return _finalize_blocker(ctx, navigation_result)
     if not navigation_result:
         reason = "форма отклика не отрисовалась — состояние формы не подтверждено"
         logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
