@@ -23,6 +23,10 @@ def register(subparsers) -> None:
         default=0,
         help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)",
     )
+    p.add_argument(
+        "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
+    )
+    p.add_argument("--permit", help="Одноразовый permit из `review approve`")
     p.set_defaults(func=run)
 
 
@@ -32,8 +36,23 @@ def run(args: argparse.Namespace) -> bool:
     from ..history import History
     from ..throttle import LimitReached, Throttle
 
+    if getattr(args, "approved", None) is not None and args.dry_run:
+        print("[FAIL] --approved нельзя использовать вместе с --dry-run")
+        return True
+
     config = load_config_or_exit(args.config)
     history = History(args.history)
+    if getattr(args, "approved", None) is not None and args.resume is None:
+        items = [item for item in history.review_items() if item["id"] == args.approved]
+        matches = [
+            resume
+            for resume in config.resumes
+            if items and resume.resume_id == items[0]["resume_id"]
+        ]
+        if not matches:
+            print("[FAIL] approved-запись не связана с резюме из текущего конфига")
+            return True
+        args.resume = matches[0].id
     resumes = resumes_from_args(config, args)
     throttle = Throttle(config.throttle, history)
 

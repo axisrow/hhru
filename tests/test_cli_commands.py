@@ -120,6 +120,7 @@ def test_all_commands_registered():
         "refresh-token",
         "reject",
         "resume-views",
+        "review",
     }
 
 
@@ -178,6 +179,7 @@ def test_register_commands_returns_names():
         "refresh_token",
         "reject",
         "resume_views",
+        "review",
     }
 
 
