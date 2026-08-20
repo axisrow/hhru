@@ -149,30 +149,31 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     for index in range(messages.count()):
         item = messages.nth(index)
         item_marker = _message_id(item.get_attribute("data-qa"))
-        item_author = item.evaluate(
+        item_author, item_label = item.evaluate(
             """(el, markers) => { for (let node = el; node; node = node.parentElement) {
                 const classes = String(node.className).split(/\s+/);
-                if (classes.includes(markers.own)) return 'me';
-                if (classes.includes(markers.other)) return 'employer';
-            } return null; }""",
+                const author = classes.includes(markers.own) ? 'me'
+                    : classes.includes(markers.other) ? 'employer' : null;
+                if (author) {
+                    const labelNode = node.querySelector(
+                        '[data-qa*="author"], [class*="author"], [aria-label], [title]');
+                    return [author, labelNode && (labelNode.getAttribute('aria-label')
+                        || labelNode.getAttribute('title') || labelNode.textContent || '').trim()];
+                }
+            } return [null, null]; }""",
             {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
         )
-        all_messages.append(ChatMessage(item_author, item_marker, item.inner_text().strip()))
+        all_messages.append(
+            ChatMessage(item_author, item_marker, item.inner_text().strip(), item_label)
+        )
     message = all_messages[-1]
-    marker = _message_id(message.get_attribute("data-qa"))
-    author = message.evaluate(
-        """(el, markers) => {
-            for (let node = el; node; node = node.parentElement) {
-                const classes = String(node.className).split(/\\s+/);
-                if (classes.includes(markers.own)) return 'me';
-                if (classes.includes(markers.other)) return 'employer';
-            }
-            return null;
-        }""",
-        {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
+    return ChatMessage(
+        message.author,
+        message.inbound_marker,
+        message.text,
+        message.author_label,
+        conversation=tuple(all_messages[-20:]),
     )
-    text = message.inner_text().strip()
-    return ChatMessage(author, marker, text, conversation=tuple(all_messages[-20:]))
 
 
 def read_chat(page: Page, topic: str, topic_to_chat_id: Mapping[str, str]) -> ChatMessage | None:
