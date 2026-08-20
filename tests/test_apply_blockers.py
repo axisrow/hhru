@@ -213,12 +213,23 @@ def test_pre_navigation_blocker_does_not_call_the_verifier():
     assert result.skip_reason == SKIP_REASONS.RELOCATION_NOT_ALLOWED
 
 
-def test_second_pass_does_not_pay_the_render_timeout_again():
+def test_second_pass_does_not_wait_at_all():
     # Штатный путь без модалки не должен ждать render-таймаут дважды.
+    # ВАЖНО: пропуск выражается отсутствием вызова wait_for, а НЕ timeout=0 —
+    # в Playwright 0 означает «таймаут отключён», то есть бесконечное ожидание.
     page = _Page()
 
     handle_post_click_blockers(
         page, allow_relocation=False, render_timeout_ms=0, post_navigation=True
     )
 
-    assert page.wait_timeouts == [0]
+    assert page.wait_timeouts == []
+
+
+def test_render_wait_never_passes_zero_timeout_to_playwright():
+    # Страж от зависания: 0 в Playwright = ждать вечно.
+    page = _Page((vacancy_page.VACANCY_LIMIT_ERROR, "Лимит откликов"))
+
+    handle_post_click_blockers(page, allow_relocation=False)
+
+    assert page.wait_timeouts and all(t > 0 for t in page.wait_timeouts)

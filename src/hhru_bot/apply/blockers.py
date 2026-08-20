@@ -71,6 +71,11 @@ def _wait_for_any_blocker(page: Page, timeout_ms: int) -> None:
     исход (форма отрисовалась нормально), поэтому таймаут проглатывается.
     """
 
+    # ВАЖНО: в Playwright ``timeout=0`` значит «таймаут отключён» (ждать
+    # бесконечно), а не «не ждать». Пропуск ожидания выражается только явным
+    # ранним выходом, иначе штатная страница без модалки повесила бы прогон.
+    if timeout_ms <= 0:
+        return
     selector = ", ".join(
         (
             vacancy_page.VACANCY_RELOCATION_CONFIRM,
