@@ -28,6 +28,11 @@ def register(subparsers) -> None:
     )
     p.add_argument("--resume", help="Slug из конфига или resume_id HH.ru (по умолчанию — все)")
     p.add_argument(
+        "--search-query",
+        action="store_true",
+        help="Группировать воронку по поисковому запросу вместо резюме",
+    )
+    p.add_argument(
         "--format",
         choices=FORMATS,
         default="table",
@@ -93,5 +98,9 @@ def run(args: argparse.Namespace) -> None:
 
     # На пустой истории воронка печатает шапку таблицы (формат стабилен, как
     # format_actions в report.py) — пользователь видит структуру даже без данных.
-    funnel = history.funnel_by_resume(since=since, resume_id=resume_id)
-    print(format_funnel(funnel, args.format))
+    if args.search_query:
+        funnel = history.funnel_by_search_query(since=since, resume_id=resume_id)
+        print(format_funnel(funnel, args.format, group_key="search_query"))
+    else:
+        funnel = history.funnel_by_resume(since=since, resume_id=resume_id)
+        print(format_funnel(funnel, args.format))

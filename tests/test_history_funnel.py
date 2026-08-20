@@ -225,6 +225,54 @@ def test_funnel_since_filters_old_actions(tmp_path):
     assert funnel[0]["sent"] == 1  # только свежий v1
 
 
+def test_funnel_by_search_query_joins_seen_vacancies_and_sorts_by_invite_rate(tmp_path):
+    """Запросы считаются отдельно, включая одну вакансию, найденную дважды."""
+    h = History(tmp_path / "h.db")
+    for vacancy in ("v1", "v2", "v3"):
+        h.record_action("r1", vacancy, "apply", "success")
+    with h._connect() as conn:
+        for vacancy, query in (
+            ("v1", "python"),
+            ("v2", "python"),
+            ("v2", "backend"),
+            ("v3", "backend"),
+        ):
+            conn.execute(
+                "INSERT INTO vacancies_seen "
+                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (vacancy, query, "2026-01-01", "2026-01-01"),
+            )
+    h.upsert_response("v1", "Acme", "invitation", "/c", topic="1")
+
+    funnel = h.funnel_by_search_query()
+    assert [row["search_query"] for row in funnel] == ["python", "backend"]
+    assert funnel[0]["sent"] == 2
+    assert funnel[0]["invited"] == 1
+    assert funnel[1]["sent"] == 2
+    assert funnel[1]["invited"] == 0
+    assert funnel[0]["invite_rate"] == 100.0
+    assert funnel[1]["invite_rate"] == 0.0
+
+
+def test_funnel_by_search_query_filters_resume_and_since(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v2", "apply", "success")
+    with h._connect() as conn:
+        for vacancy, _resume, created in (("v1", "r1", "2026-01-01"), ("v2", "r2", "2026-01-02")):
+            conn.execute(
+                "INSERT INTO vacancies_seen "
+                "(vacancy_id, search_query, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+                (vacancy, "q", "2026-01-01", "2026-01-01"),
+            )
+            conn.execute(
+                "UPDATE actions SET created_at = ? WHERE vacancy_id = ?", (created, vacancy)
+            )
+
+    assert h.funnel_by_search_query(resume_id="r1")[0]["sent"] == 1
+    assert h.funnel_by_search_query(since="2026-01-01T12:00:00")[0]["sent"] == 1
+
+
 # --- dead_responses: отклики без ответа за N дней --------------------------
 
 
