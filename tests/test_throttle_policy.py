@@ -314,6 +314,11 @@ def test_apply_uncertain_waits_and_records_uncertain(tmp_path, monkeypatch, wait
     result = ApplyResult(
         _vacancy(), False, "submit-клик упал с исключением", acted=True, uncertain=True
     )
+
+    # #441 round-2 review: uncertain — routine per-vacancy fail-closed outcome
+    # (dedup via has_applied() below is what actually protects against a
+    # duplicate application), not a genuine account-level terminal condition
+    # — it must NOT raise ApplyRunStopped (that's reserved for stop_run).
     _run_apply(monkeypatch, tmp_path, dry_run=False, result=result)
 
     assert wait_calls == [f"после отклика на '{_vacancy().title}'"]

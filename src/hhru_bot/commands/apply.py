@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 
 from ._common import (
+    ApplyProgress,
     ApplyRunStopped,
     _build_scoring_provider,
     add_common_args,
     add_force_arg,
+    add_limit_arg,
+    apply_search_page_limit,
     resumes_from_args,
     run_apply_for_resume,
 )
@@ -16,14 +19,9 @@ from ._common import (
 
 def register(subparsers) -> None:
     p = subparsers.add_parser("apply", help="Найти и откликнуться на подходящие вакансии")
-    add_common_args(p)
+    add_common_args(p, max_pages_default=None)
     add_force_arg(p)
-    p.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)",
-    )
+    add_limit_arg(p)
     p.add_argument(
         "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
     )
@@ -89,12 +87,18 @@ def run(args: argparse.Namespace) -> bool:
                         not in (None, "not_finished")
                     }
                     routing_resumes = [r for r in resumes if r.resume_id in ready]
-
             feeds = []
             for resume in routing_resumes:
                 try:
                     feeds.append(
-                        (resume, search_vacancies(page, resume.search, max_pages=args.max_pages))
+                        (
+                            resume,
+                            search_vacancies(
+                                page,
+                                resume.search,
+                                max_pages=apply_search_page_limit(args),
+                            ),
+                        )
                     )
                 except VacancySearchIndeterminate as e:
                     raise_for_antibot(page)
@@ -140,6 +144,11 @@ def run(args: argparse.Namespace) -> bool:
         else:
             cards_by_resume = None
             ranked_by_resume = None
+        # #441 round-2 review: --limit документирован как "целевое число
+        # успешных откликов ЗА ЗАПУСК", а не за резюме — общий ApplyProgress
+        # должен считать успехи по всем резюме этого прогона, иначе --limit N
+        # с M резюме может дать до N*M откликов вместо N.
+        progress = ApplyProgress()
         try:
             for resume in resumes:
                 if cards_by_resume is None:
@@ -155,6 +164,7 @@ def run(args: argparse.Namespace) -> bool:
                         cards_by_resume[resume.id],
                         True,
                         ranked_by_resume[resume.id],
+                        progress,
                     )
                 failed = result or failed
         except ApplyRunStopped:

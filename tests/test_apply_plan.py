@@ -92,10 +92,11 @@ def test_build_apply_plan_applies_limit_after_ranking(tmp_path):
 
     assert plan.total == 2
     assert plan.after_filter == 2
-    assert plan.after_limit == 1
+    assert plan.after_limit == 2
+    assert plan.target_limit == 1
     # Без scoring-секции веса нейтральны (_ZERO_WEIGHTS) -> порядок входа сохранён,
     # даже если "Senior Python" совпадает с must_have по названию сильнее.
-    assert [c.vacancy_id for c, _s, _b in plan.ranked] == ["1"]
+    assert [c.vacancy_id for c, _s, _b in plan.ranked] == ["1", "2"]
 
 
 def test_build_apply_plan_limit_none_means_no_slice(tmp_path):

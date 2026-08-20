@@ -303,6 +303,7 @@ def search_vacancies(
     page: Page,
     filters: SearchFilters,
     max_pages: int = 5,
+    start_page: int = 0,
 ) -> list[VacancyCard]:
     """
     Ищет вакансии по фильтрам, возвращает список карточек БЕЗ учёта
@@ -312,7 +313,7 @@ def search_vacancies(
     """
     results: list[VacancyCard] = []
 
-    for page_num in range(max_pages):
+    for page_num in range(start_page, start_page + max_pages):
         url = build_search_url(filters, page_num)
         logger.info("Загрузка страницы поиска: %s", url)
         goto_hh(page, url)
