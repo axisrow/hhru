@@ -50,9 +50,21 @@ APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
 #   <button type="button" data-qa="add-cover-letter"> внутри data-qa="actions-container"
 # Живёт ВНЕ <form>, а раскрываемая им textarea (APPLY_COVER_LETTER_TEXTAREA,
 # `…-popup-form-letter-input`) — ВНУТРИ формы, поэтому скоупить тоггл формой нельзя.
-# Критично: APPLY_COVER_LETTER_TOGGLE выше в модалке НЕ совпадает ни разу, и до
-# добавления этой константы письмо молча терялось — измерено по SSR
-# topicList[].hasResponseLetter: из 18 откликов аккаунта с письмом ушло 2, без — 16.
+# Критично: до добавления этой константы адресовался только APPLY_COVER_LETTER_TOGGLE
+# выше, и письмо молча терялось — измерено по SSR topicList[].hasResponseLetter:
+# из 18 откликов аккаунта с письмом ушло 2, без — 16.
+#
+# УТОЧНЕНО по всем 95 дампам data/logs/: прежняя формулировка «full-page тоггл в
+# модалке не совпадает НИ РАЗУ» неверна. `vacancy-response-letter-toggle` встречается
+# настоящим DOM-элементом в 5 дампах, несущих маркер модалки RESPONSE_MODAL_FORM_ID
+# (probe_135721455, 136067340, 136230349/50/51), а `add-cover-letter` — в 13. То есть
+# hh.ru рендерит в модалке ОБА варианта тоггла, и `Locator.or_` нужен именно поэтому —
+# ни один из двух селекторов по отдельности не покрывает все наблюдавшиеся случаи.
+#
+# Тоггл и раскрытая textarea НЕ СОСУЩЕСТВУЮТ: пересечение по 95 дампам пустое
+# (hh.ru ЗАМЕНЯЕТ тоггл на textarea — probe_136190065: initial тоггл=1/ta=0,
+# form тоггл=0/ta=1). Поэтому безусловный клик по видимому тогглу не может свернуть
+# уже развёрнутое поле.
 APPLY_COVER_LETTER_TOGGLE_POPUP = "[data-qa='add-cover-letter']"
 # Всплывающая панель со списком резюме (Magritte drop-base). Источник подтверждения —
 # боевой лог 2026-08-20 (`data/logs/hhru_bot.log`): в сообщении Playwright об
