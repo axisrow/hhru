@@ -212,3 +212,27 @@ def test_history_preserves_distinct_hidden_events_same_date(tmp_path):
     row_b = {"resume_id": "r1", "source_id": "v2", "viewed_at": "2026-08-20"}
     assert history.record_resume_views([row_a, row_b]) == 2
     assert len(history.resume_views()) == 2
+
+
+def test_history_view_key_prefers_source_id_pins_the_current_tradeoff(tmp_path):
+    """Pins view_key = source_id or employer_id (never the reverse).
+
+    This ordering is a deliberate, KNOWN tradeoff flagged in round 11 review
+    (#428) as CONFLICTING with no single-key resolution:
+    - source_id-first (current): two SSR views of the SAME employer on the
+      SAME date-only viewed_at stay distinct (this test) — but a DOM-captured
+      view (view_key=employer_id) and a later SSR capture of the same event
+      (view_key=source_id) can insert as two rows instead of deduping.
+    - employer_id-first (rejected, was round-9's actual bug): fixes the
+      cross-source duplication above, but collapses two distinct same-day
+      views of the same employer into one — a silent data loss regression.
+    hh.ru exposes no single identity stable across both SSR and DOM, so no
+    ordering satisfies both constraints; this test exists so a future change
+    that flips the ordering fails loudly instead of silently reintroducing
+    the round-9 bug.
+    """
+    history = History(tmp_path / "history.db")
+    row_a = {"resume_id": "r1", "employer_id": "7", "source_id": "v1", "viewed_at": "2026-08-20"}
+    row_b = {"resume_id": "r1", "employer_id": "7", "source_id": "v2", "viewed_at": "2026-08-20"}
+    assert history.record_resume_views([row_a, row_b]) == 2
+    assert len(history.resume_views()) == 2

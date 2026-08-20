@@ -70,6 +70,7 @@ def run(args: argparse.Namespace) -> None:
         page = context.new_page()
         for resume in resumes:
             resume_fetched = 0
+            truncated = False
             # Route accepts resume_id as a query parameter on current hh.ru; no
             # direct HTTP request is made, preserving the browser boundary.
             for page_num in range(args.max_pages):
@@ -103,8 +104,26 @@ def run(args: argparse.Namespace) -> None:
                         raise SystemExit(1) from exc
                 fetched.extend(rows)
                 resume_fetched += len(rows)
-                if not rows or resume_fetched >= args.limit or not has_next_page(page, page_num):
+                if not rows or resume_fetched >= args.limit:
                     break
+                more_pages = has_next_page(page, page_num)
+                if not more_pages:
+                    break
+                if page_num == args.max_pages - 1:
+                    # --max-pages exhausted while the pager still confirms
+                    # another page — the fetched history is a partial prefix,
+                    # not the complete history. Silently persisting it as
+                    # "the" history would mislead the daily trend and
+                    # employer aggregation (#428 review, round 11: CLAUDE.md
+                    # decision #5 — an unconfirmed-complete result must not
+                    # be presented as confirmed).
+                    truncated = True
+            if truncated:
+                print(
+                    f"[WARN] история резюме {resume.resume_id} обрезана по --max-pages "
+                    f"{args.max_pages}: на сайте есть ещё страницы, увеличьте --max-pages",
+                    file=sys.stderr,
+                )
 
     inserted = history.record_resume_views(fetched)
     stored = history.resume_views(resumes[0].resume_id if args.resume is not None else None)
