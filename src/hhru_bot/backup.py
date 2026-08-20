@@ -227,7 +227,12 @@ def restore_backup(
             # A multi-file restore cannot rename one directory without also
             # replacing unrelated logs. Roll back every file already replaced.
             for target in reversed(replaced):
-                saved = originals / target.relative_to(root)
+                if target == config:
+                    saved = originals / "config.yaml"
+                elif target == history:
+                    saved = originals / "history.db"
+                else:
+                    saved = originals / target.relative_to(root)
                 if saved.exists():
                     saved.replace(target)
                 else:
