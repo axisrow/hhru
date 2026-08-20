@@ -45,7 +45,14 @@ def create_backup(
     config, history, output = Path(config), Path(history), Path(output)
     root = _root(config, history)
     output_resolved = output.resolve()
-    managed = {config.resolve(), history.resolve()}
+    managed = {
+        config.resolve(),
+        history.resolve(),
+        *(
+            history.with_name(history.name + suffix).resolve()
+            for suffix in ("-wal", "-shm", "-journal")
+        ),
+    }
     storage = (root / "storage_state").resolve()
     if (
         output_resolved in managed
@@ -61,27 +68,30 @@ def create_backup(
         if history.exists():
             _sqlite_snapshot(history, snapshot)
         fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
-        os.close(fd)
         temporary = Path(temp_name)
         try:
-            os.chmod(temporary, 0o600)
-            with tarfile.open(temporary, "w:gz") as archive:
-                if config.is_file():
-                    archive.add(config, arcname="config.yaml", recursive=False)
-                elif not require_config:
-                    archive.addfile(tarfile.TarInfo("config.missing"))
-                if snapshot.exists():
-                    archive.add(snapshot, arcname="history.db", recursive=False)
-                storage_dir = root / "storage_state"
-                if storage_dir.is_dir() and not storage_dir.is_symlink():
-                    for item in sorted(storage_dir.rglob("*")):
-                        if item.is_file() and not item.is_symlink():
-                            archive.add(
-                                item, arcname=item.relative_to(root).as_posix(), recursive=False
-                            )
-            os.chmod(temporary, 0o600)
+            os.chmod(fd, 0o600)
+            stream = os.fdopen(fd, "wb")
+            fd = -1
+            with stream:
+                with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+                    if config.is_file():
+                        archive.add(config, arcname="config.yaml", recursive=False)
+                    elif not require_config:
+                        archive.addfile(tarfile.TarInfo("config.missing"))
+                    if snapshot.exists():
+                        archive.add(snapshot, arcname="history.db", recursive=False)
+                    storage_dir = root / "storage_state"
+                    if storage_dir.is_dir() and not storage_dir.is_symlink():
+                        for item in sorted(storage_dir.rglob("*")):
+                            if item.is_file() and not item.is_symlink():
+                                archive.add(
+                                    item, arcname=item.relative_to(root).as_posix(), recursive=False
+                                )
             os.replace(temporary, output)
         finally:
+            if fd != -1:
+                os.close(fd)
             temporary.unlink(missing_ok=True)
     return output
 
