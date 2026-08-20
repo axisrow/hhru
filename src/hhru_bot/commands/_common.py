@@ -702,9 +702,7 @@ def _run_apply_for_resume(
     plan = (
         ApplyPlan([], skipped=[], total=len(cards), after_filter=0)
         if approved_duplicate
-        else ApplyPlan(
-            [(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))]
-        )
+        else ApplyPlan([(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))])
         if approved_item
         else build_apply_plan(
             cards,
