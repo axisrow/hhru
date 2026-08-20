@@ -90,12 +90,15 @@ def run(args: argparse.Namespace) -> bool:
                 scoring_providers=providers,
             )
             cards_by_resume = {
-                resume.id: [
-                    item.card
-                    for item in merged
-                    if routed.get(item.card.vacancy_id, None)
-                    and routed[item.card.vacancy_id].resume is resume
-                ]
+                resume.id: sorted(
+                    [
+                        item.card
+                        for item in merged
+                        if routed.get(item.card.vacancy_id, None)
+                        and routed[item.card.vacancy_id].resume is resume
+                    ],
+                    key=lambda card: -routed[card.vacancy_id].score,
+                )
                 for resume in resumes
             }
         else:
