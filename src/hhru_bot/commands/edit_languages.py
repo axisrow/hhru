@@ -14,10 +14,11 @@ def register(subparsers) -> None:
         "edit-languages",
         help="LLM-заполнение раздела 'Языки' профиля с уровнями CEFR",
         description=(
-            "Предлагает языки через LLM, но не угадывает уровень CEFR. "
-            "Боевой режим требует явного уровня NAME=CEFR и подтверждения. "
-            "Раздел 'Языки' общий для всего профиля hh.ru: запись применяется "
-            "ко всем резюме аккаунта, а не только к --resume."
+            "Без --language: LLM только предлагает языки (уровень CEFR не "
+            "угадывается и не пишется на hh.ru). С --language NAME=CEFR: "
+            "записывает явно подтверждённые языки. Раздел 'Языки' общий для "
+            "всего профиля hh.ru: запись применяется ко всем резюме "
+            "аккаунта, а не только к --resume."
         ),
     )
     parser.add_argument(
@@ -36,8 +37,16 @@ def register(subparsers) -> None:
         metavar="NAME=CEFR",
         help="Добавить язык вручную; CEFR: A1, A2, B1, B2, C1 или C2 (можно повторять)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Показать план без записи на hh.ru")
-    parser.add_argument("--force", action="store_true", help="Подтвердить WRITE без prompt")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показать план без записи (только с --language; без него запись не идёт всегда)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Подтвердить WRITE без prompt (только с --language)",
+    )
     parser.set_defaults(func=run)
 
 
@@ -135,39 +144,24 @@ def run(args: argparse.Namespace) -> None:
             except (ImportError, ValueError, RuntimeError) as exc:
                 print(f"[FAIL] Не удалось построить безопасный план языков: {exc}")
                 sys.exit(1)
-            _print_plan(proposed, args.dry_run)
-            if args.dry_run:
-                print("[INFO] Ничего не сохранено на hh.ru.")
-                return
-            existing_keys = {value.casefold() for value in existing}
-            new_without_level = [
-                item.name for item in proposed if item.name.casefold() not in existing_keys
-            ]
-            if new_without_level:
-                # LLM output never carries a level (parse_language_plan), so any
-                # newly proposed language always needs a manual --language
-                # value; without this early exit the command would navigate,
-                # ask for write confirmation, and only then fail inside
-                # edit_languages_on_hh on the first unconfirmed level.
-                print(
-                    "[FAIL] Уровень CEFR не подтверждён для: "
-                    + ", ".join(new_without_level)
-                    + ". Повторите с --language NAME=CEFR для каждого нового языка."
-                )
-                sys.exit(1)
-            if not confirm_write(
-                args.force,
-                prompt=(
-                    f"Языки — общий раздел профиля hh.ru, не части резюме '{resume.id}': "
-                    "запись затронет ВСЕ резюме аккаунта. Сохранить на hh.ru?"
-                ),
-            ):
-                print(
-                    "[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено."
-                )
-                sys.exit(1)
-            result = edit_languages_on_hh(page, resume, proposed, dry_run=False, mode=args.mode)
-            _report(result, resume.id, False)
+            # #265 code-review round 3: the LLM branch is a planner only, not
+            # a writer. parse_language_plan guarantees every LLM-sourced
+            # Language.level is None (round 1 fix), so every genuinely new
+            # language always needs a manually confirmed level; there is no
+            # in-call way to collect one here. A write path below this point
+            # would either always be unreachable dead code (round-2 fail-fast
+            # before it) or always fail inside edit_languages_on_hh on the
+            # first unconfirmed level (round-1 behavior) — neither is a real
+            # write path, so this branch never calls edit_languages_on_hh and
+            # ignores --dry-run/--force (nothing here ever writes either way).
+            # Re-run with --language NAME=CEFR (the manual branch above) to
+            # actually save any newly proposed language.
+            _print_plan(proposed, dry_run=True)
+            print("[INFO] Ничего не сохранено на hh.ru.")
+            print(
+                "[INFO] Для сохранения новых языков повторите с "
+                "--language NAME=CEFR для каждого языка."
+            )
             return
 
 
