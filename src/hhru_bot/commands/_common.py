@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -392,30 +393,48 @@ def run_apply_for_resume(
                     resume.resume_id,
                 )
 
-    if cards_override is None:
+    approved_item = None
+    if getattr(args, "approved", None) is not None:
+        if not getattr(args, "permit", None):
+            raise ValueError("для --approved требуется --permit из review approve")
+        candidates = [item for item in history.review_items() if item["id"] == args.approved]
+        if not candidates or candidates[0]["resume_id"] != resume.resume_id:
+            raise ValueError("approved-запись принадлежит другому резюме")
+        approved_item = history.claim_review(args.approved, args.permit)
+        cards = [
+            VacancyCard(
+                vacancy_id=approved_item["vacancy_id"],
+                title=approved_item["title"],
+                company=approved_item["company"],
+                url=approved_item["vacancy_url"],
+            )
+        ]
+    elif cards_override is None:
         try:
             cards = search_vacancies(page, resume.search, max_pages=args.max_pages)
         except VacancySearchIndeterminate as e:
             # Search timeouts are normally per-resume failures, but a confirmed
             # challenge must escape as the terminal AntiBotChallengeDetected state.
             raise_for_antibot(page)
-            # Один сбой рендера не должен скрыться как пустой apply-план или
-            # остановить обработку остальных резюме в команде apply/run.
             print(f"[FAIL] {e}")
             return True
-        # Also catch challenge pages that happened to look like an empty/partial
-        # search result to the parser and therefore returned without raising.
         raise_for_antibot(page)
     else:
         cards = cards_override
-    scoring_provider = None if skip_scoring else _build_scoring_provider(config, resume)
-    plan = build_apply_plan(
-        cards,
-        resume.search,
-        resume,
-        history,
-        scoring_provider=scoring_provider,
-        limit=args.limit,
+    scoring_provider = (
+        None if approved_item or skip_scoring else _build_scoring_provider(config, resume)
+    )
+    plan = (
+        ApplyPlan([(cards[0], approved_item["score"], json.loads(approved_item["breakdown"]))])
+        if approved_item
+        else build_apply_plan(
+            cards,
+            resume.search,
+            resume,
+            history,
+            scoring_provider=scoring_provider,
+            limit=args.limit,
+        )
     )
     if ranked_override is not None:
         allowed = {card.vacancy_id for card, _score, _breakdown in plan.ranked}
@@ -435,6 +454,14 @@ def run_apply_for_resume(
 
     cover_letter_template = config.cover_letter_for(resume)
     letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+    if approved_item:
+        from ..apply.letter import LetterOutcome
+
+        class _ApprovedLetter:
+            def render(self, vacancy, resume_profile=None):  # noqa: ANN001, ARG002
+                return LetterOutcome(approved_item["letter"], "approved")
+
+        letter_provider = _ApprovedLetter()
     question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
     # M6 cycle-review #373: no longer blocks the whole run when
     # ai.answer_questions=true but --force is missing — pipeline.py gates
@@ -447,6 +474,16 @@ def run_apply_for_resume(
             "[WARN] --force включён: LLM-ответы на тест-вопросы будут заполнены "
             "и отправлены без дополнительного подтверждения"
         )
+
+    # #414: dry-run is also the review boundary. Persist the exact candidate,
+    # score and rendered letter so a later approved run never re-searches or
+    # silently regenerates a different payload.
+    if args.dry_run:
+        from ..apply.letter import render_cover_letter
+
+        for card, score, breakdown in plan.ranked:
+            letter = render_cover_letter(cover_letter_template, card, letter_provider)
+            history.enqueue_review(resume.resume_id, card, score, breakdown, letter)
 
     # #212: атрибуция резюме в верификаторе. Конфиг знает хэш резюме, SSR
     # /applicant/negotiations — только числовой resumeId; без маппинга found
@@ -573,6 +610,9 @@ def run_apply_for_resume(
             print(f"  [OK] {card.title} — {card.company}")
         else:
             print(f"  [FAIL] {card.title} — {result.reason}")
+
+        if approved_item:
+            history.finish_review(args.approved, "applied" if result.success else "failed")
 
         # #163: анти-бан-пауза — только после реальной отправки отклика (submit).
         # Ранние выходы не оставляют на сайте следа, пауза там не от чего не

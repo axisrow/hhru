@@ -23,6 +23,10 @@ def register(subparsers) -> None:
         default=0,
         help="Максимум откликов за запуск (0 = без ограничения кроме дневного лимита)",
     )
+    p.add_argument(
+        "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
+    )
+    p.add_argument("--permit", help="Одноразовый permit из `review approve`")
     p.set_defaults(func=run)
 
 
