@@ -89,15 +89,19 @@ CREATE TABLE IF NOT EXISTS responses (
 -- resume_views — реальные просмотры резюме работодателями (#415).
 -- Один snapshot на (резюме, событие просмотра, момент просмотра): повторный
 -- scrape не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
--- Идентичность события — view_key (NOT NULL): employer_id, если известен,
--- иначе стабильный source_id скрытого просмотра, иначе '' (оба поля пусты —
--- дедуп по (resume_id, '', viewed_at), как раньше). Ключ НЕ включает
--- employer — это mutable presentation-строка (имя могло смениться, SSR/DOM
--- по-разному форматируют), и раньше её участие в UNIQUE плодило дубликаты
--- одного и того же просмотра (#428 review). employer_id/source_id — NOT NULL
--- пустой строкой, а не NULL: SQLite считает несколько NULL различными
--- значениями, и вернувшись к NULL здесь дедуп скрытых просмотров снова
--- сломался бы (#428 review: "preserve hidden resume view events").
+-- Идентичность события — view_key (NOT NULL): стабильный per-view source_id
+-- (SSR id/viewId/eventId), если он есть, иначе employer_id, иначе '' (оба
+-- поля пусты — дедуп по (resume_id, '', viewed_at), как раньше). source_id
+-- в приоритете над employer_id: SSR-дата часто без времени суток, и два
+-- разных просмотра ОДНОГО работодателя в один день иначе получили бы
+-- одинаковый (employer_id, viewed_at) и второй был бы молча отброшен
+-- INSERT OR IGNORE (#428 review). Ключ НЕ включает employer — это mutable
+-- presentation-строка (имя могло смениться, SSR/DOM по-разному форматируют),
+-- и раньше её участие в UNIQUE плодило дубликаты одного и того же просмотра
+-- (#428 review). employer_id/source_id — NOT NULL пустой строкой, а не NULL:
+-- SQLite считает несколько NULL различными значениями, и вернувшись к NULL
+-- здесь дедуп скрытых просмотров снова сломался бы (#428 review: "preserve
+-- hidden resume view events").
 CREATE TABLE IF NOT EXISTS resume_views (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resume_id TEXT NOT NULL,
@@ -456,9 +460,11 @@ class History:
         inserted = 0
         with self._connect() as conn:
             for row in rows:
-                # view_key: employer_id when known, else the hidden-view source_id,
-                # else '' — never the mutable `employer` display string (#428 review).
-                view_key = row.get("employer_id") or row.get("source_id") or ""
+                # view_key: the per-view source_id when known (distinguishes two
+                # views of the same employer on the same date-only viewed_at),
+                # else employer_id, else '' — never the mutable `employer`
+                # display string (#428 review).
+                view_key = row.get("source_id") or row.get("employer_id") or ""
                 cur = conn.execute(
                     """INSERT OR IGNORE INTO resume_views
                        (resume_id, employer_id, employer, view_key, viewed_at, first_seen_at)

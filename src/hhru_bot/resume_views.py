@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from .negotiations_probe import parse_initial_state
 
@@ -51,10 +51,15 @@ def _canonicalize_viewed_at(raw: str) -> str:
     """Normalize a view timestamp to one canonical ISO spelling.
 
     SSR and DOM sources render the same instant differently (e.g. trailing
-    ``Z`` vs ``+00:00``); without this, the same event dedups as two rows
-    depending on which source captured it first (#428 review).
+    ``Z`` vs ``+00:00``, or the same instant in a different UTC offset);
+    without this, the same event dedups as two rows depending on which
+    source captured it first, or which offset it was rendered in
+    (#428 review).
     """
-    return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC)
+    return parsed.isoformat()
 
 
 def parse_resume_view_history(
@@ -82,20 +87,25 @@ def parse_resume_view_history(
             raise ValueError("SSR history view has an unparseable date") from exc
         employer_id = _value(entry, "employerId", "employer_id", "companyId")
         employer = _value(entry, "employerName", "employer", "companyName", "name")
-        source_id = None
-        if employer is None:
-            source_id = _value(entry, "id", "viewId", "eventId")
-            if source_id is None and employer_id is None:
-                raise ValueError("SSR hidden-employer view has no stable identity")
+        # Prefer the SSR per-view event ID whenever it's present, even for an
+        # identified employer: employer_id + date-only viewed_at alone cannot
+        # distinguish two separate views of the same employer on the same day
+        # (SSR dates often carry no time-of-day), so relying on employer_id as
+        # the sole identity would silently drop the second view (#428 review).
+        source_id = _value(entry, "id", "viewId", "eventId")
+        if employer is None and source_id is None and employer_id is None:
+            raise ValueError("SSR hidden-employer view has no stable identity")
         result.append(
             {
                 "resume_id": str(resume_id),
                 "employer_id": None if employer_id is None else str(employer_id),
                 "employer": None if employer is None else str(employer),
-                # Distinct hidden-employer events share no employer_id/employer, so the
-                # DB dedup key needs a stable identity elsewhere — see history.py's
-                # resume_views.view_key. Never encode this into `employer` (#428 review):
-                # it corrupts the "Топ работодателей" aggregation and leaks internal IDs.
+                # Distinct view events need their own identity for dedup — see
+                # history.py's resume_views.view_key, which prefers source_id
+                # over employer_id precisely to keep same-employer/same-day
+                # views distinct. Never encode this into `employer` (#428
+                # review): it corrupts the "Топ работодателей" aggregation and
+                # leaks internal IDs.
                 "source_id": None if source_id is None else str(source_id),
                 "viewed_at": viewed_at,
             }
