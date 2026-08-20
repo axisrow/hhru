@@ -563,7 +563,7 @@ def _format_questionnaire_report(results) -> str:
     return report
 
 
-def _print_questionnaire_progress(result, checked: int, total: int, results) -> None:
+def _print_questionnaire_progress(result, checked: int, total: int) -> None:
     """Print one durable progress line and the result as soon as it is known."""
     from ..apply.questionnaire import QUESTIONNAIRE
 
@@ -659,9 +659,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     resume_results.append(result)
                     all_results.append(result)
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
-                    _print_questionnaire_progress(
-                        result, len(resume_results), len(vacancies), all_results
-                    )
+                    _print_questionnaire_progress(result, len(resume_results), len(vacancies))
                     if result.status == UNKNOWN and result.retryable:
                         retry_ids.append(vacancy.vacancy_id)
                     if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
@@ -688,9 +686,9 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                     )
                     resume_results[result_index] = result
                     all_results[result_positions[vacancy_id]] = result
-                    _print_questionnaire_progress(
-                        result, len(resume_results), len(vacancies), all_results
-                    )
+                    # Позиция самой перепроверяемой вакансии, а не длина списка:
+                    # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
+                    _print_questionnaire_progress(result, result_index + 1, len(vacancies))
                     if limit and _questionnaire_counts(all_results)["questionnaire"] >= limit:
                         break
                     time.sleep(
@@ -717,13 +715,17 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
         f"unknown {unknown}, "
         f"требует авторизации {unauthenticated}"
     )
-    if interrupted:
-        return False
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
-        # как успешный полный скан — часть вакансий не проверена.
+        # как успешный полный скан — часть вакансий не проверена. Проверка
+        # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
+        # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         return True
+    if interrupted:
+        # Осознанное прерывание пользователем — не провал: частичный отчёт уже
+        # напечатан, а всё проверенное подтверждено (иначе сработал бы гейт выше).
+        return False
     if all_results and unknown == len(all_results):
         # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
         # вакансии (timeout, drift, частично распознанная анкета) — часть

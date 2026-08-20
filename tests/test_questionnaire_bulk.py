@@ -435,3 +435,241 @@ def test_group_questions_ignores_duplicate_vacancy_id_and_non_questionnaire_stat
 
 def test_group_questions_empty_input_returns_empty_list():
     assert questionnaire.group_questions([]) == []
+
+
+# --- #448: потоковый прогресс, счётчики, лимит, прерывание ---
+
+
+def _bulk_args(**overrides):
+    args = SimpleNamespace(
+        config="config.yaml",
+        resume="python",
+        max_pages=10,
+        headless=True,
+        vacancy_id=None,
+        vacancy_url=None,
+        limit_questionnaires=0,
+    )
+    for key, value in overrides.items():
+        setattr(args, key, value)
+    return args
+
+
+def _bulk_env(monkeypatch, cards, scan, *, events=None):
+    """Wire run_questionnaires to fakes; optionally record a print/scan event log."""
+    resume = SimpleNamespace(id="python", search=object())
+    config = _config([resume])
+    page = object()
+
+    @contextmanager
+    def context_manager(*args, **kwargs):
+        class Context:
+            def new_page(self):
+                return page
+
+        yield Context()
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: cards)
+    monkeypatch.setattr("hhru_bot.apply.questionnaire.scan_questionnaire", scan)
+    monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
+    if events is not None:
+        import builtins
+
+        real_print = builtins.print
+
+        def recording_print(*args, **kwargs):
+            events.append(("print", " ".join(str(a) for a in args)))
+            real_print(*args, **kwargs)
+
+        monkeypatch.setattr(builtins, "print", recording_print)
+    from hhru_bot.commands import probe
+
+    return probe
+
+
+def test_bulk_streams_each_result_before_scanning_the_next_vacancy(monkeypatch, capsys):
+    # #448 headline requirement: результат первой вакансии должен быть напечатан
+    # ДО того, как начнётся проверка второй. Проверка итогового текста этого не
+    # ловит — старая буферизованная реализация печатала бы то же самое в конце,
+    # поэтому тест смотрит на ПОРЯДОК событий, а не на содержимое вывода.
+    cards = [_card("601"), _card("602")]
+    events = []
+    question = Question(0, "Готовы к переезду?", "text")
+
+    def scan(page_arg, vacancy, **kwargs):
+        events.append(("scan", vacancy.vacancy_id))
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (question,), 1
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan, events=events)
+    probe.run_questionnaires(_bulk_args())
+    capsys.readouterr()
+
+    scan_602 = events.index(("scan", "602"))
+    printed_601 = [
+        index
+        for index, (kind, text) in enumerate(events)
+        if kind == "print" and "601" in text and "[OK] анкета" in text
+    ]
+    assert printed_601, "подтверждённая анкета первой вакансии не напечатана"
+    assert printed_601[0] < scan_602
+    # Текст вопроса и ссылка на вакансию печатаются сразу, а не только в итоге.
+    streamed = [text for kind, text in events[:scan_602] if kind == "print"]
+    assert any("Готовы к переезду?" in text for text in streamed)
+    assert any("https://hh.ru/vacancy/601" in text for text in streamed)
+
+
+def test_bulk_prints_retry_progress_with_the_real_vacancy_position(monkeypatch, capsys):
+    # Долгий retry должен быть виден в прогрессе (#448), и номер вакансии в
+    # строке прогресса — её собственная позиция: retry вакансии 1 из 3 не может
+    # печататься как «проверено 3/3».
+    cards = [_card("701"), _card("702"), _card("703")]
+    seen = []
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        seen.append((vacancy.vacancy_id, timeout_ms))
+        if vacancy.vacancy_id == "701" and timeout_ms == questionnaire.FAST_TIMEOUT_MS:
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        return questionnaire.QuestionnaireScanResult(vacancy, questionnaire.NO_QUESTIONNAIRE)
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    probe.run_questionnaires(_bulk_args())
+    output = capsys.readouterr().out
+
+    assert "[INFO] retry вакансии 701" in output
+    lines = output.splitlines()
+    retry_index = next(i for i, line in enumerate(lines) if "retry вакансии 701" in line)
+    progress_after_retry = next(
+        line for line in lines[retry_index + 1 :] if line.startswith("[INFO] проверено")
+    )
+    # Позиция самой перепроверенной вакансии (1 из 3), а не длина списка
+    # результатов: len(resume_results) напечатал бы «проверено 3/3».
+    assert progress_after_retry.startswith("[INFO] проверено 1/3: ")
+    assert "проверено 3/3: no_questionnaire" in output
+
+
+def test_bulk_final_counters_report_every_status(monkeypatch, capsys):
+    # #448: отдельный счётчик проверено/анкеты/без анкеты/уже откликались/unknown.
+    statuses = {
+        "801": questionnaire.QUESTIONNAIRE,
+        "802": questionnaire.NO_QUESTIONNAIRE,
+        "803": questionnaire.ALREADY_RESPONDED,
+        "804": questionnaire.UNKNOWN,
+    }
+    cards = [_card(vacancy_id) for vacancy_id in statuses]
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, statuses[vacancy.vacancy_id], "", retryable=False
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    probe.run_questionnaires(_bulk_args())
+    output = capsys.readouterr().out
+
+    assert "вакансий 4" in output
+    assert "анкет 1" in output
+    assert "без анкеты 1" in output
+    assert "уже откликались 1" in output
+    assert "unknown 1" in output
+    assert "требует авторизации 0" in output
+
+
+def test_limit_questionnaires_stops_scanning_after_n_confirmed(monkeypatch, capsys):
+    # #448: --limit-questionnaires N завершает скан. Проверяем число ВЫЗОВОВ
+    # scan_questionnaire — только оно доказывает, что скан остановился, а не
+    # просто напечатал результат раньше.
+    cards = [_card("901"), _card("902"), _card("903")]
+    scanned = []
+
+    def scan(page_arg, vacancy, **kwargs):
+        scanned.append(vacancy.vacancy_id)
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args(limit_questionnaires=1)) is False
+    capsys.readouterr()
+
+    assert scanned == ["901"]
+
+
+def test_limit_zero_scans_every_vacancy(monkeypatch, capsys):
+    cards = [_card("911"), _card("912"), _card("913")]
+    scanned = []
+
+    def scan(page_arg, vacancy, **kwargs):
+        scanned.append(vacancy.vacancy_id)
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    probe.run_questionnaires(_bulk_args(limit_questionnaires=0))
+    capsys.readouterr()
+
+    assert scanned == ["911", "912", "913"]
+
+
+def test_negative_limit_is_rejected_before_launching_a_browser(monkeypatch, capsys):
+    resume = SimpleNamespace(id="python", search=object())
+    config = _config([resume])
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+
+    @contextmanager
+    def forbidden_context(*args, **kwargs):
+        raise AssertionError("браузер не должен запускаться при неверном лимите")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", forbidden_context)
+    from hhru_bot.commands import probe
+
+    assert probe.run_questionnaires(_bulk_args(limit_questionnaires=-1)) is True
+    assert "--limit-questionnaires" in capsys.readouterr().err
+
+
+def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch, capsys):
+    # #448: прерывание печатает итог уже обработанной части, без traceback.
+    cards = [_card("921"), _card("922"), _card("923")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "922":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args()) is False
+    output = capsys.readouterr().out
+
+    assert "прерван пользователем" in output
+    assert "вакансий 1" in output
+    assert "анкет 1" in output
+
+
+def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
+    # Fail-closed (CLAUDE.md, #433): Ctrl-C после потери сессии — тоже неполный
+    # скан. Прерывание не должно превращать [FAIL] в успешный выход, иначе
+    # потеря авторизации маскируется намеренной остановкой.
+    cards = [_card("931"), _card("932")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "932":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args()) is True
+    output = capsys.readouterr().out
+
+    assert "прерван пользователем" in output
+    assert "[FAIL] сессия истекла во время прогона" in output
