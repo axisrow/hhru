@@ -347,3 +347,71 @@ def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
     assert probe.run_questionnaires(args) is False
     output = capsys.readouterr().out
     assert "already_responded" in output
+
+
+# --- #443 Этап 2: группировка одинаковых вопросов между вакансиями ---
+
+
+def test_group_questions_merges_identical_text_and_options_across_vacancies():
+    q = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
+    results = [
+        questionnaire.QuestionnaireScanResult(_card("1"), questionnaire.QUESTIONNAIRE, "", (q,), 1),
+        questionnaire.QuestionnaireScanResult(_card("2"), questionnaire.QUESTIONNAIRE, "", (q,), 1),
+    ]
+    groups = questionnaire.group_questions(results)
+    assert len(groups) == 1
+    assert groups[0].vacancy_ids == ("1", "2")
+    assert groups[0].text == "Готовы к переезду?"
+    assert groups[0].options == ("Да", "Нет")
+
+
+def test_group_questions_normalizes_whitespace_and_case():
+    q1 = Question(0, "  Готовы к переезду?  ", "text")
+    q2 = Question(0, "готовы к переезду?", "text")
+    results = [
+        questionnaire.QuestionnaireScanResult(
+            _card("1"), questionnaire.QUESTIONNAIRE, "", (q1,), 1
+        ),
+        questionnaire.QuestionnaireScanResult(
+            _card("2"), questionnaire.QUESTIONNAIRE, "", (q2,), 1
+        ),
+    ]
+    groups = questionnaire.group_questions(results)
+    assert len(groups) == 1
+    assert groups[0].vacancy_ids == ("1", "2")
+
+
+def test_group_questions_keeps_same_text_with_different_options_separate():
+    # Same wording, different answer choices for two different employers —
+    # merging would falsely claim both vacancies accept the same options.
+    q1 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
+    q2 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет", "Обсудим"), is_radio=True)
+    results = [
+        questionnaire.QuestionnaireScanResult(
+            _card("1"), questionnaire.QUESTIONNAIRE, "", (q1,), 1
+        ),
+        questionnaire.QuestionnaireScanResult(
+            _card("2"), questionnaire.QUESTIONNAIRE, "", (q2,), 1
+        ),
+    ]
+    groups = questionnaire.group_questions(results)
+    assert len(groups) == 2
+    assert {g.vacancy_ids for g in groups} == {("1",), ("2",)}
+
+
+def test_group_questions_ignores_duplicate_vacancy_id_and_non_questionnaire_status():
+    q = Question(0, "Готовы к переезду?", "text")
+    results = [
+        questionnaire.QuestionnaireScanResult(_card("1"), questionnaire.QUESTIONNAIRE, "", (q,), 1),
+        # Same vacancy re-scanned (retry path) must not double-count.
+        questionnaire.QuestionnaireScanResult(_card("1"), questionnaire.QUESTIONNAIRE, "", (q,), 1),
+        questionnaire.QuestionnaireScanResult(_card("2"), questionnaire.NO_QUESTIONNAIRE),
+        questionnaire.QuestionnaireScanResult(_card("3"), questionnaire.UNKNOWN, "timeout"),
+    ]
+    groups = questionnaire.group_questions(results)
+    assert len(groups) == 1
+    assert groups[0].vacancy_ids == ("1",)
+
+
+def test_group_questions_empty_input_returns_empty_list():
+    assert questionnaire.group_questions([]) == []
