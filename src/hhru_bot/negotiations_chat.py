@@ -88,7 +88,7 @@ class ReplyDecision:
 _ROBOT_AUTHOR_RE = re.compile(
     r"(?<!\w)(?:автоматический(?:\s+бот)?|автобот|робот|robot|bot)(?!\w)", re.I
 )
-_QUESTION_RE = re.compile(r"\?(?:[?!])*")
+_QUESTION_SENTENCE_RE = re.compile(r"[^.!?\n]+[?!]*\?[?!]*(?=\s|$)", re.U)
 
 
 def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
@@ -103,7 +103,7 @@ def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
         if message.author != "employer":
             run = 0
             continue
-        questions = _QUESTION_RE.findall(message.text)
+        questions = _QUESTION_SENTENCE_RE.findall(message.text)
         if questions:
             run += len(questions)
             if run >= 2:

@@ -75,6 +75,11 @@ def test_repeated_question_punctuation_counts_as_one_question():
     assert not is_robot_questionnaire([ChatMessage("employer", "1", "Спасибо! Ждём вас!")])
 
 
+def test_question_sentence_detection_handles_mixed_punctuation():
+    assert not is_robot_questionnaire([ChatMessage("employer", "1", "Вы готовы?!")])
+    assert is_robot_questionnaire([ChatMessage("employer", "1", "Готовы? Успеете?")])
+
+
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):
     # An unmapped topic returns before ``page`` is touched, so a typed stand-in
     # is enough — no real Playwright Page is needed for this branch.
