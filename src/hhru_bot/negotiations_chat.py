@@ -151,7 +151,7 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
         item_marker = _message_id(item.get_attribute("data-qa"))
         item_author, item_label = item.evaluate(
             """(el, markers) => { for (let node = el; node; node = node.parentElement) {
-                const classes = String(node.className).split(/\s+/);
+                const classes = String(node.className).split(/\\s+/);
                 const author = classes.includes(markers.own) ? 'me'
                     : classes.includes(markers.other) ? 'employer' : null;
                 if (author) {
