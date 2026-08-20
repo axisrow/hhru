@@ -56,3 +56,19 @@ def test_restore_uses_staged_files(tmp_path):
     assert config.read_text(encoding="utf-8").startswith("account:")
     with sqlite3.connect(history) as conn:
         assert conn.execute("select value from sample").fetchone() == ("old",)
+
+
+def test_restore_maps_canonical_members_to_custom_paths(tmp_path):
+    config, history = _state(tmp_path)
+    custom_config = config.with_name("custom.yaml")
+    custom_history = history.with_name("custom.sqlite")
+    config.rename(custom_config)
+    history.rename(custom_history)
+    archive = tmp_path / "state.tar.gz"
+
+    create_backup(custom_config, custom_history, archive)
+    restore_backup(archive, custom_config, custom_history, dry_run=False)
+
+    assert custom_config.read_text(encoding="utf-8").startswith("account:")
+    with sqlite3.connect(custom_history) as conn:
+        assert conn.execute("select value from sample").fetchone() == ("old",)

@@ -135,6 +135,14 @@ def restore_backup(
     """Validate and restore an archive; dry-run is the safe default."""
     archive_path, config, history = Path(archive_path), Path(config), Path(history)
     root = _root(config, history)
+
+    def target_for(name: str) -> Path:
+        if name == "config.yaml":
+            return config
+        if name == "history.db":
+            return history
+        return root / name
+
     names = inspect_backup(archive_path)
     if dry_run:
         return names
@@ -170,7 +178,7 @@ def restore_backup(
         try:
             for name in names:
                 source = staging / name
-                target = root / name
+                target = target_for(name)
                 try:
                     target.resolve(strict=False).relative_to(root.resolve())
                 except ValueError as exc:
@@ -204,7 +212,7 @@ def restore_backup(
                     if item.is_file() and not item.is_symlink()
                 )
             for name in sorted(managed - archived):
-                target = root / name
+                target = target_for(name)
                 if not target.exists() and not target.is_symlink():
                     continue
                 if target.is_symlink() or not target.is_file():
