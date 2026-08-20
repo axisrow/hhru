@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from ..config import ConfigError
+
 
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
@@ -124,7 +126,7 @@ def _edit(path: Path) -> None:
         candidate.unlink(missing_ok=True)
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace) -> None:
     path = Path(args.config).expanduser()
     if args.path:
         print(path.resolve())
@@ -156,3 +158,12 @@ def run(args: argparse.Namespace) -> None:
         print("[OK] Конфиг обновлён")
         return
     print(path.read_text(encoding="utf-8"), end="")
+
+
+def run(args: argparse.Namespace) -> bool | None:
+    """Run config and turn expected input/config errors into CLI failures."""
+    try:
+        return _run(args)
+    except (ConfigError, OSError, ValueError, KeyError, yaml.YAMLError) as exc:
+        print(f"[FAIL] {exc}")
+        return True

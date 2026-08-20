@@ -42,12 +42,19 @@ def test_config_get_set_and_unset(tmp_path, capsys):
     assert "daily_apply_limit" not in yaml.safe_load(path.read_text())["throttle"]
 
 
-def test_config_write_uses_loader_validation_and_preserves_file(tmp_path):
+def test_config_write_uses_loader_validation_and_preserves_file(tmp_path, capsys):
     path = _config(tmp_path)
     before = path.read_text()
-    with pytest.raises(Exception, match="обязательное поле"):
-        run(_args(path, set=["account.storage_state_file", "null"]))
+    assert run(_args(path, set=["account.storage_state_file", "null"])) is True
+    assert "[FAIL]" in capsys.readouterr().out
     assert path.read_text() == before
+
+
+def test_config_missing_key_is_concise_failure(tmp_path, capsys):
+    assert run(_args(_config(tmp_path), key="missing.key")) is True
+    output = capsys.readouterr().out
+    assert output.startswith("[FAIL] Ключ не найден")
+    assert "Traceback" not in output
 
 
 def test_dotted_helpers():
