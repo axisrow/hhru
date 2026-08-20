@@ -21,6 +21,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from ..ai.questions import Question, extract_questions
 from ..browser import NotAuthenticated, goto_hh, require_authenticated_page
 from ..search import VacancyCard
+from .dedup import check_already_responded
 from .questions import detect_questions
 from .steps import navigate_to_response_form, wait_apply_button
 
@@ -28,6 +29,7 @@ QUESTIONNAIRE = "questionnaire"
 NO_QUESTIONNAIRE = "no_questionnaire"
 UNKNOWN = "unknown"
 UNAUTHENTICATED = "unauthenticated"
+ALREADY_RESPONDED = "already_responded"
 
 FAST_TIMEOUT_MS = 15_000
 FAST_FORM_TIMEOUT_MS = 5_000
@@ -72,6 +74,16 @@ def scan_questionnaire(
 
     try:
         if not wait_apply_button(page, timeout_ms=form_timeout_ms):
+            # #433 cycle-review round 3: wait_apply_button() возвращает False и
+            # для реального timeout/drift, и для штатного «уже откликались»
+            # (она ждёт кнопку ИЛИ already-responded маркер одним локатором,
+            # см. её докстринг) — эти случаи неразличимы без отдельной
+            # проверки. Без неё обычная выдача с прежними откликами валит
+            # весь bulk-скан как неподтверждённый. check_already_responded()
+            # (read-only классификатор, уже используется в apply/probe.py по
+            # тому же паттерну) отличает подтверждённый пропуск от таймаута.
+            if reason := check_already_responded(page, vacancy):
+                return QuestionnaireScanResult(vacancy, ALREADY_RESPONDED, reason)
             return QuestionnaireScanResult(
                 vacancy, UNKNOWN, "кнопка отклика не подтверждена", retryable=True
             )
@@ -99,6 +111,18 @@ def scan_questionnaire(
         if not detection.has_questions:
             return QuestionnaireScanResult(vacancy, NO_QUESTIONNAIRE)
         questions, total_bodies = extract_questions(page)
+        if len(questions) != total_bodies:
+            # #433 cycle-review round 3: extract_questions() может тихо
+            # отбросить тело вопроса с нераспознанной структурой или
+            # пустыми/неуникальными вариантами ответа (см. её докстринг и
+            # тот же инвариант в apply/pipeline.py). Без этой проверки скан
+            # репортил бы урезанный список вопросов как полную анкету.
+            return QuestionnaireScanResult(
+                vacancy,
+                UNKNOWN,
+                "анкета обнаружена, но распознана частично (расхождение эвристики и парсера)",
+                retryable=False,
+            )
         return QuestionnaireScanResult(
             vacancy,
             QUESTIONNAIRE,

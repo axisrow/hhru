@@ -67,6 +67,7 @@ def test_timeout_is_unknown_and_retryable_not_no_questionnaire(monkeypatch):
     monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
     monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
     monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: False)
+    monkeypatch.setattr(questionnaire, "check_already_responded", lambda page, vacancy: None)
 
     result = questionnaire.scan_questionnaire(Page(), _card("102"))
 
@@ -95,6 +96,57 @@ def test_scan_uses_two_signal_auth_check_not_bare_login_form(monkeypatch):
     result = questionnaire.scan_questionnaire(Page(), _card("103"))
 
     assert result.status == questionnaire.UNAUTHENTICATED
+
+
+def test_scan_distinguishes_already_responded_from_timeout(monkeypatch):
+    class Page:
+        def set_default_navigation_timeout(self, timeout):
+            pass
+
+    monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
+    monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: False)
+    # #433 cycle-review round 3: wait_apply_button() возвращает False для
+    # реального timeout И для штатного «уже откликались» (общий локатор) —
+    # без отдельной проверки обычная выдача с прежними откликами валила бы
+    # весь bulk-скан как неподтверждённую.
+    monkeypatch.setattr(
+        questionnaire, "check_already_responded", lambda page, vacancy: "уже откликались"
+    )
+
+    result = questionnaire.scan_questionnaire(Page(), _card("104"))
+
+    assert result.status == questionnaire.ALREADY_RESPONDED
+    assert result.retryable is False
+
+
+def test_scan_treats_partial_question_extraction_as_unknown(monkeypatch):
+    class Page:
+        def set_default_navigation_timeout(self, timeout):
+            pass
+
+    monkeypatch.setattr(questionnaire, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(questionnaire, "require_authenticated_page", lambda page: None)
+    monkeypatch.setattr(questionnaire, "wait_apply_button", lambda page, **kwargs: True)
+    monkeypatch.setattr(
+        questionnaire, "navigate_to_response_form", lambda page, vacancy_id, **kwargs: True
+    )
+    monkeypatch.setattr(
+        questionnaire,
+        "detect_questions",
+        lambda page: SimpleNamespace(indeterminate=False, has_questions=True, reason="task-body"),
+    )
+    question = Question(0, "В каком городе вы работаете?", "text")
+    # #433 cycle-review round 3: extract_questions() может тихо отбросить тело
+    # вопроса (2 body в DOM, 1 распознан) — сравнение len(questions) !=
+    # total_bodies обязательно, иначе урезанный список репортится как полная
+    # анкета (тот же инвариант, что и в apply/pipeline.py).
+    monkeypatch.setattr(questionnaire, "extract_questions", lambda page: ([question], 2))
+
+    result = questionnaire.scan_questionnaire(Page(), _card("105"))
+
+    assert result.status == questionnaire.UNKNOWN
+    assert result.questions == ()
 
 
 def _config(resumes):
@@ -253,3 +305,45 @@ def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
     assert probe.run_questionnaires(args) is True
     output = capsys.readouterr().out
     assert "unknown" in output
+
+
+def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
+    card = _card("501")
+    resume = SimpleNamespace(id="python", search=object())
+    config = _config([resume])
+    page = object()
+
+    @contextmanager
+    def context_manager(*args, **kwargs):
+        class Context:
+            def new_page(self):
+                return page
+
+        yield Context()
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr(
+        "hhru_bot.apply.questionnaire.scan_questionnaire",
+        lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.ALREADY_RESPONDED, "уже откликались"
+        ),
+    )
+    monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
+    from hhru_bot.commands import probe
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        resume="python",
+        max_pages=10,
+        headless=True,
+        vacancy_id=None,
+        vacancy_url=None,
+    )
+    # #433 cycle-review round 3: already_responded — подтверждённое состояние
+    # (не timeout/drift), обычная выдача с прежними откликами не должна
+    # проваливать весь bulk-скан.
+    assert probe.run_questionnaires(args) is False
+    output = capsys.readouterr().out
+    assert "already_responded" in output

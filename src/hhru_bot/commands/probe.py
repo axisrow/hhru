@@ -614,15 +614,17 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
                 )
             all_results.extend(by_id[v.vacancy_id] for v in vacancies)
 
-    from ..apply.questionnaire import QUESTIONNAIRE
+    from ..apply.questionnaire import ALREADY_RESPONDED, QUESTIONNAIRE
 
     print(_format_questionnaire_report(all_results))
     unauthenticated = sum(r.status == UNAUTHENTICATED for r in all_results)
     unknown = sum(r.status == UNKNOWN for r in all_results)
+    already_responded = sum(r.status == ALREADY_RESPONDED for r in all_results)
     print(
         f"[INFO] итог: вакансий {len(all_results)}, "
         f"анкет {sum(r.status == QUESTIONNAIRE for r in all_results)}, "
         f"не подтверждено {unknown}, "
+        f"уже откликались {already_responded}, "
         f"требует авторизации {unauthenticated}"
     )
     if unauthenticated:
