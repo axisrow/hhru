@@ -81,6 +81,9 @@ def test_question_sentence_detection_handles_mixed_punctuation():
     assert is_robot_questionnaire(
         [ChatMessage("employer", "1", "«Какой у вас опыт?» «Когда готовы?»")]
     )
+    assert not is_robot_questionnaire(
+        [ChatMessage("employer", "1", "Вы видели вопрос «Когда?»🙂 в анкете?")]
+    )
 
 
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):

@@ -88,7 +88,12 @@ class ReplyDecision:
 _ROBOT_AUTHOR_RE = re.compile(
     r"(?<!\w)(?:автоматический(?:\s+бот)?|автобот|робот|robot|bot)(?!\w)", re.I
 )
-_QUESTION_SENTENCE_RE = re.compile(r"[^.!?\n]+[?!]*\?[?!]*(?=\s|$|[^\w])", re.U)
+_SENTENCE_END_RE = re.compile(r"[.!?]+[\"»”’'’)]*(?=\s|$)", re.U)
+
+
+def _question_sentence_count(text: str) -> int:
+    """Count sentence boundaries whose terminal punctuation includes ``?``."""
+    return sum("?" in match.group(0) for match in _SENTENCE_END_RE.finditer(text))
 
 
 def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
@@ -103,9 +108,9 @@ def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
         if message.author != "employer":
             run = 0
             continue
-        questions = _QUESTION_SENTENCE_RE.findall(message.text)
-        if questions:
-            run += len(questions)
+        question_count = _question_sentence_count(message.text)
+        if question_count:
+            run += question_count
             if run >= 2:
                 return True
         else:
