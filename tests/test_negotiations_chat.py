@@ -78,6 +78,9 @@ def test_repeated_question_punctuation_counts_as_one_question():
 def test_question_sentence_detection_handles_mixed_punctuation():
     assert not is_robot_questionnaire([ChatMessage("employer", "1", "Вы готовы?!")])
     assert is_robot_questionnaire([ChatMessage("employer", "1", "Готовы? Успеете?")])
+    assert is_robot_questionnaire(
+        [ChatMessage("employer", "1", "«Какой у вас опыт?» «Когда готовы?»")]
+    )
 
 
 def test_read_chat_logs_and_fails_closed_for_unmapped_topic(caplog):
