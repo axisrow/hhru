@@ -53,6 +53,7 @@ WRITE_COMMANDS = frozenset(
         "edit-skills",
         "settings",
         "config",
+        "reject",
     }
 )
 

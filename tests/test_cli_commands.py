@@ -116,6 +116,7 @@ def test_all_commands_registered():
         "learn",
         "settings",
         "refresh-token",
+        "reject",
     }
 
 
@@ -170,6 +171,7 @@ def test_register_commands_returns_names():
         "learn",
         "settings",
         "refresh_token",
+        "reject",
     }
 
 
