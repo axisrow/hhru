@@ -166,3 +166,158 @@ def test_post_submit_challenge_finalizes_uncertain_marker_before_stopping(tmp_pa
     assert row is not None
     assert row["status"] == "uncertain"
     assert "обнаружена анти-бот проверка" in row["reason"]
+
+
+def test_approved_apply_attributes_to_the_query_recorded_at_enqueue_time(tmp_path, monkeypatch):
+    """#420 follow-up (Codex adversarial-review round 1, PR #449): review_queue
+    (#414 schema) didn't persist the search_query a card was found under, so
+    the config's *current* resume.search.text got written instead — wrong
+    whenever the config changed between the dry-run that queued the card and
+    a later `apply --approved` run. The fix persists the query at enqueue
+    time and uses that stored value, not whatever the config says now.
+    """
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="devops"),  # config changed after enqueue_review
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="Acme",
+        url="https://hh.ru/vacancy/123",
+    )
+    # dry-run under "python" queued the card; that query must survive to the
+    # later approved apply, made under a config that now says "devops".
+    item_id = history.enqueue_review("AAA111", card, 1.0, {}, "cover letter", search_query="python")
+    permit = history.approve_review(item_id)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+        approved=item_id,
+        permit=permit,
+    )
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+
+    def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
+        kwargs["before_submit"]()
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="approved",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    with history._connect() as conn:
+        row = conn.execute("SELECT search_query FROM actions WHERE vacancy_id='123'").fetchone()
+
+    assert row is not None
+    assert row["search_query"] == "python"
+
+
+def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_seen(
+    tmp_path, monkeypatch
+):
+    """Codex adversarial-review round 2 (PR #449): review_queue rows created
+    before this fix shipped have no stored search_query (the column didn't
+    exist yet) and are attributed via the existing vacancies_seen fallback in
+    funnel_by_search_query — exactly the pre-PR `main` behavior for every
+    action (#420: "keep vacancies_seen as fallback rather than backfilling
+    historical actions"). This is a one-time migration-window case, not a new
+    defect: rows enqueued *after* this fix always carry their real query (see
+    test_approved_apply_attributes_to_the_query_recorded_at_enqueue_time), so
+    the fallback here only ever applies to the finite backlog of queue
+    entries that predate the column.
+    """
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="devops"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="Acme",
+        url="https://hh.ru/vacancy/123",
+    )
+    # This vacancy was independently seen by `search` under two unrelated queries.
+    now = "2026-01-01T00:00:00"
+    with history._connect() as conn:
+        conn.execute(
+            "INSERT INTO vacancies_seen (vacancy_id, search_query, first_seen_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("123", "python", now, now),
+        )
+        conn.execute(
+            "INSERT INTO vacancies_seen (vacancy_id, search_query, first_seen_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("123", "backend", now, now),
+        )
+    # Pre-fix queue row: no search_query recorded (legacy row, provenance unknown).
+    item_id = history.enqueue_review("AAA111", card, 1.0, {}, "cover letter")
+    permit = history.approve_review(item_id)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+        approved=item_id,
+        permit=permit,
+    )
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+
+    def succeeds_after_reservation(*args, **kwargs):  # noqa: ANN002, ANN003
+        kwargs["before_submit"]()
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="approved",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", succeeds_after_reservation)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    funnel = history.funnel_by_search_query()
+    attributed_to_seen_queries = {
+        row["search_query"] for row in funnel if row["search_query"] in {"python", "backend"}
+    }
+    assert attributed_to_seen_queries == {"python", "backend"}, (
+        "pre-migration queue row should still fall back to vacancies_seen, "
+        f"got {attributed_to_seen_queries}"
+    )
