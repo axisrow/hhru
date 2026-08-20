@@ -102,17 +102,29 @@ class _StrictLastLocator:
 
 def test_add_language_flow_uses_last_as_a_property_not_a_call(monkeypatch) -> None:
     """#265 code-review round 1 (Codex/claude): page.get_by_role(...).last()
-    called Locator.last as a method; it is a property on the real API and
-    the call form raises TypeError, uncaught by
-    except (PlaywrightError, RuntimeError). This test fails on that
-    regression by making get_by_role return a strict-property locator."""
+    called Locator.last as a method; it is a property on the real API, and
+    against the live API the call form raises TypeError. A permissive
+    MagicMock would not reproduce that TypeError (calling a MagicMock
+    attribute just returns another MagicMock), so this test instead uses
+    _StrictLastLocator, whose ``.last`` is a real Python property: calling it
+    behaves like the live API and breaks the mocked call chain below,
+    surfacing as a failed/incorrect LanguagesResult rather than a silent
+    pass — see the sanity check for this test in the round-1 commit message.
+    """
     resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
     page = MagicMock()
     page.url = "https://hh.ru/applicant/profile/me"
 
     card = MagicMock()
     card.count.return_value = 1
-    card.locator.return_value.all.return_value = []
+    # Before the add: no rows. After add_button.click() the post-save
+    # reconciliation re-reads the card (#265 round 2, Codex) and must find
+    # the newly added language's name among the rows, or the write is
+    # reported as unconfirmed rather than success — so the second read
+    # returns a row for "English".
+    added_row = MagicMock()
+    added_row.locator.return_value.first.inner_text.return_value = "English"
+    card.locator.return_value.all.side_effect = [[], [added_row]]
     add_button = MagicMock()
     add_button.count.return_value = 1
 
@@ -147,12 +159,98 @@ def test_add_language_flow_uses_last_as_a_property_not_a_call(monkeypatch) -> No
         page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
     )
 
-    # A TypeError from a stray .last() would be swallowed by the module's
-    # broad except only if it were (PlaywrightError, RuntimeError) — it isn't,
-    # so a regression here surfaces as an uncaught TypeError failing the test,
-    # not as a quiet result.success is False.
     assert result.success
     assert result.acted is True
+
+
+def test_unconfirmed_level_aborts_before_any_click(monkeypatch) -> None:
+    """#265 code-review round 2 (Codex/claude): the level==None guard must run
+    before the write loop starts, not inside it. Two additions, the second
+    missing a confirmed level: the first must NOT be clicked/saved on hh.ru
+    before the whole call fails — a no-op (acted=False), not a partial write
+    hidden behind success=False."""
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+
+    card = MagicMock()
+    card.count.return_value = 1
+    card.locator.return_value.all.return_value = []
+    add_button = MagicMock()
+    add_button.count.return_value = 1
+    page.locator.side_effect = lambda selector: (
+        card
+        if "language-card" in selector
+        else add_button
+        if "language-add" in selector
+        else MagicMock()
+    )
+
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
+
+    result = edit_languages_on_hh(
+        page,
+        resume,
+        (Language("English", "B2"), Language("German", None)),
+        dry_run=False,
+        mode="append",
+    )
+
+    assert not result.success
+    assert result.acted is False
+    assert "German" in result.reason
+    add_button.click.assert_not_called()
+
+
+def test_dialog_hidden_is_not_trusted_as_proof_of_persistence(monkeypatch) -> None:
+    """#265 code-review round 2 (Codex): the dialog closing (wait_for hidden)
+    is not proof the row was actually saved server-side. If the re-read of
+    the card after save doesn't show the language, the result must be a
+    failure with acted=True (write attempted, outcome unconfirmed) — not a
+    silent success."""
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+
+    card = MagicMock()
+    card.count.return_value = 1
+    # The card never shows the new row, even after the dialog closes —
+    # simulates a rerender/optimistic-close that didn't actually persist.
+    card.locator.return_value.all.return_value = []
+    add_button = MagicMock()
+    add_button.count.return_value = 1
+
+    def locator_side_effect(selector):
+        from hhru_bot.selector_groups import resume_page
+
+        if selector == resume_page.RESUME_LANGUAGE_CARD:
+            return card
+        if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        return MagicMock()
+
+    page.locator.side_effect = locator_side_effect
+
+    dialog = MagicMock()
+    form = MagicMock()
+    form.locator.return_value.count.return_value = 1
+    form.count.return_value = 1
+    dialog.locator.return_value = form
+    page.get_by_role.return_value = _StrictLastLocator(dialog)
+
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is True
+    assert "не подтверждено" in result.reason
 
 
 def test_existing_languages_are_read_from_cell_text_not_split_on_comma(monkeypatch) -> None:

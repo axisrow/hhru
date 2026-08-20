@@ -96,6 +96,33 @@ def parse_manual_languages(values: list[str]) -> tuple[Language, ...]:
     return tuple(result)
 
 
+def wait_for_language_card(page):
+    """Wait past the profile SPA hydration race and return the strictly-one
+    languages card locator, or ``None`` if it isn't unambiguous.
+
+    #265 code-review round 2 (/review): this "wait for card, then require
+    count()==1, else fail closed" logic was duplicated verbatim between
+    commands/edit_languages.py (reading ``existing`` for the LLM prompt) and
+    edit_languages_on_hh (the write path) — a selector or race-condition fix
+    applied to one would silently not apply to the other. Both callers now
+    share this helper.
+    """
+    card = page.locator(resume_page.RESUME_LANGUAGE_CARD)
+    try:
+        card.first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError:
+        pass
+    return card if card.count() == 1 else None
+
+
+def read_existing_languages(card) -> tuple[str, ...]:
+    """Read the language names already on the (already-confirmed) card."""
+    return tuple(
+        row.locator(resume_page.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
+        for row in card.locator(resume_page.RESUME_LANGUAGE_ROW).all()
+    )
+
+
 def build_languages_prompt(
     page_text: str, existing: tuple[str, ...], mode: str
 ) -> list[dict[str, str]]:
@@ -135,35 +162,38 @@ def edit_languages_on_hh(
             return LanguagesResult(False, languages, "сессия hh.ru не подтверждена")
         if urlsplit(page.url).path != "/applicant/profile/me":
             return LanguagesResult(False, languages, "страница профиля не подтверждена")
-        card = page.locator(resume_page.RESUME_LANGUAGE_CARD)
+        card = wait_for_language_card(page)
         add_button = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
-        # #265 code-review round 1: an immediate count() right after goto_hh can
-        # observe the DOM before the profile SPA finishes hydrating (the same
-        # commit-vs-render race documented in CLAUDE.md for resume_position.py /
-        # skills.py / delete_resume.py). Wait for the card to render before the
-        # strict count check; a genuinely missing card times out here and still
-        # fails closed with our own message, not a generic PlaywrightError one.
-        try:
-            card.first.wait_for(state="visible", timeout=15000)
-        except PlaywrightError:
-            pass
-        if card.count() != 1 or add_button.count() != 1:
+        if card is None or add_button.count() != 1:
             return LanguagesResult(False, languages, "карточка языков не найдена однозначно")
-        existing = tuple(
-            row.locator(resume_page.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
-            for row in card.locator(resume_page.RESUME_LANGUAGE_ROW).all()
-        )
+        existing = read_existing_languages(card)
         existing_keys = {value.casefold() for value in existing}
         if mode == "fresh" and existing:
             return LanguagesResult(False, languages, "режим с нуля требует пустого раздела")
         additions = tuple(item for item in languages if item.name.casefold() not in existing_keys)
+        # #265 code-review round 2 (Codex/claude): the level==None check must
+        # run before ANY click, not inside the write loop. A guard inside the
+        # loop lets earlier additions in the same call already be clicked and
+        # saved on hh.ru before a later item without a confirmed level aborts
+        # the whole call with success=False (partial-write, live side effects
+        # hidden behind an apparent failure) — and since parse_language_plan
+        # now guarantees every LLM-sourced Language has level=None (round 1
+        # fix), this same in-loop guard made the LLM path fail on its very
+        # first addition, so the advertised LLM-fill workflow could never
+        # write anything. Failing closed here, before the loop starts, keeps
+        # the call a true no-op (acted=False) and gives a caller the full
+        # list of languages still needing a confirmed level, instead of
+        # aborting after already writing some of them.
+        unconfirmed = tuple(item.name for item in additions if item.level is None)
+        if unconfirmed:
+            return LanguagesResult(
+                False,
+                languages,
+                "уровень CEFR не подтверждён для: " + ", ".join(unconfirmed),
+            )
         for item in additions:
-            if item.level is None:
-                return LanguagesResult(
-                    False,
-                    languages,
-                    f"уровень CEFR для языка '{item.name}' не подтверждён",
-                )
+            # unconfirmed (above) already proved every item.level is non-None.
+            assert item.level is not None
             add_button.click()
             dialog = page.get_by_role("dialog", name="Язык").last
             dialog.wait_for(state="visible")
@@ -173,6 +203,21 @@ def edit_languages_on_hh(
             _choose_degree(page, form, item.level)
             _save_language(dialog)
             dialog.wait_for(state="hidden")
+            # #265 code-review round 2 (Codex): the dialog closing is not proof
+            # the write persisted — a rerender, an ambiguous server response,
+            # or an optimistic modal close can hide the dialog without the row
+            # actually landing. Re-read the card and require the language name
+            # to now be present (RESUME_LANGUAGE_ROW_CELL_TEXT is confirmed;
+            # the CEFR level's position within a row is not, so this check
+            # only confirms the name, not the level — see resume_page.py).
+            confirmed_names = {name.casefold() for name in read_existing_languages(card)}
+            if item.name.casefold() not in confirmed_names:
+                return LanguagesResult(
+                    False,
+                    languages,
+                    f"сохранение языка '{item.name}' не подтверждено после закрытия диалога",
+                    acted=True,
+                )
         return LanguagesResult(True, languages, acted=bool(additions))
     except (PlaywrightError, RuntimeError) as exc:
         return LanguagesResult(

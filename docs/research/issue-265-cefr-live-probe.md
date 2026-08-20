@@ -63,10 +63,12 @@ this explicitly before any WRITE.
 - Save/cancel/close: `[data-qa="profile-modal-button-save"]`,
   `[data-qa="profile-modal-button-cancel"]`,
   `[data-qa="profile-modal-button-close"]`.
-- CEFR labels match `CEFR_LABELS` in `languages.py` exactly (verified against
-  the six live option texts): `A1 — Начальный`, `A2 — Элементарный`,
-  `B1 — Средний`, `B2 — Средне-продвинутый`, `C1 — Продвинутый`,
-  `C2 — В совершенстве`.
+- CEFR labels observed on the six live options (`A1 — Начальный`,
+  `A2 — Элементарный`, `B1 — Средний`, `B2 — Средне-продвинутый`,
+  `C1 — Продвинутый`, `C2 — В совершенстве`). The implementation keys on the
+  option `data-qa` codes (`magritte-select-option-{code}`), not on these
+  label strings, so no `CEFR_LABELS` constant is wired into `languages.py`
+  (code-review round 2 removed the unused one that had been added earlier).
 
 ## Other allowed drafts (kept for history — irrelevant to the fix)
 

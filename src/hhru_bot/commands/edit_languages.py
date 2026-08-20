@@ -6,8 +6,6 @@ import argparse
 import sys
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Error as PlaywrightError
-
 from .copy_resume import confirm_write
 
 
@@ -46,7 +44,13 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace) -> None:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
-    from ..languages import build_languages_prompt, edit_languages_on_hh, parse_language_plan
+    from ..languages import (
+        build_languages_prompt,
+        edit_languages_on_hh,
+        parse_language_plan,
+        read_existing_languages,
+        wait_for_language_card,
+    )
 
     config = load_config_or_exit(args.config)
     from ._common import resolve_resume
@@ -98,7 +102,6 @@ def run(args: argparse.Namespace) -> None:
         ) as context:
             page = context.new_page()
             from ..browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
-            from ..selector_groups import resume_page as selectors
 
             # Languages are a profile-level entity on hh.ru, confirmed live
             # (#265): /resume/{id} never renders a languages block, only
@@ -111,23 +114,17 @@ def run(args: argparse.Namespace) -> None:
             if urlsplit(page.url).path != "/applicant/profile/me":
                 print("[FAIL] Страница профиля не подтверждена")
                 sys.exit(1)
-            card = page.locator(selectors.RESUME_LANGUAGE_CARD)
-            # #265 code-review round 1: wait past the profile SPA hydration race
-            # (same pattern as edit_languages_on_hh) before the strict count
-            # check, and fail closed on an indeterminate card instead of
-            # silently feeding the LLM a false "no existing languages" premise
-            # (PageStateIndeterminate invariant, CLAUDE.md).
-            try:
-                card.first.wait_for(state="visible", timeout=15000)
-            except PlaywrightError:
-                pass
-            if card.count() != 1:
+            # #265 code-review round 1: fail closed on an indeterminate card
+            # instead of silently feeding the LLM a false "no existing
+            # languages" premise (PageStateIndeterminate invariant, CLAUDE.md).
+            # round 2 (/review): shares wait_for_language_card/
+            # read_existing_languages with edit_languages_on_hh instead of
+            # duplicating the wait-then-count-then-read logic here.
+            card = wait_for_language_card(page)
+            if card is None:
                 print("[FAIL] Карточка языков не найдена однозначно")
                 sys.exit(1)
-            existing = tuple(
-                row.locator(selectors.RESUME_LANGUAGE_ROW_CELL_TEXT).first.inner_text().strip()
-                for row in card.locator(selectors.RESUME_LANGUAGE_ROW).all()
-            )
+            existing = read_existing_languages(card)
             try:
                 response = LLMClient(config.ai).chat(
                     build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
@@ -142,6 +139,22 @@ def run(args: argparse.Namespace) -> None:
             if args.dry_run:
                 print("[INFO] Ничего не сохранено на hh.ru.")
                 return
+            existing_keys = {value.casefold() for value in existing}
+            new_without_level = [
+                item.name for item in proposed if item.name.casefold() not in existing_keys
+            ]
+            if new_without_level:
+                # LLM output never carries a level (parse_language_plan), so any
+                # newly proposed language always needs a manual --language
+                # value; without this early exit the command would navigate,
+                # ask for write confirmation, and only then fail inside
+                # edit_languages_on_hh on the first unconfirmed level.
+                print(
+                    "[FAIL] Уровень CEFR не подтверждён для: "
+                    + ", ".join(new_without_level)
+                    + ". Повторите с --language NAME=CEFR для каждого нового языка."
+                )
+                sys.exit(1)
             if not confirm_write(
                 args.force,
                 prompt=(
