@@ -5,7 +5,12 @@ import json
 import pytest
 
 from hhru_bot.history import History
-from hhru_bot.resume_views import _canonicalize_viewed_at, has_next_page, parse_resume_view_history
+from hhru_bot.resume_views import (
+    _canonicalize_viewed_at,
+    has_next_page,
+    parse_resume_view_history,
+    parse_resume_view_history_dom,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -68,6 +73,76 @@ def test_canonicalize_viewed_at_normalizes_offsets_to_utc():
     assert _canonicalize_viewed_at("2026-08-20T13:00:00+03:00") == _canonicalize_viewed_at(
         "2026-08-20T10:00:00Z"
     )
+
+
+class _AllWrapper:
+    def __init__(self, items):
+        self._items = items
+
+    def all(self):
+        return self._items
+
+
+class _NameEl:
+    def __init__(self, text):
+        self._text = text
+
+    def inner_text(self):
+        return self._text
+
+    def get_attribute(self, _name):
+        return None  # no href — employer link not confirmed
+
+
+class _TimeEl:
+    def get_attribute(self, name):
+        return "2026-08-20T09:00:00Z" if name == "datetime" else None
+
+
+class _DomRow:
+    """A DOM row with no data-* attrs, exposing name/time via child locators."""
+
+    def __init__(self, employer_name):
+        self._employer_name = employer_name
+
+    def get_attribute(self, _name):
+        return None  # no data-viewed-at / data-employer-name attrs
+
+    def locator(self, selector):
+        if selector == "time":
+            return _AllWrapper([_TimeEl()])
+        return _AllWrapper([_NameEl(self._employer_name)])
+
+
+class _DomPage:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def locator(self, _selector):
+        return _AllWrapper(self._rows)
+
+
+def test_dom_fallback_source_id_distinguishes_same_day_unlinked_employers():
+    """Two DOM rows with different employer names, neither exposing an
+    /employer/ link, must not collide on an empty view_key — history.py
+    dedups by (resume_id, view_key, viewed_at) (#428 review, round 10)."""
+    rows = parse_resume_view_history_dom(_DomPage([_DomRow("Acme"), _DomRow("Beta")]), "r1")
+    assert [r["employer"] for r in rows] == ["Acme", "Beta"]
+    assert [r["employer_id"] for r in rows] == [None, None]
+    # Falls back to the employer name as dedup identity since no link ID
+    # is confirmed — this is what keeps the two rows from colliding.
+    assert [r["source_id"] for r in rows] == ["Acme", "Beta"]
+
+
+def test_history_dedup_uses_dom_fallback_employer_name_when_no_id(tmp_path):
+    """record_resume_views must not collide two different DOM-observed
+    employers on the same date-only viewed_at when neither has an
+    employer_id (#428 review, round 10)."""
+    history = History(tmp_path / "history.db")
+    row_a = {"resume_id": "r1", "employer": "Acme", "source_id": "Acme", "viewed_at": "2026-08-20"}
+    row_b = {"resume_id": "r1", "employer": "Beta", "source_id": "Beta", "viewed_at": "2026-08-20"}
+    assert history.record_resume_views([row_a, row_b]) == 2
+    assert len(history.resume_views()) == 2
 
 
 def test_parse_resume_view_history_fails_closed_on_schema_drift():

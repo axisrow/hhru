@@ -92,7 +92,14 @@ def run(args: argparse.Namespace) -> None:
                         )
                         raise SystemExit(1) from dom_exc
                     if not rows:
-                        print(f"[FAIL] история просмотров не подтверждена: {exc}", file=sys.stderr)
+                        # DOM fallback succeeded but confirmed zero rows — report
+                        # that, not the earlier SSR exception that triggered the
+                        # fallback in the first place (#428 review, round 10).
+                        print(
+                            f"[FAIL] история просмотров не подтверждена: SSR недоступен"
+                            f" ({exc}), DOM fallback не нашёл ни одной строки",
+                            file=sys.stderr,
+                        )
                         raise SystemExit(1) from exc
                 fetched.extend(rows)
                 resume_fetched += len(rows)

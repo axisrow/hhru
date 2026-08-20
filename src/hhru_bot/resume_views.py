@@ -157,12 +157,21 @@ def parse_resume_view_history_dom(page, resume_id: str, *, limit: int | None = N
             href = employers[0].get_attribute("href") or ""
             match = re.search(r"/employer/([^/?#]+)", href)
             employer_id = match.group(1) if match else None
+        # DOM has no per-view source_id (unlike SSR), so when employer_id
+        # can't be extracted (no confirmed /employer/ link), fall back to the
+        # employer name as the dedup identity instead of leaving view_key
+        # empty (#428 review, round 10): an empty view_key collides across
+        # ANY two same-day DOM rows lacking a link, silently dropping the
+        # second regardless of which employer it's for. Falling back to the
+        # name narrows the collision to two same-day views of the SAME named
+        # employer without a confirmed link — a real but much smaller risk,
+        # and one already accepted for the SSR path via employer_id.
         result.append(
             {
                 "resume_id": resume_id,
                 "employer_id": employer_id,
                 "employer": employer,
-                "source_id": None,
+                "source_id": None if employer_id is not None else employer,
                 "viewed_at": viewed_at,
             }
         )
