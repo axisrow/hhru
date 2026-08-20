@@ -115,15 +115,18 @@ def _edit(path: Path) -> None:
     raw = _mapping(_read(path))
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".yaml", dir=path.parent)
     candidate = Path(name)
+    os.close(fd)
+    _dump(raw, candidate)
+    result = subprocess.run([*shlex.split(editor), str(candidate)], check=False)
+    if result.returncode:
+        raise ValueError(
+            f"Редактор завершился с кодом {result.returncode}. Правки сохранены в {candidate}"
+        )
     try:
-        os.close(fd)
-        _dump(raw, candidate)
-        result = subprocess.run([*shlex.split(editor), str(candidate)], check=False)
-        if result.returncode:
-            raise ValueError(f"Редактор завершился с кодом {result.returncode}")
         _validated_replace(path, _mapping(_read(candidate)))
-    finally:
-        candidate.unlink(missing_ok=True)
+    except (ConfigError, OSError, ValueError, KeyError, yaml.YAMLError) as exc:
+        raise ValueError(f"{exc}. Правки сохранены в {candidate}") from exc
+    candidate.unlink(missing_ok=True)
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -139,12 +142,13 @@ def _run(args: argparse.Namespace) -> None:
     raw = _mapping(_read(path))
     if args.key:
         try:
-            print(
-                yaml.safe_dump(_lookup(raw, args.key), allow_unicode=True, sort_keys=False),
-                end="",
-            )
+            value = _lookup(raw, args.key)
         except KeyError as exc:
             raise ValueError(f"Ключ не найден: {args.key}") from exc
+        if isinstance(value, dict | list):
+            print(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), end="")
+        else:
+            print(value)
         return
     if args.set is not None:
         key, value_text = args.set
