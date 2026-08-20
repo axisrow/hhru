@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -72,6 +72,9 @@ class ChatMessage:
 
     author: str | None
     inbound_marker: str | None
+    text: str = ""
+    author_label: str | None = None
+    conversation: tuple[ChatMessage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,32 @@ class ReplyDecision:
 
     should_reply: bool
     reason: str
+
+
+_ROBOT_AUTHOR_RE = re.compile(r"(?:авто(?:матический)?|робот|бот|robot|bot)", re.I)
+_QUESTION_RE = re.compile(r"(?:^|[.!?\n])\s*[^.!?\n]{8,}\?", re.U)
+
+
+def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
+    """Return true for an explicit bot author or two consecutive bot questions."""
+    if any(
+        message.author_label and _ROBOT_AUTHOR_RE.search(message.author_label)
+        for message in messages
+    ):
+        return True
+    run = 0
+    for message in messages:
+        if message.author != "employer":
+            run = 0
+            continue
+        questions = _QUESTION_RE.findall(message.text)
+        if questions:
+            run += len(questions)
+            if run >= 2:
+                return True
+        else:
+            run = 0
+    return False
 
 
 def needs_reply(chat: ChatMessage | None) -> ReplyDecision:
@@ -116,7 +145,20 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     messages = page.locator(CHAT_MESSAGE_TEXT)
     if not messages.count():
         return None
-    message = messages.nth(messages.count() - 1)
+    all_messages: list[ChatMessage] = []
+    for index in range(messages.count()):
+        item = messages.nth(index)
+        item_marker = _message_id(item.get_attribute("data-qa"))
+        item_author = item.evaluate(
+            """(el, markers) => { for (let node = el; node; node = node.parentElement) {
+                const classes = String(node.className).split(/\s+/);
+                if (classes.includes(markers.own)) return 'me';
+                if (classes.includes(markers.other)) return 'employer';
+            } return null; }""",
+            {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
+        )
+        all_messages.append(ChatMessage(item_author, item_marker, item.inner_text().strip()))
+    message = all_messages[-1]
     marker = _message_id(message.get_attribute("data-qa"))
     author = message.evaluate(
         """(el, markers) => {
@@ -129,7 +171,8 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
         }""",
         {"own": CHAT_MESSAGE_MY_MARKER, "other": CHAT_MESSAGE_OTHER_MARKER},
     )
-    return ChatMessage(author, marker)
+    text = message.inner_text().strip()
+    return ChatMessage(author, marker, text, conversation=tuple(all_messages[-20:]))
 
 
 def read_chat(page: Page, topic: str, topic_to_chat_id: Mapping[str, str]) -> ChatMessage | None:
