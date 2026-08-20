@@ -63,7 +63,7 @@ class _FakeLocator:
             hrefs = self._state.reorder_to
         return hrefs
 
-    def wait_for(self, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
         # Моделируем реальное поведение Playwright: в strict mode для коллекции
         # (несколько резюме) wait_for кидает обычный Error (НЕ PlaywrightTimeoutError).
         # Через .first strict mode снимается — тогда ждём готовность коллекции.
@@ -89,11 +89,15 @@ class _FakeLocator:
         if not self._state.visible:
             raise PlaywrightTimeoutError(f"{self.selector} not visible")
 
-    def click(self, **kwargs) -> None:
+    def click(self, *, timeout=None, no_wait_after=None) -> None:
         # Фиксируем kwargs клика — регрессия #80: клик apply-кнопки, триггерящий
         # навигацию, должен идти с no_wait_after=True (ожидание навигации владеет
         # внешний 90с expect_navigation, а не внутренний 30с action-timeout клика).
-        self._state.click_kwargs.append(kwargs)
+        # Только src/-вызываемые параметры (timeout, no_wait_after) — реальный
+        # Playwright.click() принимает больше, но в src/hhru_bot их никто не
+        # передаёт (#409 simplification review).
+        passed = {"timeout": timeout, "no_wait_after": no_wait_after}
+        self._state.click_kwargs.append({k: v for k, v in passed.items() if v is not None})
         # #176: имитация Playwright-исключения в момент клика (navigation timeout
         # после POST, target closed) — действие могло уйти на hh.ru.
         if self._state.click_error is not None:
@@ -198,7 +202,7 @@ class FakeStepsPage:
         self.content_calls = 0
         self.wait_for_function_calls: list[tuple[str, str | None, int | None]] = []
 
-    def screenshot(self, **_kwargs) -> bytes:
+    def screenshot(self, *, full_page: bool | None = None, path=None) -> bytes:
         self.screenshot_calls += 1
         return b"png"
 
@@ -206,7 +210,7 @@ class FakeStepsPage:
         self.content_calls += 1
         return "<html>diagnostic</html>"
 
-    def wait_for_function(self, _expression, arg=None, timeout=None):
+    def wait_for_function(self, _expression, *, arg=None, timeout=None, polling=None):
         self.wait_for_function_calls.append(("function", arg, timeout))
         if not self._state(arg).visible:
             raise PlaywrightTimeoutError("condition not met")

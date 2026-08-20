@@ -28,14 +28,14 @@ class _Locator:
     def count(self):
         return self._count
 
-    def wait_for(self, timeout=None):
+    def wait_for(self, *, timeout=None):
         return None
 
     @property
     def first(self):
         return self
 
-    def click(self, timeout=None):
+    def click(self, *, timeout=None):
         self.page.clicked += 1
         self.page.markup = self.page.after_markup
 
@@ -247,7 +247,7 @@ def test_publish_succeeds_only_after_searchable_signal(monkeypatch):
 
 def test_publish_marks_uncertain_on_click_error(monkeypatch):
     class _ErrorLocator(_Locator):
-        def click(self, timeout=None):
+        def click(self, *, timeout=None):
             raise PlaywrightError("navigation interrupted")
 
     class _ErrorPage(_Page):

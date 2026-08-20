@@ -172,7 +172,7 @@ def test_withdraw_failure_after_destructive_click_is_uncertain_and_not_retried(
         def click(self) -> None:
             withdraw_clicked.append(self.kind)
 
-        def wait_for(self, **_kwargs):
+        def wait_for(self, *, timeout: float | None = None, state: str | None = None):  # noqa: ARG002
             # Позитивный маркер успеха так и не появился: клик уже ушёл на hh.ru.
             raise PlaywrightTimeoutError("Timeout 10000ms exceeded")
 
@@ -292,7 +292,7 @@ def test_save_about_marks_post_click_timeout_as_uncertain():
         def click(self) -> None:
             self.clicked = True
 
-        def wait_for(self, **_kwargs):
+        def wait_for(self, *, timeout: float | None = None, state: str | None = None):  # noqa: ARG002
             if self._on_wait is not None:
                 raise self._on_wait
 

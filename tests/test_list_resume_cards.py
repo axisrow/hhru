@@ -106,7 +106,7 @@ class StubFirstCard:
         self._cards_ref = cards_ref
         self._delayed_cards = delayed_cards
 
-    def wait_for(self, timeout=None):
+    def wait_for(self, *, timeout=None):
         if self._cards_ref:
             return
         if self._delayed_cards:
@@ -356,7 +356,7 @@ class StubResumesPage:
         self._authed = authed
         self.gotos: list[str] = []
 
-    def goto(self, url, wait_until=""):  # noqa: ARG002
+    def goto(self, url, *, wait_until=""):  # noqa: ARG002
         self.gotos.append(url)
 
     def content(self):

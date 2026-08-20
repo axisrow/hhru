@@ -63,7 +63,7 @@ class _FakeLocator:
             return 0
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "visible") -> None:  # noqa: ARG002
         # wait_for моделирует реальный рендер: дожидается финального состояния,
         # а не снимка на момент вызова.
         if self._wait_error:
@@ -71,7 +71,13 @@ class _FakeLocator:
         if not self._present:
             raise PlaywrightTimeoutError(f"{self._name} not visible")
 
-    def click(self, **_kwargs) -> None:
+    def click(
+        self,
+        *,
+        timeout: float | None = None,
+        force: bool | None = None,
+        no_wait_after: bool | None = None,
+    ) -> None:  # noqa: ARG002
         if self._click_error:
             # #176: клик «выполняется», но Playwright падает — как navigation
             # timeout/target closed уже после отправки действия на hh.ru.
@@ -100,7 +106,7 @@ class FakeBumpPage:
         self._hint_wait_error = hint_wait_error
         self._button_click_error = button_click_error
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
 
     def locator(self, selector: str):

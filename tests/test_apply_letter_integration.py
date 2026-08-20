@@ -36,13 +36,13 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         if not self._present:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self, **_kwargs) -> None:
+    def click(self, *, timeout: float = 0, force: bool = False) -> None:  # noqa: ARG002
         return None
 
     def fill(self, _value: str) -> None:
@@ -72,7 +72,7 @@ class _ApplyFakePage:
     def __init__(self):
         self.goto_calls: list[str] = []
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
 
     def locator(self, selector: str):  # noqa: ARG002
@@ -82,7 +82,7 @@ class _ApplyFakePage:
             return _FakeLocator(present=True)
         return _FakeLocator(present=False)
 
-    def wait_for_url(self, _url_pattern, **_kwargs):  # noqa: ARG002
+    def wait_for_url(self, _url_pattern, *, wait_until: str = "", timeout: float = 0):  # noqa: ARG002
         # #179: navigate_to_response_form больше не использует expect_navigation.
         # Этот путь — dry-run, до формы не доходим (см. докстринг класса), метод
         # не должен вызываться, но определён для консистентности с реальным Page.

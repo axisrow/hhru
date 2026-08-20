@@ -70,7 +70,7 @@ class _FakeLocator:
     def click(self) -> None:
         return None
 
-    def wait_for(self, **kwargs) -> None:
+    def wait_for(self, *, timeout=None, state=None) -> None:
         return None
 
 

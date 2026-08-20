@@ -105,7 +105,7 @@ class _StaticLocator:
     def first(self):
         return self
 
-    def wait_for(self, **_kwargs):
+    def wait_for(self, *, timeout=None, state=None):
         return None
 
 

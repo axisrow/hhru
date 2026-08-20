@@ -51,7 +51,7 @@ class _FakeLocator:
     def count(self) -> int:
         return 1 if self._present else 0
 
-    def wait_for(self, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0, state: str = "attached") -> None:  # noqa: ARG002
         self._wait_for_calls.append(1)
         self._wait_for_timeouts.append(timeout)
         if not self._present:
@@ -59,12 +59,12 @@ class _FakeLocator:
 
             raise PlaywrightTimeoutError("not present")
 
-    def click(self, **_kwargs) -> None:
+    def click(self, *, timeout=None, no_wait_after=None) -> None:
         if self._click_error is not None:
             raise self._click_error
         return None
 
-    def fill(self, _value: str) -> None:
+    def fill(self, _value: str, *, timeout=None, no_wait_after=None, force=None) -> None:
         return None
 
     def get_attribute(self, name: str) -> str | None:
@@ -132,7 +132,7 @@ class FakePage:
         # проверяет, что они всегда равны полному _VISIBILITY_CHECK_TIMEOUT_MS.
         self.already_responded_wait_for_timeouts: list[float] = []
 
-    def goto(self, url: str, wait_until: str = "") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
         self.url = url
 
@@ -167,7 +167,7 @@ class FakePage:
             return _FakeLocator(present=self._success, click_error=self._submit_click_error)
         return _FakeLocator(present=False)
 
-    def wait_for_url(self, _url_pattern, **_kwargs):
+    def wait_for_url(self, _url_pattern, *, wait_until=None, timeout=None):
         # #179: navigate_to_response_form больше не использует expect_navigation.
         return None
 
@@ -323,7 +323,7 @@ def test_apply_rechecks_responded_marker_before_form_submit():
     """
 
     class _MarkerAppearsDuringLetterRender(FakePage):
-        def wait_for_url(self, _url_pattern, **_kwargs):
+        def wait_for_url(self, _url_pattern, *, wait_until=None, timeout=None):
             # navigate_to_response_form lands on the response-form page, where
             # vacancy-page markers are absent.
             self.url = "/applicant/vacancy_response"

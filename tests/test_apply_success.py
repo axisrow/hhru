@@ -58,7 +58,7 @@ class _FakeLocator:
             return 1 if self._page._probe_count > self._appear_after else 0
         return self._count
 
-    def wait_for(self, timeout: float = 0) -> None:  # noqa: ARG002
+    def wait_for(self, *, timeout: float = 0) -> None:  # noqa: ARG002
         if self.count() == 0:
             raise PlaywrightTimeoutError("not present")
 

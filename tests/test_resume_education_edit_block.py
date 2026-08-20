@@ -29,7 +29,7 @@ class FakeSaveButton:
     def click(self):
         self._page.saved_rows.append(self._page.current_index)
 
-    def wait_for_url(self, *args, **kwargs):  # noqa: ARG002
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         pass
 
 
@@ -67,7 +67,7 @@ class FakePage:
             return FakeSaveButton(self)
         return FakeFieldLocator()
 
-    def wait_for_url(self, *args, **kwargs):  # noqa: ARG002
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         pass
 
 

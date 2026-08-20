@@ -55,7 +55,7 @@ class _FakePage:
     def set_content(self, html: str) -> None:
         self._root = _parse_root(html)
 
-    def goto(self, url: str, wait_until: str = "domcontentloaded") -> None:  # noqa: ARG002
+    def goto(self, url: str, *, wait_until: str = "domcontentloaded") -> None:  # noqa: ARG002
         self.last_goto = url
 
     def locator(self, selector: str) -> FakeLocator:
