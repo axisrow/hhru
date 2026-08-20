@@ -1624,6 +1624,39 @@ class History:
                 cur = conn.execute("DELETE FROM skipped WHERE reason = ?", (reason,))
             return cur.rowcount
 
+    def list_skipped(self, reason: str | None = None) -> list[dict]:
+        """Возвращает журнал отсева с данными вакансий, свежие первыми.
+
+        ``vacancies_seen`` может содержать несколько строк одной вакансии (по
+        разным поисковым запросам), поэтому JOIN агрегирует её до одной строки
+        на запись ``skipped`` и не дублирует результаты команды.
+        ``LEFT JOIN`` сохраняет старые записи отсева, для которых карточка ещё
+        не была сохранена.
+        """
+        where = "WHERE s.reason = ?" if reason is not None else ""
+        params = (reason,) if reason is not None else ()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "WITH latest_vacancy AS ("
+                "SELECT vacancy_id, title, company FROM ("
+                "SELECT v.*, ROW_NUMBER() OVER ("
+                "PARTITION BY vacancy_id ORDER BY last_seen_at DESC, id DESC"
+                ") AS rn FROM vacancies_seen v"
+                ") WHERE rn = 1"
+                "), seen_queries AS ("
+                "SELECT vacancy_id, GROUP_CONCAT(DISTINCT search_query) AS search_query "
+                "FROM vacancies_seen GROUP BY vacancy_id"
+                ") SELECT s.created_at, s.resume_id, s.vacancy_id, s.reason, "
+                "v.title, v.company, q.search_query "
+                "FROM skipped s LEFT JOIN latest_vacancy v "
+                "ON v.vacancy_id = s.vacancy_id LEFT JOIN seen_queries q "
+                "ON q.vacancy_id = s.vacancy_id "
+                f"{where} "
+                "ORDER BY s.created_at DESC, s.id DESC",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def count_skipped(self, reason: str | None = None) -> int:
         """Число записей отсева (для dry-run/подтверждения clear-skipped).
 
