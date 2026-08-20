@@ -77,8 +77,9 @@ CLI (CLAUDE.md: только `[OK]/[INFO]/[FAIL]/[DRY-RUN]/[skip]`).
 
 **Отягчающее.** Тестов на `launch_browser`/`BrowserLaunchError` не было **ни одного**.
 
-Тесты: `test_headless_sandbox_failure_is_not_classified_as_browser_launch_error`,
-`test_permission_denied_is_absent_from_sandbox_markers`,
+Тесты (после фикса инвертированы):
+`test_headless_sandbox_failure_is_classified_as_browser_launch_error`,
+`test_permission_denied_mach_port_failure_is_a_sandbox_marker`,
 `test_headed_sandbox_failure_is_classified` (контроль: headed-путь работает).
 
 ---
@@ -134,8 +135,10 @@ PlaywrightError)` (`:168`) и **возвращает** `(False, ...)`, то ес
 `uncertain` дедупликацию не даёт — она требует отдельного history-guard'а перед кликом.
 Статус и guard — две разные части фикса, и путать их нельзя.
 
-Тесты: `test_withdraw_failure_after_destructive_click_is_recorded_as_failed_not_uncertain`
-(на реальной SQLite во временной директории), `test_bump_module_implements_the_uncertain_invariant_that_withdraw_lacks`.
+Тесты (после фикса инвертированы):
+`test_withdraw_failure_after_destructive_click_is_recorded_as_uncertain`
+(на реальной SQLite во временной директории),
+`test_withdraw_module_implements_the_uncertain_invariant`.
 
 ---
 
