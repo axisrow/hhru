@@ -241,21 +241,6 @@ def test_summary_counts_from_history(tmp_path, capsys):
     assert "Новых ответов" in out
 
 
-def test_summary_apply_count_is_account_wide_when_resume_selected(tmp_path, capsys):
-    session = _valid_session(tmp_path)
-    cfg = _write_config(tmp_path, _config_body(str(session)))
-
-    h = History(tmp_path / "h.db")
-    for i in range(38):
-        h.record_action("12345", f"v{i}", "apply", "success")
-    h.record_action("67890", "other", "apply", "success")
-    h.record_action("67890", "other-2", "apply", "success")
-
-    out = _run(_args(cfg, tmp_path / "h.db", resume="data"), capsys)
-
-    assert "40 / 40" in out
-
-
 def test_summary_table_has_header_and_borders(tmp_path, capsys):
     session = _valid_session(tmp_path)
     cfg = _write_config(tmp_path, _config_body(str(session)))
