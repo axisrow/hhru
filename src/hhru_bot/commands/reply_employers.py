@@ -123,6 +123,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             inbound_marker = chat.inbound_marker or ""
             status = "dry_run" if args.dry_run else "failed"
             reason = "dry-run" if args.dry_run else None
+            action_id = None
             if args.dry_run:
                 print(f"[DRY-RUN] -> {label}\n    Письмо:\n    {letter}")
             else:
@@ -164,6 +165,22 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # старого marker'а оставило бы новое входящее выглядящим
                 # неотвеченным, и следующий запуск отправил бы дубликат.
                 inbound_marker = live_chat.inbound_marker or ""
+                # Codex adversarial review (cycle-review PR #471, round 1): the
+                # durable action row must exist BEFORE the send click, mirroring
+                # apply's before_submit / clear-negotiations' begin_action
+                # pre-click barrier. Without it, a SIGINT/SIGTERM landing between
+                # this click and the post-confirmation write below leaves no
+                # actions row at all -- reconcile() then folds the attempt into
+                # an ordinary 'failed' count instead of the fail-closed
+                # 'uncertain' that a possibly-delivered message requires (#176
+                # applies here exactly as it does to apply/withdraw).
+                action_id = history.begin_action(
+                    resume_by_topic.get(topic) or "",
+                    str(candidate["vacancy_id"]),
+                    "reply",
+                    search_query=None,
+                    run_id=progress.run_id,
+                )
                 try:
                     send_reply_current(page, letter)
                 except NoReplyForm as exc:
@@ -208,15 +225,36 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     # Клик состоялся (успешно или uncertain) — реальное
                     # действие на hh.ru, пауза нужна (#163).
                     throttle.wait(f"после ответа в чате {topic}")
-            history.record_reply_and_action(
-                topic,
-                inbound_marker,
-                vacancy_id=str(candidate["vacancy_id"]),
-                resume_id=resume_by_topic.get(topic),
-                status=status,
-                reason=reason,
-                run_id=progress.run_id,
-            )
+            if action_id is not None:
+                # Pre-click reservation exists (begin_action above) -- finalize
+                # it in place instead of inserting a second actions row, and
+                # journal the reply separately. Two statements, not one
+                # transaction like record_reply_and_action: the durable actions
+                # row (the SIGINT-safety property) is already committed by
+                # begin_action before the click, so there is nothing left for
+                # atomicity to protect between these two -- worst case a crash
+                # here leaves the action finalized without a replies row, which
+                # only affects the has_replied() idempotency check, not the
+                # fail-closed action audit trail this fix exists for.
+                history.finalize_action(action_id, status, reason)
+                history.record_reply(
+                    topic,
+                    inbound_marker,
+                    vacancy_id=str(candidate["vacancy_id"]),
+                    resume_id=resume_by_topic.get(topic),
+                    status=status,
+                    note=reason,
+                )
+            else:
+                history.record_reply_and_action(
+                    topic,
+                    inbound_marker,
+                    vacancy_id=str(candidate["vacancy_id"]),
+                    resume_id=resume_by_topic.get(topic),
+                    status=status,
+                    reason=reason,
+                    run_id=progress.run_id,
+                )
             if status == "success":
                 progress.applied_count += 1
             elif status == "uncertain":

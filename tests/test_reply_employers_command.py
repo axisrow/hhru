@@ -638,3 +638,54 @@ def test_multiple_replies_are_linked_to_one_durable_run(tmp_path, monkeypatch):
             "SELECT DISTINCT run_id FROM actions WHERE action='reply'"
         ).fetchall()
     assert [row[0] for row in run_ids] == [run["run_id"]]
+
+
+# --- SIGINT mid-send must not lose the durable action audit trail (#466) ---
+
+
+def test_sigint_after_send_click_persists_uncertain_action(tmp_path, monkeypatch, capsys):
+    """A Ctrl-C right after the send click must not vanish from the ledger.
+
+    Mirrors the clear-negotiations SIGINT test: the message may have already
+    reached hh.ru by the time the process dies, so the pre-click durable
+    reservation (begin_action, mirroring apply's before_submit / withdraw's
+    begin_action) must survive the interruption and be visible as 'uncertain'
+    in both the actions table and the [RUN] summary -- not silently dropped
+    or misreported as an ordinary 'failed' attempt with no audit trail.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    refs = [TopicRef("tp1", "c1", "r1", "96223331")]
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _send(page, text):
+        raise KeyboardInterrupt
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=refs,
+        reader=lambda page, topic, refs: chat,
+        send=_send,
+    )
+
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = command.run(_args(force=True))
+    assert result is CommandExitCode.SIGINT
+
+    run = history.command_runs()[-1]
+    assert run["status"] == "interrupted"
+    assert (run["attempted"], run["success"], run["uncertain"]) == (1, 0, 1)
+    assert "status=interrupted attempted=1 success=0" in capsys.readouterr().out
+
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT vacancy_id, status FROM actions WHERE action='reply'"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [("1", "uncertain")]
+    # The action audit trail is fail-closed even though the reply journal
+    # (replies table) never got a chance to be written -- has_replied() being
+    # False here is expected (see the module docstring boundary note) and is
+    # exactly why the actions-table barrier is the one that must not be lost.
+    assert history.has_replied("tp1", "m1") is False

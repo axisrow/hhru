@@ -417,10 +417,20 @@ def _run_topics(
                     f"topic={topic} — не кликаю"
                 )
                 failed = True
+                # /review (cycle-review PR #471): this branch sets the overall
+                # `failed` return without touching failed_count, so a run that
+                # hits only this path prints status=partial/failed with every
+                # counter at zero except skipped -- misleading, since nothing
+                # here was actually skipped as routine/expected the way the
+                # empty-topic account-wide skip (progress.skipped_count above
+                # _run_topics) is. Count it as failed, matching the [FAIL] this
+                # branch already prints.
+                if progress is not None:
+                    progress.failed_count += 1
             else:
                 print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
-            if progress is not None:
-                progress.skipped_count += 1
+                if progress is not None:
+                    progress.skipped_count += 1
             continue
         # #245-style durable barrier: reserve the row as `uncertain` BEFORE
         # entering the irreversible click. If the process dies between the
