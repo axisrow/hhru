@@ -181,7 +181,8 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
     monkeypatch.setattr(
-        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card1, card1, card2]
+        "hhru_bot.search.search_vacancies",
+        lambda page, search, max_pages, **kwargs: [card1, card1, card2],
     )
 
     def fake_scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
@@ -240,7 +241,9 @@ def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
+    monkeypatch.setattr(
+        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card]
+    )
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -281,7 +284,9 @@ def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
+    monkeypatch.setattr(
+        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card]
+    )
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -324,7 +329,9 @@ def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
+    monkeypatch.setattr(
+        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card]
+    )
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -472,7 +479,9 @@ def _bulk_env(monkeypatch, cards, scan, *, events=None):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: cards)
+    monkeypatch.setattr(
+        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: cards
+    )
     monkeypatch.setattr("hhru_bot.apply.questionnaire.scan_questionnaire", scan)
     monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
     if events is not None:
@@ -850,3 +859,74 @@ def test_retry_pass_also_honours_the_limit(monkeypatch, capsys):
     retries = [call for call in calls if call[1] != questionnaire.FAST_TIMEOUT_MS]
     assert len(retries) == 1, f"retry продолжился после достижения лимита: {retries}"
     assert "анкет 1" in output
+
+
+class _FakeHistory:
+    """Records record_questionnaire() calls without touching real SQLite."""
+
+    def __init__(self, *args, **kwargs):
+        self.calls = []
+
+    def record_questionnaire(self, resume_id, vacancy_id, vacancy_url, title, company, questions):
+        self.calls.append(vacancy_id)
+
+
+def test_retry_confirmed_questionnaire_is_persisted_to_history(monkeypatch, capsys):
+    # cycle-review PR #456 (Codex): вакансия с transient UNKNOWN на быстром
+    # проходе и подтверждённой анкетой на retry (731-743) должна попасть в
+    # SQLite так же, как подтверждённая на первом проходе (682-699) — иначе
+    # итоговый отчёт (печать) расходится с исследовательской базой.
+    card = _card("991")
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        if timeout_ms == questionnaire.FAST_TIMEOUT_MS:
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [card], scan)
+    fake_history = _FakeHistory()
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: fake_history)
+    probe.run_questionnaires(_bulk_args(history="history.db"))
+    capsys.readouterr()
+
+    assert fake_history.calls == ["991"], (
+        "подтверждённая на retry анкета не записана в history.record_questionnaire"
+    )
+
+
+def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, capsys):
+    # cycle-review PR #456 (Claude /review): history.record_questionnaire()
+    # внутри цикла (682-699) не обёрнут в try/except, в отличие от
+    # search_vacancies чуть выше — упавшая запись (locked DB, диск полон)
+    # прервала бы весь bulk-скан для всех оставшихся вакансий/резюме, что
+    # противоречит fail-tolerant дизайну команды (--start-page, retry, обработка
+    # прерывания).
+    import sqlite3
+
+    card1 = _card("992")
+    card2 = _card("993")
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [card1, card2], scan)
+
+    class FailingHistory(_FakeHistory):
+        def record_questionnaire(self, *args, **kwargs):
+            raise sqlite3.Error("database is locked")
+
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: FailingHistory())
+    result = probe.run_questionnaires(_bulk_args(history="history.db"))
+    output = capsys.readouterr().out
+
+    # Скан должен дойти до второй вакансии, а не оборваться на первой записи.
+    assert "993" in output
+    assert result is not True, (
+        "падение записи в history не должно превращаться в необработанный traceback"
+    )

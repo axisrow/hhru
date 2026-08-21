@@ -329,9 +329,7 @@ def search_vacancies(
         # делает фиксированную паузу: он возвращает управление сразу после
         # появления этого DOM-узла. Timeout остаётся только fail-closed
         # предохранителем для интерстишла/зависшей страницы.
-        ready = page.locator(
-            f"{sel.VACANCY_CARD_TITLE_LINK}, {sel.VACANCY_SEARCH_EMPTY}"
-        )
+        ready = page.locator(f"{sel.VACANCY_CARD_TITLE_LINK}, {sel.VACANCY_SEARCH_EMPTY}")
         try:
             ready.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
         except PlaywrightError:

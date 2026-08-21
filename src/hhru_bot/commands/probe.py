@@ -26,6 +26,7 @@ import json
 import logging
 import random
 import re
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -366,6 +367,7 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     """
     from ..browser import launch_context
     from ..config import load_config_or_exit
+
     config = load_config_or_exit(args.config)
     spec = _healthcheck_spec(config)
 
@@ -612,8 +614,54 @@ def _limit_reached(results, limit: int) -> bool:
     return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
 
 
+def _record_questionnaire_if_confirmed(history, resume_id: str, vacancy, result) -> None:
+    """Persist a confirmed questionnaire snapshot; called after every scan pass.
+
+    cycle-review PR #456 (Codex): вызывается и после быстрого прохода, и после
+    retry (731-743 в исходной нумерации) — иначе анкета, подтверждённая только
+    на retry после transient UNKNOWN, остаётся в печатном отчёте, но не попадает
+    в SQLite, и исследовательская база расходится с выводом команды.
+
+    cycle-review PR #456 (Claude /review): запись обёрнута в except sqlite3.Error,
+    в отличие от голого вызова раньше — падение записи (locked DB, диск полон) не
+    должно обрывать весь bulk-скан для всех оставшихся вакансий/резюме (команда
+    fail-tolerant: --start-page, retry, обработка KeyboardInterrupt рядом же).
+    Ловим именно sqlite3.Error, а не bare Exception — узкий except тут тот же
+    принцип проекта, что и в run_healthcheck (см. её докстринг).
+    """
+    from ..apply.questionnaire import QUESTIONNAIRE
+
+    if history is None or result.status != QUESTIONNAIRE:
+        return
+    try:
+        history.record_questionnaire(
+            resume_id,
+            vacancy.vacancy_id,
+            vacancy.url,
+            vacancy.title,
+            vacancy.company,
+            [
+                {
+                    "body_index": question.body_index,
+                    "text": question.text,
+                    "kind": question.kind,
+                    "is_radio": question.is_radio,
+                    "options": list(question.options),
+                }
+                for question in result.questions
+            ],
+        )
+    except sqlite3.Error:
+        logger.warning(
+            "questionnaires-only: не удалось сохранить анкету %s в историю",
+            vacancy.vacancy_id,
+            exc_info=True,
+        )
+
+
 def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
-    """Scan raw search cards in one context/page, without local history."""
+    """Scan raw search cards in one context/page; confirmed questionnaires are
+    persisted to SQLite when --history is configured (see _record_questionnaire_if_confirmed)."""
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
         FAST_TIMEOUT_MS,
@@ -679,24 +727,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results.append(result)
                     all_results.append(result)
-                    if history is not None and result.status == "questionnaire":
-                        history.record_questionnaire(
-                            resume.id,
-                            vacancy.vacancy_id,
-                            vacancy.url,
-                            vacancy.title,
-                            vacancy.company,
-                            [
-                                {
-                                    "body_index": question.body_index,
-                                    "text": question.text,
-                                    "kind": question.kind,
-                                    "is_radio": question.is_radio,
-                                    "options": list(question.options),
-                                }
-                                for question in result.questions
-                            ],
-                        )
+                    _record_questionnaire_if_confirmed(history, resume.id, vacancy, result)
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
                     if result.status == UNKNOWN and result.retryable:
@@ -741,6 +772,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results[result_index] = result
                     all_results[result_positions[vacancy_id]] = result
+                    _record_questionnaire_if_confirmed(history, resume.id, vacancy, result)
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
                     _print_questionnaire_progress(result, result_index + 1, len(vacancies))

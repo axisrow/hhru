@@ -25,8 +25,12 @@ def test_record_questionnaire_stores_questions_and_options_without_dedup(tmp_pat
         }
     ]
 
-    history.record_questionnaire("marketing", "123", "https://hh.ru/vacancy/123", "Маркетолог", "Acme", questions)
-    history.record_questionnaire("marketing", "123", "https://hh.ru/vacancy/123", "Маркетолог", "Acme", questions)
+    history.record_questionnaire(
+        "marketing", "123", "https://hh.ru/vacancy/123", "Маркетолог", "Acme", questions
+    )
+    history.record_questionnaire(
+        "marketing", "123", "https://hh.ru/vacancy/123", "Маркетолог", "Acme", questions
+    )
 
     with sqlite3.connect(db_path) as conn:
         scans = conn.execute("SELECT vacancy_id FROM questionnaire_scans").fetchall()
