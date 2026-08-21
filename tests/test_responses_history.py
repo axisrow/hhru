@@ -166,6 +166,15 @@ def test_upsert_account_scope_no_cloning_across_resumes(tmp_path):
     assert rows[0]["status"] == "discard"
     assert rows[0]["resume_id"] == "r1"  # опциональная атрибуция сохранена при апдейте
 
+    # A later page without SSR mapping must not erase a previously confirmed
+    # correlation merely because the current scrape can only supply None.
+    h.upsert_response("v1", "Acme", "discard", "/c1", resume_id=None)
+    with h._connect() as conn:
+        resume_id = conn.execute(
+            "SELECT resume_id FROM responses WHERE vacancy_id='v1'"
+        ).fetchone()[0]
+    assert resume_id == "r1"
+
 
 def test_upsert_same_vacancy_different_topics_are_distinct_rows(tmp_path):
     """Регрессия Codex-critical round 2: одна вакансия → НЕСКОЛЬКО переписок.

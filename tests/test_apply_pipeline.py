@@ -797,6 +797,8 @@ def test_apply_submit_unconfirmed_external_found_is_success(monkeypatch):
     assert result.acted is True
     assert result.uncertain is False
     assert "negotiations" in result.reason
+    assert "не удалось подтвердить" not in result.reason
+    assert result.outcome_code == "reconciled_success"
     assert verifier.calls == [(page, "1", "RID")]
 
 

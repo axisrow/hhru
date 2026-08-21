@@ -114,6 +114,46 @@ def test_launch_context_sets_timeout_even_without_session(monkeypatch, tmp_path)
     calls["set_default_navigation_timeout"].assert_called_once_with(GOTO_TIMEOUT_MS)
 
 
+def test_launch_context_suppresses_only_target_closed_cleanup(monkeypatch, tmp_path):
+    calls: dict = {}
+
+    # Obtain the actual fakes by replacing the helper with explicit resources.
+    @contextmanager
+    def _sync_playwright():
+        fake_context = MagicMock(name="BrowserContext")
+        fake_context.close.side_effect = PlaywrightError(
+            "Target page, context or browser has been closed"
+        )
+        fake_browser = MagicMock(name="Browser")
+        fake_browser.new_context.return_value = fake_context
+        playwright = MagicMock(name="Playwright")
+        playwright.chromium.launch.return_value = fake_browser
+        calls["browser"] = fake_browser
+        yield playwright
+
+    monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
+    with browser.launch_context(tmp_path / "session.json", headless=True):
+        pass
+    calls["browser"].close.assert_called_once()
+
+
+def test_launch_context_propagates_unrelated_cleanup_error(monkeypatch, tmp_path):
+    @contextmanager
+    def _sync_playwright():
+        fake_context = MagicMock(name="BrowserContext")
+        fake_context.close.side_effect = PlaywrightError("transport corruption")
+        fake_browser = MagicMock(name="Browser")
+        fake_browser.new_context.return_value = fake_context
+        playwright = MagicMock(name="Playwright")
+        playwright.chromium.launch.return_value = fake_browser
+        yield playwright
+
+    monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
+    with pytest.raises(PlaywrightError, match="transport corruption"):
+        with browser.launch_context(tmp_path / "session.json", headless=True):
+            pass
+
+
 def _page_gotos(*, results):
     """Мок Page: page.goto выбрасывает исключения из results по порядку.
 

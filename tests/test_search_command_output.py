@@ -117,3 +117,82 @@ def test_record_seen_failure_does_not_raise(tmp_path):
     history.upsert_vacancy_seen = _boom  # type: ignore[method-assign]
     cards = [VacancyCard(vacancy_id="1", title="T", company="C", url="https://hh.ru/vacancy/1")]
     _record_seen(cards, "python", history)  # не должно упасть
+
+
+# --- VacancySearchIndeterminate не должен выдаваться за успешный результат ---
+#
+# cycle-review PR #460 (round 1): удалённый `continue` после `failed = True`
+# заставлял partial_results (недостоверный снимок) течь дальше в _record_seen
+# (засоряя рынок недостоверными данными) и filter_candidates/rank_candidates
+# (печатая их как подтверждённых кандидатов) вместо перехода к следующему
+# резюме. Команда read-only, но вывод/рынок не должны путать partial с success.
+
+
+def test_indeterminate_search_skips_resume_without_recording_partial_results(tmp_path, monkeypatch):
+    import argparse
+
+    from hhru_bot.commands import search as search_command
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+    from hhru_bot.history import History
+    from hhru_bot.search import VacancySearchIndeterminate
+
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python"),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return object()
+
+    partial = [
+        VacancyCard("partial-0", "Python partial", "Acme", "https://hh.ru/vacancy/partial-0")
+    ]
+    record_seen_calls: list[list[VacancyCard]] = []
+
+    def search(_page, _filters, max_pages):  # noqa: ARG001
+        raise VacancySearchIndeterminate(
+            "timeout",
+            state="indeterminate",
+            page_num=0,
+            url="https://hh.ru/search/vacancy",
+            partial_results=partial,
+        )
+
+    def record_seen(cards, _query, _history):
+        record_seen_calls.append(cards)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
+    monkeypatch.setattr(search_command, "_record_seen", record_seen)
+
+    args = argparse.Namespace(
+        config=None,
+        history=str(tmp_path / "history.db"),
+        account=None,
+        resume=None,
+        max_pages=1,
+        headless=True,
+    )
+
+    History(args.history)
+    failed = search_command.run(args)
+
+    assert failed is True
+    # partial_results must never reach the market-recording side effect nor be
+    # printed as confirmed candidates -- the resume is skipped entirely.
+    assert record_seen_calls == []

@@ -212,6 +212,165 @@ def test_limit_is_applied_across_all_resumes_per_run(tmp_path, monkeypatch):
     assert calls == ["python-a-0", "python-a-1"]
 
 
+def test_indeterminate_search_excludes_resume_from_multi_resume_apply(tmp_path, monkeypatch):
+    # Codex adversarial review (cycle-review PR #460, round 1): when
+    # search_vacancies raises VacancySearchIndeterminate for one resume in a
+    # multi-resume `apply` run, the old code kept that resume in
+    # routing_resumes and unconditionally ran merge_vacancies/route_vacancies/
+    # run_apply_for_resume for it too -- an unconfirmed/partial search feed
+    # (possibly empty) could still send live applications for that resume.
+    # Fail-closed per CLAUDE.md #5 ("Пустой результат требует подтверждения
+    # состояния страницы"): a resume whose search could not be confirmed must
+    # be excluded from this run's apply routing entirely, not merged in.
+    from hhru_bot.search import VacancySearchIndeterminate
+
+    resumes = [
+        ResumeConfig(
+            id="python-a",
+            resume_url="https://hh.ru/resume/AAA111",
+            search=SearchFilters(text="python-a"),
+        ),
+        ResumeConfig(
+            id="python-b",
+            resume_url="https://hh.ru/resume/BBB222",
+            search=SearchFilters(text="python-b"),
+        ),
+    ]
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=resumes,
+    )
+    calls: list[str] = []
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return object()
+
+    def search(_page, search, max_pages):  # noqa: ARG001
+        if search.text == "python-b":
+            raise VacancySearchIndeterminate(
+                "timeout",
+                state="indeterminate",
+                page_num=0,
+                url="https://hh.ru/search/vacancy",
+                partial_results=[
+                    VacancyCard(
+                        "python-b-partial-0",
+                        "Python partial",
+                        "Acme",
+                        "https://hh.ru/vacancy/python-b-partial-0",
+                    )
+                ],
+            )
+        return [
+            VacancyCard(
+                f"{search.text}-{i}",
+                f"Python {i}",
+                "Acme",
+                f"https://hh.ru/vacancy/{search.text}-{i}",
+            )
+            for i in range(2)
+        ]
+
+    def apply(_page, card, *_args, **_kwargs):
+        calls.append(card.vacancy_id)
+        return ApplyResult(card, True, "success")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", search)
+    monkeypatch.setattr(_common, "search_vacancies", search)
+    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+
+    args = argparse.Namespace(
+        config=None,
+        history=str(tmp_path / "history.db"),
+        account=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=0,
+        approved=None,
+        permit=None,
+        force=False,
+    )
+
+    failed = apply_command.run(args)
+
+    # python-b's search was indeterminate -> its (empty) partial_results must
+    # not be routed into a live apply; only python-a's confirmed cards apply.
+    assert calls == ["python-a-0", "python-a-1"]
+    assert failed is True  # the indeterminate resume marks the run as failed
+
+
+def test_apply_does_not_print_per_vacancy_run_progress_line(tmp_path, monkeypatch, capsys):
+    # Claude /review (cycle-review PR #460, round 1): the new per-vacancy
+    # `progress.summary("running")` print (both the skip path and the
+    # success/fail path) added an undocumented `[RUN] ...` line after EVERY
+    # single vacancy in a bulk run. docs/cli-spec.md only documents
+    # `[OK]`/`[FAIL]`/`[DRY-RUN]` for `apply`, and apply.py already prints one
+    # final `progress.summary(final_status)` at the end of the whole run
+    # (apply.py:269 as of this PR) -- the per-card prints were undocumented,
+    # redundant spam. Only the final summary line should appear.
+    config, resume, history, throttle = _setup(tmp_path)
+    cards = _cards(3)
+    results = [ApplyResult(card, True, "success") for card in cards]
+    calls: list[str] = []
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return object()
+
+    def apply(_page, card, *_args, **_kwargs):
+        calls.append(card.vacancy_id)
+        return results[len(calls) - 1]
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _Context())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: cards)
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+    monkeypatch.setattr(Throttle, "wait", lambda *a, **k: None)
+
+    args = argparse.Namespace(
+        config=None,
+        history=str(tmp_path / "history.db"),
+        account=None,
+        resume=resume.id,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=0,
+        approved=None,
+        permit=None,
+        force=False,
+    )
+
+    apply_command.run(args)
+
+    out = capsys.readouterr().out
+    assert calls == ["0", "1", "2"]
+    # Exactly one [RUN] line (the final summary), not one per vacancy.
+    assert out.count("[RUN]") == 1
+
+
 def test_lazy_search_stops_after_first_page_when_target_is_reached(tmp_path, monkeypatch):
     config, resume, history, throttle = _setup(tmp_path)
     cards = _cards(5)

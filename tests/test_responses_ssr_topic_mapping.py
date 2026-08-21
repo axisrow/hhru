@@ -69,6 +69,46 @@ def _ssr_html(topics: list[tuple[str, str, str]]) -> str:
     return f'<template id="HH-Lux-InitialState">{{"applicantNegotiations":{{"topicList":[{entries}]}}}}</template>'
 
 
+def test_ssr_topic_recovery_propagates_resume_id(monkeypatch):
+    item = responses.ResponseItem(vacancy_id="200", status=responses.ResponseStatus.READ)
+    html = (
+        '<template id="HH-Lux-InitialState">'
+        '{"applicantNegotiations":{"topicList":['
+        '{"id":999,"chatId":888,"vacancyId":200,"resumeId":321}'
+        "]}}</template>"
+    )
+    page = _SSRPage([[item]], [html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, _url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *_: False)
+
+    result = responses.fetch_responses(page, max_pages=1)[0]
+
+    assert (result.vacancy_id, result.topic, result.resume_id) == ("200", "999", "321")
+
+
+def test_ssr_mapping_enriches_resume_when_dom_already_has_topic(monkeypatch):
+    item = responses.ResponseItem(
+        vacancy_id="200", status=responses.ResponseStatus.READ, topic="999"
+    )
+    html = (
+        '<template id="HH-Lux-InitialState">'
+        '{"applicantNegotiations":{"topicList":['
+        '{"id":999,"chatId":888,"vacancyId":200,"resumeId":321}'
+        "]}}</template>"
+    )
+    page = _SSRPage([[item]], [html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, _url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *_: False)
+
+    result = responses.fetch_responses(page, max_pages=1)[0]
+
+    assert result.resume_id == "321"
+
+
 def test_ssr_topic_recovery_does_not_leak_into_previous_page_when_page_skips_a_card(
     monkeypatch,
 ):

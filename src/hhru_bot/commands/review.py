@@ -20,6 +20,8 @@ def register(subparsers) -> None:
     approve.add_argument("--ttl", type=int, default=900)
     skip = actions.add_parser("skip", help="Пропустить запись")
     skip.add_argument("id", type=int)
+    requeue = actions.add_parser("requeue", help="Вернуть failed-запись в pending")
+    requeue.add_argument("id", type=int)
     p.set_defaults(func=run)
 
 
@@ -39,6 +41,14 @@ def run(args: argparse.Namespace) -> bool:
         return False
     if args.review_action == "approve":
         print(history.approve_review(args.id, args.ttl))
+        return False
+    if args.review_action == "requeue":
+        try:
+            history.requeue_review(args.id)
+        except ValueError as exc:
+            print(f"[FAIL] {exc}")
+            return True
+        print(f"Запись #{args.id} возвращена в pending; старый permit очищен")
         return False
     with history._connect() as conn:
         cur = conn.execute(

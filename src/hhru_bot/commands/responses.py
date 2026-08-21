@@ -130,8 +130,9 @@ def run(args: argparse.Namespace) -> None:
     # резюме для ответов работодателя невозможен без достоверной атрибуции.
     if args.resume is not None:
         print(
-            "Внимание: --resume игнорируется — ответы работодателя аккаунт-уровневые "
-            "(страница /applicant/negotiations общая, принадлежность резюме недоступна)."
+            "Внимание: --resume игнорируется как фильтр обхода — /applicant/negotiations "
+            "сканируется на уровне аккаунта; подтверждённая SSR-атрибуция выводится "
+            "отдельно как vacancy/topic/resume."
         )
 
     inserted = updated = unchanged = 0
@@ -192,7 +193,7 @@ def run(args: argparse.Namespace) -> None:
                         # он пока не проброшен: это зона #180 (внешние тесты),
                         # менять её в рамках #200 не стали.
                         history.record_test_assigned(
-                            None,
+                            card.resume_id,
                             card.vacancy_id,
                             card.topic,
                             card.employer,
@@ -206,6 +207,11 @@ def run(args: argparse.Namespace) -> None:
 
         skipped_ambiguous = 0
         for card in cards:
+            print(
+                "[CORRELATION] "
+                f"vacancy_id={card.vacancy_id} topic={card.topic or '-'} "
+                f"resume_id={card.resume_id or '-'}"
+            )
             if card.topic_ambiguous:
                 # Несколько SSR-topic кандидатов на одну вакансию — fetch_responses
                 # намеренно оставил topic=None (см. ResponseItem.topic_ambiguous).
@@ -222,6 +228,7 @@ def run(args: argparse.Namespace) -> None:
                 chat_url=card.chat_url,
                 topic=card.topic,
                 response_date=card.date or None,
+                resume_id=card.resume_id,
             )
             if outcome == "inserted":
                 inserted += 1

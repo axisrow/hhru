@@ -115,7 +115,17 @@ def run(args: argparse.Namespace) -> bool:
                 # Не выдаём непроверенную выдачу за «вакансий нет» и не прячем
                 # диагностический отказ за traceback. Следующее резюме можно
                 # обработать независимо.
-                print(f"[FAIL] {e}")
+                #
+                # cycle-review PR #460 (round 1): partial_results — недостоверный
+                # снимок (сам процесс поиска не подтверждён), не «частичный успех».
+                # Раньше их без continue пропускали дальше в _record_seen (рынок
+                # получал недостоверные данные) и filter_candidates/rank_candidates
+                # (печатались как подтверждённые кандидаты) — fail-closed: просто
+                # переходим к следующему резюме, ничего не записываем и не выводим.
+                print(
+                    f"[FAIL] {e}; state={e.state} page={e.page_num} url={e.url} "
+                    f"partial_results={len(e.partial_results)} diagnostics={e.diagnostics}"
+                )
                 failed = True
                 continue
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —

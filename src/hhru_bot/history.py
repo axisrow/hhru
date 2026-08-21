@@ -7,6 +7,7 @@ import logging
 import re
 import secrets
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,8 +38,27 @@ CREATE TABLE IF NOT EXISTS actions (
     status TEXT NOT NULL,
     reason TEXT,
     search_query TEXT,
+    run_id TEXT,
+    reason_code TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS apply_runs (
+    run_id TEXT PRIMARY KEY,
+    command TEXT NOT NULL,
+    requested_limit INTEGER,
+    status TEXT NOT NULL,
+    attempted INTEGER NOT NULL DEFAULT 0,
+    success INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    uncertain INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    exit_code INTEGER,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_apply_runs_status ON apply_runs(status, started_at);
 
 -- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
 -- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
@@ -463,6 +483,8 @@ class History:
             conn.executescript(SCHEMA)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
             _ensure_column(conn, "actions", "search_query", "TEXT")
+            _ensure_column(conn, "actions", "run_id", "TEXT")
+            _ensure_column(conn, "actions", "reason_code", "TEXT")
             # #420 follow-up (Codex adversarial-review, PR #449): review_queue
             # rows created before this column existed have no stored search_query
             # — they stay NULL and are legacy-attributed via the existing
@@ -651,6 +673,102 @@ class History:
                 (status, datetime.now().isoformat(), item_id),
             )
 
+    def requeue_review(self, item_id: int) -> None:
+        """Return a confirmed pre-submit failure to pending, never a possible submit."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT resume_id, vacancy_id, status FROM review_queue WHERE id=?", (item_id,)
+            ).fetchone()
+            if row is None or row["status"] != "failed":
+                raise ValueError("повторно поставить можно только failed-запись")
+            unsafe = conn.execute(
+                """SELECT status FROM actions
+                   WHERE resume_id=? AND vacancy_id=? AND action='apply'
+                     AND status IN ('success', 'uncertain')
+                   ORDER BY id DESC LIMIT 1""",
+                (row["resume_id"], row["vacancy_id"]),
+            ).fetchone()
+            if unsafe is not None:
+                raise ValueError(
+                    f"безопасный повтор запрещён: action имеет статус {unsafe['status']}"
+                )
+            conn.execute(
+                """UPDATE review_queue
+                   SET status='pending', permit_hash=NULL, permit_expires_at=NULL, updated_at=?
+                   WHERE id=? AND status='failed'""",
+                (datetime.now().isoformat(), item_id),
+            )
+
+    def start_apply_run(self, *, command: str, requested_limit: int | None) -> str:
+        """Recover abandoned apply runs and create a durable running row."""
+        now = datetime.now().isoformat()
+        run_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE apply_runs SET status='orphaned', finished_at=?, exit_code=NULL,
+                          detail=COALESCE(detail, 'recovered by next apply run')
+                   WHERE status='running'""",
+                (now,),
+            )
+            conn.execute(
+                """INSERT INTO apply_runs
+                   (run_id, command, requested_limit, status, started_at)
+                   VALUES (?, ?, ?, 'running', ?)""",
+                (run_id, command, requested_limit, now),
+            )
+        return run_id
+
+    def finish_apply_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        exit_code: int,
+        attempted: int,
+        success: int,
+        failed: int,
+        uncertain: int,
+        skipped: int,
+        detail: str | None = None,
+    ) -> None:
+        allowed = {"completed", "partial", "failed", "interrupted", "orphaned"}
+        if status not in allowed:
+            raise ValueError(f"недопустимый статус apply run: {status}")
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE apply_runs SET status=?, attempted=?, success=?, failed=?,
+                          uncertain=?, skipped=?, finished_at=?, exit_code=?, detail=?
+                   WHERE run_id=? AND status='running'""",
+                (
+                    status,
+                    attempted,
+                    success,
+                    failed,
+                    uncertain,
+                    skipped,
+                    datetime.now().isoformat(),
+                    exit_code,
+                    detail,
+                    run_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError(f"running apply run не найден: {run_id}")
+
+    def apply_runs(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM apply_runs ORDER BY started_at")
+            return [dict(row) for row in rows]
+
+    def apply_run_action_counts(self, run_id: str) -> dict[str, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT status, COUNT(*) AS count FROM actions
+                   WHERE run_id=? AND action='apply' GROUP BY status""",
+                (run_id,),
+            ).fetchall()
+        return {row["status"]: row["count"] for row in rows}
+
     def last_action_status(
         self,
         resume_id: str,
@@ -690,6 +808,8 @@ class History:
         reason: str | None = None,
         letter_variant: str | None = None,
         search_query: str | None = None,
+        run_id: str | None = None,
+        reason_code: str | None = None,
     ) -> int:
         with self._connect() as conn:
             cursor = conn.execute(
@@ -697,9 +817,9 @@ class History:
                 INSERT INTO actions
                     (
                         resume_id, vacancy_id, action, status, reason,
-                        letter_variant, search_query, created_at
+                        letter_variant, search_query, run_id, reason_code, created_at
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     resume_id,
@@ -709,6 +829,8 @@ class History:
                     reason,
                     letter_variant,
                     search_query,
+                    run_id,
+                    reason_code,
                     datetime.now().isoformat(),
                 ),
             )
@@ -786,6 +908,7 @@ class History:
         action: str,
         *,
         search_query: str | None = None,
+        run_id: str | None = None,
     ) -> int:
         """Durably reserve a potentially external action before browser work.
 
@@ -801,6 +924,8 @@ class History:
             "uncertain",
             reason="действие начато, результат не зафиксирован",
             search_query=search_query,
+            run_id=run_id,
+            reason_code="started",
         )
 
     def finalize_action(
@@ -809,16 +934,29 @@ class History:
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
+        reason_code: str | None = None,
     ) -> None:
-        """Finalize a pre-action audit marker without creating a second row."""
+        """Finalize a pre-action audit marker without creating a second row.
+
+        cycle-review PR #460 (round 3, Claude /review): ``reason_code`` was
+        written unconditionally, so a caller that omits the new kwarg (there
+        are several, e.g. the skip and AntiBotChallengeDetected paths in
+        ``commands/_common.py``) silently overwrote ``begin_action``'s
+        ``"started"`` marker with NULL, erasing the audit trail this column
+        exists for. ``COALESCE`` keeps the existing value when a caller
+        passes ``None`` — same pattern already used for ``resume_id`` in
+        ``upsert_response`` (#1119) — an explicit caller that wants to clear
+        it can still pass an empty string.
+        """
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 UPDATE actions
-                   SET status = ?, reason = ?, letter_variant = ?
+                   SET status = ?, reason = ?, letter_variant = ?,
+                       reason_code = COALESCE(?, reason_code)
                  WHERE id = ?
                 """,
-                (status, reason, letter_variant, action_id),
+                (status, reason, letter_variant, reason_code, action_id),
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Действие истории не найдено: id={action_id}")
@@ -1051,9 +1189,10 @@ class History:
         """Записывает/обновляет текущий статус ответа работодателя (account-scope).
 
         Ключ — ``(vacancy_id, topic)`` (одна строка на переписку). Страница
-        /applicant/negotiations общая и НЕ несёт достоверного признака
-        принадлежности ответа конкретному резюме, поэтому ответ НЕ клонируется
-        под все resume_id (это фабриковало бы данные). Одна вакансия может дать
+        /applicant/negotiations общая, поэтому обход остаётся account-scope и
+        ответ НЕ клонируется под все resume_id (это фабриковало бы данные).
+        Однозначный SSR topic mapping может атрибутировать конкретную строку.
+        Одна вакансия может дать
         НЕСКОЛЬКО переписок (разные topic, напр. отклик с разных резюме) — ключ
         по вакансии затирал бы соседние; topic (= id чата из chat_url) их
         различает. topic=None (ответ без чата) группируется по vacancy_id
@@ -1101,7 +1240,8 @@ class History:
                 conn.execute(
                     """
                     UPDATE responses
-                       SET resume_id = ?, employer = ?, last_status = status, status = ?,
+                       SET resume_id = COALESCE(?, resume_id), employer = ?,
+                           last_status = status, status = ?,
                            chat_url = ?, response_date = ?, last_seen_at = ?,
                            status_changed_at = ?
                      WHERE vacancy_id = ? AND topic IS ?
@@ -1122,7 +1262,8 @@ class History:
             # Статус не изменился — освежаем только «когда последний раз видели»
             # и дату ответа (hh.ru мог обновить блок даты без смены статуса).
             conn.execute(
-                "UPDATE responses SET resume_id = ?, employer = ?, chat_url = ?, "
+                "UPDATE responses SET resume_id = COALESCE(?, resume_id), "
+                "employer = ?, chat_url = ?, "
                 "response_date = ?, last_seen_at = ? WHERE vacancy_id = ? AND topic IS ?",
                 (resume_id, employer, chat_url, response_date, now, vacancy_id, topic),
             )

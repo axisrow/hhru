@@ -288,8 +288,20 @@ def launch_context(
         try:
             yield context
         finally:
-            context.close()
-            browser.close()
+            cleanup_error = None
+            for resource in (context, browser):
+                try:
+                    resource.close()
+                except PlaywrightError as exc:
+                    message = str(exc)
+                    target_closed = (
+                        "TargetClosedError" in message
+                        or "Target page, context or browser has been closed" in message
+                    )
+                    if not target_closed and cleanup_error is None:
+                        cleanup_error = exc
+            if cleanup_error is not None:
+                raise cleanup_error
 
 
 def has_auth_cookie(page: Page) -> bool:

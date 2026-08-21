@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -40,6 +41,82 @@ class VacancySearchIndeterminate(RuntimeError):
     карточек/пагинации без него неотличим от устаревшего селектора или
     интерстишл-страницы и не должен молча выдаваться за «вакансий нет».
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        state: str = "indeterminate",
+        page_num: int | None = None,
+        url: str | None = None,
+        partial_results: list[VacancyCard] | None = None,
+        diagnostics: dict[str, object] | None = None,
+    ):
+        super().__init__(message)
+        self.state = state
+        self.page_num = page_num
+        self.url = url
+        self.partial_results = list(partial_results or [])
+        self.diagnostics = diagnostics or {}
+
+
+def _search_diagnostics(page: Page, page_num: int, url: str) -> dict[str, object]:
+    """Small, non-sensitive snapshot suitable for CLI/log output."""
+    diagnostics: dict[str, object] = {"page": page_num, "url": url}
+    try:
+        diagnostics["current_url"] = page.url
+    except Exception:  # noqa: BLE001 - diagnostics must never mask root failure
+        diagnostics["current_url"] = None
+    try:
+        diagnostics["title"] = page.title()
+    except Exception:  # noqa: BLE001
+        diagnostics["title"] = None
+    for name, selector in (
+        ("card_count", sel.VACANCY_CARD),
+        ("title_count", sel.VACANCY_CARD_TITLE_LINK),
+        ("empty_count", sel.VACANCY_SEARCH_EMPTY),
+    ):
+        try:
+            diagnostics[name] = page.locator(selector).count()
+        except Exception:  # noqa: BLE001
+            diagnostics[name] = None
+    return diagnostics
+
+
+def _search_state(page: Page) -> str:
+    try:
+        current_url = str(page.url)
+    except Exception:  # noqa: BLE001
+        current_url = ""
+    if "/account/login" in current_url:
+        return "unauthenticated"
+    try:
+        from .browser import has_login_form
+
+        if has_login_form(page):
+            return "unauthenticated"
+    except Exception:  # noqa: BLE001
+        pass
+    return "indeterminate"
+
+
+def _typed_search_failure(
+    page: Page,
+    *,
+    state: str,
+    page_num: int,
+    url: str,
+    results: list[VacancyCard],
+    detail: str,
+) -> VacancySearchIndeterminate:
+    return VacancySearchIndeterminate(
+        f"выдача поиска на странице {page_num} не подтверждена ({state}): {detail}",
+        state=state,
+        page_num=page_num,
+        url=url,
+        partial_results=results,
+        diagnostics=_search_diagnostics(page, page_num, url),
+    )
 
 
 @dataclass
@@ -319,9 +396,7 @@ def search_vacancies(
     for page_num in range(start_page, start_page + max_pages):
         url = build_search_url(filters, page_num)
         logger.info("Загрузка страницы поиска: %s", url)
-        goto_hh(page, url)
-
-        cards = page.locator(sel.VACANCY_CARD)
+        cards = None
         # ``count()`` читает DOM немедленно, а выдача hh.ru появляется после
         # JS-рендера. Контейнер карточки может смонтироваться раньше её
         # содержимого, поэтому признак готовности — уже отрендеренная ссылка с
@@ -329,14 +404,45 @@ def search_vacancies(
         # делает фиксированную паузу: он возвращает управление сразу после
         # появления этого DOM-узла. Timeout остаётся только fail-closed
         # предохранителем для интерстишла/зависшей страницы.
-        ready = page.locator(f"{sel.VACANCY_CARD_TITLE_LINK}, {sel.VACANCY_SEARCH_EMPTY}")
-        try:
-            ready.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
-        except PlaywrightError:
-            raise VacancySearchIndeterminate(
-                f"выдача поиска на странице {page_num} не подтверждена: "
-                f"ссылка вакансии или empty-state не появились за {RENDER_TIMEOUT_MS} мс"
-            ) from None
+        for render_attempt in range(2):
+            try:
+                goto_hh(page, url)
+            except PlaywrightError as exc:
+                if render_attempt == 0:
+                    time.sleep(2)
+                    continue
+                raise _typed_search_failure(
+                    page,
+                    state="unreachable",
+                    page_num=page_num,
+                    url=url,
+                    results=results,
+                    detail=f"navigation failed after retry: {exc}",
+                ) from None
+            cards = page.locator(sel.VACANCY_CARD)
+            ready = page.locator(f"{sel.VACANCY_CARD_TITLE_LINK}, {sel.VACANCY_SEARCH_EMPTY}")
+            try:
+                ready.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+                break
+            except PlaywrightError:
+                if render_attempt == 0:
+                    logger.warning("Страница %d не отрендерилась; один bounded retry", page_num)
+                    time.sleep(2)
+                    continue
+                state = _search_state(page)
+                raise _typed_search_failure(
+                    page,
+                    state=state,
+                    page_num=page_num,
+                    url=url,
+                    results=results,
+                    detail=(
+                        "ссылка вакансии или empty-state не появились "
+                        f"за {RENDER_TIMEOUT_MS} мс после retry"
+                    ),
+                ) from None
+
+        assert cards is not None
 
         count = cards.count()
         if count == 0:
@@ -345,9 +451,13 @@ def search_vacancies(
                 break
             # Защита выше должна исключить этот путь для настоящего Locator;
             # сохраняем fail-closed для нестабильных/тестовых DOM-адаптеров.
-            raise VacancySearchIndeterminate(
-                f"выдача поиска на странице {page_num} не подтверждена: "
-                "после ожидания контейнер карточек пуст"
+            raise _typed_search_failure(
+                page,
+                state=_search_state(page),
+                page_num=page_num,
+                url=url,
+                results=results,
+                detail="после ожидания контейнер карточек пуст",
             )
 
         for i in range(count):
@@ -415,7 +525,18 @@ def search_vacancies(
                 )
             )
 
-        if not _has_next_page(page, page_num):
+        try:
+            has_next = _has_next_page(page, page_num)
+        except VacancySearchIndeterminate as exc:
+            raise _typed_search_failure(
+                page,
+                state=exc.state,
+                page_num=page_num,
+                url=url,
+                results=results,
+                detail=str(exc),
+            ) from None
+        if not has_next:
             logger.info("Достигнута последняя страница поиска (%d)", page_num)
             break
 

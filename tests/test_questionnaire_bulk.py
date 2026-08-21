@@ -936,3 +936,80 @@ def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, 
     assert result is True, "падение записи в history должно давать [FAIL], а не молчаливый success"
     assert "[FAIL]" in output
     assert "history" in output.lower() or "истори" in output.lower()
+
+
+def test_interrupt_with_history_write_failure_still_returns_sigint(monkeypatch, capsys):
+    # cycle-review PR #460 (round 3, Claude /review): commit 45471ce (this
+    # PR's first commit) introduced a `PERSISTENCE_FAILED` (exit 2) short-
+    # circuit for history_write_failed+interrupted -- confirmed via
+    # `git show 14f3f0c:.../probe.py` that main (pre-PR) has NO such branch:
+    # it only prints [FAIL] and falls through, so `interrupted` alone always
+    # won with SIGINT, exactly as #453/a460ab6's adjacent comment documents
+    # ("прерывание пользователем всегда старше по приоритету и возвращает
+    # SIGINT, даже если до него уже обнаружена потеря сессии"). The earlier
+    # version of this test (added by 45471ce) asserted the regression itself
+    # as if it were a spec -- this test restores the pre-PR contract: Ctrl-C
+    # always wins, even when a history write also failed.
+    import sqlite3
+
+    cards = [_card("994"), _card("995")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "995":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+
+    class FailingHistory(_FakeHistory):
+        def record_questionnaire(self, *args, **kwargs):
+            raise sqlite3.Error("disk full")
+
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: FailingHistory())
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = probe.run_questionnaires(_bulk_args(history="history.db"))
+    output = capsys.readouterr().out
+
+    assert result is CommandExitCode.SIGINT
+    assert "[FAIL] не удалось сохранить" in output
+
+
+def test_interrupt_with_history_write_failure_still_prints_lost_auth(monkeypatch, capsys):
+    # cycle-review PR #460 (round 2, Claude /review; priority corrected in
+    # round 3): all applicable [FAIL] lines must print regardless of which
+    # exit code wins -- a lost session's [FAIL] line must not be skipped
+    # just because a history write also failed, even though SIGINT (not
+    # PERSISTENCE_FAILED) is the exit code once `interrupted` is true.
+    import sqlite3
+
+    cards = [_card("996"), _card("997"), _card("998")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "996":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+            )
+        if vacancy.vacancy_id == "997":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+            )
+        raise KeyboardInterrupt
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+
+    class FailingHistory(_FakeHistory):
+        def record_questionnaire(self, *args, **kwargs):
+            raise sqlite3.Error("disk full")
+
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: FailingHistory())
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = probe.run_questionnaires(_bulk_args(history="history.db"))
+    output = capsys.readouterr().out
+
+    assert result is CommandExitCode.SIGINT
+    assert "[FAIL] не удалось сохранить" in output
+    assert "[FAIL] сессия истекла во время прогона" in output
