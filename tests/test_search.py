@@ -94,19 +94,26 @@ class _SearchPage:
     ):
         self.cards_locator = _DelayedCardsLocator(cards, delayed_cards)
         self.empty_locator = _DelayedCardsLocator([object()] if empty else [])
+        self.ready_selector: str | None = None
 
     def locator(self, selector: str):
         if selector == search.sel.VACANCY_CARD:
             return self.cards_locator
         if selector == search.sel.VACANCY_SEARCH_EMPTY:
             return self.empty_locator
-        if selector == f"{search.sel.VACANCY_CARD}, {search.sel.VACANCY_SEARCH_EMPTY}":
+        if selector == f"{search.sel.VACANCY_CARD_TITLE_LINK}, {search.sel.VACANCY_SEARCH_EMPTY}":
+            self.ready_selector = selector
             return self.empty_locator if self.empty_locator.count() else self.cards_locator
         raise AssertionError(f"unexpected selector: {selector}")
 
 
 def _search_filters():
     return SearchFilters(text="python")
+
+
+def test_search_render_timeout_allows_current_hh_js_render_lag():
+    """#455: 10 с недостаточно, хотя выдача появляется примерно за 20 с."""
+    assert search.RENDER_TIMEOUT_MS == 30_000
 
 
 def test_search_waits_for_delayed_cards_before_declaring_empty(monkeypatch):
@@ -121,6 +128,9 @@ def test_search_waits_for_delayed_cards_before_declaring_empty(monkeypatch):
 
     assert [card.vacancy_id for card in cards] == ["42"]
     assert page.cards_locator.wait_calls == [("attached", search.RENDER_TIMEOUT_MS)]
+    assert page.ready_selector == (
+        f"{search.sel.VACANCY_CARD_TITLE_LINK}, {search.sel.VACANCY_SEARCH_EMPTY}"
+    )
 
 
 def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):

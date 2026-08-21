@@ -295,6 +295,31 @@ CREATE TABLE IF NOT EXISTS robot_questionnaires (
 CREATE INDEX IF NOT EXISTS idx_robot_questionnaires_detected_at
     ON robot_questionnaires(detected_at);
 
+-- Research snapshots are append-only by design; deduplication is out of scope.
+CREATE TABLE IF NOT EXISTS questionnaire_scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    vacancy_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    company TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_scans_detected_at
+    ON questionnaire_scans(detected_at);
+
+CREATE TABLE IF NOT EXISTS questionnaire_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER NOT NULL REFERENCES questionnaire_scans(id),
+    body_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    is_radio INTEGER NOT NULL,
+    options_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_questions_scan_id
+    ON questionnaire_questions(scan_id);
+
 -- test_assignments — факт назначения внешнего теста работодателем (#180).
 -- Отдельно от responses/actions: это событие чата, а не статус отклика и не
 -- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
@@ -2414,6 +2439,41 @@ class History:
                 "INSERT OR IGNORE INTO robot_questionnaires "
                 "(topic, vacancy_id, reason, detected_at) VALUES (?, ?, ?, ?)",
                 (topic, vacancy_id, reason, datetime.now().isoformat()),
+            )
+
+    def record_questionnaire(
+        self,
+        resume_id: str,
+        vacancy_id: str,
+        vacancy_url: str,
+        title: str,
+        company: str,
+        questions: list[dict[str, object]],
+    ) -> None:
+        """Append a questionnaire snapshot and all visible question options."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO questionnaire_scans
+                   (resume_id, vacancy_id, vacancy_url, title, company, detected_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (resume_id, vacancy_id, vacancy_url, title, company, datetime.now().isoformat()),
+            )
+            scan_id = cursor.lastrowid
+            conn.executemany(
+                """INSERT INTO questionnaire_questions
+                   (scan_id, body_index, text, kind, is_radio, options_json)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        scan_id,
+                        int(question["body_index"]),
+                        str(question["text"]),
+                        str(question["kind"]),
+                        int(bool(question["is_radio"])),
+                        json.dumps(question["options"], ensure_ascii=False),
+                    )
+                    for question in questions
+                ],
             )
 
     def is_robot_questionnaire(self, topic: str) -> bool:

@@ -517,6 +517,7 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 - `--max-pages MAX_PAGES` — Максимум страниц поиска (по умолчанию: 5)
 - `--vacancy-id` — ID целевой вакансии (число из URL https://hh.ru/vacancy/<id>)
 - `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
+- `--start-page START_PAGE` — Начальная страница поиска (нумерация с 0)
 - `--healthcheck` — Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)
 - `--negotiations` — Read-only дамп списка переговоров или чата без отправки (#107)
 - `--topic` — ID topic из SSR-дампа negotiations для открытия чата (только чтение)

@@ -26,6 +26,7 @@ import json
 import logging
 import random
 import re
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -70,6 +71,12 @@ def register(subparsers) -> None:
     p.add_argument(
         "--vacancy-url",
         help="URL целевой вакансии (альтернатива --vacancy-id)",
+    )
+    p.add_argument(
+        "--start-page",
+        type=int,
+        default=0,
+        help="Начальная страница поиска (нумерация с 0)",
     )
     p.add_argument(
         "--healthcheck",
@@ -607,8 +614,78 @@ def _limit_reached(results, limit: int) -> bool:
     return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
 
 
+def _record_questionnaire_if_confirmed(history, resume_id: str, vacancy, result) -> bool:
+    """Persist a confirmed questionnaire snapshot; called after every scan pass.
+
+    Returns False only when persistence was attempted and failed — callers use
+    this to surface a run-level [FAIL], not to abort the scan (see below).
+    True covers both "nothing to persist" (no history configured, or the
+    result isn't a confirmed questionnaire) and "persisted successfully".
+
+    cycle-review PR #456 (Codex): вызывается и после быстрого прохода, и после
+    retry (731-743 в исходной нумерации) — иначе анкета, подтверждённая только
+    на retry после transient UNKNOWN, остаётся в печатном отчёте, но не попадает
+    в SQLite, и исследовательская база расходится с выводом команды.
+
+    cycle-review PR #456 round 1 (Claude /review): запись обёрнута в except
+    sqlite3.Error, в отличие от голого вызова раньше — падение записи (locked
+    DB, диск полон) не должно обрывать весь bulk-скан для всех оставшихся
+    вакансий/резюме (команда fail-tolerant: --start-page, retry, обработка
+    KeyboardInterrupt рядом же). Ловим именно sqlite3.Error, а не bare
+    Exception — узкий except тут тот же принцип проекта, что и в
+    run_healthcheck (см. её докстринг).
+
+    cycle-review PR #456 round 2 (Codex): проглатывание ошибки одним только
+    logger.warning превращало потерю подтверждённой анкеты в молчаливый
+    success — run_questionnaires мог напечатать обычный отчёт и вернуть False,
+    хотя исследовательские данные реально потеряны без единого
+    машинно-обнаружимого сигнала. Возврат False здесь и накопление в
+    history_write_failed (в run_questionnaires) переводят это в [FAIL] в конце
+    прогона, не отменяя уже принятого решения «не обрывать скан».
+    """
+    from ..apply.questionnaire import QUESTIONNAIRE
+
+    if history is None or result.status != QUESTIONNAIRE:
+        return True
+    try:
+        history.record_questionnaire(
+            resume_id,
+            vacancy.vacancy_id,
+            vacancy.url,
+            vacancy.title,
+            vacancy.company,
+            [
+                {
+                    "body_index": question.body_index,
+                    "text": question.text,
+                    "kind": question.kind,
+                    "is_radio": question.is_radio,
+                    "options": list(question.options),
+                }
+                for question in result.questions
+            ],
+        )
+        return True
+    except sqlite3.Error:
+        logger.warning(
+            "questionnaires-only: не удалось сохранить анкету %s в историю",
+            vacancy.vacancy_id,
+            exc_info=True,
+        )
+        return False
+
+
 def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
-    """Scan raw search cards in one context/page, without local history."""
+    """Scan raw search cards in one context/page; confirmed questionnaires are
+    persisted to SQLite via ``args.history`` (see _record_questionnaire_if_confirmed).
+
+    cycle-review PR #456 round 2 (Claude /review): ``args.history`` is resolved
+    to a real default path (``data/history.db`` or the account's history) by
+    ``cli._resolve_paths`` before any command runs — through the real CLI this
+    is effectively unconditional, not gated behind an explicit ``--history``
+    flag. Only a direct unit-test call that bypasses the CLI layer (constructing
+    ``args`` without a ``history`` attribute) leaves it ``None``.
+    """
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
         FAST_TIMEOUT_MS,
@@ -618,6 +695,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     )
     from ..browser import GOTO_TIMEOUT_MS, launch_context
     from ..config import load_config_or_exit
+    from ..history import History
     from ..search import VacancySearchIndeterminate, search_vacancies
 
     if args.vacancy_id or args.vacancy_url:
@@ -628,6 +706,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         return True
 
     config = load_config_or_exit(args.config)
+    history = History(args.history) if getattr(args, "history", None) else None
     resumes = resolve_resumes(config, [args.resume] if args.resume else None)
     if not resumes:
         print("Ошибка: не выбрано резюме для bulk probe.", file=sys.stderr)
@@ -639,14 +718,25 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
 
     all_results: list[QuestionnaireScanResult] = []
     interrupted = False
-    print("[INFO] questionnaires-only: read-only поиск анкет (без истории и артефактов)")
+    # cycle-review PR #456 round 2 (Codex): накапливает потери записи в
+    # историю, не прерывая скан — см. _record_questionnaire_if_confirmed.
+    history_write_failed = False
+    print(
+        "[INFO] questionnaires-only: read-only поиск анкет "
+        "(вопросы сохраняются в SQLite; без откликов, AI и артефактов)"
+    )
     try:
         with launch_context(config.storage_state_file, headless=args.headless) as context:
             page = context.new_page()
             for resume in resumes:
                 try:
                     vacancies = _dedupe_vacancies(
-                        search_vacancies(page, resume.search, max_pages=args.max_pages)
+                        search_vacancies(
+                            page,
+                            resume.search,
+                            max_pages=args.max_pages,
+                            start_page=getattr(args, "start_page", 0),
+                        )
                     )
                 except VacancySearchIndeterminate as exc:
                     print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
@@ -664,6 +754,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results.append(result)
                     all_results.append(result)
+                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                        history_write_failed = True
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
                     if result.status == UNKNOWN and result.retryable:
@@ -708,6 +800,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results[result_index] = result
                     all_results[result_positions[vacancy_id]] = result
+                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                        history_write_failed = True
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
                     _print_questionnaire_progress(result, result_index + 1, len(vacancies))
@@ -742,6 +836,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         f"unknown {unknown}, "
         f"требует авторизации {unauthenticated}"
     )
+    if history_write_failed:
+        # cycle-review PR #456 round 2 (Codex): запись в SQLite могла упасть
+        # (locked DB, диск полон) без обрыва скана (round 1: fail-tolerant,
+        # см. _record_questionnaire_if_confirmed) — но это не должно выглядеть
+        # как молчаливый success. Печатаем безусловно, до unauthenticated/
+        # interrupted веток, чтобы строка была видна при любом сочетании.
+        print("[FAIL] не удалось сохранить одну или несколько анкет в историю")
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена. Проверка
@@ -776,7 +877,9 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         # строке, а только когда обязательные селекторы не найдены системно.
         print("[FAIL] все вакансии вернули неподтверждённый результат — скан не состоялся")
         return True
-    return False
+    # history_write_failed уже напечатан выше ([FAIL] строка); здесь только
+    # решение о статусе — иначе потеря записи истории осталась бы success.
+    return history_write_failed
 
 
 def _resolve_vacancy_url(args: argparse.Namespace) -> str:
