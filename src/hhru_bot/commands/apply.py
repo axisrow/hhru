@@ -90,6 +90,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     }
                     routing_resumes = [r for r in resumes if r.resume_id in ready]
             feeds = []
+            unconfirmed_resume_ids = set()
             for resume in routing_resumes:
                 try:
                     feeds.append(
@@ -108,10 +109,17 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                         f"[FAIL] {e}; state={e.state} page={e.page_num} url={e.url} "
                         f"partial_results={len(e.partial_results)} diagnostics={e.diagnostics}"
                     )
-                    if e.partial_results:
-                        feeds.append((resume, e.partial_results))
+                    # Codex adversarial review (cycle-review PR #460, round 1):
+                    # partial_results are an unconfirmed snapshot (search state
+                    # itself was not verified) -- routing them into the live
+                    # apply feed let this resume's applies go out against data
+                    # the search step already flagged as unreliable. Fail-closed
+                    # per CLAUDE.md #5: exclude this resume from routing/apply
+                    # entirely for this run instead of merging partial_results in.
+                    unconfirmed_resume_ids.add(resume.id)
                     failed = True
                 raise_for_antibot(page)
+            routing_resumes = [r for r in routing_resumes if r.id not in unconfirmed_resume_ids]
             merged = merge_vacancies(feeds)
             providers = {r.id: _build_scoring_provider(config, r) for r in routing_resumes}
             routed = route_vacancies(

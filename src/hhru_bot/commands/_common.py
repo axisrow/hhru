@@ -940,8 +940,6 @@ def _run_apply_for_resume(
             if action_id is not None:
                 history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
-            if progress is not None:
-                print(progress.summary("running"))
             # #342: сегодня терминальные блокеры приходят через ctx.stop()
             # (skipped=False) и до сюда не доходят. Проверка стоит и здесь,
             # чтобы будущий skip-путь с stop_run не проглотился этим continue.
@@ -1013,8 +1011,6 @@ def _run_apply_for_resume(
             print(f"  [OK] {card.title} — {card.company}")
         else:
             print(f"  [FAIL] {card.title} — {result.reason}")
-        if progress is not None:
-            print(progress.summary("running"))
 
         if approved_item:
             # #436: 'uncertain' must dedup like 'applied', not read as a safe
