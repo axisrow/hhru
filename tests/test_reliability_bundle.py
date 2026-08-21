@@ -23,7 +23,7 @@ def _card(vacancy_id: str = "123") -> VacancyCard:
     return VacancyCard(vacancy_id, "Python", "ACME", f"https://hh.ru/vacancy/{vacancy_id}")
 
 
-def test_old_database_gets_apply_run_and_action_correlation_columns(tmp_path: Path) -> None:
+def test_old_database_gets_command_run_and_action_correlation_columns(tmp_path: Path) -> None:
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
@@ -45,14 +45,71 @@ def test_old_database_gets_apply_run_and_action_correlation_columns(tmp_path: Pa
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
 
     assert {"run_id", "reason_code"} <= columns
-    assert "apply_runs" in tables
+    assert "command_runs" in tables
 
 
-def test_apply_run_recovers_orphan_and_persists_counters(tmp_path: Path) -> None:
+def test_apply_runs_table_migrates_to_command_runs(tmp_path: Path) -> None:
+    # #461: старая БД с apply_runs (PR #460) должна получить переименованную
+    # таблицу command_runs с сохранёнными данными и переименованным индексом,
+    # а не вторую параллельную таблицу.
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """CREATE TABLE apply_runs (
+                run_id TEXT PRIMARY KEY,
+                command TEXT NOT NULL,
+                requested_limit INTEGER,
+                status TEXT NOT NULL,
+                attempted INTEGER NOT NULL DEFAULT 0,
+                success INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                uncertain INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                exit_code INTEGER,
+                detail TEXT
+            )"""
+        )
+        conn.execute("CREATE INDEX idx_apply_runs_status ON apply_runs(status, started_at)")
+        conn.execute(
+            """INSERT INTO apply_runs (run_id, command, status, started_at)
+               VALUES ('old-run', 'apply', 'completed', '2026-01-01T00:00:00')"""
+        )
+
+    history = History(db)
+    with history._connect() as conn:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        indexes = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        }
+
+    assert "command_runs" in tables
+    assert "apply_runs" not in tables
+    assert "idx_command_runs_status" in indexes
+    assert "idx_apply_runs_status" not in indexes
+
+    rows = {row["run_id"]: row for row in history.command_runs()}
+    assert rows["old-run"]["status"] == "completed"
+
+    # Идемпотентность: повторное открытие той же (уже смигрированной) БД не
+    # должно падать и не должно создавать вторую таблицу.
+    History(db)
+    with sqlite3.connect(db) as conn:
+        tables_again = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert "apply_runs" not in tables_again
+    assert "command_runs" in tables_again
+
+
+def test_command_run_recovers_orphan_and_persists_counters(tmp_path: Path) -> None:
     history = History(tmp_path / "history.db")
-    first = history.start_apply_run(command="apply", requested_limit=3)
-    second = history.start_apply_run(command="apply", requested_limit=2)
-    history.finish_apply_run(
+    first = history.start_command_run(command="apply", requested_limit=3)
+    second = history.start_command_run(command="apply", requested_limit=2)
+    history.finish_command_run(
         second,
         status="completed",
         exit_code=0,
@@ -63,7 +120,7 @@ def test_apply_run_recovers_orphan_and_persists_counters(tmp_path: Path) -> None
         skipped=0,
     )
 
-    rows = {row["run_id"]: row for row in history.apply_runs()}
+    rows = {row["run_id"]: row for row in history.command_runs()}
     assert rows[first]["status"] == "orphaned"
     assert rows[first]["finished_at"]
     assert rows[second]["success"] == 2
@@ -178,7 +235,7 @@ def test_questionnaire_probe_is_a_local_write_command() -> None:
     ("failure", "expected"),
     [(KeyboardInterrupt(), CommandExitCode.SIGINT), (signal.SIGTERM, CommandExitCode.SIGTERM)],
 )
-def test_apply_run_persists_typed_signal_exit(
+def test_command_run_persists_typed_signal_exit(
     tmp_path: Path, monkeypatch, failure, expected: CommandExitCode
 ) -> None:
     from hhru_bot.commands import apply as apply_command
@@ -203,18 +260,18 @@ def test_apply_run_persists_typed_signal_exit(
     )
 
     assert apply_command.run(args) is expected
-    row = History(args.history).apply_runs()[-1]
+    row = History(args.history).command_runs()[-1]
     assert row["status"] == "interrupted"
     assert row["exit_code"] == expected.value
     assert row["attempted"] == 1
     assert row["failed"] == 1  # interruption happened before durable submit reservation
 
 
-def test_apply_run_ledger_failure_does_not_mask_the_original_exception(
+def test_command_run_ledger_failure_does_not_mask_the_original_exception(
     tmp_path: Path, monkeypatch
 ) -> None:
     # cycle-review PR #460 (round 3, Claude /review): the `finally` block's
-    # `history.finish_apply_run(...)` call can itself raise ValueError (e.g.
+    # `history.finish_command_run(...)` call can itself raise ValueError (e.g.
     # if the run row is no longer 'running') while a real exception from
     # `_run` is already propagating through `except BaseException: ...;
     # raise` -- an exception raised inside `finally` replaces/masks the one
@@ -228,10 +285,10 @@ def test_apply_run_ledger_failure_does_not_mask_the_original_exception(
 
     def crash(_args, _config, history, progress):
         progress.begin_attempt()
-        # Force finish_apply_run to fail inside `finally`: mark the run
+        # Force finish_command_run to fail inside `finally`: mark the run
         # already finished before _run's own exception even starts
         # propagating, simulating a lost race / already-finalized run.
-        history.finish_apply_run(
+        history.finish_command_run(
             progress.run_id,
             status="completed",
             exit_code=0,
