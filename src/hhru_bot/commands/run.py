@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..exit_codes import CommandExitCode
 from . import apply as apply_cmd
 from . import bump as bump_cmd
 from ._common import add_common_args, add_force_arg, add_limit_arg
@@ -24,5 +25,7 @@ def run(args: argparse.Namespace) -> bool:
     # Apply and bump are independent actions: even if vacancy search is
     # indeterminate, bump still has a valid, unrelated resume-page operation.
     # Keep bump for the same resume and report apply's failure to the caller.
+    if isinstance(apply_failed, CommandExitCode):
+        return apply_failed
     bump_cmd.run(args)
     return bool(apply_failed)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 
 from ._common import (
     ApplyProgress,
@@ -29,18 +30,19 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> bool:
+class _SignalTermination(BaseException):
+    def __init__(self, signum: int):
+        self.signum = signum
+
+
+def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
     from ..browser import launch_context
-    from ..config import load_config_or_exit
-    from ..history import History
     from ..throttle import LimitReached, Throttle
 
     if getattr(args, "approved", None) is not None and args.dry_run:
         print("[FAIL] --approved нельзя использовать вместе с --dry-run")
         return True
 
-    config = load_config_or_exit(args.config)
-    history = History(args.history)
     if getattr(args, "approved", None) is not None and args.resume is None:
         items = [item for item in history.review_items() if item["id"] == args.approved]
         matches = [
@@ -102,7 +104,12 @@ def run(args: argparse.Namespace) -> bool:
                     )
                 except VacancySearchIndeterminate as e:
                     raise_for_antibot(page)
-                    print(f"[FAIL] {e}")
+                    print(
+                        f"[FAIL] {e}; state={e.state} page={e.page_num} url={e.url} "
+                        f"partial_results={len(e.partial_results)} diagnostics={e.diagnostics}"
+                    )
+                    if e.partial_results:
+                        feeds.append((resume, e.partial_results))
                     failed = True
                 raise_for_antibot(page)
             merged = merge_vacancies(feeds)
@@ -148,11 +155,12 @@ def run(args: argparse.Namespace) -> bool:
         # успешных откликов ЗА ЗАПУСК", а не за резюме — общий ApplyProgress
         # должен считать успехи по всем резюме этого прогона, иначе --limit N
         # с M резюме может дать до N*M откликов вместо N.
-        progress = ApplyProgress()
         try:
             for resume in resumes:
                 if cards_by_resume is None:
-                    result = run_apply_for_resume(page, config, resume, history, throttle, args)
+                    result = run_apply_for_resume(
+                        page, config, resume, history, throttle, args, progress=progress
+                    )
                 else:
                     result = run_apply_for_resume(
                         page,
@@ -170,3 +178,85 @@ def run(args: argparse.Namespace) -> bool:
         except ApplyRunStopped:
             failed = True
     return failed
+
+
+def run(args: argparse.Namespace) -> bool:
+    """Run apply under a durable ledger and typed signal supervision."""
+    from ..config import load_config_or_exit
+    from ..exit_codes import CommandExitCode
+    from ..history import History
+
+    if getattr(args, "approved", None) is not None and args.dry_run:
+        print("[FAIL] --approved нельзя использовать вместе с --dry-run")
+        return True
+
+    config = load_config_or_exit(args.config)
+    history = History(args.history)
+    run_id = history.start_apply_run(
+        command=getattr(args, "command", "apply"),
+        requested_limit=getattr(args, "limit", None),
+    )
+    progress = ApplyProgress(run_id=run_id)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _terminate(signum, _frame):  # noqa: ANN001
+        raise _SignalTermination(signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
+    final_status = "failed"
+    exit_code = 1
+    detail = None
+    result: bool | CommandExitCode = True
+    try:
+        failed = _run(args, config, history, progress)
+        final_status = (
+            "partial"
+            if failed and progress.attempted_count
+            else "failed"
+            if failed
+            else "completed"
+        )
+        exit_code = 1 if failed else 0
+        result = bool(failed)
+    except KeyboardInterrupt:
+        final_status = "interrupted"
+        exit_code = CommandExitCode.SIGINT.value
+        detail = "SIGINT"
+        result = CommandExitCode.SIGINT
+    except _SignalTermination as exc:
+        final_status = "interrupted"
+        exit_code = 128 + exc.signum
+        detail = f"signal={exc.signum}"
+        result = CommandExitCode.SIGTERM
+    except BaseException as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        # If interruption landed inside an attempted vacancy after its durable
+        # reservation, account for the unresolved result in the run summary.
+        action_counts = history.apply_run_action_counts(run_id)
+        progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
+        progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
+        progress.uncertain_count = max(progress.uncertain_count, action_counts.get("uncertain", 0))
+        completed = (
+            progress.applied_count
+            + progress.failed_count
+            + progress.uncertain_count
+            + progress.skipped_count
+        )
+        if progress.attempted_count > completed:
+            progress.failed_count += progress.attempted_count - completed
+        history.finish_apply_run(
+            run_id,
+            status=final_status,
+            exit_code=exit_code,
+            attempted=progress.attempted_count,
+            success=progress.applied_count,
+            failed=progress.failed_count,
+            uncertain=progress.uncertain_count,
+            skipped=progress.skipped_count,
+            detail=detail,
+        )
+        print(progress.summary(final_status))
+    return result

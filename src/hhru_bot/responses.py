@@ -146,6 +146,7 @@ class ResponseItem:
     date: str = ""
     raw_status: str = ""
     topic_ambiguous: bool = False
+    resume_id: str | None = None
 
 
 def _extract_vacancy_id(href: str) -> str | None:
@@ -407,6 +408,18 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
             refs_by_vacancy: dict[str, list] = {}
             for ref in refs:
                 refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
+            refs_by_topic: dict[str, list] = {}
+            for ref in refs:
+                refs_by_topic.setdefault(ref.topic_id, []).append(ref)
+            # DOM may already expose ?topic=... in chat_url. It still lacks
+            # resumeId, so enrich that confirmed identity directly from the
+            # unique SSR topic rather than limiting SSR mapping to topic=None.
+            for result in results[page_start:]:
+                if result.topic is None:
+                    continue
+                candidates = refs_by_topic.get(result.topic, [])
+                if len(candidates) == 1 and candidates[0].vacancy_id == result.vacancy_id:
+                    result.resume_id = candidates[0].resume_id
             # Fail-closed on ambiguity: pairing an SSR topic to a DOM card relies on
             # matching by vacancy_id alone, and there is no verified invariant that
             # DOM card order matches SSR topicList order (no live fixture with >1
@@ -435,6 +448,7 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
                     ref = candidates[0]
                     cards[0].topic = ref.topic_id
                     cards[0].chat_url = chat_url(ref.chat_id)
+                    cards[0].resume_id = ref.resume_id
                 elif candidates:
                     for card in cards:
                         card.topic_ambiguous = True

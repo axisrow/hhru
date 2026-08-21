@@ -95,7 +95,10 @@ def register(subparsers) -> None:
     p.add_argument(
         "--questionnaires-only",
         action="store_true",
-        help=("Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit и PNG/HTML"),
+        help=(
+            "Read-only на hh.ru bulk-проверка анкет; подтверждённые вопросы "
+            "пишутся в локальную SQLite, без заполнения, AI и submit"
+        ),
     )
     p.add_argument(
         "--limit-questionnaires",
@@ -721,8 +724,9 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     # cycle-review PR #456 round 2 (Codex): накапливает потери записи в
     # историю, не прерывая скан — см. _record_questionnaire_if_confirmed.
     history_write_failed = False
+    search_failed = False
     print(
-        "[INFO] questionnaires-only: read-only поиск анкет "
+        "[INFO] questionnaires-only: read-only на hh.ru, локальная WRITE-команда "
         "(вопросы сохраняются в SQLite; без откликов, AI и артефактов)"
     )
     try:
@@ -739,8 +743,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                         )
                     )
                 except VacancySearchIndeterminate as exc:
-                    print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
-                    return True
+                    search_failed = True
+                    vacancies = _dedupe_vacancies(exc.partial_results)
+                    print(
+                        f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}; "
+                        f"state={exc.state} page={exc.page_num} url={exc.url} "
+                        f"partial_results={len(vacancies)} diagnostics={exc.diagnostics}"
+                    )
                 print(f"[INFO] {resume.id}: найдено уникальных вакансий: {len(vacancies)}")
                 retry_ids = []
                 resume_results: list[QuestionnaireScanResult] = []
@@ -843,6 +852,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         # как молчаливый success. Печатаем безусловно, до unauthenticated/
         # interrupted веток, чтобы строка была видна при любом сочетании.
         print("[FAIL] не удалось сохранить одну или несколько анкет в историю")
+        if interrupted:
+            return CommandExitCode.PERSISTENCE_FAILED
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена. Проверка
@@ -876,6 +887,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         # run_healthcheck не валит здоровый аккаунт по одной NOT_FOUND
         # строке, а только когда обязательные селекторы не найдены системно.
         print("[FAIL] все вакансии вернули неподтверждённый результат — скан не состоялся")
+        return True
+    if search_failed:
         return True
     # history_write_failed уже напечатан выше ([FAIL] строка); здесь только
     # решение о статусе — иначе потеря записи истории осталась бы success.

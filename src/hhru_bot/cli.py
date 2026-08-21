@@ -116,10 +116,20 @@ def main(argv: list[str] | None = None) -> None:
 
     lock_path = _write_lock_path(args)
     try:
-        with acquire_write_lock(lock_path):
+        owner_command = args.command
+        if args.command == "probe" and getattr(args, "questionnaires_only", False):
+            owner_command += " --questionnaires-only"
+        with acquire_write_lock(lock_path, command=owner_command):
             return _execute(args)
-    except WriteLockBusy:
-        print("[FAIL] другой процесс уже выполняет WRITE-действие")
+    except WriteLockBusy as exc:
+        owner = exc.owner
+        detail = (
+            f" (pid={owner.get('pid')}, command={owner.get('command')}, "
+            f"started_at={owner.get('started_at')})"
+            if owner
+            else ""
+        )
+        print(f"[FAIL] другой процесс уже выполняет WRITE-действие{detail}")
         sys.exit(1)
 
 
@@ -129,6 +139,8 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         # Reading config must remain usable while an unrelated local write is
         # in progress.  The editor is included because it commits a mutation.
         return bool(args.set is not None or args.unset or args.edit)
+    if args.command == "probe" and getattr(args, "questionnaires_only", False):
+        return True
     return (
         args.command in WRITE_COMMANDS
         or (args.command == "refresh-token" and getattr(args, "force", False))
@@ -186,7 +198,7 @@ def _execute(args: argparse.Namespace) -> None:
         # A command may return the conventional SIGINT status explicitly after
         # rendering a partial report (rather than raising KeyboardInterrupt).
         # Keep this separate from the bool-based fail-closed command contract.
-        if failed is CommandExitCode.SIGINT:
+        if isinstance(failed, CommandExitCode):
             sys.exit(failed.value)
         # Fail-closed contract (#148) is opt-in: only commands that report a
         # real bool success flag (search/apply/run) can trip sys.exit(1).

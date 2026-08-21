@@ -138,8 +138,36 @@ def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):
     page = _SearchPage([])
     monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
 
-    with pytest.raises(search.VacancySearchIndeterminate, match="не подтвержден"):
+    monkeypatch.setattr(search.time, "sleep", lambda *_: None)
+    with pytest.raises(search.VacancySearchIndeterminate, match="не подтвержден") as error:
         search.search_vacancies(page, _search_filters(), max_pages=1)
+    assert error.value.state == "indeterminate"
+    assert error.value.page_num == 0
+    assert error.value.partial_results == []
+
+
+def test_search_timeout_retries_current_page_once_then_returns_typed_partial(monkeypatch):
+    page = _SearchPage([_VacancyCard()])
+    calls = []
+
+    def goto(_page, url):
+        calls.append(url)
+        if len(calls) >= 2:
+            page.cards_locator.cards.clear()
+
+    monkeypatch.setattr(search, "goto_hh", goto)
+    monkeypatch.setattr(search.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(search, "_has_next_page", lambda _page, page_num: page_num == 0)
+    monkeypatch.setattr(search, "_optional_text", lambda *args: None)
+    monkeypatch.setattr(search, "_parse_employer_info", lambda *args: None)
+
+    with pytest.raises(search.VacancySearchIndeterminate) as error:
+        search.search_vacancies(page, _search_filters(), max_pages=2)
+
+    assert len(calls) == 3  # page 0, page 1, one retry of page 1
+    assert error.value.page_num == 1
+    assert [card.vacancy_id for card in error.value.partial_results] == ["42"]
+    assert error.value.diagnostics["card_count"] == 0
 
 
 def test_search_returns_empty_only_after_confirmed_empty_state(monkeypatch):
@@ -147,6 +175,32 @@ def test_search_returns_empty_only_after_confirmed_empty_state(monkeypatch):
     monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
 
     assert search.search_vacancies(page, _search_filters(), max_pages=1) == []
+
+
+def test_search_navigation_failure_is_typed_unreachable(monkeypatch):
+    page = _SearchPage([])
+    monkeypatch.setattr(search.time, "sleep", lambda *_: None)
+
+    def unreachable(*_args, **_kwargs):
+        from playwright.sync_api import Error as PlaywrightError
+
+        raise PlaywrightError("network down")
+
+    monkeypatch.setattr(search, "goto_hh", unreachable)
+    with pytest.raises(search.VacancySearchIndeterminate) as error:
+        search.search_vacancies(page, _search_filters(), max_pages=1)
+    assert error.value.state == "unreachable"
+
+
+def test_search_login_page_is_typed_unauthenticated(monkeypatch):
+    page = _SearchPage([])
+    page.url = "https://hh.ru/account/login"
+    monkeypatch.setattr(search, "goto_hh", lambda *_: None)
+    monkeypatch.setattr(search.time, "sleep", lambda *_: None)
+
+    with pytest.raises(search.VacancySearchIndeterminate) as error:
+        search.search_vacancies(page, _search_filters(), max_pages=1)
+    assert error.value.state == "unauthenticated"
 
 
 class FakeHistory:

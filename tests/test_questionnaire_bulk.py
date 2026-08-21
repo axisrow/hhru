@@ -936,3 +936,30 @@ def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, 
     assert result is True, "падение записи в history должно давать [FAIL], а не молчаливый success"
     assert "[FAIL]" in output
     assert "history" in output.lower() or "истори" in output.lower()
+
+
+def test_interrupt_with_history_write_failure_returns_persistence_exit(monkeypatch, capsys):
+    import sqlite3
+
+    cards = [_card("994"), _card("995")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "995":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+
+    class FailingHistory(_FakeHistory):
+        def record_questionnaire(self, *args, **kwargs):
+            raise sqlite3.Error("disk full")
+
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: FailingHistory())
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = probe.run_questionnaires(_bulk_args(history="history.db"))
+
+    assert result is CommandExitCode.PERSISTENCE_FAILED
+    assert "[FAIL]" in capsys.readouterr().out

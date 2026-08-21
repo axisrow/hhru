@@ -115,9 +115,12 @@ def run(args: argparse.Namespace) -> bool:
                 # Не выдаём непроверенную выдачу за «вакансий нет» и не прячем
                 # диагностический отказ за traceback. Следующее резюме можно
                 # обработать независимо.
-                print(f"[FAIL] {e}")
+                cards = e.partial_results
+                print(
+                    f"[FAIL] {e}; state={e.state} page={e.page_num} url={e.url} "
+                    f"partial_results={len(cards)} diagnostics={e.diagnostics}"
+                )
                 failed = True
-                continue
             # #66: запись собранных карточек в рынок (побочный эффект сбора) —
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
             _record_seen(cards, resume.search.text, history)

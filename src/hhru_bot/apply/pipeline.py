@@ -68,6 +68,20 @@ class ApplyResult:
     # отклик на ту же вакансию) и выдерживал троттл-паузу.
     uncertain: bool = False
     stop_run: bool = False
+    outcome_code: str = ""
+
+    def __post_init__(self) -> None:
+        if self.outcome_code:
+            return
+        self.outcome_code = (
+            "skipped"
+            if self.skipped
+            else "uncertain"
+            if self.uncertain
+            else "success"
+            if self.success
+            else "failed"
+        )
 
 
 @dataclass
@@ -123,13 +137,14 @@ class ApplyContext:
             stop_run=True,
         )
 
-    def ok(self, reason: str) -> ApplyResult:
+    def ok(self, reason: str, *, outcome_code: str = "success") -> ApplyResult:
         return ApplyResult(
             self.vacancy,
             True,
             reason,
             letter_variant=self.letter_variant,
             acted=self.acted,
+            outcome_code=outcome_code,
         )
 
     def skip(self, reason: str, skip_reason: str = SKIP_REASONS.HAS_QUESTIONS) -> ApplyResult:
@@ -146,6 +161,7 @@ class ApplyContext:
             letter_variant=self.letter_variant,
             skipped=True,
             skip_reason=skip_reason,
+            outcome_code="skipped",
         )
 
 
@@ -316,8 +332,8 @@ def _finalize_post_click_failure(ctx: ApplyContext, reason: str) -> ApplyResult:
             verdict.detail,
         )
         return ctx.ok(
-            f"{reason}; внешняя проверка: отклик присутствует в /applicant/negotiations "
-            f"({verdict.detail})"
+            f"внешняя сверка подтвердила отклик в /applicant/negotiations ({verdict.detail})",
+            outcome_code="reconciled_success",
         )
     if verdict.indeterminate:
         ctx.acted = True

@@ -310,12 +310,38 @@ class ApplyPlan:
 
 @dataclass
 class ApplyProgress:
-    """Счётчик успешных откликов, общий для последовательных search-волн."""
+    """Stable per-run counters shared by all resumes/search waves."""
 
     applied_count: int = 0
+    attempted_count: int = 0
+    failed_count: int = 0
+    uncertain_count: int = 0
+    skipped_count: int = 0
+    run_id: str | None = None
 
     def reached(self, limit: int | None) -> bool:
         return limit is not None and self.applied_count >= limit
+
+    def begin_attempt(self) -> None:
+        self.attempted_count += 1
+
+    def finish(self, result) -> None:  # noqa: ANN001 - ApplyResult avoids import cycle
+        if getattr(result, "skipped", False):
+            self.skipped_count += 1
+        elif getattr(result, "uncertain", False):
+            self.uncertain_count += 1
+        elif result.success:
+            self.applied_count += 1
+        else:
+            self.failed_count += 1
+
+    def summary(self, status: str) -> str:
+        return (
+            f"[RUN] id={self.run_id or '-'} status={status} "
+            f"attempted={self.attempted_count} success={self.applied_count} "
+            f"failed={self.failed_count} uncertain={self.uncertain_count} "
+            f"skipped={self.skipped_count}"
+        )
 
 
 @dataclass(frozen=True)
@@ -832,6 +858,7 @@ def _run_apply_for_resume(
                 search_query=(
                     approved_item["search_query"] if approved_item else resume.search.text
                 ),
+                run_id=progress.run_id if progress is not None else None,
             )
 
         # dict value type intentionally broad — **apply_kwargs spreads several
@@ -855,6 +882,8 @@ def _run_apply_for_resume(
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = getattr(args, "force", False)
+        if progress is not None:
+            progress.begin_attempt()
         try:
             result = apply_to_vacancy(
                 page,
@@ -879,7 +908,7 @@ def _run_apply_for_resume(
                 # entry never looks safely retryable.
                 history.finish_review(args.approved, "applied")
             raise
-        except Exception:
+        except BaseException:
             # A claimed review must never remain permanently in ``applying``
             # when the browser/pipeline fails before returning a result.
             if approved_item:
@@ -894,6 +923,8 @@ def _run_apply_for_resume(
             raise
 
         if result.skipped:
+            if progress is not None:
+                progress.finish(result)
             # #95: форма требует анкеты — НЕ считаем откликом, НЕ пишем actions,
             # НЕ ждём throttle (отправки не было — анти-бан-пауза не нужна). Кэш
             # skipped (#87) не даст повторно дойти до формы на следующем search.
@@ -909,6 +940,8 @@ def _run_apply_for_resume(
             if action_id is not None:
                 history.finalize_action(action_id, "failed", result.reason)
             print(f"  [skip] {card.title} — {result.reason}")
+            if progress is not None:
+                print(progress.summary("running"))
             # #342: сегодня терминальные блокеры приходят через ctx.stop()
             # (skipped=False) и до сюда не доходят. Проверка стоит и здесь,
             # чтобы будущий skip-путь с stop_run не проглотился этим continue.
@@ -937,6 +970,13 @@ def _run_apply_for_resume(
                 status,
                 result.reason,
                 letter_variant=result.letter_variant,
+                reason_code=getattr(
+                    result,
+                    "outcome_code",
+                    "uncertain"
+                    if result.uncertain
+                    else ("success" if result.success else "failed"),
+                ),
             )
         elif result.acted:
             # The verifier can positively reconcile an external submit even
@@ -955,14 +995,26 @@ def _run_apply_for_resume(
                 search_query=(
                     approved_item["search_query"] if approved_item else resume.search.text
                 ),
+                run_id=progress.run_id if progress is not None else None,
+                reason_code=getattr(
+                    result,
+                    "outcome_code",
+                    "uncertain"
+                    if result.uncertain
+                    else ("success" if result.success else "failed"),
+                ),
             )
-        if result.success:
+        if progress is not None:
+            progress.finish(result)
+            applied_count = progress.applied_count
+        elif result.success:
             applied_count += 1
-            if progress is not None:
-                progress.applied_count = applied_count
+        if result.success:
             print(f"  [OK] {card.title} — {card.company}")
         else:
             print(f"  [FAIL] {card.title} — {result.reason}")
+        if progress is not None:
+            print(progress.summary("running"))
 
         if approved_item:
             # #436: 'uncertain' must dedup like 'applied', not read as a safe
