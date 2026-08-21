@@ -360,6 +360,7 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     """
     from ..browser import launch_context
     from ..config import load_config_or_exit
+
     config = load_config_or_exit(args.config)
     spec = _healthcheck_spec(config)
 
