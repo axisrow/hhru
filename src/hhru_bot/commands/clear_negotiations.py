@@ -295,7 +295,6 @@ def run(args: argparse.Namespace) -> bool:
         print(f"[INFO] Только план: фильтр {scope}; боевой отзыв по нему запрещён.")
         return False
 
-    from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
     from ..throttle import Throttle
@@ -303,6 +302,18 @@ def run(args: argparse.Namespace) -> bool:
     config = load_config_or_exit(args.config)
     history = History(args.history)
     throttle = Throttle(config.throttle, history)
+    return run_supervised_command(
+        command=getattr(args, "command", "clear-negotiations"),
+        history=history,
+        requested_limit=None,
+        body=lambda progress: _run_account_wide(args, config, history, throttle, progress),
+        reconcile=_reconcile,
+    )
+
+
+def _run_account_wide(args, config, history, throttle, progress: ApplyProgress) -> bool:
+    from ..browser import launch_context
+
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
@@ -363,20 +374,11 @@ def run(args: argparse.Namespace) -> bool:
         # review round 2, PR #196) — fold it into the same failure signal as a
         # failed withdrawal so callers/CI see an incomplete run. Withdraw first
         # (short-circuiting on `skipped` would skip resolved topics entirely).
-        def _body(progress: ApplyProgress) -> bool:
-            progress.skipped_count += skipped
-            withdraw_failed = _run_topics(
-                args, topics, page=page, history=history, throttle=throttle, progress=progress
-            )
-            return withdraw_failed or bool(skipped)
-
-        return run_supervised_command(
-            command=getattr(args, "command", "clear-negotiations"),
-            history=history,
-            requested_limit=len(topics),
-            body=_body,
-            reconcile=_reconcile,
+        progress.skipped_count += skipped
+        withdraw_failed = _run_topics(
+            args, topics, page=page, history=history, throttle=throttle, progress=progress
         )
+        return withdraw_failed or bool(skipped)
 
 
 def _run_topics(
