@@ -88,7 +88,9 @@ def test_bump_persists_success_and_correlates_action_to_run(tmp_path, monkeypatc
     assert "[RUN]" in capsys.readouterr().out
 
 
-def test_bump_exception_still_finishes_run_and_prints_summary(tmp_path, monkeypatch, capsys) -> None:
+def test_bump_exception_still_finishes_run_and_prints_summary(
+    tmp_path, monkeypatch, capsys
+) -> None:
     config = _config(tmp_path)
     _patch_runtime(monkeypatch, config)
     monkeypatch.setattr(
