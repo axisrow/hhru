@@ -181,7 +181,7 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
     monkeypatch.setattr(
-        "hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card1, card1, card2]
+        "hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card1, card1, card2]
     )
 
     def fake_scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
@@ -204,6 +204,7 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
         config="config.yaml",
         resume="python",
         max_pages=10,
+        start_page=0,
         headless=True,
         vacancy_id=None,
         vacancy_url=None,
@@ -239,7 +240,7 @@ def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -280,7 +281,7 @@ def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -323,7 +324,7 @@ def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: [card])
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: [card])
     monkeypatch.setattr(
         "hhru_bot.apply.questionnaire.scan_questionnaire",
         lambda page_arg, vacancy, **kwargs: questionnaire.QuestionnaireScanResult(
@@ -471,7 +472,7 @@ def _bulk_env(monkeypatch, cards, scan, *, events=None):
 
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
     monkeypatch.setattr("hhru_bot.browser.launch_context", context_manager)
-    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages: cards)
+    monkeypatch.setattr("hhru_bot.search.search_vacancies", lambda page, search, max_pages, **kwargs: cards)
     monkeypatch.setattr("hhru_bot.apply.questionnaire.scan_questionnaire", scan)
     monkeypatch.setattr("hhru_bot.commands.probe.time.sleep", lambda seconds: None)
     if events is not None:

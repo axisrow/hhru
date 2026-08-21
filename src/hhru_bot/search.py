@@ -25,9 +25,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("hhru_bot.search")
 
-# JS-страница поиска может отдать DOMContentLoaded до списка карточек. Ждём
-# ограниченно: это снимает гонку, не превращая обход в бесконечное ожидание.
-RENDER_TIMEOUT_MS = 10_000
+# JS-страница поиска может отдать DOMContentLoaded до списка карточек. На
+# живой выдаче #455 карточки второй страницы появились примерно через 20 с,
+# поэтому прежние 10 с давали ложный ``VacancySearchIndeterminate``. Ждём
+# ограниченно: 30 с заметно меньше навигационного потолка в 90 с и не
+# превращает обход в бесконечное ожидание.
+RENDER_TIMEOUT_MS = 30_000
 
 
 class VacancySearchIndeterminate(RuntimeError):
@@ -320,16 +323,21 @@ def search_vacancies(
 
         cards = page.locator(sel.VACANCY_CARD)
         # ``count()`` читает DOM немедленно, а выдача hh.ru появляется после
-        # JS-рендера. Ждём карточку ИЛИ подтверждённый empty-state: только эти
-        # два исхода различают непустую и честно пустую выдачу. Timeout
-        # fail-closed (устаревший selector/интерстишл не должны стать «пусто»).
-        ready = page.locator(f"{sel.VACANCY_CARD}, {sel.VACANCY_SEARCH_EMPTY}")
+        # JS-рендера. Контейнер карточки может смонтироваться раньше её
+        # содержимого, поэтому признак готовности — уже отрендеренная ссылка с
+        # названием вакансии ИЛИ подтверждённый empty-state. ``wait_for`` не
+        # делает фиксированную паузу: он возвращает управление сразу после
+        # появления этого DOM-узла. Timeout остаётся только fail-closed
+        # предохранителем для интерстишла/зависшей страницы.
+        ready = page.locator(
+            f"{sel.VACANCY_CARD_TITLE_LINK}, {sel.VACANCY_SEARCH_EMPTY}"
+        )
         try:
             ready.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
         except PlaywrightError:
             raise VacancySearchIndeterminate(
                 f"выдача поиска на странице {page_num} не подтверждена: "
-                f"карточка или empty-state не появились за {RENDER_TIMEOUT_MS} мс"
+                f"ссылка вакансии или empty-state не появились за {RENDER_TIMEOUT_MS} мс"
             ) from None
 
         count = cards.count()

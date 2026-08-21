@@ -72,6 +72,12 @@ def register(subparsers) -> None:
         help="URL целевой вакансии (альтернатива --vacancy-id)",
     )
     p.add_argument(
+        "--start-page",
+        type=int,
+        default=0,
+        help="Начальная страница поиска (нумерация с 0)",
+    )
+    p.add_argument(
         "--healthcheck",
         action="store_true",
         help="Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)",
@@ -360,7 +366,6 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     """
     from ..browser import launch_context
     from ..config import load_config_or_exit
-
     config = load_config_or_exit(args.config)
     spec = _healthcheck_spec(config)
 
@@ -618,6 +623,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     )
     from ..browser import GOTO_TIMEOUT_MS, launch_context
     from ..config import load_config_or_exit
+    from ..history import History
     from ..search import VacancySearchIndeterminate, search_vacancies
 
     if args.vacancy_id or args.vacancy_url:
@@ -628,6 +634,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         return True
 
     config = load_config_or_exit(args.config)
+    history = History(args.history) if getattr(args, "history", None) else None
     resumes = resolve_resumes(config, [args.resume] if args.resume else None)
     if not resumes:
         print("Ошибка: не выбрано резюме для bulk probe.", file=sys.stderr)
@@ -639,14 +646,22 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
 
     all_results: list[QuestionnaireScanResult] = []
     interrupted = False
-    print("[INFO] questionnaires-only: read-only поиск анкет (без истории и артефактов)")
+    print(
+        "[INFO] questionnaires-only: read-only поиск анкет "
+        "(вопросы сохраняются в SQLite; без откликов, AI и артефактов)"
+    )
     try:
         with launch_context(config.storage_state_file, headless=args.headless) as context:
             page = context.new_page()
             for resume in resumes:
                 try:
                     vacancies = _dedupe_vacancies(
-                        search_vacancies(page, resume.search, max_pages=args.max_pages)
+                        search_vacancies(
+                            page,
+                            resume.search,
+                            max_pages=args.max_pages,
+                            start_page=getattr(args, "start_page", 0),
+                        )
                     )
                 except VacancySearchIndeterminate as exc:
                     print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
@@ -664,6 +679,24 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results.append(result)
                     all_results.append(result)
+                    if history is not None and result.status == "questionnaire":
+                        history.record_questionnaire(
+                            resume.id,
+                            vacancy.vacancy_id,
+                            vacancy.url,
+                            vacancy.title,
+                            vacancy.company,
+                            [
+                                {
+                                    "body_index": question.body_index,
+                                    "text": question.text,
+                                    "kind": question.kind,
+                                    "is_radio": question.is_radio,
+                                    "options": list(question.options),
+                                }
+                                for question in result.questions
+                            ],
+                        )
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
                     if result.status == UNKNOWN and result.retryable:
