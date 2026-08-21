@@ -110,6 +110,34 @@ def test_review_requeue_rejects_external_success_or_uncertain(tmp_path: Path, st
         history.requeue_review(item_id)
 
 
+def test_finalize_action_without_reason_code_keeps_started_marker(tmp_path: Path) -> None:
+    # cycle-review PR #460 (round 3, Claude /review): finalize_action wrote
+    # reason_code unconditionally (default None), so a caller omitting the
+    # kwarg (several do -- the AntiBotChallengeDetected and skip paths in
+    # commands/_common.py, and clear_negotiations.py) silently overwrote
+    # begin_action's "started" audit marker with NULL. COALESCE keeps the
+    # existing value when the caller passes None.
+    history = History(tmp_path / "history.db")
+    action_id = history.begin_action("resume", "123", "apply")
+
+    with history._connect() as conn:
+        before = conn.execute("SELECT reason_code FROM actions WHERE id=?", (action_id,)).fetchone()
+    assert before["reason_code"] == "started"
+
+    history.finalize_action(action_id, "failed", "кнопка не найдена")  # no reason_code kwarg
+
+    with history._connect() as conn:
+        after = conn.execute("SELECT reason_code FROM actions WHERE id=?", (action_id,)).fetchone()
+    assert after["reason_code"] == "started"  # not silently nulled
+
+    history.finalize_action(action_id, "success", "done", reason_code="reconciled_success")
+    with history._connect() as conn:
+        overwritten = conn.execute(
+            "SELECT reason_code FROM actions WHERE id=?", (action_id,)
+        ).fetchone()
+    assert overwritten["reason_code"] == "reconciled_success"  # explicit value still wins
+
+
 def test_outcome_codes_are_machine_readable() -> None:
     ctx = ApplyContext(object(), _card(), "resume", "hello", False)
     assert ctx.ok("done").outcome_code == "success"
@@ -180,6 +208,53 @@ def test_apply_run_persists_typed_signal_exit(
     assert row["exit_code"] == expected.value
     assert row["attempted"] == 1
     assert row["failed"] == 1  # interruption happened before durable submit reservation
+
+
+def test_apply_run_ledger_failure_does_not_mask_the_original_exception(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # cycle-review PR #460 (round 3, Claude /review): the `finally` block's
+    # `history.finish_apply_run(...)` call can itself raise ValueError (e.g.
+    # if the run row is no longer 'running') while a real exception from
+    # `_run` is already propagating through `except BaseException: ...;
+    # raise` -- an exception raised inside `finally` replaces/masks the one
+    # currently propagating (standard Python semantics), silently swallowing
+    # the original crash. The ledger bookkeeping in `finally` must not be
+    # allowed to eclipse a genuine in-flight exception.
+    from hhru_bot.commands import apply as apply_command
+
+    config = object()
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+
+    def crash(_args, _config, history, progress):
+        progress.begin_attempt()
+        # Force finish_apply_run to fail inside `finally`: mark the run
+        # already finished before _run's own exception even starts
+        # propagating, simulating a lost race / already-finalized run.
+        history.finish_apply_run(
+            progress.run_id,
+            status="completed",
+            exit_code=0,
+            attempted=0,
+            success=0,
+            failed=0,
+            uncertain=0,
+            skipped=0,
+        )
+        raise RuntimeError("boom: real pipeline crash")
+
+    monkeypatch.setattr(apply_command, "_run", crash)
+    args = argparse.Namespace(
+        config="unused",
+        history=str(tmp_path / "history.db"),
+        command="apply",
+        limit=1,
+        approved=None,
+        dry_run=False,
+    )
+
+    with pytest.raises(RuntimeError, match="boom: real pipeline crash"):
+        apply_command.run(args)
 
 
 def test_combined_run_does_not_bump_after_typed_interrupt(monkeypatch) -> None:

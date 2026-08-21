@@ -936,12 +936,24 @@ class History:
         letter_variant: str | None = None,
         reason_code: str | None = None,
     ) -> None:
-        """Finalize a pre-action audit marker without creating a second row."""
+        """Finalize a pre-action audit marker without creating a second row.
+
+        cycle-review PR #460 (round 3, Claude /review): ``reason_code`` was
+        written unconditionally, so a caller that omits the new kwarg (there
+        are several, e.g. the skip and AntiBotChallengeDetected paths in
+        ``commands/_common.py``) silently overwrote ``begin_action``'s
+        ``"started"`` marker with NULL, erasing the audit trail this column
+        exists for. ``COALESCE`` keeps the existing value when a caller
+        passes ``None`` — same pattern already used for ``resume_id`` in
+        ``upsert_response`` (#1119) — an explicit caller that wants to clear
+        it can still pass an empty string.
+        """
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 UPDATE actions
-                   SET status = ?, reason = ?, letter_variant = ?, reason_code = ?
+                   SET status = ?, reason = ?, letter_variant = ?,
+                       reason_code = COALESCE(?, reason_code)
                  WHERE id = ?
                 """,
                 (status, reason, letter_variant, reason_code, action_id),

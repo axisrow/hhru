@@ -898,7 +898,7 @@ def _run_apply_for_resume(
             # the row. Keep its dedup/limit-safe uncertain status, but replace
             # the generic crash reason before terminating the whole command.
             if action_id is not None:
-                history.finalize_action(action_id, "uncertain", str(exc))
+                history.finalize_action(action_id, "uncertain", str(exc), reason_code="uncertain")
             if approved_item:
                 # #436: the underlying actions row is 'uncertain' (submit may
                 # have gone through) — finish_review has no 'uncertain' state,
@@ -938,7 +938,12 @@ def _run_apply_for_resume(
             if approved_item:
                 history.finish_review(args.approved, "skipped")
             if action_id is not None:
-                history.finalize_action(action_id, "failed", result.reason)
+                history.finalize_action(
+                    action_id,
+                    "failed",
+                    result.reason,
+                    reason_code=getattr(result, "outcome_code", "skipped"),
+                )
             print(f"  [skip] {card.title} — {result.reason}")
             # #342: сегодня терминальные блокеры приходят через ctx.stop()
             # (skipped=False) и до сюда не доходят. Проверка стоит и здесь,

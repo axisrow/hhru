@@ -365,7 +365,7 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
         except Exception as exc:
             success, reason = False, str(exc)
         status = action_status(dry_run=False, success=success, uncertain=acted and not success)
-        history.finalize_action(action_id, status, reason or None)
+        history.finalize_action(action_id, status, reason or None, reason_code=status)
         if success:
             print(f"[OK] Отозван отклик topic={topic}")
         else:

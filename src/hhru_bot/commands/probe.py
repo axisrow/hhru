@@ -862,13 +862,15 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         if interrupted and unknown:
             print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
-    # cycle-review PR #460 (round 2, Claude /review): все применимые [FAIL]
-    # строки выше печатаются безусловно; приоритет exit-кода теперь единая
-    # лестница здесь, а не ранние return внутри печати — иначе совпадение
-    # history_write_failed + unauthenticated + interrupted теряло строку
-    # [FAIL] о потере сессии (return случался до её печати).
-    if history_write_failed and interrupted:
-        return CommandExitCode.PERSISTENCE_FAILED
+    # cycle-review PR #460 (round 2, Claude /review; round 3 fix-up): все
+    # применимые [FAIL] строки выше печатаются безусловно; приоритет
+    # exit-кода — единая лестница здесь, а не ранние return внутри печати.
+    # #453/a460ab6 инвариант: прерывание пользователем (Ctrl-C) всегда
+    # старше по приоритету и возвращает SIGINT, даже если до него уже
+    # обнаружена потеря сессии ИЛИ сбой записи в историю — round 1 этой PR
+    # ошибочно ввёл PERSISTENCE_FAILED, побеждающий interrupted; round 3
+    # (Claude /review, эмпирически подтверждено git-историей: на main этой
+    # ветки такого приоритета не было) восстанавливает исходный инвариант.
     if unauthenticated:
         if interrupted:
             return CommandExitCode.SIGINT

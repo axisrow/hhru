@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import signal
 
 from ._common import (
@@ -16,6 +17,8 @@ from ._common import (
     resumes_from_args,
     run_apply_for_resume,
 )
+
+logger = logging.getLogger("hhru_bot.cli")
 
 
 def register(subparsers) -> None:
@@ -241,30 +244,49 @@ def run(args: argparse.Namespace) -> bool:
         raise
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
-        # If interruption landed inside an attempted vacancy after its durable
-        # reservation, account for the unresolved result in the run summary.
-        action_counts = history.apply_run_action_counts(run_id)
-        progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
-        progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
-        progress.uncertain_count = max(progress.uncertain_count, action_counts.get("uncertain", 0))
-        completed = (
-            progress.applied_count
-            + progress.failed_count
-            + progress.uncertain_count
-            + progress.skipped_count
-        )
-        if progress.attempted_count > completed:
-            progress.failed_count += progress.attempted_count - completed
-        history.finish_apply_run(
-            run_id,
-            status=final_status,
-            exit_code=exit_code,
-            attempted=progress.attempted_count,
-            success=progress.applied_count,
-            failed=progress.failed_count,
-            uncertain=progress.uncertain_count,
-            skipped=progress.skipped_count,
-            detail=detail,
-        )
-        print(progress.summary(final_status))
+        # cycle-review PR #460 (round 3, Claude /review): this bookkeeping can
+        # itself raise (e.g. history.finish_apply_run's ValueError when the
+        # run row is no longer 'running') while a real exception from `_run`
+        # is already propagating through the `except BaseException: raise`
+        # above -- an exception raised here would replace/mask it (standard
+        # Python finally semantics), silently swallowing the original crash.
+        # Log-and-continue instead: the ledger row staying 'running'/stale is
+        # benign (`orphaned` already exists as the recognized terminal status
+        # for exactly this kind of leftover, recovered on the next apply run).
+        try:
+            # If interruption landed inside an attempted vacancy after its
+            # durable reservation, account for the unresolved result in the
+            # run summary.
+            action_counts = history.apply_run_action_counts(run_id)
+            progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
+            progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
+            progress.uncertain_count = max(
+                progress.uncertain_count, action_counts.get("uncertain", 0)
+            )
+            completed = (
+                progress.applied_count
+                + progress.failed_count
+                + progress.uncertain_count
+                + progress.skipped_count
+            )
+            if progress.attempted_count > completed:
+                progress.failed_count += progress.attempted_count - completed
+            history.finish_apply_run(
+                run_id,
+                status=final_status,
+                exit_code=exit_code,
+                attempted=progress.attempted_count,
+                success=progress.applied_count,
+                failed=progress.failed_count,
+                uncertain=progress.uncertain_count,
+                skipped=progress.skipped_count,
+                detail=detail,
+            )
+            print(progress.summary(final_status))
+        except Exception:
+            logger.exception(
+                "apply: не удалось финализировать durable ledger run_id=%s "
+                "(поглощено, чтобы не заслонить исходное исключение)",
+                run_id,
+            )
     return result
