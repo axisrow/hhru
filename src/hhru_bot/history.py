@@ -43,7 +43,13 @@ CREATE TABLE IF NOT EXISTS actions (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS apply_runs (
+-- #461: изначально apply_runs (PR #460, только apply); переименована в
+-- command_runs, так как ledger применим к любой durable-команде, не только
+-- apply. Миграция старых БД — идемпотентный ALTER TABLE RENAME в
+-- _rename_apply_runs_to_command_runs (_init_schema), CREATE TABLE IF NOT
+-- EXISTS здесь покрывает свежую БД без старой apply_runs. Второй таблицы и
+-- алиасов старых имён функций намеренно нет (один пользователь, одна БД).
+CREATE TABLE IF NOT EXISTS command_runs (
     run_id TEXT PRIMARY KEY,
     command TEXT NOT NULL,
     requested_limit INTEGER,
@@ -58,7 +64,7 @@ CREATE TABLE IF NOT EXISTS apply_runs (
     exit_code INTEGER,
     detail TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_apply_runs_status ON apply_runs(status, started_at);
+CREATE INDEX IF NOT EXISTS idx_command_runs_status ON command_runs(status, started_at);
 
 -- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
 -- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
@@ -480,6 +486,11 @@ class History:
         не теряем историю откликов.
         """
         with self._connect() as conn:
+            # #461: миграция старого имени таблицы ДО executescript(SCHEMA) —
+            # CREATE TABLE IF NOT EXISTS command_runs внутри SCHEMA не должен
+            # успеть создать пустую command_runs раньше RENAME, иначе RENAME
+            # упадёт на "table command_runs already exists".
+            _rename_apply_runs_to_command_runs(conn)
             conn.executescript(SCHEMA)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
             _ensure_column(conn, "actions", "search_query", "TEXT")
@@ -699,26 +710,26 @@ class History:
                 (datetime.now().isoformat(), item_id),
             )
 
-    def start_apply_run(self, *, command: str, requested_limit: int | None) -> str:
-        """Recover abandoned apply runs and create a durable running row."""
+    def start_command_run(self, *, command: str, requested_limit: int | None) -> str:
+        """Recover abandoned command runs and create a durable running row."""
         now = datetime.now().isoformat()
         run_id = str(uuid.uuid4())
         with self._connect() as conn:
             conn.execute(
-                """UPDATE apply_runs SET status='orphaned', finished_at=?, exit_code=NULL,
-                          detail=COALESCE(detail, 'recovered by next apply run')
+                """UPDATE command_runs SET status='orphaned', finished_at=?, exit_code=NULL,
+                          detail=COALESCE(detail, 'recovered by next command run')
                    WHERE status='running'""",
                 (now,),
             )
             conn.execute(
-                """INSERT INTO apply_runs
+                """INSERT INTO command_runs
                    (run_id, command, requested_limit, status, started_at)
                    VALUES (?, ?, ?, 'running', ?)""",
                 (run_id, command, requested_limit, now),
             )
         return run_id
 
-    def finish_apply_run(
+    def finish_command_run(
         self,
         run_id: str,
         *,
@@ -733,10 +744,10 @@ class History:
     ) -> None:
         allowed = {"completed", "partial", "failed", "interrupted", "orphaned"}
         if status not in allowed:
-            raise ValueError(f"недопустимый статус apply run: {status}")
+            raise ValueError(f"недопустимый статус command run: {status}")
         with self._connect() as conn:
             cur = conn.execute(
-                """UPDATE apply_runs SET status=?, attempted=?, success=?, failed=?,
+                """UPDATE command_runs SET status=?, attempted=?, success=?, failed=?,
                           uncertain=?, skipped=?, finished_at=?, exit_code=?, detail=?
                    WHERE run_id=? AND status='running'""",
                 (
@@ -753,14 +764,14 @@ class History:
                 ),
             )
             if cur.rowcount != 1:
-                raise ValueError(f"running apply run не найден: {run_id}")
+                raise ValueError(f"running command run не найден: {run_id}")
 
-    def apply_runs(self) -> list[dict]:
+    def command_runs(self) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM apply_runs ORDER BY started_at")
+            rows = conn.execute("SELECT * FROM command_runs ORDER BY started_at")
             return [dict(row) for row in rows]
 
-    def apply_run_action_counts(self, run_id: str) -> dict[str, int]:
+    def command_run_action_counts(self, run_id: str) -> dict[str, int]:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT status, COUNT(*) AS count FROM actions
@@ -2796,6 +2807,36 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: 
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
+def _rename_apply_runs_to_command_runs(conn: sqlite3.Connection) -> None:
+    """Идемпотентно переименовывает apply_runs → command_runs (#461).
+
+    ALTER TABLE ... RENAME TO переносит и старый индекс idx_apply_runs_status
+    под старым именем — SQLite не переименовывает индексы автоматически при
+    RENAME TABLE, поэтому индекс пересоздаём отдельно под новым именем.
+    Без второй таблицы и без wrapper-алиасов старых имён: один пользователь,
+    одна БД, миграция выполняется один раз на старой установке и затем
+    становится no-op (apply_runs больше не существует).
+    """
+    exists_old = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='apply_runs'"
+    ).fetchone()
+    if not exists_old:
+        return
+    exists_new = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='command_runs'"
+    ).fetchone()
+    if exists_new:
+        # Обе таблицы существуют одновременно — не должно происходить при
+        # нормальной эксплуатации (RENAME атомарно устраняет apply_runs).
+        # Оставляем command_runs как источник истины и не трогаем данные.
+        return
+    conn.execute("ALTER TABLE apply_runs RENAME TO command_runs")
+    conn.execute("DROP INDEX IF EXISTS idx_apply_runs_status")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_command_runs_status ON command_runs(status, started_at)"
+    )
 
 
 _APPLY_INDEX_SQL = (

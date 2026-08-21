@@ -203,7 +203,7 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    run_id = history.start_apply_run(
+    run_id = history.start_command_run(
         command=getattr(args, "command", "apply"),
         requested_limit=getattr(args, "limit", None),
     )
@@ -245,7 +245,7 @@ def run(args: argparse.Namespace) -> bool:
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         # cycle-review PR #460 (round 3, Claude /review): this bookkeeping can
-        # itself raise (e.g. history.finish_apply_run's ValueError when the
+        # itself raise (e.g. history.finish_command_run's ValueError when the
         # run row is no longer 'running') while a real exception from `_run`
         # is already propagating through the `except BaseException: raise`
         # above -- an exception raised here would replace/mask it (standard
@@ -257,7 +257,7 @@ def run(args: argparse.Namespace) -> bool:
             # If interruption landed inside an attempted vacancy after its
             # durable reservation, account for the unresolved result in the
             # run summary.
-            action_counts = history.apply_run_action_counts(run_id)
+            action_counts = history.command_run_action_counts(run_id)
             progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
             progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
             progress.uncertain_count = max(
@@ -271,7 +271,7 @@ def run(args: argparse.Namespace) -> bool:
             )
             if progress.attempted_count > completed:
                 progress.failed_count += progress.attempted_count - completed
-            history.finish_apply_run(
+            history.finish_command_run(
                 run_id,
                 status=final_status,
                 exit_code=exit_code,
