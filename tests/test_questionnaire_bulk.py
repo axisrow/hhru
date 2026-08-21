@@ -904,7 +904,10 @@ def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, 
     # search_vacancies чуть выше — упавшая запись (locked DB, диск полон)
     # прервала бы весь bulk-скан для всех оставшихся вакансий/резюме, что
     # противоречит fail-tolerant дизайну команды (--start-page, retry, обработка
-    # прерывания).
+    # прерывания). cycle-review round 2 (Codex): проглатывание sqlite3.Error
+    # не должно превращаться в молчаливый success — иначе подтверждённая
+    # анкета тихо теряется без [FAIL]/ненулевого результата, и повторный
+    # запуск может уже не найти тот же transient questionnaire.
     import sqlite3
 
     card1 = _card("992")
@@ -925,8 +928,11 @@ def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, 
     result = probe.run_questionnaires(_bulk_args(history="history.db"))
     output = capsys.readouterr().out
 
-    # Скан должен дойти до второй вакансии, а не оборваться на первой записи.
+    # Скан должен дойти до второй вакансии, а не оборваться на первой записи...
     assert "993" in output
-    assert result is not True, (
-        "падение записи в history не должно превращаться в необработанный traceback"
-    )
+    # ...но потеря подтверждённой анкеты должна быть видна как провал, а не
+    # молчаливый success (иначе исследовательская база расходится с отчётом
+    # без единого машинно-обнаружимого сигнала).
+    assert result is True, "падение записи в history должно давать [FAIL], а не молчаливый success"
+    assert "[FAIL]" in output
+    assert "history" in output.lower() or "истори" in output.lower()
