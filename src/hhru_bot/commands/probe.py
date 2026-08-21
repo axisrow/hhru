@@ -852,8 +852,6 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         # как молчаливый success. Печатаем безусловно, до unauthenticated/
         # interrupted веток, чтобы строка была видна при любом сочетании.
         print("[FAIL] не удалось сохранить одну или несколько анкет в историю")
-        if interrupted:
-            return CommandExitCode.PERSISTENCE_FAILED
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена. Проверка
@@ -864,6 +862,14 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         if interrupted and unknown:
             print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
+    # cycle-review PR #460 (round 2, Claude /review): все применимые [FAIL]
+    # строки выше печатаются безусловно; приоритет exit-кода теперь единая
+    # лестница здесь, а не ранние return внутри печати — иначе совпадение
+    # history_write_failed + unauthenticated + interrupted теряло строку
+    # [FAIL] о потере сессии (return случался до её печати).
+    if history_write_failed and interrupted:
+        return CommandExitCode.PERSISTENCE_FAILED
+    if unauthenticated:
         if interrupted:
             return CommandExitCode.SIGINT
         return True

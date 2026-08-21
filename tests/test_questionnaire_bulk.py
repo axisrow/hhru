@@ -963,3 +963,44 @@ def test_interrupt_with_history_write_failure_returns_persistence_exit(monkeypat
 
     assert result is CommandExitCode.PERSISTENCE_FAILED
     assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_interrupt_with_history_write_failure_still_prints_lost_auth(monkeypatch, capsys):
+    # cycle-review PR #460 (round 2, Claude /review): the early `return
+    # CommandExitCode.PERSISTENCE_FAILED` inside the `history_write_failed`
+    # block short-circuited before the `unauthenticated` check below could
+    # run, so its `[FAIL] сессия истекла ...` line was silently skipped
+    # whenever a persistence failure and a lost session coincided --
+    # contradicting the adjacent comment's documented priority (print all
+    # applicable [FAIL] lines regardless of which exit code wins). The exit
+    # code itself must stay PERSISTENCE_FAILED (test above, unchanged).
+    import sqlite3
+
+    cards = [_card("996"), _card("997"), _card("998")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "996":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+            )
+        if vacancy.vacancy_id == "997":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+            )
+        raise KeyboardInterrupt
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+
+    class FailingHistory(_FakeHistory):
+        def record_questionnaire(self, *args, **kwargs):
+            raise sqlite3.Error("disk full")
+
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: FailingHistory())
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = probe.run_questionnaires(_bulk_args(history="history.db"))
+    output = capsys.readouterr().out
+
+    assert result is CommandExitCode.PERSISTENCE_FAILED
+    assert "[FAIL] не удалось сохранить" in output
+    assert "[FAIL] сессия истекла во время прогона" in output
