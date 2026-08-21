@@ -230,7 +230,9 @@ def run(args: argparse.Namespace) -> bool | CommandExitCode:
         return _run(args, config, history, progress)
 
     return run_supervised_command(
-        command=getattr(args, "command", "apply"),
+        # `commands/run.py` reuses this Namespace, whose CLI command is
+        # "run".  This durable row nevertheless represents the apply stage.
+        command="apply",
         history=history,
         requested_limit=getattr(args, "limit", None),
         body=_body,
