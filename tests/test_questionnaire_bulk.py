@@ -646,7 +646,9 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -655,9 +657,9 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
 
 
 def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
-    # Fail-closed (CLAUDE.md, #433): Ctrl-C после потери сессии — тоже неполный
-    # скан. Прерывание не должно превращать [FAIL] в успешный выход, иначе
-    # потеря авторизации маскируется намеренной остановкой.
+    # Ctrl-C имеет приоритет над fail-closed причиной: владелец #452 закрепил
+    # единый exit 130 для любого пользовательского прерывания, даже если до
+    # него уже обнаружена потеря сессии. [FAIL] и частичный отчёт сохраняются.
     cards = [_card("931"), _card("932")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -668,7 +670,9 @@ def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -720,17 +724,18 @@ def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
     assert "[FAIL]" in output
 
 
-def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys):
-    # Обратная сторона: намеренная остановка чистого частичного прогона — не
-    # провал (#448 требует корректного частичного итога), иначе Ctrl-C всегда
-    # был бы ошибкой.
+def test_clean_interrupt_without_uncertainty_returns_sigint_code(monkeypatch, capsys):
+    # Даже чистая намеренная остановка возвращает стандартный POSIX-код SIGINT;
+    # частичный отчёт при этом по-прежнему печатается без traceback.
     cards = [_card("961"), _card("962")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -741,8 +746,50 @@ def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys)
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     assert "[FAIL]" not in capsys.readouterr().out
+
+
+def test_interrupt_with_lost_auth_and_unknown_prints_both_fail_lines(monkeypatch, capsys):
+    # Обе причины неполноты независимы: потерянная сессия не объясняет
+    # unresolved unknown у другой вакансии. Обе строки [FAIL] должны печататься.
+    cards = [_card("991"), _card("992"), _card("993")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "992":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        if vacancy.vacancy_id == "993":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
+    output = capsys.readouterr().out
+
+    assert "[FAIL] сессия истекла во время прогона" in output
+    assert "[FAIL] скан прерван с неподтверждёнными вакансиями" in output
+
+
+def test_limit_reached_exits_cleanly_without_interrupt(monkeypatch, capsys):
+    # --limit-questionnaires останавливает скан штатно, не через SIGINT.
+    cards = [_card("981"), _card("982")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args(limit_questionnaires=1)) is False
+    assert "прерван пользователем" not in capsys.readouterr().out
 
 
 def test_throttle_pause_precedes_every_scan_including_retry_after_limit(monkeypatch, capsys):

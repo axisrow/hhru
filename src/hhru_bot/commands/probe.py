@@ -35,6 +35,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..config import is_resume_url_placeholder
+from ..exit_codes import CommandExitCode
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -442,7 +443,7 @@ def _vacancy_from_url(url: str):
     )
 
 
-def run(args: argparse.Namespace) -> bool | None:
+def run(args: argparse.Namespace) -> bool | CommandExitCode | None:
     if getattr(args, "healthcheck", False):
         return run_healthcheck(args)
     if getattr(args, "negotiations", False):
@@ -606,7 +607,7 @@ def _limit_reached(results, limit: int) -> bool:
     return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
 
 
-def run_questionnaires(args: argparse.Namespace) -> bool:
+def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     """Scan raw search cards in one context/page, without local history."""
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
@@ -744,21 +745,27 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена. Проверка
-        # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
-        # неполный скан, прерывание не отменяет fail-closed инвариант.
+        # стоит ВЫШЕ interrupted, чтобы строка [FAIL] о потере сессии
+        # печаталась и при Ctrl-C. #452: сам exit-код это не меняет —
+        # прерывание пользователем всегда старше по приоритету и возвращает
+        # SIGINT, даже если до него уже обнаружена потеря сессии.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
+        if interrupted and unknown:
+            print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
+        if interrupted:
+            return CommandExitCode.SIGINT
         return True
     if interrupted and unknown:
-        # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
-        # неразрешённый unknown в частичном прогоне делает результат
-        # неотличимым от полного скана, если выйти с успехом. Retry этих
-        # вакансий не состоялся именно из-за остановки.
+        # cycle-review PR #450 (Codex): неразрешённый unknown в частичном
+        # прогоне делает результат неотличимым от полного скана, если выйти
+        # с успехом — печатаем [FAIL]. #452: exit-код всё равно SIGINT —
+        # Ctrl-C имеет приоритет над fail-closed причиной остановки.
         print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
-        return True
+        return CommandExitCode.SIGINT
     if interrupted:
-        # Осознанное прерывание пользователем — не провал: частичный отчёт уже
-        # напечатан, а всё проверенное подтверждено (иначе сработал бы гейт выше).
-        return False
+        # Частичный отчёт уже напечатан, но Ctrl-C всегда сохраняет стандартный
+        # POSIX-код SIGINT, независимо от подтверждённости результатов.
+        return CommandExitCode.SIGINT
     if all_results and unknown == len(all_results):
         # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
         # вакансии (timeout, drift, частично распознанная анкета) — часть

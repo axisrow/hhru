@@ -18,6 +18,7 @@ from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
 from .browser import BrowserLaunchError
+from .exit_codes import CommandExitCode
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
 
@@ -182,6 +183,11 @@ def _execute(args: argparse.Namespace) -> None:
 
     try:
         failed = args.func(args)
+        # A command may return the conventional SIGINT status explicitly after
+        # rendering a partial report (rather than raising KeyboardInterrupt).
+        # Keep this separate from the bool-based fail-closed command contract.
+        if failed is CommandExitCode.SIGINT:
+            sys.exit(failed.value)
         # Fail-closed contract (#148) is opt-in: only commands that report a
         # real bool success flag (search/apply/run) can trip sys.exit(1).
         # Commands returning other truthy values (e.g. clear-skipped's int
