@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._audit import action_status
+from ._audit import action_status, record_resume_action
 from ._common import ApplyProgress, run_supervised_command
 from .copy_resume import confirm_write, format_config_snippet
 
@@ -48,6 +48,17 @@ def run(args: argparse.Namespace):
             "Ничего не создано."
         )
         raise SystemExit(1)
+    # #464 cycle-review (Codex): a blind retry after an unresolved uncertain
+    # creation could add a second resume -- unlike publish/copy, create-resume
+    # has no vacancy/resume_id of its own before hh.ru assigns one, so the
+    # guard/marker use the fixed "account" key already shared with the
+    # actions rows written below (same convention as record_action calls).
+    if not dry_run and history.has_unresolved_uncertain("account", "create_resume"):
+        print(
+            "[FAIL] предыдущее создание резюме не подтверждено (uncertain). "
+            "Проверьте список резюме на hh.ru вручную перед повтором."
+        )
+        raise SystemExit(1)
 
     def _body(progress: ApplyProgress) -> bool:
         try:
@@ -59,13 +70,27 @@ def run(args: argparse.Namespace):
                 result = create_resume_on_hh(
                     context.new_page(), area=args.area, title=args.title, dry_run=dry_run
                 )
-        except Exception as exc:
+        except BaseException as exc:
             # A dry-run never changes hh.ru and therefore must not create an
             # action-history row, including for a local/browser failure.
+            # #464 cycle-review (Codex): ``BaseException``, not ``Exception`` --
+            # ``KeyboardInterrupt``/``SignalTermination`` (both BaseException,
+            # not Exception, #462's own rationale) can land at any point inside
+            # ``create_resume_on_hh``, including right after the browser click
+            # that already created the resume on hh.ru but before the function
+            # returns. A plain ``except Exception`` would let such a signal
+            # skip this whole block and leave no actions row at all, so a
+            # later blind retry could create a duplicate resume. There is no
+            # way to tell from here whether the click already fired, so a
+            # signal interrupt is recorded ``uncertain`` (fail-closed, blocks
+            # a retry via has_unresolved_uncertain above) while an ordinary
+            # exception (browser/network failure, never reaching the click)
+            # keeps the prior ``failed`` status.
             if not dry_run:
                 progress.failed_count += 1
-                history.record_action(
-                    "account", "account", "create_resume", "failed", f"исключение: {exc}"
+                status = "failed" if isinstance(exc, Exception) else "uncertain"
+                record_resume_action(
+                    history, "account", "create_resume", status, f"исключение: {exc}"
                 )
             raise
         if not dry_run:
