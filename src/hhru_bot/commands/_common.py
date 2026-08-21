@@ -12,6 +12,8 @@ import json
 import logging
 import math
 import re
+import signal
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +24,7 @@ from ..apply.verify import verify_response_in_negotiations
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
+from ..exit_codes import CommandExitCode
 from ..history import History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
@@ -342,6 +345,135 @@ class ApplyProgress:
             f"failed={self.failed_count} uncertain={self.uncertain_count} "
             f"skipped={self.skipped_count}"
         )
+
+
+class SignalTermination(BaseException):
+    """Raised from the SIGTERM handler installed by ``run_supervised_command``.
+
+    ``BaseException`` (not ``Exception``, #462 advisor review): several
+    ``except BaseException`` guards in the apply pipeline (and the command's
+    own ``finally``-based ledger bookkeeping below) must see this the same
+    way they see ``KeyboardInterrupt`` -- a plain ``Exception`` subclass
+    would let it be silently absorbed by a broad ``except Exception`` layer
+    somewhere in the pipeline instead of propagating up to this supervisor.
+    """
+
+    def __init__(self, signum: int):
+        self.signum = signum
+
+
+def run_supervised_command(
+    *,
+    command: str,
+    history: History,
+    requested_limit: int | None,
+    body: Callable[[ApplyProgress], bool],
+    reconcile: Callable[[ApplyProgress, History, str], None] | None = None,
+) -> bool | CommandExitCode:
+    """Run ``body`` under a durable command_run ledger row + typed signal supervision.
+
+    Extracted from ``commands/apply.py`` (#462, second sub-issue of #459) so
+    other WRITE-hh.ru commands (bump/publish/... in later issues) can reuse
+    the same SIGINT/SIGTERM handling and machine-readable ``[RUN]`` summary
+    without reimplementing it. ``bump``/``publish`` are NOT wired to this
+    helper in this PR -- only ``apply`` is, per #462 scope.
+
+    ``body`` receives the freshly created :class:`ApplyProgress` (with
+    ``run_id`` already set) and returns ``failed`` the same way
+    ``commands/apply.py::_run`` did. SIGTERM is registered for the duration
+    of the call and restored (LIFO-safe, via the previous handler captured
+    before installing ours) on the way out, so a nested/re-entrant call
+    (e.g. under future orchestration) does not clobber an outer caller's
+    handler.
+
+    SIGINT deliberately gets NO custom ``signal.signal`` handler here --
+    only the default ``KeyboardInterrupt`` it already raises is caught
+    below. Installing a custom SIGINT handler would change what type of
+    exception propagates through Playwright/pipeline code and would change
+    ``detail`` from ``"SIGINT"`` to ``"signal=2"``; #462 requires apply's
+    behaviour and tests to stay identical, so SIGINT handling is
+    intentionally left exactly as it already worked before this extraction.
+
+    ``reconcile`` is an optional hook invoked inside the same protected
+    ``finally`` block, right before ``finish_command_run`` and the
+    ``[RUN]`` summary print, to let a caller reconcile ``progress`` against
+    its own action-log semantics (apply's ``command_run_action_counts``
+    query filters ``action='apply'`` -- that is apply-specific, not generic,
+    so it is injected rather than hardcoded here; a future bump/publish
+    caller would pass its own reconcile or none at all).
+    """
+    run_id = history.start_command_run(command=command, requested_limit=requested_limit)
+    progress = ApplyProgress(run_id=run_id)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _terminate(signum, _frame):  # noqa: ANN001
+        raise SignalTermination(signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
+    final_status = "failed"
+    exit_code = 1
+    detail = None
+    result: bool | CommandExitCode = True
+    try:
+        failed = body(progress)
+        final_status = (
+            "partial"
+            if failed and progress.attempted_count
+            else "failed"
+            if failed
+            else "completed"
+        )
+        exit_code = 1 if failed else 0
+        result = bool(failed)
+    except KeyboardInterrupt:
+        final_status = "interrupted"
+        exit_code = CommandExitCode.SIGINT.value
+        detail = "SIGINT"
+        result = CommandExitCode.SIGINT
+    except SignalTermination as exc:
+        final_status = "interrupted"
+        exit_code = 128 + exc.signum
+        detail = f"signal={exc.signum}"
+        result = CommandExitCode.SIGTERM
+    except BaseException as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        # cycle-review PR #460 (round 3, Claude /review), preserved verbatim
+        # through this extraction: this bookkeeping can itself raise (e.g.
+        # history.finish_command_run's ValueError when the run row is no
+        # longer 'running') while a real exception from `body` is already
+        # propagating through the `except BaseException: raise` above -- an
+        # exception raised here would replace/mask it (standard Python
+        # finally semantics), silently swallowing the original crash.
+        # Log-and-continue instead: the ledger row staying 'running'/stale is
+        # benign (`orphaned` already exists as the recognized terminal status
+        # for exactly this kind of leftover, recovered on the next command
+        # run's start_command_run()).
+        try:
+            if reconcile is not None:
+                reconcile(progress, history, run_id)
+            history.finish_command_run(
+                run_id,
+                status=final_status,
+                exit_code=exit_code,
+                attempted=progress.attempted_count,
+                success=progress.applied_count,
+                failed=progress.failed_count,
+                uncertain=progress.uncertain_count,
+                skipped=progress.skipped_count,
+                detail=detail,
+            )
+            print(progress.summary(final_status))
+        except Exception:
+            logger.exception(
+                "%s: не удалось финализировать durable ledger run_id=%s "
+                "(поглощено, чтобы не заслонить исходное исключение)",
+                command,
+                run_id,
+            )
+    return result
 
 
 @dataclass(frozen=True)
