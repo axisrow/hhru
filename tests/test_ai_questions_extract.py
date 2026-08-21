@@ -22,6 +22,20 @@ from hhru_bot.ai.questions import AIQuestionAnswerer, AnswerProposal, Question, 
 
 pytestmark = pytest.mark.unit
 
+
+def test_answerer_marks_exact_known_fact_as_profile_source():
+    class _LLM:
+        def chat(self, *_args, **_kwargs):
+            raise AssertionError("exact profile match must not call the LLM")
+
+    proposal = AIQuestionAnswerer(_LLM(), None, {"Готовы к переезду?": "Да"}).propose(
+        Question(0, "Готовы к переезду?", "text")
+    )
+
+    assert proposal.answer == "Да"
+    assert proposal.confidence == 1.0
+    assert proposal.answer_source == "profile"
+
 _VOID = {"input", "br", "hr", "img", "meta", "link", "area", "col", "embed", "source"}
 
 

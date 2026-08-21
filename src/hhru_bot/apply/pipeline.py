@@ -12,15 +12,16 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from ..ai.questions import AIQuestionAnswerer, extract_questions
+from ..ai.questions import AIQuestionAnswerer, AnswerProposal, extract_questions
 from ..browser import goto_hh, has_login_form
-from ..history import SKIP_REASONS
+from ..history import SKIP_REASONS, History
 from ..search import VacancyCard
 from . import steps as apply_steps
 from .antibot import AntiBotChallengeDetected, detect_antibot_on_page
@@ -113,6 +114,8 @@ class ApplyContext:
     # #245: durable audit marker immediately before entering the submit path.
     before_submit: Callable[[], None] | None = None
     question_answerer: AIQuestionAnswerer | None = None
+    questionnaire_history: History | None = None
+    run_id: str | None = None
     force: bool = False
     allow_relocation: bool = False
 
@@ -176,6 +179,8 @@ def apply_to_vacancy(
     verifier: ResponseVerifier | None = None,
     before_submit: Callable[[], None] | None = None,
     question_answerer: AIQuestionAnswerer | None = None,
+    questionnaire_history: History | None = None,
+    run_id: str | None = None,
     force: bool = False,
     allow_relocation: bool = False,
 ) -> ApplyResult:
@@ -190,10 +195,50 @@ def apply_to_vacancy(
         verifier=verifier,
         before_submit=before_submit,
         question_answerer=question_answerer,
+        questionnaire_history=questionnaire_history,
+        run_id=run_id,
         force=force,
         allow_relocation=allow_relocation,
     )
     return _run(ctx)
+
+
+def _record_questionnaire_answers(
+    ctx: ApplyContext, proposals: list[AnswerProposal], *, filled: bool
+) -> bool:
+    """Persist a local audit snapshot without claiming the response was sent."""
+    if ctx.questionnaire_history is None or ctx.dry_run:
+        return True
+    try:
+        ctx.questionnaire_history.record_questionnaire(
+            ctx.resume_id,
+            ctx.vacancy.vacancy_id,
+            ctx.vacancy.url,
+            ctx.vacancy.title,
+            ctx.vacancy.company,
+            [
+                {
+                    "body_index": proposal.question.body_index,
+                    "text": proposal.question.text,
+                    "kind": proposal.question.kind,
+                    "is_radio": proposal.question.is_radio,
+                    "options": list(proposal.question.options),
+                    # A low-confidence proposal deliberately records no
+                    # answer, even if malformed model output contained one.
+                    "answer": proposal.answer if not proposal.low_confidence else "",
+                    "answer_source": proposal.answer_source,
+                    "confidence": proposal.confidence,
+                    "filled": filled and not proposal.low_confidence,
+                }
+                for proposal in proposals
+            ],
+            source="apply",
+            run_id=ctx.run_id,
+        )
+        return True
+    except sqlite3.Error as exc:
+        logger.warning("[FAIL] %s — не удалось записать аудит анкеты: %s", ctx.vacancy.title, exc)
+        return False
 
 
 def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResult:
@@ -503,6 +548,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             )
         low_confidence = [proposal for proposal in proposals if proposal.low_confidence]
         if low_confidence:
+            if not _record_questionnaire_answers(ctx, proposals, filled=False):
+                return ctx.fail("не удалось записать аудит ответов анкеты")
             reason = (
                 f"пропущен вопрос с низкой уверенностью ({len(low_confidence)}): "
                 + low_confidence[0].question.text
@@ -530,6 +577,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             reason = f"ошибка Playwright при заполнении ответов на вопросы ({exc})"
             logger.warning("[FAIL] %s — %s", ctx.vacancy.title, reason)
             return ctx.fail(reason)
+        if not _record_questionnaire_answers(ctx, proposals, filled=True):
+            return ctx.fail("не удалось записать аудит заполненной анкеты")
 
     # #176: окно действия. Submit-клик — единственный необратимый шаг формы;
     # исключение в момент/сразу после него (navigation timeout после POST,

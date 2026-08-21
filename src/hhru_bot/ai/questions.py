@@ -45,6 +45,10 @@ class AnswerProposal:
     answer: str
     confidence: float
     option_indices: tuple[int, ...] = ()
+    # ``profile`` means a local account fact (exact key or key classifier);
+    # ``llm`` is an answer generated for this vacancy.  The value itself never
+    # leaves the process during the profile-key classification stage.
+    answer_source: str = "llm"
 
     @property
     def low_confidence(self) -> bool:
@@ -200,7 +204,7 @@ class AIQuestionAnswerer:
         if profile_answer is not None:
             indices = self._choice_indices(question, profile_answer)
             if question.kind != "choice" or indices:
-                return AnswerProposal(question, profile_answer, 1.0, indices)
+                return AnswerProposal(question, profile_answer, 1.0, indices, "profile")
         try:
             response = self._llm.chat(_prompt(question, self._profile), temperature=0.2)
             payload: Any = json.loads((response.content or "").strip())

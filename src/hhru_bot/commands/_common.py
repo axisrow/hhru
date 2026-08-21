@@ -1028,6 +1028,10 @@ def _run_apply_for_resume(
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = getattr(args, "force", False)
+            # #473: the questionnaire audit is append-only and linked to the
+            # command ledger/action outcome through this run id.
+            apply_kwargs["questionnaire_history"] = history
+            apply_kwargs["run_id"] = progress.run_id if progress is not None else None
         if progress is not None:
             progress.begin_attempt()
         try:

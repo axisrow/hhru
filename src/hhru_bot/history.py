@@ -329,6 +329,7 @@ CREATE TABLE IF NOT EXISTS questionnaire_scans (
     vacancy_url TEXT NOT NULL,
     title TEXT NOT NULL,
     company TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'probe',
     detected_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_questionnaire_scans_detected_at
@@ -341,7 +342,12 @@ CREATE TABLE IF NOT EXISTS questionnaire_questions (
     text TEXT NOT NULL,
     kind TEXT NOT NULL,
     is_radio INTEGER NOT NULL,
-    options_json TEXT NOT NULL
+    options_json TEXT NOT NULL,
+    answer TEXT,
+    answer_source TEXT,
+    confidence REAL,
+    filled INTEGER NOT NULL DEFAULT 0,
+    run_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_questionnaire_questions_scan_id
     ON questionnaire_questions(scan_id);
@@ -496,6 +502,15 @@ class History:
             _ensure_column(conn, "actions", "search_query", "TEXT")
             _ensure_column(conn, "actions", "run_id", "TEXT")
             _ensure_column(conn, "actions", "reason_code", "TEXT")
+            # #473: questionnaire research snapshots predate the apply audit
+            # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
+            # untouched, so keep the migration explicitly idempotent.
+            _ensure_column(conn, "questionnaire_scans", "source", "TEXT NOT NULL DEFAULT 'probe'")
+            _ensure_column(conn, "questionnaire_questions", "answer", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "answer_source", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "confidence", "REAL")
+            _ensure_column(conn, "questionnaire_questions", "filled", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(conn, "questionnaire_questions", "run_id", "TEXT")
             # #420 follow-up (Codex adversarial-review, PR #449): review_queue
             # rows created before this column existed have no stored search_query
             # — they stay NULL and are legacy-attributed via the existing
@@ -2601,20 +2616,39 @@ class History:
         title: str,
         company: str,
         questions: list[dict[str, object]],
+        *,
+        source: str = "probe",
+        run_id: str | None = None,
     ) -> None:
-        """Append a questionnaire snapshot and all visible question options."""
+        """Append a questionnaire snapshot and its visible questions.
+
+        ``filled`` records only a successful form fill, never an HH.ru submit
+        or its later confirmation.  Apply results remain the single source of
+        truth in ``actions`` and are joined to this audit by ``run_id``.
+        """
+        if source not in {"probe", "apply"}:
+            raise ValueError(f"unknown questionnaire source: {source!r}")
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO questionnaire_scans
-                   (resume_id, vacancy_id, vacancy_url, title, company, detected_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (resume_id, vacancy_id, vacancy_url, title, company, datetime.now().isoformat()),
+                   (resume_id, vacancy_id, vacancy_url, title, company, source, detected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    resume_id,
+                    vacancy_id,
+                    vacancy_url,
+                    title,
+                    company,
+                    source,
+                    datetime.now().isoformat(),
+                ),
             )
             scan_id = cursor.lastrowid
             conn.executemany(
                 """INSERT INTO questionnaire_questions
-                   (scan_id, body_index, text, kind, is_radio, options_json)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (scan_id, body_index, text, kind, is_radio, options_json,
+                    answer, answer_source, confidence, filled, run_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         scan_id,
@@ -2623,10 +2657,29 @@ class History:
                         str(question["kind"]),
                         int(bool(question["is_radio"])),
                         json.dumps(question["options"], ensure_ascii=False),
+                        question.get("answer"),
+                        question.get("answer_source"),
+                        question.get("confidence"),
+                        int(bool(question.get("filled", False))),
+                        run_id,
                     )
                     for question in questions
                 ],
             )
+
+    def questionnaire_answer_summary(self) -> dict[str, int]:
+        """Return filled profile/LLM and unfilled counts from apply audits."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT
+                       COALESCE(SUM(filled = 1 AND answer_source = 'profile'), 0) AS profile,
+                       COALESCE(SUM(filled = 1 AND answer_source = 'llm'), 0) AS llm,
+                       COALESCE(SUM(filled = 0), 0) AS unanswered
+                     FROM questionnaire_questions AS question
+                     JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+                    WHERE scan.source = 'apply'"""
+            ).fetchone()
+        return {key: int(row[key]) for key in ("profile", "llm", "unanswered")}
 
     def is_robot_questionnaire(self, topic: str) -> bool:
         with self._connect() as conn:
