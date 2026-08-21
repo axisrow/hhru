@@ -89,6 +89,12 @@ def register(subparsers) -> None:
         action="store_true",
         help=("Read-only bulk-проверка анкет по поиску; без заполнения, AI, submit и PNG/HTML"),
     )
+    p.add_argument(
+        "--limit-questionnaires",
+        type=int,
+        default=0,
+        help="Остановить bulk-проверку после N подтверждённых анкет (0 — без лимита)",
+    )
     p.set_defaults(func=run)
 
 
@@ -557,12 +563,54 @@ def _format_questionnaire_report(results) -> str:
     return report
 
 
+def _print_questionnaire_progress(result, checked: int, total: int) -> None:
+    """Print one durable progress line and the result as soon as it is known."""
+    from ..apply.questionnaire import QUESTIONNAIRE
+
+    title = result.vacancy.title.replace("\n", " ")
+    print(f"[INFO] проверено {checked}/{total}: {result.status} — {title}", flush=True)
+    if result.status != QUESTIONNAIRE:
+        return
+    print(
+        f"[OK] анкета: {result.vacancy.title}"
+        f"\n  вакансия: {result.vacancy.url}"
+        f"\n  вопросов: {len(result.questions)}",
+        flush=True,
+    )
+    for index, question in enumerate(result.questions, start=1):
+        print(f"  {index}. {question.text}", flush=True)
+        if question.options:
+            print("     options: " + " | ".join(question.options), flush=True)
+
+
+def _questionnaire_counts(results) -> dict[str, int]:
+    from ..apply.questionnaire import (
+        ALREADY_RESPONDED,
+        NO_QUESTIONNAIRE,
+        QUESTIONNAIRE,
+        UNAUTHENTICATED,
+        UNKNOWN,
+    )
+
+    return {
+        "questionnaire": sum(r.status == QUESTIONNAIRE for r in results),
+        "no_questionnaire": sum(r.status == NO_QUESTIONNAIRE for r in results),
+        "already_responded": sum(r.status == ALREADY_RESPONDED for r in results),
+        "unknown": sum(r.status == UNKNOWN for r in results),
+        "unauthenticated": sum(r.status == UNAUTHENTICATED for r in results),
+    }
+
+
+def _limit_reached(results, limit: int) -> bool:
+    """True when --limit-questionnaires is set and already satisfied."""
+    return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
+
+
 def run_questionnaires(args: argparse.Namespace) -> bool:
-    """Scan all raw search cards in one context/page, without local history."""
+    """Scan raw search cards in one context/page, without local history."""
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
         FAST_TIMEOUT_MS,
-        UNAUTHENTICATED,
         UNKNOWN,
         QuestionnaireScanResult,
         scan_questionnaire,
@@ -583,78 +631,134 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
     if not resumes:
         print("Ошибка: не выбрано резюме для bulk probe.", file=sys.stderr)
         return True
+    limit = getattr(args, "limit_questionnaires", 0)
+    if limit < 0:
+        print("Ошибка: --limit-questionnaires не может быть отрицательным.", file=sys.stderr)
+        return True
 
     all_results: list[QuestionnaireScanResult] = []
+    interrupted = False
     print("[INFO] questionnaires-only: read-only поиск анкет (без истории и артефактов)")
-    with launch_context(config.storage_state_file, headless=args.headless) as context:
-        page = context.new_page()
-        for resume in resumes:
-            try:
-                vacancies = _dedupe_vacancies(
-                    search_vacancies(page, resume.search, max_pages=args.max_pages)
-                )
-            except VacancySearchIndeterminate as exc:
-                print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
-                return True
-            print(f"[INFO] {resume.id}: найдено уникальных вакансий: {len(vacancies)}")
-
-            by_id = {}
-            retry_ids = []
-            for vacancy in vacancies:
-                result = scan_questionnaire(
-                    page,
-                    vacancy,
-                    timeout_ms=FAST_TIMEOUT_MS,
-                    form_timeout_ms=FAST_FORM_TIMEOUT_MS,
-                )
-                by_id[vacancy.vacancy_id] = result
-                if result.status == UNKNOWN and result.retryable:
-                    retry_ids.append(vacancy.vacancy_id)
-                # #433 cycle-review: клик по кнопке отклика на каждой вакансии
-                # выдачи подряд без пауз выглядит для анти-фрод системы hh.ru
-                # как автоматизация (базовый принцип CLAUDE.md — не убирать
-                # троттлинг). Пауза та же, что и у обычных действий: случайная
-                # min..max из throttle-конфига, без записи в history (это не
-                # отклик, а read-only сканирование).
-                time.sleep(
-                    random.uniform(
-                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+    try:
+        with launch_context(config.storage_state_file, headless=args.headless) as context:
+            page = context.new_page()
+            for resume in resumes:
+                try:
+                    vacancies = _dedupe_vacancies(
+                        search_vacancies(page, resume.search, max_pages=args.max_pages)
                     )
-                )
-
-            for vacancy_id in retry_ids:
-                vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
-                by_id[vacancy_id] = scan_questionnaire(
-                    page,
-                    vacancy,
-                    timeout_ms=GOTO_TIMEOUT_MS,
-                    form_timeout_ms=10_000,
-                )
-                time.sleep(
-                    random.uniform(
-                        config.throttle.min_delay_seconds, config.throttle.max_delay_seconds
+                except VacancySearchIndeterminate as exc:
+                    print(f"[FAIL] выдача поиска не подтверждена для {resume.id}: {exc}")
+                    return True
+                print(f"[INFO] {resume.id}: найдено уникальных вакансий: {len(vacancies)}")
+                retry_ids = []
+                resume_results: list[QuestionnaireScanResult] = []
+                result_positions: dict[str, int] = {}
+                for vacancy in vacancies:
+                    result = scan_questionnaire(
+                        page,
+                        vacancy,
+                        timeout_ms=FAST_TIMEOUT_MS,
+                        form_timeout_ms=FAST_FORM_TIMEOUT_MS,
                     )
-                )
-            all_results.extend(by_id[v.vacancy_id] for v in vacancies)
+                    resume_results.append(result)
+                    all_results.append(result)
+                    result_positions[vacancy.vacancy_id] = len(all_results) - 1
+                    _print_questionnaire_progress(result, len(resume_results), len(vacancies))
+                    if result.status == UNKNOWN and result.retryable:
+                        retry_ids.append(vacancy.vacancy_id)
+                    if _limit_reached(all_results, limit):
+                        break
+                    time.sleep(
+                        random.uniform(
+                            config.throttle.min_delay_seconds,
+                            config.throttle.max_delay_seconds,
+                        )
+                    )
 
-    from ..apply.questionnaire import ALREADY_RESPONDED, QUESTIONNAIRE
+                # cycle-review PR #450: лимит — условие «не начинать новые
+                # вакансии», а не повод бросить уже накопленную неопределённость.
+                # retry_ids сливается до выхода, иначе транзиентный unknown
+                # навсегда репортится как unknown (#448: unknown не выдавать за
+                # отсутствие анкеты).
+                if retry_ids and _limit_reached(all_results, limit):
+                    # cycle-review PR #450 round 2: выход по лимиту происходит до
+                    # паузы основного цикла, поэтому здесь она обязательна — иначе
+                    # клик последней вакансии и первый retry идут подряд без
+                    # задержки (CLAUDE.md: троттлинг не ослабляем). Пауза только
+                    # когда retry реально предстоит: в конце чистого прогона
+                    # ждать не от чего.
+                    time.sleep(
+                        random.uniform(
+                            config.throttle.min_delay_seconds,
+                            config.throttle.max_delay_seconds,
+                        )
+                    )
+                for vacancy_id in retry_ids:
+                    vacancy = next(v for v in vacancies if v.vacancy_id == vacancy_id)
+                    print(f"[INFO] retry вакансии {vacancy_id}: долгий повтор", flush=True)
+                    result = scan_questionnaire(
+                        page, vacancy, timeout_ms=GOTO_TIMEOUT_MS, form_timeout_ms=10_000
+                    )
+                    result_index = next(
+                        index
+                        for index, item in enumerate(resume_results)
+                        if item.vacancy.vacancy_id == vacancy_id
+                    )
+                    resume_results[result_index] = result
+                    all_results[result_positions[vacancy_id]] = result
+                    # Позиция самой перепроверяемой вакансии, а не длина списка:
+                    # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».
+                    _print_questionnaire_progress(result, result_index + 1, len(vacancies))
+                    # cycle-review PR #450 round 3: сама перепроверка тоже
+                    # подтверждает анкеты, поэтому лимит проверяется и здесь —
+                    # иначе --limit-questionnaires 1 прокликает весь накопленный
+                    # retry и вернёт N анкет вместо одной. Пауза ниже — только
+                    # перед следующим реальным действием, а не перед выходом.
+                    if _limit_reached(all_results, limit):
+                        break
+                    time.sleep(
+                        random.uniform(
+                            config.throttle.min_delay_seconds,
+                            config.throttle.max_delay_seconds,
+                        )
+                    )
+                if _limit_reached(all_results, limit):
+                    break
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[INFO] скан прерван пользователем; печатаю итог частичного прохода")
 
     print(_format_questionnaire_report(all_results))
-    unauthenticated = sum(r.status == UNAUTHENTICATED for r in all_results)
-    unknown = sum(r.status == UNKNOWN for r in all_results)
-    already_responded = sum(r.status == ALREADY_RESPONDED for r in all_results)
+    counts = _questionnaire_counts(all_results)
+    unauthenticated = counts["unauthenticated"]
+    unknown = counts["unknown"]
     print(
         f"[INFO] итог: вакансий {len(all_results)}, "
-        f"анкет {sum(r.status == QUESTIONNAIRE for r in all_results)}, "
-        f"не подтверждено {unknown}, "
-        f"уже откликались {already_responded}, "
+        f"анкет {counts['questionnaire']}, "
+        f"без анкеты {counts['no_questionnaire']}, "
+        f"уже откликались {counts['already_responded']}, "
+        f"unknown {unknown}, "
         f"требует авторизации {unauthenticated}"
     )
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
-        # как успешный полный скан — часть вакансий не проверена.
+        # как успешный полный скан — часть вакансий не проверена. Проверка
+        # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
+        # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         return True
+    if interrupted and unknown:
+        # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
+        # неразрешённый unknown в частичном прогоне делает результат
+        # неотличимым от полного скана, если выйти с успехом. Retry этих
+        # вакансий не состоялся именно из-за остановки.
+        print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
+        return True
+    if interrupted:
+        # Осознанное прерывание пользователем — не провал: частичный отчёт уже
+        # напечатан, а всё проверенное подтверждено (иначе сработал бы гейт выше).
+        return False
     if all_results and unknown == len(all_results):
         # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
         # вакансии (timeout, drift, частично распознанная анкета) — часть
