@@ -738,8 +738,8 @@ def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
 def test_clean_interrupt_without_uncertainty_still_exits_130(monkeypatch, capsys):
     # #452: даже полностью подтверждённый частичный прогон, остановленный
     # Ctrl-C, — это SIGINT (130), а не штатный success (0). 0 зарезервирован
-    # за --limit-questionnaires (см. test_limit_reached_exits_cleanly_without_interrupt) и за
-    # завершением без прерывания.
+    # за --limit-questionnaires (см. test_limit_reached_exits_cleanly_without_interrupt)
+    # и за завершением без прерывания.
     cards = [_card("961"), _card("962")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -756,10 +756,11 @@ def test_clean_interrupt_without_uncertainty_still_exits_130(monkeypatch, capsys
     assert "[FAIL]" not in capsys.readouterr().out
 
 
-def test_interrupt_with_lost_auth_and_unknown_prints_single_fail_line(monkeypatch, capsys):
-    # #452: когда прерывание застаёт И потерю сессии, И неразрешённый unknown,
-    # причина одна и та же (сессия истекла) — печатается только одна строка
-    # [FAIL], не две подряд. Exit-код всё равно 130 (SIGINT), не 1.
+def test_interrupt_with_lost_auth_and_unknown_prints_both_fail_lines(monkeypatch, capsys):
+    # #452 cycle-review: обе причины неполноты независимы (потерянная сессия
+    # НЕ объясняет отдельный unresolved unknown у другой вакансии) — обе
+    # строки [FAIL] печатаются, ни одна не подавляется. Exit-код всё равно
+    # 130 (SIGINT), не 1.
     cards = [_card("991"), _card("992"), _card("993")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -779,8 +780,8 @@ def test_interrupt_with_lost_auth_and_unknown_prints_single_fail_line(monkeypatc
     assert exc_info.value.code == 130
     output = capsys.readouterr().out
 
-    assert output.count("[FAIL]") == 1
     assert "[FAIL] сессия истекла во время прогона" in output
+    assert "[FAIL] скан прерван с неподтверждёнными вакансиями" in output
 
 
 def test_limit_reached_exits_cleanly_without_interrupt(monkeypatch, capsys):

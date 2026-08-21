@@ -607,7 +607,13 @@ def _limit_reached(results, limit: int) -> bool:
 
 
 def run_questionnaires(args: argparse.Namespace) -> bool:
-    """Scan raw search cards in one context/page, without local history."""
+    """Scan raw search cards in one context/page, without local history.
+
+    Returns the usual fail-closed bool (True = exit 1, False = exit 0) for a
+    completed or --limit-questionnaires-stopped scan. On Ctrl-C it instead
+    calls sys.exit(130) directly (#452) and never returns — the bool return
+    type only covers the non-interrupted paths.
+    """
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
         FAST_TIMEOUT_MS,
@@ -747,19 +753,23 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         if not interrupted:
             return True
-    if interrupted and unknown and not unauthenticated:
+    if interrupted and unknown:
         # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
         # неразрешённый unknown в частичном прогоне делает результат
         # неотличимым от полного скана, если выйти с успехом. Retry этих
         # вакансий не состоялся именно из-за остановки. [FAIL] в тексте — это
         # причина остановки, а не сам код возврата (см. exit-код ниже, #452).
-        # `not unauthenticated` — иначе при обоих условиях сразу печатались бы
-        # два разных [FAIL] подряд; потеря сессии уже объяснила причину выше.
+        # Печатается ДАЖЕ если выше уже был [FAIL] про unauthenticated — это
+        # две независимые причины неполноты (cycle-review PR #454: тихо
+        # ронять инфо про unknown, когда обе причины совпали, теряет
+        # диагностику — оператор не узнал бы, что часть вакансий вдобавок
+        # осталась unknown, а не только оборвана потерей сессии).
         print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
     if interrupted:
         # #452: Ctrl-C — это SIGINT, стандартный POSIX-код возврата 130,
         # независимо от того, подтверждены ли все вакансии частичного прохода
-        # (в т.ч. потеря авторизации выше). Раньше «всё подтверждено» и
+        # (в т.ч. потеря авторизации/unknown выше — те [FAIL]-строки объясняют
+        # ПРИЧИНУ неполноты, а не код возврата). Раньше «всё подтверждено» и
         # --limit-questionnaires делили один и тот же путь выхода (exit 0) —
         # теперь они разведены: лимит остаётся 0 (штатная остановка), а
         # осознанное прерывание пользователем всегда 130. Частичный отчёт уже
