@@ -116,6 +116,14 @@ def test_run_success_prints_ok_and_yaml_snippet(env, capsys, tmp_path):
     # Аудит в actions.
     h = History(tmp_path / "h.db")
     assert h.count_today(OLD_ID, "copy_resume") == 1
+    run = h.command_runs()[-1]
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "copy-resume",
+        "completed",
+        1,
+        1,
+        0,
+    )
 
 
 def test_run_without_force_non_tty_exits_1(env, capsys, tmp_path, monkeypatch):
@@ -145,9 +153,7 @@ def test_run_dry_run_needs_no_confirmation(env, capsys, tmp_path, monkeypatch):
 def test_run_browser_failure_exits_1(env, capsys, tmp_path):
     reason = "profile_stalled: профиль hh.ru перестал прогружаться; копия не создавалась"
     env.result = CopyResumeResult("backend", False, reason=reason)
-    with pytest.raises(SystemExit) as exc:
-        cmd.run(_args(tmp_path, force=True))
-    assert exc.value.code == 1
+    assert cmd.run(_args(tmp_path, force=True)) is True
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert reason in out
@@ -165,9 +171,7 @@ def test_run_browser_failure_exits_1(env, capsys, tmp_path):
 def test_run_same_resume_id_fails_closed(env, capsys, tmp_path):
     # Страховка fail-closed в команде: браузерный шаг вернул success с исходным id.
     env.result = CopyResumeResult("backend", True, OLD_ID)
-    with pytest.raises(SystemExit) as exc:
-        cmd.run(_args(tmp_path, force=True))
-    assert exc.value.code == 1
+    assert cmd.run(_args(tmp_path, force=True)) is True
     assert "[FAIL]" in capsys.readouterr().out
 
 

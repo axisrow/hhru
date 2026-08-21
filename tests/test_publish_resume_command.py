@@ -85,14 +85,21 @@ def test_run_success_records_success_in_history(env, capsys, tmp_path):
     assert "[OK] Резюме python опубликовано" in out
     h = History(tmp_path / "h.db")
     assert h.count_today(RESUME_ID, "publish_resume") == 1
+    run = h.command_runs()[-1]
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "publish-resume",
+        "completed",
+        1,
+        1,
+        0,
+    )
 
 
 def test_run_uncertain_result_records_uncertain_and_fails(env, capsys, tmp_path):
     env.result = PublishResumeResult(
         "python", False, "ошибка клика; результат не подтверждён: boom", uncertain=True
     )
-    with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True))
+    assert cmd.run(_args(tmp_path, force=True)) is True
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "uncertain" in out
@@ -178,8 +185,7 @@ def test_run_dry_run_bypasses_uncertain_guard(env, capsys, tmp_path):
 
 def test_run_plain_failure_is_not_recorded_or_counted(env, capsys, tmp_path):
     env.result = PublishResumeResult("python", False, "кнопка не найдена")
-    with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True))
+    assert cmd.run(_args(tmp_path, force=True)) is True
     h = History(tmp_path / "h.db")
     assert h.count_today(RESUME_ID, "publish_resume") == 0
     with h._connect() as conn:
@@ -188,8 +194,7 @@ def test_run_plain_failure_is_not_recorded_or_counted(env, capsys, tmp_path):
 
 def test_run_not_authenticated_is_not_recorded_and_exits(env, capsys, tmp_path):
     env.exc = NotAuthenticated("сессия истекла")
-    with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True))
+    assert cmd.run(_args(tmp_path, force=True)) is True
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "Сессия недействительна" in out

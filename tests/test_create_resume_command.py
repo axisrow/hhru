@@ -12,6 +12,7 @@ import hhru_bot.browser
 import hhru_bot.commands.create_resume as cmd
 import hhru_bot.create_resume
 from hhru_bot.create_resume import CreateResumeResult
+from hhru_bot.history import History
 
 pytestmark = pytest.mark.integration
 NEW_ID = "b" * 38
@@ -67,6 +68,14 @@ def test_force_prints_yaml_but_does_not_modify_config(env, tmp_path, capsys):
     assert f"Новый resume_id: {NEW_ID}" in output
     assert f"https://hh.ru/resume/{NEW_ID}" in output
     assert not (tmp_path / "config.yaml").exists()
+    run = History(tmp_path / "history.db").command_runs()[-1]
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "create-resume",
+        "completed",
+        1,
+        1,
+        0,
+    )
 
 
 def test_dry_run_wins_when_force_is_also_present(env, tmp_path, capsys):

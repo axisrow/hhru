@@ -82,11 +82,22 @@ def test_no_flags_is_dry_run(env, tmp_path, capsys):
 
 def test_uncertain_is_audited_and_fails(env, tmp_path, capsys):
     env.result = DeleteResumeResult(RESUME_ID, False, "ошибка после клика", uncertain=True)
-    with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True))
+    assert cmd.run(_args(tmp_path, force=True)) is True
     assert "uncertain" in capsys.readouterr().out
     with History(tmp_path / "history.db")._connect() as conn:
         row = conn.execute(
             "SELECT status FROM actions WHERE resume_id = ?", (RESUME_ID,)
         ).fetchone()
     assert row["status"] == "uncertain"
+
+
+def test_live_success_is_recorded_as_single_completed_run(env, tmp_path):
+    assert cmd.run(_args(tmp_path, force=True)) is False
+    run = History(tmp_path / "history.db").command_runs()[-1]
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "delete-resume",
+        "completed",
+        1,
+        1,
+        0,
+    )
