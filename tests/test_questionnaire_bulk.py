@@ -646,7 +646,9 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) == 130
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -655,9 +657,9 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
 
 
 def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
-    # Fail-closed (CLAUDE.md, #433): Ctrl-C после потери сессии — тоже неполный
-    # скан. Прерывание не должно превращать [FAIL] в успешный выход, иначе
-    # потеря авторизации маскируется намеренной остановкой.
+    # Ctrl-C имеет приоритет над fail-closed причиной: владелец #452 закрепил
+    # единый exit 130 для любого пользовательского прерывания, даже если до
+    # него уже обнаружена потеря сессии. [FAIL] и частичный отчёт сохраняются.
     cards = [_card("931"), _card("932")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -668,7 +670,9 @@ def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) == 130
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -720,7 +724,9 @@ def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) == 130
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -740,7 +746,9 @@ def test_clean_interrupt_without_uncertainty_returns_sigint_code(monkeypatch, ca
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) == 130
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
     assert "[FAIL]" not in capsys.readouterr().out
 
 

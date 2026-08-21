@@ -35,6 +35,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..config import is_resume_url_placeholder
+from ..exit_codes import CommandExitCode
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -359,7 +360,6 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     """
     from ..browser import launch_context
     from ..config import load_config_or_exit
-
     config = load_config_or_exit(args.config)
     spec = _healthcheck_spec(config)
 
@@ -606,7 +606,7 @@ def _limit_reached(results, limit: int) -> bool:
     return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
 
 
-def run_questionnaires(args: argparse.Namespace) -> bool | int:
+def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     """Scan raw search cards in one context/page, without local history."""
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
@@ -748,7 +748,7 @@ def run_questionnaires(args: argparse.Namespace) -> bool | int:
         # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         if interrupted:
-            return 130
+            return CommandExitCode.SIGINT
         return True
     if interrupted and unknown:
         # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
@@ -756,11 +756,11 @@ def run_questionnaires(args: argparse.Namespace) -> bool | int:
         # неотличимым от полного скана, если выйти с успехом. Retry этих
         # вакансий не состоялся именно из-за остановки.
         print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
-        return 130
+        return CommandExitCode.SIGINT
     if interrupted:
         # Частичный отчёт уже напечатан, но Ctrl-C всегда сохраняет стандартный
         # POSIX-код SIGINT, независимо от подтверждённости результатов.
-        return 130
+        return CommandExitCode.SIGINT
     if all_results and unknown == len(all_results):
         # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
         # вакансии (timeout, drift, частично распознанная анкета) — часть

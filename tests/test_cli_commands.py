@@ -420,8 +420,9 @@ def test_clear_skipped_success_does_not_exit_nonzero(tmp_path):
 
 def test_questionnaire_interrupt_propagates_sigint_exit_code():
     from hhru_bot.cli import _execute
+    from hhru_bot.exit_codes import CommandExitCode
 
-    args = argparse.Namespace(command="log", func=lambda _args: 130)
+    args = argparse.Namespace(command="log", func=lambda _args: CommandExitCode.SIGINT)
 
     with pytest.raises(SystemExit) as exc_info:
         _execute(args)
