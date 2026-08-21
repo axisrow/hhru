@@ -636,6 +636,7 @@ def test_negative_limit_is_rejected_before_launching_a_browser(monkeypatch, caps
 
 def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch, capsys):
     # #448: прерывание печатает итог уже обработанной части, без traceback.
+    # #452: и всегда завершается exit-кодом 130 (SIGINT), а не булевым success.
     cards = [_card("921"), _card("922"), _card("923")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -646,7 +647,9 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    with pytest.raises(SystemExit) as exc_info:
+        probe.run_questionnaires(_bulk_args())
+    assert exc_info.value.code == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -656,8 +659,8 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
 
 def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
     # Fail-closed (CLAUDE.md, #433): Ctrl-C после потери сессии — тоже неполный
-    # скан. Прерывание не должно превращать [FAIL] в успешный выход, иначе
-    # потеря авторизации маскируется намеренной остановкой.
+    # скан. Печатается [FAIL] в отчёте, но exit-код всё равно 130 (#452:
+    # SIGINT сообщает ПРИЧИНУ остановки, [FAIL] в тексте — её последствие).
     cards = [_card("931"), _card("932")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -668,7 +671,9 @@ def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    with pytest.raises(SystemExit) as exc_info:
+        probe.run_questionnaires(_bulk_args())
+    assert exc_info.value.code == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -707,9 +712,10 @@ def test_limit_still_drains_pending_retries_before_stopping(monkeypatch, capsys)
 
 
 def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
-    # cycle-review PR #450 (Codex): прерывание не должно давать exit 0, если в
+    # cycle-review PR #450 (Codex): прерывание печатает [FAIL] в отчёте, если в
     # обработанной части остались неразрешённые unknown — иначе неполный скан
-    # неотличим от полного. Fail-closed тот же, что и для потери авторизации.
+    # неотличим от полного. #452: exit-код при этом всё равно 130, не 1 — это
+    # SIGINT, а не обычная fail-closed ошибка вне прерывания.
     cards = [_card("951"), _card("952")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -720,17 +726,20 @@ def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    with pytest.raises(SystemExit) as exc_info:
+        probe.run_questionnaires(_bulk_args())
+    assert exc_info.value.code == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
     assert "[FAIL]" in output
 
 
-def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys):
-    # Обратная сторона: намеренная остановка чистого частичного прогона — не
-    # провал (#448 требует корректного частичного итога), иначе Ctrl-C всегда
-    # был бы ошибкой.
+def test_clean_interrupt_without_uncertainty_still_exits_130(monkeypatch, capsys):
+    # #452: даже полностью подтверждённый частичный прогон, остановленный
+    # Ctrl-C, — это SIGINT (130), а не штатный success (0). 0 зарезервирован
+    # за --limit-questionnaires (см. test_limit_reached_exits_cleanly_without_interrupt) и за
+    # завершением без прерывания.
     cards = [_card("961"), _card("962")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -741,8 +750,52 @@ def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys)
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    with pytest.raises(SystemExit) as exc_info:
+        probe.run_questionnaires(_bulk_args())
+    assert exc_info.value.code == 130
     assert "[FAIL]" not in capsys.readouterr().out
+
+
+def test_interrupt_with_lost_auth_and_unknown_prints_single_fail_line(monkeypatch, capsys):
+    # #452: когда прерывание застаёт И потерю сессии, И неразрешённый unknown,
+    # причина одна и та же (сессия истекла) — печатается только одна строка
+    # [FAIL], не две подряд. Exit-код всё равно 130 (SIGINT), не 1.
+    cards = [_card("991"), _card("992"), _card("993")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "992":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        if vacancy.vacancy_id == "993":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    with pytest.raises(SystemExit) as exc_info:
+        probe.run_questionnaires(_bulk_args())
+    assert exc_info.value.code == 130
+    output = capsys.readouterr().out
+
+    assert output.count("[FAIL]") == 1
+    assert "[FAIL] сессия истекла во время прогона" in output
+
+
+def test_limit_reached_exits_cleanly_without_interrupt(monkeypatch, capsys):
+    # #452: --limit-questionnaires останавливает скан штатно (не через SIGINT) —
+    # exit-код должен остаться 0/False, а не 130. Отличает намеренный лимит от
+    # Ctrl-C, у которых раньше был один и тот же путь выхода.
+    cards = [_card("981"), _card("982")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args(limit_questionnaires=1)) is False
 
 
 def test_throttle_pause_precedes_every_scan_including_retry_after_limit(monkeypatch, capsys):
