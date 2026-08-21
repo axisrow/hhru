@@ -443,7 +443,7 @@ def _vacancy_from_url(url: str):
     )
 
 
-def run(args: argparse.Namespace) -> bool | None:
+def run(args: argparse.Namespace) -> bool | CommandExitCode | None:
     if getattr(args, "healthcheck", False):
         return run_healthcheck(args)
     if getattr(args, "negotiations", False):
@@ -745,8 +745,10 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     if unauthenticated:
         # #433 cycle-review: потеря сессии посреди прогона не должна выглядеть
         # как успешный полный скан — часть вакансий не проверена. Проверка
-        # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
-        # неполный скан, прерывание не отменяет fail-closed инвариант.
+        # стоит ВЫШЕ interrupted, чтобы строка [FAIL] о потере сессии
+        # печаталась и при Ctrl-C. #452: сам exit-код это не меняет —
+        # прерывание пользователем всегда старше по приоритету и возвращает
+        # SIGINT, даже если до него уже обнаружена потеря сессии.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
         if interrupted and unknown:
             print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
@@ -754,10 +756,10 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
             return CommandExitCode.SIGINT
         return True
     if interrupted and unknown:
-        # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
-        # неразрешённый unknown в частичном прогоне делает результат
-        # неотличимым от полного скана, если выйти с успехом. Retry этих
-        # вакансий не состоялся именно из-за остановки.
+        # cycle-review PR #450 (Codex): неразрешённый unknown в частичном
+        # прогоне делает результат неотличимым от полного скана, если выйти
+        # с успехом — печатаем [FAIL]. #452: exit-код всё равно SIGINT —
+        # Ctrl-C имеет приоритет над fail-closed причиной остановки.
         print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
         return CommandExitCode.SIGINT
     if interrupted:
