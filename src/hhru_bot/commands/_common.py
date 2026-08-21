@@ -373,10 +373,10 @@ def run_supervised_command(
     """Run ``body`` under a durable command_run ledger row + typed signal supervision.
 
     Extracted from ``commands/apply.py`` (#462, second sub-issue of #459) so
-    other WRITE-hh.ru commands (bump/publish/... in later issues) can reuse
-    the same SIGINT/SIGTERM handling and machine-readable ``[RUN]`` summary
-    without reimplementing it. ``bump``/``publish`` are NOT wired to this
-    helper in this PR -- only ``apply`` is, per #462 scope.
+    other WRITE-hh.ru commands can reuse the same SIGINT/SIGTERM handling and
+    machine-readable ``[RUN]`` summary without reimplementing it.  ``apply``
+    and ``bump`` currently use it; a command supplies a reconcile hook only
+    when its own action semantics require one.
 
     ``body`` receives the freshly created :class:`ApplyProgress` (with
     ``run_id`` already set) and returns ``failed`` the same way

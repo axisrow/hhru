@@ -20,7 +20,13 @@ def action_status(*, dry_run: bool, success: bool, uncertain: bool = False) -> s
 
 
 def record_resume_action(
-    history: History, resume_id: str, action: str, status: str, reason: str
+    history: History,
+    resume_id: str,
+    action: str,
+    status: str,
+    reason: str,
+    *,
+    run_id: str | None = None,
 ) -> None:
     """Record a real or uncertain action for exactly one configured resume.
 
@@ -29,4 +35,4 @@ def record_resume_action(
     """
     if status == "dry_run":
         return
-    history.record_action(resume_id, resume_id, action, status, reason)
+    history.record_action(resume_id, resume_id, action, status, reason, run_id=run_id)
