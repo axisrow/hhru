@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-import signal
+from typing import TYPE_CHECKING
 
 from ._common import (
     ApplyProgress,
@@ -16,7 +16,11 @@ from ._common import (
     apply_search_page_limit,
     resumes_from_args,
     run_apply_for_resume,
+    run_supervised_command,
 )
+
+if TYPE_CHECKING:
+    from ..exit_codes import CommandExitCode
 
 logger = logging.getLogger("hhru_bot.cli")
 
@@ -31,11 +35,6 @@ def register(subparsers) -> None:
     )
     p.add_argument("--permit", help="Одноразовый permit из `review approve`")
     p.set_defaults(func=run)
-
-
-class _SignalTermination(BaseException):
-    def __init__(self, signum: int):
-        self.signum = signum
 
 
 def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
@@ -191,10 +190,31 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     return failed
 
 
-def run(args: argparse.Namespace) -> bool:
+def _reconcile_from_action_log(progress: ApplyProgress, history, run_id: str) -> None:
+    """Apply-specific reconcile hook for ``run_supervised_command`` (#462).
+
+    If interruption landed inside an attempted vacancy after its durable
+    reservation, account for the unresolved result in the run summary.
+    ``command_run_action_counts`` filters ``action='apply'`` -- apply-only
+    semantics, kept out of the generic helper and injected here instead.
+    """
+    action_counts = history.command_run_action_counts(run_id)
+    progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
+    progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
+    progress.uncertain_count = max(progress.uncertain_count, action_counts.get("uncertain", 0))
+    completed = (
+        progress.applied_count
+        + progress.failed_count
+        + progress.uncertain_count
+        + progress.skipped_count
+    )
+    if progress.attempted_count > completed:
+        progress.failed_count += progress.attempted_count - completed
+
+
+def run(args: argparse.Namespace) -> bool | CommandExitCode:
     """Run apply under a durable ledger and typed signal supervision."""
     from ..config import load_config_or_exit
-    from ..exit_codes import CommandExitCode
     from ..history import History
 
     if getattr(args, "approved", None) is not None and args.dry_run:
@@ -203,90 +223,16 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    run_id = history.start_command_run(
+
+    def _body(progress: ApplyProgress) -> bool:
+        # Module-level lookup (not a captured default/partial), so tests that
+        # monkeypatch ``apply_command._run`` still take effect here.
+        return _run(args, config, history, progress)
+
+    return run_supervised_command(
         command=getattr(args, "command", "apply"),
+        history=history,
         requested_limit=getattr(args, "limit", None),
+        body=_body,
+        reconcile=_reconcile_from_action_log,
     )
-    progress = ApplyProgress(run_id=run_id)
-    previous_sigterm = signal.getsignal(signal.SIGTERM)
-
-    def _terminate(signum, _frame):  # noqa: ANN001
-        raise _SignalTermination(signum)
-
-    signal.signal(signal.SIGTERM, _terminate)
-    final_status = "failed"
-    exit_code = 1
-    detail = None
-    result: bool | CommandExitCode = True
-    try:
-        failed = _run(args, config, history, progress)
-        final_status = (
-            "partial"
-            if failed and progress.attempted_count
-            else "failed"
-            if failed
-            else "completed"
-        )
-        exit_code = 1 if failed else 0
-        result = bool(failed)
-    except KeyboardInterrupt:
-        final_status = "interrupted"
-        exit_code = CommandExitCode.SIGINT.value
-        detail = "SIGINT"
-        result = CommandExitCode.SIGINT
-    except _SignalTermination as exc:
-        final_status = "interrupted"
-        exit_code = 128 + exc.signum
-        detail = f"signal={exc.signum}"
-        result = CommandExitCode.SIGTERM
-    except BaseException as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        raise
-    finally:
-        signal.signal(signal.SIGTERM, previous_sigterm)
-        # cycle-review PR #460 (round 3, Claude /review): this bookkeeping can
-        # itself raise (e.g. history.finish_command_run's ValueError when the
-        # run row is no longer 'running') while a real exception from `_run`
-        # is already propagating through the `except BaseException: raise`
-        # above -- an exception raised here would replace/mask it (standard
-        # Python finally semantics), silently swallowing the original crash.
-        # Log-and-continue instead: the ledger row staying 'running'/stale is
-        # benign (`orphaned` already exists as the recognized terminal status
-        # for exactly this kind of leftover, recovered on the next apply run).
-        try:
-            # If interruption landed inside an attempted vacancy after its
-            # durable reservation, account for the unresolved result in the
-            # run summary.
-            action_counts = history.command_run_action_counts(run_id)
-            progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
-            progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
-            progress.uncertain_count = max(
-                progress.uncertain_count, action_counts.get("uncertain", 0)
-            )
-            completed = (
-                progress.applied_count
-                + progress.failed_count
-                + progress.uncertain_count
-                + progress.skipped_count
-            )
-            if progress.attempted_count > completed:
-                progress.failed_count += progress.attempted_count - completed
-            history.finish_command_run(
-                run_id,
-                status=final_status,
-                exit_code=exit_code,
-                attempted=progress.attempted_count,
-                success=progress.applied_count,
-                failed=progress.failed_count,
-                uncertain=progress.uncertain_count,
-                skipped=progress.skipped_count,
-                detail=detail,
-            )
-            print(progress.summary(final_status))
-        except Exception:
-            logger.exception(
-                "apply: не удалось финализировать durable ledger run_id=%s "
-                "(поглощено, чтобы не заслонить исходное исключение)",
-                run_id,
-            )
-    return result
