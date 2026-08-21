@@ -81,7 +81,7 @@ def _parse_manual_records(flag: str, raw_entries) -> list:
     return records
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..responses import NotAuthenticated
@@ -182,6 +182,8 @@ def run(args: argparse.Namespace) -> None:
     )
     if plan.used_fallback:
         print(f"[INFO] {plan.reason}")
+    if not args.dry_run:
+        progress.begin_attempt()
     try:
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -194,8 +196,10 @@ def run(args: argparse.Namespace) -> None:
                 dry_run=args.dry_run,
             )
     except NotAuthenticated as exc:
+        if not args.dry_run:
+            progress.failed_count += 1
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
-        sys.exit(1)
+        return True
 
     if not args.dry_run:
         from ..history import History
@@ -209,6 +213,7 @@ def run(args: argparse.Namespace) -> None:
                     "edit_education",
                     "uncertain" if result.uncertain or not result.success else "success",
                     result.reason,
+                    run_id=progress.run_id,
                 )
 
     failed = [result for result in results if not result.success]
@@ -218,8 +223,27 @@ def run(args: argparse.Namespace) -> None:
             prefix = "[FAIL] (uncertain)"
         print(f"{prefix} {result.kind}: {result.reason}")
     if failed:
-        sys.exit(1)
+        if not args.dry_run:
+            progress.failed_count += 1
+        return True
+    if not args.dry_run:
+        progress.applied_count += 1
     if args.dry_run:
         print("[DRY-RUN] Ничего не сохранено на hh.ru")
     else:
         print("[OK] Образование сохранено на hh.ru")
+    return False
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ..history import History
+    from ._common import run_supervised_command
+
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command="edit_education",
+        history=history,
+        requested_limit=1,
+        body=lambda progress: _run(args, progress),
+    )

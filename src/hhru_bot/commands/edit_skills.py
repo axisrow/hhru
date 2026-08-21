@@ -41,7 +41,7 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..skills import (
@@ -111,11 +111,15 @@ def run(args: argparse.Namespace) -> None:
                 print(f"[FAIL] Не удалось построить безопасный план навыков: {exc}")
                 sys.exit(1)
 
+        if not args.dry_run:
+            progress.begin_attempt()
         result = edit_skills_on_hh(page, resume, proposed, dry_run=args.dry_run, mode=args.mode)
 
     if not result.success:
+        if not args.dry_run:
+            progress.failed_count += 1
         print(f"[FAIL] {resume.id} — {result.reason}")
-        sys.exit(1)
+        return True
     prefix = "[DRY-RUN]" if args.dry_run else "[OK]"
     print(f"{prefix} {resume.id}: существующие навыки сохранены: {len(result.existing)}")
     for skill in result.proposed:
@@ -123,3 +127,20 @@ def run(args: argparse.Namespace) -> None:
         print(f"  - {skill.name} [{skill.level}] — {state}")
     if args.dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
+    else:
+        progress.applied_count += 1
+    return False
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ..history import History
+    from ._common import run_supervised_command
+
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command="edit_skills",
+        history=history,
+        requested_limit=1,
+        body=lambda progress: _run(args, progress),
+    )

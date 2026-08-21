@@ -52,7 +52,7 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..languages import (
@@ -94,14 +94,19 @@ def run(args: argparse.Namespace) -> None:
         ):
             print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
             sys.exit(1)
+        progress.begin_attempt()
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             result = edit_languages_on_hh(
                 context.new_page(), resume, proposed, dry_run=False, mode=args.mode
             )
+        if not result.success:
+            progress.failed_count += 1
+        else:
+            progress.applied_count += 1
         _report(result, resume.id, False)
-        return
+        return not result.success
     else:
         if config.ai is None:
             print("[FAIL] Секция ai не включена; укажите --language NAME=CEFR или добавьте ai: {}")
@@ -194,3 +199,17 @@ def _report(result, resume_id: str, dry_run: bool) -> None:
         print(f"  - {language.name} [{level}]")
     if dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ..history import History
+    from ._common import run_supervised_command
+
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command="edit_languages",
+        history=history,
+        requested_limit=1,
+        body=lambda progress: _run(args, progress),
+    )

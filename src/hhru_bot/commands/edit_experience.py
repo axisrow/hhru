@@ -88,7 +88,7 @@ def _load_entries(raw_entries: list[str] | None):
     return entries
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..experience import (
@@ -175,6 +175,7 @@ def run(args: argparse.Namespace) -> None:
 
     history = History(args.history)
     try:
+        progress.begin_attempt()
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
@@ -190,8 +191,9 @@ def run(args: argparse.Namespace) -> None:
                 page, resume.resume_id, plan, dry_run=False, indexes=indexes
             )
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback contract
+        progress.failed_count += 1
         print(f"[FAIL] {resume.id} — {exc}")
-        raise SystemExit(1) from exc
+        return True
     uncertain = any("uncertain" in item for item in results)
     success = bool(results) and all("сохранено" in item for item in results)
     history.record_action(
@@ -200,9 +202,27 @@ def run(args: argparse.Namespace) -> None:
         "edit_experience",
         "uncertain" if uncertain else ("success" if success else "failed"),
         "; ".join(results),
+        run_id=progress.run_id,
     )
     for item in results:
         prefix = "[FAIL] (uncertain)" if uncertain else ("[OK]" if success else "[FAIL]")
         print(f"{prefix} {resume.id} — {item}")
     if not success:
-        raise SystemExit(1)
+        progress.failed_count += 1
+        return True
+    progress.applied_count += 1
+    return False
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ..history import History
+    from ._common import run_supervised_command
+
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command="edit_experience",
+        history=history,
+        requested_limit=1,
+        body=lambda progress: _run(args, progress),
+    )

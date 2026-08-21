@@ -70,7 +70,7 @@ def _print_plan(plan) -> None:
         print(f"  {key}: {value}")
 
 
-def run(args: argparse.Namespace) -> bool:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..ai.llm_client import LLMClient
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -199,6 +199,7 @@ def run(args: argparse.Namespace) -> bool:
                 page.locator(CANCEL).click()
                 print("[FAIL] Нужен --force или интерактивное подтверждение. Ничего не записано.")
                 return True
+            progress.begin_attempt()
             apply_position(page, plan)
             if page.locator(SAVE).count() != 1:
                 raise RuntimeError("кнопка сохранения формы не подтверждена")
@@ -211,9 +212,26 @@ def run(args: argparse.Namespace) -> bool:
                 raise RuntimeError(
                     f"сохранение не подтверждено (uncertain) после клика: {exc}"
                 ) from exc
+            progress.applied_count += 1
             print(f"[OK] Раздел желаемой работы резюме '{resume.id}' обновлён.")
             return False
     except Exception as exc:
         prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
+        if progress.attempted_count:
+            progress.failed_count += 1
         print(f"{prefix} {exc}")
         return True
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ..history import History
+    from ._common import run_supervised_command
+
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command="resume_position",
+        history=history,
+        requested_limit=1,
+        body=lambda progress: _run(args, progress),
+    )
