@@ -386,6 +386,20 @@ def run_supervised_command(
     (e.g. under future orchestration) does not clobber an outer caller's
     handler.
 
+    That LIFO-safety covers only the *signal handler*. The durable ledger
+    itself is NOT re-entrant (cycle-review PR #468, code-reviewer-462):
+    ``History.start_command_run`` marks any still-``running`` row
+    ``orphaned`` before inserting a new one, so a nested call's
+    ``start_command_run`` orphans the outer call's row -- the outer call's
+    later ``finish_command_run`` then finds no matching ``running`` row,
+    raises, and (via the masking guard below) silently skips its own
+    ``[RUN]`` summary print. This is pre-existing ``History`` behaviour, not
+    introduced by this helper, and is harmless today because no caller nests
+    ``run_supervised_command`` (``commands/run.py`` calls ``apply_cmd.run()``
+    and ``bump_cmd.run()`` sequentially, each already-finished before the
+    next starts). A future command that wraps this helper *inside* another
+    active run would need one ledger row per process, not per nested call.
+
     SIGINT deliberately gets NO custom ``signal.signal`` handler here --
     only the default ``KeyboardInterrupt`` it already raises is caught
     below. Installing a custom SIGINT handler would change what type of

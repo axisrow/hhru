@@ -116,6 +116,26 @@ def test_sigterm_handler_is_restored_after_exception(tmp_path: Path) -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_generic_exception_persists_failed_status_with_detail(tmp_path: Path) -> None:
+    # cycle-review PR #468 (code-reviewer-462): the `except BaseException as
+    # exc: detail = ...; raise` path had no direct test -- only its handler-
+    # restoration side effect and the (deliberately finish_command_run-
+    # breaking) masking-guard test covered it, and the latter never lets
+    # `detail` reach the ledger row. Assert the row directly.
+    history = History(tmp_path / "history.db")
+
+    def body(_progress: ApplyProgress) -> bool:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_supervised_command(command="apply", history=history, requested_limit=None, body=body)
+
+    row = history.command_runs()[-1]
+    assert row["status"] == "failed"
+    assert row["exit_code"] == 1
+    assert row["detail"] == "RuntimeError: boom"
+
+
 def test_nested_call_restores_outer_handler_lifo(tmp_path: Path) -> None:
     # #462 review risk called out in the issue body: re-entrancy. A nested
     # call's own SIGTERM handler must not clobber the outer call's handler
