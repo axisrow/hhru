@@ -109,9 +109,24 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 continue
             decision = needs_reply(chat)
             if not decision.should_reply:
-                print(f"[FAIL] {label} — {decision.reason}")
-                progress.failed_count += 1
-                failed = True
+                # /code-review high: "last_message_from_us" is the routine
+                # state of an already-answered chat waiting on the employer,
+                # not an error -- it fires on nearly every normal account-wide
+                # sweep once some chats are answered. Before durable-run
+                # wiring, run() always returned None and this branch never
+                # affected the exit code at all (cli.py's fail-closed
+                # contract, #148, was never opt-in for reply-employers).
+                # Keeping it a routine skip preserves that behaviour; only
+                # genuine DOM-read uncertainty (empty_chat/inbound_marker_
+                # unknown/author_unknown) is a real failure worth failing the
+                # run and a nonzero exit code for.
+                if decision.reason == "last_message_from_us":
+                    print(f"[skip] {label} — {decision.reason}")
+                    progress.skipped_count += 1
+                else:
+                    print(f"[FAIL] {label} — {decision.reason}")
+                    progress.failed_count += 1
+                    failed = True
                 continue
             assert chat is not None
             if history.has_replied(topic, chat.inbound_marker or ""):
@@ -236,7 +251,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # here leaves the action finalized without a replies row, which
                 # only affects the has_replied() idempotency check, not the
                 # fail-closed action audit trail this fix exists for.
-                history.finalize_action(action_id, status, reason)
+                history.finalize_action(action_id, status, reason, reason_code=status)
                 history.record_reply(
                     topic,
                     inbound_marker,

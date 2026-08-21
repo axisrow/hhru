@@ -241,8 +241,14 @@ def test_last_message_from_us_is_skipped_not_sent(tmp_path, monkeypatch, capsys)
         send=_boom_send,
     )
 
-    command.run(_args(force=True))
-    assert "[FAIL]" in capsys.readouterr().out
+    result = command.run(_args(force=True))
+    # /code-review high: "already answered, waiting on the employer" is the
+    # routine state of most chats in a normal sweep, not a failure -- it must
+    # not flip the command's exit code (reply-employers was never part of the
+    # #148 fail-closed opt-in list before durable-run wiring changed run()'s
+    # return type from None to bool).
+    assert "[skip]" in capsys.readouterr().out
+    assert result is False
     with history._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
@@ -681,11 +687,74 @@ def test_sigint_after_send_click_persists_uncertain_action(tmp_path, monkeypatch
 
     with history._connect() as conn:
         rows = conn.execute(
-            "SELECT vacancy_id, status FROM actions WHERE action='reply'"
+            "SELECT vacancy_id, status, reason_code FROM actions WHERE action='reply'"
         ).fetchall()
-    assert [tuple(row) for row in rows] == [("1", "uncertain")]
+    # reason_code stays at begin_action's 'started' placeholder here -- the
+    # interrupt fires before finalize_action ever runs, so there is no real
+    # outcome to record it as (unlike the successful-finalize path covered by
+    # test_successful_reply_finalizes_reason_code_not_frozen_at_started).
+    assert [tuple(row) for row in rows] == [("1", "uncertain", "started")]
     # The action audit trail is fail-closed even though the reply journal
     # (replies table) never got a chance to be written -- has_replied() being
     # False here is expected (see the module docstring boundary note) and is
     # exactly why the actions-table barrier is the one that must not be lost.
     assert history.has_replied("tp1", "m1") is False
+
+
+def test_successful_reply_finalizes_reason_code_not_frozen_at_started(tmp_path, monkeypatch):
+    """/code-review high: finalize_action's ``reason_code`` must reflect the
+    real outcome, not stay frozen at begin_action's 'started' placeholder.
+
+    finalize_action's own docstring documents COALESCE(?, reason_code) --
+    omitting reason_code on the finalize call silently keeps 'started'
+    forever, exactly the bug already fixed once for a different caller in
+    PR #460 and reintroduced here for the new pre-click reply barrier.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    refs = [TopicRef("tp1", "c1", "r1", "96223331")]
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=refs,
+        reader=lambda page, topic, refs: chat,
+        send=lambda page, text: None,
+    )
+
+    command.run(_args(force=True))
+
+    with history._connect() as conn:
+        row = conn.execute(
+            "SELECT status, reason_code FROM actions WHERE action='reply'"
+        ).fetchone()
+    assert tuple(row) == ("success", "success")
+
+
+def test_routine_already_answered_sweep_does_not_fail_the_run(tmp_path, monkeypatch):
+    """/code-review high: durable-run wiring changed run()'s return type from
+    None to bool -- cli.py now trips sys.exit(1) on any truthy return
+    (cli.py's own comment: fail-closed is opt-in, reply-employers was never
+    on that list before this PR). A sweep where every candidate chat is
+    already answered ("last_message_from_us") is the routine, expected state
+    of most account-wide runs, not an error -- it must return a falsy result
+    so cron/CI callers checking $? don't break on a run where nothing failed.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    _seed_response(history, vacancy_id="2", topic="tp2")
+    refs = [TopicRef("tp1", "c1", None, "r1"), TopicRef("tp2", "c2", None, "r2")]
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=refs,
+        reader=lambda page, topic, refs: ChatMessage(author="me", inbound_marker="m1"),
+        send=lambda page, text: (_ for _ in ()).throw(
+            AssertionError("must not send when every chat is already answered")
+        ),
+    )
+
+    result = command.run(_args(force=True))
+    assert result is False
