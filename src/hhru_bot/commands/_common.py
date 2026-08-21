@@ -221,7 +221,7 @@ def _build_question_answerer(
     except ImportError as exc:
         logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data)
+    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
 
 
 def _build_scoring_provider(
@@ -516,7 +516,9 @@ def _build_apply_providers(
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
-        question_answerer=_build_question_answerer(config, resume, history.get_profile_answers()),
+        question_answerer=_build_question_answerer(
+            config, resume, known_data=history.get_profile_answers()
+        ),
     )
 
 

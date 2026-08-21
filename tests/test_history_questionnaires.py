@@ -91,20 +91,37 @@ def test_probe_questionnaire_keeps_new_audit_fields_empty(tmp_path):
 def test_apply_questionnaire_audit_preserves_answer_fields_and_summary(tmp_path):
     history = History(tmp_path / "history.db")
     history.record_questionnaire(
-        "marketing", "123", "https://hh.ru/vacancy/123", "Маркетолог", "Acme",
+        "marketing",
+        "123",
+        "https://hh.ru/vacancy/123",
+        "Маркетолог",
+        "Acme",
         [
             {
-                "body_index": 0, "text": "Переезд?", "kind": "text", "is_radio": False,
-                "options": [], "answer": "Да", "answer_source": "profile",
-                "confidence": 1.0, "filled": True,
+                "body_index": 0,
+                "text": "Переезд?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "Да",
+                "answer_source": "profile",
+                "confidence": 1.0,
+                "filled": True,
             },
             {
-                "body_index": 1, "text": "Кейс?", "kind": "text", "is_radio": False,
-                "options": [], "answer": "", "answer_source": "llm",
-                "confidence": 0.2, "filled": False,
+                "body_index": 1,
+                "text": "Кейс?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "",
+                "answer_source": "llm",
+                "confidence": 0.2,
+                "filled": False,
             },
         ],
-        source="apply", run_id="run-473",
+        source="apply",
+        run_id="run-473",
     )
 
     with history._connect() as conn:

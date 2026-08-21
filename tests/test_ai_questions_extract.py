@@ -36,6 +36,7 @@ def test_answerer_marks_exact_known_fact_as_profile_source():
     assert proposal.confidence == 1.0
     assert proposal.answer_source == "profile"
 
+
 _VOID = {"input", "br", "hr", "img", "meta", "link", "area", "col", "embed", "source"}
 
 
