@@ -22,7 +22,7 @@ def _launch_context(*_args, **_kwargs):
     yield SimpleNamespace(new_page=lambda: _Page())
 
 
-def test_ai_planning_rejects_wrong_resume_route_before_read_or_llm(monkeypatch, capsys):
+def test_ai_planning_rejects_wrong_resume_route_before_read_or_llm(monkeypatch, capsys, tmp_path):
     resume = SimpleNamespace(id="requested", resume_id="requested")
     config = SimpleNamespace(ai=object(), storage_state_file="session.json", user_agent=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
@@ -48,9 +48,10 @@ def test_ai_planning_rejects_wrong_resume_route_before_read_or_llm(monkeypatch, 
         skill=[],
         dry_run=True,
         force=False,
+        history=str(tmp_path / "history.db"),
     )
-    with pytest.raises(SystemExit) as exc:
-        command.run(args)
-
-    assert exc.value.code == 1
+    # #465: run() now returns `failed` (bool/CommandExitCode) under the
+    # durable command_run ledger instead of raising SystemExit — the
+    # validation error itself is unchanged, only how the command reports it.
+    assert command.run(args) is True
     assert "страница нужного резюме не подтверждена" in capsys.readouterr().out

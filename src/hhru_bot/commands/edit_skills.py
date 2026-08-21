@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from urllib.parse import urlsplit
 
 from .copy_resume import confirm_write
@@ -58,20 +57,20 @@ def _run(args: argparse.Namespace, progress) -> bool:
         resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     if not args.dry_run and not confirm_write(
         args.force,
         prompt=f"Сохранить ключевые навыки резюме '{resume.id}' на hh.ru?",
     ):
         print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
-        sys.exit(1)
+        return True
 
     try:
         manual = parse_manual_skills(args.skill)
     except ValueError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -86,7 +85,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 print(
                     "[FAIL] Секция ai не включена; укажите --skill NAME=LEVEL или добавьте ai: {}"
                 )
-                sys.exit(1)
+                return True
             from ..ai.llm_client import LLMClient
             from ..skills import read_skills
 
@@ -109,7 +108,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 proposed = parse_skill_plan(response.content)
             except (ImportError, ValueError, RuntimeError) as exc:
                 print(f"[FAIL] Не удалось построить безопасный план навыков: {exc}")
-                sys.exit(1)
+                return True
 
         if not args.dry_run:
             progress.begin_attempt()
@@ -134,13 +133,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
 
 def run(args: argparse.Namespace):
     """Execute one resume-edit command under the durable command-run ledger."""
-    from ..history import History
-    from ._common import run_supervised_command
+    from ._common import run_single_mutation_command
 
-    history = History(getattr(args, "history", "data/history.db"))
-    return run_supervised_command(
-        command="edit_skills",
-        history=history,
-        requested_limit=1,
-        body=lambda progress: _run(args, progress),
-    )
+    return run_single_mutation_command(command="edit_skills", args=args, body=_run)

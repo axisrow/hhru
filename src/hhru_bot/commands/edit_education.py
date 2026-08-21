@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
 from ..resume_education import EducationPlan, generate_education_plan
 from .copy_resume import confirm_write
@@ -101,7 +100,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             "[FAIL] --source/--mode относятся к LLM-планированию и не сочетаются "
             "с ручными записями (#326)"
         )
-        sys.exit(1)
+        return True
 
     # needs='education': команда не имеет смысла без секции — точечная ошибка
     # вместо «резюме не найдено в конфиге» (#319). Ручной ввод (#326) полный,
@@ -110,7 +109,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         resume = resolve_resume(config, args.resume, needs=() if manual else ("education",))
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     education = resume.education
 
@@ -121,7 +120,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
             "Ничего не сохранено."
         )
-        sys.exit(1)
+        return True
 
     try:
         primary_manual = _parse_manual_records("--primary-entry", args.primary_entry or [])
@@ -135,11 +134,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
             )
             if not scalar_record.institution.strip():
                 print("[FAIL] Явные поля основного образования требуют непустой --institution")
-                sys.exit(1)
+                return True
             primary_manual.append(scalar_record)
     except ValueError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     if manual:
         plan = EducationPlan(
@@ -182,12 +181,16 @@ def _run(args: argparse.Namespace, progress) -> bool:
     )
     if plan.used_fallback:
         print(f"[INFO] {plan.reason}")
-    if not args.dry_run:
-        progress.begin_attempt()
     try:
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
+            # begin_attempt() right before the real mutation, after the
+            # browser/context are already open (#465 review): counting the
+            # attempt before launch_context succeeded would misreport a
+            # browser-launch or auth failure as a real (but failed) attempt.
+            if not args.dry_run:
+                progress.begin_attempt()
             results = edit_education_on_hh(
                 context.new_page(),
                 resume.resume_url,
@@ -196,7 +199,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 dry_run=args.dry_run,
             )
     except NotAuthenticated as exc:
-        if not args.dry_run:
+        if not args.dry_run and progress.attempted_count:
             progress.failed_count += 1
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         return True
@@ -217,6 +220,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 )
 
     failed = [result for result in results if not result.success]
+    uncertain = [result for result in results if result.uncertain]
     for result in results:
         prefix = "[OK]" if result.success else "[FAIL]"
         if result.uncertain:
@@ -224,7 +228,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
         print(f"{prefix} {result.kind}: {result.reason}")
     if failed:
         if not args.dry_run:
-            progress.failed_count += 1
+            if uncertain:
+                progress.uncertain_count += 1
+            else:
+                progress.failed_count += 1
         return True
     if not args.dry_run:
         progress.applied_count += 1
@@ -237,13 +244,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
 
 def run(args: argparse.Namespace):
     """Execute one resume-edit command under the durable command-run ledger."""
-    from ..history import History
-    from ._common import run_supervised_command
+    from ._common import run_single_mutation_command
 
-    history = History(getattr(args, "history", "data/history.db"))
-    return run_supervised_command(
-        command="edit_education",
-        history=history,
-        requested_limit=1,
-        body=lambda progress: _run(args, progress),
-    )
+    return run_single_mutation_command(command="edit_education", args=args, body=_run)

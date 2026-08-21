@@ -490,6 +490,31 @@ def run_supervised_command(
     return result
 
 
+def run_single_mutation_command(
+    *,
+    command: str,
+    args: argparse.Namespace,
+    body: Callable[[argparse.Namespace, ApplyProgress], bool],
+) -> bool | CommandExitCode:
+    """Thin ``run(args)`` for the single-mutation resume-edit commands (#465).
+
+    Collapses the identical 8-line wrapper that ``edit_education.py``/
+    ``edit_experience.py``/``edit_skills.py``/``edit_languages.py``/
+    ``resume_position.py`` each duplicated verbatim (cycle-review PR #472,
+    /code-review finding): open one ``History`` against ``args.history``,
+    hand it to ``run_supervised_command`` with ``requested_limit=1`` (each of
+    these commands performs at most one mutation per invocation), and forward
+    ``progress`` into the command's own ``_run(args, progress)``.
+    """
+    history = History(getattr(args, "history", "data/history.db"))
+    return run_supervised_command(
+        command=command,
+        history=history,
+        requested_limit=1,
+        body=lambda progress: body(args, progress),
+    )
+
+
 @dataclass(frozen=True)
 class ApplyResumeIdentity:
     verify_resume_id: str

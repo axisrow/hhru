@@ -203,20 +203,19 @@ def test_edit_education_remote_hash_requires_education_section(capsys, tmp_path)
     from hhru_bot.commands import edit_education as edit_cmd
 
     config = _write_config(tmp_path, _config_body())
-    with pytest.raises(SystemExit) as exc:
-        edit_cmd.run(
-            _args(
-                config,
-                tmp_path / "h.db",
-                resume=REMOTE_ONLY_HASH,
-                section="both",
-                source=None,
-                mode=None,
-                dry_run=True,
-                force=False,
-            )
+    result = edit_cmd.run(
+        _args(
+            config,
+            tmp_path / "h.db",
+            resume=REMOTE_ONLY_HASH,
+            section="both",
+            source=None,
+            mode=None,
+            dry_run=True,
+            force=False,
         )
-    assert exc.value.code == 1
+    )
+    assert result is True
     out = capsys.readouterr().out
     assert "[FAIL]" in out
     assert "требуется настройка 'education'" in out

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -70,7 +69,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     manual = bool(args.language)
     if manual:
@@ -80,11 +79,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
             proposed = parse_manual_languages(args.language)
         except ValueError as exc:
             print(f"[FAIL] {exc}")
-            sys.exit(1)
+            return True
         _print_plan(proposed, args.dry_run)
         if args.dry_run:
             print("[INFO] Ничего не сохранено на hh.ru.")
-            return
+            return False
         if not confirm_write(
             args.force,
             prompt=(
@@ -93,7 +92,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             ),
         ):
             print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
-            sys.exit(1)
+            return True
         progress.begin_attempt()
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -105,12 +104,18 @@ def _run(args: argparse.Namespace, progress) -> bool:
             progress.failed_count += 1
         else:
             progress.applied_count += 1
-        _report(result, resume.id, False)
-        return not result.success
+        if not result.success:
+            print(f"[FAIL] {resume.id} — {result.reason}")
+            return True
+        print(f"[OK] {resume.id}: языков предложено: {len(result.proposed)}")
+        for language in result.proposed:
+            level = language.level or "нуждается в подтверждении"
+            print(f"  - {language.name} [{level}]")
+        return False
     else:
         if config.ai is None:
             print("[FAIL] Секция ai не включена; укажите --language NAME=CEFR или добавьте ai: {}")
-            sys.exit(1)
+            return True
         from ..ai.llm_client import LLMClient
 
         with launch_context(
@@ -126,10 +131,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
             goto_hh(page, f"{HH_BASE_URL}/applicant/profile/me")
             if not has_auth_cookie(page) or has_login_form(page):
                 print("[FAIL] Сессия hh.ru не подтверждена")
-                sys.exit(1)
+                return True
             if urlsplit(page.url).path != "/applicant/profile/me":
                 print("[FAIL] Страница профиля не подтверждена")
-                sys.exit(1)
+                return True
             # #265 code-review round 1: fail closed on an indeterminate card
             # instead of silently feeding the LLM a false "no existing
             # languages" premise (PageStateIndeterminate invariant, CLAUDE.md).
@@ -144,11 +149,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 card = wait_for_language_card(page)
                 if card is None:
                     print("[FAIL] Карточка языков не найдена однозначно")
-                    sys.exit(1)
+                    return True
                 existing = read_existing_languages(card)
             except PlaywrightError as exc:
                 print(f"[FAIL] Карточка языков не подтверждена: {exc}")
-                sys.exit(1)
+                return True
             try:
                 response = LLMClient(config.ai).chat(
                     build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
@@ -158,7 +163,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 proposed = parse_language_plan(content)
             except (ImportError, ValueError, RuntimeError) as exc:
                 print(f"[FAIL] Не удалось построить безопасный план языков: {exc}")
-                sys.exit(1)
+                return True
             # #265 code-review round 3: the LLM branch is a planner only, not
             # a writer. parse_language_plan guarantees every LLM-sourced
             # Language.level is None (round 1 fix), so every genuinely new
@@ -177,7 +182,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 "[INFO] Для сохранения новых языков повторите с "
                 "--language NAME=CEFR для каждого языка."
             )
-            return
+            return False
 
 
 def _print_plan(proposed, dry_run: bool) -> None:
@@ -188,28 +193,8 @@ def _print_plan(proposed, dry_run: bool) -> None:
         print(f"  - {language.name} [{level}]")
 
 
-def _report(result, resume_id: str, dry_run: bool) -> None:
-    if not result.success:
-        print(f"[FAIL] {resume_id} — {result.reason}")
-        sys.exit(1)
-    prefix = "[DRY-RUN]" if dry_run else "[OK]"
-    print(f"{prefix} {resume_id}: языков предложено: {len(result.proposed)}")
-    for language in result.proposed:
-        level = language.level or "нуждается в подтверждении"
-        print(f"  - {language.name} [{level}]")
-    if dry_run:
-        print("[INFO] Ничего не сохранено на hh.ru.")
-
-
 def run(args: argparse.Namespace):
     """Execute one resume-edit command under the durable command-run ledger."""
-    from ..history import History
-    from ._common import run_supervised_command
+    from ._common import run_single_mutation_command
 
-    history = History(getattr(args, "history", "data/history.db"))
-    return run_supervised_command(
-        command="edit_languages",
-        history=history,
-        requested_limit=1,
-        body=lambda progress: _run(args, progress),
-    )
+    return run_single_mutation_command(command="edit_languages", args=args, body=_run)

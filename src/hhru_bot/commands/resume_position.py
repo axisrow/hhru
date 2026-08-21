@@ -216,22 +216,23 @@ def _run(args: argparse.Namespace, progress) -> bool:
             print(f"[OK] Раздел желаемой работы резюме '{resume.id}' обновлён.")
             return False
     except Exception as exc:
-        prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
-        if progress.attempted_count:
+        # #465 review: applied_count is only ever incremented right above,
+        # immediately before `return False` exits the `with` block. If
+        # context.__exit__ itself raises during that unwind, this handler
+        # would otherwise also add failed_count for the same attempt —
+        # progress.applied_count is the guard against double-counting one
+        # attempt as both a success and a failure.
+        if progress.attempted_count and not progress.applied_count:
+            prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
             progress.failed_count += 1
+        else:
+            prefix = "[FAIL]"
         print(f"{prefix} {exc}")
         return True
 
 
 def run(args: argparse.Namespace):
     """Execute one resume-edit command under the durable command-run ledger."""
-    from ..history import History
-    from ._common import run_supervised_command
+    from ._common import run_single_mutation_command
 
-    history = History(getattr(args, "history", "data/history.db"))
-    return run_supervised_command(
-        command="resume_position",
-        history=history,
-        requested_limit=1,
-        body=lambda progress: _run(args, progress),
-    )
+    return run_single_mutation_command(command="resume_position", args=args, body=_run)
