@@ -771,12 +771,13 @@ class History:
             rows = conn.execute("SELECT * FROM command_runs ORDER BY started_at")
             return [dict(row) for row in rows]
 
-    def command_run_action_counts(self, run_id: str) -> dict[str, int]:
+    def command_run_action_counts(self, run_id: str, *, action: str = "apply") -> dict[str, int]:
+        """Return durable outcome counts for one action type in a command run."""
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT status, COUNT(*) AS count FROM actions
-                   WHERE run_id=? AND action='apply' GROUP BY status""",
-                (run_id,),
+                   WHERE run_id=? AND action=? GROUP BY status""",
+                (run_id, action),
             ).fetchall()
         return {row["status"]: row["count"] for row in rows}
 
@@ -2658,6 +2659,7 @@ class History:
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Write the reply journal and action audit in one SQLite transaction.
 
@@ -2691,9 +2693,10 @@ class History:
             # только когда SSR не отдал resumeId (см. докстринг).
             conn.execute(
                 """INSERT INTO actions
-                   (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
-                   VALUES (?, ?, 'reply', ?, ?, ?, ?)""",
-                (resume_id or "", vacancy_id, status, reason, letter_variant, now),
+                   (resume_id, vacancy_id, action, status, reason, letter_variant,
+                    run_id, created_at)
+                   VALUES (?, ?, 'reply', ?, ?, ?, ?, ?)""",
+                (resume_id or "", vacancy_id, status, reason, letter_variant, run_id, now),
             )
 
     def replies_since(self, since: datetime) -> list[dict]:

@@ -605,3 +605,36 @@ def test_successful_send_journals_the_live_marker_not_the_planning_one(
     # live one that was actually answered.
     assert history.has_replied("tp1", "m1") is False
     assert history.has_replied("tp1", "m2") is True
+
+
+def test_multiple_replies_are_linked_to_one_durable_run(tmp_path, monkeypatch):
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    _seed_response(history, vacancy_id="2", topic="tp2")
+    refs = [TopicRef("tp1", "c1", None, "r1"), TopicRef("tp2", "c2", None, "r2")]
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=refs,
+        reader=lambda _page, topic, _refs: ChatMessage(
+            author="employer", inbound_marker=f"m-{topic}"
+        ),
+        send=lambda _page, _text: None,
+    )
+
+    assert command.run(_args(force=True)) is False
+    run = history.command_runs()[-1]
+    assert run["command"] == "reply-employers"
+    assert (run["attempted"], run["success"], run["failed"], run["uncertain"], run["skipped"]) == (
+        2,
+        2,
+        0,
+        0,
+        0,
+    )
+    with history._connect() as conn:
+        run_ids = conn.execute(
+            "SELECT DISTINCT run_id FROM actions WHERE action='reply'"
+        ).fetchall()
+    assert [row[0] for row in run_ids] == [run["run_id"]]

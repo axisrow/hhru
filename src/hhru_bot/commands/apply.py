@@ -198,7 +198,7 @@ def _reconcile_from_action_log(progress: ApplyProgress, history, run_id: str) ->
     ``command_run_action_counts`` filters ``action='apply'`` -- apply-only
     semantics, kept out of the generic helper and injected here instead.
     """
-    action_counts = history.command_run_action_counts(run_id)
+    action_counts = history.command_run_action_counts(run_id, action="apply")
     progress.applied_count = max(progress.applied_count, action_counts.get("success", 0))
     progress.failed_count = max(progress.failed_count, action_counts.get("failed", 0))
     progress.uncertain_count = max(progress.uncertain_count, action_counts.get("uncertain", 0))

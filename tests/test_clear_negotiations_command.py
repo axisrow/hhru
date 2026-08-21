@@ -545,3 +545,53 @@ def test_account_wide_skips_cards_without_topic(tmp_path, monkeypatch):
     with history._connect() as conn:
         rows = conn.execute("SELECT vacancy_id FROM actions").fetchall()
     assert [r[0] for r in rows] == ["tp1"]
+
+
+def test_sigint_mid_withdrawal_persists_partial_run_summary(tmp_path, monkeypatch, capsys):
+    """A Ctrl-C after one irreversible withdrawal must not hide that withdrawal.
+
+    The second topic interrupts before its browser action returns.  Its pre-click
+    reservation is linked to the command run, so the supervisor reconciles both
+    the confirmed first withdrawal and the unresolved second one into the final
+    durable summary.
+    """
+    history = History(tmp_path / "history.db")
+    page = _Page()
+    calls = []
+
+    def _withdraw(_page, topic):
+        calls.append(topic)
+        if topic == "second":
+            raise KeyboardInterrupt
+        return True, "", True
+
+    monkeypatch.setattr(command, "_withdraw_topic", _withdraw)
+
+    from hhru_bot.commands._common import run_supervised_command
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = run_supervised_command(
+        command="clear-negotiations",
+        history=history,
+        requested_limit=2,
+        body=lambda progress: command._run_topics(
+            _args(force=True),
+            ["first", "second"],
+            page=page,
+            history=history,
+            throttle=_Throttle(),
+            progress=progress,
+        ),
+        reconcile=command._reconcile,
+    )
+
+    assert result is CommandExitCode.SIGINT
+    row = history.command_runs()[-1]
+    assert row["status"] == "interrupted"
+    assert (row["attempted"], row["success"], row["uncertain"]) == (2, 1, 1)
+    assert "status=interrupted attempted=2 success=1" in capsys.readouterr().out
+    with history._connect() as conn:
+        statuses = conn.execute(
+            "SELECT vacancy_id, status FROM actions WHERE action='withdraw' ORDER BY id"
+        ).fetchall()
+    assert [tuple(status) for status in statuses] == [("first", "success"), ("second", "uncertain")]

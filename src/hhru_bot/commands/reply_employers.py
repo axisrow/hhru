@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ._common import ApplyProgress, run_supervised_command
 from .copy_resume import confirm_write
 
 
@@ -45,10 +46,8 @@ def _letter(template: str, candidate: dict) -> str:
     return render_cover_letter(template, card)
 
 
-def run(args: argparse.Namespace) -> None:
+def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> bool:
     from ..browser import launch_context
-    from ..config import load_config_or_exit
-    from ..history import History
     from ..negotiations_chat import (
         NoReplyForm,
         is_robot_questionnaire,
@@ -61,34 +60,17 @@ def run(args: argparse.Namespace) -> None:
     from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
-    if args.limit < 0:
-        print("[FAIL] --limit не может быть отрицательным", file=sys.stderr)
-        sys.exit(1)
     max_pages = getattr(args, "max_pages", 5)
-    if max_pages < 1:
-        print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
-        sys.exit(1)
-    if not args.dry_run and not confirm_write(
-        args.force,
-        prompt="Ответить работодателям в выбранных чатах?",
-    ):
-        print(
-            "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
-            "Ничего не отправлено."
-        )
-        sys.exit(1)
-
-    config = load_config_or_exit(args.config)
-    history = History(args.history)
     throttle = Throttle(config.throttle, history)
     candidates = history.reply_candidates(args.limit or None)
     template = args.template if args.template is not None else config.cover_letter_default
     print("=== Ответы работодателям (account-wide) ===")
     if not candidates:
         print("[INFO] В локальной истории нет чатов для проверки.")
-        return
+        return False
 
     sent = 0
+    failed = False
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
@@ -103,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
             topic_list = paginated_topic_refs(page, max_pages=max_pages)
         except (NotAuthenticated, ResponsesIndeterminate) as exc:
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
-            sys.exit(1)
+            raise SystemExit(1) from exc
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
         # #200: SSR отдаёт resumeId для каждой переписки (проверено на живой
         # сессии 2026-08-16, 7/7). Отдельный словарь, а не расширение refs:
@@ -119,19 +101,25 @@ def run(args: argparse.Namespace) -> None:
                     topic, vacancy_id=str(candidate["vacancy_id"]), reason="robot_questionnaire"
                 )
                 print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                progress.skipped_count += 1
                 continue
             if history.is_robot_questionnaire(topic):
                 print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
+                progress.skipped_count += 1
                 continue
             decision = needs_reply(chat)
             if not decision.should_reply:
                 print(f"[FAIL] {label} — {decision.reason}")
+                progress.failed_count += 1
+                failed = True
                 continue
             assert chat is not None
             if history.has_replied(topic, chat.inbound_marker or ""):
                 print(f"[skip] {label} — уже отвечали на это сообщение")
+                progress.skipped_count += 1
                 continue
             letter = _letter(template, candidate)
+            progress.begin_attempt()
             inbound_marker = chat.inbound_marker or ""
             status = "dry_run" if args.dry_run else "failed"
             reason = "dry-run" if args.dry_run else None
@@ -142,6 +130,8 @@ def run(args: argparse.Namespace) -> None:
                     throttle.check_reply_limit(False)
                 except LimitReached as exc:
                     print(f"[FAIL] {label} — {exc}")
+                    progress.failed_count += 1
+                    failed = True
                     break
                 # Codex-ревью (#198): между планированием (needs_reply выше) и
                 # отправкой прошло время (рендер письма, проверка лимита) —
@@ -160,7 +150,10 @@ def run(args: argparse.Namespace) -> None:
                         resume_id=resume_by_topic.get(topic),
                         status="failed",
                         reason=reason,
+                        run_id=progress.run_id,
                     )
+                    progress.failed_count += 1
+                    failed = True
                     continue
                 assert live_chat is not None
                 # Codex-ревью round 2 (#198): дедуплицируем и журналируем по
@@ -222,6 +215,64 @@ def run(args: argparse.Namespace) -> None:
                 resume_id=resume_by_topic.get(topic),
                 status=status,
                 reason=reason,
+                run_id=progress.run_id,
             )
+            if status == "success":
+                progress.applied_count += 1
+            elif status == "uncertain":
+                progress.uncertain_count += 1
+                failed = True
+            elif status == "dry_run":
+                progress.skipped_count += 1
+            else:
+                progress.failed_count += 1
+                failed = True
 
     print(f"Итого отправлено: {sent} ({'dry-run' if args.dry_run else 'боевой режим'})")
+    return failed
+
+
+def _reconcile(progress: ApplyProgress, history, run_id: str) -> None:
+    counts = history.command_run_action_counts(run_id, action="reply")
+    progress.applied_count = max(progress.applied_count, counts.get("success", 0))
+    progress.failed_count = max(progress.failed_count, counts.get("failed", 0))
+    progress.uncertain_count = max(progress.uncertain_count, counts.get("uncertain", 0))
+    completed = (
+        progress.applied_count
+        + progress.failed_count
+        + progress.uncertain_count
+        + progress.skipped_count
+    )
+    if progress.attempted_count > completed:
+        progress.failed_count += progress.attempted_count - completed
+
+
+def run(args: argparse.Namespace):
+    """Reply under a durable command run without changing reply deduplication."""
+    from ..config import load_config_or_exit
+    from ..history import History
+
+    if args.limit < 0:
+        print("[FAIL] --limit не может быть отрицательным", file=sys.stderr)
+        sys.exit(1)
+    max_pages = getattr(args, "max_pages", 5)
+    if max_pages < 1:
+        print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
+        sys.exit(1)
+    if not args.dry_run and not confirm_write(
+        args.force, prompt="Ответить работодателям в выбранных чатах?"
+    ):
+        print(
+            "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
+            "Ничего не отправлено."
+        )
+        sys.exit(1)
+    config = load_config_or_exit(args.config)
+    history = History(args.history)
+    return run_supervised_command(
+        command=getattr(args, "command", "reply-employers"),
+        history=history,
+        requested_limit=args.limit or None,
+        body=lambda progress: _run(args, config, history, progress),
+        reconcile=_reconcile,
+    )
