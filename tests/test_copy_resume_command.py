@@ -9,6 +9,7 @@ WRITE-hh-ru команда: боевой режим требует --force ил�
 from __future__ import annotations
 
 import argparse
+import signal
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -233,3 +234,27 @@ def test_run_uncertain_blocks_subsequent_copy(env, tmp_path, monkeypatch, capsys
     assert "[FAIL]" in out
     assert "не подтверждено (uncertain)" in out
     assert env.calls == []  # до браузера не дошло
+
+
+def test_sigterm_after_clone_click_leaves_unresolved_uncertain_marker(env, tmp_path, monkeypatch):
+    """Codex cycle-review PR #470 (round 2): a SIGTERM/KeyboardInterrupt
+    delivered right after copy_resume_on_hh's clone click must not let a
+    blind retry create a duplicate. ``except Exception`` cannot catch a
+    signal-raised ``BaseException`` (KeyboardInterrupt/SignalTermination),
+    so today no uncertain actions row is written when the interrupt lands
+    after the click already fired.
+    """
+
+    def raising_copy(page, resume, dry_run):  # noqa: ANN001, ARG001
+        env.calls.append((resume.id, dry_run))
+        signal.raise_signal(signal.SIGTERM)
+
+    monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", raising_copy)
+
+    cmd.run(_args(tmp_path, force=True))
+
+    h = History(tmp_path / "h.db")
+    assert h.has_unresolved_uncertain(OLD_ID, "copy_resume"), (
+        "a SIGTERM after the clone click must leave an unresolved uncertain "
+        "actions marker, or a blind retry can create a duplicate resume"
+    )

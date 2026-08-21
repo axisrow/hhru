@@ -59,6 +59,15 @@ def run(args: argparse.Namespace):
             "Ничего не удалено."
         )
         raise SystemExit(1)
+    # #464 cycle-review (Codex round 2): mirrors publish-resume/copy-resume's
+    # existing guard -- an unresolved uncertain deletion must block a blind
+    # retry, since the destructive click may have already gone through.
+    if not dry_run and history.has_unresolved_uncertain(resume.resume_id, "delete_resume"):
+        print(
+            f"[FAIL] {resume.id} — предыдущее удаление не подтверждено (uncertain). "
+            "Проверьте статус резюме на hh.ru вручную перед повтором."
+        )
+        raise SystemExit(1)
 
     def _body(progress: ApplyProgress) -> bool:
         try:
@@ -74,11 +83,22 @@ def run(args: argparse.Namespace):
                 record_resume_action(history, resume.resume_id, "delete_resume", "failed", str(exc))
             print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
             return True
-        except Exception as exc:
+        except BaseException as exc:
+            # #464 cycle-review (Codex round 2): ``BaseException``, not
+            # ``Exception`` -- delete_resume_on_hh's own destructive-click
+            # try/except (delete_resume.py library module) already treats a
+            # PlaywrightError after the confirm click as uncertain, but a
+            # SIGTERM/KeyboardInterrupt landing at that same point is a
+            # BaseException and previously bypassed this whole block, leaving
+            # no actions row and no has_unresolved_uncertain marker to block
+            # a retry. Fail-closed: a signal interrupt is recorded
+            # ``uncertain``; an ordinary pre-click exception keeps the prior
+            # ``failed`` status (unchanged behavior).
             if not dry_run:
                 progress.failed_count += 1
+                status = "failed" if isinstance(exc, Exception) else "uncertain"
                 record_resume_action(
-                    history, resume.resume_id, "delete_resume", "failed", f"исключение: {exc}"
+                    history, resume.resume_id, "delete_resume", status, f"исключение: {exc}"
                 )
             raise
 

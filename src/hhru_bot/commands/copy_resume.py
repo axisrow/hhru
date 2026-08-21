@@ -128,12 +128,18 @@ def run(args: argparse.Namespace):
                 record_resume_action(history, resume.resume_id, "copy_resume", "failed", str(e))
             print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
             return True
-        except Exception as e:
+        except BaseException as e:
             # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
             # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
             # ретраи) — копия на hh.ru могла создаться, а локальной записи не будет.
             # Результат после возможного клика не подтверждён: это ``uncertain`,
             # а не failed, чтобы не разрешить безопасный на вид повтор.
+            # #464 cycle-review (Codex round 2): ``BaseException``, not
+            # ``Exception`` -- SIGTERM/KeyboardInterrupt (both BaseException)
+            # landing right after copy_resume_on_hh's clone click previously
+            # bypassed this whole block, leaving no uncertain marker and
+            # letting the has_unresolved_uncertain guard above pass a blind
+            # retry through undetected.
             if not args.dry_run:
                 progress.uncertain_count += 1
                 record_resume_action(
