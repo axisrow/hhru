@@ -748,6 +748,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
         # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
+        if interrupted and unknown:
+            print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
         if interrupted:
             return CommandExitCode.SIGINT
         return True

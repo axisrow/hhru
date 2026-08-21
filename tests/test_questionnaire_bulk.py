@@ -752,6 +752,46 @@ def test_clean_interrupt_without_uncertainty_returns_sigint_code(monkeypatch, ca
     assert "[FAIL]" not in capsys.readouterr().out
 
 
+def test_interrupt_with_lost_auth_and_unknown_prints_both_fail_lines(monkeypatch, capsys):
+    # Обе причины неполноты независимы: потерянная сессия не объясняет
+    # unresolved unknown у другой вакансии. Обе строки [FAIL] должны печататься.
+    cards = [_card("991"), _card("992"), _card("993")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        if vacancy.vacancy_id == "992":
+            return questionnaire.QuestionnaireScanResult(
+                vacancy, questionnaire.UNKNOWN, "timeout", retryable=True
+            )
+        if vacancy.vacancy_id == "993":
+            raise KeyboardInterrupt
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.UNAUTHENTICATED, "требуется авторизация"
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    from hhru_bot.exit_codes import CommandExitCode
+
+    assert probe.run_questionnaires(_bulk_args()) is CommandExitCode.SIGINT
+    output = capsys.readouterr().out
+
+    assert "[FAIL] сессия истекла во время прогона" in output
+    assert "[FAIL] скан прерван с неподтверждёнными вакансиями" in output
+
+
+def test_limit_reached_exits_cleanly_without_interrupt(monkeypatch, capsys):
+    # --limit-questionnaires останавливает скан штатно, не через SIGINT.
+    cards = [_card("981"), _card("982")]
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, cards, scan)
+    assert probe.run_questionnaires(_bulk_args(limit_questionnaires=1)) is False
+    assert "прерван пользователем" not in capsys.readouterr().out
+
+
 def test_throttle_pause_precedes_every_scan_including_retry_after_limit(monkeypatch, capsys):
     # cycle-review PR #450 round 2 (Codex): выход по лимиту происходит ДО
     # time.sleep(), а следом сразу стартует накопленный retry — два клика по
