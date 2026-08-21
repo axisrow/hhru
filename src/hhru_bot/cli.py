@@ -182,6 +182,11 @@ def _execute(args: argparse.Namespace) -> None:
 
     try:
         failed = args.func(args)
+        # A command may return the conventional SIGINT status explicitly after
+        # rendering a partial report (rather than raising KeyboardInterrupt).
+        # Keep this separate from the bool-based fail-closed command contract.
+        if failed == 130 and not isinstance(failed, bool):
+            sys.exit(130)
         # Fail-closed contract (#148) is opt-in: only commands that report a
         # real bool success flag (search/apply/run) can trip sys.exit(1).
         # Commands returning other truthy values (e.g. clear-skipped's int

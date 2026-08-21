@@ -418,6 +418,17 @@ def test_clear_skipped_success_does_not_exit_nonzero(tmp_path):
         pytest.fail(f"main() exited with {e.code} on a successful deletion")
 
 
+def test_questionnaire_interrupt_propagates_sigint_exit_code():
+    from hhru_bot.cli import _execute
+
+    args = argparse.Namespace(command="log", func=lambda _args: 130)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _execute(args)
+
+    assert exc_info.value.code == 130
+
+
 def test_unhandled_exception_from_command_is_logged_to_file(monkeypatch, capsys):
     """#179: необработанное исключение из args.func (напр. непойманный внутри
     apply-пайплайна Playwright TimeoutError) раньше уходило только в stderr

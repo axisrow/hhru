@@ -646,7 +646,7 @@ def test_keyboard_interrupt_prints_partial_report_without_traceback(monkeypatch,
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    assert probe.run_questionnaires(_bulk_args()) == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -668,7 +668,7 @@ def test_interrupt_does_not_mask_lost_authentication(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    assert probe.run_questionnaires(_bulk_args()) == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
@@ -720,17 +720,16 @@ def test_interrupt_after_unresolved_unknown_is_a_failure(monkeypatch, capsys):
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is True
+    assert probe.run_questionnaires(_bulk_args()) == 130
     output = capsys.readouterr().out
 
     assert "прерван пользователем" in output
     assert "[FAIL]" in output
 
 
-def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys):
-    # Обратная сторона: намеренная остановка чистого частичного прогона — не
-    # провал (#448 требует корректного частичного итога), иначе Ctrl-C всегда
-    # был бы ошибкой.
+def test_clean_interrupt_without_uncertainty_returns_sigint_code(monkeypatch, capsys):
+    # Даже чистая намеренная остановка возвращает стандартный POSIX-код SIGINT;
+    # частичный отчёт при этом по-прежнему печатается без traceback.
     cards = [_card("961"), _card("962")]
 
     def scan(page_arg, vacancy, **kwargs):
@@ -741,7 +740,7 @@ def test_clean_interrupt_without_uncertainty_still_succeeds(monkeypatch, capsys)
         )
 
     probe = _bulk_env(monkeypatch, cards, scan)
-    assert probe.run_questionnaires(_bulk_args()) is False
+    assert probe.run_questionnaires(_bulk_args()) == 130
     assert "[FAIL]" not in capsys.readouterr().out
 
 

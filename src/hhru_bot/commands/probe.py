@@ -606,7 +606,7 @@ def _limit_reached(results, limit: int) -> bool:
     return bool(limit) and _questionnaire_counts(results)["questionnaire"] >= limit
 
 
-def run_questionnaires(args: argparse.Namespace) -> bool:
+def run_questionnaires(args: argparse.Namespace) -> bool | int:
     """Scan raw search cards in one context/page, without local history."""
     from ..apply.questionnaire import (
         FAST_FORM_TIMEOUT_MS,
@@ -747,6 +747,8 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
         # стоит ВЫШЕ interrupted: Ctrl-C после потери сессии — это тоже
         # неполный скан, прерывание не отменяет fail-closed инвариант.
         print("[FAIL] сессия истекла во время прогона — скан неполный")
+        if interrupted:
+            return 130
         return True
     if interrupted and unknown:
         # cycle-review PR #450 (Codex): прерывание не отменяет fail-closed —
@@ -754,11 +756,11 @@ def run_questionnaires(args: argparse.Namespace) -> bool:
         # неотличимым от полного скана, если выйти с успехом. Retry этих
         # вакансий не состоялся именно из-за остановки.
         print("[FAIL] скан прерван с неподтверждёнными вакансиями — результат неполный")
-        return True
+        return 130
     if interrupted:
-        # Осознанное прерывание пользователем — не провал: частичный отчёт уже
-        # напечатан, а всё проверенное подтверждено (иначе сработал бы гейт выше).
-        return False
+        # Частичный отчёт уже напечатан, но Ctrl-C всегда сохраняет стандартный
+        # POSIX-код SIGINT, независимо от подтверждённости результатов.
+        return 130
     if all_results and unknown == len(all_results):
         # #433 cycle-review round 3 fix-up: единичный unknown по конкретной
         # вакансии (timeout, drift, частично распознанная анкета) — часть
