@@ -34,6 +34,9 @@ class _History:
     def get_confirmed_matches(self):
         return self._confirmed
 
+    def list_templates(self):
+        return list(self._templates.values())
+
 
 def test_keyword_resolver_answers_without_any_llm_configured():
     """Issue #482: keyword resolver works with no AI dependency at all."""
@@ -64,6 +67,21 @@ def test_resume_override_takes_priority_over_account_answer():
     assert proposal.answer == "300000"
 
 
+def test_resume_override_used_when_account_answer_is_empty_string():
+    """Advisor review: an empty-string account answer must not shadow a real
+    resume-scoped override -- ``"" or resume_value`` must resolve to
+    resume_value, not silently fail.
+    """
+    history = _History(
+        templates={"salary": Template(name="salary", mode="static")},
+        answers={"salary": {"account": "", "resume": {"backend": "300000"}}},
+        confirmed={"желаемая зарплата": "salary"},
+    )
+    answerer = HybridQuestionAnswerer(history=history, resume_id="backend", llm_answerer=None)
+    (proposal,) = answerer.propose_all([Question(0, "Желаемая зарплата", "text")])
+    assert proposal.answer == "300000"
+
+
 def test_falls_back_to_llm_answerer_when_resolver_has_no_match():
     history = _History()  # no templates, no confirmed matches at all
     llm_answerer = AIQuestionAnswerer(_StubLLM(), known_data={"Ваш телефон?": "+7 900"})
@@ -81,6 +99,45 @@ def test_no_llm_answerer_and_no_resolver_match_is_low_confidence_not_exception()
     (proposal,) = answerer.propose_all([Question(0, "Случайный вопрос", "text")])
     assert proposal.low_confidence
     assert proposal.answer == ""
+
+
+def test_suggest_template_returns_none_when_learn_questionnaires_disabled():
+    """--learn-questionnaires is opt-in: suggest_template must be a no-op
+    (and never call the LLM) unless explicitly enabled.
+    """
+    history = _History(templates={"salary": Template(name="salary", mode="static")})
+    llm_client = _StubLLM()
+    answerer = HybridQuestionAnswerer(
+        history=history,
+        resume_id="backend",
+        llm_answerer=None,
+        llm=llm_client,
+        learn_questionnaires=False,
+    )
+    assert answerer.suggest_template(Question(0, "Q", "text")) is None
+
+
+def test_suggest_template_uses_llm_when_enabled():
+    class _MatchLLM:
+        def chat(self, messages, **_kwargs):
+            from hhru_bot.ai.types import NormalizedResponse
+
+            return NormalizedResponse(
+                content='{"template": "salary", "confidence": 0.95}',
+                tool_calls=None,
+                finish_reason="stop",
+            )
+
+    history = _History(templates={"salary": Template(name="salary", mode="static")})
+    answerer = HybridQuestionAnswerer(
+        history=history,
+        resume_id="backend",
+        llm_answerer=None,
+        llm=_MatchLLM(),
+        learn_questionnaires=True,
+    )
+    result = answerer.suggest_template(Question(0, "Ваши зарплатные ожидания?", "text"))
+    assert result == ("salary", 0.95)
 
 
 def test_apply_delegates_to_ai_question_answerer_apply(monkeypatch):

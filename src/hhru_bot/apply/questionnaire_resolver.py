@@ -199,3 +199,54 @@ def resolve_answer(
         answer_source=proposal.answer_source,
         threshold=answer_threshold,
     )
+
+
+def suggest_template_llm(
+    question_text: str,
+    template_names: list[str],
+    llm: LLMClient | None,
+    *,
+    threshold: float = DEFAULT_ANSWER_THRESHOLD,
+) -> tuple[str, float] | None:
+    """Suggest an EXISTING template name for an unresolved question (``--learn-questionnaires``).
+
+    A pure classifier, same safety shape as ``external_forms.detect.match_answer_llm``:
+    the model selects a name from ``template_names`` (never invents one, never
+    sees/returns an answer value) and must clear ``threshold``. The result is
+    a *suggestion* only -- issue #482: "Первое LLM-сопоставление требует
+    подтверждения пользователя" -- callers must persist it to
+    ``questionnaire_pending.suggested_template`` and route it through
+    ``History.confirm_match`` (via ``questionnaire learn``) before
+    ``resolve_by_keyword`` can ever use it.
+    """
+    if not template_names or llm is None:
+        return None
+    prompt = (
+        "Сопоставь вопрос анкеты с одним из существующих шаблонов ответа по имени. "
+        "Не придумывай имя. Верни только JSON вида "
+        '{"template": "точное имя из списка или null", "confidence": 0.0}. '
+        "Выбирай шаблон только если он действительно отвечает на вопрос; иначе template=null.\n"
+        + json.dumps(
+            {"question": question_text, "known_templates": sorted(template_names)},
+            ensure_ascii=False,
+        )
+    )
+    try:
+        response = llm.chat([{"role": "user", "content": prompt}], temperature=0)
+        payload: Any = json.loads((response.content or "").strip())
+        name = payload.get("template") if isinstance(payload, dict) else None
+        confidence = payload.get("confidence") if isinstance(payload, dict) else None
+        if (
+            isinstance(name, str)
+            and name in template_names
+            and not is_denied_answer_field(name)
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and math.isfinite(confidence)
+            and confidence >= threshold
+        ):
+            return name, float(confidence)
+    except Exception as exc:  # noqa: BLE001 - malformed/failed LLM -> no suggestion
+        logger.warning("Не удалось предложить шаблон для вопроса: %s", exc)
+        return None
+    return None

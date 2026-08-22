@@ -116,6 +116,25 @@ def add_force_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_learn_questionnaires_arg(p: argparse.ArgumentParser) -> None:
+    """``--learn-questionnaires`` — только для apply/run (issue #482).
+
+    Opt-in inline-обучение: неотвеченный вопрос анкеты дополнительно получает
+    LLM-предложение шаблона (``suggested_template``/``suggested_confidence``
+    в ``questionnaire_pending``) для последующего подтверждения через
+    `questionnaire learn`. Никогда не подтверждает сопоставление сам и не
+    делает интерактивный prompt внутри отклика (см. HybridQuestionAnswerer).
+    """
+    p.add_argument(
+        "--learn-questionnaires",
+        action="store_true",
+        help=(
+            "Предлагать шаблон для неотвеченных вопросов анкеты "
+            "(требует подтверждения через `questionnaire learn`)"
+        ),
+    )
+
+
 def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[ResumeConfig]:
     if not resume_ids:
         return config.resumes
@@ -225,7 +244,13 @@ def _build_llm_client_for_questions(config: AppConfig):
         return None
 
 
-def _build_question_answerer(config: AppConfig, resume: ResumeConfig, history: History):
+def _build_question_answerer(
+    config: AppConfig,
+    resume: ResumeConfig,
+    history: History,
+    *,
+    learn_questionnaires: bool = False,
+):
     """Build the question answerer used by apply's pipeline, if configured.
 
     Issue #482: ``questionnaires.enabled`` and ``ai.answer_questions`` are
@@ -268,6 +293,7 @@ def _build_question_answerer(config: AppConfig, resume: ResumeConfig, history: H
         llm_answerer=llm_answerer,
         llm=llm_client,
         answer_threshold=questionnaires_config.llm_answer_threshold,
+        learn_questionnaires=learn_questionnaires,
     )
 
 
@@ -703,12 +729,19 @@ class ApplyProviders:
 
 
 def _build_apply_providers(
-    config: AppConfig, resume: ResumeConfig, cover_letter_template: str, history: History
+    config: AppConfig,
+    resume: ResumeConfig,
+    cover_letter_template: str,
+    history: History,
+    *,
+    learn_questionnaires: bool = False,
 ) -> ApplyProviders:
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
-        question_answerer=_build_question_answerer(config, resume, history),
+        question_answerer=_build_question_answerer(
+            config, resume, history, learn_questionnaires=learn_questionnaires
+        ),
     )
 
 
@@ -879,7 +912,13 @@ def run_apply_for_resume(
     providers = (
         None
         if skip_scoring
-        else _build_apply_providers(config, resume, cover_letter_template, history)
+        else _build_apply_providers(
+            config,
+            resume,
+            cover_letter_template,
+            history,
+            learn_questionnaires=getattr(args, "learn_questionnaires", False),
+        )
     )
 
     progress = progress or ApplyProgress()
@@ -1097,7 +1136,12 @@ def _run_apply_for_resume(
         question_answerer = providers.question_answerer
     else:
         letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-        question_answerer = _build_question_answerer(config, resume, history)
+        question_answerer = _build_question_answerer(
+            config,
+            resume,
+            history,
+            learn_questionnaires=getattr(args, "learn_questionnaires", False),
+        )
     if approved_item:
         from ..apply.letter import LetterOutcome
 

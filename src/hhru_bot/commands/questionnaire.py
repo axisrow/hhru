@@ -96,7 +96,10 @@ def _resolve_resume_id(args: argparse.Namespace) -> str | None:
 def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
 
-    resume_id = getattr(args, "resume", None)
+    # #482 review: pending rows are keyed by the numeric resume_id apply
+    # writes (ctx.resume_id), not the config slug -- resolve --resume the
+    # same way run_set does, or a slug filter silently returns nothing.
+    resume_id = _resolve_resume_id(args)
     rows = History(args.history).list_pending(resume_id=resume_id)
     if not rows:
         print("[INFO] Очередь неотвеченных вопросов пуста.")
@@ -181,7 +184,7 @@ def run_unset(args: argparse.Namespace) -> bool:
 def run_learn(args: argparse.Namespace) -> bool:
     from ..history import History
 
-    resume_id = getattr(args, "resume", None)
+    resume_id = _resolve_resume_id(args)
     history = History(args.history)
     pending = history.list_pending(resume_id=resume_id)[: args.limit]
     if not pending:

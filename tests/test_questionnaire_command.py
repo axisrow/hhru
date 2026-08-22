@@ -10,6 +10,7 @@ subcommands (set/unset/learn) go through the same shared local lock as
 from __future__ import annotations
 
 import argparse
+import textwrap
 
 import pytest
 
@@ -22,6 +23,26 @@ pytestmark = pytest.mark.unit
 
 def _build():
     return cli.build_parser()
+
+
+def _write_config(tmp_path):
+    """One resume, slug 'backend' -> resume_id '11111111' (#319 hash addressing)."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            account:
+              storage_state_file: data/storage_state/hh_session.json
+            resumes:
+              - id: backend
+                resume_url: "https://hh.ru/resume/11111111"
+                search:
+                  text: "python developer"
+            """
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_questionnaire_registered_with_subcommands():
@@ -82,6 +103,51 @@ def test_pending_lists_open_questions(tmp_path, capsys):
     questionnaire_cmd.run_pending(args)
     out = capsys.readouterr().out
     assert "Готовы к переезду?" in out
+
+
+def test_pending_resolves_resume_slug_to_hash_resume_id(tmp_path, capsys):
+    """Regression: `apply` enqueues pending rows keyed by the numeric
+    resume_id (ctx.resume_id), not the config slug -- `--resume backend`
+    must resolve the slug the same way before filtering, or the row is
+    invisible even though it belongs to this resume.
+    """
+    config_path = _write_config(tmp_path)
+    history_path = tmp_path / "history.db"
+    History(history_path).enqueue_pending(
+        resume_id="11111111",  # the hash addressed by slug 'backend' above
+        vacancy_id="1",
+        question_text="Готовы к переезду?",
+        kind="text",
+        options=[],
+    )
+    args = argparse.Namespace(history=str(history_path), config=str(config_path), resume="backend")
+    questionnaire_cmd.run_pending(args)
+    out = capsys.readouterr().out
+    assert "Готовы к переезду?" in out
+
+
+def test_learn_resolves_resume_slug_to_hash_resume_id(tmp_path, capsys, monkeypatch):
+    config_path = _write_config(tmp_path)
+    history_path = tmp_path / "history.db"
+    History(history_path).enqueue_pending(
+        resume_id="11111111",
+        vacancy_id="1",
+        question_text="Готовы к переезду?",
+        kind="text",
+        options=[],
+    )
+    monkeypatch.setattr(questionnaire_cmd.sys.stdin, "isatty", lambda: False)
+    args = argparse.Namespace(
+        history=str(history_path),
+        config=str(config_path),
+        resume="backend",
+        limit=20,
+    )
+    result = questionnaire_cmd.run_learn(args)
+    # A non-empty, resolved pending queue must reach the TTY-required [FAIL]
+    # path -- not silently report "queue is empty" because of a scope miss.
+    assert result is True
+    assert "[FAIL]" in capsys.readouterr().out
 
 
 def test_templates_prints_info_when_empty(tmp_path, capsys):

@@ -14,6 +14,7 @@ from hhru_bot.apply.questionnaire_resolver import (
     is_denied_answer_field,
     resolve_answer,
     resolve_by_keyword,
+    suggest_template_llm,
 )
 
 pytestmark = pytest.mark.unit
@@ -170,3 +171,52 @@ def test_resolve_answer_static_refuses_denied_template_name():
         template, resume_answers={}, account_answers={"Номер паспорта": "1234 567890"}
     )
     assert proposal is None
+
+
+# --- suggest_template_llm (--learn-questionnaires: proposal only, never
+# auto-applied -- issue #482: "Первое LLM-сопоставление требует
+# подтверждения пользователя") -------------------------------------------
+
+
+def test_suggest_template_llm_returns_confident_match():
+    llm = _LLM('{"template": "salary", "confidence": 0.95}')
+    result = suggest_template_llm(
+        "Ваши зарплатные ожидания?", ["salary", "location"], llm, threshold=0.90
+    )
+    assert result == ("salary", 0.95)
+
+
+def test_suggest_template_llm_below_threshold_returns_none():
+    llm = _LLM('{"template": "salary", "confidence": 0.5}')
+    assert (
+        suggest_template_llm("Ваши зарплатные ожидания?", ["salary"], llm, threshold=0.90) is None
+    )
+
+
+def test_suggest_template_llm_unknown_template_name_returns_none():
+    """The model must select a NAME FROM THE SUPPLIED LIST -- a hallucinated
+    template name (not in ``template_names``) is refused, same boundary as
+    ``match_answer_llm``'s key-classifier contract.
+    """
+    llm = _LLM('{"template": "made_up", "confidence": 0.99}')
+    assert suggest_template_llm("Q", ["salary"], llm, threshold=0.90) is None
+
+
+def test_suggest_template_llm_no_templates_returns_none_without_calling_llm():
+    llm = _LLM('{"template": "salary", "confidence": 0.99}')
+    assert suggest_template_llm("Q", [], llm, threshold=0.90) is None
+    assert llm.calls == []
+
+
+def test_suggest_template_llm_no_llm_returns_none():
+    assert suggest_template_llm("Q", ["salary"], None, threshold=0.90) is None
+
+
+def test_suggest_template_llm_malformed_response_returns_none():
+    llm = _LLM("not json")
+    assert suggest_template_llm("Q", ["salary"], llm, threshold=0.90) is None
+
+
+def test_suggest_template_llm_never_suggests_denied_template():
+    llm = _LLM('{"template": "Номер паспорта", "confidence": 0.99}')
+    assert suggest_template_llm("Q", ["Номер паспорта"], llm, threshold=0.90) is None

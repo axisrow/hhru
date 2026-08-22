@@ -211,6 +211,16 @@ def test_apply_has_limit():
     assert "--limit" in opts
 
 
+def test_apply_has_learn_questionnaires_flag():
+    opts = _opts_for("apply")
+    assert "--learn-questionnaires" in opts
+
+
+def test_run_has_learn_questionnaires_flag():
+    opts = _opts_for("run")
+    assert "--learn-questionnaires" in opts
+
+
 def test_restore_has_no_dead_dry_run_flag():
     # restore's dry-run behavior is controlled entirely by --apply (absent =
     # dry-run, present = apply); a separate --dry-run flag was parsed but

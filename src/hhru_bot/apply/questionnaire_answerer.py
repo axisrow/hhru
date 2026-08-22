@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, Question
-from .questionnaire_resolver import resolve_answer, resolve_by_keyword
+from .questionnaire_resolver import resolve_answer, resolve_by_keyword, suggest_template_llm
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -41,6 +41,7 @@ class HybridQuestionAnswerer:
         llm_answerer: AIQuestionAnswerer | None,
         llm: object | None = None,
         answer_threshold: float = 0.90,
+        learn_questionnaires: bool = False,
     ):
         """``history`` is a ``History`` instance (typed loosely to avoid a
         pipeline.py <-> history.py import cycle -- see ``History.get_template``'s
@@ -49,11 +50,19 @@ class HybridQuestionAnswerer:
         ``llm_answerer`` (the full ``AIQuestionAnswerer``, used only as the
         profile/LLM fallback stage) because a contextual template's prompt
         has nothing to do with ``AIQuestionAnswerer``'s own prompt/profile.
+
+        ``learn_questionnaires`` gates ``suggest_template`` (``--learn-questionnaires``,
+        issue #482). Deliberately does NOT gate anything else here: it never
+        prompts interactively (there is no page/dry_run/force visibility at
+        this layer, and pipeline.py's post-click "grey zone" must never block
+        on input()) -- it only enriches what ``pipeline.py`` hands to
+        ``History.enqueue_pending`` for later ``questionnaire learn`` review.
         """
         self._history = history
         self._resume_id = resume_id
         self._llm_answerer = llm_answerer
         self._llm = llm
+        self._learn_questionnaires = learn_questionnaires
         self._answer_threshold = answer_threshold
 
     def _resolve_via_keyword(self, question: Question) -> AnswerProposal | None:
@@ -122,3 +131,17 @@ class HybridQuestionAnswerer:
         -- reusing it avoids duplicating that DOM-interaction code.
         """
         return AIQuestionAnswerer.apply(page, proposals)
+
+    def suggest_template(self, question: Question) -> tuple[str, float] | None:
+        """Suggest an existing template for an unresolved question (``--learn-questionnaires``).
+
+        Returns ``None`` when the flag is off (default) -- opt-in, and this
+        never auto-applies the suggestion: the caller (``pipeline.py``) only
+        stores it on the pending-queue row for later confirmation via
+        ``questionnaire learn`` (issue #482: "Первое LLM-сопоставление
+        требует подтверждения пользователя").
+        """
+        if not self._learn_questionnaires or self._llm is None:
+            return None
+        names = [template.name for template in self._history.list_templates()]
+        return suggest_template_llm(question.text, names, self._llm)

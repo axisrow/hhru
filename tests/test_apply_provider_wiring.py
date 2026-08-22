@@ -89,3 +89,40 @@ def test_questionnaires_enabled_resolves_confirmed_template_end_to_end(tmp_path)
     (proposal,) = answerer.propose_all([Question(0, "Желаемая зарплата", "text")])
     assert proposal.answer == "300000"
     assert proposal.answer_source == "template"
+
+
+def test_learn_questionnaires_flag_defaults_off(tmp_path):
+    """--learn-questionnaires is opt-in: suggest_template must be inert by default."""
+    history = History(tmp_path / "history.db")
+    config = _Config(questionnaires=QuestionnairesConfig(enabled=True))
+
+    answerer = _build_question_answerer(config, _resume(), history)
+    from hhru_bot.ai.questions import Question
+
+    assert answerer.suggest_template(Question(0, "Q", "text")) is None
+
+
+def test_learn_questionnaires_flag_enables_suggest_template(tmp_path, monkeypatch):
+    history = History(tmp_path / "history.db")
+    history.upsert_template("salary", mode="static")
+    config = _Config(
+        ai=AiConfig(answer_questions=True),
+        questionnaires=QuestionnairesConfig(enabled=True),
+    )
+    monkeypatch.setattr("hhru_bot.ai.llm_client.LLMClient.__init__", lambda self, ai_config: None)
+    monkeypatch.setattr(
+        "hhru_bot.ai.llm_client.LLMClient.chat",
+        lambda self, messages, **kwargs: _MatchResponse(),
+    )
+
+    answerer = _build_question_answerer(config, _resume(), history, learn_questionnaires=True)
+    from hhru_bot.ai.questions import Question
+
+    result = answerer.suggest_template(Question(0, "Ваши зарплатные ожидания?", "text"))
+    assert result == ("salary", 0.95)
+
+
+class _MatchResponse:
+    content = '{"template": "salary", "confidence": 0.95}'
+    tool_calls = None
+    finish_reason = "stop"
