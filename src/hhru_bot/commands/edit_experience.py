@@ -89,7 +89,7 @@ def _load_entries(raw_entries: list[str] | None):
 
 
 def _run(args: argparse.Namespace, progress) -> bool:
-    from ..browser import launch_context
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..experience import (
         ExperiencePlan,
@@ -194,6 +194,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
             results = edit_experience_on_hh(
                 page, resume.resume_id, plan, dry_run=False, indexes=indexes
             )
+    except BrowserLaunchError:
+        # #465 review round 3: re-raise so cli.py's dedicated handler
+        # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+        # instead of the broad except Exception below swallowing it.
+        raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback contract
         # Only count a failure if the attempt was actually reserved (#465
         # review): read_experience_on_hh (manual re-index path) can raise
@@ -203,8 +208,18 @@ def _run(args: argparse.Namespace, progress) -> bool:
             progress.failed_count += 1
         print(f"[FAIL] {resume.id} — {exc}")
         return True
-    uncertain = any("uncertain" in item for item in results)
     success = bool(results) and all("сохранено" in item for item in results)
+    # A hard failure (neither "сохранено" nor "uncertain") must win over
+    # uncertain in the same batch (#465 review, round 3 — same batch-
+    # classification bug already fixed for edit_education.py in round 2,
+    # found still present here): "any uncertain in the whole batch" masked a
+    # definite hard failure on one entry as merely uncertain because another
+    # entry in the same --entry batch happened to be uncertain.
+    hard_failed_items = [
+        item for item in results if "сохранено" not in item and "uncertain" not in item
+    ]
+    uncertain_items = [item for item in results if "uncertain" in item]
+    uncertain = bool(uncertain_items) and not hard_failed_items
     history.record_action(
         resume.resume_id,
         resume.resume_id,
@@ -214,13 +229,14 @@ def _run(args: argparse.Namespace, progress) -> bool:
         run_id=progress.run_id,
     )
     for item in results:
-        prefix = "[FAIL] (uncertain)" if uncertain else ("[OK]" if success else "[FAIL]")
+        is_item_uncertain = "uncertain" in item
+        prefix = "[FAIL] (uncertain)" if is_item_uncertain else ("[OK]" if success else "[FAIL]")
         print(f"{prefix} {resume.id} — {item}")
     if not success:
-        if uncertain:
-            progress.uncertain_count += 1
-        else:
+        if hard_failed_items:
             progress.failed_count += 1
+        elif uncertain_items:
+            progress.uncertain_count += 1
         return True
     progress.applied_count += 1
     return False

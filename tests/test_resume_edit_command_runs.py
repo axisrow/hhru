@@ -465,3 +465,305 @@ def test_edit_education_mutation_exception_after_attempt_is_recorded_as_failed(
     assert row["status"] == "partial"
     assert row["attempted"] == row["failed"] == 1
     assert row["success"] == row["uncertain"] == row["skipped"] == 0
+
+
+def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression test for a BLOCKING finding in cycle-review round 3 of PR
+    #472: the CLAUDE.md #207 grey-zone post-click failure (save click landed,
+    confirmation timed out) was recorded as failed_count instead of
+    uncertain_count, losing the "may have landed" fail-closed semantic.
+    """
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.resume_position import PositionValues
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=object())
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=object())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    class _FailingLocator:
+        def count(self):
+            return 1
+
+        def click(self):
+            return None
+
+        def wait_for(self, *, state=None, timeout=None):
+            raise TimeoutError("form did not hide")
+
+    class _Page:
+        def locator(self, _selector):
+            return _FailingLocator()
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: _Page())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda page, resume: PositionValues(title="старая"),
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        title="новая",
+        specialization=None,
+        salary=None,
+        currency=None,
+        employment=None,
+        work_format=None,
+        commute=None,
+        business_trips=None,
+        mode=None,
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+    assert "(uncertain)" in capsys.readouterr().out
+
+    row = History(history_path).command_runs()[-1]
+    assert row["command"] == "resume_position"
+    assert row["attempted"] == row["uncertain"] == 1
+    assert row["failed"] == row["success"] == row["skipped"] == 0
+
+
+def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression test for the same batch-classification bug (round 2 fixed
+    it in edit_education.py; round 3 found it still present here): a hard
+    failure on one --entry item must win over an uncertain result on another
+    item in the same batch.
+    """
+    import hhru_bot.commands.edit_experience as command
+
+    resume = SimpleNamespace(id="r1", resume_id="r1")
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: object())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        "hhru_bot.experience.edit_experience_on_hh",
+        lambda *_a, **_kw: [
+            "строка 1: отклонено, ошибка формы",
+            "строка 2: uncertain, не подтверждено",
+        ],
+    )
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        mode="fill",
+        career=None,
+        existing=None,
+        entry=[
+            '{"company": "a", "position": "b"}',
+            '{"company": "c", "position": "d"}',
+        ],
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+
+    row = History(history_path).command_runs()[-1]
+    assert row["command"] == "edit_experience"
+    assert row["attempted"] == row["failed"] == 1
+    assert row["uncertain"] == row["success"] == row["skipped"] == 0
+
+
+def test_edit_skills_acted_failure_is_recorded_as_uncertain(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression test for a BLOCKING finding in cycle-review round 3 of PR
+    #472: edit_skills.py had no uncertain lane at all — SkillsResult(
+    success=False, acted=True) was always counted as failed, even though
+    ``acted`` documents that the click may already have reached hh.ru.
+    """
+    import hhru_bot.commands.edit_skills as command
+    from hhru_bot.skills import SkillsResult
+
+    resume = SimpleNamespace(id="r1", resume_id="r1")
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: object())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.skills.edit_skills_on_hh",
+        lambda *_a, **_kw: SkillsResult(
+            success=False, acted=True, reason="сохранение навыков не подтверждено"
+        ),
+    )
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        mode="append",
+        skill=["Python=advanced"],
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+    assert "(uncertain)" in capsys.readouterr().out
+
+    row = History(history_path).command_runs()[-1]
+    assert row["command"] == "edit_skills"
+    assert row["attempted"] == row["uncertain"] == 1
+    assert row["failed"] == row["success"] == row["skipped"] == 0
+
+
+def test_edit_languages_acted_failure_is_recorded_as_uncertain(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Regression test for a BLOCKING finding in cycle-review round 3 of PR
+    #472: edit_languages.py had no uncertain lane at all — LanguagesResult(
+    success=False, acted=True) was always counted as failed.
+    """
+    import hhru_bot.commands.edit_languages as command
+    from hhru_bot.languages import Language, LanguagesResult
+
+    resume = SimpleNamespace(id="r1", resume_id="r1")
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: object())
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.languages.edit_languages_on_hh",
+        lambda *_a, **_kw: LanguagesResult(
+            success=False,
+            acted=True,
+            proposed=(Language("English", "B1"),),
+            reason="сохранение не подтверждено",
+        ),
+    )
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        mode="append",
+        language=["English=B1"],
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+    assert "(uncertain)" in capsys.readouterr().out
+
+    row = History(history_path).command_runs()[-1]
+    assert row["command"] == "edit_languages"
+    assert row["attempted"] == row["uncertain"] == 1
+    assert row["failed"] == row["success"] == row["skipped"] == 0
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["edit_education", "edit_experience", "edit_skills", "edit_languages", "resume_position"],
+)
+def test_browser_launch_error_propagates_to_cli_environment_handler(
+    tmp_path: Path, monkeypatch, module_name: str
+) -> None:
+    """Regression test for a finding in cycle-review round 3 of PR #472: a
+    broad ``except Exception`` added around launch_context in each command
+    must not swallow BrowserLaunchError before it reaches cli.py's dedicated
+    handler (prints "[ENVIRONMENT] ..." and exits distinctly from an
+    ordinary command failure).
+    """
+    from hhru_bot.browser import BrowserLaunchError
+
+    command = importlib.import_module(f"hhru_bot.commands.{module_name}")
+    resume = SimpleNamespace(
+        id="r1",
+        resume_id="r1",
+        resume_url="https://hh.ru/resume/r1",
+        education=None,
+        ai_profile=object(),
+    )
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=object())
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    def exploding_launch_context(*_args, **_kwargs):
+        raise BrowserLaunchError("CODEX_SANDBOX_BROWSER_FAILURE: sandboxed")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", exploding_launch_context)
+
+    history_path = tmp_path / "history.db"
+    base_args = {
+        "config": "config.yaml",
+        "headless": True,
+        "resume": "r1",
+        "dry_run": False,
+        "force": True,
+        "history": str(history_path),
+    }
+    per_command_args = {
+        "edit_education": {
+            "section": "both",
+            "source": None,
+            "mode": None,
+            "institution": "МГУ",
+            "faculty": None,
+            "specialty": None,
+            "year": None,
+            "primary_entry": None,
+            "additional_entry": None,
+        },
+        "edit_experience": {
+            "mode": "fill",
+            "career": None,
+            "existing": None,
+            "entry": ['{"company": "a", "position": "b"}'],
+        },
+        "edit_skills": {"mode": "append", "skill": ["Python=advanced"]},
+        "edit_languages": {"mode": "append", "language": ["English=B1"]},
+        "resume_position": {
+            "title": "новая",
+            "specialization": None,
+            "salary": None,
+            "currency": None,
+            "employment": None,
+            "work_format": None,
+            "commute": None,
+            "business_trips": None,
+            "mode": None,
+        },
+    }
+    args = argparse.Namespace(**base_args, **per_command_args[module_name])
+
+    with pytest.raises(BrowserLaunchError):
+        command.run(args)

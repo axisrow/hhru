@@ -81,7 +81,7 @@ def _parse_manual_records(flag: str, raw_entries) -> list:
 
 
 def _run(args: argparse.Namespace, progress) -> bool:
-    from ..browser import launch_context
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..responses import NotAuthenticated
     from ..resume_education import _record, edit_education_on_hh
@@ -203,6 +203,12 @@ def _run(args: argparse.Namespace, progress) -> bool:
             progress.failed_count += 1
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         return True
+    except BrowserLaunchError:
+        # #465 review round 3: a broad `except Exception` here would swallow
+        # BrowserLaunchError before it reaches cli.py's dedicated handler
+        # (prints "[ENVIRONMENT] ..." and exits distinctly from an ordinary
+        # command failure) — re-raise so that classification is preserved.
+        raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback
         if not args.dry_run and progress.attempted_count:
             progress.failed_count += 1

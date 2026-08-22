@@ -52,7 +52,7 @@ def register(subparsers) -> None:
 
 
 def _run(args: argparse.Namespace, progress) -> bool:
-    from ..browser import launch_context
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..languages import (
         build_languages_prompt,
@@ -109,14 +109,27 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 result = edit_languages_on_hh(
                     context.new_page(), resume, proposed, dry_run=False, mode=args.mode
                 )
+        except BrowserLaunchError:
+            # #465 review round 3: re-raise so cli.py's dedicated handler
+            # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+            # instead of the broad except Exception below swallowing it.
+            raise
         except Exception as exc:  # browser/auth errors are a failed command, not a traceback
             if progress.attempted_count:
                 progress.failed_count += 1
             print(f"[FAIL] {resume.id} — {exc}")
             return True
         if not result.success:
-            progress.failed_count += 1
-            print(f"[FAIL] {resume.id} — {result.reason}")
+            # acted=True and not success is the uncertain discriminator
+            # (CLAUDE.md #163/#176, #465 review round 3): the write may
+            # already have reached hh.ru, so this is not a definite failure.
+            uncertain = result.acted
+            if uncertain:
+                progress.uncertain_count += 1
+            else:
+                progress.failed_count += 1
+            prefix = "[FAIL] (uncertain)" if uncertain else "[FAIL]"
+            print(f"{prefix} {resume.id} — {result.reason}")
             return True
         progress.applied_count += 1
         print(f"[OK] {resume.id}: языков предложено: {len(result.proposed)}")
@@ -173,7 +186,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 )
                 content = response.content if response and response.content else ""
                 proposed = parse_language_plan(content)
-            except (ImportError, ValueError, RuntimeError) as exc:
+            except (ImportError, ValueError, RuntimeError, PlaywrightError) as exc:
+                # #465 review round 3: page.locator("body").inner_text() can
+                # also raise PlaywrightError, same as the card read above.
                 print(f"[FAIL] Не удалось построить безопасный план языков: {exc}")
                 return True
             # #265 code-review round 3: the LLM branch is a planner only, not
