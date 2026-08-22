@@ -112,7 +112,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
 
         if not args.dry_run:
             progress.begin_attempt()
-        result = edit_skills_on_hh(page, resume, proposed, dry_run=args.dry_run, mode=args.mode)
+        try:
+            result = edit_skills_on_hh(page, resume, proposed, dry_run=args.dry_run, mode=args.mode)
+        except Exception as exc:  # browser/auth errors are a failed command, not a traceback
+            if not args.dry_run:
+                progress.failed_count += 1
+            print(f"[FAIL] {resume.id} — {exc}")
+            return True
 
     if not result.success:
         if not args.dry_run:

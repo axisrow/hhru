@@ -93,20 +93,32 @@ def _run(args: argparse.Namespace, progress) -> bool:
         ):
             print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
             return True
-        progress.begin_attempt()
-        with launch_context(
-            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-        ) as context:
-            result = edit_languages_on_hh(
-                context.new_page(), resume, proposed, dry_run=False, mode=args.mode
-            )
+        try:
+            with launch_context(
+                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+            ) as context:
+                # begin_attempt() right before the real mutation, after the
+                # browser/context are already open (#465 review, round 2):
+                # counting the attempt before launch_context succeeded would
+                # misreport a browser-launch failure as a real (but failed)
+                # attempt — this whole block previously had no try/except at
+                # all, so such a failure escaped run_supervised_command's
+                # bool-based classification entirely (raw traceback,
+                # attempted=1 with every outcome column at 0).
+                progress.begin_attempt()
+                result = edit_languages_on_hh(
+                    context.new_page(), resume, proposed, dry_run=False, mode=args.mode
+                )
+        except Exception as exc:  # browser/auth errors are a failed command, not a traceback
+            if progress.attempted_count:
+                progress.failed_count += 1
+            print(f"[FAIL] {resume.id} — {exc}")
+            return True
         if not result.success:
             progress.failed_count += 1
-        else:
-            progress.applied_count += 1
-        if not result.success:
             print(f"[FAIL] {resume.id} — {result.reason}")
             return True
+        progress.applied_count += 1
         print(f"[OK] {resume.id}: языков предложено: {len(result.proposed)}")
         for language in result.proposed:
             level = language.level or "нуждается в подтверждении"
