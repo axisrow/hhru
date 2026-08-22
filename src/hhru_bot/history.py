@@ -488,6 +488,33 @@ def _pid_is_alive(pid: int | None) -> bool:
     return True
 
 
+#: #479 (Codex adversarial-review of PR #478): ``owner_pid`` is a column added
+#: by ``_ensure_column`` -- an idempotent ``ALTER TABLE`` that does not
+#: backfill PIDs onto rows written by an older binary. A genuinely stale
+#: legacy ``running`` row (created before this column existed, process long
+#: gone) and a *live* one from an older binary still executing a supervised
+#: command exactly across a ``git pull`` + reinstall between two terminal
+#: sessions are both indistinguishable by ``owner_pid IS NULL`` alone. This
+#: grace window trades a still-narrow reclaim delay for closing that overlap:
+#: a NULL-owner row younger than the grace period is treated as live (blocks
+#: a competing start, same as a confirmed-alive PID); older than it, it is
+#: still reclaimed unconditionally -- a NULL-owner row from months ago is not
+#: given an unbounded lease just because no PID was ever recorded. The window
+#: is sized well above any single supervised command's realistic duration
+#: (``apply``/``run`` under daily limits can run for a while), not "a couple
+#: of minutes" -- comparable in order of magnitude to ``throttle.BUMP_COOLDOWN``.
+LEGACY_LEASE_GRACE = timedelta(hours=6)
+
+
+def _row_is_live(row: sqlite3.Row, *, now: datetime) -> bool:
+    """Whether a ``running`` command_runs row still holds the lease (#479)."""
+    owner_pid = row["owner_pid"]
+    if owner_pid is not None:
+        return _pid_is_alive(owner_pid)
+    started_at = datetime.fromisoformat(row["started_at"])
+    return started_at > now - LEGACY_LEASE_GRACE
+
+
 class History:
     # Feedback is deliberately bounded: it is prompt context, not an archive
     # of potentially sensitive letters.
@@ -768,10 +795,11 @@ class History:
             # observe no owner before either INSERT commits.
             conn.execute("BEGIN IMMEDIATE")
             running = conn.execute(
-                "SELECT run_id, command, owner_pid FROM command_runs WHERE status='running'"
+                "SELECT run_id, command, owner_pid, started_at FROM command_runs "
+                "WHERE status='running'"
             ).fetchall()
             for row in running:
-                if _pid_is_alive(row["owner_pid"]):
+                if _row_is_live(row, now=datetime.now()):
                     raise CommandRunBusy(row["run_id"], row["command"], row["owner_pid"])
             conn.execute(
                 """UPDATE command_runs SET status='orphaned', finished_at=?, exit_code=NULL,

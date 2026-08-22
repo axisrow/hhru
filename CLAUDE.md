@@ -146,6 +146,60 @@ python3 -m playwright install chromium
    а флаговые результаты (`questions.indeterminate`, `probe.unreachable`) используют
    тот же словарь состояний `browser.PAGE_STATE`.
 
+6. **Попытка засчитывается ровно один раз, в ровно одном месте, по структурному
+   сигналу** (эпик #459, `history.py`, `commands/_common.py`):
+   - **Lease на supervised-команды.** `history.start_command_run` сериализует
+     write-команды через SQLite lease с owner PID (`owner_pid` в
+     `command_runs`, `_pid_is_alive`): конкурентный запуск другой durable-команды
+     не осиротняет активный `running`-run, а получает `CommandRunBusy` (#475).
+     `owner_pid IS NULL` — legacy-строка без записанного PID (колонка добавлена
+     `_ensure_column`, задним числом PID не бэкфиллится); `_row_is_live` даёт ей
+     `LEGACY_LEASE_GRACE` (6 часов) как живой, прежде чем считать мёртвой —
+     иначе живая строка от старого бинарника, ещё выполняющего команду ровно в
+     момент `git pull` + переустановки между двумя терминальными сессиями,
+     была бы ошибочно осиротнена, разрешив второй одновременный supervised-запуск
+     (#479). Строка старше порога по-прежнему осиротняется безусловно — это
+     тот же trade-off, что был до #478 в более широком виде, просто сужен, а не
+     закрыт полностью (не строим unbounded-lease машинерию под гипотетическую
+     сверхстарую живую строку).
+   - **`before_click`/`DurableMutationAttempt` seam** (#476) — для
+     `publish-resume`/`copy-resume`/`create-resume`/`delete-resume`: узкое окно
+     между «клик по мутирующей кнопке ушёл» и «результат записан» резервирует
+     `uncertain`-маркер в actions только начиная с реального клика, а не с любой
+     pre-click ошибки (launch_context, форма не найдена и т.п. остаются обычным
+     `failed`/retry, не блокируют повторный запуск).
+   - **`ApplyProgress.finish()`** (#477) — единая точка классификации
+     skipped→uncertain→success→failed для целого batch-результата команды;
+     хендлеры команд (`edit_experience`/`edit_education`/`edit_skills`/
+     `edit_languages`, `resume_position`) не пересчитывают этот приоритет
+     каждый по-своему.
+   - **`has_unresolved_uncertain`** блокирует повтор той же mutation-команды для
+     `resume_id`, пока не появится более поздняя `success`-строка. Для
+     `delete-resume` это структурно недостижимо, если клик реально сработал:
+     резюме удалено → повтор всегда получит «резюме не найдено», никогда
+     `success` → команда для этого `resume_id` заблокирована навсегда без
+     ручного вмешательства (#480). **Осознанно нет отдельной `--reconcile`
+     команды** — новая read-машинерия на 4 разных сценария (delete/publish/
+     copy/create) ради узкого, редкого окна была бы преждевременной
+     инфраструктурой (принцип «максимальная простота», см. выше «Схема SQLite»).
+     Вместо этого — ручная reconciliation через прямой доступ к `history.db`
+     (проект и так не имеет системы миграций/admin UI, тот же принцип):
+     1. Подтвердить фактическое состояние на hh.ru вручную (для `delete-resume`
+        — резюме отсутствует в `list-resumes`; для остальных — соответствующий
+        наблюдаемый статус/список).
+     2. Только после подтверждения — вставить резолюцию: явную `success`-строку
+        (`created_at` позже существующей `uncertain`) в таблицу `actions`, тем
+        же action-именем (`delete_resume`/`publish_resume`/`copy_resume`/
+        `create_resume`):
+        ```sql
+        INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at)
+        VALUES ('<resume_id>', '<resume_id>', 'delete_resume', 'success',
+                'manual reconciliation: confirmed via hh.ru UI', datetime('now'));
+        ```
+     Писать `success` вручную можно **только** после подтверждения на hh.ru —
+     тот же fail-closed принцип, что и у самого `uncertain`: ложный `success`
+     хуже постоянной блокировки.
+
 ### Селекторы — статус проверки (критично)
 
 Канонический источник селекторов — пакет `selector_groups/` (по страницам);

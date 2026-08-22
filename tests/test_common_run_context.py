@@ -11,13 +11,15 @@ apply-specific plumbing.
 from __future__ import annotations
 
 import signal
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from hhru_bot.commands._common import ApplyProgress, SignalTermination, run_supervised_command
 from hhru_bot.exit_codes import CommandExitCode
-from hhru_bot.history import CommandRunBusy, History
+from hhru_bot.history import LEGACY_LEASE_GRACE, CommandRunBusy, History
 
 pytestmark = pytest.mark.integration
 
@@ -82,6 +84,66 @@ def test_live_supervised_owner_rejects_competing_command_without_orphaning(
     assert len(rows) == 1
     assert rows[0]["run_id"] == active
     assert rows[0]["status"] == "running"
+
+
+def _insert_running_row(history: History, *, owner_pid: int | None, started_at: datetime) -> str:
+    """Insert a ``running`` command_runs row directly, bypassing the lease.
+
+    Simulates a row written by an older binary predating the ``owner_pid``
+    column (#479): ``_ensure_column``'s ``ALTER TABLE`` backfills existing
+    rows with NULL, it never retrofits a live PID onto them.
+    """
+    run_id = str(uuid.uuid4())
+    with history._connect() as conn:
+        conn.execute(
+            """INSERT INTO command_runs
+               (run_id, command, requested_limit, status, started_at, owner_pid)
+               VALUES (?, 'apply', NULL, 'running', ?, ?)""",
+            (run_id, started_at.isoformat(), owner_pid),
+        )
+    return run_id
+
+
+def test_recent_null_owner_row_blocks_competing_command_without_orphaning(
+    tmp_path: Path,
+) -> None:
+    """A NULL-owner row younger than the grace window is treated as live (#479).
+
+    Covers the migration-window race: an older binary, predating the
+    ``owner_pid`` column, is still executing a supervised command when a
+    freshly reinstalled binary starts and reads the same database. Without
+    the grace window, the old binary's live row (owner_pid=NULL, just
+    started) would be reclaimed unconditionally and a second supervised
+    command would run concurrently against the same account.
+    """
+    history = History(tmp_path / "history.db")
+    stale_run_id = _insert_running_row(history, owner_pid=None, started_at=datetime.now())
+
+    with pytest.raises(CommandRunBusy):
+        history.start_command_run(command="clear-negotiations", requested_limit=None)
+
+    rows = history.command_runs()
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == stale_run_id
+    assert rows[0]["status"] == "running"
+
+
+def test_old_null_owner_row_is_still_reclaimed(tmp_path: Path) -> None:
+    """A NULL-owner row older than the grace window is reclaimed as before.
+
+    Preserves pre-#479 behaviour for genuinely stale legacy rows: an
+    unbounded lease was never the intent, only closing the narrow
+    rolling-upgrade overlap.
+    """
+    history = History(tmp_path / "history.db")
+    old_started_at = datetime.now() - LEGACY_LEASE_GRACE - timedelta(minutes=1)
+    stale_run_id = _insert_running_row(history, owner_pid=None, started_at=old_started_at)
+
+    new_run_id = history.start_command_run(command="apply", requested_limit=1)
+
+    rows = {row["run_id"]: row for row in history.command_runs()}
+    assert rows[stale_run_id]["status"] == "orphaned"
+    assert rows[new_run_id]["status"] == "running"
 
 
 @pytest.mark.parametrize(
