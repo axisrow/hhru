@@ -12,6 +12,7 @@ import pytest
 
 from hhru_bot.ai.questions import Question
 from hhru_bot.ai.types import NormalizedResponse
+from hhru_bot.external_forms.detect import normalize
 from hhru_bot.questionnaires.resolver import (
     KEYWORD,
     PHRASE,
@@ -466,6 +467,13 @@ def test_resolved_answer_pending_helper_is_not_resolved():
         "Просим подтвердить, что вы указали в резюме достоверную информацию.",
         "Находитесь ли вы на территории РФ?",
         "Проживаете на территории России?",
+        # Резидентство спрашивают и без слова «территория». Смысл тот же —
+        # правовой статус пребывания, — поэтому и удерживать вопрос обязан тот
+        # же гейт: иначе одна формулировка уходит в очередь, а соседняя
+        # отвечается городом из обычного location-шаблона.
+        "Подскажите, вы на данный момент проживаете в РФ?",
+        "Территориально проживаете в РФ? В каком городе?",
+        "Вы проживаете в России?",
     ],
 )
 def test_compliance_gate_blocks_by_text_without_any_match(text):
@@ -500,6 +508,82 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
     assert not resolved.resolved
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Подскажите, вы на данный момент проживаете в РФ?",
+        "Вы проживаете в России?",
+    ],
+)
+def test_residency_question_is_not_matched_to_a_plain_template(text):
+    """Сохранённый город не должен отвечать на вопрос о резидентстве.
+
+    Регресс на асимметрию: «проживаете НА ТЕРРИТОРИИ РФ» гейт удерживал, а
+    «проживаете В РФ» уходило в обычный ``location`` и заполнялось городом с
+    keyword-уверенностью 0.95 — выше порога, то есть без очереди и без
+    подтверждения человеком. Вопрос при этом спрашивает правовой статус
+    пребывания, и город — ответ не на него. Ошибка необратима и видна
+    работодателю, поэтому оба варианта формулировки обязаны вести себя
+    одинаково.
+    """
+    # Реальный поток: шаблон ищется ПО ИМЕНИ из match, поэтому несопоставленный
+    # вопрос не имеет сохранённого значения — ровно это и передаётся дальше.
+    match = resolve_template(text, confirmed={})
+    resolved = build_answer(_text(text), None, match)
+
+    assert match is None
+    assert not resolved.resolved
+    assert not resolved.answer
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Территориально проживаете в РФ? В каком городе?",
+        "Находитесь ли вы на территории РФ? В каком городе?",
+    ],
+)
+def test_compound_residency_question_is_not_answered_by_a_guessed_template(text):
+    """Составной вопрос не отвечается городом, сохранённым для другой темы.
+
+    Латентная дырка гейта, вскрытая расширением комплаенс-паттерна (второй
+    пример воспроизводится и до него): «в каком городе» ловится обычным
+    ``location``-стемом, вопрос при этом остаётся комплаенсным ПО ТЕКСТУ, а
+    гейт считал сохранённый там город «явным значением» — хотя оператор заводил
+    его под вопрос о городе, а не о правовом статусе пребывания.
+    """
+    match = resolve_template(text, confirmed={})
+    resolved = build_answer(_text(text), _static("location", "Москва"), match)
+
+    assert match is not None and match.source == KEYWORD
+    assert not resolved.resolved
+    assert not resolved.answer
+
+
+def test_confirmed_phrase_still_answers_a_compliance_question():
+    """Подтверждённая человеком формулировка — не догадка, гейт её пропускает."""
+    text = "Подскажите, вы на данный момент проживаете в РФ?"
+    match = match_phrase(text, {normalize(text): "residency"})
+    resolved = build_answer(_text(text), _static("residency", "Да", cluster="compliance"), match)
+
+    assert match is not None and match.source == PHRASE
+    assert resolved.resolved
+    assert resolved.answer == "Да"
+
+
+def test_residency_question_is_answered_only_by_explicit_static_compliance():
+    """Явно сохранённый комплаенс-ответ по-прежнему отвечает — гейт не глухой."""
+    text = "Подскажите, вы на данный момент проживаете в РФ?"
+    resolved = build_answer(
+        _text(text),
+        _static("residency", "Да", cluster="compliance"),
+        TemplateMatch("residency", "compliance", KEYWORD, 0.95),
+    )
+
+    assert resolved.resolved
+    assert resolved.answer == "Да"
+
+
 # --- склонение и словоформы (регресс: фиксированные формы промахивались) ----
 
 
@@ -527,7 +611,6 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
         # Живой прогон 2026-08-23: реальные формулировки, промахивавшиеся мимо
         # шаблона и уходившие в очередь как незнакомые.
         ("Из какого города вы планируете работать?", "location"),
-        ("Подскажите, вы на данный момент проживаете в РФ?", "location"),
         # Аббревиатуры «ЗП»/«з/п» — живой прогон 2026-08-23: реальный вопрос
         # «От какой ЗП вилки готовы рассматривать...» не сопоставлялся ни с
         # чем и уходил в очередь как незнакомый.
@@ -653,6 +736,11 @@ def test_fenced_answer_is_accepted_end_to_end():
         # «находитесь» без уточнения места — вопрос о причинах поиска работы,
         # а не о локации; стем location не должен его задевать.
         "Почему сейчас находитесь в поиске работы?",
+        # Дефис и слэш сами являются границей слова, поэтому \bзп\b видит их
+        # как отдельный токен: аббревиатура внутри составного термина — это
+        # предметная область, а не вопрос о зарплатных ожиданиях.
+        "Знакомы с ЗП-модулем 1С?",
+        "Есть опыт работы с ЗП/кадрами?",
     ],
 )
 def test_seed_patterns_do_not_match_unrelated_questions(text):
