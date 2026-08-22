@@ -58,6 +58,7 @@ def env(monkeypatch, tmp_path):
         yield SimpleNamespace(new_page=lambda: object())
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", launch)
+
     def delete(page, resume, dry, *, before_click=None):  # noqa: ANN001, ARG001
         if not dry and (state.result.success or state.result.uncertain):
             before_click()

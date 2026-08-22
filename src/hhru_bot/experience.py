@@ -258,9 +258,7 @@ def edit_experience_on_hh(
             add = page.locator(EXPERIENCE_ADD_BUTTON)
             if add.count() != 1:
                 return results + [
-                    ExperienceResult(
-                        f"строка опыта {index}: add-триггер не подтверждён однозначно"
-                    )
+                    ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
                 ]
             try:
                 add.click()

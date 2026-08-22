@@ -398,13 +398,11 @@ def _classify_result_batch(results: list | tuple) -> str:
         success = bool(getattr(result, "success", False))
         skipped = bool(getattr(result, "skipped", False))
         uncertain = bool(
-            getattr(result, "uncertain", False)
-            or (getattr(result, "acted", False) and not success)
+            getattr(result, "uncertain", False) or (getattr(result, "acted", False) and not success)
         )
         flags.append((skipped, uncertain, success))
     hard_failed = any(
-        not skipped and not uncertain and not success
-        for skipped, uncertain, success in flags
+        not skipped and not uncertain and not success for skipped, uncertain, success in flags
     )
     if hard_failed:
         return "failed"
