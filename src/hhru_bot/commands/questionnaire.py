@@ -86,6 +86,20 @@ def register(subparsers) -> None:
     unset_parser.set_defaults(func=run_unset)
 
 
+def _limit(args: argparse.Namespace) -> int:
+    """Проверенный ``--limit``. Отрицательное значение — явная ошибка.
+
+    В SQLite ``LIMIT -1`` означает «без ограничения», то есть опечатка вроде
+    ``--limit -5`` давала бы поведение, прямо противоположное намерению, и
+    молча: команда напечатала бы ВСЮ очередь.
+    """
+    limit = getattr(args, "limit", 0) or 0
+    if limit < 1:
+        print("[FAIL] --limit должен быть >= 1", file=sys.stderr)
+        sys.exit(1)
+    return limit
+
+
 def _scope(args: argparse.Namespace) -> str | None:
     """Ключ хранения: реальный resume_id HH.ru, а не slug из конфига.
 
@@ -114,7 +128,13 @@ def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
 
-    rows = History(args.history).list_questionnaire_pending(_scope(args), limit=max(1, args.limit))
+    scope = _scope(args)
+    history = History(args.history)
+    # Тот же bootstrap, что и в learn: команда обязана показывать всё, что
+    # реально ждёт решения, включая вопросы из ранее собранных сканов, —
+    # иначе очередь выглядела бы пустой при полной базе вопросов.
+    _seed_queue_from_scans(history, scope)
+    rows = history.list_questionnaire_pending(scope, limit=_limit(args))
     if not rows:
         print("[INFO] Очередь вопросов анкет пуста.")
         return
@@ -188,6 +208,18 @@ def run_set(args: argparse.Namespace) -> None:
     if args.example and args.mode != "contextual":
         print("[FAIL] --example имеет смысл только для --mode contextual", file=sys.stderr)
         sys.exit(1)
+    from ..questionnaires.templates import is_strict
+
+    if is_strict(cluster) and args.mode != "static":
+        # Отказ на входе, а не при ответе: contextual-шаблон в строгом кластере
+        # заведомо неисполним (compliance_gate его отвергнет), и сохранить его
+        # значит дать оператору ложное ощущение настроенного ответа.
+        print(
+            f"[FAIL] кластер '{cluster}' допускает только --mode static: "
+            "документы и комплаенс отвечаются явным сохранённым значением",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     scope = _scope(args)
     history = History(args.history)
@@ -207,8 +239,10 @@ def run_set(args: argparse.Namespace) -> None:
     print(f"[OK] Шаблон '{args.template}' ({args.mode}, {cluster}) сохранён для {where}.")
     # Вопросы, стоявшие в очереди с пометкой «шаблон найден, ответа нет»,
     # теперь решены — иначе они остались бы висеть и держали бы свои вакансии
-    # заблокированными, хотя ответ уже задан.
-    history.resolve_pending_for_templates({args.template}, resume_id=scope)
+    # заблокированными, хотя ответ уже задан. Только для static: contextual без
+    # настроенного LLM по-прежнему неисполним, снимать его с очереди рано.
+    if args.mode == "static":
+        history.resolve_pending_for_templates({args.template}, resume_id=scope)
     _unblock(history, scope)
 
 
@@ -238,7 +272,9 @@ def run_learn(args: argparse.Namespace):
 
     scope = _scope(args)
     history = History(args.history)
-    rows = history.list_questionnaire_pending(scope, limit=max(1, args.limit))
+    if seeded := _seed_queue_from_scans(history, scope):
+        print(f"[INFO] Добавлено в очередь из ранее собранных анкет: {seeded}.")
+    rows = history.list_questionnaire_pending(scope, limit=_limit(args))
     if not rows:
         print("[INFO] Очередь вопросов анкет пуста.")
         return None
@@ -257,6 +293,64 @@ def run_learn(args: argparse.Namespace):
     print(f"[OK] Разобрано вопросов: {learned} из {len(rows)}.")
     _unblock(history, scope)
     return None
+
+
+def _seed_queue_from_scans(history, scope: str | None) -> int:
+    """Наполнить очередь вопросами из ранее собранных сканов (#482).
+
+    ``probe --questionnaires-only`` (#456) уже сложил в базу сотню реальных
+    вопросов, и без этого шага ``learn`` был бы пуст до первого боевого
+    ``apply``: обучать бота пришлось бы по одному вопросу за прогон, хотя
+    материал давно собран.
+
+    Вопросы, на которые резолвер и так отвечает (есть шаблон и подтверждённая
+    формулировка либо ключевые слова), в очередь не попадают — она для того,
+    что бот решить не может. Уже стоящие в очереди строки не дублируются:
+    ``record_questionnaire_pending`` дедуплицирован по ``(резюме, вопрос)``.
+    """
+    import json
+
+    from ..external_forms.detect import normalize
+    from ..questionnaires.resolver import resolve_template
+
+    templates = history.get_questionnaire_templates(scope)
+    phrases = history.get_confirmed_phrases(scope)
+    # Строки очереди, на которые ответ уже задан (static-шаблон появился после
+    # того, как вопрос туда попал), снимаются здесь же — иначе они висели бы
+    # вечно, держа свои вакансии заблокированными. Contextual-шаблоны не
+    # снимаются: без LLM они по-прежнему неисполнимы.
+    answerable = {
+        name
+        for name, row in templates.items()
+        if row.get("mode") == "static" and (row.get("answer") or "").strip()
+    }
+    history.resolve_pending_for_templates(answerable, resume_id=scope)
+    known = {row["question_key"] for row in history.list_questionnaire_pending(scope)}
+
+    by_resume: dict[str, list[dict]] = {}
+    for row in history.list_scanned_questions(scope):
+        if normalize(row["text"]) in known:
+            continue
+        match = resolve_template(row["text"], confirmed=phrases)
+        if match is not None and match.template in templates:
+            continue
+        by_resume.setdefault(row["resume_id"], []).append(
+            {
+                "text": row["text"],
+                "kind": row["kind"],
+                "is_radio": bool(row["is_radio"]),
+                "options": json.loads(row["options_json"] or "[]"),
+                "template": match.template if match else None,
+                "cluster": match.cluster if match else None,
+                "reason": "вопрос из собранных анкет, ответ не задан",
+            }
+        )
+
+    seeded = 0
+    for resume_id, items in by_resume.items():
+        if history.record_questionnaire_pending(resume_id, items):
+            seeded += len(items)
+    return seeded
 
 
 def _learn_one(history, row: dict, scope: str | None) -> int:

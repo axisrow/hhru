@@ -3115,6 +3115,42 @@ class History:
                 ).rowcount
             )
 
+    def list_scanned_questions(self, resume_id: str | None = None) -> list[dict]:
+        """Вопросы анкет из ранее собранных сканов (#482).
+
+        Источник — ``questionnaire_scans``/``questionnaire_questions``, куда
+        пишет read-only ``probe --questionnaires-only`` (#456). Нужен, чтобы
+        ``questionnaire learn`` мог начаться на уже накопленных данных: без
+        этого очередь пуста до первого боевого ``apply``, хотя сотня реальных
+        вопросов уже лежит в базе.
+
+        Дедупликация по нормализованному тексту: один и тот же вопрос
+        встречается у десятков работодателей, и разбирать его нужно один раз.
+        Берётся последняя встреча (``MAX(question.id)``) — у неё свежее
+        привязка к вакансии.
+        """
+        where = []
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT question.text, question.kind, question.is_radio,
+                       question.options_json, scan.resume_id, scan.vacancy_id,
+                       scan.vacancy_url, MAX(question.id) AS last_id
+                FROM questionnaire_questions AS question
+                JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+                {clause}
+                GROUP BY scan.resume_id, LOWER(TRIM(question.text))
+                ORDER BY last_id
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def resolve_pending_for_templates(
         self, templates: set[str], *, resume_id: str | None = None
     ) -> int:

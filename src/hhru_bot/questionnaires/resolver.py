@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -134,7 +135,7 @@ def match_keyword(
     вопрос. Такой вопрос уходит в очередь и решается человеком один раз.
     """
     normalized = normalize(text)
-    matched = {seed.name: seed for seed in seeds if any(k in normalized for k in seed.keywords)}
+    matched = {seed.name: seed for seed in seeds if seed.matches(normalized)}
     if len(matched) != 1:
         if matched:
             logger.debug(
@@ -285,6 +286,18 @@ def _contextual_prompt(question: Question, template: QuestionTemplate) -> list[d
     return [{"role": "system", "content": system}, {"role": "user", "content": "\n\n".join(parts)}]
 
 
+#: Markdown-обёртка вокруг JSON: модели её добавляют вопреки инструкции
+#: «только JSON», и без снятия валидный ответ отбрасывался бы как испорченный.
+#: Регулярка, а не removeprefix('```json'): ограждение бывает и без тега языка,
+#: и с завершающим ``` — обрезка по префиксу такие случаи пропускает.
+_CODE_FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*(?P<body>.*?)\s*```\s*$", re.DOTALL)
+
+
+def _strip_code_fence(raw: str) -> str:
+    match = _CODE_FENCE_RE.match(raw)
+    return match.group("body") if match else raw.strip()
+
+
 def parse_llm_payload(raw: str) -> tuple[dict, float]:
     """Разобрать JSON модели и её уверенность. Любое нарушение — исключение.
 
@@ -294,7 +307,7 @@ def parse_llm_payload(raw: str) -> tuple[dict, float]:
     есть испорченная уверенность прошла бы порог как ВЫСОКАЯ и была бы
     отправлена. Тот же контракт, что в ``ai/questions.py`` (#373).
     """
-    payload = json.loads(raw.strip())
+    payload = json.loads(_strip_code_fence(raw))
     if not isinstance(payload, dict):
         raise ValueError("LLM вернул не JSON-объект")
     confidence = float(payload.get("confidence", 0))

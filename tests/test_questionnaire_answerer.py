@@ -9,6 +9,7 @@ import pytest
 from hhru_bot.ai.questions import AnswerProposal, Question
 from hhru_bot.ai.types import NormalizedResponse
 from hhru_bot.config_sections.questionnaires import QuestionnairesConfig
+from hhru_bot.external_forms.detect import normalize
 from hhru_bot.history import History
 from hhru_bot.questionnaires.answerer import TemplateQuestionAnswerer, confirm_mapping
 
@@ -54,6 +55,12 @@ def _answerer(history, **kwargs) -> TemplateQuestionAnswerer:
 
 def _text(text: str = "Какие у вас зарплатные ожидания?") -> Question:
     return Question(0, text, "text")
+
+
+#: Формулировка про зарплату, которую seed-паттерны НЕ ловят — нужна там, где
+#: тест проверяет именно LLM-ступень: любой узнаваемый вопрос разрешается
+#: раньше, ключевыми словами, и до модели дело не доходит.
+_UNMATCHED_SALARY = "Ваши финансовые ожидания?"
 
 
 # --- работа без AI ----------------------------------------------------------
@@ -243,7 +250,7 @@ def test_llm_mapping_requires_confirmation(tmp_path):
         return False
 
     answerer = _answerer(history, llm=llm, learn=True, confirm_fn=_refuse)
-    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    proposal = answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert asked, "пользователя должны были спросить"
     assert proposal.low_confidence
@@ -256,10 +263,10 @@ def test_confirmed_llm_mapping_answers_and_is_remembered(tmp_path):
     llm = _LLM({"template": "salary", "confidence": 0.99})
 
     answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
-    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    proposal = answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert proposal.answer == "от 250000"
-    assert history.get_confirmed_phrases("r1")["сколько вы хотите получать в месяц?"] == "salary"
+    assert history.get_confirmed_phrases("r1")[normalize(_UNMATCHED_SALARY)] == "salary"
 
 
 def test_second_identical_question_is_not_asked_twice(tmp_path):
@@ -271,8 +278,8 @@ def test_second_identical_question_is_not_asked_twice(tmp_path):
     answerer = _answerer(
         history, llm=llm, learn=True, confirm_fn=lambda **kw: (asks.append(kw), True)[1]
     )
-    answerer.propose(_text("Сколько вы хотите получать в месяц?"))
-    answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    answerer.propose(_text(_UNMATCHED_SALARY))
+    answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert len(asks) == 1
 
@@ -420,7 +427,7 @@ def test_llm_mapping_below_the_configured_threshold_is_rejected(tmp_path):
         learn=True,
         confirm_fn=lambda **_: True,
     )
-    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    proposal = answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert proposal.answer == ""
     assert proposal.low_confidence
@@ -439,7 +446,7 @@ def test_llm_mapping_above_the_threshold_is_accepted(tmp_path):
         confirm_fn=lambda **_: True,
     )
 
-    assert answerer.propose(_text("Сколько вы хотите получать в месяц?")).answer == "от 250000"
+    assert answerer.propose(_text(_UNMATCHED_SALARY)).answer == "от 250000"
 
 
 @pytest.mark.parametrize(
@@ -458,7 +465,7 @@ def test_malformed_llm_mapping_is_rejected(tmp_path, payload):
 
     answerer = _answerer(history, llm=_LLM(payload), learn=True, confirm_fn=lambda **_: True)
 
-    assert answerer.propose(_text("Сколько вы хотите получать в месяц?")).low_confidence
+    assert answerer.propose(_text(_UNMATCHED_SALARY)).low_confidence
 
 
 def test_llm_mapping_records_the_reported_confidence(tmp_path):
@@ -477,7 +484,7 @@ def test_llm_mapping_records_the_reported_confidence(tmp_path):
         learn=True,
         confirm_fn=lambda **_: True,
     )
-    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    proposal = answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert proposal.confidence == pytest.approx(0.97), "уверенность ОТВЕТА, не порог"
     assert proposal.template == "salary"
@@ -495,7 +502,51 @@ def test_every_llm_call_is_bounded_by_a_timeout(tmp_path):
     )
 
     answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
-    answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+    answerer.propose(_text(_UNMATCHED_SALARY))
 
     assert llm.calls == 2, "должны сработать и сопоставление, и генерация ответа"
     assert all(call.get("timeout") for call in llm.kwargs)
+
+
+# --- арность вариантов и пустой account-ответ ------------------------------
+
+
+def _choice_q(text: str, *options: str, is_radio: bool) -> Question:
+    return Question(0, text, "choice", tuple(options), is_radio=is_radio)
+
+
+def test_radio_with_an_ambiguous_stored_answer_is_queued(tmp_path):
+    """Сохранённый ответ, совпадающий с ДВУМЯ radio-вариантами после
+    нормализации, отправлять нельзя: браузер оставит последний отмеченный, то
+    есть уйдёт не то, что показано в предпросмотре и записано в аудит."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("relocation", mode="static", answer="Да")
+    history.confirm_questionnaire_example("relocation", "Готовы к переезду?")
+
+    proposal = _answerer(history).propose(
+        _choice_q("Готовы к переезду?", "Да", "да ", is_radio=True)
+    )
+
+    assert proposal.low_confidence
+    assert proposal.option_indices == ()
+
+
+def test_checkbox_accepts_several_matching_options(tmp_path):
+    """Парный кейс к radio: checkbox допускает больше одного совпадения."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("skills", mode="static", answer="Python")
+    history.confirm_questionnaire_example("skills", "Навыки")
+
+    proposal = _answerer(history).propose(_choice_q("Навыки", "Python", "python ", is_radio=False))
+
+    assert not proposal.low_confidence
+    assert proposal.option_indices == (0, 1)
+
+
+def test_blank_account_answer_does_not_shadow_a_resume_override(tmp_path):
+    """`account_value or resume_value` дало бы пустую строку как «ответ»."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="")
+    history.set_questionnaire_template("salary", mode="static", answer="резюме", resume_id="r1")
+
+    assert _answerer(history).propose(_text()).answer == "резюме"

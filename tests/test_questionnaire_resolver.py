@@ -455,6 +455,10 @@ def test_resolved_answer_pending_helper_is_not_resolved():
         "Ваш СНИЛС",
         "Есть ли вид на жительство?",
         "Действующая медицинская книжка есть?",
+        "Есть ли военный билет?",
+        "Подтверждаете достоверность указанных сведений?",
+        "Находитесь ли вы на территории РФ?",
+        "Проживаете на территории России?",
     ],
 )
 def test_compliance_gate_blocks_by_text_without_any_match(text):
@@ -487,3 +491,122 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
     )
 
     assert not resolved.resolved
+
+
+# --- склонение и словоформы (регресс: фиксированные формы промахивались) ----
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # salary во всех падежах и синонимах
+        ("Ваши зарплатные ожидания?", "salary"),
+        ("Укажите желаемую зарплату", "salary"),
+        ("Зарплата?", "salary"),
+        ("Какая зарплата вас интересует?", "salary"),
+        ("Ваши пожелания по окладу", "salary"),
+        ("Желаемый оклад", "salary"),
+        ("Заработная плата?", "salary"),
+        ("уровень доходов", "salary"),
+        ("Уровень оплаты труда", "salary"),
+        ("Сколько вы хотите зарабатывать?", "salary"),
+        # location
+        ("В каком городе вы проживаете?", "location"),
+        ("Город проживания", "location"),
+        ("Где вы живёте?", "location"),
+        ("Где вы живете?", "location"),
+        ("Страна проживания?", "location"),
+        ("Ваш город?", "location"),
+        # desired_role
+        ("Желаемая должность?", "desired_role"),
+        ("Укажите желаемую роль", "desired_role"),
+        ("Какая роль вам интересна?", "desired_role"),
+        ("Какие задачи вам интересны?", "desired_role"),
+        ("Чем хотите заниматься?", "desired_role"),
+        # business_segments
+        ("С какими сегментами бизнеса вы работали?", "business_segments"),
+        ("Сегмент бизнеса?", "business_segments"),
+        ("В каких сферах у вас опыт?", "business_segments"),
+        ("Работали ли вы с B2B или B2C?", "business_segments"),
+    ],
+)
+def test_keyword_matching_survives_russian_inflection(text, expected):
+    """Русский вопрос склоняется: фиксированные словоформы промахивались на
+    большинстве реальных формулировок, и вопрос молча уходил в очередь."""
+    match = match_keyword(text)
+
+    assert match is not None, f"не распознано: {text}"
+    assert match.template == expected
+
+
+def test_seed_patterns_do_not_collide():
+    """Признак, попавший в два шаблона, снимает сопоставление вовсе (fail-closed).
+
+    Безвредно по последствиям, но тихо ломает автоматизацию: шаблон
+    перестаёт срабатывать вообще. Страж на случай добавления новых стемов.
+    """
+    from hhru_bot.external_forms.detect import normalize
+    from hhru_bot.questionnaires.templates import SEED_TEMPLATES
+
+    canonical = {
+        "salary": ("зарплатные ожидания", "желаемая зарплата", "оклад", "уровень дохода"),
+        "location": ("в каком городе", "город проживания", "страна проживания", "ваш город"),
+        "desired_role": ("желаемая должность", "какие задачи", "чем хотите заниматься"),
+        "business_segments": ("сегменты бизнеса", "в каких сферах", "с какими нишами"),
+    }
+    for owner, texts in canonical.items():
+        for text in texts:
+            hits = [seed.name for seed in SEED_TEMPLATES if seed.matches(normalize(text))]
+            assert hits == [owner], f"{text!r} задевает {hits}, ожидался только {owner}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Опишите свой самый сложный проект",
+        "Ваши зарплатные ожидания?",
+        "В каком городе вы живёте?",
+        "Есть ли опыт работы с юридическими лицами?",
+        "Знакомы ли вы с инновациями в отрасли?",
+        "Какие задачи вам интересны?",
+    ],
+)
+def test_compliance_pattern_does_not_catch_ordinary_questions(text):
+    """Ложное срабатывание безвредно (вопрос уйдёт в очередь), но глушит
+    автоматизацию — обычные вопросы паттерн задевать не должен."""
+    from hhru_bot.questionnaires.templates import is_compliance_text
+
+    assert is_compliance_text(text) is False
+
+
+# --- markdown-обёртка вокруг JSON ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"answer":"да","confidence":0.95}',
+        '```json\n{"answer":"да","confidence":0.95}\n```',
+        '```\n{"answer":"да","confidence":0.95}\n```',
+        '  {"answer":"да","confidence":0.95}  ',
+    ],
+)
+def test_llm_payload_survives_a_markdown_code_fence(raw):
+    """Модели добавляют ограждение вопреки инструкции «только JSON»; без снятия
+    валидный ответ отбрасывался бы как испорченный."""
+    from hhru_bot.questionnaires.resolver import parse_llm_payload
+
+    payload, confidence = parse_llm_payload(raw)
+
+    assert payload["answer"] == "да"
+    assert confidence == pytest.approx(0.95)
+
+
+def test_fenced_answer_is_accepted_end_to_end():
+    llm = _LLM(None, raw='```json\n{"answer":"250-300","confidence":0.97}\n```')
+
+    resolved = build_answer(
+        _text("Ожидания?"), _contextual("salary", "скажи вилку"), _salary_match(), llm=llm
+    )
+
+    assert resolved.resolved and resolved.answer == "250-300"

@@ -339,3 +339,128 @@ def test_set_requires_a_mode():
 
     with pytest.raises(SystemExit):
         parser.parse_args(["questionnaire", "set", "salary"])
+
+
+# --- bootstrap очереди из ранее собранных сканов ---------------------------
+
+
+def _scan(history, resume_id: str, vacancy_id: str, *texts: str) -> None:
+    history.record_questionnaire(
+        resume_id,
+        vacancy_id,
+        f"https://hh.ru/vacancy/{vacancy_id}",
+        "Разработчик",
+        "Acme",
+        [
+            {"body_index": i, "text": t, "kind": "text", "is_radio": False, "options": []}
+            for i, t in enumerate(texts)
+        ],
+    )
+
+
+def test_pending_seeds_the_queue_from_earlier_scans(capsys, tmp_path):
+    """probe --questionnaires-only уже собрал вопросы: обучать бота можно сразу,
+    не дожидаясь первого боевого apply."""
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID", "v1", "Опишите самый сложный проект", "Есть ли судимость?")
+
+    cmd.run_pending(_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "Опишите самый сложный проект" in out
+    assert "Есть ли судимость?" in out
+
+
+def test_seeding_deduplicates_a_question_seen_in_many_vacancies(tmp_path):
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID", "v1", "Опишите самый сложный проект")
+    _scan(history, "RID", "v2", "Опишите самый сложный проект")
+
+    cmd.run_pending(_args(tmp_path))
+
+    assert len(history.list_questionnaire_pending("RID")) == 1
+
+
+def test_seeding_skips_questions_the_resolver_already_answers(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="от 250000")
+    _scan(history, "RID", "v1", "Ваши зарплатные ожидания?", "Опишите самый сложный проект")
+
+    cmd.run_pending(_args(tmp_path))
+
+    queued = {row["question_text"] for row in history.list_questionnaire_pending("RID")}
+    assert queued == {"Опишите самый сложный проект"}
+
+
+def test_answering_a_template_clears_its_question_from_the_queue(capsys, tmp_path):
+    """Шаблон мог появиться позже, чем вопрос попал в очередь."""
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID", "v1", "Ваши зарплатные ожидания?")
+    cmd.run_pending(_args(tmp_path))
+    capsys.readouterr()
+
+    cmd.run_set(_args(tmp_path, answer="от 250000"))
+    cmd.run_pending(_args(tmp_path))
+
+    assert "зарплатные ожидания" not in capsys.readouterr().out
+
+
+def test_contextual_template_without_llm_keeps_its_question_queued(tmp_path):
+    """Contextual-шаблон без LLM неисполним — снимать вопрос с очереди рано."""
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID", "v1", "Ваши зарплатные ожидания?")
+    cmd.run_pending(_args(tmp_path))
+
+    cmd.run_set(_args(tmp_path, mode="contextual", instruction="назови вилку"))
+
+    assert len(history.list_questionnaire_pending("RID")) == 1
+
+
+def test_seeding_is_scoped_to_the_requested_resume(tmp_path):
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID1", "v1", "Опишите проект")
+    _scan(history, "RID2", "v2", "Опишите проект")
+
+    cmd.run_pending(_args(tmp_path, resume="RID1"))
+
+    assert len(history.list_questionnaire_pending("RID1")) == 1
+    assert history.list_questionnaire_pending("RID2") == []
+
+
+# --- валидация аргументов ---------------------------------------------------
+
+
+@pytest.mark.parametrize("limit", [0, -1, -50])
+def test_non_positive_limit_is_rejected(capsys, tmp_path, limit):
+    """LIMIT -1 в SQLite означает «без ограничения» — молча противоположный смысл."""
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_pending(_args(tmp_path, limit=limit))
+
+    assert exc.value.code == 1
+    assert "--limit" in capsys.readouterr().err
+
+
+def test_compliance_cluster_rejects_a_contextual_template(capsys, tmp_path):
+    """Отказ на входе, а не при ответе: такой шаблон заведомо неисполним."""
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_set(
+            _args(
+                tmp_path,
+                template="work_permit",
+                mode="contextual",
+                instruction="ответь по документам",
+                cluster="compliance",
+            )
+        )
+
+    assert exc.value.code == 1
+    assert "только --mode static" in capsys.readouterr().err
+    assert History(tmp_path / "h.db").get_questionnaire_templates() == {}
+
+
+def test_compliance_cluster_accepts_a_static_template(tmp_path):
+    cmd.run_set(
+        _args(tmp_path, template="work_permit", answer="Гражданство РФ", cluster="compliance")
+    )
+
+    assert History(tmp_path / "h.db").get_questionnaire_templates()["work_permit"]["answer"]
