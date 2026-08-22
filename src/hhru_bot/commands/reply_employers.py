@@ -241,24 +241,24 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     # действие на hh.ru, пауза нужна (#163).
                     throttle.wait(f"после ответа в чате {topic}")
             if action_id is not None:
-                # Pre-click reservation exists (begin_action above) -- finalize
-                # it in place instead of inserting a second actions row, and
-                # journal the reply separately. Two statements, not one
-                # transaction like record_reply_and_action: the durable actions
-                # row (the SIGINT-safety property) is already committed by
-                # begin_action before the click, so there is nothing left for
-                # atomicity to protect between these two -- worst case a crash
-                # here leaves the action finalized without a replies row, which
-                # only affects the has_replied() idempotency check, not the
-                # fail-closed action audit trail this fix exists for.
-                history.finalize_action(action_id, status, reason, reason_code=status)
-                history.record_reply(
+                # Pre-click reservation exists (begin_action above). Codex
+                # adversarial review (cycle-review PR #471, round 3): finalizing
+                # the action and journaling the reply as two separate
+                # transactions left a crash window where a confirmed external
+                # reply's action row was finalized but its replies row never
+                # committed -- has_replied() (dedup barrier #12) reads only
+                # replies, so that crash silently reopened the duplicate-send
+                # guard. finalize_reply_action() commits both in one
+                # transaction, matching record_reply_and_action's atomicity for
+                # the non-reserved (dry-run/pre-click-failed) path below.
+                history.finalize_reply_action(
+                    action_id,
                     topic,
                     inbound_marker,
                     vacancy_id=str(candidate["vacancy_id"]),
                     resume_id=resume_by_topic.get(topic),
                     status=status,
-                    note=reason,
+                    reason=reason,
                 )
             else:
                 history.record_reply_and_action(
