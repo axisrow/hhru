@@ -13,6 +13,7 @@ import logging
 import math
 import re
 import signal
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -112,7 +113,15 @@ def add_force_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--force",
         action="store_true",
-        help="Разрешить реальную отправку отклика с LLM-ответами на вопросы",
+        help="Разрешить реальную отправку отклика с автоматически заполненной анкетой",
+    )
+
+
+def add_questionnaire_learning_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--learn-questionnaires",
+        action="store_true",
+        help="Интерактивно подтверждать новые шаблоны вопросов (только TTY, не headless)",
     )
 
 
@@ -207,21 +216,51 @@ def _build_letter_provider(
 
 
 def _build_question_answerer(
-    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
+    config: AppConfig,
+    resume: ResumeConfig,
+    known_data: dict[str, str] | None = None,
+    history: History | None = None,
 ):
-    """Build the opt-in LLM question answerer, if configured."""
-    ai_config = getattr(config, "ai", None)
-    if ai_config is None or not ai_config.answer_questions:
+    """Build keyword automation independently; attach LLM only when enabled."""
+    ai_config = config.ai
+    questionnaire_config = config.questionnaires
+    resolver_enabled = bool(questionnaire_config and questionnaire_config.enabled)
+    llm_enabled = bool(ai_config and ai_config.answer_questions)
+    if not resolver_enabled and not llm_enabled:
         return None
-    from ..ai.llm_client import LLMClient
     from ..ai.questions import AIQuestionAnswerer
 
-    try:
-        client = LLMClient(ai_config)
-    except ImportError as exc:
-        logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+    client = None
+    if llm_enabled:
+        assert ai_config is not None
+        from ..ai.llm_client import LLMClient
+
+        try:
+            client = LLMClient(ai_config)
+        except ImportError as exc:
+            logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+    resolver = None
+    if resolver_enabled:
+        assert questionnaire_config is not None
+        if history is None:
+            raise ValueError("questionnaire resolver requires History")
+        from ..questionnaire_answers import QuestionnaireResolver
+
+        resolver = QuestionnaireResolver(
+            history,
+            questionnaire_config,
+            llm=client,
+            profile=getattr(resume, "ai_profile", None),
+            known_data=known_data,
+        )
+    if client is None and resolver is None:
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
+    return AIQuestionAnswerer(
+        client,
+        getattr(resume, "ai_profile", None),
+        known_data=known_data,
+        resolver=resolver,
+    )
 
 
 def _build_scoring_provider(
@@ -662,7 +701,7 @@ def _build_apply_providers(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
         question_answerer=_build_question_answerer(
-            config, resume, known_data=history.get_profile_answers()
+            config, resume, known_data=history.get_profile_answers(), history=history
         ),
     )
 
@@ -1052,7 +1091,9 @@ def _run_apply_for_resume(
         question_answerer = providers.question_answerer
     else:
         letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-        question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
+        question_answerer = _build_question_answerer(
+            config, resume, history.get_profile_answers(), history=history
+        )
     if approved_item:
         from ..apply.letter import LetterOutcome
 
@@ -1179,6 +1220,11 @@ def _run_apply_for_resume(
             # command ledger/action outcome through this run id.
             apply_kwargs["questionnaire_history"] = history
             apply_kwargs["run_id"] = progress.run_id if progress is not None else None
+            apply_kwargs["learn_questionnaires"] = bool(
+                getattr(args, "learn_questionnaires", False)
+                and not getattr(args, "headless", False)
+                and sys.stdin.isatty()
+            )
         if progress is not None:
             progress.begin_attempt()
         try:

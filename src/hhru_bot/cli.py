@@ -64,7 +64,14 @@ WRITE_COMMANDS = frozenset(
 
 # Nested commands need their own classification: account create mutates local
 # files, while account list is a read-only directory scan.
-WRITE_SUBCOMMANDS = frozenset({("account", "create")})
+WRITE_SUBCOMMANDS = frozenset(
+    {
+        ("account", "create"),
+        ("questionnaire", "learn"),
+        ("questionnaire", "set"),
+        ("questionnaire", "unset"),
+    }
+)
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
@@ -146,7 +153,11 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         or (args.command == "refresh-token" and getattr(args, "force", False))
         or (
             args.command,
-            getattr(args, "account_command", None),
+            getattr(
+                args,
+                "account_command" if args.command == "account" else "questionnaire_action",
+                None,
+            ),
         )
         in WRITE_SUBCOMMANDS
     )

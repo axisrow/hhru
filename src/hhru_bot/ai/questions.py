@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from playwright.sync_api import Locator, Page
 
     from ..config_sections.ai_profile import AIProfile
+    from ..questionnaire_answers import QuestionnaireResolver
+    from ..search import VacancyCard
     from .llm_client import LLMClient
 
 logger = logging.getLogger("hhru_bot.ai.questions")
@@ -49,6 +51,11 @@ class AnswerProposal:
     # ``llm`` is an answer generated for this vacancy.  The value itself never
     # leaves the process during the profile-key classification stage.
     answer_source: str = "llm"
+    template_key: str = ""
+    cluster: str = ""
+    match_source: str = ""
+    match_confidence: float = 0.0
+    confirmed: bool = False
 
     @property
     def low_confidence(self) -> bool:
@@ -173,13 +180,21 @@ def _prompt(question: Question, profile: AIProfile | None) -> list[dict[str, str
 class AIQuestionAnswerer:
     def __init__(
         self,
-        llm: LLMClient,
+        llm: LLMClient | None,
         profile: AIProfile | None = None,
         known_data: dict[str, str] | None = None,
+        resolver: QuestionnaireResolver | None = None,
     ):
         self._llm = llm
         self._profile = profile
         self._known_data = known_data or {}
+        self._resolver = resolver
+
+    def set_context(
+        self, vacancy: VacancyCard, resume_id: str, *, interactive: bool = False
+    ) -> None:
+        if self._resolver is not None:
+            self._resolver.set_context(vacancy, resume_id, interactive=interactive)
 
     def _profile_answer(self, question: Question) -> str | None:
         """Resolve a question from account facts before asking the generator."""
@@ -191,6 +206,8 @@ class AIQuestionAnswerer:
             return value
         # This classifier receives field names only; values stay local.  The
         # external-form matcher owns the sensitive-field denylist (#361).
+        if self._llm is None:
+            return None
         value = match_answer_llm(question.text, self._known_data, self._llm)
         return value if isinstance(value, str) and value.strip() else None
 
@@ -200,12 +217,49 @@ class AIQuestionAnswerer:
         return tuple(i for i, option in enumerate(question.options) if normalize(option) == wanted)
 
     def propose(self, question: Question) -> AnswerProposal:
+        if self._resolver is not None:
+            resolved = self._resolver.resolve(question)
+            if resolved.status != "resolved":
+                return AnswerProposal(
+                    question,
+                    "",
+                    0.0,
+                    answer_source="pending",
+                    template_key=resolved.template_key,
+                    cluster=resolved.cluster,
+                    match_source=resolved.match_source,
+                    match_confidence=resolved.match_confidence,
+                    confirmed=False,
+                )
+            indices = tuple(
+                i
+                for i, option in enumerate(question.options)
+                if normalize(option) in {normalize(value) for value in resolved.choice_labels}
+            )
+            if question.kind == "choice" and (
+                not indices or (question.is_radio and len(indices) != 1)
+            ):
+                return AnswerProposal(question, "", 0.0, answer_source="pending")
+            return AnswerProposal(
+                question,
+                resolved.answer,
+                resolved.confidence,
+                indices,
+                resolved.answer_source,
+                resolved.template_key,
+                resolved.cluster,
+                resolved.match_source,
+                resolved.match_confidence,
+                resolved.confirmed,
+            )
         profile_answer = self._profile_answer(question)
         if profile_answer is not None:
             indices = self._choice_indices(question, profile_answer)
             if question.kind != "choice" or indices:
                 return AnswerProposal(question, profile_answer, 1.0, indices, "profile")
         try:
+            if self._llm is None:
+                raise ValueError("LLM is not configured")
             response = self._llm.chat(_prompt(question, self._profile), temperature=0.2)
             payload: Any = json.loads((response.content or "").strip())
             confidence = float(payload.get("confidence", 0))

@@ -36,6 +36,13 @@ account:
 #   # Issue #97: dry-run previews proposed answers; real form filling requires --force.
 #   answer_questions: false
 
+# Автоматизация анкет работодателей (#482). Keyword-уровень работает без AI;
+# LLM fallback дополнительно требует ai.answer_questions: true.
+# questionnaires:
+#   enabled: false
+#   llm_match_threshold: 0.90
+#   llm_answer_threshold: 0.90
+
 
 throttle:
   min_delay_seconds: 8

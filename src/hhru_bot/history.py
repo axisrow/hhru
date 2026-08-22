@@ -349,10 +349,78 @@ CREATE TABLE IF NOT EXISTS questionnaire_questions (
     answer_source TEXT,
     confidence REAL,
     filled INTEGER NOT NULL DEFAULT 0,
-    run_id TEXT
+    run_id TEXT,
+    template_key TEXT,
+    cluster TEXT,
+    match_source TEXT,
+    match_confidence REAL,
+    confirmed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_questionnaire_questions_scan_id
     ON questionnaire_questions(scan_id);
+
+CREATE TABLE IF NOT EXISTS questionnaire_templates (
+    template_key TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    cluster TEXT NOT NULL,
+    default_mode TEXT NOT NULL,
+    default_scope TEXT NOT NULL,
+    instruction TEXT,
+    sensitive INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS questionnaire_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_key TEXT NOT NULL,
+    scope_id TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(template_key, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS questionnaire_aliases (
+    fingerprint TEXT PRIMARY KEY,
+    raw_text TEXT NOT NULL,
+    normalized_text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    template_key TEXT NOT NULL,
+    cluster TEXT NOT NULL,
+    source TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    seen_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_aliases_template
+    ON questionnaire_aliases(template_key);
+
+CREATE TABLE IF NOT EXISTS questionnaire_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint TEXT NOT NULL,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT,
+    raw_text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    proposal_json TEXT,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(fingerprint, resume_id)
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_pending_status
+    ON questionnaire_pending(status, resume_id);
 
 -- test_assignments — факт назначения внешнего теста работодателем (#180).
 -- Отдельно от responses/actions: это событие чата, а не статус отклика и не
@@ -571,6 +639,13 @@ class History:
             _ensure_column(conn, "questionnaire_questions", "confidence", "REAL")
             _ensure_column(conn, "questionnaire_questions", "filled", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(conn, "questionnaire_questions", "run_id", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "template_key", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "cluster", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "match_source", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "match_confidence", "REAL")
+            _ensure_column(
+                conn, "questionnaire_questions", "confirmed", "INTEGER NOT NULL DEFAULT 0"
+            )
             # #420 follow-up (Codex adversarial-review, PR #449): review_queue
             # rows created before this column existed have no stored search_query
             # — they stay NULL and are legacy-attributed via the existing
@@ -2719,12 +2794,13 @@ class History:
             conn.executemany(
                 """INSERT INTO questionnaire_questions
                    (scan_id, body_index, text, kind, is_radio, options_json,
-                    answer, answer_source, confidence, filled, run_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    answer, answer_source, confidence, filled, run_id, template_key,
+                    cluster, match_source, match_confidence, confirmed)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         scan_id,
-                        int(question["body_index"]),
+                        int(str(question["body_index"])),
                         str(question["text"]),
                         str(question["kind"]),
                         int(bool(question["is_radio"])),
@@ -2734,10 +2810,317 @@ class History:
                         question.get("confidence"),
                         int(bool(question.get("filled", False))),
                         run_id,
+                        question.get("template_key"),
+                        question.get("cluster"),
+                        question.get("match_source"),
+                        question.get("match_confidence"),
+                        int(bool(question.get("confirmed", False))),
                     )
                     for question in questions
                 ],
             )
+
+    def upsert_questionnaire_template(
+        self,
+        template_key: str,
+        label: str,
+        cluster: str,
+        default_mode: str,
+        default_scope: str,
+        *,
+        instruction: str | None = None,
+        sensitive: bool = False,
+        source: str = "user",
+        confirmed: bool = True,
+    ) -> None:
+        """Store one effective template; seed refreshes never replace user data."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO questionnaire_templates
+                   (template_key, label, cluster, default_mode, default_scope,
+                    instruction, sensitive, source, confirmed, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(template_key) DO UPDATE SET
+                       label = excluded.label,
+                       cluster = excluded.cluster,
+                       default_mode = excluded.default_mode,
+                       default_scope = excluded.default_scope,
+                       instruction = excluded.instruction,
+                       sensitive = excluded.sensitive,
+                       source = excluded.source,
+                       confirmed = excluded.confirmed,
+                       updated_at = excluded.updated_at
+                   WHERE questionnaire_templates.source = 'seed'
+                      OR excluded.source != 'seed'""",
+                (
+                    template_key,
+                    label,
+                    cluster,
+                    default_mode,
+                    default_scope,
+                    instruction,
+                    int(sensitive),
+                    source,
+                    int(confirmed),
+                    now,
+                    now,
+                ),
+            )
+
+    def get_questionnaire_template(self, template_key: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM questionnaire_templates WHERE template_key = ?",
+                (template_key,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_questionnaire_templates(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM questionnaire_templates ORDER BY cluster, template_key"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_questionnaire_answer(
+        self,
+        template_key: str,
+        *,
+        scope_id: str = "",
+        mode: str,
+        payload: dict[str, object],
+        source: str = "user",
+        confirmed: bool = True,
+    ) -> None:
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO questionnaire_answers
+                   (template_key, scope_id, mode, payload_json, source, confirmed,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(template_key, scope_id) DO UPDATE SET
+                       mode = excluded.mode,
+                       payload_json = excluded.payload_json,
+                       source = excluded.source,
+                       confirmed = excluded.confirmed,
+                       updated_at = excluded.updated_at""",
+                (
+                    template_key,
+                    scope_id,
+                    mode,
+                    json.dumps(payload, ensure_ascii=False),
+                    source,
+                    int(confirmed),
+                    now,
+                    now,
+                ),
+            )
+
+    def get_questionnaire_answer(self, template_key: str, resume_id: str) -> dict | None:
+        """Return a confirmed resume override, falling back to account scope."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM questionnaire_answers
+                   WHERE template_key = ? AND confirmed = 1 AND scope_id IN (?, '')
+                   ORDER BY CASE WHEN scope_id = ? THEN 0 ELSE 1 END
+                   LIMIT 1""",
+                (template_key, resume_id, resume_id),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result.pop("payload_json"))
+        return result
+
+    def delete_questionnaire_answer(self, template_key: str, scope_id: str = "") -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM questionnaire_answers WHERE template_key = ? AND scope_id = ?",
+                (template_key, scope_id),
+            )
+        return cursor.rowcount == 1
+
+    def list_questionnaire_answers(self, resume_id: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM questionnaire_answers"
+        params: tuple[str, ...] = ()
+        if resume_id is not None:
+            sql += " WHERE scope_id IN ('', ?)"
+            params = (resume_id,)
+        sql += " ORDER BY template_key, scope_id"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result.append(item)
+        return result
+
+    def upsert_questionnaire_alias(
+        self,
+        fingerprint: str,
+        raw_text: str,
+        normalized_text: str,
+        kind: str,
+        options: list[str] | tuple[str, ...],
+        template_key: str,
+        cluster: str,
+        *,
+        source: str,
+        confirmed: bool,
+    ) -> None:
+        """Persist a labelled example while protecting confirmed user corrections."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO questionnaire_aliases
+                   (fingerprint, raw_text, normalized_text, kind, options_json,
+                    template_key, cluster, source, confirmed, first_seen_at,
+                    last_seen_at, seen_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                   ON CONFLICT(fingerprint) DO UPDATE SET
+                       raw_text = excluded.raw_text,
+                       normalized_text = excluded.normalized_text,
+                       kind = excluded.kind,
+                       options_json = excluded.options_json,
+                       template_key = CASE
+                           WHEN questionnaire_aliases.confirmed = 1
+                            AND excluded.confirmed = 0
+                           THEN questionnaire_aliases.template_key
+                           ELSE excluded.template_key END,
+                       cluster = CASE
+                           WHEN questionnaire_aliases.confirmed = 1
+                            AND excluded.confirmed = 0
+                           THEN questionnaire_aliases.cluster
+                           ELSE excluded.cluster END,
+                       source = CASE
+                           WHEN questionnaire_aliases.confirmed = 1
+                            AND excluded.confirmed = 0
+                           THEN questionnaire_aliases.source
+                           ELSE excluded.source END,
+                       confirmed = MAX(questionnaire_aliases.confirmed, excluded.confirmed),
+                       last_seen_at = excluded.last_seen_at,
+                       seen_count = questionnaire_aliases.seen_count + 1""",
+                (
+                    fingerprint,
+                    raw_text,
+                    normalized_text,
+                    kind,
+                    json.dumps(options, ensure_ascii=False),
+                    template_key,
+                    cluster,
+                    source,
+                    int(confirmed),
+                    now,
+                    now,
+                ),
+            )
+
+    def get_questionnaire_alias(self, fingerprint: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM questionnaire_aliases WHERE fingerprint = ? AND confirmed = 1",
+                (fingerprint,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def enqueue_questionnaire_pending(
+        self,
+        fingerprint: str,
+        resume_id: str,
+        vacancy_id: str | None,
+        raw_text: str,
+        kind: str,
+        options: list[str] | tuple[str, ...],
+        *,
+        proposal: dict[str, object] | None,
+        reason: str,
+    ) -> None:
+        now = datetime.now().isoformat()
+        proposal_json = json.dumps(proposal, ensure_ascii=False) if proposal else None
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO questionnaire_pending
+                   (fingerprint, resume_id, vacancy_id, raw_text, kind, options_json,
+                    proposal_json, reason, status, first_seen_at, last_seen_at, seen_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)
+                   ON CONFLICT(fingerprint, resume_id) DO UPDATE SET
+                       vacancy_id = excluded.vacancy_id,
+                       raw_text = excluded.raw_text,
+                       kind = excluded.kind,
+                       options_json = excluded.options_json,
+                       proposal_json = excluded.proposal_json,
+                       reason = excluded.reason,
+                       status = 'pending',
+                       last_seen_at = excluded.last_seen_at,
+                       seen_count = questionnaire_pending.seen_count + 1""",
+                (
+                    fingerprint,
+                    resume_id,
+                    vacancy_id,
+                    raw_text,
+                    kind,
+                    json.dumps(options, ensure_ascii=False),
+                    proposal_json,
+                    reason,
+                    now,
+                    now,
+                ),
+            )
+
+    def list_questionnaire_pending(
+        self, resume_id: str | None = None, *, limit: int = 0
+    ) -> list[dict]:
+        sql = "SELECT * FROM questionnaire_pending WHERE status = 'pending'"
+        params: list[object] = []
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        sql += " ORDER BY first_seen_at, id"
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["options"] = json.loads(item.pop("options_json"))
+            proposal_json = item.pop("proposal_json")
+            item["proposal"] = json.loads(proposal_json) if proposal_json else None
+            result.append(item)
+        return result
+
+    def list_questionnaire_questions_for_learning(self, resume_id: str | None = None) -> list[dict]:
+        sql = """SELECT question.text, question.kind, question.is_radio,
+                        question.options_json, scan.resume_id, scan.vacancy_id
+                   FROM questionnaire_questions AS question
+                   JOIN questionnaire_scans AS scan ON scan.id = question.scan_id"""
+        params: tuple[str, ...] = ()
+        if resume_id is not None:
+            sql += " WHERE scan.resume_id = ?"
+            params = (resume_id,)
+        sql += " ORDER BY question.id"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["options"] = json.loads(item.pop("options_json"))
+            result.append(item)
+        return result
+
+    def mark_questionnaire_pending(self, pending_id: int, status: str) -> bool:
+        if status not in {"confirmed", "skipped"}:
+            raise ValueError(f"unknown pending status: {status}")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE questionnaire_pending SET status = ?, last_seen_at = ? WHERE id = ?",
+                (status, datetime.now().isoformat(), pending_id),
+            )
+        return cursor.rowcount == 1
 
     def questionnaire_answer_summary(
         self, resume_id: str | None = None, period: str = "all"

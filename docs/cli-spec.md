@@ -105,6 +105,7 @@
 | `funnel`    | воронка откликов (#13)                       | READ           | ASCII-таблица / md             |
 | `mark`      | ручная пометка оффера (#13)                  | WRITE-local    | `[OK]`                         |
 | `profile`   | управление профилем аккаунта (#287)          | READ/WRITE-local | ASCII-таблица / `[OK]`        |
+| `questionnaire` | шаблоны и очередь ответов на анкеты (#482) | READ/WRITE-local | ASCII-таблица / `[OK]`        |
 | `schedule`  | генератор конфига launchd/cron (#18)         | READ           | текст (plist/crontab)          |
 
 ### 3.2. Команды s3rgeym, явно НЕ переносимые
@@ -510,6 +511,25 @@
 - Старые записи `resume.form_profile.answers` в YAML больше не читаются. Их нужно
   один раз перенести вручную командами `hhru_bot profile set "<вопрос>" "<значение>"`;
   автоматического переноса нет, чтобы не дублировать персональные данные в конфиге.
+
+---
+
+#### `questionnaire` — шаблоны ответов на анкеты (#482)
+
+- **Природа:** `pending`/`templates` — READ; `learn`/`set`/`unset` — WRITE-local.
+- **Сигнатуры:** `questionnaire pending|templates [--resume <id>]`,
+  `questionnaire learn [--resume <id>] [--limit N]`,
+  `questionnaire set <template> [--resume <id>] --mode static|contextual ...`,
+  `questionnaire unset <template> [--resume <id>]`.
+- Resolver работает последовательно: подтверждённый alias/keyword → LLM fallback →
+  интерактивный вопрос или локальная pending-очередь. Классическая ML-модель пока
+  не используется; подтверждённые alias сохраняются как будущая обучающая выборка.
+- Первое LLM-сопоставление всегда подтверждается пользователем. Статические и
+  compliance-поля требуют явно сохранённого ответа; варианты выбора сохраняются
+  по видимой нормализованной подписи, а не по DOM-индексу.
+- `apply`/`run --learn-questionnaires` разрешает inline-обучение только в TTY и
+  не в headless. Иначе неизвестный вопрос попадает в очередь, а вакансия
+  fail-closed пропускается. Боевой submit анкеты требует `--force`.
 
 ---
 

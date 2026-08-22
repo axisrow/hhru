@@ -123,6 +123,7 @@ def test_all_commands_registered():
         "restore",
         "resume-views",
         "review",
+        "questionnaire",
     }
 
 
@@ -183,6 +184,7 @@ def test_register_commands_returns_names():
         "backup",
         "resume_views",
         "review",
+        "questionnaire",
     }
 
 
@@ -207,6 +209,7 @@ def test_apply_has_limit():
     assert "--dry-run" in opts
     assert "--max-pages" in opts
     assert "--limit" in opts
+    assert "--learn-questionnaires" in opts
 
 
 def test_restore_has_no_dead_dry_run_flag():
