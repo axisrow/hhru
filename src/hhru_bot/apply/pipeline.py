@@ -29,6 +29,7 @@ from .blockers import PostClickBlocker, PostSubmitLimitExceeded
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
+from .questionnaire import question_cluster_key
 from .questions import detect_questions
 from .steps import SubmitClickUncertain
 from .success import wait_success_confirmation
@@ -229,6 +230,13 @@ def _record_questionnaire_answers(
                     "answer_source": proposal.answer_source,
                     "confidence": proposal.confidence,
                     "filled": filled,
+                    # #482: attribute the row to a learnable template (when
+                    # the resolver answered it) and a deterministic cluster
+                    # key (always -- lets stats group repeat questions across
+                    # vacancies the same way apply/questionnaire.py's bulk
+                    # scan report does).
+                    "template": proposal.template,
+                    "cluster": question_cluster_key(proposal.question),
                 }
                 for proposal in proposals
             ],

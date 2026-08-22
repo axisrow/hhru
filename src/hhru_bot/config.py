@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     # Только для статического анализа; реальный импорт был бы циклическим
     # (config_sections.ai импортирует ConfigError из config).
     from .config_sections.ai import AiConfig
+    from .config_sections.questionnaires import QuestionnairesConfig
 
 
 @dataclass
@@ -103,6 +104,9 @@ class AppConfig:
     # None = AI-функциональность выключена (issue #16, Этап 5). TOP-LEVEL секция ai
     # (как account), парсится в load_config через config_sections.ai.parse_ai.
     ai: AiConfig | None = None
+    # None = keyword resolver анкет выключен (issue #482). TOP-LEVEL секция
+    # questionnaires (как ai), парсится через config_sections.questionnaires.
+    questionnaires: QuestionnairesConfig | None = None
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
         # #319: ключ адресации — slug из конфига ИЛИ реальный resume_id HH.ru
@@ -138,6 +142,7 @@ def load_config(path: str | Path) -> AppConfig:
     from .config_sections import names as section_names
     from .config_sections import parse_account
     from .config_sections.ai import parse_ai
+    from .config_sections.questionnaires import parse_questionnaires
 
     path = Path(path)
     if not path.exists():
@@ -164,6 +169,10 @@ def load_config(path: str | Path) -> AppConfig:
     # TOP-LEVEL секция ai (issue #16, Этап 5): провайдер/модель/base_url.
     # Опциональна — None, если секции нет. API-ключ НЕ парсится из yaml (только env).
     ai = parse_ai(raw.get("ai"), "ai")
+
+    # TOP-LEVEL секция questionnaires (issue #482): keyword resolver анкет,
+    # независимый от ai.answer_questions. Опциональна — None, если секции нет.
+    questionnaires = parse_questionnaires(raw.get("questionnaires"), "questionnaires")
 
     throttle_raw = raw.get("throttle", {})
     throttle = ThrottleConfig(
@@ -223,6 +232,7 @@ def load_config(path: str | Path) -> AppConfig:
         resumes=resumes,
         user_agent=user_agent,
         ai=ai,
+        questionnaires=questionnaires,
     )
 
 

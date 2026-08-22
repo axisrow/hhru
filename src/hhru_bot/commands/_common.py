@@ -206,22 +206,69 @@ def _build_letter_provider(
     )
 
 
-def _build_question_answerer(
-    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
-):
-    """Build the opt-in LLM question answerer, if configured."""
+def _build_llm_client_for_questions(config: AppConfig):
+    """Build the shared LLMClient used by both the old and #482 answer paths.
+
+    Returns ``None`` (with a logged warning) rather than raising when
+    ``hermes-agent-axisrow`` isn't installed -- absence of the optional [ai]
+    extra must degrade to "no LLM fallback", not crash apply.
+    """
     ai_config = getattr(config, "ai", None)
     if ai_config is None or not ai_config.answer_questions:
         return None
     from ..ai.llm_client import LLMClient
-    from ..ai.questions import AIQuestionAnswerer
 
     try:
-        client = LLMClient(ai_config)
+        return LLMClient(ai_config)
     except ImportError as exc:
         logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
+
+
+def _build_question_answerer(config: AppConfig, resume: ResumeConfig, history: History):
+    """Build the question answerer used by apply's pipeline, if configured.
+
+    Issue #482: ``questionnaires.enabled`` and ``ai.answer_questions`` are
+    independent switches. Exactly one of four cases applies:
+
+    - neither set -> ``None`` (pipeline skips every questionnaire, unchanged
+      pre-#482 behaviour).
+    - only ``ai.answer_questions`` -> the plain ``AIQuestionAnswerer``
+      returned directly, NOT wrapped in ``HybridQuestionAnswerer`` -- keeps
+      this path byte-identical to before #482 (explicit regression test).
+    - only ``questionnaires.enabled`` -> ``HybridQuestionAnswerer`` with
+      ``llm_answerer=None`` -- keyword resolver works with zero AI
+      dependency ("Keyword resolver работает без AI-зависимости").
+    - both set -> ``HybridQuestionAnswerer`` wrapping the plain
+      ``AIQuestionAnswerer`` as its profile/LLM fallback stage, plus the raw
+      ``LLMClient`` for contextual-template answers.
+    """
+    questionnaires_config = getattr(config, "questionnaires", None)
+    questionnaires_enabled = bool(questionnaires_config) and questionnaires_config.enabled
+    llm_client = _build_llm_client_for_questions(config)
+
+    llm_answerer = None
+    if llm_client is not None:
+        from ..ai.questions import AIQuestionAnswerer
+
+        llm_answerer = AIQuestionAnswerer(
+            llm_client,
+            getattr(resume, "ai_profile", None),
+            known_data=history.get_profile_answers(),
+        )
+
+    if not questionnaires_enabled:
+        return llm_answerer
+
+    from ..apply.questionnaire_answerer import HybridQuestionAnswerer
+
+    return HybridQuestionAnswerer(
+        history=history,
+        resume_id=resume.resume_id,
+        llm_answerer=llm_answerer,
+        llm=llm_client,
+        answer_threshold=questionnaires_config.llm_answer_threshold,
+    )
 
 
 def _build_scoring_provider(
@@ -661,9 +708,7 @@ def _build_apply_providers(
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
-        question_answerer=_build_question_answerer(
-            config, resume, known_data=history.get_profile_answers()
-        ),
+        question_answerer=_build_question_answerer(config, resume, history),
     )
 
 
@@ -1052,7 +1097,7 @@ def _run_apply_for_resume(
         question_answerer = providers.question_answerer
     else:
         letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-        question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
+        question_answerer = _build_question_answerer(config, resume, history)
     if approved_item:
         from ..apply.letter import LetterOutcome
 

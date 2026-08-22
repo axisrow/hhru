@@ -1063,6 +1063,38 @@ def test_apply_force_gate_blocks_when_questions_found_without_force(monkeypatch)
     assert "--force" in result.reason
 
 
+def test_apply_force_gate_blocks_resolver_only_answerer_without_llm(monkeypatch):
+    """#482 regression: --force is required even when the questionnaire is
+    answered purely by the keyword resolver (no LLM configured at all) --
+    "Любая реальная отправка заполненной анкеты требует --force" doesn't
+    carve out an exception for the AI-free path.
+    """
+    from hhru_bot.apply.questionnaire_answerer import HybridQuestionAnswerer
+
+    class _History:
+        def get_confirmed_matches(self):
+            return {}
+
+        def get_template(self, _name):
+            return None
+
+        def get_template_answers(self, _name):
+            return {"account": None, "resume": {}}
+
+    answerer = HybridQuestionAnswerer(history=_History(), resume_id="RID", llm_answerer=None)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=answerer, force=False
+    )
+
+    assert result.success is False
+    assert "--force" in result.reason
+
+
 def test_apply_extracted_mismatch_skips_instead_of_blank_submit(monkeypatch):
     """B1 cycle-review #373: detect_questions() (task-body OR heuristic
     radio/checkbox/textarea) can say has_questions=True while extract_questions()
@@ -1244,6 +1276,39 @@ def test_apply_questionnaire_audit_records_low_confidence_without_fill(monkeypat
     assert args[5][0]["answer"] == ""
     assert args[5][0]["confidence"] == 0.2
     assert args[5][0]["filled"] is False
+
+
+def test_apply_questionnaire_audit_records_template_and_cluster(monkeypatch):
+    """#482: keyword-resolver answers must attribute the audit row to the
+    template name and a deterministic cluster key, not just answer_source.
+    """
+    from hhru_bot.ai.questions import AnswerProposal, Question
+    from hhru_bot.apply.questionnaire import question_cluster_key
+
+    question = Question(0, "Желаемая зарплата", "text")
+    proposal = AnswerProposal(question, "300000", 1.0, answer_source="template", template="salary")
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-482",
+    )
+
+    assert result.success is True
+    args, _kwargs = history.calls[0]
+    assert args[5][0]["template"] == "salary"
+    assert args[5][0]["cluster"] == question_cluster_key(question)
 
 
 def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):

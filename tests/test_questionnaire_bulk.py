@@ -445,6 +445,31 @@ def test_group_questions_empty_input_returns_empty_list():
     assert questionnaire.group_questions([]) == []
 
 
+# --- #482: question_cluster_key — тот же ключ, что group_questions, как
+# переиспользуемая чистая функция для аудита анкеты (template/cluster поля).
+
+
+def test_question_cluster_key_matches_group_questions_grouping():
+    """cluster для одного и того же вопроса должен совпадать с тем, что
+    group_questions использует для дедупа — иначе аудит и репорт кластеров
+    разошлись бы в определении "один и тот же вопрос".
+    """
+    q1 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
+    q2 = Question(1, "готовы  к переезду? ", "choice", ("Нет", "Да"), is_radio=True)
+    assert questionnaire.question_cluster_key(q1) == questionnaire.question_cluster_key(q2)
+
+
+def test_question_cluster_key_differs_for_different_options():
+    q1 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет"), is_radio=True)
+    q2 = Question(0, "Готовы к переезду?", "choice", ("Да", "Нет", "Не знаю"), is_radio=True)
+    assert questionnaire.question_cluster_key(q1) != questionnaire.question_cluster_key(q2)
+
+
+def test_question_cluster_key_is_deterministic():
+    q = Question(0, "Ваш опыт?", "text")
+    assert questionnaire.question_cluster_key(q) == questionnaire.question_cluster_key(q)
+
+
 # --- #448: потоковый прогресс, счётчики, лимит, прерывание ---
 
 
