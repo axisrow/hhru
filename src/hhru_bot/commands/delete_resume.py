@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ._audit import action_status, record_resume_action
+from ._common import ApplyProgress, run_supervised_command
 from .copy_resume import confirm_write
 
 
@@ -32,7 +33,7 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..delete_resume import delete_resume_on_hh
@@ -58,33 +59,69 @@ def run(args: argparse.Namespace) -> None:
             "Ничего не удалено."
         )
         raise SystemExit(1)
-
-    try:
-        with launch_context(
-            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-        ) as context:
-            result = delete_resume_on_hh(context.new_page(), resume, dry_run)
-    except NotAuthenticated as exc:
-        if not dry_run:
-            record_resume_action(history, resume.resume_id, "delete_resume", "failed", str(exc))
-        print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
-        raise SystemExit(1) from None
-    except Exception as exc:
-        if not dry_run:
-            record_resume_action(
-                history, resume.resume_id, "delete_resume", "failed", f"исключение: {exc}"
-            )
-        raise
-
-    if not dry_run:
-        status = action_status(dry_run=False, success=result.success, uncertain=result.uncertain)
-        record_resume_action(history, resume.resume_id, "delete_resume", status, result.reason)
-    if not result.success:
-        prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
-        print(f"{prefix} {resume.id} — {result.reason}")
+    # #464 cycle-review (Codex round 2): mirrors publish-resume/copy-resume's
+    # existing guard -- an unresolved uncertain deletion must block a blind
+    # retry, since the destructive click may have already gone through.
+    if not dry_run and history.has_unresolved_uncertain(resume.resume_id, "delete_resume"):
+        print(
+            f"[FAIL] {resume.id} — предыдущее удаление не подтверждено (uncertain). "
+            "Проверьте статус резюме на hh.ru вручную перед повтором."
+        )
         raise SystemExit(1)
-    if dry_run:
-        print(f"[DRY-RUN] Резюме {resume.id}: {result.reason}")
-        print("[INFO] Ничего не удалено.")
-    else:
-        print(f"[OK] Резюме {resume.id} удалено")
+
+    def _body(progress: ApplyProgress) -> bool:
+        try:
+            if not dry_run:
+                progress.begin_attempt()
+            with launch_context(
+                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+            ) as context:
+                result = delete_resume_on_hh(context.new_page(), resume, dry_run)
+        except NotAuthenticated as exc:
+            if not dry_run:
+                progress.failed_count += 1
+                record_resume_action(history, resume.resume_id, "delete_resume", "failed", str(exc))
+            print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
+            return True
+        except BaseException as exc:
+            # #464 cycle-review (Codex round 2): ``BaseException``, not
+            # ``Exception`` -- delete_resume_on_hh's own destructive-click
+            # try/except (delete_resume.py library module) already treats a
+            # PlaywrightError after the confirm click as uncertain, but a
+            # SIGTERM/KeyboardInterrupt landing at that same point is a
+            # BaseException and previously bypassed this whole block, leaving
+            # no actions row and no has_unresolved_uncertain marker to block
+            # a retry. Fail-closed: a signal interrupt is recorded
+            # ``uncertain``; an ordinary pre-click exception keeps the prior
+            # ``failed`` status (unchanged behavior).
+            if not dry_run:
+                progress.failed_count += 1
+                status = "failed" if isinstance(exc, Exception) else "uncertain"
+                record_resume_action(
+                    history, resume.resume_id, "delete_resume", status, f"исключение: {exc}"
+                )
+            raise
+
+        if not dry_run:
+            progress.finish(result)
+            status = action_status(
+                dry_run=False, success=result.success, uncertain=result.uncertain
+            )
+            record_resume_action(history, resume.resume_id, "delete_resume", status, result.reason)
+        if not result.success:
+            prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
+            print(f"{prefix} {resume.id} — {result.reason}")
+            return True
+        if dry_run:
+            print(f"[DRY-RUN] Резюме {resume.id}: {result.reason}")
+            print("[INFO] Ничего не удалено.")
+        else:
+            print(f"[OK] Резюме {resume.id} удалено")
+        return False
+
+    return run_supervised_command(
+        command=getattr(args, "command", "delete-resume"),
+        history=history,
+        requested_limit=None,
+        body=_body,
+    )

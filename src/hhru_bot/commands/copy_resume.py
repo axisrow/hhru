@@ -15,6 +15,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ._common import ApplyProgress, run_supervised_command
+
 
 def register(subparsers) -> None:
     p = subparsers.add_parser(
@@ -72,7 +74,7 @@ def format_config_snippet(new_resume_id: str) -> str:
     )
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..copy_resume import copy_resume_on_hh
@@ -111,56 +113,80 @@ def run(args: argparse.Namespace) -> None:
                 "повторный запуск создаст ещё один дубль на hh.ru."
             )
 
-    try:
-        with launch_context(
-            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-        ) as context:
-            page = context.new_page()
-            result = copy_resume_on_hh(page, resume, args.dry_run)
-    except NotAuthenticated as e:
+    def _body(progress: ApplyProgress) -> bool:
+        try:
+            if not args.dry_run:
+                progress.begin_attempt()
+            with launch_context(
+                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+            ) as context:
+                page = context.new_page()
+                result = copy_resume_on_hh(page, resume, args.dry_run)
+        except NotAuthenticated as e:
+            if not args.dry_run:
+                progress.failed_count += 1
+                record_resume_action(history, resume.resume_id, "copy_resume", "failed", str(e))
+            print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
+            return True
+        except BaseException as e:
+            # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
+            # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
+            # ретраи) — копия на hh.ru могла создаться, а локальной записи не будет.
+            # Результат после возможного клика не подтверждён: это ``uncertain`,
+            # а не failed, чтобы не разрешить безопасный на вид повтор.
+            # #464 cycle-review (Codex round 2): ``BaseException``, not
+            # ``Exception`` -- SIGTERM/KeyboardInterrupt (both BaseException)
+            # landing right after copy_resume_on_hh's clone click previously
+            # bypassed this whole block, leaving no uncertain marker and
+            # letting the has_unresolved_uncertain guard above pass a blind
+            # retry through undetected.
+            if not args.dry_run:
+                progress.uncertain_count += 1
+                record_resume_action(
+                    history,
+                    resume.resume_id,
+                    "copy_resume",
+                    "uncertain",
+                    f"исключение в браузерном шаге: {e}",
+                )
+            raise
+
+        # Fail-closed (#116): success без нового id или с id, совпавшим с исходным,
+        # успехом не считается — копия не подтверждена.
+        if result.success and not args.dry_run:
+            if not result.new_resume_id or result.new_resume_id == resume.resume_id:
+                result.success = False
+                result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
+
         if not args.dry_run:
-            record_resume_action(history, resume.resume_id, "copy_resume", "failed", str(e))
-        print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
-        sys.exit(1)
-    except Exception as e:
-        # Клик по «Дублировать» уже мог уйти на hh.ru (POST /applicant/resumes/clone)
-        # раньше, чем упало исключение (например, goto_hh при diff-fallback исчерпал
-        # ретраи) — копия на hh.ru могла создаться, а локальной записи не будет.
-        # Результат после возможного клика не подтверждён: это ``uncertain`,
-        # а не failed, чтобы не разрешить безопасный на вид повтор.
-        if not args.dry_run:
-            record_resume_action(
-                history,
-                resume.resume_id,
-                "copy_resume",
-                "uncertain",
-                f"исключение в браузерном шаге: {e}",
+            progress.finish(result)
+            status = action_status(
+                dry_run=False, success=result.success, uncertain=result.uncertain
             )
-        raise
+            reason = (
+                f"new_resume_id={result.new_resume_id}" if status == "success" else result.reason
+            )
+            # Для action='copy_resume' нет vacancy_id (операция над резюме, не отклик) —
+            # как у bump, заполняем sentinel'ом resume_id.
+            record_resume_action(history, resume.resume_id, "copy_resume", status, reason)
 
-    # Fail-closed (#116): success без нового id или с id, совпавшим с исходным,
-    # успехом не считается — копия не подтверждена.
-    if result.success and not args.dry_run:
-        if not result.new_resume_id or result.new_resume_id == resume.resume_id:
-            result.success = False
-            result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
+        if args.dry_run:
+            if not result.success:
+                print(f"[FAIL] {resume.id} — {result.reason}")
+                return True
+            print("[INFO] Ничего не отправлено.")
+        elif result.success:
+            print(f"[OK] Резюме {resume.id} скопировано. Новый resume_id: {result.new_resume_id}")
+            print(format_config_snippet(result.new_resume_id))
+        else:
+            prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
+            print(f"{prefix} {resume.id} — {result.reason}")
+            return True
+        return False
 
-    if not args.dry_run:
-        status = action_status(dry_run=False, success=result.success, uncertain=result.uncertain)
-        reason = f"new_resume_id={result.new_resume_id}" if status == "success" else result.reason
-        # Для action='copy_resume' нет vacancy_id (операция над резюме, не отклик) —
-        # как у bump, заполняем sentinel'ом resume_id.
-        record_resume_action(history, resume.resume_id, "copy_resume", status, reason)
-
-    if args.dry_run:
-        if not result.success:
-            print(f"[FAIL] {resume.id} — {result.reason}")
-            sys.exit(1)
-        print("[INFO] Ничего не отправлено.")
-    elif result.success:
-        print(f"[OK] Резюме {resume.id} скопировано. Новый resume_id: {result.new_resume_id}")
-        print(format_config_snippet(result.new_resume_id))
-    else:
-        prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
-        print(f"{prefix} {resume.id} — {result.reason}")
-        sys.exit(1)
+    return run_supervised_command(
+        command=getattr(args, "command", "copy-resume"),
+        history=history,
+        requested_limit=None,
+        body=_body,
+    )
