@@ -7,6 +7,7 @@ No endpoint is called directly: both destructive steps are UI clicks.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -49,7 +50,13 @@ def _wait_resume_list_ready(page: Page) -> None:
     )
 
 
-def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult:
+def delete_resume_on_hh(
+    page: Page,
+    resume,
+    dry_run: bool,
+    *,
+    before_click: Callable[[], None] | None = None,
+) -> DeleteResumeResult:
     """Delete exactly ``resume.resume_id`` after strict identity checks.
 
     A post-click exception is ``uncertain``: the click may have reached hh.ru.
@@ -137,6 +144,8 @@ def delete_resume_on_hh(page: Page, resume, dry_run: bool) -> DeleteResumeResult
             resume_id, False, "подтверждение удаления не подтверждено однозначно", False
         )
     try:
+        if before_click is not None:
+            before_click()
         confirm.first.click()
     except PlaywrightError as exc:
         return DeleteResumeResult(resume_id, False, f"ошибка destructive-клика: {exc}", True)

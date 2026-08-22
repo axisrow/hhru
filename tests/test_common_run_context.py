@@ -17,7 +17,7 @@ import pytest
 
 from hhru_bot.commands._common import ApplyProgress, SignalTermination, run_supervised_command
 from hhru_bot.exit_codes import CommandExitCode
-from hhru_bot.history import History
+from hhru_bot.history import CommandRunBusy, History
 
 pytestmark = pytest.mark.integration
 
@@ -67,6 +67,21 @@ def test_failed_run_with_attempts_is_partial(tmp_path: Path) -> None:
     assert result is True
     row = history.command_runs()[-1]
     assert row["status"] == "partial"
+
+
+def test_live_supervised_owner_rejects_competing_command_without_orphaning(
+    tmp_path: Path,
+) -> None:
+    history = History(tmp_path / "history.db")
+    active = history.start_command_run(command="apply", requested_limit=1)
+
+    with pytest.raises(CommandRunBusy):
+        history.start_command_run(command="clear-negotiations", requested_limit=None)
+
+    rows = history.command_runs()
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == active
+    assert rows[0]["status"] == "running"
 
 
 @pytest.mark.parametrize(

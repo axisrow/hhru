@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -123,7 +124,13 @@ def _visibility_text(page: Page) -> str:
     return ""
 
 
-def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> PublishResumeResult:
+def publish_resume_on_hh(
+    page: Page,
+    resume: ResumeConfig,
+    dry_run: bool,
+    *,
+    before_click: Callable[[], None] | None = None,
+) -> PublishResumeResult:
     """Inspect one config resume and optionally click its publish button."""
     try:
         open_confirmed_resume(page, resume.resume_id)
@@ -200,6 +207,8 @@ def publish_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> Pub
         return PublishResumeResult(resume.id, True, reason, state.status, state.is_searchable)
 
     try:
+        if before_click is not None:
+            before_click()
         publish.first.click(timeout=PUBLISH_TIMEOUT_MS)
     except PlaywrightError as exc:
         # #219 (по аналогии с #176/#207): клик мог уйти на hh.ru раньше, чем

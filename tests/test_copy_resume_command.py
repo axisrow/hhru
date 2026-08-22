@@ -100,8 +100,10 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
 
-    def fake_copy(page, resume, dry_run):
+    def fake_copy(page, resume, dry_run, *, before_click=None):
         state.calls.append((resume.id, dry_run))
+        if not dry_run and (state.result.success or state.result.uncertain):
+            before_click()
         return state.result
 
     monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", fake_copy)
@@ -165,8 +167,9 @@ def test_run_browser_failure_exits_1(env, capsys, tmp_path):
             "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
             (OLD_ID,),
         ).fetchone()
-    assert row["status"] == "failed"
-    assert row["reason"] == reason
+    assert row is None
+    run = h.command_runs()[-1]
+    assert run["attempted"] == run["failed"] == run["uncertain"] == 0
 
 
 def test_run_same_resume_id_fails_closed(env, capsys, tmp_path):
@@ -197,8 +200,9 @@ def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, 
     # (например, goto_hh при diff-fallback исчерпал ретраи) — не должны молчать
     # локально о попытке: пишем uncertain в actions ДО того, как исключение улетит
     # дальше (#132 review: без этого возможна копия на hh.ru без локальной записи).
-    def raising_copy(page, resume, dry_run):
+    def raising_copy(page, resume, dry_run, *, before_click):
         env.calls.append((resume.id, dry_run))
+        before_click()
         raise RuntimeError("goto_hh исчерпал ретраи")
 
     monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", raising_copy)
@@ -214,7 +218,21 @@ def test_run_browser_exception_still_records_audit_then_reraises(env, tmp_path, 
             (OLD_ID,),
         ).fetchone()
     assert row["status"] == "uncertain"
-    assert "исключение в браузерном шаге" in row["reason"]
+    assert "исключение после точки невозврата" in row["reason"]
+
+
+def test_pre_click_launch_failure_leaves_no_uncertain_marker(env, tmp_path, monkeypatch):
+    def fail_launch(*_args, **_kwargs):
+        raise RuntimeError("transient launch failure")
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fail_launch)
+
+    with pytest.raises(RuntimeError, match="transient launch failure"):
+        cmd.run(_args(tmp_path, force=True))
+
+    history = History(tmp_path / "h.db")
+    assert not history.has_unresolved_uncertain(OLD_ID, "copy_resume")
+    assert history.command_runs()[-1]["attempted"] == 0
 
 
 def test_run_uncertain_blocks_subsequent_copy(env, tmp_path, monkeypatch, capsys):
@@ -245,8 +263,9 @@ def test_sigterm_after_clone_click_leaves_unresolved_uncertain_marker(env, tmp_p
     after the click already fired.
     """
 
-    def raising_copy(page, resume, dry_run):  # noqa: ANN001, ARG001
+    def raising_copy(page, resume, dry_run, *, before_click):  # noqa: ANN001, ARG001
         env.calls.append((resume.id, dry_run))
+        before_click()
         signal.raise_signal(signal.SIGTERM)
 
     monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", raising_copy)

@@ -105,9 +105,10 @@ def test_apply_runs_table_migrates_to_command_runs(tmp_path: Path) -> None:
     assert "command_runs" in tables_again
 
 
-def test_command_run_recovers_orphan_and_persists_counters(tmp_path: Path) -> None:
+def test_command_run_recovers_orphan_and_persists_counters(tmp_path: Path, monkeypatch) -> None:
     history = History(tmp_path / "history.db")
     first = history.start_command_run(command="apply", requested_limit=3)
+    monkeypatch.setattr("hhru_bot.history._pid_is_alive", lambda _pid: False)
     second = history.start_command_run(command="apply", requested_limit=2)
     history.finish_command_run(
         second,

@@ -70,9 +70,11 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
 
-    def fake_publish(page, resume, dry_run):
+    def fake_publish(page, resume, dry_run, *, before_click=None):
         if state.exc is not None:
             raise state.exc
+        if not dry_run and (state.result.success or state.result.uncertain):
+            before_click()
         return state.result
 
     monkeypatch.setattr(hhru_bot.publish_resume, "publish_resume_on_hh", fake_publish)
@@ -202,6 +204,20 @@ def test_run_not_authenticated_is_not_recorded_and_exits(env, capsys, tmp_path):
     # резюме, поэтому pre-click отказ не оставляет строку в actions.
     with History(tmp_path / "h.db")._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
+
+
+def test_pre_click_launch_failure_leaves_no_uncertain_marker(env, tmp_path, monkeypatch):
+    def fail_launch(*_args, **_kwargs):
+        raise RuntimeError("transient launch failure")
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fail_launch)
+
+    with pytest.raises(RuntimeError, match="transient launch failure"):
+        cmd.run(_args(tmp_path, force=True))
+
+    history = History(tmp_path / "h.db")
+    assert not history.has_unresolved_uncertain(RESUME_ID, "publish_resume")
+    assert history.command_runs()[-1]["attempted"] == 0
 
 
 def test_run_dry_run_writes_nothing_to_history(env, capsys, tmp_path):

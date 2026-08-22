@@ -97,7 +97,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
     )
 
     config = load_config_or_exit(args.config)
-    from ._common import resolve_resume
+    from ._common import MutationOutcome, resolve_resume
 
     # Ручной ввод (#326): любое готовое поле отключает LLM; facts-гварды и
     # fill/from-scratch не применяются — значения даёт вызывающий, как в
@@ -223,7 +223,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 raise _SaveConfirmationUncertain(
                     f"сохранение не подтверждено (uncertain) после клика: {exc}"
                 ) from exc
-            progress.applied_count += 1
+            progress.finish(MutationOutcome(success=True))
             print(f"[OK] Раздел желаемой работы резюме '{resume.id}' обновлён.")
             return False
     except _SaveConfirmationUncertain as exc:
@@ -233,8 +233,8 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # type (not a substring match on the message) is the discriminator,
         # per the code-reviewer's round-3 finding that acted/uncertain must
         # be a structural signal, never free-text matching.
-        if progress.attempted_count and not progress.applied_count:
-            progress.uncertain_count += 1
+        if progress.attempted_count:
+            progress.finish(exc, uncertain_exceptions=(_SaveConfirmationUncertain,))
         print(f"[FAIL] (uncertain) {exc}")
         return True
     except BrowserLaunchError:
@@ -243,14 +243,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # instead of the broad except Exception below swallowing it.
         raise
     except Exception as exc:
-        # #465 review: applied_count is only ever incremented right above,
-        # immediately before `return False` exits the `with` block. If
-        # context.__exit__ itself raises during that unwind, this handler
-        # would otherwise also add failed_count for the same attempt —
-        # progress.applied_count is the guard against double-counting one
-        # attempt as both a success and a failure.
-        if progress.attempted_count and not progress.applied_count:
-            progress.failed_count += 1
+        # If context.__exit__ raises after the success above, ApplyProgress's
+        # one-finish-per-attempt guard prevents counting the same attempt again.
+        if progress.attempted_count:
+            progress.finish(exc)
         print(f"[FAIL] {exc}")
         return True
 

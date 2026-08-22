@@ -207,6 +207,7 @@ def test_edit_experience_uncertain_outcome_is_not_counted_as_failed(
 ) -> None:
     """Same regression as above, for edit_experience._run (#465 review)."""
     import hhru_bot.commands.edit_experience as command
+    from hhru_bot.experience import ExperienceResult
 
     resume = SimpleNamespace(id="r1", resume_id="r1")
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
@@ -221,7 +222,7 @@ def test_edit_experience_uncertain_outcome_is_not_counted_as_failed(
     monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
     monkeypatch.setattr(
         "hhru_bot.experience.edit_experience_on_hh",
-        lambda *_a, **_kw: ["строка 1: uncertain, не подтверждено"],
+        lambda *_a, **_kw: [ExperienceResult("строка 1: не подтверждено", uncertain=True)],
     )
 
     history_path = tmp_path / "history.db"
@@ -545,6 +546,7 @@ def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
     item in the same batch.
     """
     import hhru_bot.commands.edit_experience as command
+    from hhru_bot.experience import ExperienceResult
 
     resume = SimpleNamespace(id="r1", resume_id="r1")
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
@@ -560,8 +562,8 @@ def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
     monkeypatch.setattr(
         "hhru_bot.experience.edit_experience_on_hh",
         lambda *_a, **_kw: [
-            "строка 1: отклонено, ошибка формы",
-            "строка 2: uncertain, не подтверждено",
+            ExperienceResult("строка 1: отклонено, ошибка формы"),
+            ExperienceResult("строка 2: не подтверждено", uncertain=True),
         ],
     )
 

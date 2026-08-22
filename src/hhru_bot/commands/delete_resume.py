@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._audit import action_status, record_resume_action
-from ._common import ApplyProgress, run_supervised_command
+from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 from .copy_resume import confirm_write
 
 
@@ -70,44 +69,31 @@ def run(args: argparse.Namespace):
         raise SystemExit(1)
 
     def _body(progress: ApplyProgress) -> bool:
+        attempt = (
+            None
+            if dry_run
+            else DurableMutationAttempt(history, progress, resume.resume_id, "delete_resume")
+        )
         try:
-            if not dry_run:
-                progress.begin_attempt()
             with launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
-                result = delete_resume_on_hh(context.new_page(), resume, dry_run)
+                result = delete_resume_on_hh(
+                    context.new_page(),
+                    resume,
+                    dry_run,
+                    before_click=attempt.before_click if attempt is not None else None,
+                )
         except NotAuthenticated as exc:
-            if not dry_run:
-                progress.failed_count += 1
-                record_resume_action(history, resume.resume_id, "delete_resume", "failed", str(exc))
             print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
             return True
         except BaseException as exc:
-            # #464 cycle-review (Codex round 2): ``BaseException``, not
-            # ``Exception`` -- delete_resume_on_hh's own destructive-click
-            # try/except (delete_resume.py library module) already treats a
-            # PlaywrightError after the confirm click as uncertain, but a
-            # SIGTERM/KeyboardInterrupt landing at that same point is a
-            # BaseException and previously bypassed this whole block, leaving
-            # no actions row and no has_unresolved_uncertain marker to block
-            # a retry. Fail-closed: a signal interrupt is recorded
-            # ``uncertain``; an ordinary pre-click exception keeps the prior
-            # ``failed`` status (unchanged behavior).
-            if not dry_run:
-                progress.failed_count += 1
-                status = "failed" if isinstance(exc, Exception) else "uncertain"
-                record_resume_action(
-                    history, resume.resume_id, "delete_resume", status, f"исключение: {exc}"
-                )
+            if attempt is not None:
+                attempt.interrupt(exc)
             raise
 
-        if not dry_run:
-            progress.finish(result)
-            status = action_status(
-                dry_run=False, success=result.success, uncertain=result.uncertain
-            )
-            record_resume_action(history, resume.resume_id, "delete_resume", status, result.reason)
+        if attempt is not None:
+            attempt.finish(result)
         if not result.success:
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
             print(f"{prefix} {resume.id} — {result.reason}")

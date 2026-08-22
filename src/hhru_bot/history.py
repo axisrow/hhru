@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -62,7 +63,8 @@ CREATE TABLE IF NOT EXISTS command_runs (
     started_at TEXT NOT NULL,
     finished_at TEXT,
     exit_code INTEGER,
-    detail TEXT
+    detail TEXT,
+    owner_pid INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_command_runs_status ON command_runs(status, started_at);
 
@@ -456,6 +458,36 @@ SKIP_REASON_VALUES = (
 REPLY_STATUS_VALUES = ("success", "failed", "dry_run", "uncertain")
 
 
+class CommandRunBusy(RuntimeError):
+    """A live process already owns the supervised-command lease."""
+
+    def __init__(self, run_id: str, command: str, owner_pid: int | None):
+        self.run_id = run_id
+        self.command = command
+        self.owner_pid = owner_pid
+        super().__init__(
+            f"supervised-команда уже выполняется: command={command}, "
+            f"pid={owner_pid}, run_id={run_id}"
+        )
+
+
+def _pid_is_alive(pid: int | None) -> bool:
+    """Return whether a recorded local PID is confirmed alive.
+
+    Legacy rows have no owner PID and are recoverable. Permission errors mean
+    the process exists and therefore must be treated as alive (fail closed).
+    """
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class History:
     # Feedback is deliberately bounded: it is prompt context, not an archive
     # of potentially sensitive letters.
@@ -502,6 +534,7 @@ class History:
             _ensure_column(conn, "actions", "search_query", "TEXT")
             _ensure_column(conn, "actions", "run_id", "TEXT")
             _ensure_column(conn, "actions", "reason_code", "TEXT")
+            _ensure_column(conn, "command_runs", "owner_pid", "INTEGER")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.
@@ -726,21 +759,31 @@ class History:
             )
 
     def start_command_run(self, *, command: str, requested_limit: int | None) -> str:
-        """Recover abandoned command runs and create a durable running row."""
+        """Recover dead owners and acquire the single supervised-command lease."""
         now = datetime.now().isoformat()
         run_id = str(uuid.uuid4())
         with self._connect() as conn:
+            # Serialize the read/recover/insert sequence across processes.  A
+            # normal deferred SQLite transaction would let two starters both
+            # observe no owner before either INSERT commits.
+            conn.execute("BEGIN IMMEDIATE")
+            running = conn.execute(
+                "SELECT run_id, command, owner_pid FROM command_runs WHERE status='running'"
+            ).fetchall()
+            for row in running:
+                if _pid_is_alive(row["owner_pid"]):
+                    raise CommandRunBusy(row["run_id"], row["command"], row["owner_pid"])
             conn.execute(
                 """UPDATE command_runs SET status='orphaned', finished_at=?, exit_code=NULL,
-                          detail=COALESCE(detail, 'recovered by next command run')
+                          detail=COALESCE(detail, 'recovered after owner process exited')
                    WHERE status='running'""",
                 (now,),
             )
             conn.execute(
                 """INSERT INTO command_runs
-                   (run_id, command, requested_limit, status, started_at)
-                   VALUES (?, ?, ?, 'running', ?)""",
-                (run_id, command, requested_limit, now),
+                   (run_id, command, requested_limit, status, started_at, owner_pid)
+                   VALUES (?, ?, ?, 'running', ?, ?)""",
+                (run_id, command, requested_limit, now, os.getpid()),
             )
         return run_id
 

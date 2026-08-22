@@ -200,7 +200,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             )
     except NotAuthenticated as exc:
         if not args.dry_run and progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         return True
     except BrowserLaunchError:
@@ -211,47 +211,43 @@ def _run(args: argparse.Namespace, progress) -> bool:
         raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback
         if not args.dry_run and progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — {exc}")
         return True
 
-    if not args.dry_run:
-        from ..history import History
-
-        history = History(args.history)
-        for result in results:
-            if result.success or result.uncertain or result.saved:
-                history.record_action(
-                    resume.resume_id,
-                    resume.resume_id,
-                    "edit_education",
-                    "uncertain" if result.uncertain or not result.success else "success",
-                    result.reason,
-                    run_id=progress.run_id,
-                )
-
-    failed = [result for result in results if not result.success]
-    # A hard failure (not success, not uncertain) must win over uncertain
-    # when both appear in the same --section both batch (#465 review, round
-    # 2): checking "any uncertain in the whole batch" masked a definite hard
-    # failure on one block as merely uncertain because another block in the
-    # same call happened to be uncertain.
-    hard_failed = [result for result in failed if not result.uncertain]
-    uncertain = [result for result in failed if result.uncertain]
     for result in results:
         prefix = "[OK]" if result.success else "[FAIL]"
         if result.uncertain:
             prefix = "[FAIL] (uncertain)"
         print(f"{prefix} {result.kind}: {result.reason}")
-    if failed:
-        if not args.dry_run:
-            if hard_failed:
-                progress.failed_count += 1
-            elif uncertain:
-                progress.uncertain_count += 1
-        return True
+
     if not args.dry_run:
-        progress.applied_count += 1
+        from ..history import History
+
+        history = History(args.history)
+        # A single classification for the whole attempt (#477): status comes
+        # from ApplyProgress.finish()'s priority (skipped > uncertain > success
+        # > failed) over the *entire* results batch, not from each item
+        # separately re-deriving "uncertain or not success" -- that would
+        # classify the same attempt in two places. Always record one row
+        # (no per-item filter): has_unresolved_uncertain never reads
+        # "edit_education" as a retry gate, so this ledger is audit/stats
+        # only, and a hard-failed batch must not disagree with command_runs
+        # (which already counts it via progress.finish above).
+        status = progress.finish(results)
+        assert status is not None
+        history.record_action(
+            resume.resume_id,
+            resume.resume_id,
+            "edit_education",
+            status,
+            "; ".join(result.reason for result in results),
+            run_id=progress.run_id,
+        )
+
+    failed = any(not result.success for result in results)
+    if failed:
+        return True
     if args.dry_run:
         print("[DRY-RUN] Ничего не сохранено на hh.ru")
     else:

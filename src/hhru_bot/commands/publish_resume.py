@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ._audit import action_status, record_resume_action
-from ._common import ApplyProgress, run_supervised_command
+from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 
 
 def register(subparsers) -> None:
@@ -56,32 +55,35 @@ def run(args: argparse.Namespace):
         sys.exit(1)
 
     def _body(progress: ApplyProgress) -> bool:
+        attempt = (
+            None
+            if args.dry_run
+            else DurableMutationAttempt(history, progress, resume.resume_id, "publish_resume")
+        )
         try:
-            if not args.dry_run:
-                progress.begin_attempt()
             with launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
-                result = publish_resume_on_hh(context.new_page(), resume, args.dry_run)
+                result = publish_resume_on_hh(
+                    context.new_page(),
+                    resume,
+                    args.dry_run,
+                    before_click=attempt.before_click if attempt is not None else None,
+                )
         except NotAuthenticated as exc:
-            if not args.dry_run:
-                progress.failed_count += 1
             print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
             return True
+        except BaseException as exc:
+            if attempt is not None:
+                attempt.interrupt(exc)
+            raise
 
         # actions — журнал взаимодействий с hh.ru, а не всех проверок команды.
         # До клика (identity/state/button guards) внешний эффект невозможен и не
         # должен выглядеть в истории как неудачная попытка публикации.  ``uncertain``
         # означает, что клик уже мог уйти, поэтому такую запись сохраняем.
-        if not args.dry_run:
-            progress.finish(result)
-            if result.success or result.uncertain:
-                status = action_status(
-                    dry_run=False, success=result.success, uncertain=result.uncertain
-                )
-                record_resume_action(
-                    history, resume.resume_id, "publish_resume", status, result.reason
-                )
+        if attempt is not None:
+            attempt.finish(result)
 
         if not result.success:
             prefix = "[FAIL]" if not result.uncertain else "[FAIL] (uncertain)"
