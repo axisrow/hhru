@@ -128,15 +128,22 @@ def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
 
+    limit = _limit(args)
     scope = _scope(args)
     history = History(args.history)
-    # Тот же bootstrap, что и в learn: команда обязана показывать всё, что
-    # реально ждёт решения, включая вопросы из ранее собранных сканов, —
-    # иначе очередь выглядела бы пустой при полной базе вопросов.
-    _seed_queue_from_scans(history, scope)
-    rows = history.list_questionnaire_pending(scope, limit=_limit(args))
+    rows = history.list_questionnaire_pending(scope, limit=limit)
+    # Вопросы из ранее собранных сканов только СЧИТАЮТСЯ, но не записываются:
+    # pending классифицирована READ (cli._is_write_command), не берёт общий
+    # write-lock и обязана оставаться доступной во время идущего apply. Запись
+    # делает learn — она WRITE-local и лок держит.
+    unseeded = sum(len(items) for items in _unqueued_scanned(history, scope).values())
     if not rows:
         print("[INFO] Очередь вопросов анкет пуста.")
+        if unseeded:
+            print(
+                f"[INFO] В собранных анкетах есть неразобранных вопросов: {unseeded}. "
+                "Добавить в очередь и разобрать: hhru questionnaire learn"
+            )
         return
     print(
         _ascii_table(
@@ -154,6 +161,8 @@ def run_pending(args: argparse.Namespace) -> None:
         )
     )
     print(f"[INFO] Ожидает решения: {len(rows)}. Разобрать: hhru questionnaire learn")
+    if unseeded:
+        print(f"[INFO] Ещё не в очереди, из собранных анкет: {unseeded}.")
 
 
 def run_templates(args: argparse.Namespace) -> None:
@@ -295,18 +304,16 @@ def run_learn(args: argparse.Namespace):
     return None
 
 
-def _seed_queue_from_scans(history, scope: str | None) -> int:
-    """Наполнить очередь вопросами из ранее собранных сканов (#482).
+def _unqueued_scanned(history, scope: str | None) -> dict[str, list[dict]]:
+    """Вопросы из собранных сканов, которых нет ни в очереди, ни в шаблонах.
+
+    ЧИСТОЕ ЧТЕНИЕ — вызывается в том числе из READ-команды ``pending``, которая
+    не берёт общий write-lock и потому не имеет права ничего писать.
 
     ``probe --questionnaires-only`` (#456) уже сложил в базу сотню реальных
-    вопросов, и без этого шага ``learn`` был бы пуст до первого боевого
-    ``apply``: обучать бота пришлось бы по одному вопросу за прогон, хотя
-    материал давно собран.
-
-    Вопросы, на которые резолвер и так отвечает (есть шаблон и подтверждённая
-    формулировка либо ключевые слова), в очередь не попадают — она для того,
-    что бот решить не может. Уже стоящие в очереди строки не дублируются:
-    ``record_questionnaire_pending`` дедуплицирован по ``(резюме, вопрос)``.
+    вопросов; без этого источника ``learn`` был бы пуст до первого боевого
+    ``apply``, хотя материал давно собран. Вопросы, на которые резолвер и так
+    отвечает, сюда не попадают — очередь для того, что бот решить не может.
     """
     import json
 
@@ -315,16 +322,6 @@ def _seed_queue_from_scans(history, scope: str | None) -> int:
 
     templates = history.get_questionnaire_templates(scope)
     phrases = history.get_confirmed_phrases(scope)
-    # Строки очереди, на которые ответ уже задан (static-шаблон появился после
-    # того, как вопрос туда попал), снимаются здесь же — иначе они висели бы
-    # вечно, держа свои вакансии заблокированными. Contextual-шаблоны не
-    # снимаются: без LLM они по-прежнему неисполнимы.
-    answerable = {
-        name
-        for name, row in templates.items()
-        if row.get("mode") == "static" and (row.get("answer") or "").strip()
-    }
-    history.resolve_pending_for_templates(answerable, resume_id=scope)
     known = {row["question_key"] for row in history.list_questionnaire_pending(scope)}
 
     by_resume: dict[str, list[dict]] = {}
@@ -345,9 +342,27 @@ def _seed_queue_from_scans(history, scope: str | None) -> int:
                 "reason": "вопрос из собранных анкет, ответ не задан",
             }
         )
+    return by_resume
+
+
+def _seed_queue_from_scans(history, scope: str | None) -> int:
+    """Записать в очередь вопросы из собранных сканов. Только для WRITE-команд.
+
+    Заодно снимает строки, на которые ответ уже задан (static-шаблон появился
+    после того, как вопрос туда попал): иначе они висели бы вечно, держа свои
+    вакансии заблокированными. Contextual-шаблоны не снимаются — без
+    настроенного LLM они по-прежнему неисполнимы.
+    """
+    templates = history.get_questionnaire_templates(scope)
+    answerable = {
+        name
+        for name, row in templates.items()
+        if row.get("mode") == "static" and (row.get("answer") or "").strip()
+    }
+    history.resolve_pending_for_templates(answerable, resume_id=scope)
 
     seeded = 0
-    for resume_id, items in by_resume.items():
+    for resume_id, items in _unqueued_scanned(history, scope).items():
         if history.record_questionnaire_pending(resume_id, items):
             seeded += len(items)
     return seeded

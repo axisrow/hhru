@@ -358,45 +358,65 @@ def _scan(history, resume_id: str, vacancy_id: str, *texts: str) -> None:
     )
 
 
-def test_pending_seeds_the_queue_from_earlier_scans(capsys, tmp_path):
+def _learn_with(tmp_path, monkeypatch, answers=()):
+    """Запустить learn интерактивно с заготовленными ответами."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    replies = iter(answers)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(replies, ""))
+    return cmd.run_learn(_args(tmp_path, limit=20))
+
+
+def test_learn_seeds_the_queue_from_earlier_scans(capsys, tmp_path, monkeypatch):
     """probe --questionnaires-only уже собрал вопросы: обучать бота можно сразу,
     не дожидаясь первого боевого apply."""
     history = History(tmp_path / "h.db")
     _scan(history, "RID", "v1", "Опишите самый сложный проект", "Есть ли судимость?")
 
+    _learn_with(tmp_path, monkeypatch)
+
+    assert "из ранее собранных анкет: 2" in capsys.readouterr().out
+    queued = {row["question_text"] for row in history.list_questionnaire_pending("RID")}
+    assert queued == {"Опишите самый сложный проект", "Есть ли судимость?"}
+
+
+def test_pending_reports_scanned_questions_without_writing_them(capsys, tmp_path):
+    """pending классифицирована READ, не берёт общий write-lock и потому не
+    имеет права писать в историю — она только сообщает, что материал есть."""
+    history = History(tmp_path / "h.db")
+    _scan(history, "RID", "v1", "Опишите самый сложный проект")
+
     cmd.run_pending(_args(tmp_path))
 
-    out = capsys.readouterr().out
-    assert "Опишите самый сложный проект" in out
-    assert "Есть ли судимость?" in out
+    assert "неразобранных вопросов: 1" in capsys.readouterr().out
+    assert history.list_questionnaire_pending("RID") == []
 
 
-def test_seeding_deduplicates_a_question_seen_in_many_vacancies(tmp_path):
+def test_seeding_deduplicates_a_question_seen_in_many_vacancies(tmp_path, monkeypatch):
     history = History(tmp_path / "h.db")
     _scan(history, "RID", "v1", "Опишите самый сложный проект")
     _scan(history, "RID", "v2", "Опишите самый сложный проект")
 
-    cmd.run_pending(_args(tmp_path))
+    _learn_with(tmp_path, monkeypatch)
 
     assert len(history.list_questionnaire_pending("RID")) == 1
 
 
-def test_seeding_skips_questions_the_resolver_already_answers(tmp_path):
+def test_seeding_skips_questions_the_resolver_already_answers(tmp_path, monkeypatch):
     history = History(tmp_path / "h.db")
     history.set_questionnaire_template("salary", mode="static", answer="от 250000")
     _scan(history, "RID", "v1", "Ваши зарплатные ожидания?", "Опишите самый сложный проект")
 
-    cmd.run_pending(_args(tmp_path))
+    _learn_with(tmp_path, monkeypatch)
 
     queued = {row["question_text"] for row in history.list_questionnaire_pending("RID")}
     assert queued == {"Опишите самый сложный проект"}
 
 
-def test_answering_a_template_clears_its_question_from_the_queue(capsys, tmp_path):
+def test_answering_a_template_clears_its_question_from_the_queue(capsys, tmp_path, monkeypatch):
     """Шаблон мог появиться позже, чем вопрос попал в очередь."""
     history = History(tmp_path / "h.db")
     _scan(history, "RID", "v1", "Ваши зарплатные ожидания?")
-    cmd.run_pending(_args(tmp_path))
+    _learn_with(tmp_path, monkeypatch)
     capsys.readouterr()
 
     cmd.run_set(_args(tmp_path, answer="от 250000"))
@@ -405,23 +425,25 @@ def test_answering_a_template_clears_its_question_from_the_queue(capsys, tmp_pat
     assert "зарплатные ожидания" not in capsys.readouterr().out
 
 
-def test_contextual_template_without_llm_keeps_its_question_queued(tmp_path):
+def test_contextual_template_without_llm_keeps_its_question_queued(tmp_path, monkeypatch):
     """Contextual-шаблон без LLM неисполним — снимать вопрос с очереди рано."""
     history = History(tmp_path / "h.db")
     _scan(history, "RID", "v1", "Ваши зарплатные ожидания?")
-    cmd.run_pending(_args(tmp_path))
+    _learn_with(tmp_path, monkeypatch)
 
     cmd.run_set(_args(tmp_path, mode="contextual", instruction="назови вилку"))
 
     assert len(history.list_questionnaire_pending("RID")) == 1
 
 
-def test_seeding_is_scoped_to_the_requested_resume(tmp_path):
+def test_seeding_is_scoped_to_the_requested_resume(tmp_path, monkeypatch):
     history = History(tmp_path / "h.db")
     _scan(history, "RID1", "v1", "Опишите проект")
     _scan(history, "RID2", "v2", "Опишите проект")
 
-    cmd.run_pending(_args(tmp_path, resume="RID1"))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    cmd.run_learn(_args(tmp_path, resume="RID1", limit=20))
 
     assert len(history.list_questionnaire_pending("RID1")) == 1
     assert history.list_questionnaire_pending("RID2") == []
