@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     # Только для статического анализа; реальный импорт был бы циклическим
     # (config_sections.ai импортирует ConfigError из config).
     from .config_sections.ai import AiConfig
+    from .config_sections.questionnaires import QuestionnairesConfig
 
 
 @dataclass
@@ -92,6 +93,18 @@ def bare_resume(resume_id: str) -> ResumeConfig:
     )
 
 
+def _default_questionnaires() -> QuestionnairesConfig:
+    """Дефолты секции questionnaires (#482) с ленивым импортом.
+
+    Импорт внутри функции, а не на уровне модуля: config_sections.questionnaires
+    импортирует ConfigError отсюда, то есть модульный импорт был бы циклическим
+    (та же причина, по которой load_config импортирует парсеры внутри себя).
+    """
+    from .config_sections.questionnaires import QuestionnairesConfig
+
+    return QuestionnairesConfig()
+
+
 @dataclass
 class AppConfig:
     storage_state_file: Path
@@ -103,6 +116,10 @@ class AppConfig:
     # None = AI-функциональность выключена (issue #16, Этап 5). TOP-LEVEL секция ai
     # (как account), парсится в load_config через config_sections.ai.parse_ai.
     ai: AiConfig | None = None
+    # Автозаполнение анкет (#482). TOP-LEVEL секция, как ai. В отличие от ai это
+    # НЕ Optional: отсутствие секции даёт дефолты с enabled=False, поэтому
+    # потребителям не нужно различать «секции нет» и «секция выключена».
+    questionnaires: QuestionnairesConfig = field(default_factory=lambda: _default_questionnaires())
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
         # #319: ключ адресации — slug из конфига ИЛИ реальный resume_id HH.ru
@@ -138,6 +155,7 @@ def load_config(path: str | Path) -> AppConfig:
     from .config_sections import names as section_names
     from .config_sections import parse_account
     from .config_sections.ai import parse_ai
+    from .config_sections.questionnaires import parse_questionnaires
 
     path = Path(path)
     if not path.exists():
@@ -164,6 +182,10 @@ def load_config(path: str | Path) -> AppConfig:
     # TOP-LEVEL секция ai (issue #16, Этап 5): провайдер/модель/base_url.
     # Опциональна — None, если секции нет. API-ключ НЕ парсится из yaml (только env).
     ai = parse_ai(raw.get("ai"), "ai")
+
+    # TOP-LEVEL секция questionnaires (#482): автозаполнение анкет по обучаемым
+    # шаблонам. Отсутствие секции = дефолты с enabled=False (поведение до #482).
+    questionnaires = parse_questionnaires(raw.get("questionnaires"), "questionnaires")
 
     throttle_raw = raw.get("throttle", {})
     throttle = ThrottleConfig(
@@ -223,6 +245,7 @@ def load_config(path: str | Path) -> AppConfig:
         resumes=resumes,
         user_agent=user_agent,
         ai=ai,
+        questionnaires=questionnaires,
     )
 
 

@@ -12,6 +12,7 @@ from ._common import (
     _build_scoring_provider,
     add_common_args,
     add_force_arg,
+    add_learn_questionnaires_arg,
     add_limit_arg,
     apply_search_page_limit,
     resumes_from_args,
@@ -29,6 +30,7 @@ def register(subparsers) -> None:
     p = subparsers.add_parser("apply", help="Найти и откликнуться на подходящие вакансии")
     add_common_args(p, max_pages_default=None)
     add_force_arg(p)
+    add_learn_questionnaires_arg(p)
     add_limit_arg(p)
     p.add_argument(
         "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"

@@ -64,7 +64,26 @@ WRITE_COMMANDS = frozenset(
 
 # Nested commands need their own classification: account create mutates local
 # files, while account list is a read-only directory scan.
-WRITE_SUBCOMMANDS = frozenset({("account", "create")})
+WRITE_SUBCOMMANDS = frozenset(
+    {
+        ("account", "create"),
+        # #482: questionnaire set/unset/learn правят локальные шаблоны и очередь;
+        # pending/templates только читают и должны оставаться доступными во время
+        # идущего apply.
+        ("questionnaire", "set"),
+        ("questionnaire", "unset"),
+        ("questionnaire", "learn"),
+    }
+)
+
+# В каком атрибуте каждая вложенная команда хранит свою подкоманду. Раньше dest
+# был захардкожен как ``account_command`` прямо в проверке ниже, поэтому любая
+# новая вложенная WRITE-команда молча обходила бы write-lock: запись в
+# WRITE_SUBCOMMANDS для неё просто никогда не совпадала бы (#482).
+SUBCOMMAND_DESTS = {
+    "account": "account_command",
+    "questionnaire": "questionnaire_command",
+}
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
@@ -141,14 +160,12 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         return bool(args.set is not None or args.unset or args.edit)
     if args.command == "probe" and getattr(args, "questionnaires_only", False):
         return True
+    subcommand_dest = SUBCOMMAND_DESTS.get(args.command)
+    subcommand = getattr(args, subcommand_dest, None) if subcommand_dest else None
     return (
         args.command in WRITE_COMMANDS
         or (args.command == "refresh-token" and getattr(args, "force", False))
-        or (
-            args.command,
-            getattr(args, "account_command", None),
-        )
-        in WRITE_SUBCOMMANDS
+        or (args.command, subcommand) in WRITE_SUBCOMMANDS
     )
 
 

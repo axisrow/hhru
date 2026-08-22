@@ -354,6 +354,71 @@ CREATE TABLE IF NOT EXISTS questionnaire_questions (
 CREATE INDEX IF NOT EXISTS idx_questionnaire_questions_scan_id
     ON questionnaire_questions(scan_id);
 
+-- questionnaire_templates (#482) — как отвечать на вопрос данного смысла.
+-- resume_id='' означает ответ уровня АККАУНТА, непустой — переопределение для
+-- конкретного резюме (приоритет резюме над аккаунтом — get_questionnaire_templates).
+-- NOT NULL DEFAULT '' вместо nullable намеренно: SQLite не считает два NULL
+-- одинаковыми, поэтому UNIQUE с nullable resume_id допустил бы неограниченное
+-- число дублирующих account-строк для одного шаблона.
+CREATE TABLE IF NOT EXISTS questionnaire_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template TEXT NOT NULL,
+    resume_id TEXT NOT NULL DEFAULT '',
+    cluster TEXT NOT NULL DEFAULT 'mixed',
+    mode TEXT NOT NULL CHECK (mode IN ('static', 'contextual')),
+    answer TEXT,
+    instruction TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (template, resume_id)
+);
+
+-- questionnaire_examples (#482) — подтверждённые пользователем формулировки.
+-- Двойное назначение: (1) few-shot примеры в contextual-промпте, (2) корпус
+-- сопоставлений «формулировка -> шаблон», который issue просит накапливать для
+-- будущего классического ML. question_key = normalize(текст вопроса), поэтому
+-- phrase-стратегия резолвера — один индексированный lookup.
+CREATE TABLE IF NOT EXISTS questionnaire_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template TEXT NOT NULL,
+    resume_id TEXT NOT NULL DEFAULT '',
+    question_key TEXT NOT NULL,
+    question_text TEXT NOT NULL,
+    confirmed_by TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL,
+    UNIQUE (template, resume_id, question_key)
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_examples_key
+    ON questionnaire_examples(question_key);
+
+-- questionnaire_pending (#482) — очередь вопросов, на которые бот не имеет
+-- права ответить сам (нет шаблона, низкая уверенность, комплаенс без явного
+-- значения). Зеркалит review_queue: status + индекс по (status, id).
+-- UNIQUE(resume_id, question_key) + ON CONFLICT DO UPDATE: один и тот же
+-- вопрос встречается у десятков работодателей, и без ключа дедупликации
+-- очередь заполнялась бы копиями одной строки быстрее, чем её успевают разобрать.
+CREATE TABLE IF NOT EXISTS questionnaire_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL DEFAULT '',
+    vacancy_url TEXT NOT NULL DEFAULT '',
+    question_key TEXT NOT NULL,
+    question_text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    is_radio INTEGER NOT NULL DEFAULT 0,
+    options_json TEXT NOT NULL DEFAULT '[]',
+    template TEXT,
+    cluster TEXT,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (resume_id, question_key)
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_pending_status
+    ON questionnaire_pending(status, id);
+
 -- test_assignments — факт назначения внешнего теста работодателем (#180).
 -- Отдельно от responses/actions: это событие чата, а не статус отклика и не
 -- наше действие. Запись append-only, чтобы сохранять текст сообщения и URL.
@@ -410,6 +475,11 @@ class _SkipReasons:
     LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
     HAS_QUESTIONS = "has_questions"  # #84 идея №7 (зарезервирован)
     QUESTION_LOW_CONFIDENCE = "question_skipped_low_confidence"
+    # #482: вопрос анкеты ушёл в очередь на ручное решение. Отдельно от
+    # QUESTION_LOW_CONFIDENCE: та причина означает «LLM ответил неуверенно» и
+    # снимается только вручную, а эта снимается автоматически, когда оператор
+    # обучил соответствующий шаблон (`questionnaire learn`).
+    QUESTIONNAIRE_PENDING = "questionnaire_pending"
     RESUME_VISIBILITY = "resume_visibility"  # отклик заблокирован видимостью резюме
     DUPLICATE = "duplicate"  # дубликат вакансии в одном сборе
     RELOCATION_NOT_ALLOWED = "relocation_not_allowed"
@@ -432,6 +502,7 @@ SKIP_REASON_VALUES = (
     _SkipReasons.LOW_LLM_SCORE,
     _SkipReasons.HAS_QUESTIONS,
     _SkipReasons.QUESTION_LOW_CONFIDENCE,
+    _SkipReasons.QUESTIONNAIRE_PENDING,
     _SkipReasons.RESUME_VISIBILITY,
     _SkipReasons.DUPLICATE,
     _SkipReasons.RELOCATION_NOT_ALLOWED,
@@ -570,6 +641,11 @@ class History:
             _ensure_column(conn, "questionnaire_questions", "answer_source", "TEXT")
             _ensure_column(conn, "questionnaire_questions", "confidence", "REAL")
             _ensure_column(conn, "questionnaire_questions", "filled", "INTEGER NOT NULL DEFAULT 0")
+            # #482: аудит анкеты расширен полями резолвера. answer_source и
+            # confidence добавлены ещё в #473 и здесь не дублируются.
+            _ensure_column(conn, "questionnaire_questions", "template", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "cluster", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "resolver_source", "TEXT")
             _ensure_column(conn, "questionnaire_questions", "run_id", "TEXT")
             # #420 follow-up (Codex adversarial-review, PR #449): review_queue
             # rows created before this column existed have no stored search_query
@@ -2719,8 +2795,9 @@ class History:
             conn.executemany(
                 """INSERT INTO questionnaire_questions
                    (scan_id, body_index, text, kind, is_radio, options_json,
-                    answer, answer_source, confidence, filled, run_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    answer, answer_source, confidence, filled, run_id,
+                    template, cluster, resolver_source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         scan_id,
@@ -2734,6 +2811,9 @@ class History:
                         question.get("confidence"),
                         int(bool(question.get("filled", False))),
                         run_id,
+                        question.get("template"),
+                        question.get("cluster"),
+                        question.get("resolver_source"),
                     )
                     for question in questions
                 ],
@@ -2772,6 +2852,378 @@ class History:
                 params,
             ).fetchone()
         return {key: int(row[key]) for key in ("profile", "llm", "unanswered")}
+
+    # --- обучаемые шаблоны ответов на анкеты (#482) ---------------------
+    #
+    # Скоуп хранится строкой resume_id: '' — уровень аккаунта, непустая —
+    # переопределение для конкретного резюме. Приоритет резюме над аккаунтом
+    # реализован тем же приёмом, что и manual над hh_ru в get_profile_answers():
+    # одна выборка с ORDER BY по признаку скоупа + setdefault, а не два запроса
+    # с ручным слиянием.
+
+    @staticmethod
+    def _scope(resume_id: str | None) -> str:
+        return resume_id or ""
+
+    def set_questionnaire_template(
+        self,
+        template: str,
+        *,
+        mode: str,
+        cluster: str = "mixed",
+        answer: str | None = None,
+        instruction: str | None = None,
+        resume_id: str | None = None,
+    ) -> None:
+        """Создать или обновить шаблон в заданном скоупе."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questionnaire_templates
+                    (template, resume_id, cluster, mode, answer, instruction,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(template, resume_id) DO UPDATE SET
+                    cluster = excluded.cluster,
+                    mode = excluded.mode,
+                    answer = excluded.answer,
+                    instruction = excluded.instruction,
+                    updated_at = excluded.updated_at
+                """,
+                (template, self._scope(resume_id), cluster, mode, answer, instruction, now, now),
+            )
+
+    def unset_questionnaire_template(self, template: str, *, resume_id: str | None = None) -> bool:
+        """Удалить шаблон ТОЛЬКО из указанного скоупа.
+
+        Как и ``profile unset``, снятие resume-переопределения не трогает
+        account-строку: после него снова начинает действовать общий ответ.
+        Подтверждённые формулировки того же скоупа удаляются вместе с шаблоном
+        — иначе они продолжали бы направлять вопросы на несуществующий шаблон,
+        и каждый такой вопрос падал бы в очередь с невнятной причиной.
+        """
+        scope = self._scope(resume_id)
+        with self._connect() as conn:
+            deleted = conn.execute(
+                "DELETE FROM questionnaire_templates WHERE template = ? AND resume_id = ?",
+                (template, scope),
+            ).rowcount
+            if deleted:
+                conn.execute(
+                    "DELETE FROM questionnaire_examples WHERE template = ? AND resume_id = ?",
+                    (template, scope),
+                )
+        return bool(deleted)
+
+    def get_questionnaire_templates(self, resume_id: str | None = None) -> dict[str, dict]:
+        """Действующие шаблоны: переопределение резюме поверх ответа аккаунта."""
+        scope = self._scope(resume_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT template, resume_id, cluster, mode, answer, instruction
+                FROM questionnaire_templates
+                WHERE resume_id = ? OR resume_id = ''
+                ORDER BY template,
+                         CASE WHEN resume_id = ? THEN 0 ELSE 1 END,
+                         id
+                """,
+                (scope, scope),
+            ).fetchall()
+            examples = conn.execute(
+                """
+                SELECT template, question_text
+                FROM questionnaire_examples
+                WHERE resume_id = ? OR resume_id = ''
+                ORDER BY id
+                """,
+                (scope,),
+            ).fetchall()
+        by_template: dict[str, dict] = {}
+        for row in rows:
+            by_template.setdefault(row["template"], dict(row))
+        for row in examples:
+            entry = by_template.get(row["template"])
+            if entry is not None:
+                entry.setdefault("examples", []).append(row["question_text"])
+        return by_template
+
+    def list_questionnaire_templates(self, resume_id: str | None = None) -> list[dict]:
+        """Сырые строки обоих скоупов для отчёта ``questionnaire templates``."""
+        where, params = "", []
+        if resume_id is not None:
+            where = "WHERE resume_id = ? OR resume_id = ''"
+            params = [self._scope(resume_id)]
+        with self._connect() as conn:
+            return [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT template, resume_id, cluster, mode, answer, instruction, updated_at
+                    FROM questionnaire_templates
+                    {where}
+                    ORDER BY template, resume_id
+                    """,
+                    params,
+                ).fetchall()
+            ]
+
+    def confirm_questionnaire_example(
+        self,
+        template: str,
+        question_text: str,
+        *,
+        resume_id: str | None = None,
+        confirmed_by: str = "user",
+    ) -> None:
+        """Записать подтверждённое сопоставление «формулировка -> шаблон»."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO questionnaire_examples
+                    (template, resume_id, question_key, question_text, confirmed_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    template,
+                    self._scope(resume_id),
+                    normalize(question_text),
+                    question_text,
+                    confirmed_by,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def get_confirmed_phrases(self, resume_id: str | None = None) -> dict[str, str]:
+        """``{нормализованный текст вопроса: шаблон}`` — вход phrase-стратегии."""
+        scope = self._scope(resume_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT question_key, template
+                FROM questionnaire_examples
+                WHERE resume_id = ? OR resume_id = ''
+                ORDER BY question_key,
+                         CASE WHEN resume_id = ? THEN 0 ELSE 1 END,
+                         id
+                """,
+                (scope, scope),
+            ).fetchall()
+        phrases: dict[str, str] = {}
+        for row in rows:
+            phrases.setdefault(row["question_key"], row["template"])
+        return phrases
+
+    def record_questionnaire_pending(
+        self,
+        resume_id: str,
+        items: list[dict],
+        *,
+        vacancy_id: str = "",
+        vacancy_url: str = "",
+        run_id: str | None = None,
+    ) -> bool:
+        """Поставить нерешённые вопросы в очередь. False при сбое SQLite.
+
+        Возвращает bool, а не бросает: вызывающий (pipeline) обязан отличать
+        «очередь не записана» от исключения, рвущего цикл откликов, — тот же
+        контракт, что у ``_record_questionnaire_answers``.
+        """
+        if not items:
+            return True
+        now = datetime.now().isoformat()
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO questionnaire_pending
+                        (resume_id, vacancy_id, vacancy_url, question_key, question_text,
+                         kind, is_radio, options_json, template, cluster, reason,
+                         status, run_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                    ON CONFLICT(resume_id, question_key) DO UPDATE SET
+                        vacancy_id = excluded.vacancy_id,
+                        vacancy_url = excluded.vacancy_url,
+                        question_text = excluded.question_text,
+                        kind = excluded.kind,
+                        is_radio = excluded.is_radio,
+                        options_json = excluded.options_json,
+                        template = excluded.template,
+                        cluster = excluded.cluster,
+                        reason = excluded.reason,
+                        status = 'pending',
+                        run_id = excluded.run_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    [
+                        (
+                            resume_id,
+                            vacancy_id,
+                            vacancy_url,
+                            normalize(str(item["text"])),
+                            str(item["text"]),
+                            str(item.get("kind", "text")),
+                            int(bool(item.get("is_radio", False))),
+                            json.dumps(list(item.get("options", ())), ensure_ascii=False),
+                            item.get("template"),
+                            item.get("cluster"),
+                            str(item.get("reason", "")),
+                            run_id,
+                            now,
+                            now,
+                        )
+                        for item in items
+                    ],
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Не удалось записать очередь вопросов анкеты: %s", exc)
+            return False
+        return True
+
+    def list_questionnaire_pending(
+        self,
+        resume_id: str | None = None,
+        *,
+        status: str = "pending",
+        limit: int | None = None,
+    ) -> list[dict]:
+        where = ["status = ?"]
+        params: list = [status]
+        if resume_id is not None:
+            where.append("resume_id = ?")
+            params.append(resume_id)
+        sql = f"""
+            SELECT id, resume_id, vacancy_id, vacancy_url, question_key, question_text,
+                   kind, is_radio, options_json, template, cluster, reason, status, updated_at
+            FROM questionnaire_pending
+            WHERE {" AND ".join(where)}
+            ORDER BY id
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def resolve_questionnaire_pending(self, pending_id: int, *, status: str = "resolved") -> bool:
+        with self._connect() as conn:
+            return bool(
+                conn.execute(
+                    "UPDATE questionnaire_pending SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, datetime.now().isoformat(), pending_id),
+                ).rowcount
+            )
+
+    def list_scanned_questions(self, resume_id: str | None = None) -> list[dict]:
+        """Вопросы анкет из ранее собранных сканов (#482).
+
+        Источник — ``questionnaire_scans``/``questionnaire_questions``, куда
+        пишет read-only ``probe --questionnaires-only`` (#456). Нужен, чтобы
+        ``questionnaire learn`` мог начаться на уже накопленных данных: без
+        этого очередь пуста до первого боевого ``apply``, хотя сотня реальных
+        вопросов уже лежит в базе.
+
+        Дедупликация по нормализованному тексту: один и тот же вопрос
+        встречается у десятков работодателей, и разбирать его нужно один раз.
+        Берётся последняя встреча (``MAX(question.id)``) — у неё свежее
+        привязка к вакансии.
+        """
+        where = []
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT question.text, question.kind, question.is_radio,
+                       question.options_json, scan.resume_id, scan.vacancy_id,
+                       scan.vacancy_url, MAX(question.id) AS last_id
+                FROM questionnaire_questions AS question
+                JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+                {clause}
+                GROUP BY scan.resume_id, LOWER(TRIM(question.text))
+                ORDER BY last_id
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_pending_for_templates(
+        self, templates: set[str], *, resume_id: str | None = None
+    ) -> int:
+        """Пометить решёнными вопросы очереди, закреплённые за этими шаблонами.
+
+        Вызывается после ``questionnaire set``: вопрос стоял в очереди с
+        пометкой «шаблон найден, но ответа нет» — теперь ответ есть, и держать
+        его нерешённым незачем. Помечаются только строки, у которых шаблон
+        совпадает: вопросы без сопоставления (``template IS NULL``) остаются в
+        очереди — для них по-прежнему неизвестно, что отвечать.
+        """
+        if not templates:
+            return 0
+        placeholders = ",".join("?" for _ in templates)
+        sql = (
+            f"UPDATE questionnaire_pending SET status = 'resolved', updated_at = ? "
+            f"WHERE status = 'pending' AND template IN ({placeholders})"
+        )
+        params: list = [datetime.now().isoformat(), *sorted(templates)]
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
+    def clear_pending_skips(self, resume_id: str | None = None) -> int:
+        """Снять skip-записи, поставленные из-за очереди анкет (#482).
+
+        Вызывается после обучения шаблона: вакансия была пропущена только
+        потому, что бот не знал ответа, и теперь знает. Удаляются исключительно
+        строки с причиной ``questionnaire_pending`` — прочие skip'ы (стоп-слова,
+        уже откликались, низкая уверенность LLM) остаются нетронутыми, иначе
+        обучение одного шаблона молча воскрешало бы вакансии, отсеянные совсем
+        по другим основаниям.
+
+        Разблокируется вакансия, у которой в очереди есть решённые вопросы и не
+        осталось нерешённых. Одна анкета часто содержит несколько неизвестных
+        вопросов, и обучение одного шаблона не делает её проходимой:
+        безусловная разблокировка отправляла бы бота открывать ту же форму
+        снова и снова, тратя запросы к hh.ru (а они здесь — троттлинг-бюджет)
+        ради заведомо повторного пропуска.
+
+        Требование «есть решённые» — не придирка, а следствие дедупликации
+        очереди по ``(resume_id, question_key)``: один и тот же вопрос у десяти
+        работодателей держит в очереди ОДНУ строку, с ``vacancy_id`` последней
+        встреченной вакансии. Проверка «нет нерешённых» сама по себе выпускала
+        бы все девять остальных, хотя их общий вопрос ещё не разобран.
+        Вакансии, которых очередь не знает вовсе (запись до #482 или ручная
+        чистка), остаются в ``skipped`` и снимаются обычным ``clear-skipped`` —
+        автоматика не должна гадать за пределами своих данных.
+        """
+        sql = """
+            DELETE FROM skipped
+            WHERE reason = ?
+              AND EXISTS (
+                  SELECT 1 FROM questionnaire_pending AS q
+                  WHERE q.resume_id = skipped.resume_id
+                    AND q.vacancy_id = skipped.vacancy_id
+                    AND q.status <> 'pending'
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM questionnaire_pending AS q
+                  WHERE q.resume_id = skipped.resume_id
+                    AND q.vacancy_id = skipped.vacancy_id
+                    AND q.status = 'pending'
+              )
+        """
+        params: list = [SKIP_REASONS.QUESTIONNAIRE_PENDING]
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
 
     def is_robot_questionnaire(self, topic: str) -> bool:
         with self._connect() as conn:
