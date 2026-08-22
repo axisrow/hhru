@@ -58,9 +58,12 @@ def env(monkeypatch, tmp_path):
         yield SimpleNamespace(new_page=lambda: object())
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", launch)
-    monkeypatch.setattr(
-        hhru_bot.delete_resume, "delete_resume_on_hh", lambda page, resume, dry: state.result
-    )
+    def delete(page, resume, dry, *, before_click=None):  # noqa: ANN001, ARG001
+        if not dry and (state.result.success or state.result.uncertain):
+            before_click()
+        return state.result
+
+    monkeypatch.setattr(hhru_bot.delete_resume, "delete_resume_on_hh", delete)
     return state
 
 
@@ -114,7 +117,8 @@ def test_sigterm_after_destructive_click_leaves_unresolved_uncertain_marker(
     row is written when the interrupt lands after the click already fired.
     """
 
-    def raising_delete(page, resume, dry_run):  # noqa: ANN001, ARG001
+    def raising_delete(page, resume, dry_run, *, before_click):  # noqa: ANN001, ARG001
+        before_click()
         signal.raise_signal(signal.SIGTERM)
 
     monkeypatch.setattr(hhru_bot.delete_resume, "delete_resume_on_hh", raising_delete)
@@ -126,6 +130,20 @@ def test_sigterm_after_destructive_click_leaves_unresolved_uncertain_marker(
         "a SIGTERM after the destructive click must leave an unresolved "
         "uncertain actions marker, or a blind retry can re-attempt deletion"
     )
+
+
+def test_pre_click_launch_failure_leaves_no_uncertain_marker(env, tmp_path, monkeypatch):
+    def fail_launch(*_args, **_kwargs):
+        raise RuntimeError("transient launch failure")
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fail_launch)
+
+    with pytest.raises(RuntimeError, match="transient launch failure"):
+        cmd.run(_args(tmp_path, force=True))
+
+    history = History(tmp_path / "history.db")
+    assert not history.has_unresolved_uncertain(RESUME_ID, "delete_resume")
+    assert history.command_runs()[-1]["attempted"] == 0
 
 
 def test_unresolved_uncertain_blocks_retry(env, tmp_path, capsys):

@@ -152,7 +152,7 @@ def test_edit_experience_manual_entry_appends_after_existing_rows(tmp_path, caps
     experience must append a new row (index len(existing)), never reuse an
     existing index — reusing an index blanks any field the manual JSON omitted.
     """
-    from hhru_bot.experience import ExperienceEntry
+    from hhru_bot.experience import ExperienceEntry, ExperienceResult
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr(
@@ -166,7 +166,7 @@ def test_edit_experience_manual_entry_appends_after_existing_rows(tmp_path, caps
     def fake_edit_experience_on_hh(page, resume_id, plan, *, dry_run, indexes=None):
         captured["indexes"] = indexes
         captured["plan"] = plan
-        return ["строка 1: сохранено"]
+        return [ExperienceResult("строка 1: сохранено", success=True)]
 
     monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fake_edit_experience_on_hh)
     edit_experience_cmd.run(

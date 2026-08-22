@@ -67,6 +67,15 @@ class ExperiencePlan:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class ExperienceResult:
+    """Structural outcome for one experience row."""
+
+    reason: str
+    success: bool = False
+    uncertain: bool = False
+
+
 def _entry(raw: Any) -> ExperienceEntry | None:
     if not isinstance(raw, dict):
         return None
@@ -231,13 +240,13 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
 def edit_experience_on_hh(
     page: Page, resume_id: str, plan: ExperiencePlan, *, dry_run: bool, indexes=None
 ):
-    """Apply a plan to one or more rows; return a list of textual results."""
+    """Apply a plan to one or more rows; return structural row outcomes."""
     try:
         open_confirmed_resume(page, resume_id)
     except ValueError:
-        return ["identity резюме не подтверждён"]
+        return [ExperienceResult("identity резюме не подтверждён")]
     if plan.used_fallback and not plan.entries:
-        return [plan.reason or "LLM не предложил безопасных изменений"]
+        return [ExperienceResult(plan.reason or "LLM не предложил безопасных изменений")]
     selected = list(indexes if indexes is not None else range(len(plan.entries)))
     results = []
     for entry, index in zip(plan.entries, selected, strict=False):
@@ -248,15 +257,25 @@ def edit_experience_on_hh(
             # text or a broad CSS selector.
             add = page.locator(EXPERIENCE_ADD_BUTTON)
             if add.count() != 1:
-                return results + [f"строка опыта {index}: add-триггер не подтверждён однозначно"]
+                return results + [
+                    ExperienceResult(
+                        f"строка опыта {index}: add-триггер не подтверждён однозначно"
+                    )
+                ]
             try:
                 add.click()
                 trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
                 trigger.first.wait_for(state="visible", timeout=SAVE_TIMEOUT_MS)
             except PlaywrightError as exc:
-                return results + [f"строка опыта {index}: не удалось открыть новую запись: {exc}"]
+                return results + [
+                    ExperienceResult(
+                        f"строка опыта {index}: не удалось открыть новую запись: {exc}"
+                    )
+                ]
         if trigger.count() != 1:
-            return results + [f"строка опыта {index}: триггер не найден однозначно"]
+            return results + [
+                ExperienceResult(f"строка опыта {index}: триггер не найден однозначно")
+            ]
         save_attempted = False
         try:
             trigger.click()
@@ -272,12 +291,14 @@ def edit_experience_on_hh(
             if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
                 _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
             if dry_run:
-                results.append(f"строка {index}: предложено, save не нажат")
+                results.append(ExperienceResult(f"строка {index}: предложено, save не нажат", True))
                 page.locator(EXPERIENCE_CANCEL).click()
             else:
                 save = page.locator(EXPERIENCE_SAVE)
                 if save.count() != 1:
-                    return results + [f"строка {index}: save-кнопка не подтверждена"]
+                    return results + [
+                        ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
+                    ]
                 save_attempted = True
                 save.click()
                 try:
@@ -288,14 +309,24 @@ def edit_experience_on_hh(
                     )
                 except PlaywrightError as exc:
                     return results + [
-                        f"строка {index}: сохранение не подтверждено (uncertain) после клика: {exc}"
+                        ExperienceResult(
+                            f"строка {index}: сохранение не подтверждено после клика: {exc}",
+                            uncertain=True,
+                        )
                     ]
                 if not resume_identity_matches(page, resume_id):
                     return results + [
-                        f"строка {index}: после save identity резюме не подтверждён (uncertain)"
+                        ExperienceResult(
+                            f"строка {index}: после save identity резюме не подтверждён",
+                            uncertain=True,
+                        )
                     ]
-                results.append(f"строка {index}: сохранено")
+                results.append(ExperienceResult(f"строка {index}: сохранено", True))
         except (PlaywrightError, ValueError) as exc:
-            suffix = " (uncertain: клик сохранения уже был выполнен)" if save_attempted else ""
-            return results + [f"строка {index}: {exc}{suffix}"]
+            return results + [
+                ExperienceResult(
+                    f"строка {index}: {exc}",
+                    uncertain=save_attempted,
+                )
+            ]
     return results

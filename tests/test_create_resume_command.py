@@ -47,8 +47,10 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(hhru_bot.browser, "launch_context", launch)
     state = SimpleNamespace(result=CreateResumeResult(True, NEW_ID, "черновик создан"), calls=[])
 
-    def create(page, *, area, title, dry_run):
+    def create(page, *, area, title, dry_run, before_click=None):
         state.calls.append((area, title, dry_run))
+        if not dry_run and (state.result.success or state.result.uncertain):
+            before_click()
         return state.result
 
     monkeypatch.setattr(hhru_bot.create_resume, "create_resume_on_hh", create)
@@ -105,9 +107,10 @@ def test_sigterm_after_creation_leaves_unresolved_uncertain_marker(env, tmp_path
     external creation -- this test pins that gap red until fixed.
     """
 
-    def create(page, *, area, title, dry_run):  # noqa: ANN001, ARG001
+    def create(page, *, area, title, dry_run, before_click):  # noqa: ANN001, ARG001
         # Simulate hh.ru having already created the resume, then the process
         # getting SIGTERM'd before the command can record anything.
+        before_click()
         signal.raise_signal(signal.SIGTERM)
         return CreateResumeResult(True, NEW_ID, "черновик создан")
 
@@ -121,6 +124,20 @@ def test_sigterm_after_creation_leaves_unresolved_uncertain_marker(env, tmp_path
         "unresolved uncertain actions marker, or a blind retry can create "
         "a duplicate resume"
     )
+
+
+def test_pre_click_launch_failure_leaves_no_uncertain_marker(env, tmp_path, monkeypatch):
+    def fail_launch(*_args, **_kwargs):
+        raise RuntimeError("transient launch failure")
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fail_launch)
+
+    with pytest.raises(RuntimeError, match="transient launch failure"):
+        cmd.run(_args(tmp_path, force=True))
+
+    history = History(tmp_path / "history.db")
+    assert not history.has_unresolved_uncertain("account", "create_resume")
+    assert history.command_runs()[-1]["attempted"] == 0
 
 
 def test_unresolved_uncertain_blocks_retry(env, tmp_path, capsys):

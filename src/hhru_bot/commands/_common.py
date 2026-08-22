@@ -25,7 +25,7 @@ from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_place
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
 from ..exit_codes import CommandExitCode
-from ..history import History
+from ..history import CommandRunBusy, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     VacancyCard,
@@ -321,6 +321,7 @@ class ApplyProgress:
     uncertain_count: int = 0
     skipped_count: int = 0
     run_id: str | None = None
+    _finished_attempts: int = field(default=0, init=False, repr=False, compare=False)
 
     def reached(self, limit: int | None) -> bool:
         return limit is not None and self.applied_count >= limit
@@ -328,15 +329,56 @@ class ApplyProgress:
     def begin_attempt(self) -> None:
         self.attempted_count += 1
 
-    def finish(self, result) -> None:  # noqa: ANN001 - ApplyResult avoids import cycle
-        if getattr(result, "skipped", False):
+    def finish(
+        self,
+        result,  # noqa: ANN001 - command result types intentionally share a protocol
+        *,
+        uncertain_exceptions: tuple[type[BaseException], ...] = (),
+    ) -> str | None:
+        """Classify and count the current attempt exactly once.
+
+        Single results use structural flags (``skipped``, ``uncertain`` or
+        ``acted``, then ``success``).  Batch results are first collapsed so a
+        definite failure cannot be hidden by an uncertain sibling.  Typed
+        post-click exceptions can be supplied through ``uncertain_exceptions``;
+        exception messages are deliberately never inspected.
+        """
+        if self._finished_attempts >= self.attempted_count:
+            return None
+        self._finished_attempts += 1
+
+        if isinstance(result, BaseException):
+            status = "uncertain" if isinstance(result, uncertain_exceptions) else "failed"
+        elif isinstance(result, (list, tuple)):
+            status = _classify_result_batch(result)
+        else:
+            skipped = bool(getattr(result, "skipped", False))
+            success = bool(
+                getattr(result, "success", result if isinstance(result, bool) else False)
+            )
+            uncertain = bool(
+                getattr(result, "uncertain", False)
+                or (getattr(result, "acted", False) and not success)
+            )
+            status = (
+                "skipped"
+                if skipped
+                else "uncertain"
+                if uncertain
+                else "success"
+                if success
+                else "failed"
+            )
+
+        if status == "skipped":
             self.skipped_count += 1
-        elif getattr(result, "uncertain", False):
+        elif status == "uncertain":
             self.uncertain_count += 1
-        elif result.success:
+        elif status == "success":
             self.applied_count += 1
         else:
             self.failed_count += 1
+        return status
 
     def summary(self, status: str) -> str:
         return (
@@ -344,6 +386,90 @@ class ApplyProgress:
             f"attempted={self.attempted_count} success={self.applied_count} "
             f"failed={self.failed_count} uncertain={self.uncertain_count} "
             f"skipped={self.skipped_count}"
+        )
+
+
+def _classify_result_batch(results: list | tuple) -> str:
+    """Collapse a batch into the single status consumed by ``finish``."""
+    if not results:
+        return "failed"
+    flags = []
+    for result in results:
+        success = bool(getattr(result, "success", False))
+        skipped = bool(getattr(result, "skipped", False))
+        uncertain = bool(
+            getattr(result, "uncertain", False)
+            or (getattr(result, "acted", False) and not success)
+        )
+        flags.append((skipped, uncertain, success))
+    hard_failed = any(
+        not skipped and not uncertain and not success
+        for skipped, uncertain, success in flags
+    )
+    if hard_failed:
+        return "failed"
+    if all(skipped for skipped, _uncertain, _success in flags):
+        return "skipped"
+    if any(uncertain for _skipped, uncertain, _success in flags):
+        return "uncertain"
+    if all(success for _skipped, _uncertain, success in flags):
+        return "success"
+    return "failed"
+
+
+@dataclass(frozen=True)
+class MutationOutcome:
+    """Minimal structural result for mutations that otherwise return no object."""
+
+    success: bool = False
+    uncertain: bool = False
+    skipped: bool = False
+
+
+@dataclass
+class DurableMutationAttempt:
+    """Reserve/finalize one resume mutation at its browser click boundary."""
+
+    history: History
+    progress: ApplyProgress
+    resume_id: str
+    action: str
+    action_id: int | None = None
+
+    def before_click(self) -> None:
+        if self.action_id is not None:
+            raise RuntimeError(f"{self.action}: durable intent уже зарезервирован")
+        self.action_id = self.history.begin_action(
+            self.resume_id,
+            self.resume_id,
+            self.action,
+            run_id=self.progress.run_id,
+        )
+        self.progress.begin_attempt()
+
+    def finish(self, result) -> None:  # noqa: ANN001 - shared structural result protocol
+        if self.action_id is None:
+            return
+        status = self.progress.finish(result)
+        if status is None:
+            raise RuntimeError(f"{self.action}: попытка уже финализирована")
+        self.history.finalize_action(
+            self.action_id,
+            status,
+            getattr(result, "reason", None),
+            reason_code=status,
+        )
+
+    def interrupt(self, exc: BaseException) -> None:
+        if self.action_id is None:
+            return
+        outcome = MutationOutcome(uncertain=True)
+        self.progress.finish(outcome)
+        self.history.finalize_action(
+            self.action_id,
+            "uncertain",
+            f"исключение после точки невозврата: {type(exc).__name__}: {exc}",
+            reason_code="uncertain",
         )
 
 
@@ -386,19 +512,11 @@ def run_supervised_command(
     (e.g. under future orchestration) does not clobber an outer caller's
     handler.
 
-    That LIFO-safety covers only the *signal handler*. The durable ledger
-    itself is NOT re-entrant (cycle-review PR #468, code-reviewer-462):
-    ``History.start_command_run`` marks any still-``running`` row
-    ``orphaned`` before inserting a new one, so a nested call's
-    ``start_command_run`` orphans the outer call's row -- the outer call's
-    later ``finish_command_run`` then finds no matching ``running`` row,
-    raises, and (via the masking guard below) silently skips its own
-    ``[RUN]`` summary print. This is pre-existing ``History`` behaviour, not
-    introduced by this helper, and is harmless today because no caller nests
-    ``run_supervised_command`` (``commands/run.py`` calls ``apply_cmd.run()``
-    and ``bump_cmd.run()`` sequentially, each already-finished before the
-    next starts). A future command that wraps this helper *inside* another
-    active run would need one ledger row per process, not per nested call.
+    The durable ledger is intentionally non-reentrant: one live owner PID
+    holds the SQLite-backed supervised-command lease. A concurrent or nested
+    start is rejected without touching the active row; only a row whose owner
+    PID is confirmed dead (or a legacy row without owner metadata) is recovered
+    as ``orphaned``.
 
     SIGINT deliberately gets NO custom ``signal.signal`` handler here --
     only the default ``KeyboardInterrupt`` it already raises is caught
@@ -416,7 +534,11 @@ def run_supervised_command(
     so it is injected rather than hardcoded here; a future bump/publish
     caller would pass its own reconcile or none at all).
     """
-    run_id = history.start_command_run(command=command, requested_limit=requested_limit)
+    try:
+        run_id = history.start_command_run(command=command, requested_limit=requested_limit)
+    except CommandRunBusy as exc:
+        print(f"[FAIL] {exc}")
+        return True
     progress = ApplyProgress(run_id=run_id)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -48,11 +49,19 @@ def _require(locator: Locator | None) -> Locator:
     return locator
 
 
-def _click_one(page: Page, selector: str, label: str) -> str:
+def _click_one(
+    page: Page,
+    selector: str,
+    label: str,
+    *,
+    before_click: Callable[[], None] | None = None,
+) -> str:
     """Resolve exactly one locator and click it; return a non-empty reason on failure."""
     locator, reason = _one(page, selector, label)
     if reason:
         return reason
+    if before_click is not None:
+        before_click()
     _require(locator).click()
     return ""
 
@@ -138,7 +147,14 @@ def _existing_resume_reason(page: Page, title: str) -> str:
     return _existing_title_reason(cards.count(), titles, title)
 
 
-def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> CreateResumeResult:
+def create_resume_on_hh(
+    page: Page,
+    *,
+    area: str,
+    title: str,
+    dry_run: bool,
+    before_click: Callable[[], None] | None = None,
+) -> CreateResumeResult:
     """Create one draft; never uses a direct HTTP request.
 
     Dry-run only reads the list and wizard DOM.  In particular it never clicks
@@ -208,7 +224,12 @@ def create_resume_on_hh(page: Page, *, area: str, title: str, dry_run: bool) -> 
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
-        reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения после каталога")
+        reason = _click_one(
+            page,
+            RESUME_CREATION_NEXT,
+            "кнопка продолжения после каталога",
+            before_click=before_click,
+        )
         if reason:
             return CreateResumeResult(False, reason=reason)
         page.wait_for_url(_RESUME_ID_RE, wait_until="commit")

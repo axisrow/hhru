@@ -200,7 +200,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             )
     except NotAuthenticated as exc:
         if not args.dry_run and progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — Сессия недействительна: {exc}")
         return True
     except BrowserLaunchError:
@@ -211,7 +211,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback
         if not args.dry_run and progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — {exc}")
         return True
 
@@ -231,13 +231,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 )
 
     failed = [result for result in results if not result.success]
-    # A hard failure (not success, not uncertain) must win over uncertain
-    # when both appear in the same --section both batch (#465 review, round
-    # 2): checking "any uncertain in the whole batch" masked a definite hard
-    # failure on one block as merely uncertain because another block in the
-    # same call happened to be uncertain.
-    hard_failed = [result for result in failed if not result.uncertain]
-    uncertain = [result for result in failed if result.uncertain]
     for result in results:
         prefix = "[OK]" if result.success else "[FAIL]"
         if result.uncertain:
@@ -245,13 +238,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
         print(f"{prefix} {result.kind}: {result.reason}")
     if failed:
         if not args.dry_run:
-            if hard_failed:
-                progress.failed_count += 1
-            elif uncertain:
-                progress.uncertain_count += 1
+            progress.finish(results)
         return True
     if not args.dry_run:
-        progress.applied_count += 1
+        progress.finish(results)
     if args.dry_run:
         print("[DRY-RUN] Ничего не сохранено на hh.ru")
     else:

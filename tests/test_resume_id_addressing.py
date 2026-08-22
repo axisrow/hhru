@@ -132,7 +132,7 @@ def _patch_publish(monkeypatch, captured: list):
     def fake_launch(*a, **kw):
         yield SimpleNamespace(new_page=lambda: SimpleNamespace())
 
-    def fake_publish(page, resume, dry_run):
+    def fake_publish(page, resume, dry_run, *, before_click=None):
         captured.append((resume.id, resume.resume_id, dry_run))
         return _PublishResult(
             success=True, uncertain=False, reason="Черновик готов к публикации", is_searchable=None

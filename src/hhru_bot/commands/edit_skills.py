@@ -123,7 +123,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback
         if not args.dry_run and progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — {exc}")
         return True
 
@@ -131,13 +131,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # acted=True and not success is the uncertain discriminator
         # (CLAUDE.md #163/#176, #465 review round 3): the click may already
         # have reached hh.ru, so this is not a definite failure.
-        uncertain = result.acted
         if not args.dry_run:
-            if uncertain:
-                progress.uncertain_count += 1
-            else:
-                progress.failed_count += 1
-        prefix = "[FAIL] (uncertain)" if uncertain else "[FAIL]"
+            progress.finish(result)
+        prefix = "[FAIL] (uncertain)" if result.acted else "[FAIL]"
         print(f"{prefix} {resume.id} — {result.reason}")
         return True
     prefix = "[DRY-RUN]" if args.dry_run else "[OK]"
@@ -148,7 +144,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
     if args.dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
     else:
-        progress.applied_count += 1
+        progress.finish(result)
     return False
 
 

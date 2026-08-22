@@ -205,41 +205,24 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # before begin_attempt() runs, which must not misreport attempted=0
         # as failed=1.
         if progress.attempted_count:
-            progress.failed_count += 1
+            progress.finish(exc)
         print(f"[FAIL] {resume.id} — {exc}")
         return True
-    success = bool(results) and all("сохранено" in item for item in results)
-    # A hard failure (neither "сохранено" nor "uncertain") must win over
-    # uncertain in the same batch (#465 review, round 3 — same batch-
-    # classification bug already fixed for edit_education.py in round 2,
-    # found still present here): "any uncertain in the whole batch" masked a
-    # definite hard failure on one entry as merely uncertain because another
-    # entry in the same --entry batch happened to be uncertain.
-    hard_failed_items = [
-        item for item in results if "сохранено" not in item and "uncertain" not in item
-    ]
-    uncertain_items = [item for item in results if "uncertain" in item]
-    uncertain = bool(uncertain_items) and not hard_failed_items
+    success = bool(results) and all(item.success for item in results)
+    status = progress.finish(results)
+    assert status is not None
     history.record_action(
         resume.resume_id,
         resume.resume_id,
         "edit_experience",
-        "uncertain" if uncertain else ("success" if success else "failed"),
-        "; ".join(results),
+        status,
+        "; ".join(item.reason for item in results),
         run_id=progress.run_id,
     )
     for item in results:
-        is_item_uncertain = "uncertain" in item
-        prefix = "[FAIL] (uncertain)" if is_item_uncertain else ("[OK]" if success else "[FAIL]")
-        print(f"{prefix} {resume.id} — {item}")
-    if not success:
-        if hard_failed_items:
-            progress.failed_count += 1
-        elif uncertain_items:
-            progress.uncertain_count += 1
-        return True
-    progress.applied_count += 1
-    return False
+        prefix = "[FAIL] (uncertain)" if item.uncertain else ("[OK]" if item.success else "[FAIL]")
+        print(f"{prefix} {resume.id} — {item.reason}")
+    return not success
 
 
 def run(args: argparse.Namespace):

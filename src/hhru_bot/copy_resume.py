@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -620,7 +621,13 @@ def _wait_single_match_count(locator, *, timeout_ms: int) -> int:
     return match_count
 
 
-def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyResumeResult:
+def copy_resume_on_hh(
+    page: Page,
+    resume: ResumeConfig,
+    dry_run: bool,
+    *,
+    before_click: Callable[[], None] | None = None,
+) -> CopyResumeResult:
     observer = None
     absolute_deadline = _monotonic() + PROFILE_ABSOLUTE_TIMEOUT_SECONDS
     if not dry_run:
@@ -688,6 +695,8 @@ def copy_resume_on_hh(page: Page, resume: ResumeConfig, dry_run: bool) -> CopyRe
     before = _card_hashes(page)
 
     try:
+        if before_click is not None:
+            before_click()
         duplicate.click()
         logger.info("Клик по «Дублировать» — жду страницу нового резюме")
 

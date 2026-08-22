@@ -115,6 +115,7 @@ def test_next_bump_run_recovers_abandoned_bump_as_orphaned(tmp_path, monkeypatch
     _patch_runtime(monkeypatch, config)
     history = History(tmp_path / "history.db")
     abandoned = history.start_command_run(command="bump", requested_limit=None)
+    monkeypatch.setattr("hhru_bot.history._pid_is_alive", lambda _pid: False)
     monkeypatch.setattr(
         "hhru_bot.bump.bump_resume", lambda *_args: (_ for _ in ()).throw(KeyboardInterrupt())
     )
