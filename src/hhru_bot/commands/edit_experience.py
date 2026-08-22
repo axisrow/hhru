@@ -88,8 +88,8 @@ def _load_entries(raw_entries: list[str] | None):
     return entries
 
 
-def run(args: argparse.Namespace) -> None:
-    from ..browser import launch_context
+def _run(args: argparse.Namespace, progress) -> bool:
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..experience import (
         ExperiencePlan,
@@ -106,22 +106,22 @@ def run(args: argparse.Namespace) -> None:
     manual = bool(getattr(args, "entry", None))
     if manual and args.career:
         print("[FAIL] --career относится к LLM-планированию и не сочетается с --entry (#326)")
-        raise SystemExit(1)
+        return True
     if not manual and not args.career:
         print("[FAIL] Требуется --career (LLM) или --entry (готовый текст, #326)")
-        raise SystemExit(1)
+        return True
     if manual and args.mode != "fill":
         print("[FAIL] --mode относится к LLM-планированию и не сочетается с --entry (#326)")
-        raise SystemExit(1)
+        return True
 
     try:
         resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        raise SystemExit(1) from exc
+        return True
     if not manual and config.ai is None:
         print("[FAIL] AI выключен: добавьте пустую секцию 'ai' в config.yaml")
-        raise SystemExit(1)
+        return True
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Сохранить опыт работы резюме '{resume.id}' на hh.ru?"
     ):
@@ -129,13 +129,13 @@ def run(args: argparse.Namespace) -> None:
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
             "Ничего не сохранено."
         )
-        raise SystemExit(1)
+        return True
     try:
         existing = _load_existing(args.existing)
         entries = _load_entries(getattr(args, "entry", None))
     except ValueError as exc:
         print(f"[FAIL] {exc}")
-        raise SystemExit(1) from exc
+        return True
 
     if manual:
         plan = ExperiencePlan(entries)
@@ -151,7 +151,7 @@ def run(args: argparse.Namespace) -> None:
                     existing = read_experience_on_hh(context.new_page(), resume.resume_id)
             except Exception as exc:  # noqa: BLE001 - command reports browser drift clearly
                 print(f"[FAIL] Не удалось прочитать существующий опыт: {exc}")
-                raise SystemExit(1) from exc
+                return True
 
         try:
             from ..ai.llm_client import LLMClient
@@ -161,17 +161,17 @@ def run(args: argparse.Namespace) -> None:
             )
         except ImportError as exc:
             print(f"[FAIL] AI-пакет не установлен: {exc}")
-            raise SystemExit(1) from exc
+            return True
 
     if plan.used_fallback:
         print(f"[INFO] {plan.reason}; безопасный fallback: существующие записи без изменений")
     print(json.dumps([entry.__dict__ for entry in plan.entries], ensure_ascii=False, indent=2))
     if args.dry_run:
         print("[DRY-RUN] save не нажат; изменений на hh.ru нет")
-        return
+        return False
     if plan.used_fallback or not plan.entries:
         print("[FAIL] Нет безопасного LLM-плана; боевая запись запрещена.")
-        raise SystemExit(1)
+        return True
 
     history = History(args.history)
     try:
@@ -186,23 +186,64 @@ def run(args: argparse.Namespace) -> None:
                 # JSON omitted. Always append after the live row count instead.
                 existing_count = len(read_experience_on_hh(page, resume.resume_id))
                 indexes = list(range(existing_count, existing_count + len(plan.entries)))
+            # begin_attempt() right before the real mutation, after the page/
+            # context are already open (#465 review): counting the attempt
+            # before launch_context succeeded would misreport a browser-launch
+            # or auth failure as a real (but failed) mutation attempt.
+            progress.begin_attempt()
             results = edit_experience_on_hh(
                 page, resume.resume_id, plan, dry_run=False, indexes=indexes
             )
+    except BrowserLaunchError:
+        # #465 review round 3: re-raise so cli.py's dedicated handler
+        # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+        # instead of the broad except Exception below swallowing it.
+        raise
     except Exception as exc:  # browser/auth errors are a failed command, not a traceback contract
+        # Only count a failure if the attempt was actually reserved (#465
+        # review): read_experience_on_hh (manual re-index path) can raise
+        # before begin_attempt() runs, which must not misreport attempted=0
+        # as failed=1.
+        if progress.attempted_count:
+            progress.failed_count += 1
         print(f"[FAIL] {resume.id} — {exc}")
-        raise SystemExit(1) from exc
-    uncertain = any("uncertain" in item for item in results)
+        return True
     success = bool(results) and all("сохранено" in item for item in results)
+    # A hard failure (neither "сохранено" nor "uncertain") must win over
+    # uncertain in the same batch (#465 review, round 3 — same batch-
+    # classification bug already fixed for edit_education.py in round 2,
+    # found still present here): "any uncertain in the whole batch" masked a
+    # definite hard failure on one entry as merely uncertain because another
+    # entry in the same --entry batch happened to be uncertain.
+    hard_failed_items = [
+        item for item in results if "сохранено" not in item and "uncertain" not in item
+    ]
+    uncertain_items = [item for item in results if "uncertain" in item]
+    uncertain = bool(uncertain_items) and not hard_failed_items
     history.record_action(
         resume.resume_id,
         resume.resume_id,
         "edit_experience",
         "uncertain" if uncertain else ("success" if success else "failed"),
         "; ".join(results),
+        run_id=progress.run_id,
     )
     for item in results:
-        prefix = "[FAIL] (uncertain)" if uncertain else ("[OK]" if success else "[FAIL]")
+        is_item_uncertain = "uncertain" in item
+        prefix = "[FAIL] (uncertain)" if is_item_uncertain else ("[OK]" if success else "[FAIL]")
         print(f"{prefix} {resume.id} — {item}")
     if not success:
-        raise SystemExit(1)
+        if hard_failed_items:
+            progress.failed_count += 1
+        elif uncertain_items:
+            progress.uncertain_count += 1
+        return True
+    progress.applied_count += 1
+    return False
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ._common import run_single_mutation_command
+
+    return run_single_mutation_command(command="edit_experience", args=args, body=_run)

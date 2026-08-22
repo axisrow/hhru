@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from urllib.parse import urlsplit
 
 from .copy_resume import confirm_write
@@ -41,8 +40,8 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
-    from ..browser import launch_context
+def _run(args: argparse.Namespace, progress) -> bool:
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..skills import (
         build_skills_prompt,
@@ -58,64 +57,89 @@ def run(args: argparse.Namespace) -> None:
         resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     if not args.dry_run and not confirm_write(
         args.force,
         prompt=f"Сохранить ключевые навыки резюме '{resume.id}' на hh.ru?",
     ):
         print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
-        sys.exit(1)
+        return True
 
     try:
         manual = parse_manual_skills(args.skill)
     except ValueError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
-    with launch_context(
-        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-    ) as context:
-        page = context.new_page()
-        # Manual values intentionally avoid an LLM call. Otherwise use the same
-        # LLMClient transport and fail closed on every malformed/empty response.
-        if manual:
-            proposed = manual
-        else:
-            if config.ai is None:
-                print(
-                    "[FAIL] Секция ai не включена; укажите --skill NAME=LEVEL или добавьте ai: {}"
-                )
-                sys.exit(1)
-            from ..ai.llm_client import LLMClient
-            from ..skills import read_skills
+    try:
+        with launch_context(
+            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+        ) as context:
+            page = context.new_page()
+            # Manual values intentionally avoid an LLM call. Otherwise use the
+            # same LLMClient transport and fail closed on every malformed/empty
+            # response.
+            if manual:
+                proposed = manual
+            else:
+                if config.ai is None:
+                    print(
+                        "[FAIL] Секция ai не включена; "
+                        "укажите --skill NAME=LEVEL или добавьте ai: {}"
+                    )
+                    return True
+                from ..ai.llm_client import LLMClient
+                from ..skills import read_skills
 
-            try:
-                goto = f"https://hh.ru/resume/{resume.resume_id}"
-                from ..browser import goto_hh, has_auth_cookie, has_login_form
+                try:
+                    goto = f"https://hh.ru/resume/{resume.resume_id}"
+                    from ..browser import goto_hh, has_auth_cookie, has_login_form
 
-                goto_hh(page, goto)
-                if not has_auth_cookie(page) or has_login_form(page):
-                    raise RuntimeError("сессия hh.ru не подтверждена")
-                if urlsplit(page.url).path != f"/resume/{resume.resume_id}":
-                    raise RuntimeError("страница нужного резюме не подтверждена")
-                existing = read_skills(page)
-                response = LLMClient(config.ai).chat(
-                    build_skills_prompt(page.locator("body").inner_text(), existing, args.mode),
-                    temperature=0,
-                )
-                if not response or not response.content:
-                    raise ValueError("LLM вернул пустой ответ")
-                proposed = parse_skill_plan(response.content)
-            except (ImportError, ValueError, RuntimeError) as exc:
-                print(f"[FAIL] Не удалось построить безопасный план навыков: {exc}")
-                sys.exit(1)
+                    goto_hh(page, goto)
+                    if not has_auth_cookie(page) or has_login_form(page):
+                        raise RuntimeError("сессия hh.ru не подтверждена")
+                    if urlsplit(page.url).path != f"/resume/{resume.resume_id}":
+                        raise RuntimeError("страница нужного резюме не подтверждена")
+                    existing = read_skills(page)
+                    response = LLMClient(config.ai).chat(
+                        build_skills_prompt(page.locator("body").inner_text(), existing, args.mode),
+                        temperature=0,
+                    )
+                    if not response or not response.content:
+                        raise ValueError("LLM вернул пустой ответ")
+                    proposed = parse_skill_plan(response.content)
+                except (ImportError, ValueError, RuntimeError) as exc:
+                    print(f"[FAIL] Не удалось построить безопасный план навыков: {exc}")
+                    return True
 
-        result = edit_skills_on_hh(page, resume, proposed, dry_run=args.dry_run, mode=args.mode)
+            if not args.dry_run:
+                progress.begin_attempt()
+            result = edit_skills_on_hh(page, resume, proposed, dry_run=args.dry_run, mode=args.mode)
+    except BrowserLaunchError:
+        # #465 review round 3: re-raise so cli.py's dedicated handler
+        # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+        # instead of the broad except Exception below swallowing it.
+        raise
+    except Exception as exc:  # browser/auth errors are a failed command, not a traceback
+        if not args.dry_run and progress.attempted_count:
+            progress.failed_count += 1
+        print(f"[FAIL] {resume.id} — {exc}")
+        return True
 
     if not result.success:
-        print(f"[FAIL] {resume.id} — {result.reason}")
-        sys.exit(1)
+        # acted=True and not success is the uncertain discriminator
+        # (CLAUDE.md #163/#176, #465 review round 3): the click may already
+        # have reached hh.ru, so this is not a definite failure.
+        uncertain = result.acted
+        if not args.dry_run:
+            if uncertain:
+                progress.uncertain_count += 1
+            else:
+                progress.failed_count += 1
+        prefix = "[FAIL] (uncertain)" if uncertain else "[FAIL]"
+        print(f"{prefix} {resume.id} — {result.reason}")
+        return True
     prefix = "[DRY-RUN]" if args.dry_run else "[OK]"
     print(f"{prefix} {resume.id}: существующие навыки сохранены: {len(result.existing)}")
     for skill in result.proposed:
@@ -123,3 +147,13 @@ def run(args: argparse.Namespace) -> None:
         print(f"  - {skill.name} [{skill.level}] — {state}")
     if args.dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
+    else:
+        progress.applied_count += 1
+    return False
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ._common import run_single_mutation_command
+
+    return run_single_mutation_command(command="edit_skills", args=args, body=_run)

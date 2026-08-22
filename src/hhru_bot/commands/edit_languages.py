@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -52,8 +51,8 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> None:
-    from ..browser import launch_context
+def _run(args: argparse.Namespace, progress) -> bool:
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..languages import (
         build_languages_prompt,
@@ -70,7 +69,7 @@ def run(args: argparse.Namespace) -> None:
         resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
-        sys.exit(1)
+        return True
 
     manual = bool(args.language)
     if manual:
@@ -80,11 +79,11 @@ def run(args: argparse.Namespace) -> None:
             proposed = parse_manual_languages(args.language)
         except ValueError as exc:
             print(f"[FAIL] {exc}")
-            sys.exit(1)
+            return True
         _print_plan(proposed, args.dry_run)
         if args.dry_run:
             print("[INFO] Ничего не сохранено на hh.ru.")
-            return
+            return False
         if not confirm_write(
             args.force,
             prompt=(
@@ -93,19 +92,55 @@ def run(args: argparse.Namespace) -> None:
             ),
         ):
             print("[FAIL] Требуется --force или интерактивное подтверждение. Ничего не сохранено.")
-            sys.exit(1)
-        with launch_context(
-            config.storage_state_file, headless=args.headless, user_agent=config.user_agent
-        ) as context:
-            result = edit_languages_on_hh(
-                context.new_page(), resume, proposed, dry_run=False, mode=args.mode
-            )
-        _report(result, resume.id, False)
-        return
+            return True
+        try:
+            with launch_context(
+                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+            ) as context:
+                # begin_attempt() right before the real mutation, after the
+                # browser/context are already open (#465 review, round 2):
+                # counting the attempt before launch_context succeeded would
+                # misreport a browser-launch failure as a real (but failed)
+                # attempt — this whole block previously had no try/except at
+                # all, so such a failure escaped run_supervised_command's
+                # bool-based classification entirely (raw traceback,
+                # attempted=1 with every outcome column at 0).
+                progress.begin_attempt()
+                result = edit_languages_on_hh(
+                    context.new_page(), resume, proposed, dry_run=False, mode=args.mode
+                )
+        except BrowserLaunchError:
+            # #465 review round 3: re-raise so cli.py's dedicated handler
+            # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+            # instead of the broad except Exception below swallowing it.
+            raise
+        except Exception as exc:  # browser/auth errors are a failed command, not a traceback
+            if progress.attempted_count:
+                progress.failed_count += 1
+            print(f"[FAIL] {resume.id} — {exc}")
+            return True
+        if not result.success:
+            # acted=True and not success is the uncertain discriminator
+            # (CLAUDE.md #163/#176, #465 review round 3): the write may
+            # already have reached hh.ru, so this is not a definite failure.
+            uncertain = result.acted
+            if uncertain:
+                progress.uncertain_count += 1
+            else:
+                progress.failed_count += 1
+            prefix = "[FAIL] (uncertain)" if uncertain else "[FAIL]"
+            print(f"{prefix} {resume.id} — {result.reason}")
+            return True
+        progress.applied_count += 1
+        print(f"[OK] {resume.id}: языков предложено: {len(result.proposed)}")
+        for language in result.proposed:
+            level = language.level or "нуждается в подтверждении"
+            print(f"  - {language.name} [{level}]")
+        return False
     else:
         if config.ai is None:
             print("[FAIL] Секция ai не включена; укажите --language NAME=CEFR или добавьте ai: {}")
-            sys.exit(1)
+            return True
         from ..ai.llm_client import LLMClient
 
         with launch_context(
@@ -121,10 +156,10 @@ def run(args: argparse.Namespace) -> None:
             goto_hh(page, f"{HH_BASE_URL}/applicant/profile/me")
             if not has_auth_cookie(page) or has_login_form(page):
                 print("[FAIL] Сессия hh.ru не подтверждена")
-                sys.exit(1)
+                return True
             if urlsplit(page.url).path != "/applicant/profile/me":
                 print("[FAIL] Страница профиля не подтверждена")
-                sys.exit(1)
+                return True
             # #265 code-review round 1: fail closed on an indeterminate card
             # instead of silently feeding the LLM a false "no existing
             # languages" premise (PageStateIndeterminate invariant, CLAUDE.md).
@@ -139,11 +174,11 @@ def run(args: argparse.Namespace) -> None:
                 card = wait_for_language_card(page)
                 if card is None:
                     print("[FAIL] Карточка языков не найдена однозначно")
-                    sys.exit(1)
+                    return True
                 existing = read_existing_languages(card)
             except PlaywrightError as exc:
                 print(f"[FAIL] Карточка языков не подтверждена: {exc}")
-                sys.exit(1)
+                return True
             try:
                 response = LLMClient(config.ai).chat(
                     build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
@@ -151,9 +186,11 @@ def run(args: argparse.Namespace) -> None:
                 )
                 content = response.content if response and response.content else ""
                 proposed = parse_language_plan(content)
-            except (ImportError, ValueError, RuntimeError) as exc:
+            except (ImportError, ValueError, RuntimeError, PlaywrightError) as exc:
+                # #465 review round 3: page.locator("body").inner_text() can
+                # also raise PlaywrightError, same as the card read above.
                 print(f"[FAIL] Не удалось построить безопасный план языков: {exc}")
-                sys.exit(1)
+                return True
             # #265 code-review round 3: the LLM branch is a planner only, not
             # a writer. parse_language_plan guarantees every LLM-sourced
             # Language.level is None (round 1 fix), so every genuinely new
@@ -172,7 +209,7 @@ def run(args: argparse.Namespace) -> None:
                 "[INFO] Для сохранения новых языков повторите с "
                 "--language NAME=CEFR для каждого языка."
             )
-            return
+            return False
 
 
 def _print_plan(proposed, dry_run: bool) -> None:
@@ -183,14 +220,8 @@ def _print_plan(proposed, dry_run: bool) -> None:
         print(f"  - {language.name} [{level}]")
 
 
-def _report(result, resume_id: str, dry_run: bool) -> None:
-    if not result.success:
-        print(f"[FAIL] {resume_id} — {result.reason}")
-        sys.exit(1)
-    prefix = "[DRY-RUN]" if dry_run else "[OK]"
-    print(f"{prefix} {resume_id}: языков предложено: {len(result.proposed)}")
-    for language in result.proposed:
-        level = language.level or "нуждается в подтверждении"
-        print(f"  - {language.name} [{level}]")
-    if dry_run:
-        print("[INFO] Ничего не сохранено на hh.ru.")
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ._common import run_single_mutation_command
+
+    return run_single_mutation_command(command="edit_languages", args=args, body=_run)

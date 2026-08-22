@@ -107,38 +107,41 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
 
 
 def test_edit_experience_manual_entry_invalid_json_fails_closed(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
+    # #465: run() reports a validation failure by returning `True` under the
+    # durable command_run ledger instead of raising SystemExit.
+    assert (
         edit_experience_cmd.run(
             _args(tmp_path, mode="fill", career=None, existing=None, entry=["{"])
         )
-    assert exc.value.code == 1
+        is True
+    )
     assert "валидный JSON" in capsys.readouterr().out
 
 
 def test_edit_experience_manual_entry_requires_company_and_position(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
+    assert (
         edit_experience_cmd.run(
             _args(tmp_path, mode="fill", career=None, existing=None, entry=['{"duties": "x"}'])
         )
-    assert exc.value.code == 1
+        is True
+    )
     assert "company и position" in capsys.readouterr().out
 
 
 def test_edit_experience_entry_conflicts_with_career(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
+    assert (
         edit_experience_cmd.run(
             _args(
                 tmp_path, career="факты", existing=None, entry=['{"company": "a", "position": "b"}']
             )
         )
-    assert exc.value.code == 1
+        is True
+    )
     assert "LLM-планированию" in capsys.readouterr().out
 
 
 def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
-        edit_experience_cmd.run(_args(tmp_path, mode="fill", career=None, existing=None))
-    assert exc.value.code == 1
+    assert edit_experience_cmd.run(_args(tmp_path, mode="fill", career=None, existing=None)) is True
     assert "--career" in capsys.readouterr().out
 
 
@@ -253,6 +256,54 @@ def test_resume_position_manual_allows_explicit_fill_mode(tmp_path, capsys, monk
     assert "新职位" in capsys.readouterr().out
 
 
+def test_resume_position_write_success_does_not_double_count_on_exit_error(
+    tmp_path, capsys, monkeypatch
+):
+    """A successful write must not also be counted as failed (#465 review).
+
+    Regression guard for the cycle-review PR #472 finding: applied_count was
+    incremented, then `return False` unwinds the `with launch_context(...)`
+    block — if `context.__exit__` itself raises during that unwind, the outer
+    `except Exception` handler must not ALSO add failed_count for the same
+    attempt (attempted=1 success=1 failed=1 would be a lie: the write did
+    land, per the applied_count already recorded).
+    """
+    from hhru_bot.history import History
+    from hhru_bot.resume_position import PositionValues
+
+    @contextmanager
+    def _exploding_launch_context(*_args, **_kwargs):
+        yield _FakePage()
+        raise RuntimeError("browser close failed")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _exploding_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda page, resume: PositionValues(title="старая"),
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
+
+    history_path = tmp_path / "h.db"
+    result = resume_position_cmd.run(
+        _args(
+            tmp_path,
+            title="新职位",
+            mode=None,
+            dry_run=False,
+            force=True,
+            history=str(history_path),
+        )
+    )
+    assert result is True  # the command still reports failure (exit unwind raised)
+
+    row = History(history_path).command_runs()[-1]
+    assert row["attempted"] == 1
+    assert row["success"] == 1
+    # The write itself landed (success=1); the __exit__ failure must not also
+    # be double-counted as a failure for the same single attempt.
+    assert row["failed"] == 0
+
+
 # --- edit-education ручные записи -------------------------------------------
 
 
@@ -275,11 +326,12 @@ def test_edit_education_parse_manual_records_requires_institution():
 
 
 def test_edit_education_manual_conflicts_with_source(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
+    assert (
         edit_education_cmd.run(
             _args(tmp_path, section="both", source="факты", mode=None, institution="МГУ")
         )
-    assert exc.value.code == 1
+        is True
+    )
     assert "LLM-планированию" in capsys.readouterr().out
 
 

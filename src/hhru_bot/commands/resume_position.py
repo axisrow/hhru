@@ -7,6 +7,17 @@ import argparse
 from .copy_resume import confirm_write
 
 
+class _SaveConfirmationUncertain(RuntimeError):
+    """Post-click grey-zone failure marker (#465 review, round 3).
+
+    Raised only when the SAVE click already landed and confirmation
+    couldn't be verified (CLAUDE.md #207 grey-zone). A dedicated type, not a
+    substring match on the exception message, is the discriminator between
+    'uncertain' and 'failed' — text matching is fragile and was the exact
+    class of bug found in edit_skills.py/edit_languages.py in this round.
+    """
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "resume-position",
@@ -70,9 +81,9 @@ def _print_plan(plan) -> None:
         print(f"  {key}: {value}")
 
 
-def run(args: argparse.Namespace) -> bool:
+def _run(args: argparse.Namespace, progress) -> bool:
     from ..ai.llm_client import LLMClient
-    from ..browser import launch_context
+    from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_position import (
         CANCEL,
@@ -199,6 +210,7 @@ def run(args: argparse.Namespace) -> bool:
                 page.locator(CANCEL).click()
                 print("[FAIL] Нужен --force или интерактивное подтверждение. Ничего не записано.")
                 return True
+            progress.begin_attempt()
             apply_position(page, plan)
             if page.locator(SAVE).count() != 1:
                 raise RuntimeError("кнопка сохранения формы не подтверждена")
@@ -208,12 +220,43 @@ def run(args: argparse.Namespace) -> bool:
                     state="hidden", timeout=10_000
                 )
             except Exception as exc:  # click already landed; result is uncertain
-                raise RuntimeError(
+                raise _SaveConfirmationUncertain(
                     f"сохранение не подтверждено (uncertain) после клика: {exc}"
                 ) from exc
+            progress.applied_count += 1
             print(f"[OK] Раздел желаемой работы резюме '{resume.id}' обновлён.")
             return False
-    except Exception as exc:
-        prefix = "[FAIL] (uncertain)" if "uncertain" in str(exc) else "[FAIL]"
-        print(f"{prefix} {exc}")
+    except _SaveConfirmationUncertain as exc:
+        # #465 review round 3: the grey-zone post-click failure (CLAUDE.md
+        # #207) must be recorded as uncertain, not failed — the save click
+        # already landed and may have taken effect. A dedicated exception
+        # type (not a substring match on the message) is the discriminator,
+        # per the code-reviewer's round-3 finding that acted/uncertain must
+        # be a structural signal, never free-text matching.
+        if progress.attempted_count and not progress.applied_count:
+            progress.uncertain_count += 1
+        print(f"[FAIL] (uncertain) {exc}")
         return True
+    except BrowserLaunchError:
+        # #465 review round 3: re-raise so cli.py's dedicated handler
+        # (prints "[ENVIRONMENT] ..." and exits distinctly) still fires,
+        # instead of the broad except Exception below swallowing it.
+        raise
+    except Exception as exc:
+        # #465 review: applied_count is only ever incremented right above,
+        # immediately before `return False` exits the `with` block. If
+        # context.__exit__ itself raises during that unwind, this handler
+        # would otherwise also add failed_count for the same attempt —
+        # progress.applied_count is the guard against double-counting one
+        # attempt as both a success and a failure.
+        if progress.attempted_count and not progress.applied_count:
+            progress.failed_count += 1
+        print(f"[FAIL] {exc}")
+        return True
+
+
+def run(args: argparse.Namespace):
+    """Execute one resume-edit command under the durable command-run ledger."""
+    from ._common import run_single_mutation_command
+
+    return run_single_mutation_command(command="resume_position", args=args, body=_run)
