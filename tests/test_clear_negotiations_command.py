@@ -545,3 +545,103 @@ def test_account_wide_skips_cards_without_topic(tmp_path, monkeypatch):
     with history._connect() as conn:
         rows = conn.execute("SELECT vacancy_id FROM actions").fetchall()
     assert [r[0] for r in rows] == ["tp1"]
+
+
+def test_sigint_mid_withdrawal_persists_partial_run_summary(tmp_path, monkeypatch, capsys):
+    """A Ctrl-C after one irreversible withdrawal must not hide that withdrawal.
+
+    The second topic interrupts before its browser action returns.  Its pre-click
+    reservation is linked to the command run, so the supervisor reconciles both
+    the confirmed first withdrawal and the unresolved second one into the final
+    durable summary.
+    """
+    history = History(tmp_path / "history.db")
+    page = _Page()
+    calls = []
+
+    def _withdraw(_page, topic):
+        calls.append(topic)
+        if topic == "second":
+            raise KeyboardInterrupt
+        return True, "", True
+
+    monkeypatch.setattr(command, "_withdraw_topic", _withdraw)
+
+    from hhru_bot.commands._common import run_supervised_command
+    from hhru_bot.exit_codes import CommandExitCode
+
+    result = run_supervised_command(
+        command="clear-negotiations",
+        history=history,
+        requested_limit=2,
+        body=lambda progress: command._run_topics(
+            _args(force=True),
+            ["first", "second"],
+            page=page,
+            history=history,
+            throttle=_Throttle(),
+            progress=progress,
+        ),
+        reconcile=command._reconcile,
+    )
+
+    assert result is CommandExitCode.SIGINT
+    row = history.command_runs()[-1]
+    assert row["status"] == "interrupted"
+    assert (row["attempted"], row["success"], row["uncertain"]) == (2, 1, 1)
+    assert "status=interrupted attempted=2 success=1" in capsys.readouterr().out
+    with history._connect() as conn:
+        statuses = conn.execute(
+            "SELECT vacancy_id, status FROM actions WHERE action='withdraw' ORDER BY id"
+        ).fetchall()
+    assert [tuple(status) for status in statuses] == [("first", "success"), ("second", "uncertain")]
+
+
+def test_uncertain_retry_barrier_counts_as_failed_not_only_skipped(tmp_path, monkeypatch, capsys):
+    """/review (cycle-review PR #471): a pre-existing unresolved `uncertain`
+    withdrawal must refuse to re-click (retry barrier) *and* the durable
+    [RUN] summary must show it as a failure, matching the printed [FAIL].
+
+    Before this fix the retry-skip branch only incremented skipped_count,
+    so a run hitting exactly this path printed a misleading
+    'status=failed ... failed=0 ... skipped=1' -- the summary counters gave
+    no indication anything had actually failed.
+    """
+    history = History(tmp_path / "history.db")
+    # Seed a prior unresolved attempt exactly as begin_action would have
+    # left it: reserved 'uncertain', never finalized (simulated crash).
+    history.begin_action(command.ACCOUNT_SCOPE, "77", "withdraw")
+
+    page = _Page()
+
+    class Context:
+        def new_page(self):
+            return page
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(command, "confirm_write", lambda *args, **kwargs: True)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *args, **kwargs: Context())
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda *args, **kwargs: type(
+            "Cfg", (), {"storage_state_file": "unused", "user_agent": None, "throttle": None}
+        )(),
+    )
+    monkeypatch.setattr("hhru_bot.history.History", lambda *args, **kwargs: history)
+    monkeypatch.setattr("hhru_bot.throttle.Throttle", lambda *args, **kwargs: _Throttle())
+
+    result = command.run(_args(topic="77", force=True))
+    assert result is True
+
+    out = capsys.readouterr().out
+    assert "[FAIL] (uncertain)" in out
+    run = history.command_runs()[-1]
+    assert run["status"] in ("failed", "partial")
+    assert run["failed"] == 1
+    assert run["success"] == 0
+    assert run["uncertain"] == 0

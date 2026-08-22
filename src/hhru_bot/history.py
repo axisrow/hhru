@@ -771,12 +771,13 @@ class History:
             rows = conn.execute("SELECT * FROM command_runs ORDER BY started_at")
             return [dict(row) for row in rows]
 
-    def command_run_action_counts(self, run_id: str) -> dict[str, int]:
+    def command_run_action_counts(self, run_id: str, *, action: str = "apply") -> dict[str, int]:
+        """Return durable outcome counts for one action type in a command run."""
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT status, COUNT(*) AS count FROM actions
-                   WHERE run_id=? AND action='apply' GROUP BY status""",
-                (run_id,),
+                   WHERE run_id=? AND action=? GROUP BY status""",
+                (run_id, action),
             ).fetchall()
         return {row["status"]: row["count"] for row in rows}
 
@@ -2658,6 +2659,7 @@ class History:
         status: str,
         reason: str | None = None,
         letter_variant: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Write the reply journal and action audit in one SQLite transaction.
 
@@ -2691,9 +2693,68 @@ class History:
             # только когда SSR не отдал resumeId (см. докстринг).
             conn.execute(
                 """INSERT INTO actions
-                   (resume_id, vacancy_id, action, status, reason, letter_variant, created_at)
-                   VALUES (?, ?, 'reply', ?, ?, ?, ?)""",
-                (resume_id or "", vacancy_id, status, reason, letter_variant, now),
+                   (resume_id, vacancy_id, action, status, reason, letter_variant,
+                    run_id, created_at)
+                   VALUES (?, ?, 'reply', ?, ?, ?, ?, ?)""",
+                (resume_id or "", vacancy_id, status, reason, letter_variant, run_id, now),
+            )
+
+    def finalize_reply_action(
+        self,
+        action_id: int,
+        topic: str,
+        inbound_marker: str,
+        *,
+        vacancy_id: str,
+        resume_id: str | None = None,
+        status: str,
+        reason: str | None = None,
+        letter_variant: str | None = None,
+    ) -> None:
+        """Finalize a pre-click reply reservation and journal the reply atomically.
+
+        Codex adversarial review (cycle-review PR #471, round 3): the pre-click
+        durable barrier for reply-employers (``begin_action`` before the send
+        click, mirroring apply/withdraw) previously called
+        ``finalize_action`` and ``record_reply`` as two separate
+        ``self._connect()`` transactions. A crash between them left a
+        finalized ``actions`` row with no matching ``replies`` row -- the
+        action audit trail survived, but ``has_replied()`` (which reads only
+        ``replies``) would return False on the next run, silently reopening
+        the duplicate-send guard #12 exists to close. This method commits
+        both writes in one transaction, matching ``record_reply_and_action``'s
+        atomicity guarantee for the non-reserved (dry-run/pre-click-failed)
+        path this pre-click barrier does not cover.
+        """
+        if status not in REPLY_STATUS_VALUES:
+            raise ValueError(f"недопустимый status={status!r} для replies")
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE actions
+                   SET status = ?, reason = ?, letter_variant = ?, reason_code = ?
+                 WHERE id = ?
+                """,
+                (status, reason, letter_variant, status, action_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Действие истории не найдено: id={action_id}")
+            conn.execute(
+                """INSERT OR IGNORE INTO replies
+                   (topic, inbound_marker, vacancy_id, resume_id, status,
+                    letter_variant, note, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    topic,
+                    inbound_marker,
+                    vacancy_id,
+                    resume_id,
+                    status,
+                    letter_variant,
+                    reason,
+                    now,
+                ),
             )
 
     def replies_since(self, since: datetime) -> list[dict]:

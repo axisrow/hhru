@@ -24,6 +24,7 @@ from ..selector_groups.negotiations import (
     NEGOTIATION_WITHDRAW_SUCCESS,
 )
 from ._audit import action_status
+from ._common import ApplyProgress, run_supervised_command
 from .copy_resume import confirm_write
 
 ACCOUNT_SCOPE = "__account__"
@@ -219,6 +220,40 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str, bool]:
         return False, f"состояние отзыва topic={topic} не подтверждено: {exc}", acted
 
 
+def _reconcile(progress: ApplyProgress, history, run_id: str) -> None:
+    """Reconcile reserved destructive actions after an interruption."""
+    counts = history.command_run_action_counts(run_id, action="withdraw")
+    progress.applied_count = max(progress.applied_count, counts.get("success", 0))
+    progress.failed_count = max(progress.failed_count, counts.get("failed", 0))
+    progress.uncertain_count = max(progress.uncertain_count, counts.get("uncertain", 0))
+    completed = (
+        progress.applied_count
+        + progress.failed_count
+        + progress.uncertain_count
+        + progress.skipped_count
+    )
+    if progress.attempted_count > completed:
+        progress.failed_count += progress.attempted_count - completed
+
+
+def _run_topics_in_browser(
+    args, topics, config, history, throttle, progress: ApplyProgress
+) -> bool:
+    from ..browser import launch_context
+
+    with launch_context(
+        config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+    ) as context:
+        return _run_topics(
+            args,
+            topics,
+            page=context.new_page(),
+            history=history,
+            throttle=throttle,
+            progress=progress,
+        )
+
+
 def run(args: argparse.Namespace) -> bool:
     """Return True when the run failed (fail-closed contract, see cli.main)."""
     _validate(args)
@@ -236,7 +271,22 @@ def run(args: argparse.Namespace) -> bool:
         if args.dry_run:
             print(f"[DRY-RUN] Отзыв отклика topic={args.topic}")
             return False
-        return _run_topics(args, [args.topic])
+        from ..config import load_config_or_exit
+        from ..history import History
+        from ..throttle import Throttle
+
+        config = load_config_or_exit(args.config)
+        history = History(args.history)
+        throttle = Throttle(config.throttle, history)
+        return run_supervised_command(
+            command=getattr(args, "command", "clear-negotiations"),
+            history=history,
+            requested_limit=1,
+            body=lambda progress: _run_topics_in_browser(
+                args, [args.topic], config, history, throttle, progress
+            ),
+            reconcile=_reconcile,
+        )
 
     # Vacancy/resume are intentionally read-only plans. With no selector there
     # is no safe target, so do not open a browser or imply that anything ran.
@@ -245,7 +295,6 @@ def run(args: argparse.Namespace) -> bool:
         print(f"[INFO] Только план: фильтр {scope}; боевой отзыв по нему запрещён.")
         return False
 
-    from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
     from ..throttle import Throttle
@@ -253,6 +302,18 @@ def run(args: argparse.Namespace) -> bool:
     config = load_config_or_exit(args.config)
     history = History(args.history)
     throttle = Throttle(config.throttle, history)
+    return run_supervised_command(
+        command=getattr(args, "command", "clear-negotiations"),
+        history=history,
+        requested_limit=None,
+        body=lambda progress: _run_account_wide(args, config, history, throttle, progress),
+        reconcile=_reconcile,
+    )
+
+
+def _run_account_wide(args, config, history, throttle, progress: ApplyProgress) -> bool:
+    from ..browser import launch_context
+
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
@@ -306,17 +367,23 @@ def run(args: argparse.Namespace) -> bool:
 
         if skipped:
             print(f"[INFO] Пропущено без topic (нет чата/неоднозначный SSR): {skipped}")
+
         # A skipped card means the account-wide run did not attempt every
         # negotiation it found. Reporting success (False) here would silently
         # understate coverage on a destructive, irreversible operation (Codex
         # review round 2, PR #196) — fold it into the same failure signal as a
         # failed withdrawal so callers/CI see an incomplete run. Withdraw first
         # (short-circuiting on `skipped` would skip resolved topics entirely).
-        withdraw_failed = _run_topics(args, topics, page=page, history=history, throttle=throttle)
+        progress.skipped_count += skipped
+        withdraw_failed = _run_topics(
+            args, topics, page=page, history=history, throttle=throttle, progress=progress
+        )
         return withdraw_failed or bool(skipped)
 
 
-def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool:
+def _run_topics(
+    args, topics, *, page=None, history=None, throttle=None, progress: ApplyProgress | None = None
+) -> bool:
     """Withdraw each topic; return True if any withdrawal failed."""
     if page is None:
         from ..browser import launch_context
@@ -331,7 +398,12 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             return _run_topics(
-                args, topics, page=context.new_page(), history=history, throttle=throttle
+                args,
+                topics,
+                page=context.new_page(),
+                history=history,
+                throttle=throttle,
+                progress=progress,
             )
 
     failed = False
@@ -345,8 +417,20 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
                     f"topic={topic} — не кликаю"
                 )
                 failed = True
+                # /review (cycle-review PR #471): this branch sets the overall
+                # `failed` return without touching failed_count, so a run that
+                # hits only this path prints status=partial/failed with every
+                # counter at zero except skipped -- misleading, since nothing
+                # here was actually skipped as routine/expected the way the
+                # empty-topic account-wide skip (progress.skipped_count above
+                # _run_topics) is. Count it as failed, matching the [FAIL] this
+                # branch already prints.
+                if progress is not None:
+                    progress.failed_count += 1
             else:
                 print(f"[INFO] Уже есть запись об отзыве topic={topic} — не кликаю")
+                if progress is not None:
+                    progress.skipped_count += 1
             continue
         # #245-style durable barrier: reserve the row as `uncertain` BEFORE
         # entering the irreversible click. If the process dies between the
@@ -358,7 +442,11 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
         # history is only ever None on the empty-discovery path (no topics
         # means the loop never runs); with real topics the callers above
         # always supply it, so it cannot be None here.
-        action_id = history.begin_action(ACCOUNT_SCOPE, topic, "withdraw")
+        if progress is not None:
+            progress.begin_attempt()
+        action_id = history.begin_action(
+            ACCOUNT_SCOPE, topic, "withdraw", run_id=progress.run_id if progress else None
+        )
         acted = False
         try:
             success, reason, acted = _withdraw_topic(page, topic)
@@ -366,6 +454,13 @@ def _run_topics(args, topics, *, page=None, history=None, throttle=None) -> bool
             success, reason = False, str(exc)
         status = action_status(dry_run=False, success=success, uncertain=acted and not success)
         history.finalize_action(action_id, status, reason or None, reason_code=status)
+        if progress is not None:
+            if status == "success":
+                progress.applied_count += 1
+            elif status == "uncertain":
+                progress.uncertain_count += 1
+            else:
+                progress.failed_count += 1
         if success:
             print(f"[OK] Отозван отклик topic={topic}")
         else:
