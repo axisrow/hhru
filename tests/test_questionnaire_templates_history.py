@@ -303,3 +303,49 @@ def test_opening_the_same_database_twice_is_idempotent(tmp_path):
     History(db_path).set_questionnaire_template("salary", mode="static", answer="a")
 
     assert History(db_path).get_questionnaire_templates()["salary"]["answer"] == "a"
+
+
+def test_clear_pending_skips_keeps_vacancies_with_unresolved_questions(tmp_path):
+    """Анкета с двумя неизвестными вопросами не проходима после одного ответа.
+
+    Безусловная разблокировка отправляла бы бота открывать ту же форму снова
+    ради заведомо повторного пропуска — это реальные запросы к hh.ru.
+    """
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1", [_pending_item("Первый"), _pending_item("Второй")], vacancy_id="v1"
+    )
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+    resolved_id = history.list_questionnaire_pending("r1")[0]["id"]
+    history.resolve_questionnaire_pending(resolved_id)
+
+    assert history.clear_pending_skips() == 0
+    assert history.is_skipped("r1", "v1") is True
+
+
+def test_clear_pending_skips_releases_a_fully_resolved_vacancy(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending("r1", [_pending_item("Единственный")], vacancy_id="v1")
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+    for row in history.list_questionnaire_pending("r1"):
+        history.resolve_questionnaire_pending(row["id"])
+
+    assert history.clear_pending_skips() == 1
+    assert history.is_skipped("r1", "v1") is False
+
+
+def test_clear_pending_skips_releases_vacancies_the_queue_never_saw(tmp_path):
+    """Записи до #482 или после ручной чистки очереди не должны залипать навсегда."""
+    history = History(tmp_path / "h.db")
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    assert history.clear_pending_skips() == 1
+
+
+def test_pending_of_another_resume_does_not_block_release(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending("r2", [_pending_item("Чужой вопрос")], vacancy_id="v1")
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    assert history.clear_pending_skips() == 1
+    assert history.is_skipped("r1", "v1") is False

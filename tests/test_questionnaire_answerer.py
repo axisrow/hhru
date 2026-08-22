@@ -233,7 +233,7 @@ def test_compliance_question_with_explicit_static_is_answered(tmp_path):
 def test_llm_mapping_requires_confirmation(tmp_path):
     history = History(tmp_path / "h.db")
     history.set_questionnaire_template("salary", mode="static", answer="от 250000")
-    llm = _LLM({"key": "salary", "confidence": 0.99})
+    llm = _LLM({"template": "salary", "confidence": 0.99})
     asked: list[str] = []
 
     def _refuse(*, learn, prompt):  # noqa: ARG001 - фиксируем сам факт вопроса
@@ -251,7 +251,7 @@ def test_llm_mapping_requires_confirmation(tmp_path):
 def test_confirmed_llm_mapping_answers_and_is_remembered(tmp_path):
     history = History(tmp_path / "h.db")
     history.set_questionnaire_template("salary", mode="static", answer="от 250000")
-    llm = _LLM({"key": "salary", "confidence": 0.99})
+    llm = _LLM({"template": "salary", "confidence": 0.99})
 
     answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
     proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
@@ -263,7 +263,7 @@ def test_confirmed_llm_mapping_answers_and_is_remembered(tmp_path):
 def test_second_identical_question_is_not_asked_twice(tmp_path):
     history = History(tmp_path / "h.db")
     history.set_questionnaire_template("salary", mode="static", answer="от 250000")
-    llm = _LLM({"key": "salary", "confidence": 0.99})
+    llm = _LLM({"template": "salary", "confidence": 0.99})
     asks = []
 
     answerer = _answerer(
@@ -280,7 +280,7 @@ def test_compliance_is_never_mapped_by_the_llm(tmp_path):
     history.set_questionnaire_template(
         "work_permit", mode="static", cluster="compliance", answer="Гражданство РФ"
     )
-    llm = _LLM({"key": "work_permit", "confidence": 0.99})
+    llm = _LLM({"template": "work_permit", "confidence": 0.99})
 
     answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
     proposal = answerer.propose(_text("Подтверждаете ли вы отсутствие судимости?"))
@@ -350,3 +350,132 @@ def test_confirm_mapping_rejects_everything_else(answer):
     assert not confirm_mapping(
         learn=True, prompt="?", isatty_fn=lambda: True, input_fn=lambda _p: answer
     )
+
+
+# --- комплаенс по тексту, без опоры на сопоставление (регресс) -------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Готовы предоставить справку об отсутствии судимости?",
+        "Есть ли у вас разрешение на работу в РФ?",
+        "Ваше гражданство?",
+        "Укажите серию и номер паспорта",
+        "Есть ли действующая медицинская книжка?",
+        "Ваш ИНН",
+        "Состоите ли вы на воинском учёте?",
+    ],
+)
+def test_compliance_text_is_never_answered_by_free_generation(tmp_path, text):
+    """Кластерного гейта мало: он опирается на найденный шаблон, а такой вопрос
+    может не совпасть ни с одним и уйти в свободную LLM-генерацию."""
+    question = _text(text)
+    fallback = _StubFallback(AnswerProposal(question, "Да", 0.99, answer_source="llm"))
+
+    answerer = _answerer(History(tmp_path / "h.db"), llm_fallback=fallback)
+    proposal = answerer.propose(question)
+
+    assert proposal.answer == ""
+    assert proposal.low_confidence
+    assert fallback.calls == 0, "к генератору обращаться нельзя"
+    assert answerer.pending, "вопрос должен попасть в очередь"
+
+
+def test_compliance_text_is_not_mapped_by_the_llm_either(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="от 250000")
+    llm = _LLM({"template": "salary", "confidence": 0.99})
+
+    answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
+    proposal = answerer.propose(_text("Ваше гражданство?"))
+
+    assert proposal.low_confidence
+    assert llm.calls == 0
+
+
+def test_ordinary_question_still_reaches_the_fallback(tmp_path):
+    """Комплаенс-паттерн не должен глушить обычные вопросы."""
+    question = _text("Опишите свой самый сложный проект")
+    fallback = _StubFallback(AnswerProposal(question, "Проект X", 0.95, answer_source="llm"))
+
+    assert _answerer(History(tmp_path / "h.db"), llm_fallback=fallback).propose(question).answer
+
+
+# --- llm_match_threshold реально гейтит (регресс) --------------------------
+
+
+def test_llm_mapping_below_the_configured_threshold_is_rejected(tmp_path):
+    """Порог из конфига должен решать, а не быть декоративным полем."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="от 250000")
+    llm = _LLM({"template": "salary", "confidence": 0.86})
+
+    answerer = _answerer(
+        history,
+        settings=_settings(llm_match_threshold=0.99),
+        llm=llm,
+        learn=True,
+        confirm_fn=lambda **_: True,
+    )
+    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+
+    assert proposal.answer == ""
+    assert proposal.low_confidence
+
+
+def test_llm_mapping_above_the_threshold_is_accepted(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="от 250000")
+    llm = _LLM({"template": "salary", "confidence": 0.95})
+
+    answerer = _answerer(
+        history,
+        settings=_settings(llm_match_threshold=0.90),
+        llm=llm,
+        learn=True,
+        confirm_fn=lambda **_: True,
+    )
+
+    assert answerer.propose(_text("Сколько вы хотите получать в месяц?")).answer == "от 250000"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"template": "salary", "confidence": float("nan")},
+        {"template": "salary", "confidence": 1.5},
+        {"template": "неизвестный", "confidence": 0.99},
+        {"template": None, "confidence": 0.99},
+        {"confidence": 0.99},
+    ],
+)
+def test_malformed_llm_mapping_is_rejected(tmp_path, payload):
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="static", answer="от 250000")
+
+    answerer = _answerer(history, llm=_LLM(payload), learn=True, confirm_fn=lambda **_: True)
+
+    assert answerer.propose(_text("Сколько вы хотите получать в месяц?")).low_confidence
+
+
+def test_llm_mapping_records_the_reported_confidence(tmp_path):
+    """В аудит должна попадать уверенность модели, а не сам порог."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="contextual", instruction="вилка")
+    llm = _LLM(
+        {"template": "salary", "confidence": 0.93},
+        {"answer": "250-300", "confidence": 0.97},
+    )
+
+    answerer = _answerer(
+        history,
+        settings=_settings(llm_match_threshold=0.90),
+        llm=llm,
+        learn=True,
+        confirm_fn=lambda **_: True,
+    )
+    proposal = answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+
+    assert proposal.confidence == pytest.approx(0.97), "уверенность ОТВЕТА, не порог"
+    assert proposal.template == "salary"

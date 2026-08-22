@@ -524,7 +524,9 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     # still requires explicit --force.
     needs_force = questions.has_questions and ctx.question_answerer is not None
     if needs_force and not ctx.dry_run and not ctx.force:
-        return ctx.fail("LLM-ответы на вопросы требуют явного --force")
+        # #482: формулировка без упоминания LLM — с обучаемыми шаблонами ответ
+        # может быть целиком локальным, и модель в нём не участвует вовсе.
+        return ctx.fail("отправка отклика с заполненной анкетой требует явного --force")
     if ctx.question_answerer is not None:
         try:
             if questions.has_questions:

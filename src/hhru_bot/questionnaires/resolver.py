@@ -31,6 +31,7 @@ from .templates import (
     QuestionTemplate,
     SeedTemplate,
     TemplateError,
+    is_compliance_text,
     is_strict,
 )
 
@@ -167,7 +168,12 @@ def resolve_template(
     return match_phrase(text, confirmed) or match_keyword(text, seeds)
 
 
-def compliance_gate(template: QuestionTemplate | None, match: TemplateMatch) -> str:
+def compliance_gate(
+    template: QuestionTemplate | None,
+    match: TemplateMatch | None = None,
+    *,
+    text: str = "",
+) -> str:
     """Пустая строка, если отвечать разрешено; иначе причина для очереди.
 
     #482: «Документы и комплаенс отвечаются только явным сохранённым
@@ -175,13 +181,22 @@ def compliance_gate(template: QuestionTemplate | None, match: TemplateMatch) -> 
     нужен сохранённый static-ответ. Ни contextual-генерация, ни keyword-догадка
     сюда не допускаются: ошибка в ответе про гражданство, судимость или
     разрешение на работу необратима и видна работодателю.
+
+    Тема определяется ДВУМЯ независимыми признаками, и достаточно любого:
+    кластер сопоставленного шаблона ИЛИ сам текст вопроса. Одной кластерной
+    проверки мало — она работает только когда шаблон найден, а вопрос про
+    судимость может не совпасть ни с одним шаблоном и тогда ушёл бы дальше по
+    цепочке в свободную LLM-генерацию. Поэтому ``text`` проверяется и при
+    ``match is None``.
     """
-    if not is_strict(match.cluster):
+    strict = (match is not None and is_strict(match.cluster)) or is_compliance_text(text)
+    if not strict:
         return ""
+    name = f" (шаблон '{match.template}')" if match is not None else ""
     if template is None:
-        return f"комплаенс-вопрос без сохранённого значения (шаблон '{match.template}')"
+        return f"комплаенс-вопрос без сохранённого значения{name}"
     if not template.is_static or not (template.answer or "").strip():
-        return f"комплаенс-вопрос допускает только явный static-ответ (шаблон '{match.template}')"
+        return f"комплаенс-вопрос допускает только явный static-ответ{name}"
     return ""
 
 
@@ -355,7 +370,7 @@ def build_answer(
     шаблон вовсе не сохранён (``template is None``), и тогда, когда он есть, но
     в contextual-режиме.
     """
-    if reason := compliance_gate(template, match):
+    if reason := compliance_gate(template, match, text=question.text):
         return ResolvedAnswer.pending(reason, match)
     if template is None:
         return ResolvedAnswer.pending(

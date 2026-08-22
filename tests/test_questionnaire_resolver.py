@@ -440,3 +440,50 @@ def test_compliance_contextual_never_reaches_llm():
 
 def test_resolved_answer_pending_helper_is_not_resolved():
     assert not ResolvedAnswer.pending("причина").resolved
+
+
+# --- комплаенс распознаётся по тексту, а не только по кластеру --------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Готовы предоставить справку об отсутствии судимости?",
+        "Есть ли разрешение на работу в РФ?",
+        "Ваше гражданство?",
+        "Серия и номер паспорта",
+        "Ваш СНИЛС",
+        "Есть ли вид на жительство?",
+        "Действующая медицинская книжка есть?",
+    ],
+)
+def test_compliance_gate_blocks_by_text_without_any_match(text):
+    """Гейт обязан срабатывать и когда шаблон не найден вовсе."""
+    assert compliance_gate(None, None, text=text) != ""
+
+
+def test_compliance_gate_by_text_allows_an_explicit_static_answer():
+    template = _static("work_permit", "Гражданство РФ", cluster="compliance")
+
+    assert compliance_gate(template, None, text="Ваше гражданство?") == ""
+
+
+def test_compliance_gate_by_text_rejects_a_contextual_template():
+    template = _contextual("work_permit", "ответь", cluster="compliance")
+
+    assert compliance_gate(template, None, text="Ваше гражданство?") != ""
+
+
+def test_compliance_gate_leaves_ordinary_questions_alone():
+    assert compliance_gate(None, None, text="Опишите свой самый сложный проект") == ""
+
+
+def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
+    """Тема определяется текстом даже если шаблон объявлен обычным кластером."""
+    resolved = build_answer(
+        _text("Ваше гражданство?"),
+        _contextual("about_me", "расскажи", cluster="motivation"),
+        TemplateMatch("about_me", "motivation", KEYWORD, 0.95),
+    )
+
+    assert not resolved.resolved

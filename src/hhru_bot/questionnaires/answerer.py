@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import sys
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -24,7 +26,13 @@ from typing import TYPE_CHECKING
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, Question
 from ..external_forms.detect import normalize
 from .resolver import LLM, ResolvedAnswer, TemplateMatch, build_answer, resolve_template
-from .templates import DEFAULT_CLUSTER, QuestionTemplate, cluster_for, is_strict
+from .templates import (
+    DEFAULT_CLUSTER,
+    QuestionTemplate,
+    cluster_for,
+    is_compliance_text,
+    is_strict,
+)
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -152,34 +160,73 @@ class TemplateQuestionAnswerer:
     def _llm_match(self, question: Question) -> TemplateMatch | None:
         """Сопоставление вопроса с ИЗВЕСТНЫМ шаблоном силами модели.
 
-        Модель выбирает имя шаблона из уже сохранённых — она не придумывает ни
-        новый шаблон, ни сам ответ. Это тот же приём, что в
-        ``external_forms.match_answer_llm``: наружу уходят только имена полей,
-        а значение подставляется локально.
+        Модель работает классификатором: выбирает имя из уже сохранённых
+        шаблонов и сообщает свою уверенность. Ни нового шаблона, ни самого
+        ответа она здесь не придумывает — наружу уходят только имена шаблонов
+        (не значения ответов), тот же приём, что в
+        ``external_forms.match_answer_llm``.
+
+        Своя реализация, а не вызов ``match_answer_llm``, именно из-за
+        уверенности: та функция гейтит внутри по собственному порогу 0.85 и
+        возвращает только значение. Через неё ``llm_match_threshold`` из
+        конфига оказался бы декоративным (0.99 пропускал бы матч на 0.86), а в
+        аудит писался бы сам порог вместо того, что сказала модель. Поднимать
+        0.85 внутри ``match_answer_llm`` нельзя — он общий с ``fill-form``.
         """
         if self._llm is None or not self._templates:
             return None
-        from ..external_forms.detect import match_answer_llm
-
-        # match_answer_llm возвращает ЗНАЧЕНИЕ по ключу, поэтому подаём ему
-        # словарь «имя шаблона -> имя шаблона»: тогда его ответ и есть имя
-        # выбранного шаблона, а порог/денилист/валидация JSON переиспользуются
-        # без копирования.
-        names = {name: name for name in self._templates}
+        prompt = (
+            "Сопоставь вопрос анкеты с одним из известных шаблонов ответа по его имени. "
+            "Не придумывай новый шаблон и не отвечай на сам вопрос. Верни только JSON вида "
+            '{"template": "точное имя или null", "confidence": 0.0}. '
+            "Выбирай шаблон, только если он действительно отвечает на этот вопрос.\n"
+            + json.dumps(
+                {"question": question.text, "templates": sorted(self._templates)},
+                ensure_ascii=False,
+            )
+        )
         try:
-            chosen = match_answer_llm(question.text, names, self._llm)
+            response = self._llm.chat(
+                [{"role": "user", "content": prompt}], temperature=0, max_tokens=128
+            )
+            payload = json.loads((response.content or "").strip())
+            if not isinstance(payload, dict):
+                raise ValueError("LLM вернул не JSON-объект")
+            chosen = payload.get("template")
+            confidence = float(payload.get("confidence", 0))
+            # isfinite: NaN прошёл бы сравнение с порогом как «не меньше» и
+            # закрепился бы как уверенное сопоставление (тот же дефект, что
+            # закрыт для ответов в _parse_llm_answer).
+            if not (math.isfinite(confidence) and 0.0 <= confidence <= 1.0):
+                raise ValueError(f"некорректная уверенность: {confidence!r}")
         except Exception as exc:  # noqa: BLE001 — сбой модели не рвёт отклик
             logger.warning("Анкета: LLM-сопоставление не удалось (%s)", exc)
             return None
-        if not chosen or chosen not in self._templates:
+        if not isinstance(chosen, str) or chosen not in self._templates:
             return None
-        return TemplateMatch(
-            chosen, self._cluster_of(chosen), LLM, self._settings.llm_match_threshold
-        )
+        if confidence < self._settings.llm_match_threshold:
+            logger.info(
+                "Анкета: сопоставление с шаблоном '%s' отклонено (%.2f < %.2f)",
+                chosen,
+                confidence,
+                self._settings.llm_match_threshold,
+            )
+            return None
+        return TemplateMatch(chosen, self._cluster_of(chosen), LLM, confidence)
 
     def _resolve(self, question: Question) -> ResolvedAnswer:
         match = resolve_template(question.text, confirmed=self._phrases)
         if match is None:
+            # Комплаенс распознаётся ПО ТЕКСТУ до всякого сопоставления: иначе
+            # вопрос про судимость, не совпавший ни с одним шаблоном, прошёл бы
+            # мимо кластерного гейта (тот опирается на найденный шаблон) прямо
+            # в свободную LLM-генерацию ступени fallback. Проверка стоит и до
+            # _llm_match: сопоставлять документы догадкой модели тоже нельзя.
+            if is_compliance_text(question.text):
+                return ResolvedAnswer.pending(
+                    "комплаенс-вопрос без сохранённого значения "
+                    "(ответ допускается только явным static-шаблоном)"
+                )
             match = self._llm_match(question)
             if match is None:
                 return ResolvedAnswer.pending("вопрос не сопоставлен ни с одним шаблоном")
@@ -240,6 +287,13 @@ class TemplateQuestionAnswerer:
         ответ, сочинённый без шаблона, должен проходить более высокую планку.
         """
         if self._fallback is None:
+            return None
+        if is_compliance_text(question.text):
+            # Defence-in-depth: _resolve уже отсекает такие вопросы раньше, но
+            # эта ступень — единственное место, где ответ берётся из свободной
+            # генерации, и цена ошибки здесь максимальная. Повторная проверка
+            # стоит одного regex и не даёт будущей правке _resolve тихо открыть
+            # этот путь.
             return None
         proposal = self._fallback.propose(question)
         if not proposal.answer and not proposal.option_indices:
