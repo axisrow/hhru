@@ -228,19 +228,22 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # A single classification for the whole attempt (#477): status comes
         # from ApplyProgress.finish()'s priority (skipped > uncertain > success
         # > failed) over the *entire* results batch, not from each item
-        # separately re-deriving "uncertain or not success" — that would
-        # classify the same attempt in two places.
+        # separately re-deriving "uncertain or not success" -- that would
+        # classify the same attempt in two places. Always record one row
+        # (no per-item filter): has_unresolved_uncertain never reads
+        # "edit_education" as a retry gate, so this ledger is audit/stats
+        # only, and a hard-failed batch must not disagree with command_runs
+        # (which already counts it via progress.finish above).
         status = progress.finish(results)
         assert status is not None
-        if any(result.success or result.uncertain or result.saved for result in results):
-            history.record_action(
-                resume.resume_id,
-                resume.resume_id,
-                "edit_education",
-                status,
-                "; ".join(result.reason for result in results),
-                run_id=progress.run_id,
-            )
+        history.record_action(
+            resume.resume_id,
+            resume.resume_id,
+            "edit_education",
+            status,
+            "; ".join(result.reason for result in results),
+            run_id=progress.run_id,
+        )
 
     failed = any(not result.success for result in results)
     if failed:
