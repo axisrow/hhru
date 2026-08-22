@@ -205,6 +205,10 @@ def run_set(args: argparse.Namespace) -> None:
         )
     where = f"резюме {scope}" if scope else "аккаунта"
     print(f"[OK] Шаблон '{args.template}' ({args.mode}, {cluster}) сохранён для {where}.")
+    # Вопросы, стоявшие в очереди с пометкой «шаблон найден, ответа нет»,
+    # теперь решены — иначе они остались бы висеть и держали бы свои вакансии
+    # заблокированными, хотя ответ уже задан.
+    history.resolve_pending_for_templates({args.template}, resume_id=scope)
     _unblock(history, scope)
 
 

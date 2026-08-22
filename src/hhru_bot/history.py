@@ -3115,6 +3115,31 @@ class History:
                 ).rowcount
             )
 
+    def resolve_pending_for_templates(
+        self, templates: set[str], *, resume_id: str | None = None
+    ) -> int:
+        """Пометить решёнными вопросы очереди, закреплённые за этими шаблонами.
+
+        Вызывается после ``questionnaire set``: вопрос стоял в очереди с
+        пометкой «шаблон найден, но ответа нет» — теперь ответ есть, и держать
+        его нерешённым незачем. Помечаются только строки, у которых шаблон
+        совпадает: вопросы без сопоставления (``template IS NULL``) остаются в
+        очереди — для них по-прежнему неизвестно, что отвечать.
+        """
+        if not templates:
+            return 0
+        placeholders = ",".join("?" for _ in templates)
+        sql = (
+            f"UPDATE questionnaire_pending SET status = 'resolved', updated_at = ? "
+            f"WHERE status = 'pending' AND template IN ({placeholders})"
+        )
+        params: list = [datetime.now().isoformat(), *sorted(templates)]
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
     def clear_pending_skips(self, resume_id: str | None = None) -> int:
         """Снять skip-записи, поставленные из-за очереди анкет (#482).
 
@@ -3125,23 +3150,36 @@ class History:
         обучение одного шаблона молча воскрешало бы вакансии, отсеянные совсем
         по другим основаниям.
 
-        Возвращаются только вакансии, у которых в очереди НЕ ОСТАЛОСЬ
-        нерешённых вопросов. Одна анкета часто содержит несколько неизвестных
-        вопросов, и обучение одного шаблона не делает вакансию проходимой:
+        Разблокируется вакансия, у которой в очереди есть решённые вопросы и не
+        осталось нерешённых. Одна анкета часто содержит несколько неизвестных
+        вопросов, и обучение одного шаблона не делает её проходимой:
         безусловная разблокировка отправляла бы бота открывать ту же форму
         снова и снова, тратя запросы к hh.ru (а они здесь — троттлинг-бюджет)
-        ради заведомо повторного пропуска. Вакансии, для которых очередь вообще
-        не знает вопросов (запись сделана до #482 или очередь почищена
-        вручную), разблокируются — данных против этого нет, а вечная
-        блокировка хуже одной лишней загрузки страницы.
+        ради заведомо повторного пропуска.
+
+        Требование «есть решённые» — не придирка, а следствие дедупликации
+        очереди по ``(resume_id, question_key)``: один и тот же вопрос у десяти
+        работодателей держит в очереди ОДНУ строку, с ``vacancy_id`` последней
+        встреченной вакансии. Проверка «нет нерешённых» сама по себе выпускала
+        бы все девять остальных, хотя их общий вопрос ещё не разобран.
+        Вакансии, которых очередь не знает вовсе (запись до #482 или ручная
+        чистка), остаются в ``skipped`` и снимаются обычным ``clear-skipped`` —
+        автоматика не должна гадать за пределами своих данных.
         """
         sql = """
             DELETE FROM skipped
             WHERE reason = ?
-              AND vacancy_id NOT IN (
-                  SELECT vacancy_id FROM questionnaire_pending
-                  WHERE status = 'pending' AND vacancy_id <> ''
-                    AND resume_id = skipped.resume_id
+              AND EXISTS (
+                  SELECT 1 FROM questionnaire_pending AS q
+                  WHERE q.resume_id = skipped.resume_id
+                    AND q.vacancy_id = skipped.vacancy_id
+                    AND q.status <> 'pending'
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM questionnaire_pending AS q
+                  WHERE q.resume_id = skipped.resume_id
+                    AND q.vacancy_id = skipped.vacancy_id
+                    AND q.status = 'pending'
               )
         """
         params: list = [SKIP_REASONS.QUESTIONNAIRE_PENDING]

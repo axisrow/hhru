@@ -12,8 +12,15 @@ from hhru_bot.history import SKIP_REASON_VALUES, SKIP_REASONS, History
 pytestmark = pytest.mark.unit
 
 
-def _pending_item(text: str, **overrides) -> dict:
-    item = {"text": text, "kind": "text", "is_radio": False, "options": (), "reason": "нет шаблона"}
+def _pending_item(text: str, *, template: str | None = None, **overrides) -> dict:
+    item = {
+        "text": text,
+        "kind": "text",
+        "is_radio": False,
+        "options": (),
+        "reason": "нет шаблона",
+        "template": template,
+    }
     item.update(overrides)
     return item
 
@@ -243,8 +250,17 @@ def test_record_pending_returns_false_on_sqlite_error(tmp_path):
 # --- авто-разблокировка вакансий -------------------------------------------
 
 
+def _resolved_queue(history, resume_id: str, vacancy_id: str, text: str = "Вопрос?") -> None:
+    """Вакансия с полностью разобранной анкетой — условие разблокировки."""
+    history.record_questionnaire_pending(resume_id, [_pending_item(text)], vacancy_id=vacancy_id)
+    for row in history.list_questionnaire_pending(resume_id):
+        if row["vacancy_id"] == vacancy_id:
+            history.resolve_questionnaire_pending(row["id"])
+
+
 def test_clear_pending_skips_removes_only_questionnaire_pending_reason(tmp_path):
     history = History(tmp_path / "h.db")
+    _resolved_queue(history, "r1", "v1")
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
     history.record_skip("r1", "v2", SKIP_REASONS.STOPWORD_TITLE)
     history.record_skip("r1", "v3", SKIP_REASONS.QUESTION_LOW_CONFIDENCE)
@@ -258,6 +274,8 @@ def test_clear_pending_skips_removes_only_questionnaire_pending_reason(tmp_path)
 
 def test_clear_pending_skips_can_be_scoped_to_one_resume(tmp_path):
     history = History(tmp_path / "h.db")
+    _resolved_queue(history, "r1", "v1")
+    _resolved_queue(history, "r2", "v2")
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
     history.record_skip("r2", "v2", SKIP_REASONS.QUESTIONNAIRE_PENDING)
 
@@ -334,18 +352,76 @@ def test_clear_pending_skips_releases_a_fully_resolved_vacancy(tmp_path):
     assert history.is_skipped("r1", "v1") is False
 
 
-def test_clear_pending_skips_releases_vacancies_the_queue_never_saw(tmp_path):
-    """Записи до #482 или после ручной чистки очереди не должны залипать навсегда."""
+def test_clear_pending_skips_leaves_vacancies_the_queue_never_saw(tmp_path):
+    """Автоматика не гадает за пределами своих данных.
+
+    Запись до #482 или после ручной чистки очереди снимается штатным
+    `clear-skipped`, а не разблокируется вслепую: без строки в очереди
+    неизвестно, был ли вопрос вакансии вообще разобран.
+    """
     history = History(tmp_path / "h.db")
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
 
-    assert history.clear_pending_skips() == 1
+    assert history.clear_pending_skips() == 0
+    assert history.clear_skipped(SKIP_REASONS.QUESTIONNAIRE_PENDING) == 1
 
 
 def test_pending_of_another_resume_does_not_block_release(tmp_path):
     history = History(tmp_path / "h.db")
+    _resolved_queue(history, "r1", "v1")
     history.record_questionnaire_pending("r2", [_pending_item("Чужой вопрос")], vacancy_id="v1")
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
 
     assert history.clear_pending_skips() == 1
     assert history.is_skipped("r1", "v1") is False
+
+
+def test_deduplicated_question_does_not_release_its_earlier_vacancies(tmp_path):
+    """Регресс: очередь дедуплицирует вопрос, оставляя ПОСЛЕДНЮЮ вакансию.
+
+    Один и тот же вопрос у десяти работодателей держит одну строку очереди.
+    Проверки «нет нерешённых вопросов» в одиночку не хватало: девять остальных
+    вакансий не упомянуты в очереди вовсе и выпускались бы, хотя их общий
+    вопрос никто не разобрал.
+    """
+    history = History(tmp_path / "h.db")
+    for vacancy in ("v1", "v2"):
+        history.record_questionnaire_pending("r1", [_pending_item("Ваш опыт?")], vacancy_id=vacancy)
+        history.record_skip("r1", vacancy, SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    assert history.clear_pending_skips() == 0
+    assert history.is_skipped("r1", "v1") is True
+    assert history.is_skipped("r1", "v2") is True
+
+
+def test_resolve_pending_for_templates_marks_only_matching_rows(tmp_path):
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1",
+        [
+            _pending_item("Зарплата?", template="salary"),
+            _pending_item("Город?", template="location"),
+            _pending_item("Сложный проект?"),
+        ],
+        vacancy_id="v1",
+    )
+
+    assert history.resolve_pending_for_templates({"salary"}) == 1
+
+    open_texts = {row["question_text"] for row in history.list_questionnaire_pending("r1")}
+    assert open_texts == {"Город?", "Сложный проект?"}
+
+
+def test_resolve_pending_for_templates_is_scoped_to_a_resume(tmp_path):
+    history = History(tmp_path / "h.db")
+    for resume in ("r1", "r2"):
+        history.record_questionnaire_pending(
+            resume, [_pending_item("Зарплата?", template="salary")], vacancy_id="v1"
+        )
+
+    assert history.resolve_pending_for_templates({"salary"}, resume_id="r1") == 1
+    assert len(history.list_questionnaire_pending("r2")) == 1
+
+
+def test_resolve_pending_for_templates_without_templates_is_a_noop(tmp_path):
+    assert History(tmp_path / "h.db").resolve_pending_for_templates(set()) == 0

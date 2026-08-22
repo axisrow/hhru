@@ -62,7 +62,7 @@ MAX_PROMPT_EXAMPLES = 5
 #: Сколько LLM-ответов на анкету допустимо ждать. Совпадает по смыслу с
 #: таймаутом скоринга (``scoring._LLM_TIMEOUT``): анкета заполняется в живой
 #: сессии браузера, зависший запрос держал бы открытую форму отклика.
-_LLM_TIMEOUT = 30.0
+LLM_TIMEOUT = 30.0
 _LLM_MAX_TOKENS = 512
 
 
@@ -285,13 +285,14 @@ def _contextual_prompt(question: Question, template: QuestionTemplate) -> list[d
     return [{"role": "system", "content": system}, {"role": "user", "content": "\n\n".join(parts)}]
 
 
-def _parse_llm_answer(question: Question, raw: str) -> tuple[str, tuple[int, ...], float]:
-    """Строгий разбор ответа модели. Любое нарушение — исключение.
+def parse_llm_payload(raw: str) -> tuple[dict, float]:
+    """Разобрать JSON модели и её уверенность. Любое нарушение — исключение.
 
-    Валидация повторяет уже принятый в проекте контракт (``ai/questions.py``):
-    ``float()`` принимает литералы ``NaN``/``Infinity``, а сравнение
-    ``nan < threshold`` ложно в Python — то есть испорченный ответ выглядел бы
-    как ответ ВЫСОКОЙ уверенности и мог быть отправлен.
+    Общая для ОБОИХ LLM-путей (сопоставление шаблона и генерация ответа) —
+    инвариант обязан быть одинаковым: ``float()`` принимает литералы
+    ``NaN``/``Infinity``, а сравнение ``nan < threshold`` в Python ложно, то
+    есть испорченная уверенность прошла бы порог как ВЫСОКАЯ и была бы
+    отправлена. Тот же контракт, что в ``ai/questions.py`` (#373).
     """
     payload = json.loads(raw.strip())
     if not isinstance(payload, dict):
@@ -299,6 +300,12 @@ def _parse_llm_answer(question: Question, raw: str) -> tuple[str, tuple[int, ...
     confidence = float(payload.get("confidence", 0))
     if not (math.isfinite(confidence) and 0.0 <= confidence <= 1.0):
         raise ValueError(f"LLM вернул некорректную уверенность: {confidence!r}")
+    return payload, confidence
+
+
+def _parse_llm_answer(question: Question, raw: str) -> tuple[str, tuple[int, ...], float]:
+    """Строгий разбор ответа модели на вопрос анкеты."""
+    payload, confidence = parse_llm_payload(raw)
     answer = str(payload.get("answer", "")).strip()
     indices = tuple(int(i) for i in payload.get("indices", []))
     if question.kind == "choice":
@@ -334,7 +341,7 @@ def _contextual_answer(
             _contextual_prompt(question, template),
             temperature=0.2,
             max_tokens=_LLM_MAX_TOKENS,
-            timeout=_LLM_TIMEOUT,
+            timeout=LLM_TIMEOUT,
         )
         answer, indices, confidence = _parse_llm_answer(question, response.content or "")
     except Exception as exc:  # noqa: BLE001 — сбой модели не должен рвать отклик

@@ -18,14 +18,21 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import sys
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, Question
 from ..external_forms.detect import normalize
-from .resolver import LLM, ResolvedAnswer, TemplateMatch, build_answer, resolve_template
+from .resolver import (
+    LLM,
+    LLM_TIMEOUT,
+    ResolvedAnswer,
+    TemplateMatch,
+    build_answer,
+    parse_llm_payload,
+    resolve_template,
+)
 from .templates import (
     DEFAULT_CLUSTER,
     QuestionTemplate,
@@ -41,6 +48,10 @@ if TYPE_CHECKING:
     from ..history import History
 
 logger = logging.getLogger("hhru_bot.questionnaires.answerer")
+
+#: Классификатор возвращает имя шаблона и уверенность — ответ короткий, поэтому
+#: лимит жёстче, чем у генерации ответа (``resolver._LLM_MAX_TOKENS``).
+_MATCH_MAX_TOKENS = 128
 
 
 def confirm_mapping(
@@ -187,18 +198,20 @@ class TemplateQuestionAnswerer:
         )
         try:
             response = self._llm.chat(
-                [{"role": "user", "content": prompt}], temperature=0, max_tokens=128
+                [{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=_MATCH_MAX_TOKENS,
+                # Тот же таймаут, что у contextual-ответа: сопоставление идёт в
+                # живой сессии браузера с открытой формой отклика, и зависший
+                # запрос держал бы её ровно так же. Без явного timeout запрос
+                # ограничен только дефолтом транспорта.
+                timeout=LLM_TIMEOUT,
             )
-            payload = json.loads((response.content or "").strip())
-            if not isinstance(payload, dict):
-                raise ValueError("LLM вернул не JSON-объект")
+            # Общий с генерацией ответа разбор: NaN прошёл бы сравнение с
+            # порогом как «не меньше» и закрепился бы как уверенное
+            # сопоставление, поэтому инвариант обязан быть один на оба пути.
+            payload, confidence = parse_llm_payload(response.content or "")
             chosen = payload.get("template")
-            confidence = float(payload.get("confidence", 0))
-            # isfinite: NaN прошёл бы сравнение с порогом как «не меньше» и
-            # закрепился бы как уверенное сопоставление (тот же дефект, что
-            # закрыт для ответов в _parse_llm_answer).
-            if not (math.isfinite(confidence) and 0.0 <= confidence <= 1.0):
-                raise ValueError(f"некорректная уверенность: {confidence!r}")
         except Exception as exc:  # noqa: BLE001 — сбой модели не рвёт отклик
             logger.warning("Анкета: LLM-сопоставление не удалось (%s)", exc)
             return None

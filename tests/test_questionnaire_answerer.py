@@ -19,9 +19,11 @@ class _LLM:
     def __init__(self, *payloads):
         self.payloads = list(payloads)
         self.calls = 0
+        self.kwargs: list[dict] = []
 
-    def chat(self, _messages, **_kwargs):
+    def chat(self, _messages, **kwargs):
         self.calls += 1
+        self.kwargs.append(kwargs)
         payload = self.payloads.pop(0) if self.payloads else {}
         return NormalizedResponse(
             content=json.dumps(payload), tool_calls=None, finish_reason="stop"
@@ -479,3 +481,21 @@ def test_llm_mapping_records_the_reported_confidence(tmp_path):
 
     assert proposal.confidence == pytest.approx(0.97), "уверенность ОТВЕТА, не порог"
     assert proposal.template == "salary"
+
+
+def test_every_llm_call_is_bounded_by_a_timeout(tmp_path):
+    """Анкета заполняется в живой сессии браузера: зависший запрос держал бы
+    открытую форму отклика, а без явного timeout запрос ограничен только
+    дефолтом транспорта."""
+    history = History(tmp_path / "h.db")
+    history.set_questionnaire_template("salary", mode="contextual", instruction="вилка")
+    llm = _LLM(
+        {"template": "salary", "confidence": 0.99},
+        {"answer": "250-300", "confidence": 0.99},
+    )
+
+    answerer = _answerer(history, llm=llm, learn=True, confirm_fn=lambda **_: True)
+    answerer.propose(_text("Сколько вы хотите получать в месяц?"))
+
+    assert llm.calls == 2, "должны сработать и сопоставление, и генерация ответа"
+    assert all(call.get("timeout") for call in llm.kwargs)

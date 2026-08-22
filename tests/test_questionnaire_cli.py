@@ -108,6 +108,18 @@ def test_set_scopes_to_a_resume(tmp_path):
 
 def test_set_unblocks_vacancies_skipped_for_the_queue(capsys, tmp_path):
     history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1",
+        [
+            {
+                "text": "Зарплатные ожидания?",
+                "kind": "text",
+                "reason": "нет ответа",
+                "template": "salary",
+            }
+        ],
+        vacancy_id="v1",
+    )
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
     history.record_skip("r1", "v2", SKIP_REASONS.STOPWORD_TITLE)
 
@@ -116,6 +128,30 @@ def test_set_unblocks_vacancies_skipped_for_the_queue(capsys, tmp_path):
     assert "Возвращено в поиск" in capsys.readouterr().out
     assert history.is_skipped("r1", "v1") is False
     assert history.is_skipped("r1", "v2") is True
+
+
+def test_set_does_not_unblock_a_vacancy_with_other_open_questions(capsys, tmp_path):
+    """Один ответ не делает анкету из двух неизвестных вопросов проходимой."""
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1",
+        [
+            {
+                "text": "Зарплатные ожидания?",
+                "kind": "text",
+                "reason": "нет ответа",
+                "template": "salary",
+            },
+            {"text": "Опишите сложный проект", "kind": "text", "reason": "нет шаблона"},
+        ],
+        vacancy_id="v1",
+    )
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    cmd.run_set(_args(tmp_path, answer="от 250000"))
+
+    assert "Возвращено в поиск" not in capsys.readouterr().out
+    assert history.is_skipped("r1", "v1") is True
 
 
 # --- unset ------------------------------------------------------------------
@@ -202,6 +238,7 @@ def test_learn_stores_answer_and_resolves_the_queue(capsys, tmp_path, monkeypatc
     history.record_questionnaire_pending(
         "r1",
         [{"text": "Ваш желаемый доход?", "kind": "text", "reason": "нет шаблона"}],
+        vacancy_id="v1",
     )
     history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
