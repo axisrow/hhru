@@ -215,33 +215,36 @@ def _run(args: argparse.Namespace, progress) -> bool:
         print(f"[FAIL] {resume.id} — {exc}")
         return True
 
-    if not args.dry_run:
-        from ..history import History
-
-        history = History(args.history)
-        for result in results:
-            if result.success or result.uncertain or result.saved:
-                history.record_action(
-                    resume.resume_id,
-                    resume.resume_id,
-                    "edit_education",
-                    "uncertain" if result.uncertain or not result.success else "success",
-                    result.reason,
-                    run_id=progress.run_id,
-                )
-
-    failed = [result for result in results if not result.success]
     for result in results:
         prefix = "[OK]" if result.success else "[FAIL]"
         if result.uncertain:
             prefix = "[FAIL] (uncertain)"
         print(f"{prefix} {result.kind}: {result.reason}")
-    if failed:
-        if not args.dry_run:
-            progress.finish(results)
-        return True
+
     if not args.dry_run:
-        progress.finish(results)
+        from ..history import History
+
+        history = History(args.history)
+        # A single classification for the whole attempt (#477): status comes
+        # from ApplyProgress.finish()'s priority (skipped > uncertain > success
+        # > failed) over the *entire* results batch, not from each item
+        # separately re-deriving "uncertain or not success" — that would
+        # classify the same attempt in two places.
+        status = progress.finish(results)
+        assert status is not None
+        if any(result.success or result.uncertain or result.saved for result in results):
+            history.record_action(
+                resume.resume_id,
+                resume.resume_id,
+                "edit_education",
+                status,
+                "; ".join(result.reason for result in results),
+                run_id=progress.run_id,
+            )
+
+    failed = any(not result.success for result in results)
+    if failed:
+        return True
     if args.dry_run:
         print("[DRY-RUN] Ничего не сохранено на hh.ru")
     else:
