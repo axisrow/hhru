@@ -2667,17 +2667,37 @@ class History:
                 ],
             )
 
-    def questionnaire_answer_summary(self) -> dict[str, int]:
-        """Return filled profile/LLM and unfilled counts from apply audits."""
+    def questionnaire_answer_summary(
+        self, resume_id: str | None = None, period: str = "all"
+    ) -> dict[str, int]:
+        """Return filled profile/LLM and unfilled counts from apply audits.
+
+        Scoped the same way as ``summary()``/``reply_summary()`` (#473 cycle-review):
+        ``resume_id=None`` means all resumes, ``period`` filters on
+        ``questionnaire_scans.detected_at`` — otherwise a scoped ``stats
+        --resume X --period 7d`` call would silently mix in lifetime,
+        all-resume totals for this one line.
+        """
+        where = ["scan.source = 'apply'"]
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        since = self._period_since(period)
+        if since is not None:
+            where.append("scan.detected_at >= ?")
+            params.append(since)
+        clause = " AND ".join(where)
         with self._connect() as conn:
             row = conn.execute(
-                """SELECT
+                f"""SELECT
                        COALESCE(SUM(filled = 1 AND answer_source = 'profile'), 0) AS profile,
                        COALESCE(SUM(filled = 1 AND answer_source = 'llm'), 0) AS llm,
                        COALESCE(SUM(filled = 0), 0) AS unanswered
                      FROM questionnaire_questions AS question
                      JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
-                    WHERE scan.source = 'apply'"""
+                    WHERE {clause}""",
+                params,
             ).fetchone()
         return {key: int(row[key]) for key in ("profile", "llm", "unanswered")}
 

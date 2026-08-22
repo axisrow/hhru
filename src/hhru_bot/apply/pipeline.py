@@ -228,7 +228,7 @@ def _record_questionnaire_answers(
                     "answer": proposal.answer if not proposal.low_confidence else "",
                     "answer_source": proposal.answer_source,
                     "confidence": proposal.confidence,
-                    "filled": filled and not proposal.low_confidence,
+                    "filled": filled,
                 }
                 for proposal in proposals
             ],

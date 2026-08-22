@@ -85,7 +85,9 @@ def run(args: argparse.Namespace) -> None:
         print(format_summary(summary, args.format))
         if args.format != "csv":
             print(f"Тестов ожидает: {pending_tests}")
-            questionnaire_answers = history.questionnaire_answer_summary()
+            questionnaire_answers = history.questionnaire_answer_summary(
+                resume_id=resume_id, period=args.period
+            )
             print(
                 "Анкеты: профиль={profile}, LLM={llm}, не закрыто={unanswered}".format(
                     **questionnaire_answers

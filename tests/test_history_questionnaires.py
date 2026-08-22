@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -133,3 +134,64 @@ def test_apply_questionnaire_audit_preserves_answer_fields_and_summary(tmp_path)
     assert tuple(rows[0]) == ("Да", "profile", 1.0, 1, "run-473")
     assert tuple(rows[1]) == ("", "llm", 0.2, 0, "run-473")
     assert history.questionnaire_answer_summary() == {"profile": 1, "llm": 0, "unanswered": 1}
+
+
+def test_questionnaire_answer_summary_scoped_by_resume_and_period(tmp_path):
+    """cycle-review #473: stats --resume/--period must not mix in other resumes.
+
+    Regression test for a /review finding: questionnaire_answer_summary() had
+    no filters even though it was printed inside the resume/period-scoped
+    stats block, so it silently reported lifetime, all-resume totals.
+    """
+    history = History(tmp_path / "history.db")
+    question = {
+        "body_index": 0,
+        "text": "Переезд?",
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer": "Да",
+        "answer_source": "profile",
+        "confidence": 1.0,
+        "filled": True,
+    }
+    history.record_questionnaire(
+        "marketing",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Маркетолог",
+        "Acme",
+        [question],
+        source="apply",
+        run_id="run-a",
+    )
+    history.record_questionnaire(
+        "backend",
+        "2",
+        "https://hh.ru/vacancy/2",
+        "Разработчик",
+        "Beta",
+        [question],
+        source="apply",
+        run_id="run-b",
+    )
+    # Backdate the "marketing" scan outside a "today" window.
+    with history._connect() as conn:
+        stale = (datetime.now() - timedelta(days=2)).isoformat()
+        conn.execute(
+            "UPDATE questionnaire_scans SET detected_at = ? WHERE resume_id = 'marketing'",
+            (stale,),
+        )
+        conn.commit()
+
+    assert history.questionnaire_answer_summary(resume_id="backend") == {
+        "profile": 1,
+        "llm": 0,
+        "unanswered": 0,
+    }
+    assert history.questionnaire_answer_summary(period="today") == {
+        "profile": 1,
+        "llm": 0,
+        "unanswered": 0,
+    }
+    assert history.questionnaire_answer_summary() == {"profile": 2, "llm": 0, "unanswered": 0}
