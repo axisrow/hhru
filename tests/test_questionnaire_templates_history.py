@@ -169,8 +169,10 @@ def test_pending_round_trip(tmp_path):
     history = History(tmp_path / "h.db")
 
     assert history.record_questionnaire_pending(
-        "r1", [_pending_item("Ваш опыт?", options=("Да", "Нет"), kind="choice", is_radio=True)],
-        vacancy_id="v1", vacancy_url="https://hh.ru/vacancy/v1",
+        "r1",
+        [_pending_item("Ваш опыт?", options=("Да", "Нет"), kind="choice", is_radio=True)],
+        vacancy_id="v1",
+        vacancy_url="https://hh.ru/vacancy/v1",
     )
 
     row = history.list_questionnaire_pending("r1")[0]

@@ -52,7 +52,9 @@ def _parse_threshold(raw: dict, key: str, context: str, default: float) -> float
     # ложно — такой порог молча пропускал бы ЛЮБОЙ ответ как достаточно
     # уверенный (тот же класс дефекта, что закрыт в ai/questions.py).
     if not (math.isfinite(value) and 0.0 <= value <= 1.0):
-        raise ConfigError(f"Поле '{context}.{key}' должно быть числом от 0 до 1, получено: {value!r}")
+        raise ConfigError(
+            f"Поле '{context}.{key}' должно быть числом от 0 до 1, получено: {value!r}"
+        )
     return value
 
 

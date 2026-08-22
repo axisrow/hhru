@@ -217,11 +217,15 @@ def check_choice_compatibility(question: Question, indices: tuple[int, ...]) -> 
     if not indices:
         return "ни один вариант ответа не совпал с сохранённым значением"
     if question.is_radio and len(indices) != 1:
-        return f"вопрос допускает один вариант, а сохранённому значению соответствуют {len(indices)}"
+        return (
+            f"вопрос допускает один вариант, а сохранённому значению соответствуют {len(indices)}"
+        )
     return ""
 
 
-def _static_answer(question: Question, template: QuestionTemplate, match: TemplateMatch) -> ResolvedAnswer:
+def _static_answer(
+    question: Question, template: QuestionTemplate, match: TemplateMatch
+) -> ResolvedAnswer:
     answer = (template.answer or "").strip()
     indices: tuple[int, ...] = ()
     if question.kind == "choice":
@@ -238,9 +242,7 @@ def _static_answer(question: Question, template: QuestionTemplate, match: Templa
     )
 
 
-def _contextual_prompt(
-    question: Question, template: QuestionTemplate
-) -> list[dict[str, str]]:
+def _contextual_prompt(question: Question, template: QuestionTemplate) -> list[dict[str, str]]:
     system = (
         "Ты отвечаешь на вопрос анкеты работодателя на hh.ru от лица кандидата. "
         "Следуй инструкции кандидата буквально и не выдумывай фактов о нём. "
@@ -367,6 +369,4 @@ def build_answer(
         return ResolvedAnswer.pending(f"шаблон непригоден: {exc}", match)
     if template.is_static:
         return _static_answer(question, template, match)
-    return _contextual_answer(
-        question, template, match, llm=llm, answer_threshold=answer_threshold
-    )
+    return _contextual_answer(question, template, match, llm=llm, answer_threshold=answer_threshold)

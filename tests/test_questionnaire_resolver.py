@@ -310,7 +310,9 @@ def test_build_answer_pends_on_invalid_template():
 
 
 def test_build_answer_contextual_without_llm_pends():
-    resolved = build_answer(_text("Ожидания?"), _contextual("salary", "скажи вилку"), _salary_match())
+    resolved = build_answer(
+        _text("Ожидания?"), _contextual("salary", "скажи вилку"), _salary_match()
+    )
 
     assert not resolved.resolved and "LLM не настроен" in resolved.pending_reason
 

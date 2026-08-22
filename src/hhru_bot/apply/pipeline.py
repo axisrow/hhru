@@ -203,6 +203,24 @@ def apply_to_vacancy(
     return _run(ctx)
 
 
+def _record_questionnaire_pending(ctx: ApplyContext) -> bool:
+    """Записать вопросы, ушедшие в очередь на обучение (#482).
+
+    Работает только с answerer'ами, которые ведут очередь (``TemplateQuestionAnswerer``);
+    обычный LLM-путь #97/#373 такого свойства не имеет и просто не даёт записей.
+    """
+    pending = getattr(ctx.question_answerer, "pending", None)
+    if not pending or ctx.questionnaire_history is None:
+        return True
+    return ctx.questionnaire_history.record_questionnaire_pending(
+        ctx.resume_id,
+        pending,
+        vacancy_id=ctx.vacancy.vacancy_id,
+        vacancy_url=ctx.vacancy.url,
+        run_id=ctx.run_id,
+    )
+
+
 def _record_questionnaire_answers(
     ctx: ApplyContext, proposals: list[AnswerProposal], *, filled: bool
 ) -> bool:
@@ -229,6 +247,15 @@ def _record_questionnaire_answers(
                     "answer_source": proposal.answer_source,
                     "confidence": proposal.confidence,
                     "filled": filled,
+                    # #482: какой шаблон и какая стратегия дали ответ. Отдельно
+                    # от answer_source, который остаётся закрытой парой
+                    # profile/llm — на неё опирается questionnaire_answer_summary
+                    # (и через него stats), и третье значение выпало бы из всех
+                    # его бакетов. getattr: обычный AIQuestionAnswerer шаблонов
+                    # не знает и этих полей не несёт.
+                    "template": getattr(proposal, "template", None),
+                    "cluster": getattr(proposal, "cluster", None),
+                    "resolver_source": getattr(proposal, "resolver_source", "") or None,
                 }
                 for proposal in proposals
             ],
@@ -546,6 +573,15 @@ def _run(ctx: ApplyContext) -> ApplyResult:
                 proposal.answer or "(пропущен: низкая уверенность)",
                 proposal.confidence,
             )
+        # #482: вопросы, на которые resolver не имеет права ответить сам, идут в
+        # очередь на обучение. Запись выполняется и в dry-run — в отличие от
+        # _record_questionnaire_answers, который в dry-run намеренно молчит: тот
+        # фиксирует аудит СОСТОЯВШЕГОСЯ заполнения формы, а это рабочая очередь,
+        # и наполнять её безопасной разведкой — единственный способ обучить
+        # шаблоны ДО первого боевого прогона. Дедупликация по (resume, вопрос) в
+        # record_questionnaire_pending не даёт очереди расти от повторных прогонов.
+        if not _record_questionnaire_pending(ctx):
+            return ctx.fail("не удалось записать очередь неотвеченных вопросов анкеты")
         low_confidence = [proposal for proposal in proposals if proposal.low_confidence]
         if low_confidence:
             if not _record_questionnaire_answers(ctx, proposals, filled=False):
@@ -564,7 +600,17 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             # low-confidence outcome may use it.
             if ctx.dry_run:
                 return ctx.fail(reason + " (dry-run — предпросмотр, не сохраняется)")
-            return ctx.skip(reason, skip_reason=SKIP_REASONS.QUESTION_LOW_CONFIDENCE)
+            # #482: если вопрос ушёл в очередь, причина отсева другая — она
+            # снимается автоматически, как только оператор обучит шаблон
+            # (`questionnaire learn`/`set`). QUESTION_LOW_CONFIDENCE остаётся за
+            # чистым LLM-путём, где обучать нечего и решение принимает человек
+            # вручную через clear-skipped.
+            skip_reason = (
+                SKIP_REASONS.QUESTIONNAIRE_PENDING
+                if getattr(ctx.question_answerer, "pending", None)
+                else SKIP_REASONS.QUESTION_LOW_CONFIDENCE
+            )
+            return ctx.skip(reason, skip_reason=skip_reason)
         if ctx.dry_run:
             return ctx.ok("dry-run: предложенные ответы на вопросы показаны")
         try:

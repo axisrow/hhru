@@ -7,7 +7,12 @@ import argparse
 from ..exit_codes import CommandExitCode
 from . import apply as apply_cmd
 from . import bump as bump_cmd
-from ._common import add_common_args, add_force_arg, add_limit_arg
+from ._common import (
+    add_common_args,
+    add_force_arg,
+    add_learn_questionnaires_arg,
+    add_limit_arg,
+)
 
 
 def register(subparsers) -> None:
@@ -15,6 +20,7 @@ def register(subparsers) -> None:
     add_common_args(p, max_pages_default=None)
     # apply_cmd.run(args) reuses this Namespace — apply's --force must exist here.
     add_force_arg(p)
+    add_learn_questionnaires_arg(p)
     add_limit_arg(p)
     p.set_defaults(func=run)
 

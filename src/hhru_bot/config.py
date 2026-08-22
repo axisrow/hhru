@@ -119,9 +119,7 @@ class AppConfig:
     # Автозаполнение анкет (#482). TOP-LEVEL секция, как ai. В отличие от ai это
     # НЕ Optional: отсутствие секции даёт дефолты с enabled=False, поэтому
     # потребителям не нужно различать «секции нет» и «секция выключена».
-    questionnaires: QuestionnairesConfig = field(
-        default_factory=lambda: _default_questionnaires()
-    )
+    questionnaires: QuestionnairesConfig = field(default_factory=lambda: _default_questionnaires())
 
     def get_resume(self, resume_id: str) -> ResumeConfig:
         # #319: ключ адресации — slug из конфига ИЛИ реальный resume_id HH.ru

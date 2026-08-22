@@ -1,0 +1,306 @@
+"""Управление обучаемыми шаблонами ответов на анкеты (#482).
+
+Команда локальная: браузер не открывается, на hh.ru ничего не отправляется.
+Шаблоны, подтверждённые формулировки и очередь неотвеченных вопросов живут в
+``history.db`` рядом с остальной историей аккаунта.
+
+Скоуп задаётся флагом ``--resume``: без него правится общий ответ аккаунта, с
+ним — переопределение для конкретного резюме, которое имеет приоритет
+(тот же приём, что manual над hh_ru в ``profile``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+# Импорт на уровне модуля (а не ленивый, как обычно в commands/): значения нужны
+# для choices ещё при построении парсера. Пакет questionnaires намеренно лёгкий
+# — чистые данные, без Playwright и без optional-зависимости .[ai].
+from ..questionnaires.templates import CLUSTERS, MODES
+
+
+def register(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "questionnaire",
+        help="Шаблоны ответов на анкеты работодателей",
+        description="Показать очередь и шаблоны, задать ответ или обучить шаблон.",
+    )
+    commands = parser.add_subparsers(dest="questionnaire_command", required=True)
+
+    pending = commands.add_parser(
+        "pending",
+        help="Показать вопросы анкет, ожидающие решения (READ)",
+        description="Вопросы, на которые бот не стал отвечать сам.",
+    )
+    pending.add_argument("--resume", help="Slug резюме или resume_id (по умолчанию — все)")
+    pending.add_argument("--limit", type=int, default=50, help="Сколько строк вывести")
+    pending.set_defaults(func=run_pending)
+
+    templates = commands.add_parser(
+        "templates",
+        help="Показать сохранённые шаблоны ответов (READ)",
+        description="Шаблоны уровня аккаунта и переопределения резюме.",
+    )
+    templates.add_argument("--resume", help="Slug резюме или resume_id")
+    templates.set_defaults(func=run_templates)
+
+    learn = commands.add_parser(
+        "learn",
+        help="Разобрать очередь и задать ответы (WRITE-local)",
+        description="Интерактивный разбор накопившихся вопросов анкет.",
+    )
+    learn.add_argument("--resume", help="Slug резюме или resume_id")
+    learn.add_argument("--limit", type=int, default=20, help="Сколько вопросов разобрать")
+    learn.set_defaults(func=run_learn)
+
+    set_parser = commands.add_parser(
+        "set",
+        help="Задать ответ для шаблона (WRITE-local)",
+        description="static — готовое значение; contextual — инструкция для LLM.",
+    )
+    set_parser.add_argument("template", help="Имя шаблона, например salary")
+    set_parser.add_argument(
+        "--mode", choices=MODES, required=True, help="static (значение) или contextual (инструкция)"
+    )
+    set_parser.add_argument("--answer", help="Готовый ответ (для --mode static)")
+    set_parser.add_argument("--instruction", help="Инструкция для LLM (для --mode contextual)")
+    set_parser.add_argument(
+        "--example",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="Формулировка вопроса, относящаяся к этому шаблону (можно повторять)",
+    )
+    set_parser.add_argument("--cluster", choices=CLUSTERS, help="Тематический кластер вопроса")
+    set_parser.add_argument("--resume", help="Задать только для этого резюме")
+    set_parser.set_defaults(func=run_set)
+
+    unset_parser = commands.add_parser(
+        "unset",
+        help="Удалить шаблон (WRITE-local)",
+        description="Удаляет шаблон только из своего скоупа.",
+    )
+    unset_parser.add_argument("template", help="Имя шаблона")
+    unset_parser.add_argument("--resume", help="Снять только переопределение этого резюме")
+    unset_parser.set_defaults(func=run_unset)
+
+
+def _scope(args: argparse.Namespace) -> str | None:
+    """Ключ хранения: реальный resume_id HH.ru, а не slug из конфига.
+
+    Slug — локальное имя записи в config.yaml, он может быть переименован; вся
+    остальная история (actions/skipped/questionnaire_scans) ключуется реальным
+    resume_id, и шаблоны обязаны использовать тот же ключ, иначе
+    переопределение «потерялось бы» после переименования резюме в конфиге.
+    Резолв через конфиг, но без падения: работать с шаблонами можно и по сырому
+    resume_id, когда конфига под рукой нет.
+    """
+    if not args.resume:
+        return None
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(args.config)
+    except (ConfigError, SystemExit, OSError):
+        return args.resume
+    try:
+        return config.get_resume(args.resume).resume_id
+    except ConfigError:
+        return args.resume
+
+
+def run_pending(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..report import _ascii_table
+
+    rows = History(args.history).list_questionnaire_pending(_scope(args), limit=max(1, args.limit))
+    if not rows:
+        print("[INFO] Очередь вопросов анкет пуста.")
+        return
+    print(
+        _ascii_table(
+            ["id", "resume", "вопрос", "шаблон", "причина"],
+            [
+                [
+                    str(row["id"]),
+                    row["resume_id"],
+                    row["question_text"],
+                    row["template"] or "-",
+                    row["reason"],
+                ]
+                for row in rows
+            ],
+        )
+    )
+    print(f"[INFO] Ожидает решения: {len(rows)}. Разобрать: hhru questionnaire learn")
+
+
+def run_templates(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..report import _ascii_table
+
+    rows = History(args.history).list_questionnaire_templates(_scope(args))
+    if not rows:
+        print("[INFO] Шаблоны ответов не заданы.")
+        return
+    print(
+        _ascii_table(
+            ["шаблон", "скоуп", "кластер", "режим", "ответ/инструкция"],
+            [
+                [
+                    row["template"],
+                    row["resume_id"] or "account",
+                    row["cluster"],
+                    row["mode"],
+                    (row["answer"] if row["mode"] == "static" else row["instruction"]) or "",
+                ]
+                for row in rows
+            ],
+        )
+    )
+
+
+def run_set(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..questionnaires.templates import (
+        DEFAULT_CLUSTER,
+        QuestionTemplate,
+        TemplateError,
+        cluster_for,
+    )
+
+    cluster = args.cluster or cluster_for(args.template) or DEFAULT_CLUSTER
+    template = QuestionTemplate(
+        name=args.template,
+        cluster=cluster,
+        mode=args.mode,
+        answer=args.answer,
+        instruction=args.instruction,
+    )
+    try:
+        template.validate()
+    except TemplateError as exc:
+        # Проверка здесь, а не через mutually-exclusive group argparse: нужна
+        # понятная строка [FAIL] и код возврата 1, а не argparse-usage.
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        sys.exit(1)
+    if args.example and args.mode != "contextual":
+        print("[FAIL] --example имеет смысл только для --mode contextual", file=sys.stderr)
+        sys.exit(1)
+
+    scope = _scope(args)
+    history = History(args.history)
+    history.set_questionnaire_template(
+        args.template,
+        mode=args.mode,
+        cluster=cluster,
+        answer=args.answer,
+        instruction=args.instruction,
+        resume_id=scope,
+    )
+    for example in args.example:
+        history.confirm_questionnaire_example(
+            args.template, example, resume_id=scope, confirmed_by="seed"
+        )
+    where = f"резюме {scope}" if scope else "аккаунта"
+    print(f"[OK] Шаблон '{args.template}' ({args.mode}, {cluster}) сохранён для {where}.")
+    _unblock(history, scope)
+
+
+def run_unset(args: argparse.Namespace) -> None:
+    from ..history import History
+
+    scope = _scope(args)
+    if History(args.history).unset_questionnaire_template(args.template, resume_id=scope):
+        where = f"резюме {scope}" if scope else "аккаунта"
+        print(f"[OK] Шаблон '{args.template}' удалён для {where}.")
+    else:
+        print(f"[INFO] Шаблон '{args.template}' не найден в этом скоупе.")
+
+
+def run_learn(args: argparse.Namespace):
+    """Интерактивный разбор очереди: вопрос -> шаблон -> ответ.
+
+    Не-TTY завершается сообщением, а не зависанием на stdin: команда штатно
+    запускается человеком, но может попасть в cron или в пайп.
+    """
+    from ..exit_codes import CommandExitCode
+    from ..history import History
+
+    if not sys.stdin.isatty():
+        print("[INFO] Неинтерактивный режим — обучение пропущено.")
+        return None
+
+    scope = _scope(args)
+    history = History(args.history)
+    rows = history.list_questionnaire_pending(scope, limit=max(1, args.limit))
+    if not rows:
+        print("[INFO] Очередь вопросов анкет пуста.")
+        return None
+
+    learned = 0
+    try:
+        for row in rows:
+            learned += _learn_one(history, row, scope)
+    except KeyboardInterrupt:
+        # Ctrl-C после нескольких разобранных вопросов не должен терять их:
+        # каждый ответ уже записан, печатаем итог и отдаём общий код 130.
+        print(f"\n[INFO] Прервано. Разобрано вопросов: {learned}.")
+        _unblock(history, scope)
+        return CommandExitCode.SIGINT
+
+    print(f"[OK] Разобрано вопросов: {learned} из {len(rows)}.")
+    _unblock(history, scope)
+    return None
+
+
+def _learn_one(history, row: dict, scope: str | None) -> int:
+    """Разобрать один вопрос очереди. Возвращает 1, если ответ задан."""
+    import json
+
+    print()
+    print(f"Вопрос: {row['question_text']}")
+    if options := json.loads(row["options_json"] or "[]"):
+        kind = "один вариант" if row["is_radio"] else "один или несколько"
+        print(f"  Варианты ({kind}): {' | '.join(options)}")
+    print(f"  Причина: {row['reason']}")
+
+    suggested = row["template"] or ""
+    prompt = f"  Шаблон [{suggested}]: " if suggested else "  Шаблон (пусто — пропустить): "
+    template = input(prompt).strip() or suggested
+    if not template:
+        print("  [skip] Вопрос оставлен в очереди.")
+        return 0
+    answer = input("  Ответ (пусто — пропустить): ").strip()
+    if not answer:
+        print("  [skip] Вопрос оставлен в очереди.")
+        return 0
+
+    from ..questionnaires.templates import DEFAULT_CLUSTER, cluster_for
+
+    history.set_questionnaire_template(
+        template,
+        mode="static",
+        cluster=row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER,
+        answer=answer,
+        resume_id=scope,
+    )
+    history.confirm_questionnaire_example(
+        template, row["question_text"], resume_id=scope, confirmed_by="user"
+    )
+    history.resolve_questionnaire_pending(row["id"])
+    print(f"  [OK] Шаблон '{template}' сохранён.")
+    return 1
+
+
+def _unblock(history, scope: str | None) -> None:
+    """Вернуть в оборот вакансии, пропущенные только из-за очереди анкет (#482).
+
+    Вакансия была отсеяна потому, что бот не знал ответа; теперь знает, и
+    держать её в журнале ``skipped`` — значит навсегда потерять её без ручного
+    ``clear-skipped``. Снимаются только записи с причиной
+    ``questionnaire_pending``; прочие основания отсева не трогаются.
+    """
+    if unblocked := history.clear_pending_skips(scope):
+        print(f"[INFO] Возвращено в поиск вакансий: {unblocked}.")

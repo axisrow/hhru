@@ -169,7 +169,9 @@ class QuestionTemplate:
         if not self.name.strip():
             raise TemplateError("имя шаблона не может быть пустым")
         if self.mode not in MODES:
-            raise TemplateError(f"неизвестный режим шаблона: {self.mode!r} (допустимо: static, contextual)")
+            raise TemplateError(
+                f"неизвестный режим шаблона: {self.mode!r} (допустимо: static, contextual)"
+            )
         if self.cluster not in CLUSTERS:
             raise TemplateError(f"неизвестный кластер: {self.cluster!r}")
         if self.is_static and not (self.answer or "").strip():

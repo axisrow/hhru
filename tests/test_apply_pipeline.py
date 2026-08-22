@@ -1309,3 +1309,185 @@ def test_apply_dry_run_grey_zone_failure_never_sets_acted(monkeypatch):
     assert result.success is False
     assert result.skipped is False
     assert verifier_calls == []
+
+
+# --- очередь неотвеченных вопросов анкеты (#482) ---------------------------
+
+
+class _PendingAnswerer(_StubAnswerer):
+    """Answerer с очередью: ведёт себя как TemplateQuestionAnswerer для pipeline."""
+
+    def __init__(self, proposals_by_text=None, pending=None):
+        super().__init__(proposals_by_text)
+        self.pending = pending if pending is not None else []
+
+
+class _PendingHistory(_QuestionnaireHistory):
+    def __init__(self, ok=True):
+        super().__init__()
+        self.ok = ok
+        self.pending_calls = []
+
+    def record_questionnaire_pending(self, resume_id, items, **kwargs):
+        self.pending_calls.append((resume_id, items, kwargs))
+        return self.ok
+
+
+def _queued_setup(monkeypatch):
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Опишите сложный проект", "text")
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    answerer = _PendingAnswerer(
+        {question.text: AnswerProposal(question, "", 0.0)},
+        pending=[{"text": question.text, "kind": "text", "reason": "нет шаблона"}],
+    )
+    return question, answerer
+
+
+def test_queued_question_skips_the_vacancy_with_its_own_reason(monkeypatch):
+    from hhru_bot.history import SKIP_REASONS
+
+    _question, answerer = _queued_setup(monkeypatch)
+    history = _PendingHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=answerer,
+        force=True,
+        questionnaire_history=history,
+    )
+
+    assert result.success is False
+    assert result.skipped is True
+    assert result.skip_reason == SKIP_REASONS.QUESTIONNAIRE_PENDING
+    assert answerer.applied is None, "форма не должна заполняться"
+
+
+def test_queued_question_is_recorded_in_the_queue(monkeypatch):
+    _question, answerer = _queued_setup(monkeypatch)
+    history = _PendingHistory()
+
+    apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=answerer,
+        force=True,
+        questionnaire_history=history,
+        run_id="run-482",
+    )
+
+    resume_id, items, kwargs = history.pending_calls[0]
+    assert resume_id == "RID"
+    assert items[0]["text"] == "Опишите сложный проект"
+    assert kwargs["run_id"] == "run-482"
+
+
+def test_dry_run_also_fills_the_queue_but_never_persists_a_skip(monkeypatch):
+    """Разведка обязана наполнять очередь: иначе обучать шаблоны нечем."""
+    _question, answerer = _queued_setup(monkeypatch)
+    history = _PendingHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        question_answerer=answerer,
+        questionnaire_history=history,
+    )
+
+    assert history.pending_calls, "dry-run должен записывать очередь"
+    assert result.skipped is False, "dry-run не хоронит вакансию через record_skip"
+    assert result.success is False
+
+
+def test_failure_to_record_the_queue_fails_closed(monkeypatch):
+    _question, answerer = _queued_setup(monkeypatch)
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=answerer,
+        force=True,
+        questionnaire_history=_PendingHistory(ok=False),
+    )
+
+    assert result.success is False
+    assert result.skipped is False
+    assert answerer.applied is None
+
+
+def test_low_confidence_without_a_queue_keeps_the_old_skip_reason(monkeypatch):
+    """Чистый LLM-путь #97/#373 не должен переехать на новую причину."""
+    from hhru_bot.ai.questions import AnswerProposal, Question
+    from hhru_bot.history import SKIP_REASONS
+
+    question = Question(0, "Готовы к переезду?", "text")
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: AnswerProposal(question, "", 0.1)}),
+        force=True,
+    )
+
+    assert result.skip_reason == SKIP_REASONS.QUESTION_LOW_CONFIDENCE
+
+
+def test_template_answer_reaches_the_audit(monkeypatch):
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Зарплатные ожидания?", "text")
+    proposal = AnswerProposal(
+        question,
+        "от 250000",
+        1.0,
+        answer_source="profile",
+        template="salary",
+        cluster="conditions",
+        resolver_source="static",
+    )
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _PendingHistory()
+
+    apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_PendingAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+    )
+
+    recorded = history.calls[0][0][5][0]
+    assert recorded["template"] == "salary"
+    assert recorded["cluster"] == "conditions"
+    assert recorded["resolver_source"] == "static"
+    assert recorded["answer_source"] == "profile", "закрытая пара profile/llm"

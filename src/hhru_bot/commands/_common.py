@@ -116,6 +116,22 @@ def add_force_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_learn_questionnaires_arg(p: argparse.ArgumentParser) -> None:
+    """``--learn-questionnaires`` — разрешение СПРАШИВАТЬ, а не отправлять (#482).
+
+    Отдельный флаг, а не переиспользование ``--force``: тот авторизует боевую
+    отправку отклика, и если бы обучение шло под ним, ``apply --force`` молча
+    закреплял бы догадки модели как подтверждённые пользователем сопоставления.
+    Без этого флага неизвестный вопрос сразу уходит в очередь — прогон не
+    останавливается на stdin (важно для headless/cron).
+    """
+    p.add_argument(
+        "--learn-questionnaires",
+        action="store_true",
+        help="Спрашивать подтверждение сопоставления вопроса анкеты с шаблоном",
+    )
+
+
 def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[ResumeConfig]:
     if not resume_ids:
         return config.resumes
@@ -207,21 +223,64 @@ def _build_letter_provider(
 
 
 def _build_question_answerer(
-    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
+    config: AppConfig,
+    resume: ResumeConfig,
+    known_data: dict[str, str] | None = None,
+    *,
+    history: History | None = None,
+    learn: bool = False,
 ):
-    """Build the opt-in LLM question answerer, if configured."""
-    ai_config = getattr(config, "ai", None)
-    if ai_config is None or not ai_config.answer_questions:
-        return None
-    from ..ai.llm_client import LLMClient
-    from ..ai.questions import AIQuestionAnswerer
+    """Собрать отвечающего на вопросы анкеты. None — анкеты не обрабатываются.
 
-    try:
-        client = LLMClient(ai_config)
-    except ImportError as exc:
-        logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+    Гейт двухуровневый (#482):
+      * ``questionnaires.enabled`` включает resolver по обучаемым шаблонам,
+        который обязан работать БЕЗ AI-зависимости;
+      * ``ai.answer_questions`` добавляет к нему LLM-ступень.
+
+    Отсутствие пакета ``.[ai]`` деградирует до resolver-only, а НЕ до None:
+    ``pipeline._run`` пропускает вакансию с анкетой при ``question_answerer is
+    None``, то есть возврат None здесь стоил бы всего keyword-пути — ровно того,
+    что issue требует сохранить работоспособным без AI.
+    """
+    ai_config = getattr(config, "ai", None)
+    questionnaires = getattr(config, "questionnaires", None)
+    templates_enabled = bool(questionnaires is not None and questionnaires.enabled and history)
+    llm_enabled = ai_config is not None and ai_config.answer_questions
+    if not templates_enabled and not llm_enabled:
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
+
+    client = fallback = None
+    if llm_enabled:
+        from ..ai.llm_client import LLMClient
+        from ..ai.questions import AIQuestionAnswerer
+
+        try:
+            client = LLMClient(ai_config)
+        except ImportError as exc:
+            if not templates_enabled:
+                logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
+                return None
+            logger.warning(
+                "LLM-ступень ответов на анкеты недоступна (%s) — остаются шаблоны без AI", exc
+            )
+        else:
+            fallback = AIQuestionAnswerer(
+                client, getattr(resume, "ai_profile", None), known_data=known_data
+            )
+
+    if not templates_enabled:
+        return fallback
+
+    from ..questionnaires.answerer import TemplateQuestionAnswerer
+
+    return TemplateQuestionAnswerer(
+        history,
+        resume.resume_id,
+        settings=questionnaires,
+        llm=client,
+        llm_fallback=fallback,
+        learn=learn,
+    )
 
 
 def _build_scoring_provider(
@@ -656,13 +715,22 @@ class ApplyProviders:
 
 
 def _build_apply_providers(
-    config: AppConfig, resume: ResumeConfig, cover_letter_template: str, history: History
+    config: AppConfig,
+    resume: ResumeConfig,
+    cover_letter_template: str,
+    history: History,
+    *,
+    learn: bool = False,
 ) -> ApplyProviders:
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
         question_answerer=_build_question_answerer(
-            config, resume, known_data=history.get_profile_answers()
+            config,
+            resume,
+            known_data=history.get_profile_answers(),
+            history=history,
+            learn=learn,
         ),
     )
 
@@ -834,7 +902,13 @@ def run_apply_for_resume(
     providers = (
         None
         if skip_scoring
-        else _build_apply_providers(config, resume, cover_letter_template, history)
+        else _build_apply_providers(
+            config,
+            resume,
+            cover_letter_template,
+            history,
+            learn=getattr(args, "learn_questionnaires", False),
+        )
     )
 
     progress = progress or ApplyProgress()
@@ -1052,7 +1126,13 @@ def _run_apply_for_resume(
         question_answerer = providers.question_answerer
     else:
         letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-        question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
+        question_answerer = _build_question_answerer(
+            config,
+            resume,
+            history.get_profile_answers(),
+            history=history,
+            learn=getattr(args, "learn_questionnaires", False),
+        )
     if approved_item:
         from ..apply.letter import LetterOutcome
 

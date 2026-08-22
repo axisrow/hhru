@@ -513,6 +513,40 @@
 
 ---
 
+#### `questionnaire` — обучаемые шаблоны ответов на анкеты (#482)
+
+- **Природа:** READ (`pending`, `templates`) и WRITE-local (`set`, `unset`, `learn`);
+  браузер не открывается, на hh.ru ничего не отправляется.
+- **Сигнатуры:**
+  ```
+  hhru questionnaire pending   [--resume ID] [--limit N]
+  hhru questionnaire templates [--resume ID]
+  hhru questionnaire learn     [--resume ID] [--limit N]
+  hhru questionnaire set TEMPLATE --mode static     --answer VALUE     [--resume ID] [--cluster C]
+  hhru questionnaire set TEMPLATE --mode contextual --instruction TEXT [--example TEXT ...] [--resume ID] [--cluster C]
+  hhru questionnaire unset TEMPLATE [--resume ID]
+  ```
+- **Шаблон** — семантический ключ, сводящий разные формулировки одного вопроса в одну
+  запись (`salary`, `location`, `desired_role`, `business_segments` идут из коробки как
+  seed-поля). Режим `static` отдаёт сохранённое значение как есть и LLM не вызывает;
+  `contextual` хранит инструкцию и подтверждённые примеры, по которым ответ генерируется
+  под конкретную вакансию.
+- **Скоуп:** без `--resume` правится общий ответ аккаунта, с `--resume` —
+  переопределение для этого резюме, которое имеет приоритет (тот же приём, что
+  `manual` над `hh_ru` в `profile`). `unset` снимает только свой скоуп.
+- **Очередь:** вопрос, на который бот не имеет права ответить сам, попадает в
+  `questionnaire pending`, а вакансия пропускается с причиной `questionnaire_pending` —
+  прогон продолжается. Очередь наполняется и в `apply --dry-run`, поэтому шаблоны можно
+  обучить до первого боевого прогона. `learn`/`set` снимают эти skip-записи
+  автоматически, вручную `clear-skipped` не нужен.
+- **Комплаенс:** вопросы про документы, гражданство, разрешение на работу и судимость
+  отвечаются ТОЛЬКО явным `static`-значением. Ни ключевые слова, ни LLM их не заполняют.
+- `learn` интерактивен: в неинтерактивном режиме печатает `[INFO]` и ничего не меняет;
+  Ctrl-C печатает частичный итог и возвращает 130.
+- **Вывод:** ASCII-таблицы через `report._ascii_table`, префиксы `[OK]`/`[INFO]`/`[FAIL]`.
+
+---
+
 #### `clear-skipped` — очистка записи о пропущенных вакансиях
 
 - **Природа:** WRITE-local (история) — либо READ-рекомендация, см. заметку

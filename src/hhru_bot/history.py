@@ -2795,8 +2795,9 @@ class History:
             conn.executemany(
                 """INSERT INTO questionnaire_questions
                    (scan_id, body_index, text, kind, is_radio, options_json,
-                    answer, answer_source, confidence, filled, run_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    answer, answer_source, confidence, filled, run_id,
+                    template, cluster, resolver_source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         scan_id,
@@ -2810,6 +2811,9 @@ class History:
                         question.get("confidence"),
                         int(bool(question.get("filled", False))),
                         run_id,
+                        question.get("template"),
+                        question.get("cluster"),
+                        question.get("resolver_source"),
                     )
                     for question in questions
                 ],
@@ -2890,9 +2894,7 @@ class History:
                 (template, self._scope(resume_id), cluster, mode, answer, instruction, now, now),
             )
 
-    def unset_questionnaire_template(
-        self, template: str, *, resume_id: str | None = None
-    ) -> bool:
+    def unset_questionnaire_template(self, template: str, *, resume_id: str | None = None) -> bool:
         """Удалить шаблон ТОЛЬКО из указанного скоупа.
 
         Как и ``profile unset``, снятие resume-переопределения не трогает
