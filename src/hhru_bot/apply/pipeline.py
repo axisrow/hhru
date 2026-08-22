@@ -29,6 +29,7 @@ from .blockers import PostClickBlocker, PostSubmitLimitExceeded
 from .dedup import check_already_responded
 from .letter import VARIANT_TEMPLATE, CoverLetterProvider, render_cover_letter
 from .probe import NOOP_PROBE, ProbeHook
+from .questionnaire import question_cluster_key
 from .questions import detect_questions
 from .steps import SubmitClickUncertain
 from .success import wait_success_confirmation
@@ -229,6 +230,13 @@ def _record_questionnaire_answers(
                     "answer_source": proposal.answer_source,
                     "confidence": proposal.confidence,
                     "filled": filled,
+                    # #482: attribute the row to a learnable template (when
+                    # the resolver answered it) and a deterministic cluster
+                    # key (always -- lets stats group repeat questions across
+                    # vacancies the same way apply/questionnaire.py's bulk
+                    # scan report does).
+                    "template": proposal.template,
+                    "cluster": question_cluster_key(proposal.question),
                 }
                 for proposal in proposals
             ],
@@ -239,6 +247,42 @@ def _record_questionnaire_answers(
     except sqlite3.Error as exc:
         logger.warning("[FAIL] %s — не удалось записать аудит анкеты: %s", ctx.vacancy.title, exc)
         return False
+
+
+def _enqueue_pending_questions(ctx: ApplyContext, low_confidence: list[AnswerProposal]) -> None:
+    """Queue unresolved questions for ``questionnaire pending``/``learn`` (#482).
+
+    Issue #482: "Headless/non-TTY: неизвестный вопрос идет в очередь,
+    вакансия пропускается, batch продолжается" -- this applies to ANY
+    non-dry-run low-confidence outcome (not just headless specifically),
+    since apply has no interactive prompt of its own here; the vacancy is
+    already being skipped by the existing low-confidence path, this only
+    adds the durable queue entry so `questionnaire learn`/`--learn-questionnaires`
+    has something to work from. Best-effort: a write failure here must not
+    turn an otherwise-successful skip into a pipeline failure.
+    """
+    if ctx.questionnaire_history is None or ctx.dry_run:
+        return
+    # #482 --learn-questionnaires: an optional duck-typed hook, not a new
+    # ApplyContext field or pipeline branch -- keeps pipeline.py generic over
+    # which question_answerer is plugged in (AIQuestionAnswerer has none).
+    suggest = getattr(ctx.question_answerer, "suggest_template", None)
+    for proposal in low_confidence:
+        suggestion = suggest(proposal.question) if suggest is not None else None
+        try:
+            ctx.questionnaire_history.enqueue_pending(
+                resume_id=ctx.resume_id,
+                vacancy_id=ctx.vacancy.vacancy_id,
+                question_text=proposal.question.text,
+                kind=proposal.question.kind,
+                options=list(proposal.question.options),
+                suggested_template=suggestion[0] if suggestion else None,
+                suggested_confidence=suggestion[1] if suggestion else None,
+            )
+        except sqlite3.Error as exc:
+            logger.warning(
+                "[FAIL] %s — не удалось поставить вопрос в очередь: %s", ctx.vacancy.title, exc
+            )
 
 
 def _finalize_blocker(ctx: ApplyContext, blocker: PostClickBlocker) -> ApplyResult:
@@ -550,6 +594,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         if low_confidence:
             if not _record_questionnaire_answers(ctx, proposals, filled=False):
                 return ctx.fail("не удалось записать аудит ответов анкеты")
+            _enqueue_pending_questions(ctx, low_confidence)
             reason = (
                 f"пропущен вопрос с низкой уверенностью ({len(low_confidence)}): "
                 + low_confidence[0].question.text

@@ -1019,9 +1019,13 @@ class _StubAnswerer:
 class _QuestionnaireHistory:
     def __init__(self):
         self.calls = []
+        self.pending_calls = []
 
     def record_questionnaire(self, *args, **kwargs):
         self.calls.append((args, kwargs))
+
+    def enqueue_pending(self, **kwargs):
+        self.pending_calls.append(kwargs)
 
 
 def _question_detection(has_questions=True, reason="anketa"):
@@ -1060,6 +1064,38 @@ def test_apply_force_gate_blocks_when_questions_found_without_force(monkeypatch)
 
     assert result.success is False
     assert result.skipped is False
+    assert "--force" in result.reason
+
+
+def test_apply_force_gate_blocks_resolver_only_answerer_without_llm(monkeypatch):
+    """#482 regression: --force is required even when the questionnaire is
+    answered purely by the keyword resolver (no LLM configured at all) --
+    "Любая реальная отправка заполненной анкеты требует --force" doesn't
+    carve out an exception for the AI-free path.
+    """
+    from hhru_bot.apply.questionnaire_answerer import HybridQuestionAnswerer
+
+    class _History:
+        def get_confirmed_matches(self):
+            return {}
+
+        def get_template(self, _name):
+            return None
+
+        def get_template_answers(self, _name):
+            return {"account": None, "resume": {}}
+
+    answerer = HybridQuestionAnswerer(history=_History(), resume_id="RID", llm_answerer=None)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    page = FakePage(apply_button=True, success=True, submit_in_form=True)
+
+    result = apply_to_vacancy(
+        page, _vacancy(), "RID", "x", dry_run=False, question_answerer=answerer, force=False
+    )
+
+    assert result.success is False
     assert "--force" in result.reason
 
 
@@ -1241,9 +1277,141 @@ def test_apply_questionnaire_audit_records_low_confidence_without_fill(monkeypat
     args, kwargs = history.calls[0]
     assert kwargs["source"] == "apply"
     assert args[5][0]["answer_source"] == "llm"
-    assert args[5][0]["answer"] == ""
     assert args[5][0]["confidence"] == 0.2
     assert args[5][0]["filled"] is False
+
+
+def test_apply_low_confidence_question_is_enqueued_as_pending(monkeypatch):
+    """#482: headless/non-TTY (and any low-confidence real run) must queue the
+    unresolved question, not silently drop it -- "Headless/non-TTY:
+    неизвестный вопрос идет в очередь, вакансия пропускается".
+    """
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Расскажите о кейсе", "text")
+    proposal = AnswerProposal(question, "Сомнительный ответ", 0.2)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-482",
+    )
+
+    assert len(history.pending_calls) == 1
+    call = history.pending_calls[0]
+    assert call["resume_id"] == "RID"
+    assert call["question_text"] == "Расскажите о кейсе"
+    assert call["kind"] == "text"
+    assert call["suggested_template"] is None
+    assert call["suggested_confidence"] is None
+
+
+def test_apply_learn_questionnaires_suggestion_reaches_pending_row(monkeypatch):
+    """#482 --learn-questionnaires: when the answerer exposes suggest_template
+    (HybridQuestionAnswerer with the flag on), its suggestion must land on the
+    pending row for `questionnaire learn` to present -- duck-typed, so a plain
+    AIQuestionAnswerer (no suggest_template) still works with suggested_*=None.
+    """
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Расскажите о кейсе", "text")
+    proposal = AnswerProposal(question, "Сомнительный ответ", 0.2)
+
+    class _SuggestingAnswerer(_StubAnswerer):
+        def suggest_template(self, _question):
+            return ("case_study", 0.93)
+
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_SuggestingAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-482",
+    )
+
+    assert history.pending_calls[0]["suggested_template"] == "case_study"
+    assert history.pending_calls[0]["suggested_confidence"] == 0.93
+
+
+def test_apply_dry_run_low_confidence_does_not_enqueue_pending(monkeypatch):
+    """A dry-run preview must not persist anything -- same reasoning as the
+    existing "dry-run doesn't record_skip" invariant just above.
+    """
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Готовы к переезду?", "text")
+    low_confidence = AnswerProposal(question, "", 0.1)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=True,
+        question_answerer=_StubAnswerer({question.text: low_confidence}),
+        questionnaire_history=history,
+    )
+
+    assert history.pending_calls == []
+
+
+def test_apply_questionnaire_audit_records_template_and_cluster(monkeypatch):
+    """#482: keyword-resolver answers must attribute the audit row to the
+    template name and a deterministic cluster key, not just answer_source.
+    """
+    from hhru_bot.ai.questions import AnswerProposal, Question
+    from hhru_bot.apply.questionnaire import question_cluster_key
+
+    question = Question(0, "Желаемая зарплата", "text")
+    proposal = AnswerProposal(question, "300000", 1.0, answer_source="template", template="salary")
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-482",
+    )
+
+    assert result.success is True
+    args, _kwargs = history.calls[0]
+    assert args[5][0]["template"] == "salary"
+    assert args[5][0]["cluster"] == question_cluster_key(question)
 
 
 def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):

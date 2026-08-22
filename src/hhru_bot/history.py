@@ -349,10 +349,73 @@ CREATE TABLE IF NOT EXISTS questionnaire_questions (
     answer_source TEXT,
     confidence REAL,
     filled INTEGER NOT NULL DEFAULT 0,
-    run_id TEXT
+    run_id TEXT,
+    template TEXT,
+    cluster TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_questionnaire_questions_scan_id
     ON questionnaire_questions(scan_id);
+
+-- #482: learnable answer templates (keyword resolver + LLM fallback), independent
+-- of the AI-only questionnaire_scans/questionnaire_questions audit above.
+CREATE TABLE IF NOT EXISTS questionnaire_templates (
+    name TEXT PRIMARY KEY,
+    mode TEXT NOT NULL,              -- 'static' | 'contextual'
+    instruction TEXT,                -- contextual only
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS questionnaire_template_examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_name TEXT NOT NULL REFERENCES questionnaire_templates(name),
+    example TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_template_examples_name
+    ON questionnaire_template_examples(template_name);
+
+-- resume_id='' is the account-wide sentinel (NOT NULL): SQLite UNIQUE allows
+-- many NULLs, which would let two "account-wide" rows coexist for the same
+-- template instead of upserting one. resume-scoped override takes priority
+-- over the account-wide row at read time (History.get_template_answers).
+CREATE TABLE IF NOT EXISTS questionnaire_template_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_name TEXT NOT NULL REFERENCES questionnaire_templates(name),
+    resume_id TEXT NOT NULL DEFAULT '',
+    answer TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (template_name, resume_id)
+);
+
+-- Keyword resolver: normalized(question_text) -> template_name. A row here
+-- means the match is CONFIRMED (issue #482: "Первое LLM-сопоставление
+-- требует подтверждения пользователя") -- resolve_by_keyword only reads
+-- from this table, never from an unconfirmed LLM suggestion.
+CREATE TABLE IF NOT EXISTS questionnaire_confirmed_matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_text TEXT NOT NULL UNIQUE,
+    template_name TEXT NOT NULL REFERENCES questionnaire_templates(name),
+    confirmed_at TEXT NOT NULL
+);
+
+-- Questions neither the keyword resolver nor (if enabled) the LLM could
+-- confidently answer: headless runs and low-confidence outcomes land here
+-- instead of silently vanishing (issue #482: "Headless/non-TTY: неизвестный
+-- вопрос идет в очередь, вакансия пропускается, batch продолжается").
+CREATE TABLE IF NOT EXISTS questionnaire_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    question_text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    suggested_template TEXT,
+    suggested_confidence REAL,
+    status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'resolved'
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_questionnaire_pending_status
+    ON questionnaire_pending(status);
 
 -- test_assignments — факт назначения внешнего теста работодателем (#180).
 -- Отдельно от responses/actions: это событие чата, а не статус отклика и не
@@ -571,6 +634,10 @@ class History:
             _ensure_column(conn, "questionnaire_questions", "confidence", "REAL")
             _ensure_column(conn, "questionnaire_questions", "filled", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(conn, "questionnaire_questions", "run_id", "TEXT")
+            # #482: keyword resolver / template audit fields, same idempotent
+            # migration shape as the #473 block directly above.
+            _ensure_column(conn, "questionnaire_questions", "template", "TEXT")
+            _ensure_column(conn, "questionnaire_questions", "cluster", "TEXT")
             # #420 follow-up (Codex adversarial-review, PR #449): review_queue
             # rows created before this column existed have no stored search_query
             # — they stay NULL and are legacy-attributed via the existing
@@ -2697,9 +2764,18 @@ class History:
         ``filled`` records only a successful form fill, never an HH.ru submit
         or its later confirmation.  Apply results remain the single source of
         truth in ``actions`` and are joined to this audit by ``run_id``.
+
+        ``answer_source`` (per-question, in ``questions``) is validated the
+        same way as ``source``: a typo here would silently vanish from
+        ``questionnaire_answer_summary()`` instead of raising (#482 review).
         """
         if source not in {"probe", "apply"}:
             raise ValueError(f"unknown questionnaire source: {source!r}")
+        valid_answer_sources = {None, "profile", "llm", "template"}
+        for question in questions:
+            answer_source = question.get("answer_source")
+            if answer_source not in valid_answer_sources:
+                raise ValueError(f"unknown questionnaire answer_source: {answer_source!r}")
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO questionnaire_scans
@@ -2719,8 +2795,8 @@ class History:
             conn.executemany(
                 """INSERT INTO questionnaire_questions
                    (scan_id, body_index, text, kind, is_radio, options_json,
-                    answer, answer_source, confidence, filled, run_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    answer, answer_source, confidence, filled, run_id, template, cluster)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         scan_id,
@@ -2734,6 +2810,8 @@ class History:
                         question.get("confidence"),
                         int(bool(question.get("filled", False))),
                         run_id,
+                        question.get("template"),
+                        question.get("cluster"),
                     )
                     for question in questions
                 ],
@@ -2765,13 +2843,227 @@ class History:
                 f"""SELECT
                        COALESCE(SUM(filled = 1 AND answer_source = 'profile'), 0) AS profile,
                        COALESCE(SUM(filled = 1 AND answer_source = 'llm'), 0) AS llm,
+                       COALESCE(SUM(filled = 1 AND answer_source = 'template'), 0) AS template,
                        COALESCE(SUM(filled = 0), 0) AS unanswered
                      FROM questionnaire_questions AS question
                      JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
                     WHERE {clause}""",
                 params,
             ).fetchone()
-        return {key: int(row[key]) for key in ("profile", "llm", "unanswered")}
+        return {key: int(row[key]) for key in ("profile", "llm", "template", "unanswered")}
+
+    # --- Learnable questionnaire templates (#482) ---------------------------
+
+    def upsert_template(
+        self,
+        name: str,
+        *,
+        mode: str,
+        instruction: str | None = None,
+        examples: list[str] | None = None,
+    ) -> None:
+        """Create or update a template's mode/instruction (idempotent).
+
+        Examples fully replace the previous set (delete+insert) rather than
+        appending -- ``questionnaire set`` always supplies the complete
+        example list, matching the CLI's ``--example TEXT ...`` contract.
+        """
+        if mode not in {"static", "contextual"}:
+            raise ValueError(f"unknown template mode: {mode!r}")
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questionnaire_templates
+                    (name, mode, instruction, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    mode = excluded.mode,
+                    instruction = excluded.instruction,
+                    updated_at = excluded.updated_at
+                """,
+                (name, mode, instruction, now, now),
+            )
+            conn.execute(
+                "DELETE FROM questionnaire_template_examples WHERE template_name = ?", (name,)
+            )
+            if examples:
+                conn.executemany(
+                    "INSERT INTO questionnaire_template_examples (template_name, example) "
+                    "VALUES (?, ?)",
+                    [(name, example) for example in examples],
+                )
+
+    def get_template(self, name: str):
+        from .apply.questionnaire_resolver import Template
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT name, mode, instruction FROM questionnaire_templates WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if row is None:
+                return None
+            examples = conn.execute(
+                "SELECT example FROM questionnaire_template_examples "
+                "WHERE template_name = ? ORDER BY id",
+                (name,),
+            ).fetchall()
+        return Template(
+            name=row["name"],
+            mode=row["mode"],
+            instruction=row["instruction"],
+            examples=tuple(r["example"] for r in examples),
+        )
+
+    def list_templates(self):
+        with self._connect() as conn:
+            names = [
+                r["name"]
+                for r in conn.execute("SELECT name FROM questionnaire_templates ORDER BY name")
+            ]
+        return [self.get_template(name) for name in names]
+
+    def delete_template(self, name: str) -> None:
+        """Remove a template and everything scoped to it (answers/examples).
+
+        Confirmed keyword-resolver matches pointing at this template are also
+        removed -- an orphaned ``normalized_text -> template_name`` row would
+        make ``resolve_by_keyword`` return a name ``get_template`` can no
+        longer resolve.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM questionnaire_template_examples WHERE template_name = ?", (name,)
+            )
+            conn.execute(
+                "DELETE FROM questionnaire_template_answers WHERE template_name = ?", (name,)
+            )
+            conn.execute(
+                "DELETE FROM questionnaire_confirmed_matches WHERE template_name = ?", (name,)
+            )
+            conn.execute("DELETE FROM questionnaire_templates WHERE name = ?", (name,))
+
+    def set_template_answer(
+        self, template_name: str, answer: str, *, resume_id: str | None = None
+    ) -> None:
+        """Store an account-wide (``resume_id=None``) or resume-scoped answer.
+
+        ``resume_id=None`` maps to the ``''`` sentinel row (schema comment on
+        ``questionnaire_template_answers``): NULL would let SQLite's
+        UNIQUE(template_name, resume_id) accept unlimited account-wide rows
+        for the same template instead of updating one.
+        """
+        scope = resume_id or ""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questionnaire_template_answers
+                    (template_name, resume_id, answer, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(template_name, resume_id) DO UPDATE SET
+                    answer = excluded.answer,
+                    updated_at = excluded.updated_at
+                """,
+                (template_name, scope, answer, now),
+            )
+
+    def get_template_answers(self, template_name: str) -> dict:
+        """Return ``{"account": str|None, "resume": {resume_id: answer}}``."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT resume_id, answer FROM questionnaire_template_answers "
+                "WHERE template_name = ?",
+                (template_name,),
+            ).fetchall()
+        account = None
+        resume: dict[str, str] = {}
+        for row in rows:
+            if row["resume_id"] == "":
+                account = row["answer"]
+            else:
+                resume[row["resume_id"]] = row["answer"]
+        return {"account": account, "resume": resume}
+
+    def confirm_match(self, normalized_text: str, template_name: str) -> None:
+        """Record a confirmed keyword match (issue #482: first LLM match
+
+        requires user confirmation before the keyword resolver can use it
+        automatically). Re-confirming the same normalized text repoints it at
+        a (possibly different) template rather than raising.
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questionnaire_confirmed_matches
+                    (normalized_text, template_name, confirmed_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(normalized_text) DO UPDATE SET
+                    template_name = excluded.template_name,
+                    confirmed_at = excluded.confirmed_at
+                """,
+                (normalized_text, template_name, now),
+            )
+
+    def get_confirmed_matches(self) -> dict[str, str]:
+        """Return ``{normalized_question_text: template_name}`` for the resolver."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT normalized_text, template_name FROM questionnaire_confirmed_matches"
+            ).fetchall()
+        return {row["normalized_text"]: row["template_name"] for row in rows}
+
+    def enqueue_pending(
+        self,
+        *,
+        resume_id: str,
+        vacancy_id: str,
+        question_text: str,
+        kind: str,
+        options: list[str],
+        suggested_template: str | None = None,
+        suggested_confidence: float | None = None,
+    ) -> None:
+        """Queue an unresolved question for ``questionnaire learn``/``pending``."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questionnaire_pending
+                    (resume_id, vacancy_id, question_text, kind, options_json,
+                     suggested_template, suggested_confidence, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                """,
+                (
+                    resume_id,
+                    vacancy_id,
+                    question_text,
+                    kind,
+                    json.dumps(options, ensure_ascii=False),
+                    suggested_template,
+                    suggested_confidence,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def list_pending(self, resume_id: str | None = None) -> list[dict]:
+        """Return open pending questions, newest first (for ``learn``/``pending``)."""
+        query = "SELECT * FROM questionnaire_pending WHERE status = 'open'"
+        params: list = []
+        if resume_id is not None:
+            query += " AND resume_id = ?"
+            params.append(resume_id)
+        query += " ORDER BY created_at DESC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_pending(self, pending_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE questionnaire_pending SET status = 'resolved' WHERE id = ?", (pending_id,)
+            )
 
     def is_robot_questionnaire(self, topic: str) -> bool:
         with self._connect() as conn:

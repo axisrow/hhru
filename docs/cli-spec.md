@@ -106,6 +106,7 @@
 | `mark`      | ручная пометка оффера (#13)                  | WRITE-local    | `[OK]`                         |
 | `profile`   | управление профилем аккаунта (#287)          | READ/WRITE-local | ASCII-таблица / `[OK]`        |
 | `schedule`  | генератор конфига launchd/cron (#18)         | READ           | текст (plist/crontab)          |
+| `questionnaire` | keyword resolver анкет: шаблоны, pending-очередь, обучение (#482) | READ (`pending`/`templates`) / WRITE-local (`learn`/`set`/`unset`) | ASCII-таблица / `[OK]`/`[FAIL]`/`[INFO]` |
 
 ### 3.2. Команды s3rgeym, явно НЕ переносимые
 

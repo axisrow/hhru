@@ -116,6 +116,25 @@ def add_force_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_learn_questionnaires_arg(p: argparse.ArgumentParser) -> None:
+    """``--learn-questionnaires`` — только для apply/run (issue #482).
+
+    Opt-in inline-обучение: неотвеченный вопрос анкеты дополнительно получает
+    LLM-предложение шаблона (``suggested_template``/``suggested_confidence``
+    в ``questionnaire_pending``) для последующего подтверждения через
+    `questionnaire learn`. Никогда не подтверждает сопоставление сам и не
+    делает интерактивный prompt внутри отклика (см. HybridQuestionAnswerer).
+    """
+    p.add_argument(
+        "--learn-questionnaires",
+        action="store_true",
+        help=(
+            "Предлагать шаблон для неотвеченных вопросов анкеты "
+            "(требует подтверждения через `questionnaire learn`)"
+        ),
+    )
+
+
 def resolve_resumes(config: AppConfig, resume_ids: list[str] | None) -> list[ResumeConfig]:
     if not resume_ids:
         return config.resumes
@@ -206,22 +225,76 @@ def _build_letter_provider(
     )
 
 
-def _build_question_answerer(
-    config: AppConfig, resume: ResumeConfig, known_data: dict[str, str] | None = None
-):
-    """Build the opt-in LLM question answerer, if configured."""
+def _build_llm_client_for_questions(config: AppConfig):
+    """Build the shared LLMClient used by both the old and #482 answer paths.
+
+    Returns ``None`` (with a logged warning) rather than raising when
+    ``hermes-agent-axisrow`` isn't installed -- absence of the optional [ai]
+    extra must degrade to "no LLM fallback", not crash apply.
+    """
     ai_config = getattr(config, "ai", None)
     if ai_config is None or not ai_config.answer_questions:
         return None
     from ..ai.llm_client import LLMClient
-    from ..ai.questions import AIQuestionAnswerer
 
     try:
-        client = LLMClient(ai_config)
+        return LLMClient(ai_config)
     except ImportError as exc:
         logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
+
+
+def _build_question_answerer(
+    config: AppConfig,
+    resume: ResumeConfig,
+    history: History,
+    *,
+    learn_questionnaires: bool = False,
+):
+    """Build the question answerer used by apply's pipeline, if configured.
+
+    Issue #482: ``questionnaires.enabled`` and ``ai.answer_questions`` are
+    independent switches. Exactly one of four cases applies:
+
+    - neither set -> ``None`` (pipeline skips every questionnaire, unchanged
+      pre-#482 behaviour).
+    - only ``ai.answer_questions`` -> the plain ``AIQuestionAnswerer``
+      returned directly, NOT wrapped in ``HybridQuestionAnswerer`` -- keeps
+      this path byte-identical to before #482 (explicit regression test).
+    - only ``questionnaires.enabled`` -> ``HybridQuestionAnswerer`` with
+      ``llm_answerer=None`` -- keyword resolver works with zero AI
+      dependency ("Keyword resolver работает без AI-зависимости").
+    - both set -> ``HybridQuestionAnswerer`` wrapping the plain
+      ``AIQuestionAnswerer`` as its profile/LLM fallback stage, plus the raw
+      ``LLMClient`` for contextual-template answers.
+    """
+    questionnaires_config = getattr(config, "questionnaires", None)
+    questionnaires_enabled = bool(questionnaires_config) and questionnaires_config.enabled
+    llm_client = _build_llm_client_for_questions(config)
+
+    llm_answerer = None
+    if llm_client is not None:
+        from ..ai.questions import AIQuestionAnswerer
+
+        llm_answerer = AIQuestionAnswerer(
+            llm_client,
+            getattr(resume, "ai_profile", None),
+            known_data=history.get_profile_answers(),
+        )
+
+    if not questionnaires_enabled:
+        return llm_answerer
+
+    from ..apply.questionnaire_answerer import HybridQuestionAnswerer
+
+    return HybridQuestionAnswerer(
+        history=history,
+        resume_id=resume.resume_id,
+        llm_answerer=llm_answerer,
+        llm=llm_client,
+        answer_threshold=questionnaires_config.llm_answer_threshold,
+        learn_questionnaires=learn_questionnaires,
+    )
 
 
 def _build_scoring_provider(
@@ -656,13 +729,18 @@ class ApplyProviders:
 
 
 def _build_apply_providers(
-    config: AppConfig, resume: ResumeConfig, cover_letter_template: str, history: History
+    config: AppConfig,
+    resume: ResumeConfig,
+    cover_letter_template: str,
+    history: History,
+    *,
+    learn_questionnaires: bool = False,
 ) -> ApplyProviders:
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
         question_answerer=_build_question_answerer(
-            config, resume, known_data=history.get_profile_answers()
+            config, resume, history, learn_questionnaires=learn_questionnaires
         ),
     )
 
@@ -834,7 +912,13 @@ def run_apply_for_resume(
     providers = (
         None
         if skip_scoring
-        else _build_apply_providers(config, resume, cover_letter_template, history)
+        else _build_apply_providers(
+            config,
+            resume,
+            cover_letter_template,
+            history,
+            learn_questionnaires=getattr(args, "learn_questionnaires", False),
+        )
     )
 
     progress = progress or ApplyProgress()
@@ -1052,7 +1136,12 @@ def _run_apply_for_resume(
         question_answerer = providers.question_answerer
     else:
         letter_provider = _build_letter_provider(config, resume, cover_letter_template)
-        question_answerer = _build_question_answerer(config, resume, history.get_profile_answers())
+        question_answerer = _build_question_answerer(
+            config,
+            resume,
+            history,
+            learn_questionnaires=getattr(args, "learn_questionnaires", False),
+        )
     if approved_item:
         from ..apply.letter import LetterOutcome
 

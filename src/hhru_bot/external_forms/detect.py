@@ -26,6 +26,18 @@ def normalize(text: str) -> str:
     return _SPACE.sub(" ", text).strip().casefold()
 
 
+def is_denied_field(text: str) -> bool:
+    """Whether *text* names a document/compliance field (#280, reused by #482).
+
+    Shared denylist so the questionnaire keyword resolver (#482) and
+    ``match_answer_llm`` below never diverge on which fields are excluded
+    from auto-answering: a confident-but-wrong guess here is the costliest
+    failure mode (issue #482: "Документы и комплаенс отвечаются только явным
+    сохраненным значением").
+    """
+    return bool(_LLM_DENIED_KEY_PATTERN.search(text))
+
+
 def _question_text(text: str) -> str:
     """Remove presentation-only required markers from accessible labels."""
     text = re.sub(r"\bобязательное поле\b", "", text, flags=re.IGNORECASE)

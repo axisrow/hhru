@@ -12,6 +12,7 @@ the absence of the login form alone does not prove an authenticated page
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
@@ -72,6 +73,33 @@ class QuestionGroup:
 _GroupKey = tuple[str, str, bool, tuple[str, ...]]
 
 
+def _question_group_key(question: Question) -> _GroupKey:
+    """The canonical dedup key: same text/kind/is_radio/option SET = same question.
+
+    #444 cycle-review: sort the normalized options for the key — the key must
+    match on the SET of options, not their on-page order (hh.ru can render
+    the same option set in a different order across vacancies; without
+    sorting, that alone would split one duplicate question into two groups).
+
+    Shared by ``group_questions`` (below) and ``question_cluster_key`` (#482:
+    the questionnaire audit's ``cluster`` field) — one definition of "the same
+    question", not two that could silently drift apart.
+    """
+    normalized_options = tuple(sorted(normalize(option) for option in question.options))
+    return (normalize(question.text), question.kind, question.is_radio, normalized_options)
+
+
+def question_cluster_key(question: Question) -> str:
+    """Deterministic string cluster id for the audit's ``cluster`` column (#482).
+
+    Same grouping as ``group_questions`` (see ``_question_group_key``), just
+    serialized to a stable string a SQL column can hold and compare on.
+    """
+    text, kind, is_radio, options = _question_group_key(question)
+    payload = "\x1f".join((text, kind, str(int(is_radio)), *options))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def group_questions(results: list[QuestionnaireScanResult]) -> list[QuestionGroup]:
     """Group identical questions across scan results without losing the
     vacancy link (#443 acceptance: "повторяющиеся вопросы объединяются без
@@ -87,15 +115,7 @@ def group_questions(results: list[QuestionnaireScanResult]) -> list[QuestionGrou
         if result.status != QUESTIONNAIRE:
             continue
         for question in result.questions:
-            # #444 cycle-review: sort the normalized options for the key — the
-            # key must match on the SET of options, not their on-page order
-            # (the docstring's own contract). hh.ru can render the same
-            # option set in a different order across vacancies; without
-            # sorting, that alone would split one duplicate question into two
-            # groups and undercount it. Display order (`question.options`) is
-            # kept as-is in `display`, only the matching key is canonicalized.
-            normalized_options = tuple(sorted(normalize(option) for option in question.options))
-            key = (normalize(question.text), question.kind, question.is_radio, normalized_options)
+            key = _question_group_key(question)
             if key not in vacancy_ids:
                 vacancy_ids[key] = []
                 display[key] = (question.text, question.options)

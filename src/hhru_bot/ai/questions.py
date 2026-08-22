@@ -46,9 +46,15 @@ class AnswerProposal:
     confidence: float
     option_indices: tuple[int, ...] = ()
     # ``profile`` means a local account fact (exact key or key classifier);
-    # ``llm`` is an answer generated for this vacancy.  The value itself never
-    # leaves the process during the profile-key classification stage.
+    # ``llm`` is an answer generated for this vacancy; ``template`` (#482) is
+    # a learnable keyword-resolver template (static or contextual). The value
+    # itself never leaves the process during the profile-key classification
+    # stage.
     answer_source: str = "llm"
+    # #482: the template name when answer_source == "template", so the audit
+    # (history.record_questionnaire) and cluster/template stats can attribute
+    # the answer to a specific learnable template, not just its source kind.
+    template: str | None = None
 
     @property
     def low_confidence(self) -> bool:

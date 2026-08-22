@@ -36,6 +36,19 @@ account:
 #   # Issue #97: dry-run previews proposed answers; real form filling requires --force.
 #   answer_questions: false
 
+# Keyword resolver анкет (issue #482) — ОПЦИОНАЛЬНО, top-level секция (как ai).
+# Независим от ai.answer_questions: включает подстановку заранее сохранённых
+# ответов (шаблонов) по подтверждённым сопоставлениям вопроса, БЕЗ LLM.
+# LLM используется только как дополнительный fallback — для contextual-шаблонов
+# и предложения совпадений (`--learn-questionnaires`), если секция `ai` тоже
+# включена. Шаблоны создаются/редактируются командой `hhru questionnaire`
+# (pending/templates/learn/set/unset), не в этом YAML.
+#
+# questionnaires:
+#   enabled: false
+#   llm_match_threshold: 0.90   # порог для LLM-предложения существующего шаблона
+#   llm_answer_threshold: 0.90  # порог для LLM-ответа по contextual-шаблону
+
 
 throttle:
   min_delay_seconds: 8

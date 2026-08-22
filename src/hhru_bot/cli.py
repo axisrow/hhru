@@ -63,8 +63,23 @@ WRITE_COMMANDS = frozenset(
 )
 
 # Nested commands need their own classification: account create mutates local
-# files, while account list is a read-only directory scan.
-WRITE_SUBCOMMANDS = frozenset({("account", "create")})
+# files, while account list is a read-only directory scan. Keyed by the
+# top-level command's own argparse `dest` for its sub-subparsers (#482:
+# questionnaire has "questionnaire_command", account has "account_command") —
+# _is_write_command below reads WRITE_SUBCOMMAND_DEST[args.command] to know
+# which attribute of `args` to check, instead of hardcoding one dest name.
+WRITE_SUBCOMMAND_DEST = {
+    "account": "account_command",
+    "questionnaire": "questionnaire_command",
+}
+WRITE_SUBCOMMANDS = frozenset(
+    {
+        ("account", "create"),
+        ("questionnaire", "set"),
+        ("questionnaire", "unset"),
+        ("questionnaire", "learn"),
+    }
+)
 
 
 def register_commands(subparsers: argparse._SubParsersAction) -> list[str]:
@@ -141,14 +156,12 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         return bool(args.set is not None or args.unset or args.edit)
     if args.command == "probe" and getattr(args, "questionnaires_only", False):
         return True
+    sub_dest = WRITE_SUBCOMMAND_DEST.get(args.command)
+    sub_value = getattr(args, sub_dest, None) if sub_dest is not None else None
     return (
         args.command in WRITE_COMMANDS
         or (args.command == "refresh-token" and getattr(args, "force", False))
-        or (
-            args.command,
-            getattr(args, "account_command", None),
-        )
-        in WRITE_SUBCOMMANDS
+        or (args.command, sub_value) in WRITE_SUBCOMMANDS
     )
 
 
