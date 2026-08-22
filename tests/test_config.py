@@ -21,6 +21,7 @@ from hhru_bot.config import (
 )
 from hhru_bot.config_sections.ai import parse_ai
 from hhru_bot.config_sections.ai_profile import AIProfile
+from hhru_bot.config_sections.questionnaires import parse_questionnaires
 
 pytestmark = pytest.mark.unit
 
@@ -709,3 +710,38 @@ def test_parse_ai_legacy_routing_fields_fail_closed():
 def test_parse_ai_legacy_single_field_fail_closed():
     with pytest.raises(ConfigError, match="ai.model"):
         parse_ai({"model": "gpt-4o"}, "ai")
+
+
+def test_parse_questionnaires_defaults_to_disabled_keyword_resolver():
+    config = parse_questionnaires(None, "questionnaires")
+    assert config.enabled is False
+    assert config.llm_match_threshold == 0.90
+    assert config.llm_answer_threshold == 0.90
+
+
+def test_parse_questionnaires_accepts_explicit_thresholds():
+    config = parse_questionnaires(
+        {
+            "enabled": True,
+            "llm_match_threshold": 0.95,
+            "llm_answer_threshold": 0.92,
+        },
+        "questionnaires",
+    )
+    assert config.enabled is True
+    assert config.llm_match_threshold == 0.95
+    assert config.llm_answer_threshold == 0.92
+
+
+@pytest.mark.parametrize(
+    ("raw", "match"),
+    [
+        ({"enabled": "yes"}, "enabled"),
+        ({"llm_match_threshold": 2}, "llm_match_threshold"),
+        ({"llm_answer_threshold": "high"}, "llm_answer_threshold"),
+        ([], "отображением"),
+    ],
+)
+def test_parse_questionnaires_rejects_invalid_values(raw, match):
+    with pytest.raises(ConfigError, match=match):
+        parse_questionnaires(raw, "questionnaires")

@@ -118,6 +118,7 @@ class ApplyContext:
     run_id: str | None = None
     force: bool = False
     allow_relocation: bool = False
+    learn_questionnaires: bool = False
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -183,6 +184,7 @@ def apply_to_vacancy(
     run_id: str | None = None,
     force: bool = False,
     allow_relocation: bool = False,
+    learn_questionnaires: bool = False,
 ) -> ApplyResult:
     ctx = ApplyContext(
         page=page,
@@ -199,6 +201,7 @@ def apply_to_vacancy(
         run_id=run_id,
         force=force,
         allow_relocation=allow_relocation,
+        learn_questionnaires=learn_questionnaires,
     )
     return _run(ctx)
 
@@ -229,6 +232,11 @@ def _record_questionnaire_answers(
                     "answer_source": proposal.answer_source,
                     "confidence": proposal.confidence,
                     "filled": filled,
+                    "template_key": proposal.template_key,
+                    "cluster": proposal.cluster,
+                    "match_source": proposal.match_source,
+                    "match_confidence": proposal.match_confidence,
+                    "confirmed": proposal.confirmed,
                 }
                 for proposal in proposals
             ],
@@ -536,6 +544,13 @@ def _run(ctx: ApplyContext) -> ApplyResult:
             )
             logger.warning("[skip] %s — %s", ctx.vacancy.title, reason)
             return ctx.skip(reason, skip_reason=SKIP_REASONS.HAS_QUESTIONS)
+        set_context = getattr(ctx.question_answerer, "set_context", None)
+        if callable(set_context):
+            set_context(
+                ctx.vacancy,
+                ctx.resume_id,
+                interactive=ctx.learn_questionnaires,
+            )
         proposals = ctx.question_answerer.propose_all(extracted)
         prefix = "[DRY-RUN]" if ctx.dry_run else "[FORCE]"
         for proposal in proposals:

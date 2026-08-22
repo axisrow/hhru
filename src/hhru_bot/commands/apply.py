@@ -13,6 +13,7 @@ from ._common import (
     add_common_args,
     add_force_arg,
     add_limit_arg,
+    add_questionnaire_learning_arg,
     apply_search_page_limit,
     resumes_from_args,
     run_apply_for_resume,
@@ -30,6 +31,7 @@ def register(subparsers) -> None:
     add_common_args(p, max_pages_default=None)
     add_force_arg(p)
     add_limit_arg(p)
+    add_questionnaire_learning_arg(p)
     p.add_argument(
         "--approved", type=int, metavar="ID", help="Отправить ровно approved-запись review-очереди"
     )
