@@ -101,6 +101,14 @@ class HybridQuestionAnswerer:
             # not a safe fill; let the caller's low-confidence/pending path
             # take over instead of silently picking nothing.
             return None
+        if question.kind == "choice" and question.is_radio and len(indices) != 1:
+            # Mirrors AIQuestionAnswerer.propose's own radio-arity guard
+            # (ai/questions.py) -- a stored answer matching >1 option on a
+            # radio question is exactly the class of bug #373 fixed: apply()
+            # would check every matched control and the browser silently
+            # keeps only the last one. Fail closed to unresolved/pending
+            # rather than hand a multi-index proposal to apply().
+            return None
         return AnswerProposal(
             question,
             proposal.answer,

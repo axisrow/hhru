@@ -93,6 +93,60 @@ def test_falls_back_to_llm_answerer_when_resolver_has_no_match():
     assert proposal.answer_source == "profile"
 
 
+def test_radio_question_with_ambiguous_stored_answer_is_not_resolved():
+    """Advisor review (#373 regression class): a stored template answer that
+    normalizes to MORE THAN ONE radio option must not produce a proposal --
+    AIQuestionAnswerer.apply() would check() every matched index and the
+    browser silently keeps only the last radio, submitting a different
+    answer than logged. Two distinct-but-equal-after-normalize options are
+    contrived here specifically to trigger that ambiguity.
+    """
+    history = _History(
+        templates={"remote": Template(name="remote", mode="static")},
+        answers={"remote": {"account": "Да", "resume": {}}},
+        confirmed={"готовы к переезду?": "remote"},
+    )
+    answerer = HybridQuestionAnswerer(history=history, resume_id="backend", llm_answerer=None)
+    question = Question(
+        0,
+        "Готовы к переезду?",
+        "choice",
+        options=("Да", "да "),
+        is_radio=True,
+    )
+
+    (proposal,) = answerer.propose_all([question])
+
+    assert proposal.low_confidence
+    assert proposal.answer_source != "template"
+
+
+def test_checkbox_question_allows_multiple_matched_options():
+    """Counterpart to the radio-arity guard: checkbox (is_radio=False) must
+    still accept a stored answer matching more than one option -- the #373
+    guard is specific to single-select radios.
+    """
+    history = _History(
+        templates={"skills": Template(name="skills", mode="static")},
+        answers={"skills": {"account": "Python", "resume": {}}},
+        confirmed={"навыки": "skills"},
+    )
+    answerer = HybridQuestionAnswerer(history=history, resume_id="backend", llm_answerer=None)
+    question = Question(
+        0,
+        "Навыки",
+        "choice",
+        options=("Python", "python "),
+        is_radio=False,
+    )
+
+    (proposal,) = answerer.propose_all([question])
+
+    assert proposal.answer_source == "template"
+    assert proposal.option_indices == (0, 1)
+    assert not proposal.low_confidence
+
+
 def test_no_llm_answerer_and_no_resolver_match_is_low_confidence_not_exception():
     history = _History()
     answerer = HybridQuestionAnswerer(history=history, resume_id="backend", llm_answerer=None)
