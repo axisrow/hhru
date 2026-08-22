@@ -49,10 +49,26 @@ class AnswerProposal:
     # ``llm`` is an answer generated for this vacancy.  The value itself never
     # leaves the process during the profile-key classification stage.
     answer_source: str = "llm"
+    # #482: порог, ниже которого ответ считается неуверенным и НЕ заполняется.
+    # Раньше это была жёсткая ссылка на модульную константу, а pipeline ветвится
+    # именно по low_confidence — то есть настраиваемый порог из секции
+    # questionnaires (0.90 по умолчанию) до решения не доезжал бы, и ответ с
+    # уверенностью 0.75 уходил бы боевой отправкой. Дефолт прежний, поэтому
+    # существующий LLM-путь (#97/#373) не меняет поведения. Порог хранится
+    # рядом с confidence, а не подменяет её: реальная уверенность нужна в
+    # аудите, обнуление уничтожило бы диагностику.
+    threshold: float = CONFIDENCE_THRESHOLD
+    # #482: детализация для аудита анкеты. ``answer_source`` остаётся закрытой
+    # парой profile/llm (на неё опирается questionnaire_answer_summary и через
+    # него stats), а «каким шаблоном и какой стратегией» пишется отдельными
+    # колонками. Пусто для обычного LLM-пути — он шаблонов не знает.
+    template: str | None = None
+    cluster: str | None = None
+    resolver_source: str = ""
 
     @property
     def low_confidence(self) -> bool:
-        return self.confidence < CONFIDENCE_THRESHOLD
+        return self.confidence < self.threshold
 
 
 def _control_text(control: Locator) -> str:
