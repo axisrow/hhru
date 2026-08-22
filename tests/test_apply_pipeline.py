@@ -1016,6 +1016,14 @@ class _StubAnswerer:
         return [p for p in proposals if p.low_confidence]
 
 
+class _QuestionnaireHistory:
+    def __init__(self):
+        self.calls = []
+
+    def record_questionnaire(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+
+
 def _question_detection(has_questions=True, reason="anketa"):
     from hhru_bot.apply.questions import QuestionDetection
 
@@ -1164,6 +1172,78 @@ def test_apply_dry_run_low_confidence_does_not_persist_skip(monkeypatch):
 
     assert result.success is False
     assert result.skipped is False
+
+
+def test_apply_questionnaire_audit_records_profile_fill_and_run_id(monkeypatch):
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Готовы к переезду?", "text")
+    proposal = AnswerProposal(question, "Да", 1.0, answer_source="profile")
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-473",
+    )
+
+    assert result.success is True
+    assert len(history.calls) == 1
+    args, kwargs = history.calls[0]
+    assert args[:5] == (
+        "RID",
+        _vacancy().vacancy_id,
+        _vacancy().url,
+        _vacancy().title,
+        _vacancy().company,
+    )
+    assert kwargs["source"] == "apply"
+    assert kwargs["run_id"] == "run-473"
+    assert args[5][0]["answer_source"] == "profile"
+    assert args[5][0]["answer"] == "Да"
+    assert args[5][0]["filled"] is True
+
+
+def test_apply_questionnaire_audit_records_low_confidence_without_fill(monkeypatch):
+    from hhru_bot.ai.questions import AnswerProposal, Question
+
+    question = Question(0, "Расскажите о кейсе", "text")
+    proposal = AnswerProposal(question, "Сомнительный ответ", 0.2)
+    monkeypatch.setattr(
+        pipeline_module, "detect_questions", lambda _page: _question_detection(True)
+    )
+    monkeypatch.setattr(pipeline_module, "extract_questions", lambda _page: ([question], 1))
+    history = _QuestionnaireHistory()
+
+    result = apply_to_vacancy(
+        FakePage(apply_button=True, success=True, submit_in_form=True),
+        _vacancy(),
+        "RID",
+        "x",
+        dry_run=False,
+        question_answerer=_StubAnswerer({question.text: proposal}),
+        force=True,
+        questionnaire_history=history,
+        run_id="run-473",
+    )
+
+    assert result.skipped is True
+    args, kwargs = history.calls[0]
+    assert kwargs["source"] == "apply"
+    assert args[5][0]["answer_source"] == "llm"
+    assert args[5][0]["answer"] == ""
+    assert args[5][0]["confidence"] == 0.2
+    assert args[5][0]["filled"] is False
 
 
 def test_apply_dry_run_shows_proposals_without_submitting(monkeypatch):

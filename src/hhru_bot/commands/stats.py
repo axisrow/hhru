@@ -85,6 +85,14 @@ def run(args: argparse.Namespace) -> None:
         print(format_summary(summary, args.format))
         if args.format != "csv":
             print(f"Тестов ожидает: {pending_tests}")
+            questionnaire_answers = history.questionnaire_answer_summary(
+                resume_id=resume_id, period=args.period
+            )
+            print(
+                "Анкеты: профиль={profile}, LLM={llm}, не закрыто={unanswered}".format(
+                    **questionnaire_answers
+                )
+            )
         # CSV — экспорт для машин: один документ, одна схема колонок (см. #112
         # ревью). Reply-сводка имеет другую схему (metric,value), поэтому в csv
         # её печатать вторым документом в тот же stdout-поток нельзя — консьюмер,

@@ -221,7 +221,7 @@ def _build_question_answerer(
     except ImportError as exc:
         logger.warning("LLM-ответы на вопросы недоступны: %s", exc)
         return None
-    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data)
+    return AIQuestionAnswerer(client, getattr(resume, "ai_profile", None), known_data=known_data)
 
 
 def _build_scoring_provider(
@@ -516,7 +516,9 @@ def _build_apply_providers(
     return ApplyProviders(
         scoring_provider=_build_scoring_provider(config, resume),
         letter_provider=_build_letter_provider(config, resume, cover_letter_template),
-        question_answerer=_build_question_answerer(config, resume, history.get_profile_answers()),
+        question_answerer=_build_question_answerer(
+            config, resume, known_data=history.get_profile_answers()
+        ),
     )
 
 
@@ -1028,6 +1030,10 @@ def _run_apply_for_resume(
         if question_answerer is not None:
             apply_kwargs["question_answerer"] = question_answerer
             apply_kwargs["force"] = getattr(args, "force", False)
+            # #473: the questionnaire audit is append-only and linked to the
+            # command ledger/action outcome through this run id.
+            apply_kwargs["questionnaire_history"] = history
+            apply_kwargs["run_id"] = progress.run_id if progress is not None else None
         if progress is not None:
             progress.begin_attempt()
         try:
