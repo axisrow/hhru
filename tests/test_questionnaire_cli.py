@@ -25,6 +25,8 @@ def _args(tmp_path, **overrides) -> argparse.Namespace:
         "instruction": None,
         "example": [],
         "cluster": None,
+        "last": 50,
+        "low_confidence": False,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -220,6 +222,122 @@ def test_output_has_no_emoji(capsys, tmp_path):
     assert all(ord(char) < 0x2190 for char in out), "вывод CLI должен быть текст/ASCII-таблицы"
 
 
+# --- audit --------------------------------------------------------------
+
+
+def _record_apply_answer(tmp_path, **overrides):
+    question = {
+        "body_index": 0,
+        "text": "Настоящим подтверждаю...",
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer": "Да",
+        "answer_source": "profile",
+        "confidence": 1.0,
+        "filled": True,
+        "template": "data_accuracy",
+        "cluster": "compliance",
+        "resolver_source": "static",
+    }
+    question.update(overrides)
+    History(tmp_path / "h.db").record_questionnaire(
+        "marketing",
+        "132855712",
+        "https://hh.ru/vacancy/132855712",
+        "Маркетолог",
+        "Acme",
+        [question],
+        source="apply",
+    )
+
+
+def test_audit_prints_an_ascii_table(capsys, tmp_path):
+    _record_apply_answer(tmp_path)
+
+    cmd.run_audit(_args(tmp_path, template=None))
+
+    out = capsys.readouterr().out
+    assert "132855712" in out
+    assert "data_accuracy" in out
+    assert "Настоящим подтверждаю" in out
+    assert "Да" in out
+    assert "Показано строк: 1" in out
+
+
+def test_audit_truncates_long_question_and_answer_text(capsys, tmp_path):
+    """Реальные вопросы анкет — по 150-300 символов; без обрезки одна такая
+    строка растягивает всю ASCII-таблицу до нечитаемой ширины."""
+    long_question = "Расскажите подробно о своём опыте работы с CRM-системами. " * 5
+    long_answer = "У меня большой опыт работы с несколькими CRM-системами. " * 5
+    _record_apply_answer(tmp_path, text=long_question, answer=long_answer)
+
+    cmd.run_audit(_args(tmp_path, template=None))
+
+    out = capsys.readouterr().out
+    assert long_question not in out
+    assert long_answer not in out
+    assert "..." in out
+    assert max(len(line) for line in out.splitlines()) < len(long_question)
+
+
+def test_audit_shows_not_filled_marker_for_unanswered_questions(capsys, tmp_path):
+    _record_apply_answer(
+        tmp_path,
+        text="Какие редакторы вы используете?",
+        answer="",
+        answer_source=None,
+        confidence=0.0,
+        filled=False,
+        template=None,
+        cluster=None,
+        resolver_source=None,
+    )
+
+    cmd.run_audit(_args(tmp_path, template=None))
+
+    out = capsys.readouterr().out
+    assert "[не заполнено]" in out
+
+
+def test_audit_empty_prints_info(capsys, tmp_path):
+    cmd.run_audit(_args(tmp_path, template=None))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_filters_by_resume(capsys, tmp_path):
+    _record_apply_answer(tmp_path)
+
+    cmd.run_audit(_args(tmp_path, template=None, resume="backend"))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_filters_by_template(capsys, tmp_path):
+    _record_apply_answer(tmp_path)
+
+    cmd.run_audit(_args(tmp_path, template="other_template"))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_filters_by_low_confidence(capsys, tmp_path):
+    _record_apply_answer(tmp_path)  # confidence=1.0 — не должен попасть
+
+    cmd.run_audit(_args(tmp_path, template=None, low_confidence=True))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_rejects_non_positive_last(capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_audit(_args(tmp_path, template=None, last=0))
+
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
+
+
 # --- learn ------------------------------------------------------------------
 
 
@@ -296,7 +414,7 @@ def test_mutating_subcommands_take_the_write_lock(subcommand):
     assert _is_write_command(args) is True
 
 
-@pytest.mark.parametrize("subcommand", ["pending", "templates"])
+@pytest.mark.parametrize("subcommand", ["pending", "templates", "audit"])
 def test_read_subcommands_do_not_take_the_write_lock(subcommand):
     args = argparse.Namespace(command="questionnaire", questionnaire_command=subcommand)
 
@@ -331,7 +449,7 @@ def test_parser_registers_every_subcommand():
         if isinstance(action, argparse._SubParsersAction)
     )
 
-    assert set(nested.choices) == {"pending", "templates", "learn", "set", "unset"}
+    assert set(nested.choices) == {"pending", "templates", "audit", "learn", "set", "unset"}
 
 
 def test_set_requires_a_mode():

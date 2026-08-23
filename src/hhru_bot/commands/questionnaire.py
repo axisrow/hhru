@@ -45,6 +45,21 @@ def register(subparsers) -> None:
     templates.add_argument("--resume", help="Slug резюме или resume_id")
     templates.set_defaults(func=run_templates)
 
+    audit = commands.add_parser(
+        "audit",
+        help="Показать сохранённый аудит ответов на анкеты (READ)",
+        description="Что боевой apply реально ответил на вопросы анкет (#488).",
+    )
+    audit.add_argument("--resume", help="Slug резюме или resume_id (по умолчанию — все)")
+    audit.add_argument("--last", type=int, default=50, help="Сколько последних строк вывести")
+    audit.add_argument("--template", help="Только строки, сопоставленные этому шаблону")
+    audit.add_argument(
+        "--low-confidence",
+        action="store_true",
+        help="Только строки с уверенностью ниже 0.70 (ai.questions.CONFIDENCE_THRESHOLD)",
+    )
+    audit.set_defaults(func=run_audit)
+
     learn = commands.add_parser(
         "learn",
         help="Разобрать очередь и задать ответы (WRITE-local)",
@@ -86,16 +101,16 @@ def register(subparsers) -> None:
     unset_parser.set_defaults(func=run_unset)
 
 
-def _limit(args: argparse.Namespace) -> int:
-    """Проверенный ``--limit``. Отрицательное значение — явная ошибка.
+def _limit(args: argparse.Namespace, attr: str = "limit") -> int:
+    """Проверенный ``--limit``/``--last``. Отрицательное значение — явная ошибка.
 
     В SQLite ``LIMIT -1`` означает «без ограничения», то есть опечатка вроде
     ``--limit -5`` давала бы поведение, прямо противоположное намерению, и
     молча: команда напечатала бы ВСЮ очередь.
     """
-    limit = getattr(args, "limit", 0) or 0
+    limit = getattr(args, attr, 0) or 0
     if limit < 1:
-        print("[FAIL] --limit должен быть >= 1", file=sys.stderr)
+        print(f"[FAIL] --{attr.replace('_', '-')} должен быть >= 1", file=sys.stderr)
         sys.exit(1)
     return limit
 
@@ -188,6 +203,55 @@ def run_templates(args: argparse.Namespace) -> None:
             ],
         )
     )
+
+
+def _truncate(text: str, limit: int = 60) -> str:
+    """Обрезает длинную ячейку таблицы, чтобы одна строка не растягивала всю
+    таблицу до ширины реального вопроса анкеты (те бывают по 150-300 символов).
+    """
+    text = text.replace("\n", " ")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def run_audit(args: argparse.Namespace) -> None:
+    """Аудит сохранённых ответов на анкеты (#488).
+
+    Только чтение — новый LLM-вызов не делается, команда показывает то, что
+    ``apply`` уже записал через ``_record_questionnaire_answers``. Оценку
+    правильности ставит человек или Claude Code по выводу.
+    """
+    from ..history import History
+    from ..report import _ascii_table
+
+    limit = _limit(args, "last")
+    rows = History(args.history).list_questionnaire_audit(
+        _scope(args),
+        template=args.template,
+        low_confidence=args.low_confidence,
+        limit=limit,
+    )
+    if not rows:
+        print("[INFO] Аудит ответов на анкеты пуст.")
+        return
+    print(
+        _ascii_table(
+            ["vacancy", "conf", "source", "template", "question", "answer"],
+            [
+                [
+                    row["vacancy_id"],
+                    f"{row['confidence']:.2f}" if row["confidence"] is not None else "-",
+                    row["answer_source"] or "-",
+                    row["template"] or "-",
+                    _truncate(row["text"]),
+                    _truncate((row["answer"] or "") if row["filled"] else "[не заполнено]"),
+                ]
+                for row in rows
+            ],
+        )
+    )
+    print(f"[INFO] Показано строк: {len(rows)}.")
 
 
 def run_set(args: argparse.Namespace) -> None:

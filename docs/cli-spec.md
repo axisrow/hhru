@@ -515,12 +515,13 @@
 
 #### `questionnaire` — обучаемые шаблоны ответов на анкеты (#482)
 
-- **Природа:** READ (`pending`, `templates`) и WRITE-local (`set`, `unset`, `learn`);
-  браузер не открывается, на hh.ru ничего не отправляется.
+- **Природа:** READ (`pending`, `templates`, `audit`) и WRITE-local (`set`, `unset`,
+  `learn`); браузер не открывается, на hh.ru ничего не отправляется.
 - **Сигнатуры:**
   ```
   hhru questionnaire pending   [--resume ID] [--limit N]
   hhru questionnaire templates [--resume ID]
+  hhru questionnaire audit     [--resume ID] [--last N] [--template T] [--low-confidence]
   hhru questionnaire learn     [--resume ID] [--limit N]
   hhru questionnaire set TEMPLATE --mode static     --answer VALUE     [--resume ID] [--cluster C]
   hhru questionnaire set TEMPLATE --mode contextual --instruction TEXT [--example TEXT ...] [--resume ID] [--cluster C]
@@ -554,6 +555,16 @@
   идущего `apply`.
 - `learn` интерактивен: в неинтерактивном режиме печатает `[INFO]` и ничего не меняет;
   Ctrl-C печатает частичный итог и возвращает 130.
+- **`audit`** (#488) — read-only снимок того, что уже записал живой `apply`
+  (`questionnaire_questions` со `scan.source = 'apply'`): ответ, источник
+  (`profile`/`llm`), уверенность, сопоставленный шаблон/кластер. Новый LLM-вызов не
+  делается — оценку правильности ставит человек или Claude Code, читая вывод.
+  `--last N` — сколько последних строк показать (новые сверху), `--template` —
+  фильтр по сопоставленному шаблону, `--low-confidence` — только строки с
+  уверенностью ниже `ai.questions.CONFIDENCE_THRESHOLD` (0.70); строки с
+  неизвестной (`NULL`) уверенностью в выборку не попадают. Низкоуверенные
+  предложения намеренно пишутся с `answer=""` (`apply/pipeline.py`), поэтому
+  «что бот хотел ответить, но не стал» этот аудит не показывает.
 - **Вывод:** ASCII-таблицы через `report._ascii_table`, префиксы `[OK]`/`[INFO]`/`[FAIL]`.
 
 ---

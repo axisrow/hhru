@@ -3115,6 +3115,61 @@ class History:
                 ).rowcount
             )
 
+    def list_questionnaire_audit(
+        self,
+        resume_id: str | None = None,
+        *,
+        template: str | None = None,
+        low_confidence: bool = False,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Аудит ответов на анкеты, записанных живым ``apply`` (#488).
+
+        Источник — ``questionnaire_questions``/``questionnaire_scans`` с
+        ``scan.source = 'apply'``: только реальные боевые сканы, не разведка
+        ``probe --questionnaires-only`` (та пишет ``source='probe'`` и вопросов
+        без ответа не имеет смысла показывать как «аудит ответов»).
+        Без фильтров/лимита — новые сверху (``question.id DESC``), чтобы
+        ``--last N`` показывал именно последние N ответов, а не первые N по
+        времени создания таблицы.
+        """
+        where = ["scan.source = 'apply'"]
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        if template is not None:
+            where.append("question.template = ?")
+            params.append(template)
+        if low_confidence:
+            # Ленивый импорт: используется только в этой ветке, а
+            # ai.questions тянет playwright.sync_api на уровне модуля —
+            # history.py в остальном не завязан на браузерный стек, и
+            # незачем тащить его в каждый импорт history для одного порога.
+            from .ai.questions import CONFIDENCE_THRESHOLD
+
+            # NULL confidence (обычный AIQuestionAnswerer без шаблонов) не
+            # входит в выборку: "низкая уверенность" осмысленна только когда
+            # уверенность вообще известна.
+            where.append("question.confidence IS NOT NULL AND question.confidence < ?")
+            params.append(CONFIDENCE_THRESHOLD)
+        clause = " AND ".join(where)
+        sql = f"""
+            SELECT question.id, scan.resume_id, scan.vacancy_id, question.text,
+                   question.answer, question.answer_source, question.confidence,
+                   question.filled, question.template, question.cluster,
+                   question.resolver_source
+            FROM questionnaire_questions AS question
+            JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+            WHERE {clause}
+            ORDER BY question.id DESC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
     def list_scanned_questions(self, resume_id: str | None = None) -> list[dict]:
         """Вопросы анкет из ранее собранных сканов (#482).
 

@@ -195,3 +195,175 @@ def test_questionnaire_answer_summary_scoped_by_resume_and_period(tmp_path):
         "unanswered": 0,
     }
     assert history.questionnaire_answer_summary() == {"profile": 2, "llm": 0, "unanswered": 0}
+
+
+def test_list_questionnaire_audit_returns_apply_rows_newest_first(tmp_path):
+    """#488: чтение аудита ответов, записанных живым apply."""
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire(
+        "marketing",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Маркетолог",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Настоящим подтверждаю...",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "Да",
+                "answer_source": "profile",
+                "confidence": 1.0,
+                "filled": True,
+                "template": "data_accuracy",
+                "cluster": "compliance",
+                "resolver_source": "static",
+            }
+        ],
+        source="apply",
+        run_id="run-1",
+    )
+    history.record_questionnaire(
+        "marketing",
+        "2",
+        "https://hh.ru/vacancy/2",
+        "Маркетолог",
+        "Beta",
+        [
+            {
+                "body_index": 0,
+                "text": "Какие редакторы вы используете?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "",
+                "answer_source": None,
+                "confidence": 0.0,
+                "filled": False,
+                "template": None,
+                "cluster": None,
+                "resolver_source": None,
+            }
+        ],
+        source="apply",
+        run_id="run-2",
+    )
+    # probe-скан не должен попасть в аудит ответов.
+    history.record_questionnaire(
+        "marketing",
+        "3",
+        "https://hh.ru/vacancy/3",
+        "Маркетолог",
+        "Gamma",
+        [
+            {
+                "body_index": 0,
+                "text": "Вопрос из разведки?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+            }
+        ],
+        source="probe",
+    )
+
+    rows = history.list_questionnaire_audit()
+
+    assert [row["vacancy_id"] for row in rows] == ["2", "1"]
+    first = rows[0]
+    assert first["text"] == "Какие редакторы вы используете?"
+    assert first["filled"] == 0
+    assert first["template"] is None
+    second = rows[1]
+    assert second["answer"] == "Да"
+    assert second["answer_source"] == "profile"
+    assert second["confidence"] == 1.0
+    assert second["template"] == "data_accuracy"
+    assert second["cluster"] == "compliance"
+    assert second["resolver_source"] == "static"
+
+
+def test_list_questionnaire_audit_filters_by_resume_template_and_confidence(tmp_path):
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire(
+        "marketing",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Маркетолог",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Зарплата?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "от 200000",
+                "answer_source": "profile",
+                "confidence": 0.9,
+                "filled": True,
+                "template": "salary",
+            }
+        ],
+        source="apply",
+    )
+    history.record_questionnaire(
+        "backend",
+        "2",
+        "https://hh.ru/vacancy/2",
+        "Разработчик",
+        "Beta",
+        [
+            {
+                "body_index": 0,
+                "text": "Готовы к переезду?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "",
+                "answer_source": "llm",
+                "confidence": 0.3,
+                "filled": False,
+                "template": "relocation",
+            }
+        ],
+        source="apply",
+    )
+
+    assert [row["vacancy_id"] for row in history.list_questionnaire_audit("backend")] == ["2"]
+    assert [row["vacancy_id"] for row in history.list_questionnaire_audit(template="salary")] == [
+        "1"
+    ]
+    low_conf = history.list_questionnaire_audit(low_confidence=True)
+    assert [row["vacancy_id"] for row in low_conf] == ["2"]
+    assert history.list_questionnaire_audit(limit=1) == history.list_questionnaire_audit()[:1]
+
+
+def test_list_questionnaire_audit_low_confidence_excludes_null_confidence(tmp_path):
+    """NULL confidence (обычный AIQuestionAnswerer) не считается низкой уверенностью."""
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire(
+        "marketing",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Маркетолог",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Вопрос без оценки уверенности?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "ответ",
+                "answer_source": "llm",
+                "confidence": None,
+                "filled": True,
+            }
+        ],
+        source="apply",
+    )
+
+    assert history.list_questionnaire_audit(low_confidence=True) == []
