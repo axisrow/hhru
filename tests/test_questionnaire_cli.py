@@ -783,7 +783,7 @@ def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_pat
     assert history.list_questionnaire_pending(a_real) == []
     assert len(history.list_scanned_questions(b_real)) == 1
     assert history.list_scanned_questions(a_real) == []
-    assert "[FAIL]" in capsys.readouterr().out
+    assert "[INFO] Нормализация ключей анкет отменена" in capsys.readouterr().out
 
 
 def test_rekey_still_runs_when_a_slug_equals_its_own_real_id(tmp_path):
