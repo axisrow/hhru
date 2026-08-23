@@ -151,6 +151,26 @@ def test_snippets_missing_block_returns_none():
     assert _optional_text(card, search.sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) is None
 
 
+# --- side_job / no_resume ----------------------------------------------------
+
+
+def test_optional_card_badges_are_present_when_locators_match():
+    card = _FixtureCard(
+        {
+            search.sel.VACANCY_CARD_SIDE_JOB: ("Подработка", None),
+            search.sel.VACANCY_CARD_NO_RESUME: ("Можно без резюме", None),
+        }
+    )
+    assert card.locator(search.sel.VACANCY_CARD_SIDE_JOB).first.count() > 0
+    assert card.locator(search.sel.VACANCY_CARD_NO_RESUME).first.count() > 0
+
+
+def test_optional_card_badges_are_absent_when_locators_do_not_match():
+    card = _FixtureCard({})
+    assert card.locator(search.sel.VACANCY_CARD_SIDE_JOB).first.count() == 0
+    assert card.locator(search.sel.VACANCY_CARD_NO_RESUME).first.count() == 0
+
+
 # --- VacancyCard: дефолты новых полей ------------------------------------------
 
 
@@ -161,6 +181,8 @@ def test_vacancy_card_new_fields_default_to_empty():
     assert c.experience == ""
     assert c.snippet_requirement == ""
     assert c.snippet_responsibility == ""
+    assert c.side_job is None
+    assert c.no_resume is None
 
 
 def test_vacancy_card_accepts_new_fields():
@@ -174,9 +196,13 @@ def test_vacancy_card_accepts_new_fields():
         experience="between1And3",
         snippet_requirement="req",
         snippet_responsibility="resp",
+        side_job=True,
+        no_resume=False,
     )
     assert c.address == "Москва"
     assert c.is_remote is True
     assert c.experience == "between1And3"
     assert c.snippet_requirement == "req"
     assert c.snippet_responsibility == "resp"
+    assert c.side_job is True
+    assert c.no_resume is False

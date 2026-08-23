@@ -229,6 +229,10 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     experience TEXT,
     snippet_requirement TEXT,
     snippet_responsibility TEXT,
+    -- Приоритет-2 из #516: опциональные бейджи "Подработка" и
+    -- "Можно без резюме". NULL означает отсутствие наблюдения.
+    side_job INTEGER,
+    no_resume INTEGER,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -674,6 +678,9 @@ class History:
             _ensure_column(conn, "vacancies_seen", "experience", "TEXT")
             _ensure_column(conn, "vacancies_seen", "snippet_requirement", "TEXT")
             _ensure_column(conn, "vacancies_seen", "snippet_responsibility", "TEXT")
+            # #516 priority-2: optional vacancy-card badges.
+            _ensure_column(conn, "vacancies_seen", "side_job", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "no_resume", "INTEGER")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -1859,6 +1866,8 @@ class History:
         experience: str | None = None,
         snippet_requirement: str | None = None,
         snippet_responsibility: str | None = None,
+        side_job: bool | None = None,
+        no_resume: bool | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1902,6 +1911,10 @@ class History:
         сохранённое значение, а явный ``False`` всё ещё может обновить
         ``True``.
 
+        ``side_job``/``no_resume`` — тристейтные сигналы для опциональных
+        бейджей карточки. ``None`` означает «наблюдения нет» и сохраняет
+        ранее известное значение; ``True``/``False`` — наблюдения.
+
         Для всех полей действует консервативная политика «best known»: NULL и
         пустые строки из нового scrape не удаляют подтверждённые данные. Это
         предотвращает массовую потерю истории при дрейфе селектора (#532).
@@ -1919,8 +1932,8 @@ class History:
                      salary_currency, search_query, first_seen_at,
                      last_seen_at, employer_tier, vacancy_text, published_at,
                      address, is_remote, experience, snippet_requirement,
-                     snippet_responsibility)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     snippet_responsibility, side_job, no_resume)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = COALESCE(NULLIF(excluded.title, ''), title),
                     company = COALESCE(NULLIF(excluded.company, ''), company),
@@ -1963,6 +1976,8 @@ class History:
                     snippet_responsibility = COALESCE(
                         NULLIF(excluded.snippet_responsibility, ''), snippet_responsibility
                     ),
+                    side_job = COALESCE(excluded.side_job, side_job),
+                    no_resume = COALESCE(excluded.no_resume, no_resume),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1983,6 +1998,8 @@ class History:
                     experience,
                     snippet_requirement,
                     snippet_responsibility,
+                    None if side_job is None else int(side_job),
+                    None if no_resume is None else int(no_resume),
                 ),
             )
 
@@ -1997,7 +2014,7 @@ class History:
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
                 "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
                 "published_at, address, is_remote, experience, snippet_requirement, "
-                "snippet_responsibility "
+                "snippet_responsibility, side_job, no_resume "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]

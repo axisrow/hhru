@@ -101,6 +101,9 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
     address/is_remote/experience/snippet_requirement/snippet_responsibility
     (#517) — доп. признаки карточки для статистики/ML, прокидываются как есть
     из VacancyCard (пустая строка/None, если hh.ru не отдал блок).
+
+    side_job/no_resume (#516) — опциональные булевы бейджи карточки. None
+    означает отсутствие наблюдения и не затирает уже сохранённое значение.
     """
     from ..scoring import classify_employer
 
@@ -146,6 +149,8 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 experience=card.experience or None,
                 snippet_requirement=card.snippet_requirement or None,
                 snippet_responsibility=card.snippet_responsibility or None,
+                side_job=card.side_job,
+                no_resume=card.no_resume,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)

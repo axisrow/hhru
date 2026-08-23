@@ -317,6 +317,10 @@ class VacancyCard:
     experience: str = ""
     snippet_requirement: str = ""
     snippet_responsibility: str = ""
+    # Приоритет-2 из issue #516. None означает, что опциональный селектор не
+    # дал наблюдения; это не то же самое, что подтверждённое отсутствие бейджа.
+    side_job: bool | None = None
+    no_resume: bool | None = None
 
     def __post_init__(self) -> None:
         if self.portfolio_evidence_requirement is None and self.vacancy_text:
@@ -532,6 +536,13 @@ def search_vacancies(
             snippet_responsibility = (
                 _optional_text(card, sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) or ""
             )
+            # Для булевых бейджей отсутствие элемента неоднозначно: это может
+            # быть обычная вакансия или дрейф/неполный DOM. Не эмитим False,
+            # чтобы не затирать ранее подтверждённое значение в истории.
+            side_job_label = card.locator(sel.VACANCY_CARD_SIDE_JOB).first
+            side_job = True if side_job_label.count() > 0 else None
+            no_resume_label = card.locator(sel.VACANCY_CARD_NO_RESUME).first
+            no_resume = True if no_resume_label.count() > 0 else None
 
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
@@ -558,6 +569,8 @@ def search_vacancies(
                     experience=experience,
                     snippet_requirement=snippet_requirement,
                     snippet_responsibility=snippet_responsibility,
+                    side_job=side_job,
+                    no_resume=no_resume,
                 )
             )
 

@@ -83,6 +83,8 @@ def test_record_seen_writes_all_cards(tmp_path):
             url="https://hh.ru/vacancy/1",
             salary=SalaryInfo(300000, 400000, "RUB", "raw"),
             vacancy_text="Python and Docker",
+            side_job=True,
+            no_resume=False,
         ),
         VacancyCard(
             vacancy_id="2",
@@ -100,6 +102,8 @@ def test_record_seen_writes_all_cards(tmp_path):
     assert by_id["1"]["salary_from"] == 300000
     assert by_id["1"]["search_query"] == "python backend"
     assert by_id["1"]["vacancy_text"] == "Python and Docker"
+    assert by_id["1"]["side_job"] == 1
+    assert by_id["1"]["no_resume"] == 0
     # вакансия без зарплаты тоже записана
     assert by_id["2"]["salary_from"] is None
 
