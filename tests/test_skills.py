@@ -195,6 +195,13 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
     assert editor.wait_for.call_count == 1
 
 
+def _mock_chip_locator() -> MagicMock:
+    """A RESUME_SKILLS_CHIP locator stub whose .nth().wait_for() no-ops."""
+    chip_locator = MagicMock()
+    chip_locator.nth.return_value.wait_for.return_value = None
+    return chip_locator
+
+
 def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None:
     """A closed editor is not enough: the saved chip set must match the plan."""
     resume = bare_resume("resume-id")
@@ -205,9 +212,11 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     input_.count.return_value = 1
     save = MagicMock()
     save.count.return_value = 1
+    chip_locator = _mock_chip_locator()
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
@@ -224,6 +233,11 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     assert result.added == ("Docker",)
     assert result.acted is True
     assert read_skills.call_count == 2
+    # #536 round 1: the post-save read must wait for the chip container to
+    # settle instead of racing the React re-render right after the editor
+    # (a separate overlay) reports hidden.
+    chip_locator.nth.assert_called_once_with(1)
+    chip_locator.nth.return_value.wait_for.assert_called_once_with(state="visible", timeout=5_000)
 
 
 def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
@@ -239,6 +253,44 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(
+        skills_module, "read_skills", MagicMock(side_effect=[("Python",), ("Python",)])
+    )
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
+    )
+
+    assert result.success is False
+    assert result.acted is True
+    assert "не совпало с планом" in result.reason
+
+
+def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeypatch) -> None:
+    """If the chip never settles in time, the strict multiset check still fires
+    (fail-closed) instead of the wait's PlaywrightError propagating uncaught."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    save = MagicMock()
+    save.count.return_value = 1
+    chip_locator = MagicMock()
+    chip_locator.nth.return_value.wait_for.side_effect = PlaywrightError("timeout")
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)

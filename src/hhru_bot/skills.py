@@ -194,6 +194,20 @@ def edit_skills_on_hh(
             reason=f"сохранение навыков не подтверждено: {exc}",
             acted=True,
         )
+    # editor.wait_for(state="hidden") only confirms the overlay closed, not that
+    # the underlying resume page has re-rendered the chip list (CLAUDE.md: "commit
+    # не значит отрисовано"). Give the chip count a short window to settle before
+    # the strict read below, matching the wait_for(state="visible") pattern used
+    # after other mutating clicks (resume_position.py, bump.py, etc.) — a mismatch
+    # is still fail-closed after the wait, this only avoids racing the re-render.
+    expected_chip_count = len(existing) + len(additions)
+    if expected_chip_count > 0:
+        try:
+            page.locator(resume_page.RESUME_SKILLS_CHIP).nth(expected_chip_count - 1).wait_for(
+                state="visible", timeout=5_000
+            )
+        except PlaywrightError:
+            pass
     try:
         observed = read_skills(page)
     except PlaywrightError as exc:
