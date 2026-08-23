@@ -719,6 +719,32 @@ def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
     assert history.list_questionnaire_pending("python") == []
 
 
+def test_rekey_does_not_revive_a_question_resolved_under_both_keys(tmp_path):
+    """Перенос полей не смеет воскрешать уже отвеченный вопрос.
+
+    Обходной путь из #486 — `learn`/`set` БЕЗ `--resume` — резолвит по всей базе,
+    включая слаг-строки, поэтому у реального пользователя пара «оба resolved» это
+    норма, а не экзотика. Слияние копирует со слаг-строки ПОЛЯ, но приоритет
+    статуса остаётся условным: `record_questionnaire_pending` ставит 'pending' по
+    факту повторной ВСТРЕЧИ вопроса на вакансии, а миграция ключа встречей не
+    является. Безусловный промоут вернул бы отвеченный вопрос в очередь на
+    обучение и заново заблокировал бы вакансию через questionnaire_pending.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+    history.resolve_pending_for_questions(["Ваш опыт?"], resume_id=None)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert history.list_questionnaire_pending(real_id) == [], (
+        "rekey воскресил отвеченный вопрос: он вернётся в learn и заблокирует вакансию"
+    )
+    assert history.list_questionnaire_pending("python") == []
+
+
 def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_path, capsys):
     """Коллизия «слаг A == реальный resume_id B» — поддерживаемый конфиг, не абсурд.
 

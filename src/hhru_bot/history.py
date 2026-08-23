@@ -2856,10 +2856,15 @@ class History:
                 "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
                 (new_resume_id, old_resume_id),
             ).rowcount
-            # Сначала слить слаг-строку в её hex-близнеца — ровно тот же набор
-            # колонок и тот же приоритет, что у ``record_questionnaire_pending``
-            # (ON CONFLICT DO UPDATE): статус возвращается в 'pending', а
-            # смысловые поля берутся со слаг-строки. Переносить один статус
+            # Сначала слить слаг-строку в её hex-близнеца: смысловые поля — тот
+            # же набор колонок, что у ``record_questionnaire_pending``
+            # (ON CONFLICT DO UPDATE), а вот статус промоутится УСЛОВНО, только
+            # с активной слаг-строки. Там 'pending' ставится по факту повторной
+            # ВСТРЕЧИ вопроса на вакансии, а миграция ключа встречей не является:
+            # обходной путь из issue (`learn`/`set` БЕЗ --resume резолвит по всей
+            # базе, включая слаги) делает пару «оба resolved» нормой, и
+            # безусловный промоут вернул бы отвеченный вопрос в очередь на
+            # обучение, заново заблокировав вакансию. Переносить один статус
             # нельзя: слаг-строку писал probe+learn уже с распознанным
             # кластером, а hex-близнец мог быть записан ранним apply вовсе без
             # него — и следующий DELETE унёс бы cluster='compliance' вместе со
@@ -2875,7 +2880,8 @@ class History:
             # исчезнет из очереди навсегда.
             conn.execute(
                 """UPDATE questionnaire_pending AS hex SET
-                       status = 'pending',
+                       status = CASE WHEN slug.status = 'pending'
+                                     THEN 'pending' ELSE hex.status END,
                        updated_at = ?,
                        vacancy_id = slug.vacancy_id,
                        vacancy_url = slug.vacancy_url,
