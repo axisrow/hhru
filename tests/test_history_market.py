@@ -72,7 +72,7 @@ def test_upsert_updates_existing_vacancy_keeps_first_seen(tmp_path):
 
 def test_upsert_stores_extra_card_fields(tmp_path):
     """Доп. признаки карточки для статистики/ML (#517): address, is_remote,
-    experience, snippet_requirement, snippet_responsibility."""
+    experience, snippet_requirement, snippet_responsibility, side_job, no_resume."""
     h = History(tmp_path / "h.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
@@ -84,6 +84,8 @@ def test_upsert_stores_extra_card_fields(tmp_path):
         experience="between1And3",
         snippet_requirement="Опыт работы с Hadoop.",
         snippet_responsibility="Развитие сервисов платформы.",
+        side_job=True,
+        no_resume=True,
     )
     row = h.list_vacancies_seen()[0]
     assert row["address"] == "Москва"
@@ -91,6 +93,8 @@ def test_upsert_stores_extra_card_fields(tmp_path):
     assert row["experience"] == "between1And3"
     assert row["snippet_requirement"] == "Опыт работы с Hadoop."
     assert row["snippet_responsibility"] == "Развитие сервисов платформы."
+    assert row["side_job"] == 1
+    assert row["no_resume"] == 1
 
 
 def test_upsert_extra_card_fields_default_to_null(tmp_path):
@@ -103,6 +107,8 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
     assert row["experience"] is None
     assert row["snippet_requirement"] is None
     assert row["snippet_responsibility"] is None
+    assert row["side_job"] is None
+    assert row["no_resume"] is None
 
 
 def test_upsert_refreshes_extra_card_fields_with_new_nonempty_value(tmp_path):
@@ -147,6 +153,8 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
         experience="between1And3",
         snippet_requirement="req",
         snippet_responsibility="resp",
+        side_job=True,
+        no_resume=True,
     )
     # Повторный scrape: карточка не найдена/блоки не отрендерились —
     # caller шлёт None для текстовых полей (как _record_seen делает через
@@ -161,6 +169,8 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
         experience=None,
         snippet_requirement=None,
         snippet_responsibility=None,
+        side_job=None,
+        no_resume=None,
     )
     row = h.list_vacancies_seen()[0]
     assert row["address"] == "Москва"
@@ -168,6 +178,8 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
     assert row["snippet_requirement"] == "req"
     assert row["snippet_responsibility"] == "resp"
     assert row["is_remote"] == 1
+    assert row["side_job"] == 1
+    assert row["no_resume"] == 1
 
     # Явное наблюдение «не удалённая» всё ещё должно обновить true.
     h.upsert_vacancy_seen(
@@ -178,6 +190,29 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
         is_remote=False,
     )
     assert h.list_vacancies_seen()[0]["is_remote"] == 0
+
+
+def test_upsert_refreshes_optional_card_badges(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        side_job=True,
+        no_resume=True,
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        side_job=False,
+        no_resume=False,
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["side_job"] == 0
+    assert row["no_resume"] == 0
 
 
 def test_upsert_keeps_all_known_fields_when_scrape_returns_empty_values(tmp_path):

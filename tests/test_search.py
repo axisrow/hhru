@@ -74,9 +74,11 @@ class _TextLocator:
 
 
 class _VacancyCard:
-    def __init__(self, remote: bool = False):
+    def __init__(self, remote: bool = False, side_job: bool = False, no_resume: bool = False):
         # remote=True → на карточке есть remote-лейбл (count=1); False → нет.
         self._remote = remote
+        self._side_job = side_job
+        self._no_resume = no_resume
 
     def locator(self, selector: str):
         if selector == search.sel.VACANCY_CARD_TITLE_LINK:
@@ -89,6 +91,10 @@ class _VacancyCard:
             return _TextLocator(count=1 if self._remote else 0)
         if selector == search.sel.VACANCY_CARD_EXPERIENCE:
             return _TextLocator(count=0)
+        if selector == search.sel.VACANCY_CARD_SIDE_JOB:
+            return _TextLocator(count=1 if self._side_job else 0)
+        if selector == search.sel.VACANCY_CARD_NO_RESUME:
+            return _TextLocator(count=1 if self._no_resume else 0)
         raise AssertionError(f"unexpected card selector: {selector}")
 
     def inner_text(self):
@@ -175,6 +181,19 @@ def test_search_reports_is_remote_true_when_remote_label_present(monkeypatch):
     cards = search.search_vacancies(page, _search_filters(), max_pages=1)
 
     assert cards[0].is_remote is True
+
+
+def test_search_reports_optional_card_badges(monkeypatch):
+    page = _SearchPage([_VacancyCard(side_job=True, no_resume=True)])
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search, "_has_next_page", lambda *args: False)
+    monkeypatch.setattr(search, "_optional_text", lambda *args: None)
+    monkeypatch.setattr(search, "_parse_employer_info", lambda *args: None)
+
+    cards = search.search_vacancies(page, _search_filters(), max_pages=1)
+
+    assert cards[0].side_job is True
+    assert cards[0].no_resume is True
 
 
 def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):

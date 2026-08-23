@@ -534,8 +534,9 @@
   hhru questionnaire unset TEMPLATE [--resume ID]
   ```
 - **Шаблон** — семантический ключ, сводящий разные формулировки одного вопроса в одну
-  запись (`salary`, `location`, `desired_role`, `business_segments` идут из коробки как
-  seed-поля). Режим `static` отдаёт сохранённое значение как есть и LLM не вызывает;
+  запись (`salary`, `location`, `desired_role`, `business_segments`, `test_task`,
+  `schedule`, `start_date`, `age`, `smoking` идут из коробки как seed-поля). Режим
+  `static` отдаёт сохранённое значение как есть и LLM не вызывает;
   `contextual` хранит инструкцию и подтверждённые примеры, по которым ответ генерируется
   под конкретную вакансию.
 - **Скоуп:** без `--resume` правится общий ответ аккаунта, с `--resume` —

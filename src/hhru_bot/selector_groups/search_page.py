@@ -64,3 +64,8 @@ VACANCY_CARD_REMOTE_LABEL = "[data-qa='vacancy-label-work-schedule-remote']"
 VACANCY_CARD_EXPERIENCE = "[data-qa^='vacancy-serp__vacancy-work-experience-']"
 VACANCY_CARD_SNIPPET_REQUIREMENT = "[data-qa='vacancy-serp__vacancy_snippet_requirement']"
 VACANCY_CARD_SNIPPET_RESPONSIBILITY = "[data-qa='vacancy-serp__vacancy_snippet_responsibility']"
+# Приоритет-2 из issue #516: опциональные бейджи типа занятости/отклика.
+# Подтверждено вручную через DevTools/JS в браузере 2026-08-23 (read-only,
+# живая выдача /search/vacancy); это не curl-дамп и не боевой Playwright-лог.
+VACANCY_CARD_SIDE_JOB = "[data-qa='vacancy-label-side-job']"
+VACANCY_CARD_NO_RESUME = "[data-qa='vacancy-label-no-resume']"
