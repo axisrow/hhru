@@ -399,9 +399,7 @@ def test_audit_prints_answer_confidence_and_template(capsys, tmp_path):
 @pytest.mark.parametrize("status", ["success", "uncertain", "failed"])
 def test_audit_prints_the_apply_outcome_separately_from_form_fill(capsys, tmp_path, status):
     _record_audit(tmp_path)
-    History(tmp_path / "h.db").record_action(
-        "r1", "132855712", "apply", status, run_id="run-488"
-    )
+    History(tmp_path / "h.db").record_action("r1", "132855712", "apply", status, run_id="run-488")
 
     cmd.run_audit(_audit_args(tmp_path))
 

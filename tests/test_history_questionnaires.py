@@ -335,9 +335,7 @@ def test_audit_shows_a_null_answer_but_low_confidence_does_not_select_it(tmp_pat
 
 
 @pytest.mark.parametrize("status", ["success", "uncertain", "failed"])
-def test_audit_joins_the_apply_outcome_by_run_and_keeps_one_row_per_question(
-    tmp_path, status
-):
+def test_audit_joins_the_apply_outcome_by_run_and_keeps_one_row_per_question(tmp_path, status):
     """One apply action must annotate every question without multiplying rows."""
     history = History(tmp_path / "history.db")
     _record_audit(
