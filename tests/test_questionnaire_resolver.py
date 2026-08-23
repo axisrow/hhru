@@ -604,6 +604,12 @@ def test_compliance_question_is_answered_by_explicit_static_template():
         ("Сегмент бизнеса?", "business_segments"),
         ("В каких сферах у вас опыт?", "business_segments"),
         ("Работали ли вы с B2B или B2C?", "business_segments"),
+        # частотные шаблонные вопросы из очереди (#489)
+        ("Готовы выполнить тестовое задание?", "test_task"),
+        ("Какой график работы вы рассматриваете?", "schedule"),
+        ("Когда готовы выйти на работу?", "start_date"),
+        ("Сколько вам лет?", "age"),
+        ("Вы курите?", "smoking"),
     ],
 )
 def test_keyword_matching_survives_russian_inflection(text, expected):
@@ -633,6 +639,11 @@ def test_seed_patterns_do_not_collide():
             "чем хотите заниматься",
         ),
         "business_segments": ("сегменты бизнеса", "в каких сферах", "с какими нишами"),
+        "test_task": ("тестовое задание",),
+        "schedule": ("график работы", "режим работы", "5/2", "рабочие часы"),
+        "start_date": ("срок выхода на работу", "дата выхода на работу"),
+        "age": ("возраст", "сколько вам лет", "год рождения"),
+        "smoking": ("курение", "вы курите", "сигареты"),
     }
     for owner, texts in canonical.items():
         for text in texts:
