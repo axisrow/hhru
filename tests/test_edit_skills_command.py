@@ -37,7 +37,7 @@ def test_success_output_reports_added_and_existing_skills(capsys):
 def test_success_output_reports_noop_append(capsys):
     result = SkillsResult(
         success=True,
-        existing=("Python",),
+        existing=("Python", "Git"),
         proposed=(Skill("python", "advanced"),),
         added=(),
     )
@@ -45,9 +45,28 @@ def test_success_output_reports_noop_append(capsys):
     command._print_success("resume", result, dry_run=False)
 
     output = capsys.readouterr().out
-    assert "навыков было 1, добавлено 0, стало 1" in output
-    assert "уже были: python" in output
+    assert "навыков было 2, добавлено 0, стало 2" in output
+    # The resume holds "Python"; the caller typed "python".  The report must
+    # name the chip read from the page, not the caller's spelling (#528).
+    assert "уже были: Python" in output
+    assert "уже были: python" not in output
     assert "добавлены:" not in output
+
+
+def test_success_output_names_skill_as_read_from_resume(capsys):
+    """An uppercase --skill still reports the chip's own spelling (#528)."""
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("PYTHON", "advanced"),),
+        added=(),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "уже были: Python" in output
+    assert "уже были: PYTHON" not in output
 
 
 @contextmanager

@@ -12,8 +12,14 @@ def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
     """Print counts that distinguish additions from skills already present."""
     prefix = "[DRY-RUN]" if dry_run else "[OK]"
     added_keys = {name.casefold() for name in result.added}
+    # Report the chip as it was read off the resume, not as the caller spelled
+    # it: matching is casefolded, and #528 exists so the output confirms what
+    # is actually on hh.ru.  ``existing`` is the DOM-read source of truth.
+    existing_by_key = {name.casefold(): name for name in result.existing}
     already_present = tuple(
-        skill.name for skill in result.proposed if skill.name.casefold() not in added_keys
+        existing_by_key.get(skill.name.casefold(), skill.name)
+        for skill in result.proposed
+        if skill.name.casefold() not in added_keys
     )
     print(
         f"{prefix} {resume_id}: навыков было {len(result.existing)}, "
