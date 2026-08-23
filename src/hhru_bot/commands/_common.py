@@ -804,6 +804,33 @@ def _load_apply_page(page, filters: SearchFilters, page_num: int) -> tuple[list[
     return cards, _has_next_page(page, page_num)
 
 
+def _log_resume_match_scores(candidates: list[VacancyCard], profile) -> None:
+    """Считает и логирует resume<->vacancy keyword-match score (Этап 1, #492).
+
+    Только логирование — НЕ фильтрует и не влияет на ranked/skipped. Цель issue
+    #492 Этапа 1: увидеть на реальных прогонах реальное распределение score,
+    прежде чем калибровать порог отсечения (Этап 2, отдельно). Сбой скоринга
+    одной карточки не должен ронять план откликов — как и остальные
+    провайдеры скоринга в проекте (см. LLMScoringProvider), поэтому ошибка
+    только логируется и вычисление продолжается на следующей карточке.
+    """
+    from ..scoring import score_resume_match
+
+    for card in candidates:
+        try:
+            outcome = score_resume_match(card, profile)
+        except Exception as e:  # noqa: BLE001 — логирование не должно ронять план
+            logger.warning("Resume-match scoring failed for '%s': %s", card.title, e)
+            continue
+        logger.info(
+            "Resume-match score для '%s' (%s): %.1f/100 (breakdown=%s)",
+            card.title,
+            card.vacancy_id,
+            outcome.score_0_100,
+            outcome.breakdown,
+        )
+
+
 def build_apply_plan(
     candidates: list[VacancyCard],
     filters: SearchFilters,
@@ -827,6 +854,8 @@ def build_apply_plan(
     """
     prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
     filtered, skipped = filter_candidates(candidates, filters, resume.resume_id, history, prefilter)
+
+    _log_resume_match_scores(filtered, getattr(resume, "ai_profile", None))
 
     ranked = rank_candidates(
         filtered,
