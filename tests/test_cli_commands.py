@@ -201,6 +201,16 @@ def test_search_has_common_args_no_limit():
     assert "--dry-run" in opts
     assert "--max-pages" in opts
     assert "--limit" not in opts
+    assert "--text" in opts
+
+
+def test_search_text_is_optional_without_resume():
+    parser = _build()
+
+    args = parser.parse_args(["search", "--text", "Тестировщик"])
+
+    assert args.text == "Тестировщик"
+    assert args.resume is None
 
 
 def test_apply_has_limit():

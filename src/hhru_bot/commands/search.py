@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+from dataclasses import replace
 
+from ..config import ResumeConfig, SearchFilters
 from ..history import History
 from ..search import SalaryInfo, VacancyCard
 from ._common import add_common_args, resumes_from_args
@@ -15,7 +18,36 @@ logger = logging.getLogger("hhru_bot.cli")
 def register(subparsers) -> None:
     p = subparsers.add_parser("search", help="Найти вакансии по фильтрам резюме (без откликов)")
     add_common_args(p)
+    p.add_argument(
+        "--text",
+        help="Разовый текст поиска; можно использовать без --resume",
+    )
     p.set_defaults(func=run)
+
+
+def _resumes_for_search(config, args: argparse.Namespace) -> list[ResumeConfig]:
+    """Resolve configured resumes, optionally overlaying an ad-hoc query."""
+    text = getattr(args, "text", None)
+    if args.resume:
+        resumes = resumes_from_args(config, args)
+        if text is None:
+            return resumes
+        return [replace(resume, search=replace(resume.search, text=text)) for resume in resumes]
+
+    if text is None:
+        return resumes_from_args(config, args)
+
+    # Keep history for separate ad-hoc queries isolated from configured
+    # resumes and from one another.  The synthetic resume is local-only: it is
+    # never used to address a resume on HH.ru.
+    query_key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return [
+        ResumeConfig(
+            id=f"adhoc:{text}",
+            resume_url=f"https://hh.ru/resume/adhoc-{query_key}",
+            search=SearchFilters(text=text),
+        )
+    ]
 
 
 def _format_salary(salary: SalaryInfo | None) -> str:
@@ -100,7 +132,7 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    resumes = resumes_from_args(config, args)
+    resumes = _resumes_for_search(config, args)
 
     failed = False
     with launch_context(

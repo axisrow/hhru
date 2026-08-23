@@ -107,6 +107,12 @@
 | `profile`   | управление профилем аккаунта (#287)          | READ/WRITE-local | ASCII-таблица / `[OK]`        |
 | `schedule`  | генератор конфига launchd/cron (#18)         | READ           | текст (plist/crontab)          |
 
+Для разового поиска без изменения `config.yaml` команда `search` принимает
+опциональный `--text <TEXT>`. Сигнатура:
+`hhru_bot search [--resume <id>] [--text <TEXT>] [--max-pages N]`.
+При наличии `--resume` текст временно переопределяет `resume.search.text`;
+без `--resume` создаётся временный поиск с остальными фильтрами по умолчанию.
+
 ### 3.2. Команды s3rgeym, явно НЕ переносимые
 
 | Команда s3rgeym | Почему не нужна у нас                                              |
