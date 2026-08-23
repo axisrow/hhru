@@ -12,12 +12,18 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 # Импорт на уровне модуля (а не ленивый, как обычно в commands/): значения нужны
 # для choices ещё при построении парсера. Пакет questionnaires намеренно лёгкий
 # — чистые данные, без Playwright и без optional-зависимости .[ai].
 from ..questionnaires.templates import CLUSTERS, MODES
+
+# HH resume URL tails in the durable history are opaque hex ids; deployed
+# fixtures use 38 characters, while older accounts may use the neighboring
+# 32/40-character forms.
+_CANONICAL_RESUME_ID_RE = re.compile(r"^[0-9a-f]{32,40}$", re.IGNORECASE)
 
 
 def register(subparsers) -> None:
@@ -172,23 +178,42 @@ def rekey_legacy_scans(config, history) -> None:
     контракт, что у ``record_questionnaire_pending``).
 
     Весь маппинг проверяется ДО первой мутации и при неоднозначности не
-    выполняется вовсе: ``AppConfig.get_resume`` прямо поддерживает коллизию
+    выполняется вовсе. ``AppConfig.get_resume`` прямо поддерживает коллизию
     «слаг одного резюме == реальный resume_id другого» (решает её в пользу
-    слага), а ``load_config`` валидирует только дубли слагов. Безусловный
-    ренейм по такой паре унёс бы законные строки чужого резюме под ключ
-    первого: ответы анкет и аудит смешались бы, а совпавшие ``question_key``
-    удалил бы ``DELETE`` в ``rekey_questionnaire_scans`` навсегда. Отказ
-    целиком, а не наполовину — восстановить провенанс перемешанных строк
-    потом нечем, и наполовину выполненная уборка хуже невыполненной.
+    слага), а ``load_config`` валидирует только дубли слагов. Дополнительно
+    проверяем durable-историю: если слаг уже выглядит как канонический
+    hex-id длиной 32–40 символов и встречается в questionnaire history, он может быть
+    ключом выбывшего из config резюме. Безусловный ренейм по такой паре унёс бы
+    законные строки чужого резюме под ключ первого, поэтому нормализация
+    отменяется целиком. Провенанс перемешанных строк потом не восстановить.
     """
     import sqlite3
 
     real_ids = {resume.resume_id for resume in config.resumes}
+    try:
+        historical_ids = history.questionnaire_resume_ids()
+    except AttributeError:
+        # Lightweight History doubles used by the read-only bulk probe predate
+        # this preflight. Real History always provides the durable registry.
+        historical_ids = set()
+    except sqlite3.Error as exc:
+        print(f"[INFO] Нормализация ключей анкет пропущена: {exc}")
+        return
     ambiguous = sorted(
         resume.id
         for resume in config.resumes
         if resume.id != resume.resume_id and resume.id in real_ids
     )
+    ambiguous.extend(
+        resume.id
+        for resume in config.resumes
+        if (
+            resume.id != resume.resume_id
+            and resume.id in historical_ids
+            and _CANONICAL_RESUME_ID_RE.fullmatch(resume.id)
+        )
+    )
+    ambiguous = sorted(set(ambiguous))
     if ambiguous:
         # [INFO], а не [FAIL]: сама команда продолжает работу штатно, отменена
         # только разовая уборка — по конвенции вывода проекта [FAIL] означает
