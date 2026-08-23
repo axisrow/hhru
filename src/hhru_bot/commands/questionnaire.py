@@ -61,7 +61,9 @@ def register(subparsers) -> None:
     audit.add_argument(
         "--low-confidence",
         action="store_true",
-        help="Только вопросы, на которые бот не стал отвечать из-за низкой уверенности",
+        # Причину «низкая уверенность» база не хранит — в ней записано только
+        # решение не сохранять ответ, а к нему приводит и отказ compliance-гейта.
+        help="Только вопросы, на которые бот не стал отвечать",
     )
     audit.set_defaults(func=run_audit)
 
@@ -233,7 +235,13 @@ def run_audit(args: argparse.Namespace) -> None:
         limit=_limit(args),
     )
     if not rows:
-        print("[INFO] Сохранённых ответов на анкеты нет.")
+        # «Аудит пуст» и «под фильтр ничего не попало» — разные факты. Слить их
+        # в одну строку значит отправить оператора обратно в прямой SQL, ровно
+        # от которого команда и избавляет.
+        if args.template or args.low_confidence or args.resume:
+            print("[INFO] Под заданный фильтр не попало ни одного ответа.")
+        else:
+            print("[INFO] Сохранённых ответов на анкеты нет.")
         return
     print(
         _ascii_table(

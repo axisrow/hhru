@@ -389,6 +389,16 @@ def test_audit_empty_prints_info(capsys, tmp_path):
     assert "[INFO]" in capsys.readouterr().out
 
 
+def test_audit_distinguishes_an_empty_audit_from_an_empty_filter(capsys, tmp_path):
+    """«Ответов нет» и «под фильтр ничего не попало» — разные факты: первый
+    отправил бы оператора в прямой SQL проверять, правда ли база пуста."""
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary"))
+
+    assert "Под заданный фильтр" in capsys.readouterr().out
+
+
 def test_audit_rejects_a_negative_last(capsys, tmp_path):
     """--last -5 в SQLite означало бы «без ограничения» — противоположность намерению."""
     with pytest.raises(SystemExit) as exc:
