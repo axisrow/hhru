@@ -24,7 +24,7 @@ def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "questionnaire",
         help="Шаблоны ответов на анкеты работодателей",
-        description="Показать очередь и шаблоны, задать ответ или обучить шаблон.",
+        description="Показать очередь, аудит и шаблоны, задать ответ или обучить шаблон.",
     )
     commands = parser.add_subparsers(dest="questionnaire_command", required=True)
 

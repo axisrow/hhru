@@ -515,12 +515,13 @@
 
 #### `questionnaire` — обучаемые шаблоны ответов на анкеты (#482)
 
-- **Природа:** READ (`pending`, `templates`) и WRITE-local (`set`, `unset`, `learn`);
-  браузер не открывается, на hh.ru ничего не отправляется.
+- **Природа:** READ (`pending`, `templates`, `audit`) и WRITE-local (`set`, `unset`,
+  `learn`); браузер не открывается, на hh.ru ничего не отправляется.
 - **Сигнатуры:**
   ```
   hhru questionnaire pending   [--resume ID] [--limit N]
   hhru questionnaire templates [--resume ID]
+  hhru questionnaire audit     [--resume ID] [--last N] [--template T] [--low-confidence]
   hhru questionnaire learn     [--resume ID] [--limit N]
   hhru questionnaire set TEMPLATE --mode static     --answer VALUE     [--resume ID] [--cluster C]
   hhru questionnaire set TEMPLATE --mode contextual --instruction TEXT [--example TEXT ...] [--resume ID] [--cluster C]
@@ -554,6 +555,22 @@
   идущего `apply`.
 - `learn` интерактивен: в неинтерактивном режиме печатает `[INFO]` и ничего не меняет;
   Ctrl-C печатает частичный итог и возвращает 130.
+- **`audit`** (#488) — read-only снимок того, что уже записал живой `apply`
+  (`questionnaire_questions` со `scan.source = 'apply'`; разведка
+  `probe --questionnaires-only` идёт с `source='probe'` и сюда не попадает):
+  ответ, источник, уверенность, сопоставленный шаблон/кластер. Нового LLM-вызова
+  не делает — оценку правильности ставит человек или Claude Code, читая вывод.
+  `--last N` — последние N ответов, `--template` — фильтр по шаблону.
+  `--low-confidence` отбирает строки, на которые бот **не стал отвечать**
+  (признак — пустой `answer`, который `apply/pipeline.py` пишет намеренно).
+  Причина по строке не различима: так фиксируется и уверенность ниже порога, и
+  отказ комплаенс-гейта, и «вопрос не сопоставлен ни с одним шаблоном» — сама
+  причина лежит в `questionnaire_pending.reason` и видна через
+  `questionnaire pending`. Фильтровать по самому порогу нечем: он живёт в
+  `AnswerProposal.threshold` и в базу не пишется. По той же причине признаком
+  НЕ служит `filled`: он батчевый, пишется всему скану сразу, и уверенные
+  соседи неуверенного вопроса тоже равны нулю.
+  Из-за пустого `answer` аудит не показывает, «что бот хотел ответить, но не стал».
 - **Вывод:** ASCII-таблицы через `report._ascii_table`, префиксы `[OK]`/`[INFO]`/`[FAIL]`.
 
 ---
