@@ -124,6 +124,87 @@ def _scope(args: argparse.Namespace) -> str | None:
         return args.resume
 
 
+def rekey_legacy_scans(config, history) -> None:
+    """Перевести анкеты, записанные слагом конфига, на реальный resume_id (#486 п.1).
+
+    До исправления ``probe --questionnaires-only`` ключевал сканы ``resume.id``
+    (слаг), а не hex-хвостом ``resume_url``, и накопленные строки остались бы
+    недостижимы через ``--resume`` после правки самого probe. Нормализуем их
+    здесь, а не в ``History``: маппинг «слаг -> resume_id» живёт в конфиге, до
+    которого история не достаёт.
+
+    Вызывается только из WRITE-путей (``learn``/``set`` и сам bulk-``probe``):
+    ``pending`` и ``list`` классифицированы READ, не берут общий write-lock и
+    писать не вправе. Точек вызова несколько намеренно — рабочий цикл
+    пользователя может идти только через ``probe`` и никогда не доходить до
+    ``learn``, и тогда его накопленные слаг-строки не нормализовал бы никто.
+    Операция идемпотентна, поэтому лишний вызов ничего не стоит.
+
+    Проходит по ВСЕМ резюме конфига, а не только по ``--resume``: перекос ключей
+    общий для базы, и чинить его наполовину значит оставить мину под следующей
+    командой с другим ``--resume``.
+
+    Сбой SQLite глотается так же, как сбой конфига в обёртке: это разовая уборка
+    накопленных данных, а не запрошенное пользователем действие — упавшая
+    нормализация не должна обрушивать саму команду, которая идёт следом (тот же
+    контракт, что у ``record_questionnaire_pending``).
+
+    Весь маппинг проверяется ДО первой мутации и при неоднозначности не
+    выполняется вовсе: ``AppConfig.get_resume`` прямо поддерживает коллизию
+    «слаг одного резюме == реальный resume_id другого» (решает её в пользу
+    слага), а ``load_config`` валидирует только дубли слагов. Безусловный
+    ренейм по такой паре унёс бы законные строки чужого резюме под ключ
+    первого: ответы анкет и аудит смешались бы, а совпавшие ``question_key``
+    удалил бы ``DELETE`` в ``rekey_questionnaire_scans`` навсегда. Отказ
+    целиком, а не наполовину — восстановить провенанс перемешанных строк
+    потом нечем, и наполовину выполненная уборка хуже невыполненной.
+    """
+    import sqlite3
+
+    real_ids = {resume.resume_id for resume in config.resumes}
+    ambiguous = sorted(
+        resume.id
+        for resume in config.resumes
+        if resume.id != resume.resume_id and resume.id in real_ids
+    )
+    if ambiguous:
+        # [INFO], а не [FAIL]: сама команда продолжает работу штатно, отменена
+        # только разовая уборка — по конвенции вывода проекта [FAIL] означает
+        # провал команды и код возврата 1.
+        print(
+            "[INFO] Нормализация ключей анкет отменена: слаг резюме совпадает с "
+            f"реальным resume_id другого резюме ({', '.join(ambiguous)}). "
+            "Переименуйте слаг в config.yaml — иначе перенос смешал бы историю "
+            "двух резюме без возможности разделить её обратно."
+        )
+        return
+
+    moved = 0
+    try:
+        for resume in config.resumes:
+            moved += history.rekey_questionnaire_scans(resume.id, resume.resume_id)
+    except sqlite3.Error as exc:
+        print(f"[INFO] Нормализация ключей анкет пропущена: {exc}")
+        return
+    if moved:
+        print(f"[INFO] Сканы анкет переключены со слага на resume_id: {moved}.")
+
+
+def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
+    """``rekey_legacy_scans`` для путей, где конфиг ещё не загружен.
+
+    Сбой загрузки глотается той же деградацией, что и в ``_scope()``: работать с
+    уже накопленной очередью можно и без config.yaml под рукой.
+    """
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(args.config)
+    except (ConfigError, SystemExit, OSError):
+        return
+    rekey_legacy_scans(config, history)
+
+
 def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
@@ -214,9 +295,12 @@ def run_set(args: argparse.Namespace) -> None:
         # понятная строка [FAIL] и код возврата 1, а не argparse-usage.
         print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
-    if args.example and args.mode != "contextual":
-        print("[FAIL] --example имеет смысл только для --mode contextual", file=sys.stderr)
-        sys.exit(1)
+    # #486 п.2: --example разрешён в обоих режимах. Подтверждение формулировки
+    # (confirm_questionnaire_example -> phrase-стратегия) от режима шаблона не
+    # зависит, а запрет делал static-шаблон с несидовым именем недостижимым
+    # неинтерактивно: сохранить его было можно, а связать с вопросом — нечем.
+    # Больнее всего это било по комплаенсу, где ответ разрешён ТОЛЬКО явным
+    # static-значением, то есть путь без интерактива был закрыт полностью.
     from ..questionnaires.templates import is_strict
 
     if is_strict(cluster) and args.mode != "static":
@@ -232,6 +316,9 @@ def run_set(args: argparse.Namespace) -> None:
 
     scope = _scope(args)
     history = History(args.history)
+    # Здесь, а не только в learn: learn выходит по !isatty ДО нормализации, и без
+    # этого вызова у неё не было бы неинтерактивного пути вовсе.
+    _rekey_legacy_scans(args, history)
     history.set_questionnaire_template(
         args.template,
         mode=args.mode,
@@ -252,6 +339,10 @@ def run_set(args: argparse.Namespace) -> None:
     # настроенного LLM по-прежнему неисполним, снимать его с очереди рано.
     if args.mode == "static":
         history.resolve_pending_for_templates({args.template}, resume_id=scope)
+        # ...и по самой формулировке (#486 п.2): вопрос, не совпавший ни с одним
+        # шаблоном, стоит в очереди с template IS NULL — по имени шаблона его не
+        # снять, хотя подтверждённый пример только что сделал ответ известным.
+        history.resolve_pending_for_questions(list(args.example), resume_id=scope)
     _unblock(history, scope)
 
 
@@ -281,6 +372,7 @@ def run_learn(args: argparse.Namespace):
 
     scope = _scope(args)
     history = History(args.history)
+    _rekey_legacy_scans(args, history)
     if seeded := _seed_queue_from_scans(history, scope):
         print(f"[INFO] Добавлено в очередь из ранее собранных анкет: {seeded}.")
     rows = history.list_questionnaire_pending(scope, limit=_limit(args))
@@ -392,10 +484,25 @@ def _learn_one(history, row: dict, scope: str | None) -> int:
 
     from ..questionnaires.templates import DEFAULT_CLUSTER, cluster_for
 
+    # #486 п.5: кластер УЖЕ сохранённого шаблона имеет приоритет над всем
+    # выведенным. cluster_for() знает только seed-имена и для пользовательского
+    # возвращает DEFAULT_CLUSTER ('mixed'), поэтому learn молча понижал явно
+    # заданный 'compliance' до 'mixed' — двойной признак строгости из CLAUDE.md
+    # п.7 (кластер ИЛИ текст) вырождался в одинарный, без единого предупреждения.
+    # row["cluster"] (кластер строки очереди) тоже выведенный, поэтому стоит
+    # ниже сохранённого; явную смену кластера по-прежнему делает `set --cluster`.
+    #
+    # Сравнение scope ТОЧНОЕ: get_questionnaire_templates(scope) отдаёт и
+    # account-строки (resume_id=''), и без этой проверки 'mixed' аккаунта
+    # закрепился бы за резюме — та же деградация кластера, только с другого
+    # конца. Перезаписываем лишь то, что уже принадлежит этому же scope.
+    stored = history.get_questionnaire_templates(scope).get(template) or {}
+    own = stored if stored.get("resume_id") == (scope or "") else {}
+    cluster = own.get("cluster") or row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER
     history.set_questionnaire_template(
         template,
         mode="static",
-        cluster=row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER,
+        cluster=cluster,
         answer=answer,
         resume_id=scope,
     )

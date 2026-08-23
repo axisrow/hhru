@@ -719,6 +719,15 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         print("Ошибка: --limit-questionnaires не может быть отрицательным.", file=sys.stderr)
         return True
 
+    if history is not None:
+        # #486 п.1: рабочий цикл пользователя может идти только через эту команду
+        # и никогда не доходить до `questionnaire learn`/`set` — тогда его
+        # накопленные слаг-строки не нормализовал бы никто. Идемпотентно, поэтому
+        # повторный вызов на уже нормализованной базе ничего не стоит.
+        from .questionnaire import rekey_legacy_scans
+
+        rekey_legacy_scans(config, history)
+
     all_results: list[QuestionnaireScanResult] = []
     interrupted = False
     # cycle-review PR #456 round 2 (Codex): накапливает потери записи в
@@ -763,7 +772,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results.append(result)
                     all_results.append(result)
-                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                    # resume.resume_id, а НЕ resume.id (слаг конфига) — тот же
+                    # инвариант, что и в probe_vacancy выше (#486 п.1): apply-путь
+                    # и questionnaire._scope() ключуют историю реальным hex-хвостом
+                    # resume_url, и скан со слагом был бы недостижим через --resume.
+                    if not _record_questionnaire_if_confirmed(
+                        history, resume.resume_id, vacancy, result
+                    ):
                         history_write_failed = True
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
@@ -809,7 +824,9 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results[result_index] = result
                     all_results[result_positions[vacancy_id]] = result
-                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                    if not _record_questionnaire_if_confirmed(
+                        history, resume.resume_id, vacancy, result
+                    ):
                         history_write_failed = True
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».

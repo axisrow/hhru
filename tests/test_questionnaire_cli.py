@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,11 +74,49 @@ def test_set_contextual_stores_instruction_and_examples(tmp_path):
     assert len(history.get_confirmed_phrases()) == 2
 
 
-def test_example_is_rejected_for_static_mode(capsys, tmp_path):
-    with pytest.raises(SystemExit):
-        cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
+def test_example_is_accepted_for_static_mode(tmp_path):
+    """#486 п.2: механизм подтверждения формулировки от режима не зависит —
+    без него static-шаблон с несидовым именем недостижим неинтерактивно."""
+    cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
 
-    assert "--example" in capsys.readouterr().err
+    assert History(tmp_path / "h.db").get_confirmed_phrases()["доход?"] == "salary"
+
+
+def test_static_example_resolves_the_queued_question_and_unblocks_the_vacancy(tmp_path):
+    """#486 п.2: вопрос попал в очередь БЕЗ шаблона (ни один не совпал), поэтому
+    resolve по имени шаблона его не снимет — снимает подтверждённая формулировка."""
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1",
+        [{"text": "Данные достоверны?", "kind": "text", "reason": "комплаенс без значения"}],
+        vacancy_id="v1",
+    )
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    cmd.run_set(
+        _args(
+            tmp_path,
+            template="data_accuracy",
+            cluster="compliance",
+            answer="Да",
+            example=["Данные достоверны?"],
+        )
+    )
+
+    assert history.list_questionnaire_pending("r1") == []
+    assert history.is_skipped("r1", "v1") is False
+
+
+def test_static_example_without_a_matching_question_leaves_the_queue_alone(tmp_path):
+    """Снимается ровно подтверждённая формулировка, а не вся очередь."""
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
+
+    assert len(history.list_questionnaire_pending("r1")) == 1
 
 
 def test_set_uses_the_seed_cluster_by_default(tmp_path):
@@ -252,6 +291,24 @@ def test_learn_stores_answer_and_resolves_the_queue(capsys, tmp_path, monkeypatc
     assert history.list_questionnaire_pending("r1") == []
     assert history.is_skipped("r1", "v1") is False
     assert "Разобрано вопросов: 1" in capsys.readouterr().out
+
+
+def test_learn_keeps_the_cluster_of_an_existing_template(tmp_path, monkeypatch):
+    """#486 п.5: learn не знает пользовательских имён и раньше писал 'mixed'
+    поверх сохранённого 'compliance' — двойной признак строгости из CLAUDE.md
+    п.7 вырождался в одинарный, молча."""
+    history = History(tmp_path / "h.db")
+    cmd.run_set(_args(tmp_path, template="data_accuracy", cluster="compliance", answer="Да"))
+    history.record_questionnaire_pending(
+        "r1", [{"text": "Сведения верны?", "kind": "text", "reason": "нет шаблона"}]
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    _answers = iter(["data_accuracy", "Да"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(_answers))
+
+    cmd.run_learn(_args(tmp_path, limit=20))
+
+    assert history.get_questionnaire_templates()["data_accuracy"]["cluster"] == "compliance"
 
 
 def test_learn_keeps_the_question_when_the_answer_is_empty(capsys, tmp_path, monkeypatch):
@@ -486,3 +543,334 @@ def test_compliance_cluster_accepts_a_static_template(tmp_path):
     )
 
     assert History(tmp_path / "h.db").get_questionnaire_templates()["work_permit"]["answer"]
+
+
+# --- #486 п.1: расщепление ключей probe/learn --------------------------------
+
+
+def _write_config(tmp_path, slug: str, resume_url: str) -> None:
+    (tmp_path / "config.yaml").write_text(
+        "account:\n"
+        "  storage_state_file: data/storage_state/hh_session.json\n"
+        "resumes:\n"
+        f"  - id: {slug}\n"
+        f'    resume_url: "{resume_url}"\n'
+        "    search:\n"
+        '      text: "python developer"\n',
+        encoding="utf-8",
+    )
+
+
+def test_learn_rekeys_scans_recorded_under_the_config_slug(tmp_path, monkeypatch):
+    """probe до #486 писал сканы слагом, apply-путь — реальным resume_id.
+
+    После правки самого probe накопленные строки остались бы недостижимы через
+    --resume: learn находил бы единицы вопросов вместо сотни, молча.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите самый сложный проект")
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    cmd.run_learn(_args(tmp_path, resume="python", limit=20))
+
+    queued = {row["question_text"] for row in history.list_questionnaire_pending(real_id)}
+    assert queued == {"Опишите самый сложный проект"}
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_is_idempotent_and_leaves_foreign_keys_alone(tmp_path):
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите проект")
+    _scan(history, "marketing", "v2", "Ваш опыт?")
+
+    assert history.rekey_questionnaire_scans("python", real_id) == 1
+    assert history.rekey_questionnaire_scans("python", real_id) == 0
+    assert history.rekey_questionnaire_scans(real_id, real_id) == 0
+    assert len(history.list_scanned_questions("marketing")) == 1
+
+
+def test_rekey_moves_the_pending_queue_not_only_the_scans(tmp_path):
+    """Очередь ключуется тем же слагом: `learn` БЕЗ --resume (обходной путь из
+    #486) сеет строки под ключом из скана, а не под scope.
+
+    Перенеся только сканы, мы бы заново засеяли те же вопросы под hex-ключом:
+    ON CONFLICT у очереди — (resume_id, question_key), слаг и hex не сталкиваются,
+    и получился бы дубль, одна половина которого недостижима навсегда.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "python", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(real_id)] == [
+        "Ваш опыт?"
+    ]
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_collapses_a_question_queued_under_both_keys(tmp_path):
+    """Тот же вопрос уже стоит под hex (боевой apply) и под слагом (probe+learn).
+
+    UNIQUE(resume_id, question_key) не даст перенести слаг поверх существующего
+    hex — перенос обязан схлопнуть дубль, а не упасть и не оставить сироту.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert len(history.list_questionnaire_pending(real_id)) == 1
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_set_rekeys_legacy_scans_without_a_tty(tmp_path):
+    """learn выходит по !isatty ДО нормализации, поэтому set — единственный её
+    неинтерактивный путь."""
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите проект")
+
+    cmd.run_set(_args(tmp_path, resume="python", answer="от 250000"))
+
+    assert len(history.list_scanned_questions(real_id)) == 1
+    assert history.list_scanned_questions("python") == []
+
+
+def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
+    """UNIQUE — по (resume_id, question_key), статус в ключ НЕ входит.
+
+    Поэтому UPDATE OR IGNORE отказывается переносить слаг-строку при ЛЮБОМ
+    hex-близнеце, в том числе resolved, и следующий DELETE её уничтожал: вопрос
+    исчезал из очереди навсегда. `record_questionnaire_pending` на этой же
+    таблице имеет ОБРАТНЫЙ приоритет (ON CONFLICT ... SET status='pending' —
+    заново увиденный вопрос воскрешает resolved-строку), и перенос обязан
+    совпадать с ним, а не противоречить.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+    history.resolve_pending_for_questions(["Ваш опыт?"], resume_id=real_id)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(real_id)] == [
+        "Ваш опыт?"
+    ]
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
+    """Схлопывание близнецов обязано переносить смысловые поля, а не только статус.
+
+    ``record_questionnaire_pending`` на этой же таблице при ON CONFLICT переносит
+    ВСЁ (cluster, template, kind, options_json, reason, vacancy_id), а не один
+    статус. Перенос со слага обязан совпадать с ним: слаг-строка — более свежая
+    (её писал probe+learn уже с детектом кластера), а hex-близнец мог быть
+    записан ранним apply вовсе без cluster.
+
+    Цена расхождения — та же деградация строгости, которую чинит п.5 этого же
+    PR, только с другого конца: ``cluster='compliance'`` — один из ДВУХ
+    независимых признаков комплаенса (CLAUDE.md п.7), а ``_learn_one`` берёт
+    ``row["cluster"]`` вторым приоритетом. Потеряв его при rekey, learn молча
+    получит 'mixed' там, где стоял 'compliance'.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    # hex-близнец: ранний apply, без кластера и без шаблона.
+    history.record_questionnaire_pending(
+        real_id, [{"text": "Данные достоверны?", "kind": "text", "reason": "старая причина"}]
+    )
+    # слаг-строка: свежая, с распознанным комплаенс-кластером и шаблоном.
+    history.record_questionnaire_pending(
+        "python",
+        [
+            {
+                "text": "Данные достоверны?",
+                "kind": "text",
+                "cluster": "compliance",
+                "template": "data_accuracy",
+                "reason": "комплаенс без значения",
+            }
+        ],
+        vacancy_id="v42",
+        vacancy_url="https://hh.ru/vacancy/v42",
+    )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    (row,) = history.list_questionnaire_pending(real_id)
+    assert row["cluster"] == "compliance", "rekey потерял признак строгости комплаенса"
+    assert row["template"] == "data_accuracy"
+    assert row["reason"] == "комплаенс без значения"
+    assert row["vacancy_id"] == "v42"
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_does_not_revive_a_question_resolved_under_both_keys(tmp_path):
+    """Перенос полей не смеет воскрешать уже отвеченный вопрос.
+
+    Обходной путь из #486 — `learn`/`set` БЕЗ `--resume` — резолвит по всей базе,
+    включая слаг-строки, поэтому у реального пользователя пара «оба resolved» это
+    норма, а не экзотика. Слияние копирует со слаг-строки ПОЛЯ, но приоритет
+    статуса остаётся условным: `record_questionnaire_pending` ставит 'pending' по
+    факту повторной ВСТРЕЧИ вопроса на вакансии, а миграция ключа встречей не
+    является. Безусловный промоут вернул бы отвеченный вопрос в очередь на
+    обучение и заново заблокировал бы вакансию через questionnaire_pending.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+    history.resolve_pending_for_questions(["Ваш опыт?"], resume_id=None)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert history.list_questionnaire_pending(real_id) == [], (
+        "rekey воскресил отвеченный вопрос: он вернётся в learn и заблокирует вакансию"
+    )
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_path, capsys):
+    """Коллизия «слаг A == реальный resume_id B» — поддерживаемый конфиг, не абсурд.
+
+    ``AppConfig.get_resume`` (config.py) прямо документирует эту коллизию и
+    решает её в пользу слага, а ``load_config`` проверяет только дубли слагов.
+    Rekey же трактует каждую пару (id -> resume_id) как безусловный ренейм и
+    без проверки унёс бы законные данные резюме B под ключ резюме A: ответы
+    анкет и аудит смешались бы между резюме, а совпавшие ``question_key``
+    удалил бы ``DELETE`` навсегда.
+
+    Разовая уборка обязана отказаться на неоднозначном маппинге целиком, а не
+    чинить его наполовину: восстановить провенанс перемешанных строк потом
+    нечем.
+    """
+    from hhru_bot.commands.questionnaire import rekey_legacy_scans
+
+    b_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    a_real = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    config = SimpleNamespace(
+        resumes=[
+            SimpleNamespace(id=b_real, resume_id=a_real),  # слаг A == реальный id B
+            SimpleNamespace(id="python", resume_id=b_real),
+        ]
+    )
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        b_real, [{"text": "Вопрос резюме B", "kind": "text", "reason": "нет шаблона"}]
+    )
+    _scan(history, b_real, "v9", "Скан резюме B")
+
+    rekey_legacy_scans(config, history)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(b_real)] == [
+        "Вопрос резюме B"
+    ], "данные резюме B уехали под ключ другого резюме"
+    assert history.list_questionnaire_pending(a_real) == []
+    assert len(history.list_scanned_questions(b_real)) == 1
+    assert history.list_scanned_questions(a_real) == []
+    assert "[INFO] Нормализация ключей анкет отменена" in capsys.readouterr().out
+
+
+def test_rekey_still_runs_when_a_slug_equals_its_own_real_id(tmp_path):
+    """Слаг, уже равный СВОЕМУ resume_id, — не коллизия, а нормализованный конфиг.
+
+    Проверка неоднозначности обязана игнорировать эту пару: иначе первый же
+    пользователь, назвавший резюме его настоящим id, отменял бы уборку целиком
+    и навсегда — причём молча для остальных резюме того же конфига.
+    """
+    from hhru_bot.commands.questionnaire import rekey_legacy_scans
+
+    self_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    other_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    config = SimpleNamespace(
+        resumes=[
+            SimpleNamespace(id=self_id, resume_id=self_id),  # слаг == свой же id
+            SimpleNamespace(id="python", resume_id=other_real),
+        ]
+    )
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Скан под слагом")
+
+    rekey_legacy_scans(config, history)
+
+    assert len(history.list_scanned_questions(other_real)) == 1
+    assert history.list_scanned_questions("python") == []
+
+
+def test_learn_does_not_pin_a_resume_to_the_account_cluster(tmp_path, monkeypatch):
+    """Приоритет «сохранённого шаблона» обязан быть scope-ТОЧНЫМ.
+
+    get_questionnaire_templates(scope) возвращает и account-строки (resume_id=''),
+    поэтому нескопированная проверка закрепляла бы 'mixed' аккаунта за резюме —
+    ровно та деградация кластера, которую чинит #486 п.5, только с другого конца.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    # Account-шаблон с дефолтным кластером; резюме-переопределения ещё нет.
+    history.set_questionnaire_template(
+        "work_permit", mode="static", cluster="mixed", answer="Да", resume_id=None
+    )
+    history.record_questionnaire_pending(
+        real_id,
+        [
+            {
+                "text": "Есть ли разрешение на работу?",
+                "kind": "text",
+                "cluster": "compliance",
+                "reason": "нет шаблона",
+            }
+        ],
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    _answers = iter(["work_permit", "Да"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(_answers))
+
+    cmd.run_learn(_args(tmp_path, resume="python", limit=20))
+
+    stored = History(tmp_path / "h.db").get_questionnaire_templates(real_id)["work_permit"]
+    assert stored["cluster"] == "compliance"
+
+
+def test_static_example_resolves_only_within_the_given_scope(tmp_path):
+    """Скоупированный путь: тот же вопрос стоит у двух резюме, снимается один.
+
+    Тест выше вызывает set БЕЗ --resume, то есть scope=None и резолюция идёт
+    по всей базе — он проходил бы и при сломанной фильтрации по resume_id.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    other_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Данные достоверны?", "kind": "text", "reason": "комплаенс"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending(other_id, question)
+
+    cmd.run_set(
+        _args(
+            tmp_path,
+            resume="python",
+            template="data_accuracy",
+            cluster="compliance",
+            answer="Да",
+            example=["Данные достоверны?"],
+        )
+    )
+
+    assert history.list_questionnaire_pending(real_id) == []
+    assert len(history.list_questionnaire_pending(other_id)) == 1

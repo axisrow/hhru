@@ -2819,6 +2819,95 @@ class History:
                 ],
             )
 
+    def rekey_questionnaire_scans(self, old_resume_id: str, new_resume_id: str) -> int:
+        """Переключить накопленные анкеты со слага конфига на реальный resume_id.
+
+        До #486 ``probe --questionnaires-only`` ключевал сканы слагом
+        (``resume.id``), тогда как apply-путь и ``questionnaire._scope()``
+        используют hex-хвост ``resume_url``. В одной таблице оказались оба вида
+        ключей, и ``learn --resume python`` находил единицы вопросов вместо
+        сотни — молча, без предупреждения. Тот же перекос задевал scoped
+        ``stats``: ``questionnaire_answer_summary`` джойнит эту же таблицу.
+
+        Переносятся ОБЕ таблицы. Очередь — не производная от сканов: обходной
+        путь из issue (``learn`` БЕЗ ``--resume``) сеет строки под ключом из
+        скана, а не под scope, поэтому в ``questionnaire_pending`` слаг-строк
+        накопилось больше, чем в сканах. Перенеся только сканы, следующий
+        ``learn`` заново засеял бы те же вопросы уже под hex-ключом: ON CONFLICT
+        очереди — ``(resume_id, question_key)``, слаг и hex не сталкиваются, и
+        вышел бы дубль, половина которого недостижима навсегда.
+
+        ``UPDATE OR IGNORE`` + удаление остатка: тот же вопрос мог уже стоять
+        под hex (боевой apply) и под слагом (probe+learn) — UNIQUE не даст
+        перенести второй, и его нужно схлопнуть, а не оставить сиротой.
+
+        Идемпотентно и узко: трогает ровно строки со старым ключом. Системы
+        миграций в проекте нет намеренно (CLAUDE.md, «Схема SQLite»), поэтому
+        разовая нормализация живёт как обычный метод и вызывается командой, у
+        которой на руках есть маппинг слаг -> resume_id из конфига.
+
+        Возвращает число перенесённых строк сканов (то, что видит пользователь
+        как «сколько анкет вернулось в оборот»).
+        """
+        if not old_resume_id or old_resume_id == new_resume_id:
+            return 0
+        with self._connect() as conn:
+            moved = conn.execute(
+                "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
+                (new_resume_id, old_resume_id),
+            ).rowcount
+            # Сначала слить слаг-строку в её hex-близнеца: смысловые поля — тот
+            # же набор колонок, что у ``record_questionnaire_pending``
+            # (ON CONFLICT DO UPDATE), а вот статус промоутится УСЛОВНО, только
+            # с активной слаг-строки. Там 'pending' ставится по факту повторной
+            # ВСТРЕЧИ вопроса на вакансии, а миграция ключа встречей не является:
+            # обходной путь из issue (`learn`/`set` БЕЗ --resume резолвит по всей
+            # базе, включая слаги) делает пару «оба resolved» нормой, и
+            # безусловный промоут вернул бы отвеченный вопрос в очередь на
+            # обучение, заново заблокировав вакансию. Переносить один статус
+            # нельзя: слаг-строку писал probe+learn уже с распознанным
+            # кластером, а hex-близнец мог быть записан ранним apply вовсе без
+            # него — и следующий DELETE унёс бы cluster='compliance' вместе со
+            # строкой. Это один из ДВУХ независимых признаков строгости
+            # комплаенса (CLAUDE.md п.7), а ``_learn_one`` берёт row["cluster"]
+            # вторым приоритетом: молча потеряв его, learn закрепил бы 'mixed'
+            # там, где стоял 'compliance' — та же деградация, что чинит п.5.
+            #
+            # Отдельным шагом до переноса, а не после: UNIQUE — по
+            # (resume_id, question_key), СТАТУС в ключ не входит, поэтому
+            # UPDATE OR IGNORE ниже откажется переносить слаг-строку при любом
+            # близнеце, включая resolved, а DELETE её уничтожит — вопрос
+            # исчезнет из очереди навсегда.
+            conn.execute(
+                """UPDATE questionnaire_pending AS hex SET
+                       status = CASE WHEN slug.status = 'pending'
+                                     THEN 'pending' ELSE hex.status END,
+                       updated_at = ?,
+                       vacancy_id = slug.vacancy_id,
+                       vacancy_url = slug.vacancy_url,
+                       question_text = slug.question_text,
+                       kind = slug.kind,
+                       is_radio = slug.is_radio,
+                       options_json = slug.options_json,
+                       template = slug.template,
+                       cluster = slug.cluster,
+                       reason = slug.reason,
+                       run_id = slug.run_id
+                   FROM questionnaire_pending AS slug
+                   WHERE hex.resume_id = ? AND slug.resume_id = ?
+                     AND slug.question_key = hex.question_key""",
+                (datetime.now().isoformat(), new_resume_id, old_resume_id),
+            )
+            conn.execute(
+                "UPDATE OR IGNORE questionnaire_pending SET resume_id = ? WHERE resume_id = ?",
+                (new_resume_id, old_resume_id),
+            )
+            # Остаток — строки, которым UNIQUE не дал переехать: тот же вопрос
+            # уже стоит под новым ключом (и после promote выше — в актуальном
+            # статусе), дубликат не нужен.
+            conn.execute("DELETE FROM questionnaire_pending WHERE resume_id = ?", (old_resume_id,))
+            return moved
+
     def questionnaire_answer_summary(
         self, resume_id: str | None = None, period: str = "all"
     ) -> dict[str, int]:
@@ -3170,6 +3259,36 @@ class History:
             f"WHERE status = 'pending' AND template IN ({placeholders})"
         )
         params: list = [datetime.now().isoformat(), *sorted(templates)]
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
+    def resolve_pending_for_questions(
+        self, question_texts: list[str], *, resume_id: str | None = None
+    ) -> int:
+        """Пометить решёнными вопросы очереди с этими формулировками (#486 п.2).
+
+        Дополняет ``resolve_pending_for_templates``, которая матчит по имени
+        шаблона: вопрос, не совпавший НИ с одним шаблоном, стоит в очереди с
+        ``template IS NULL``, и снять его по имени нечем. Именно так туда
+        попадает комплаенс-вопрос, ради которого ``set --example`` и нужен —
+        подтверждённая формулировка и есть то, что делает шаблон применимым.
+
+        Сопоставление по ``question_key`` (``normalize(text)``) — тому же ключу,
+        которым ``confirm_questionnaire_example`` пишет пример, а
+        ``record_questionnaire_pending`` — строку очереди.
+        """
+        keys = {normalize(text) for text in question_texts if text.strip()}
+        if not keys:
+            return 0
+        placeholders = ",".join("?" for _ in keys)
+        sql = (
+            f"UPDATE questionnaire_pending SET status = 'resolved', updated_at = ? "
+            f"WHERE status = 'pending' AND question_key IN ({placeholders})"
+        )
+        params: list = [datetime.now().isoformat(), *sorted(keys)]
         if resume_id is not None:
             sql += " AND resume_id = ?"
             params.append(resume_id)

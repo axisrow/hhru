@@ -11,6 +11,11 @@ from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.unit
 
+# Слаг конфига ("python") и реальный resume_id — РАЗНЫЕ значения, иначе двойник
+# резюме прячет расхождение ключей (#486 п.1): probe обязан ключевать сканы
+# hex-хвостом resume_url, как apply-путь и questionnaire._scope().
+REAL_RESUME_ID = "b3236ebbff10f60ff30039ed1f6d5876645331"
+
 
 def _card(vacancy_id: str) -> VacancyCard:
     return VacancyCard(
@@ -163,7 +168,7 @@ def _config(resumes):
 def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, capsys):
     card1 = _card("201")
     card2 = _card("202")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     page = object()
     pages = []
@@ -227,7 +232,7 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
 
 def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
     card = _card("301")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     page = object()
 
@@ -270,7 +275,7 @@ def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
 
 def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
     card = _card("401")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     page = object()
 
@@ -315,7 +320,7 @@ def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
 
 def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
     card = _card("501")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     page = object()
 
@@ -465,7 +470,7 @@ def _bulk_args(**overrides):
 
 def _bulk_env(monkeypatch, cards, scan, *, events=None):
     """Wire run_questionnaires to fakes; optionally record a print/scan event log."""
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     page = object()
 
@@ -628,7 +633,7 @@ def test_limit_zero_scans_every_vacancy(monkeypatch, capsys):
 
 
 def test_negative_limit_is_rejected_before_launching_a_browser(monkeypatch, capsys):
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id=REAL_RESUME_ID, search=object())
     config = _config([resume])
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
 
@@ -866,9 +871,15 @@ class _FakeHistory:
 
     def __init__(self, *args, **kwargs):
         self.calls = []
+        self.resume_keys = []
 
     def record_questionnaire(self, resume_id, vacancy_id, vacancy_url, title, company, questions):
         self.calls.append(vacancy_id)
+        self.resume_keys.append(resume_id)
+
+    def rekey_questionnaire_scans(self, old_resume_id, new_resume_id):
+        """Разовая нормализация ключей (#486 п.1) — этим двойникам её нечего чинить."""
+        return 0
 
 
 def test_retry_confirmed_questionnaire_is_persisted_to_history(monkeypatch, capsys):
@@ -896,6 +907,34 @@ def test_retry_confirmed_questionnaire_is_persisted_to_history(monkeypatch, caps
     assert fake_history.calls == ["991"], (
         "подтверждённая на retry анкета не записана в history.record_questionnaire"
     )
+    assert fake_history.resume_keys == [REAL_RESUME_ID], (
+        "retry-ветка ключует скан слагом конфига вместо resume_id (#486 п.1)"
+    )
+
+
+def test_bulk_scan_is_keyed_by_resume_id_not_the_config_slug(monkeypatch, capsys):
+    """#486 п.1: probe писал сканы слагом, apply-путь — hex-хвостом resume_url.
+
+    В одной таблице оказывались оба вида ключей, и `learn --resume python`
+    находил единицы вопросов вместо сотни — молча, без предупреждения.
+    Тот же перекос задевал scoped `stats` (questionnaire_answer_summary
+    джойнит ту же таблицу).
+    """
+    card = _card("991")
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [card], scan)
+    fake_history = _FakeHistory()
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: fake_history)
+    probe.run_questionnaires(_bulk_args(history="history.db"))
+    capsys.readouterr()
+
+    assert fake_history.resume_keys == [REAL_RESUME_ID]
+    assert "python" not in fake_history.resume_keys
 
 
 def test_history_write_failure_does_not_abort_the_rest_of_the_scan(monkeypatch, capsys):
@@ -1013,3 +1052,45 @@ def test_interrupt_with_history_write_failure_still_prints_lost_auth(monkeypatch
     assert result is CommandExitCode.SIGINT
     assert "[FAIL] не удалось сохранить" in output
     assert "[FAIL] сессия истекла во время прогона" in output
+
+
+def test_bulk_normalizes_legacy_slug_scans_on_startup(monkeypatch, capsys, tmp_path):
+    """#486: нормализация обязана быть достижима и из probe, не только из
+    questionnaire set/learn.
+
+    Пользователь, чей рабочий цикл идёт через `probe --questionnaires-only`,
+    может никогда не дойти до learn — без вызова здесь его накопленные slug-строки
+    остались бы недостижимы через --resume навсегда.
+    """
+    from hhru_bot.history import History
+
+    db = tmp_path / "h.db"
+    history = History(db)
+    history.record_questionnaire(
+        "python",
+        "v1",
+        "https://hh.ru/vacancy/v1",
+        "Разработчик",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Опишите проект",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+            }
+        ],
+    )
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.NO_QUESTIONNAIRE, "no-task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [_card("991")], scan)
+    probe.run_questionnaires(_bulk_args(history=str(db)))
+    capsys.readouterr()
+
+    assert len(history.list_scanned_questions(REAL_RESUME_ID)) == 1
+    assert history.list_scanned_questions("python") == []
