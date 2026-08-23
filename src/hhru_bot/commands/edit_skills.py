@@ -8,6 +8,47 @@ from urllib.parse import urlsplit
 from .copy_resume import confirm_write
 
 
+def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
+    """Print counts that distinguish additions from skills already present."""
+    prefix = "[DRY-RUN]" if dry_run else "[OK]"
+    added_keys = {name.casefold() for name in result.added}
+    # Report the chip as it was read off the resume, not as the caller spelled
+    # it: matching is casefolded, and #528 exists so the output confirms what
+    # is actually on hh.ru.  ``existing`` is the DOM-read source of truth.
+    existing_by_key = {name.casefold(): name for name in result.existing}
+    already_present = tuple(
+        existing_by_key.get(skill.name.casefold(), skill.name)
+        for skill in result.proposed
+        if skill.name.casefold() not in added_keys
+    )
+    # A dry run cancels the form, so nothing was added: state the counts in the
+    # future tense there.  The real run keeps the wording #528 asked for.
+    if dry_run:
+        counts = (
+            f"навыков сейчас {len(result.existing)}, "
+            f"будет добавлено {len(result.added)}, "
+            f"станет {len(result.existing) + len(result.added)}"
+        )
+    else:
+        counts = (
+            f"навыков было {len(result.existing)}, "
+            f"добавлено {len(result.added)}, "
+            f"стало {len(result.existing) + len(result.added)}"
+        )
+    print(f"{prefix} {resume_id}: {counts}")
+    if result.added:
+        label = "будут добавлены" if dry_run else "добавлены"
+        print(f"  {label}: {', '.join(result.added)}")
+    if already_present:
+        print(f"  уже были: {', '.join(already_present)}")
+    for skill in result.proposed:
+        state = "добавить" if skill.name.casefold() in added_keys else "сохранить"
+        name = existing_by_key.get(skill.name.casefold(), skill.name)
+        print(f"  - {name} [{skill.level}] — {state}")
+    if dry_run:
+        print("[INFO] Ничего не сохранено на hh.ru.")
+
+
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "edit-skills",
@@ -136,14 +177,8 @@ def _run(args: argparse.Namespace, progress) -> bool:
         prefix = "[FAIL] (uncertain)" if result.acted else "[FAIL]"
         print(f"{prefix} {resume.id} — {result.reason}")
         return True
-    prefix = "[DRY-RUN]" if args.dry_run else "[OK]"
-    print(f"{prefix} {resume.id}: существующие навыки сохранены: {len(result.existing)}")
-    for skill in result.proposed:
-        state = "добавить" if skill.name in result.added else "сохранить"
-        print(f"  - {skill.name} [{skill.level}] — {state}")
-    if args.dry_run:
-        print("[INFO] Ничего не сохранено на hh.ru.")
-    else:
+    _print_success(resume.id, result, dry_run=args.dry_run)
+    if not args.dry_run:
         progress.finish(result)
     return False
 

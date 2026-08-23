@@ -9,12 +9,85 @@ from types import SimpleNamespace
 import pytest
 
 import hhru_bot.commands.edit_skills as command
+from hhru_bot.skills import Skill, SkillsResult
 
 pytestmark = pytest.mark.unit
 
 
 class _Page:
     url = "https://hh.ru/resume/wrong-resume"
+
+
+def test_success_output_reports_added_and_existing_skills(capsys):
+    result = SkillsResult(
+        success=True,
+        existing=("Python", "Git"),
+        proposed=(Skill("Python", "advanced"), Skill("Docker", "intermediate")),
+        added=("Docker",),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "навыков было 2, добавлено 1, стало 3" in output
+    assert "добавлены: Docker" in output
+    assert "уже были: Python" in output
+
+
+def test_success_output_reports_noop_append(capsys):
+    result = SkillsResult(
+        success=True,
+        existing=("Python", "Git"),
+        proposed=(Skill("python", "advanced"),),
+        added=(),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "навыков было 2, добавлено 0, стало 2" in output
+    # The resume holds "Python"; the caller typed "python".  The report must
+    # name the chip read from the page, not the caller's spelling (#528).
+    assert "уже были: Python" in output
+    assert "уже были: python" not in output
+    assert "добавлены:" not in output
+
+
+def test_success_output_names_skill_as_read_from_resume(capsys):
+    """An uppercase --skill still reports the chip's own spelling (#528)."""
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("PYTHON", "advanced"),),
+        added=(),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "уже были: Python" in output
+    # The itemized line must agree with the line above it: both name the chip
+    # as read off the resume, not as the caller spelled it.
+    assert "  - Python [advanced] — сохранить" in output
+    assert "PYTHON" not in output
+
+
+def test_dry_run_output_does_not_claim_skills_were_added(capsys):
+    """A cancelled dry run must not report additions in the past tense (#528)."""
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("Python", "advanced"), Skill("Docker", "basic")),
+        added=("Docker",),
+    )
+
+    command._print_success("resume", result, dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "навыков сейчас 1, будет добавлено 1, станет 2" in output
+    assert "добавлено 1, стало 2" not in output
+    assert "будут добавлены: Docker" in output
+    assert "[INFO] Ничего не сохранено на hh.ru." in output
 
 
 @contextmanager
