@@ -219,6 +219,16 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     employer_tier TEXT,
     vacancy_text TEXT,
     published_at TEXT,
+    -- Доп. признаки карточки для статистики/ML (#517, приоритет-1 из #516):
+    -- город/адрес, метка удалённой работы, категория опыта, структурные
+    -- сниппеты "Требования"/"Обязанности". Все опциональны — NULL/0, если
+    -- hh.ru не отдал блок в разметке карточки (тот же паттерн, что
+    -- employer_tier/vacancy_text/published_at).
+    address TEXT,
+    is_remote INTEGER,
+    experience TEXT,
+    snippet_requirement TEXT,
+    snippet_responsibility TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -658,6 +668,12 @@ class History:
             _ensure_column(conn, "vacancies_seen", "employer_tier", "TEXT")
             _ensure_column(conn, "vacancies_seen", "vacancy_text", "TEXT")
             _ensure_column(conn, "vacancies_seen", "published_at", "TEXT")
+            # #517: доп. признаки карточки для статистики/ML на старых БД.
+            _ensure_column(conn, "vacancies_seen", "address", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "is_remote", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "experience", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "snippet_requirement", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "snippet_responsibility", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -1838,6 +1854,11 @@ class History:
         employer_tier: str | None = None,
         vacancy_text: str | None = None,
         published_at: str | None = None,
+        address: str | None = None,
+        is_remote: bool | None = None,
+        experience: str | None = None,
+        snippet_requirement: str | None = None,
+        snippet_responsibility: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1863,6 +1884,12 @@ class History:
         своей природе. Селектор для неё опционален (см. ``selector_groups/
         search_page.py``), поэтому при повторном scrape без даты уже известное
         значение сохраняется (``COALESCE``), а не затирается NULL'ом.
+
+        ``address``/``is_remote``/``experience``/``snippet_requirement``/
+        ``snippet_responsibility`` (#517) — доп. признаки карточки для
+        статистики/ML. Все опциональны в разметке hh.ru, при повторном
+        scrape освежаются как title/company/salary (не COALESCE) — карточка
+        могла поменять адрес/формат работы между заходами.
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1875,8 +1902,10 @@ class History:
                 INSERT INTO vacancies_seen
                     (vacancy_id, title, company, salary_from, salary_to,
                      salary_currency, search_query, first_seen_at,
-                     last_seen_at, employer_tier, vacancy_text, published_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_seen_at, employer_tier, vacancy_text, published_at,
+                     address, is_remote, experience, snippet_requirement,
+                     snippet_responsibility)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -1886,6 +1915,11 @@ class History:
                     employer_tier = excluded.employer_tier,
                     vacancy_text = excluded.vacancy_text,
                     published_at = COALESCE(excluded.published_at, published_at),
+                    address = excluded.address,
+                    is_remote = excluded.is_remote,
+                    experience = excluded.experience,
+                    snippet_requirement = excluded.snippet_requirement,
+                    snippet_responsibility = excluded.snippet_responsibility,
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -1901,6 +1935,11 @@ class History:
                     employer_tier,
                     vacancy_text,
                     published_at,
+                    address,
+                    None if is_remote is None else int(is_remote),
+                    experience,
+                    snippet_requirement,
+                    snippet_responsibility,
                 ),
             )
 
@@ -1914,7 +1953,8 @@ class History:
             rows = conn.execute(
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
                 "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
-                "published_at "
+                "published_at, address, is_remote, experience, snippet_requirement, "
+                "snippet_responsibility "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]

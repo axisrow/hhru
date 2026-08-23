@@ -306,6 +306,17 @@ class VacancyCard:
     # by callers through ``vacancy_text`` when available.
     vacancy_text: str = ""
     portfolio_evidence_requirement: PortfolioEvidenceRequirement | None = None
+    # Доп. признаки карточки для статистики/ML (issue #517, приоритет-1 из
+    # #516). Все блоки опциональны в разметке hh.ru — пустая строка/False,
+    # если карточка их не отдала (тот же паттерн, что salary/published_at).
+    address: str = ""
+    is_remote: bool = False
+    # Категория опыта как есть из data-qa (напр. "between1And3"), пустая
+    # строка если блок не найден. Не нормализуем в enum — источник истины
+    # для дальнейшего анализа остаётся значение hh.ru.
+    experience: str = ""
+    snippet_requirement: str = ""
+    snippet_responsibility: str = ""
 
     def __post_init__(self) -> None:
         if self.portfolio_evidence_requirement is None and self.vacancy_text:
@@ -502,6 +513,16 @@ def search_vacancies(
             # модуля (и не тянуть scoring/ai при import search).
             employer_info = _parse_employer_info(card)
 
+            # Доп. признаки карточки для статистики/ML (issue #517). Все блоки
+            # опциональны — мягкий парсинг, отсутствие не роняет сбор карточки.
+            address = _optional_text(card, sel.VACANCY_CARD_ADDRESS) or ""
+            is_remote = bool(card.locator(sel.VACANCY_CARD_REMOTE_LABEL).first.count())
+            experience = _parse_experience(card)
+            snippet_requirement = _optional_text(card, sel.VACANCY_CARD_SNIPPET_REQUIREMENT) or ""
+            snippet_responsibility = (
+                _optional_text(card, sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) or ""
+            )
+
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
                 continue
@@ -522,6 +543,11 @@ def search_vacancies(
                     # VacancyCard.__post_init__ derives portfolio_evidence_requirement
                     # from vacancy_text automatically; no need to compute it twice.
                     vacancy_text=card_text,
+                    address=address,
+                    is_remote=is_remote,
+                    experience=experience,
+                    snippet_requirement=snippet_requirement,
+                    snippet_responsibility=snippet_responsibility,
                 )
             )
 
@@ -611,6 +637,24 @@ def extract_salary_text_from_html(html: str) -> str | None:
     обратной совместимости существующих импортов/тестов и делегирует в новое имя.
     """
     return extract_salary_text(html)
+
+
+_EXPERIENCE_PREFIX = "vacancy-serp__vacancy-work-experience-"
+
+
+def _parse_experience(card) -> str:
+    """Категория опыта работы (issue #517): значение закодировано в САМОМ
+    суффиксе data-qa элемента (напр. "between1And3"), а не в его тексте —
+    в отличие от остальных опциональных полей карточки. Блок опционален;
+    отсутствие → пустая строка, не роняем сбор карточки.
+    """
+    locator = card.locator(sel.VACANCY_CARD_EXPERIENCE).first
+    if not locator.count():
+        return ""
+    qa = locator.get_attribute("data-qa") or ""
+    if not qa.startswith(_EXPERIENCE_PREFIX):
+        return ""
+    return qa[len(_EXPERIENCE_PREFIX) :]
 
 
 def _optional_text(card, selector: str) -> str | None:

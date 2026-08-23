@@ -70,6 +70,67 @@ def test_upsert_updates_existing_vacancy_keeps_first_seen(tmp_path):
     assert row["last_seen_at"] >= first_seen
 
 
+def test_upsert_stores_extra_card_fields(tmp_path):
+    """Доп. признаки карточки для статистики/ML (#517): address, is_remote,
+    experience, snippet_requirement, snippet_responsibility."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="Backend",
+        company="Yandex",
+        search_query="python backend",
+        address="Москва",
+        is_remote=True,
+        experience="between1And3",
+        snippet_requirement="Опыт работы с Hadoop.",
+        snippet_responsibility="Развитие сервисов платформы.",
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["address"] == "Москва"
+    assert row["is_remote"] == 1
+    assert row["experience"] == "between1And3"
+    assert row["snippet_requirement"] == "Опыт работы с Hadoop."
+    assert row["snippet_responsibility"] == "Развитие сервисов платформы."
+
+
+def test_upsert_extra_card_fields_default_to_null(tmp_path):
+    """Опциональные блоки карточки — не роняем upsert, если их не передали."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(vacancy_id="123", title="T", company="C", search_query="python")
+    row = h.list_vacancies_seen()[0]
+    assert row["address"] is None
+    assert row["is_remote"] is None
+    assert row["experience"] is None
+    assert row["snippet_requirement"] is None
+    assert row["snippet_responsibility"] is None
+
+
+def test_upsert_refreshes_extra_card_fields_on_conflict(tmp_path):
+    """При повторном scrape address/is_remote освежаются (карточка могла
+    поменять формат работы между заходами) — в отличие от published_at,
+    который COALESCE'ится."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        address="Москва",
+        is_remote=False,
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        address="Санкт-Петербург",
+        is_remote=True,
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["address"] == "Санкт-Петербург"
+    assert row["is_remote"] == 1
+
+
 def test_upsert_same_vacancy_different_query_keeps_both(tmp_path):
     """UNIQUE(vacancy_id, search_query): одна вакансия по разным запросам —
     отдельные строки (рынок хочет видеть, по каким запросам что находится)."""
