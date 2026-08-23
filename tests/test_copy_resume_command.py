@@ -139,6 +139,28 @@ def test_write_resume_config_keeps_file_without_trailing_newline_loadable(tmp_pa
     assert [r.id for r in config.resumes] == ["backend", "backend-copy"]
 
 
+def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
+    """Непустой inline-список (`resumes: [{...}]`) нельзя дописать, удалив строку:
+    вместе с ней исчезли бы уже настроенные резюме. Результат при этом остаётся
+    валидным YAML, поэтому проверка кандидата загрузчиком такую потерю не ловит —
+    нужен явный отказ ДО подмены файла."""
+    from hhru_bot.config import ConfigError, load_config
+
+    config_path = tmp_path / "config.yaml"
+    original = _loadable_config(
+        "resumes: [{id: backend, resume_url: "
+        f'"https://hh.ru/resume/{OLD_ID}", search: {{text: python}}}}]\n'
+    )
+    config_path.write_text(original, encoding="utf-8")
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+    with pytest.raises(ConfigError):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+
 def test_write_resume_config_rejects_candidate_the_loader_cannot_read(tmp_path, monkeypatch):
     """Валидация кандидата — страховка от НЕизвестных форм порчи, а не только от
     двух найденных: любая правка, после которой load_config не читает файл,

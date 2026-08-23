@@ -120,6 +120,8 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
     требование #520). Валидность результата гарантирует не эта функция, а
     проверка кандидата продакшн-загрузчиком в write_resume_config.
     """
+    from ..config import ConfigError
+
     dumped = yaml.safe_dump(
         [_resume_mapping(resume, slug, new_resume_id)],
         allow_unicode=True,
@@ -138,11 +140,22 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
     )
     # Секции нет вовсе, либо она записана inline (`resumes: []`, `resumes:` со
     # значением на той же строке): дописать элемент внутрь такой формы нельзя,
-    # поэтому заводим собственный блок в конце файла. Пустой inline-список при
-    # этом остаётся в файле и сливается с новым блоком при загрузке — нет, YAML
-    # запрещает дубль ключа, поэтому inline-форму сначала убираем.
-    inline = resumes_line is not None and bool(lines[resumes_line].split(":", 1)[1].strip())
-    if resumes_line is None or inline:
+    # поэтому заводим собственный блок в конце файла. Inline-строку при этом
+    # приходится убирать — YAML запрещает дубль ключа верхнего уровня.
+    inline_value = lines[resumes_line].split(":", 1)[1].strip() if resumes_line is not None else ""
+    if resumes_line is None or inline_value:
+        # ...но удалить можно только ПУСТУЮ форму. В непустом inline-списке
+        # удаление строки унесло бы уже настроенные резюме, а результат остался
+        # бы валидным YAML — проверка кандидата загрузчиком такую потерю не
+        # поймает. Дешевле отказаться до подмены файла, чем молча стереть
+        # чужие настройки (fail-closed, как отказ по коллизии слагов).
+        if inline_value and yaml.safe_load(inline_value):
+            raise ConfigError(
+                "Секция resumes записана списком в одну строку и не пуста — "
+                "дописать в неё резюме нельзя, не переписав её целиком. "
+                "Переведите resumes в блочный вид (по элементу на строку) "
+                "и повторите."
+            )
         if resumes_line is not None:
             del lines[resumes_line]
             text = "".join(lines)
