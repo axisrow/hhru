@@ -12,6 +12,7 @@ import pytest
 
 from hhru_bot.ai.questions import Question
 from hhru_bot.ai.types import NormalizedResponse
+from hhru_bot.external_forms.detect import normalize
 from hhru_bot.questionnaires.resolver import (
     KEYWORD,
     PHRASE,
@@ -457,6 +458,13 @@ def test_resolved_answer_pending_helper_is_not_resolved():
         "Действующая медицинская книжка есть?",
         "Есть ли военный билет?",
         "Подтверждаете достоверность указанных сведений?",
+        # Живой прогон 2026-08-23: стем «достоверност» не ловил прилагательное
+        # «достоверными» — суффикс -ост есть только у существительного. Реальная
+        # формулировка встретилась у 3 работодателей, и заверение уходило бы в
+        # свободную генерацию вместо комплаенс-гейта.
+        "Настоящим подтверждаю, что предоставленные сведения являются "
+        "достоверными, полными и точными.",
+        "Просим подтвердить, что вы указали в резюме достоверную информацию.",
         "Находитесь ли вы на территории РФ?",
         "Проживаете на территории России?",
     ],
@@ -493,6 +501,71 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
     assert not resolved.resolved
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Подскажите, вы на данный момент проживаете в РФ?",
+        "Территориально проживаете в РФ? В каком городе?",
+        "Вы проживаете в России?",
+    ],
+)
+def test_residency_wording_is_answered_as_ordinary_location(text):
+    """«Проживаете в РФ?» — вопрос о местоположении, а не о правовом статусе.
+
+    Живой прогон 2026-08-23: этой формулировкой работодатель выясняет, откуда
+    кандидат работает, и ответ на неё уже лежит в шаблоне ``location`` — каким
+    бы он ни был у конкретного пользователя («Воронеж», «Таиланд»). Попытка
+    считать её комплаенсом уводила в очередь вопрос, на который есть готовый
+    ответ, и заодно блокировала обычные вопросы про российский рынок.
+    Юридические формулировки закрыты отдельно, см.
+    ``test_compliance_gate_blocks_by_text_without_any_match``.
+    """
+    match = resolve_template(text, confirmed={})
+    resolved = build_answer(_text(text), _static("location", "Таиланд"), match)
+
+    assert match is not None and match.template == "location"
+    assert resolved.resolved
+    assert resolved.answer == "Таиланд"
+
+
+def test_compliance_question_is_not_answered_by_a_guessed_template():
+    """Комплаенс не отвечается шаблоном, который подобрала эвристика.
+
+    #482: «ни ключевые слова, ни LLM» не отвечают на комплаенс. Проверки
+    «шаблон static и непуст» для этого мало — гейт обязан смотреть, ЧЬИМ
+    решением выбран сам шаблон, иначе значение, сохранённое под другую тему,
+    засчитывается как явный комплаенс-ответ.
+    """
+    match = TemplateMatch("location", "conditions", KEYWORD, 0.95)
+    resolved = build_answer(_text("Ваше гражданство?"), _static("location", "Таиланд"), match)
+
+    assert not resolved.resolved
+    assert not resolved.answer
+
+
+def test_confirmed_phrase_still_answers_a_compliance_question():
+    """Подтверждённая человеком формулировка — не догадка, гейт её пропускает."""
+    text = "Ваше гражданство?"
+    match = match_phrase(text, {normalize(text): "citizenship"})
+    resolved = build_answer(_text(text), _static("citizenship", "РФ", cluster="compliance"), match)
+
+    assert match is not None and match.source == PHRASE
+    assert resolved.resolved
+    assert resolved.answer == "РФ"
+
+
+def test_compliance_question_is_answered_by_explicit_static_template():
+    """Явно объявленный комплаенс-шаблон отвечает — гейт не глухой."""
+    resolved = build_answer(
+        _text("Ваше гражданство?"),
+        _static("citizenship", "РФ", cluster="compliance"),
+        TemplateMatch("citizenship", "compliance", KEYWORD, 0.95),
+    )
+
+    assert resolved.resolved
+    assert resolved.answer == "РФ"
+
+
 # --- склонение и словоформы (регресс: фиксированные формы промахивались) ----
 
 
@@ -517,6 +590,9 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
         ("Где вы живете?", "location"),
         ("Страна проживания?", "location"),
         ("Ваш город?", "location"),
+        # Живой прогон 2026-08-23: реальные формулировки, промахивавшиеся мимо
+        # шаблона и уходившие в очередь как незнакомые.
+        ("Из какого города вы планируете работать?", "location"),
         # desired_role
         ("Желаемая должность?", "desired_role"),
         ("Укажите желаемую роль", "desired_role"),
@@ -634,6 +710,9 @@ def test_fenced_answer_is_accepted_end_to_end():
         "Есть ли опыт управления командой?",
         "Ваш стаж работы?",
         "Почему вы уходите с текущего места?",
+        # «находитесь» без уточнения места — вопрос о причинах поиска работы,
+        # а не о локации; стем location не должен его задевать.
+        "Почему сейчас находитесь в поиске работы?",
     ],
 )
 def test_seed_patterns_do_not_match_unrelated_questions(text):
