@@ -198,9 +198,7 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
     inline_value, inline_comment = ("", "")
     if resumes_line is not None:
         line_without_ending = lines[resumes_line].rstrip("\r\n")
-        inline_value, inline_comment = _split_trailing_comment(
-            line_without_ending.split(":", 1)[1]
-        )
+        inline_value, inline_comment = _split_trailing_comment(line_without_ending.split(":", 1)[1])
     if resumes_line is None or inline_value:
         if inline_value:
             inline_resumes = yaml.safe_load(inline_value)
@@ -221,11 +219,7 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
                 line = lines[resumes_line]
                 line_ending = line[len(line.rstrip("\r\n")) :]
                 lines[resumes_line] = (
-                    line.split(":", 1)[0]
-                    + ": "
-                    + rendered
-                    + inline_comment
-                    + line_ending
+                    line.split(":", 1)[0] + ": " + rendered + inline_comment + line_ending
                 )
                 return "".join(lines)
         if resumes_line is not None:
