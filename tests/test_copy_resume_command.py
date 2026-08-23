@@ -139,6 +139,73 @@ def test_write_resume_config_keeps_file_without_trailing_newline_loadable(tmp_pa
     assert [r.id for r in config.resumes] == ["backend", "backend-copy"]
 
 
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("  # мои резюме", ""),
+        (" []", "[]"),
+        (" []  # пока пусто", "[]"),
+        ("#immediate", ""),
+        # '#' внутри кавычек — обычный символ, а не начало комментария:
+        # обрезав по нему, мы приняли бы непустой inline-список за пустой
+        # и удалили бы строку вместе с уже настроенными резюме.
+        (' "a#b"', '"a#b"'),
+        (" '[{id: a#b}]'", "'[{id: a#b}]'"),
+    ],
+)
+def test_strip_trailing_comment(value, expected):
+    assert cmd._strip_trailing_comment(value) == expected
+
+
+@pytest.mark.parametrize("key", ['"resumes":', "resumes :", "resumes:"])
+def test_write_resume_config_never_loses_resumes_on_alternate_key_spellings(tmp_path, key):
+    """Ключ resumes можно записать по-разному (`\"resumes\":`, `resumes :`).
+    Текстовый поиск такие формы пропускал и дописывал ВТОРОЙ ключ resumes; PyYAML
+    берёт последний, поэтому load_config кандидата проходил, а прежние резюме
+    молча исчезали. Ни одна форма не имеет права терять уже настроенное резюме."""
+    from hhru_bot.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _loadable_config(
+            f"{key}\n"
+            "  - id: backend\n"
+            f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+            "    search:\n"
+            "      text: python\n"
+        ),
+        encoding="utf-8",
+    )
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert [r.id for r in load_config(config_path).resumes] == ["backend", "backend-copy"]
+
+
+def test_write_resume_config_appends_under_key_with_trailing_comment(tmp_path):
+    """`resumes:  # комментарий` — обычная разметка, а не inline-список:
+    хвостовой комментарий не должен уводить в ветку замены блока."""
+    from hhru_bot.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _loadable_config(
+            "resumes:  # мои резюме\n"
+            "  - id: backend\n"
+            f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+            "    search:\n"
+            "      text: python\n"
+        ),
+        encoding="utf-8",
+    )
+
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert [r.id for r in load_config(config_path).resumes] == ["backend", "backend-copy"]
+    assert "# мои резюме" in config_path.read_text(encoding="utf-8")
+
+
 def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
     """Непустой inline-список (`resumes: [{...}]`) нельзя дописать, удалив строку:
     вместе с ней исчезли бы уже настроенные резюме. Результат при этом остаётся
@@ -155,6 +222,41 @@ def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
     assert [r.id for r in load_config(config_path).resumes] == ["backend"]
 
     with pytest.raises(ConfigError):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+
+def test_write_resume_config_refuses_when_an_entry_would_disappear(tmp_path, monkeypatch):
+    """Страховка на НЕизвестные написания ключа: если правка всё же потеряла бы
+    резюме, отказываем. Потеря может остаться валидным YAML (дубль ключа —
+    побеждает последний), поэтому одной загружаемости кандидата мало."""
+    from hhru_bot.config import ConfigError, load_config
+
+    config_path = tmp_path / "config.yaml"
+    original = _loadable_config(
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    # Кандидат загружается, но прежнее резюме в нём отсутствует.
+    def _drops_entry(text, resume, slug, new_resume_id):
+        return _loadable_config(
+            "resumes:\n"
+            f"  - id: {slug}\n"
+            f'    resume_url: "https://hh.ru/resume/{new_resume_id}"\n'
+            "    search:\n"
+            "      text: python\n"
+        )
+
+    monkeypatch.setattr(cmd, "_config_with_resume", _drops_entry)
+
+    with pytest.raises(ConfigError, match="пропали бы резюме"):
         cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
 
     assert config_path.read_text(encoding="utf-8") == original

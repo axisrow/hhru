@@ -112,6 +112,46 @@ def reject_bare_source(resume) -> None:
         sys.exit(1)
 
 
+def _strip_trailing_comment(value: str) -> str:
+    """Значение YAML-скаляра без хвостового комментария.
+
+    Комментарий начинается с ``#`` вне кавычек и (по спецификации YAML) после
+    пробела; ``#`` внутри кавычек — обычный символ, а не начало комментария.
+    """
+    quote = ""
+    for i, char in enumerate(value):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].strip()
+    return value.strip()
+
+
+def _resumes_key_line(lines: list[str]) -> int | None:
+    """Номер строки с ключом верхнего уровня ``resumes``, определённый разбором.
+
+    Написаний у ключа несколько (``resumes:``, ``"resumes":``, ``resumes :``),
+    поэтому спрашиваем парсер, а не сравниваем начало строки: пропущенный ключ
+    приводит к дублю секции, а дубль PyYAML разрешает молча (побеждает
+    последний), унося прежние резюме без единой ошибки.
+    """
+    for i, line in enumerate(lines):
+        if not line.strip() or line[:1].isspace() or line.lstrip().startswith("#"):
+            continue
+        try:
+            parsed = yaml.safe_load(line if ":" in line else f"{line}:")
+        except yaml.YAMLError:
+            # Строка сама по себе не разбирается (начало многострочного
+            # значения и т.п.) — это не ключ resumes.
+            continue
+        if isinstance(parsed, dict) and "resumes" in parsed:
+            return i
+    return None
+
+
 def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str:
     """Текст конфига с дописанной секцией нового резюме.
 
@@ -130,19 +170,23 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
     )
     entry = "\n".join("  " + line for line in dumped.rstrip("\n").splitlines())
     lines = text.splitlines(keepends=True)
-    resumes_line = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if line.startswith("resumes:") and not line.startswith(" ")
-        ),
-        None,
-    )
+    # Ключ ищем разбором, а не поиском подстроки: `"resumes":` и `resumes :` —
+    # такие же валидные написания, и текстовый поиск их пропускал, дописывая
+    # ВТОРОЙ ключ resumes. PyYAML берёт последний, поэтому проверка кандидата
+    # загрузчиком проходила, а прежние резюме исчезали молча.
+    resumes_line = _resumes_key_line(lines)
     # Секции нет вовсе, либо она записана inline (`resumes: []`, `resumes:` со
     # значением на той же строке): дописать элемент внутрь такой формы нельзя,
     # поэтому заводим собственный блок в конце файла. Inline-строку при этом
     # приходится убирать — YAML запрещает дубль ключа верхнего уровня.
-    inline_value = lines[resumes_line].split(":", 1)[1].strip() if resumes_line is not None else ""
+    # Значение inline-формы берём БЕЗ хвостового комментария: `resumes:  # мои
+    # резюме` — обычный блочный ключ, и приняв «# мои резюме» за значение, мы
+    # удалили бы строку ключа, осиротив весь блок под ней.
+    inline_value = (
+        _strip_trailing_comment(lines[resumes_line].split(":", 1)[1])
+        if resumes_line is not None
+        else ""
+    )
     if resumes_line is None or inline_value:
         # ...но удалить можно только ПУСТУЮ форму. В непустом inline-списке
         # удаление строки унесло бы уже настроенные резюме, а результат остался
@@ -185,10 +229,11 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
     тут уже не откатить, поэтому оригинал не трогается, пока кандидат не признан
     загружаемым.
     """
-    from ..config import load_config
+    from ..config import ConfigError, load_config
 
     config_path = Path(path)
     text = config_path.read_text(encoding="utf-8")
+    before = {r.id for r in load_config(config_path).resumes}
     candidate_text = _config_with_resume(text, resume, slug, new_resume_id)
 
     fd, name = tempfile.mkstemp(
@@ -198,7 +243,17 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
     try:
         os.close(fd)
         candidate.write_text(candidate_text, encoding="utf-8")
-        load_config(candidate)
+        candidate_config = load_config(candidate)
+        # Загружаемости мало: потерю резюме она не видит. Дубль ключа resumes —
+        # валидный YAML, PyYAML берёт последний, и прежние записи исчезают без
+        # ошибки. Поэтому сверяем состав: пропажа резюме — отказ, а не запись.
+        lost = before - {r.id for r in candidate_config.resumes}
+        if lost:
+            raise ConfigError(
+                "После дописывания в config.yaml пропали бы резюме: "
+                f"{', '.join(sorted(lost))}. Файл не изменён — "
+                "проверьте, как записана секция resumes."
+            )
         os.replace(candidate, config_path)
     finally:
         candidate.unlink(missing_ok=True)
