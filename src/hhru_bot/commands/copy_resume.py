@@ -6,14 +6,20 @@
 Дневные лимиты/кулдауны throttle к copy-resume не применяются (разовая
 операция, согласовано в cli-spec §3.3), но аудит в actions обязателен.
 
-Новый resume_id НАМЕРЕННО не пишется в config.yaml — копию надо сперва
-проверить руками на hh.ru; команда печатает готовый YAML-фрагмент для вставки.
+Новый resume_id по умолчанию только печатается. Флаг --write-config добавляет
+копию секции исходного резюме в config.yaml после подтверждённого успеха.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+
+import yaml
 
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 
@@ -43,6 +49,10 @@ def register(subparsers) -> None:
         action="store_true",
         help="Подтвердить боевой запуск без интерактивного вопроса",
     )
+    p.add_argument(
+        "--write-config", action="store_true", help="Добавить новое резюме в config.yaml"
+    )
+    p.add_argument("--slug", help="Slug нового резюме (по умолчанию <исходный>-copy)")
     p.set_defaults(func=run)
 
 
@@ -74,6 +84,193 @@ def format_config_snippet(new_resume_id: str) -> str:
     )
 
 
+def _resume_mapping(resume, slug: str, new_resume_id: str) -> dict:
+    values = asdict(resume) if is_dataclass(resume) else {}
+    values["id"] = slug
+    values["resume_url"] = f"https://hh.ru/resume/{new_resume_id}"
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def reject_bare_source(resume) -> None:
+    """Отказ регистрировать bare-резюме (#319) в конфиге.
+
+    ``resolve_resume`` отдаёт bare-резюме для сырого resume_id, которого нет в
+    конфиге: все секции None, ``search.text`` — пустая заглушка. Массовый
+    apply-путь (``resolve_resumes``) намеренно не использует bare именно потому,
+    что поиск без настроек не имеет смысла. Но ``--write-config`` — это и есть
+    регистрация: записав такую заглушку, мы бы добавили в config.yaml резюме с
+    пустым запросом, и следующий ``apply`` без ``--resume`` пошёл бы по нему
+    откликаться по неограниченной выдаче. Запрос виден работодателю, откат
+    невозможен — поэтому fail-closed отказ, а не запись с предупреждением.
+    """
+    if not resume.search.text.strip():
+        print(
+            f"[FAIL] У резюме '{resume.id}' нет настроек search в config.yaml — "
+            "нечего копировать в новую секцию. Добавьте исходное резюме в конфиг "
+            "и повторите."
+        )
+        sys.exit(1)
+
+
+def _strip_trailing_comment(value: str) -> str:
+    """Значение YAML-скаляра без хвостового комментария.
+
+    Комментарий начинается с ``#`` вне кавычек и (по спецификации YAML) после
+    пробела; ``#`` внутри кавычек — обычный символ, а не начало комментария.
+    """
+    quote = ""
+    for i, char in enumerate(value):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].strip()
+    return value.strip()
+
+
+def _resumes_key_line(lines: list[str]) -> int | None:
+    """Номер строки с ключом верхнего уровня ``resumes``, определённый разбором.
+
+    Написаний у ключа несколько (``resumes:``, ``"resumes":``, ``resumes :``),
+    поэтому спрашиваем парсер, а не сравниваем начало строки: пропущенный ключ
+    приводит к дублю секции, а дубль PyYAML разрешает молча (побеждает
+    последний), унося прежние резюме без единой ошибки.
+    """
+    for i, line in enumerate(lines):
+        if not line.strip() or line[:1].isspace() or line.lstrip().startswith("#"):
+            continue
+        try:
+            parsed = yaml.safe_load(line if ":" in line else f"{line}:")
+        except yaml.YAMLError:
+            # Строка сама по себе не разбирается (начало многострочного
+            # значения и т.п.) — это не ключ resumes.
+            continue
+        if isinstance(parsed, dict) and "resumes" in parsed:
+            return i
+    return None
+
+
+def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str:
+    """Текст конфига с дописанной секцией нового резюме.
+
+    Правка текстовая, а не через safe_load+safe_dump всего файла: полный
+    round-trip уничтожил бы комментарии и форматирование пользователя (явное
+    требование #520). Валидность результата гарантирует не эта функция, а
+    проверка кандидата продакшн-загрузчиком в write_resume_config.
+    """
+    from ..config import ConfigError
+
+    dumped = yaml.safe_dump(
+        [_resume_mapping(resume, slug, new_resume_id)],
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+    entry = "\n".join("  " + line for line in dumped.rstrip("\n").splitlines())
+    lines = text.splitlines(keepends=True)
+    # Ключ ищем разбором, а не поиском подстроки: `"resumes":` и `resumes :` —
+    # такие же валидные написания, и текстовый поиск их пропускал, дописывая
+    # ВТОРОЙ ключ resumes. PyYAML берёт последний, поэтому проверка кандидата
+    # загрузчиком проходила, а прежние резюме исчезали молча.
+    resumes_line = _resumes_key_line(lines)
+    # Секции нет вовсе, либо она записана inline (`resumes: []`, `resumes:` со
+    # значением на той же строке): дописать элемент внутрь такой формы нельзя,
+    # поэтому заводим собственный блок в конце файла. Inline-строку при этом
+    # приходится убирать — YAML запрещает дубль ключа верхнего уровня.
+    # Значение inline-формы берём БЕЗ хвостового комментария: `resumes:  # мои
+    # резюме` — обычный блочный ключ, и приняв «# мои резюме» за значение, мы
+    # удалили бы строку ключа, осиротив весь блок под ней.
+    inline_value = (
+        _strip_trailing_comment(lines[resumes_line].split(":", 1)[1])
+        if resumes_line is not None
+        else ""
+    )
+    if resumes_line is None or inline_value:
+        # ...но удалить можно только ПУСТУЮ форму. В непустом inline-списке
+        # удаление строки унесло бы уже настроенные резюме, а результат остался
+        # бы валидным YAML — проверка кандидата загрузчиком такую потерю не
+        # поймает. Дешевле отказаться до подмены файла, чем молча стереть
+        # чужие настройки (fail-closed, как отказ по коллизии слагов).
+        if inline_value and yaml.safe_load(inline_value):
+            raise ConfigError(
+                "Секция resumes записана списком в одну строку и не пуста — "
+                "дописать в неё резюме нельзя, не переписав её целиком. "
+                "Переведите resumes в блочный вид (по элементу на строку) "
+                "и повторите."
+            )
+        if resumes_line is not None:
+            del lines[resumes_line]
+            text = "".join(lines)
+        suffix = "\n" if text and not text.endswith("\n") else ""
+        return text + suffix + "resumes:\n" + entry + "\n"
+    insert_at = len(lines)
+    for i in range(resumes_line + 1, len(lines)):
+        if lines[i].strip() and not lines[i].startswith((" ", "\t", "#")):
+            insert_at = i
+            break
+    # Файл без финального перевода строки: без него дописанный элемент склеился
+    # бы с последней строкой в одну (`text: python  - id: ...`) и конфиг стал бы
+    # нечитаемым — а произошло бы это уже ПОСЛЕ успешного копирования на hh.ru.
+    if insert_at == len(lines) and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines[insert_at:insert_at] = [entry + "\n"]
+    return "".join(lines)
+
+
+def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str) -> None:
+    """Append a complete entry while leaving existing YAML/comments untouched.
+
+    Кандидат сначала пишется во временный файл рядом с конфигом, проверяется
+    продакшн-загрузчиком и только потом атомарно подменяет оригинал — тот же
+    контракт, что у ``config_cmd._validated_replace``. Запись идёт после
+    подтверждённого копирования на hh.ru: испорченный или обрезанный config.yaml
+    тут уже не откатить, поэтому оригинал не трогается, пока кандидат не признан
+    загружаемым.
+    """
+    from ..config import ConfigError, load_config
+
+    config_path = Path(path)
+    text = config_path.read_text(encoding="utf-8")
+    before = {r.id for r in load_config(config_path).resumes}
+    candidate_text = _config_with_resume(text, resume, slug, new_resume_id)
+
+    fd, name = tempfile.mkstemp(
+        prefix=f".{config_path.name}.", suffix=".tmp", dir=config_path.parent
+    )
+    candidate = Path(name)
+    try:
+        os.close(fd)
+        candidate.write_text(candidate_text, encoding="utf-8")
+        candidate_config = load_config(candidate)
+        # Загружаемости мало: потерю резюме она не видит. Дубль ключа resumes —
+        # валидный YAML, PyYAML берёт последний, и прежние записи исчезают без
+        # ошибки. Поэтому сверяем состав: пропажа резюме — отказ, а не запись.
+        lost = before - {r.id for r in candidate_config.resumes}
+        if lost:
+            raise ConfigError(
+                "После дописывания в config.yaml пропали бы резюме: "
+                f"{', '.join(sorted(lost))}. Файл не изменён — "
+                "проверьте, как записана секция resumes."
+            )
+        # Отсутствие потерь ещё не значит, что запись состоялась. При дубле
+        # ключа resumes (валидный YAML — PyYAML берёт последний) элемент уходит
+        # в игнорируемую секцию: состав не изменился, проверка выше молчит, а
+        # копия на hh.ru остаётся незарегистрированной при отчёте об успехе.
+        # Поэтому требуем, чтобы новое резюме реально читалось из кандидата.
+        added = next((r for r in candidate_config.resumes if r.id == slug), None)
+        if added is None or added.resume_id != new_resume_id:
+            raise ConfigError(
+                f"Резюме '{slug}' не читается из обновлённого config.yaml — "
+                "запись не состоялась бы (возможен дубль ключа resumes). "
+                "Файл не изменён."
+            )
+        os.replace(candidate, config_path)
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
 def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -89,6 +286,20 @@ def run(args: argparse.Namespace):
     except ConfigError as e:
         print(f"[FAIL] {e}")
         sys.exit(1)
+    write_config = bool(getattr(args, "write_config", False))
+    slug = getattr(args, "slug", None) or f"{resume.id}-copy"
+    if write_config:
+        if not slug.strip() or any(char in slug for char in "\r\n"):
+            print("[FAIL] Slug не может быть пустым или содержать перевод строки")
+            sys.exit(1)
+        existing = getattr(config, "resumes", [])
+        if any(slug == item.id or slug == item.resume_id for item in existing):
+            print(f"[FAIL] Резюме со slug '{slug}' уже есть в конфиге")
+            sys.exit(1)
+        # Проверки записи — ДО браузера: отказ после успешного копирования на
+        # hh.ru оставил бы лишний дубль в аккаунте (та же логика, что у проверки
+        # коллизии слагов выше — «отказ до записи», #520).
+        reject_bare_source(resume)
     history = History(args.history)
 
     if args.dry_run:
@@ -156,7 +367,19 @@ def run(args: argparse.Namespace):
             print("[INFO] Ничего не отправлено.")
         elif result.success:
             print(f"[OK] Резюме {resume.id} скопировано. Новый resume_id: {result.new_resume_id}")
-            print(format_config_snippet(result.new_resume_id))
+            if write_config:
+                try:
+                    write_resume_config(args.config, resume, slug, result.new_resume_id)
+                except (ConfigError, OSError, yaml.YAMLError) as exc:
+                    # Копия на hh.ru уже создана и необратима, а конфиг остался
+                    # прежним (подмена атомарная) — единственное, что осталось
+                    # дать пользователю, это фрагмент для ручной вставки.
+                    print(f"[FAIL] Копия создана, но config.yaml не обновлён: {exc}")
+                    print(format_config_snippet(result.new_resume_id))
+                    return True
+                print(f"[OK] Резюме '{slug}' добавлено в config.yaml")
+            else:
+                print(format_config_snippet(result.new_resume_id))
         else:
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
             print(f"{prefix} {resume.id} — {result.reason}")
