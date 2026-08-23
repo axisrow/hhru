@@ -77,7 +77,15 @@ def test_letter_negation_does_not_score_as_full_match(letter: str):
 def test_letter_negation_is_scoped_to_the_negated_token_not_whole_letter():
     """Отрицание в письме точечное (как resume_match): вычёркивает конкретный
     отрицаемый токен, а не всё письмо. Отличаем от «letter пуст после фильтра»
-    (см. соседний тест) сравнением с письмом, где ВСЕ токены под отрицанием."""
+    (см. соседний тест) сравнением с письмом, где ВСЕ токены под отрицанием.
+
+    Точное числовое значение НЕ проверяем: оно зависит от ширины окна
+    ``resume_match._is_negated``, общего кода вне владения этого модуля
+    (сузилось после #550) — assert на конкретное число молча привязался бы
+    к деталям чужой реализации. Проверяем инвариант, который гарантирует сам
+    фикс: отрицаемый токен не засчитан, а несвязанный совпадающий токен —
+    засчитан.
+    """
     only_negation = letter_match_score(card("Требуется Python"), "без Python").rationale
     mixed = letter_match_score(card("Требуется Python, Kubernetes"), "без Python, знаю Kubernetes")
 
@@ -85,4 +93,6 @@ def test_letter_negation_is_scoped_to_the_negated_token_not_whole_letter():
     # (letter_text непустой), не NO_DATA_RATIONALE:
     assert only_negation == "совпадений нет"
     assert mixed.rationale == "keyword-match письма"
-    assert mixed.score_0_100 == 100.0  # непокрытый Kubernetes уже отфильтрован из letter
+    # Python отрицаем в письме — не должен внести вклад в 100%; Kubernetes не
+    # отрицаем и есть в вакансии — совпадение не должно быть занулено:
+    assert 0.0 < mixed.score_0_100 < 100.0
