@@ -238,7 +238,10 @@ def run_audit(args: argparse.Namespace) -> None:
         # «Аудит пуст» и «под фильтр ничего не попало» — разные факты. Слить их
         # в одну строку значит отправить оператора обратно в прямой SQL, ровно
         # от которого команда и избавляет.
-        if args.template or args.low_confidence or args.resume:
+        # Признак тот же, по которому фильтр ставится в SQL (``is not None``), а
+        # не truthiness: `--template ""` — фильтр реальный, совпадений у него
+        # просто нет, и сообщение «ответов нет» было бы ложью про базу.
+        if args.template is not None or args.low_confidence or args.resume:
             print("[INFO] Под заданный фильтр не попало ни одного ответа.")
         else:
             print("[INFO] Сохранённых ответов на анкеты нет.")

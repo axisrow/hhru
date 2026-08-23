@@ -383,6 +383,20 @@ def test_audit_template_flag_filters_by_template(capsys, tmp_path):
     assert "Настоящим подтверждаю" not in out
 
 
+def test_audit_renders_legacy_rows_without_resolver_columns(capsys, tmp_path):
+    """template/cluster/resolver_source добавлены ALTER'ом задним числом (#482),
+    поэтому в базе есть apply-строки, где они NULL. Таблица не должна падать и
+    обязана показать прочерк, а не пустую ячейку или None."""
+    _record_audit(tmp_path, template=None, cluster=None, resolver_source=None)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "None" not in out
+    assert "| -" in out
+    assert "Показано ответов: 1" in out
+
+
 def test_audit_empty_prints_info(capsys, tmp_path):
     cmd.run_audit(_audit_args(tmp_path))
 
@@ -409,11 +423,43 @@ def test_audit_rejects_a_negative_last(capsys, tmp_path):
 
 
 def test_audit_last_flag_stores_into_limit():
-    """--last переиспользует dest=limit, иначе _limit() не увидел бы значение."""
+    """--last переиспользует dest=limit, иначе _limit() не увидел бы значение.
+
+    Здесь же сверяются дефолты, на которые опирается ``_audit_args``: без этого
+    контур незамкнут — появись у ``--template`` не-None дефолт, CLI-тесты audit
+    продолжили бы проходить против фикстуры, разошедшейся с парсером.
+    """
     args = build_parser().parse_args(["questionnaire", "audit", "--last", "5"])
 
     assert args.limit == 5
     assert args.low_confidence is False
+    assert args.template is None
+    assert args.resume is None
+
+
+def test_audit_empty_template_is_a_real_filter_not_an_empty_audit(capsys, tmp_path):
+    """``--template ""`` — фильтр реальный (SQL ставит его по is not None),
+    совпадений у него просто нет. Сообщение «ответов нет» было бы ложью про базу."""
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path, template=""))
+
+    assert "Под заданный фильтр" in capsys.readouterr().out
+
+
+def test_audit_last_n_applies_after_the_filter(capsys, tmp_path):
+    """LIMIT + WHERE + reversed() вместе: срез берётся от отфильтрованных строк."""
+    for index in range(4):
+        _record_audit(tmp_path, text=f"Зарплата {index}?", template="salary")
+        _record_audit(tmp_path, text=f"Комплаенс {index}?", template="data_accuracy")
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary", limit=2))
+
+    out = capsys.readouterr().out
+    assert "Зарплата 2?" in out and "Зарплата 3?" in out
+    assert "Зарплата 1?" not in out
+    assert "Комплаенс" not in out
+    assert "Показано ответов: 2" in out
 
 
 def test_audit_output_has_no_emoji(capsys, tmp_path):
