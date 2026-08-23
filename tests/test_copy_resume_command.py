@@ -18,6 +18,7 @@ import pytest
 import hhru_bot.browser
 import hhru_bot.commands.copy_resume as cmd
 import hhru_bot.copy_resume
+from hhru_bot.config import ResumeConfig, SearchFilters
 from hhru_bot.copy_resume import CopyResumeResult
 from hhru_bot.history import History
 
@@ -52,6 +53,27 @@ def test_confirm_tty_prompt(answer, expected):
         cmd.confirm_write(False, prompt="?", isatty_fn=lambda: True, input_fn=lambda _: answer)
         is expected
     )
+
+
+def test_write_resume_config_appends_entry_without_rewriting_comments(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    original = "# keep this note\nresumes:\n  - id: backend\n    resume_url: old\n    search:\n      text: python\n\nthrottle:\n  daily_apply_limit: 40\n"
+    config_path.write_text(original, encoding="utf-8")
+    resume = ResumeConfig(
+        id="backend",
+        resume_url="https://hh.ru/resume/old",
+        search=SearchFilters(text="python"),
+    )
+
+    cmd.write_resume_config(config_path, resume, "backend-copy", NEW_ID)
+
+    result = config_path.read_text(encoding="utf-8")
+    assert "# keep this note\n" in result
+    assert "  - id: backend\n    resume_url: old\n    search:\n      text: python\n" in result
+    assert "  - id: backend-copy\n" in result
+    assert f"    resume_url: https://hh.ru/resume/{NEW_ID}\n" in result
+    assert "      text: python\n" in result
+    assert "throttle:\n" in result
 
 
 # --- run(): оркестрация с подменёнными браузером и конфигом ---

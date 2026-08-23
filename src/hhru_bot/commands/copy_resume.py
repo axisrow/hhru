@@ -6,14 +6,18 @@
 Дневные лимиты/кулдауны throttle к copy-resume не применяются (разовая
 операция, согласовано в cli-spec §3.3), но аудит в actions обязателен.
 
-Новый resume_id НАМЕРЕННО не пишется в config.yaml — копию надо сперва
-проверить руками на hh.ru; команда печатает готовый YAML-фрагмент для вставки.
+Новый resume_id по умолчанию только печатается. Флаг --write-config добавляет
+копию секции исходного резюме в config.yaml после подтверждённого успеха.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+
+import yaml
 
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 
@@ -43,6 +47,10 @@ def register(subparsers) -> None:
         action="store_true",
         help="Подтвердить боевой запуск без интерактивного вопроса",
     )
+    p.add_argument(
+        "--write-config", action="store_true", help="Добавить новое резюме в config.yaml"
+    )
+    p.add_argument("--slug", help="Slug нового резюме (по умолчанию <исходный>-copy)")
     p.set_defaults(func=run)
 
 
@@ -74,6 +82,46 @@ def format_config_snippet(new_resume_id: str) -> str:
     )
 
 
+def _resume_mapping(resume, slug: str, new_resume_id: str) -> dict:
+    values = asdict(resume) if is_dataclass(resume) else {}
+    values["id"] = slug
+    values["resume_url"] = f"https://hh.ru/resume/{new_resume_id}"
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str) -> None:
+    """Append a complete entry while leaving existing YAML/comments untouched."""
+    config_path = Path(path)
+    text = config_path.read_text(encoding="utf-8")
+    dumped = yaml.safe_dump(
+        [_resume_mapping(resume, slug, new_resume_id)],
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+    entry = "\n".join("  " + line for line in dumped.rstrip("\n").splitlines())
+    lines = text.splitlines(keepends=True)
+    resumes_line = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("resumes:") and not line.startswith(" ")
+        ),
+        None,
+    )
+    if resumes_line is None:
+        suffix = "\n" if text and not text.endswith("\n") else ""
+        config_path.write_text(text + suffix + "resumes:\n" + entry + "\n", encoding="utf-8")
+        return
+    insert_at = len(lines)
+    for i in range(resumes_line + 1, len(lines)):
+        if lines[i].strip() and not lines[i].startswith((" ", "\t", "#")):
+            insert_at = i
+            break
+    lines[insert_at:insert_at] = [entry + "\n"]
+    config_path.write_text("".join(lines), encoding="utf-8")
+
+
 def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -89,6 +137,16 @@ def run(args: argparse.Namespace):
     except ConfigError as e:
         print(f"[FAIL] {e}")
         sys.exit(1)
+    write_config = bool(getattr(args, "write_config", False))
+    slug = getattr(args, "slug", None) or f"{resume.id}-copy"
+    if write_config:
+        if not slug.strip() or any(char in slug for char in "\r\n"):
+            print("[FAIL] Slug не может быть пустым или содержать перевод строки")
+            sys.exit(1)
+        existing = getattr(config, "resumes", [])
+        if any(slug == item.id or slug == item.resume_id for item in existing):
+            print(f"[FAIL] Резюме со slug '{slug}' уже есть в конфиге")
+            sys.exit(1)
     history = History(args.history)
 
     if args.dry_run:
@@ -156,7 +214,15 @@ def run(args: argparse.Namespace):
             print("[INFO] Ничего не отправлено.")
         elif result.success:
             print(f"[OK] Резюме {resume.id} скопировано. Новый resume_id: {result.new_resume_id}")
-            print(format_config_snippet(result.new_resume_id))
+            if write_config:
+                try:
+                    write_resume_config(args.config, resume, slug, result.new_resume_id)
+                except (OSError, yaml.YAMLError) as exc:
+                    print(f"[FAIL] Копия создана, но config.yaml не обновлён: {exc}")
+                    return True
+                print(f"[OK] Резюме '{slug}' добавлено в config.yaml")
+            else:
+                print(format_config_snippet(result.new_resume_id))
         else:
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
             print(f"{prefix} {resume.id} — {result.reason}")
