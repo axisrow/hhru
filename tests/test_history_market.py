@@ -134,8 +134,8 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
     """address/experience/snippet_* опциональны в разметке hh.ru: пропуск
     блока при повторном scrape (транзиентный DOM-промах) НЕ должен затирать
     ранее собранное значение NULL'ом — COALESCE, как у published_at.
-    is_remote — исключение (см. docstring upsert_vacancy_seen): у него нет
-    промежуточного «не удалось прочитать», поэтому пишется безусловно."""
+    is_remote — тристейтный сигнал: None означает «не удалось прочитать», а
+    явный False остаётся валидным наблюдением."""
     h = History(tmp_path / "h.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
@@ -150,14 +150,14 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
     )
     # Повторный scrape: карточка не найдена/блоки не отрендерились —
     # caller шлёт None для текстовых полей (как _record_seen делает через
-    # `card.address or None`), но is_remote всегда bool.
+    # `card.address or None`) и для is_remote, если селектор не дал сигнала.
     h.upsert_vacancy_seen(
         vacancy_id="123",
         title="T",
         company="C",
         search_query="python",
         address=None,
-        is_remote=False,
+        is_remote=None,
         experience=None,
         snippet_requirement=None,
         snippet_responsibility=None,
@@ -167,7 +167,95 @@ def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
     assert row["experience"] == "between1And3"
     assert row["snippet_requirement"] == "req"
     assert row["snippet_responsibility"] == "resp"
-    assert row["is_remote"] == 0  # безусловно перезаписано, не COALESCE
+    assert row["is_remote"] == 1
+
+    # Явное наблюдение «не удалённая» всё ещё должно обновить true.
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        is_remote=False,
+    )
+    assert h.list_vacancies_seen()[0]["is_remote"] == 0
+
+
+def test_upsert_keeps_all_known_fields_when_scrape_returns_empty_values(tmp_path):
+    """Дрейф селектора не должен стирать best-known карточку (#532)."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python",
+        title="Backend",
+        company="Yandex",
+        salary_from=300000,
+        salary_to=400000,
+        salary_currency="RUB",
+        employer_tier="top_tech",
+        vacancy_text="Python and Docker",
+        published_at="2026-08-23T00:00:00",
+        address="Москва",
+        is_remote=True,
+        experience="between1And3",
+        snippet_requirement="req",
+        snippet_responsibility="resp",
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python",
+        title="",
+        company="",
+        salary_from=None,
+        salary_to=None,
+        salary_currency=None,
+        employer_tier=None,
+        vacancy_text="",
+        published_at=None,
+        address="",
+        is_remote=None,
+        experience="",
+        snippet_requirement="",
+        snippet_responsibility="",
+    )
+
+    row = h.list_vacancies_seen()[0]
+    assert row["title"] == "Backend"
+    assert row["company"] == "Yandex"
+    assert row["salary_from"] == 300000
+    assert row["salary_to"] == 400000
+    assert row["salary_currency"] == "RUB"
+    assert row["employer_tier"] == "top_tech"
+    assert row["vacancy_text"] == "Python and Docker"
+    assert row["published_at"] == "2026-08-23T00:00:00"
+    assert row["address"] == "Москва"
+    assert row["is_remote"] == 1
+    assert row["experience"] == "between1And3"
+    assert row["snippet_requirement"] == "req"
+    assert row["snippet_responsibility"] == "resp"
+
+
+def test_upsert_replaces_salary_bounds_as_one_observation(tmp_path):
+    """Частичная новая вилка не должна смешиваться со старой границей."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python",
+        salary_from=300000,
+        salary_to=400000,
+        salary_currency="RUB",
+    )
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python",
+        salary_from=350000,
+        salary_to=None,
+        salary_currency="RUB",
+    )
+
+    row = h.list_vacancies_seen()[0]
+    assert row["salary_from"] == 350000
+    assert row["salary_to"] is None
+    assert row["salary_currency"] == "RUB"
 
 
 def test_upsert_same_vacancy_different_query_keeps_both(tmp_path):

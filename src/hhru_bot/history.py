@@ -1867,6 +1867,8 @@ class History:
         находится и за сколько). При повторном scrape та же пара обновляет
         title/company/salary (hh.ru мог поменять вилку) и двигает
         ``last_seen_at``; ``first_seen_at`` хранит ПЕРВОЕ появление и не трогается.
+        Пустое значение не затирает ранее подтверждённое: это позволяет
+        пережить дрейф/временный сбой селектора без потери истории.
 
         Зарплата приходит из ``SalaryInfo`` (#34): ``salary_from``/``salary_to``
         оба NULL = «з/п не указана» (``parse_salary`` вернул None) — такая
@@ -1895,20 +1897,14 @@ class History:
         значение перезаписывает старое, а пропуск при повторном scrape НЕ
         затирает ранее собранные данные NULL'ом.
 
-        ``is_remote`` — исключение из этого правила: у него нет
-        промежуточного «не удалось прочитать» состояния при РАБОТАЮЩЕМ
-        селекторе — ``count()`` либо 0, либо >0, всегда однозначно. Поэтому
-        пишется безусловно (``excluded.is_remote``, не COALESCE): `False` —
-        валидное наблюдение "метки не было", а не признак сбоя.
+        ``is_remote`` — тристейтный сигнал: ``True`` и ``False`` — наблюдения,
+        ``None`` — селектор не дал наблюдения. Поэтому ``None`` не затирает
+        сохранённое значение, а явный ``False`` всё ещё может обновить
+        ``True``.
 
-        Это рассуждение перестаёт быть верным при ДРЕЙФЕ/переименовании
-        самого селектора (``VACANCY_CARD_REMOTE_LABEL``) — тогда ``count()``
-        молча вернёт 0 для всех карточек, и `is_remote` окажется неотличим
-        от массового "метки действительно не было". Тот же класс риска
-        (безусловная перезапись при дрейфе селектора) существует и для
-        ``title``/``company``/``salary_*``/``employer_tier`` выше — не
-        специфичен для `is_remote` и не устраняется точечным патчем одного
-        поля; разбор — issue #532.
+        Для всех полей действует консервативная политика «best known»: NULL и
+        пустые строки из нового scrape не удаляют подтверждённые данные. Это
+        предотвращает массовую потерю истории при дрейфе селектора (#532).
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1926,22 +1922,46 @@ class History:
                      snippet_responsibility)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
-                    title = excluded.title,
-                    company = excluded.company,
-                    salary_from = excluded.salary_from,
-                    salary_to = excluded.salary_to,
-                    salary_currency = excluded.salary_currency,
-                    employer_tier = excluded.employer_tier,
-                    vacancy_text = excluded.vacancy_text,
-                    published_at = COALESCE(excluded.published_at, published_at),
-                    address = COALESCE(excluded.address, address),
-                    is_remote = excluded.is_remote,
-                    experience = COALESCE(excluded.experience, experience),
+                    title = COALESCE(NULLIF(excluded.title, ''), title),
+                    company = COALESCE(NULLIF(excluded.company, ''), company),
+                    salary_from = CASE
+                        WHEN excluded.salary_from IS NOT NULL
+                          OR excluded.salary_to IS NOT NULL
+                          OR NULLIF(excluded.salary_currency, '') IS NOT NULL
+                        THEN excluded.salary_from
+                        ELSE salary_from
+                    END,
+                    salary_to = CASE
+                        WHEN excluded.salary_from IS NOT NULL
+                          OR excluded.salary_to IS NOT NULL
+                          OR NULLIF(excluded.salary_currency, '') IS NOT NULL
+                        THEN excluded.salary_to
+                        ELSE salary_to
+                    END,
+                    salary_currency = CASE
+                        WHEN excluded.salary_from IS NOT NULL
+                          OR excluded.salary_to IS NOT NULL
+                          OR NULLIF(excluded.salary_currency, '') IS NOT NULL
+                        THEN excluded.salary_currency
+                        ELSE salary_currency
+                    END,
+                    employer_tier = COALESCE(
+                        NULLIF(excluded.employer_tier, ''), employer_tier
+                    ),
+                    vacancy_text = COALESCE(
+                        NULLIF(excluded.vacancy_text, ''), vacancy_text
+                    ),
+                    published_at = COALESCE(
+                        NULLIF(excluded.published_at, ''), published_at
+                    ),
+                    address = COALESCE(NULLIF(excluded.address, ''), address),
+                    is_remote = COALESCE(excluded.is_remote, is_remote),
+                    experience = COALESCE(NULLIF(excluded.experience, ''), experience),
                     snippet_requirement = COALESCE(
-                        excluded.snippet_requirement, snippet_requirement
+                        NULLIF(excluded.snippet_requirement, ''), snippet_requirement
                     ),
                     snippet_responsibility = COALESCE(
-                        excluded.snippet_responsibility, snippet_responsibility
+                        NULLIF(excluded.snippet_responsibility, ''), snippet_responsibility
                     ),
                     last_seen_at = excluded.last_seen_at
                 """,
