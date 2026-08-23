@@ -42,6 +42,7 @@ def run(args: argparse.Namespace) -> None:
         else:
             print(f'[INFO] настройка "{args.key}" не найдена')
     else:
+
         def _set_setting(progress: ApplyProgress) -> bool:
             progress.begin_attempt()
             history.set_setting(args.key, args.value)
