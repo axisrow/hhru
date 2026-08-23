@@ -124,7 +124,7 @@ def _scope(args: argparse.Namespace) -> str | None:
         return args.resume
 
 
-def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
+def rekey_legacy_scans(config, history) -> None:
     """Перевести анкеты, записанные слагом конфига, на реальный resume_id (#486 п.1).
 
     До исправления ``probe --questionnaires-only`` ключевал сканы ``resume.id``
@@ -133,27 +133,24 @@ def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
     здесь, а не в ``History``: маппинг «слаг -> resume_id» живёт в конфиге, до
     которого история не достаёт.
 
-    Вызывается только из WRITE-команд (``learn``/``set``): ``pending`` и ``list``
-    классифицированы READ, не берут общий write-lock и писать не вправе.
-    Операция идемпотентна — второй прогон не найдёт ни одной строки со слагом.
+    Вызывается только из WRITE-путей (``learn``/``set`` и сам bulk-``probe``):
+    ``pending`` и ``list`` классифицированы READ, не берут общий write-lock и
+    писать не вправе. Точек вызова несколько намеренно — рабочий цикл
+    пользователя может идти только через ``probe`` и никогда не доходить до
+    ``learn``, и тогда его накопленные слаг-строки не нормализовал бы никто.
+    Операция идемпотентна, поэтому лишний вызов ничего не стоит.
 
     Проходит по ВСЕМ резюме конфига, а не только по ``--resume``: перекос ключей
     общий для базы, и чинить его наполовину значит оставить мину под следующей
     командой с другим ``--resume``.
 
-    Сбой SQLite глотается так же, как сбой конфига выше: это разовая уборка
+    Сбой SQLite глотается так же, как сбой конфига в обёртке: это разовая уборка
     накопленных данных, а не запрошенное пользователем действие — упавшая
-    нормализация не должна обрушивать саму ``set``/``learn``, которая идёт
-    следом (тот же контракт, что у ``record_questionnaire_pending``).
+    нормализация не должна обрушивать саму команду, которая идёт следом (тот же
+    контракт, что у ``record_questionnaire_pending``).
     """
     import sqlite3
 
-    from ..config import ConfigError, load_config
-
-    try:
-        config = load_config(args.config)
-    except (ConfigError, SystemExit, OSError):
-        return
     moved = 0
     try:
         for resume in config.resumes:
@@ -163,6 +160,21 @@ def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
         return
     if moved:
         print(f"[INFO] Сканы анкет переключены со слага на resume_id: {moved}.")
+
+
+def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
+    """``rekey_legacy_scans`` для путей, где конфиг ещё не загружен.
+
+    Сбой загрузки глотается той же деградацией, что и в ``_scope()``: работать с
+    уже накопленной очередью можно и без config.yaml под рукой.
+    """
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(args.config)
+    except (ConfigError, SystemExit, OSError):
+        return
+    rekey_legacy_scans(config, history)
 
 
 def run_pending(args: argparse.Namespace) -> None:

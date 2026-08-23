@@ -719,6 +719,15 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         print("Ошибка: --limit-questionnaires не может быть отрицательным.", file=sys.stderr)
         return True
 
+    if history is not None:
+        # #486 п.1: рабочий цикл пользователя может идти только через эту команду
+        # и никогда не доходить до `questionnaire learn`/`set` — тогда его
+        # накопленные слаг-строки не нормализовал бы никто. Идемпотентно, поэтому
+        # повторный вызов на уже нормализованной базе ничего не стоит.
+        from .questionnaire import rekey_legacy_scans
+
+        rekey_legacy_scans(config, history)
+
     all_results: list[QuestionnaireScanResult] = []
     interrupted = False
     # cycle-review PR #456 round 2 (Codex): накапливает потери записи в

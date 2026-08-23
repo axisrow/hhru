@@ -877,6 +877,10 @@ class _FakeHistory:
         self.calls.append(vacancy_id)
         self.resume_keys.append(resume_id)
 
+    def rekey_questionnaire_scans(self, old_resume_id, new_resume_id):
+        """Разовая нормализация ключей (#486 п.1) — этим двойникам её нечего чинить."""
+        return 0
+
 
 def test_retry_confirmed_questionnaire_is_persisted_to_history(monkeypatch, capsys):
     # cycle-review PR #456 (Codex): вакансия с transient UNKNOWN на быстром
@@ -1048,3 +1052,45 @@ def test_interrupt_with_history_write_failure_still_prints_lost_auth(monkeypatch
     assert result is CommandExitCode.SIGINT
     assert "[FAIL] не удалось сохранить" in output
     assert "[FAIL] сессия истекла во время прогона" in output
+
+
+def test_bulk_normalizes_legacy_slug_scans_on_startup(monkeypatch, capsys, tmp_path):
+    """#486: нормализация обязана быть достижима и из probe, не только из
+    questionnaire set/learn.
+
+    Пользователь, чей рабочий цикл идёт через `probe --questionnaires-only`,
+    может никогда не дойти до learn — без вызова здесь его накопленные slug-строки
+    остались бы недостижимы через --resume навсегда.
+    """
+    from hhru_bot.history import History
+
+    db = tmp_path / "h.db"
+    history = History(db)
+    history.record_questionnaire(
+        "python",
+        "v1",
+        "https://hh.ru/vacancy/v1",
+        "Разработчик",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Опишите проект",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+            }
+        ],
+    )
+
+    def scan(page_arg, vacancy, *, timeout_ms, form_timeout_ms):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.NO_QUESTIONNAIRE, "no-task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [_card("991")], scan)
+    probe.run_questionnaires(_bulk_args(history=str(db)))
+    capsys.readouterr()
+
+    assert len(history.list_scanned_questions(REAL_RESUME_ID)) == 1
+    assert history.list_scanned_questions("python") == []
