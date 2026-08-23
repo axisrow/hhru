@@ -104,6 +104,32 @@ def test_parse_experience_attribute_without_expected_prefix_returns_empty_string
     assert _parse_experience(card) == ""
 
 
+def test_parse_experience_ambiguous_match_returns_empty_string():
+    """Fail-closed на неоднозначности (>1 совпадение) — селектор префиксный
+    ([data-qa^='...']), не точный, поэтому в отличие от однозначных полей
+    карточки код НЕ полагается на .first и не выбирает произвольный элемент.
+    """
+
+    class _AmbiguousLocator:
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 2
+
+        def get_attribute(self, _name: str):
+            raise AssertionError("не должен читаться при неоднозначном count()")
+
+    class _AmbiguousCard:
+        def locator(self, selector: str):
+            if selector == search.sel.VACANCY_CARD_EXPERIENCE:
+                return _AmbiguousLocator()
+            return _TextLocator("", count=0)
+
+    assert _parse_experience(_AmbiguousCard()) == ""
+
+
 # --- snippet_requirement / snippet_responsibility -----------------------------
 
 

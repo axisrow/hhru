@@ -105,10 +105,9 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
     assert row["snippet_responsibility"] is None
 
 
-def test_upsert_refreshes_extra_card_fields_on_conflict(tmp_path):
-    """При повторном scrape address/is_remote освежаются (карточка могла
-    поменять формат работы между заходами) — в отличие от published_at,
-    который COALESCE'ится."""
+def test_upsert_refreshes_extra_card_fields_with_new_nonempty_value(tmp_path):
+    """При повторном scrape новое НЕпустое значение address перезаписывает
+    старое (карточка могла реально поменять город/формат работы)."""
     h = History(tmp_path / "h.db")
     h.upsert_vacancy_seen(
         vacancy_id="123",
@@ -129,6 +128,46 @@ def test_upsert_refreshes_extra_card_fields_on_conflict(tmp_path):
     row = h.list_vacancies_seen()[0]
     assert row["address"] == "Санкт-Петербург"
     assert row["is_remote"] == 1
+
+
+def test_upsert_keeps_previous_text_fields_when_scrape_misses_block(tmp_path):
+    """address/experience/snippet_* опциональны в разметке hh.ru: пропуск
+    блока при повторном scrape (транзиентный DOM-промах) НЕ должен затирать
+    ранее собранное значение NULL'ом — COALESCE, как у published_at.
+    is_remote — исключение (см. docstring upsert_vacancy_seen): у него нет
+    промежуточного «не удалось прочитать», поэтому пишется безусловно."""
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        address="Москва",
+        is_remote=True,
+        experience="between1And3",
+        snippet_requirement="req",
+        snippet_responsibility="resp",
+    )
+    # Повторный scrape: карточка не найдена/блоки не отрендерились —
+    # caller шлёт None для текстовых полей (как _record_seen делает через
+    # `card.address or None`), но is_remote всегда bool.
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="T",
+        company="C",
+        search_query="python",
+        address=None,
+        is_remote=False,
+        experience=None,
+        snippet_requirement=None,
+        snippet_responsibility=None,
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["address"] == "Москва"
+    assert row["experience"] == "between1And3"
+    assert row["snippet_requirement"] == "req"
+    assert row["snippet_responsibility"] == "resp"
+    assert row["is_remote"] == 0  # безусловно перезаписано, не COALESCE
 
 
 def test_upsert_same_vacancy_different_query_keeps_both(tmp_path):

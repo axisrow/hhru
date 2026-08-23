@@ -1885,11 +1885,21 @@ class History:
         search_page.py``), поэтому при повторном scrape без даты уже известное
         значение сохраняется (``COALESCE``), а не затирается NULL'ом.
 
-        ``address``/``is_remote``/``experience``/``snippet_requirement``/
+        ``address``/``experience``/``snippet_requirement``/
         ``snippet_responsibility`` (#517) — доп. признаки карточки для
-        статистики/ML. Все опциональны в разметке hh.ru, при повторном
-        scrape освежаются как title/company/salary (не COALESCE) — карточка
-        могла поменять адрес/формат работы между заходами.
+        статистики/ML. В отличие от title/company/salary эти блоки НЕ
+        рендерятся гарантированно (опциональны в разметке hh.ru): пустое
+        значение неотличимо от «карточка реально не отдала блок при этом
+        конкретном scrape» (транзиентный DOM-промах). Поэтому, как и
+        ``published_at``, освежаются через ``COALESCE`` — новое непустое
+        значение перезаписывает старое, а пропуск при повторном scrape НЕ
+        затирает ранее собранные данные NULL'ом.
+
+        ``is_remote`` — исключение из этого правила: у него нет
+        промежуточного «не удалось прочитать» состояния — ``count()`` детской
+        логики "есть ли DOM-нода" либо 0, либо >0, всегда однозначно.
+        Поэтому пишется безусловно (``excluded.is_remote``, не COALESCE):
+        `False` — валидное наблюдение "метки не было", а не признак сбоя.
         """
         now = datetime.now().isoformat()
         with self._connect() as conn:
@@ -1915,11 +1925,15 @@ class History:
                     employer_tier = excluded.employer_tier,
                     vacancy_text = excluded.vacancy_text,
                     published_at = COALESCE(excluded.published_at, published_at),
-                    address = excluded.address,
+                    address = COALESCE(excluded.address, address),
                     is_remote = excluded.is_remote,
-                    experience = excluded.experience,
-                    snippet_requirement = excluded.snippet_requirement,
-                    snippet_responsibility = excluded.snippet_responsibility,
+                    experience = COALESCE(excluded.experience, experience),
+                    snippet_requirement = COALESCE(
+                        excluded.snippet_requirement, snippet_requirement
+                    ),
+                    snippet_responsibility = COALESCE(
+                        excluded.snippet_responsibility, snippet_responsibility
+                    ),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (

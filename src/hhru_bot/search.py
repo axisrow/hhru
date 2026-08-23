@@ -647,11 +647,18 @@ def _parse_experience(card) -> str:
     суффиксе data-qa элемента (напр. "between1And3"), а не в его тексте —
     в отличие от остальных опциональных полей карточки. Блок опционален;
     отсутствие → пустая строка, не роняем сбор карточки.
+
+    Селектор — префиксный матч (``[data-qa^='...']``), а не точный, поэтому
+    в отличие от строгого ``count() != 1`` fail-closed паттерна этого проекта
+    здесь неоднозначность (>1 совпадение) тоже трактуется как «не смогли
+    определить» → пустая строка, а не произвольный выбор через ``.first``.
+    На живой выдаче (50 карточек, 2026-08-23, DevTools) совпадений всегда
+    ровно 0 или 1 — но код не полагается на это как на гарантию.
     """
-    locator = card.locator(sel.VACANCY_CARD_EXPERIENCE).first
-    if not locator.count():
+    locator = card.locator(sel.VACANCY_CARD_EXPERIENCE)
+    if locator.count() != 1:
         return ""
-    qa = locator.get_attribute("data-qa") or ""
+    qa = locator.first.get_attribute("data-qa") or ""
     if not qa.startswith(_EXPERIENCE_PREFIX):
         return ""
     return qa[len(_EXPERIENCE_PREFIX) :]
