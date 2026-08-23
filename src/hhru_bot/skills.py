@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -129,6 +130,19 @@ def read_skills(page: Page) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _skill_key(name: str) -> str:
+    """Casefolded, whitespace-normalized key for comparing skill chips.
+
+    parse_skill_plan normalizes planned names via ``" ".join(name.split())``;
+    read_skills only strips. Without applying the same normalization to the
+    observed/existing chips, a chip rendered with a double space or nbsp would
+    falsely mismatch the Counter and report false uncertain, locking the resume
+    via has_unresolved_uncertain (#536 round 2). The raw chip spelling is still
+    preserved in the success report; this key is only for equality comparison.
+    """
+    return " ".join(name.split()).casefold()
+
+
 def edit_skills_on_hh(
     page: Page,
     resume: ResumeConfig,
@@ -158,8 +172,8 @@ def edit_skills_on_hh(
     except RuntimeError as exc:
         return SkillsResult(False, reason=str(exc))
     existing = read_skills(page)
-    existing_keys = {skill.casefold() for skill in existing}
-    additions = tuple(skill for skill in skills if skill.name.casefold() not in existing_keys)
+    existing_keys = {_skill_key(skill) for skill in existing}
+    additions = tuple(skill for skill in skills if _skill_key(skill.name) not in existing_keys)
     if mode == "fresh" and existing:
         return SkillsResult(False, existing, skills, reason="режим с нуля требует пустого раздела")
     if dry_run:
@@ -193,4 +207,59 @@ def edit_skills_on_hh(
             reason=f"сохранение навыков не подтверждено: {exc}",
             acted=True,
         )
-    return SkillsResult(True, existing, skills, tuple(s.name for s in additions), acted=True)
+    # editor.wait_for(state="hidden") only confirms the overlay closed, not that
+    # the underlying resume page has re-rendered the chip list (CLAUDE.md: "commit
+    # не значит отрисовано"). Give the chip count a short window to settle before
+    # the strict read below, matching the wait_for(state="visible") pattern used
+    # after other mutating clicks (resume_position.py, bump.py, etc.) — a mismatch
+    # is still fail-closed after the wait, this only avoids racing the re-render.
+    expected_chip_count = len(existing) + len(additions)
+    if expected_chip_count > 0:
+        try:
+            page.locator(resume_page.RESUME_SKILLS_CHIP).nth(expected_chip_count - 1).wait_for(
+                state="visible", timeout=5_000
+            )
+        except PlaywrightError:
+            pass
+    try:
+        observed = read_skills(page)
+    except PlaywrightError as exc:
+        return SkillsResult(
+            False,
+            existing,
+            skills,
+            reason=f"сохранение навыков не подтверждено: чипы не прочитаны: {exc}",
+            acted=True,
+        )
+
+    # The editor closing only confirms that the UI accepted the interaction;
+    # the chips are the source of truth for what actually landed on the resume.
+    # Compare multisets so a rejected, duplicated, or otherwise unexpected
+    # chip cannot be reported as a successful addition.
+    existing_keys = [_skill_key(skill) for skill in existing]
+    expected_keys = existing_keys + [_skill_key(skill.name) for skill in additions]
+    observed_keys = [_skill_key(skill) for skill in observed]
+    if Counter(observed_keys) != Counter(expected_keys):
+        return SkillsResult(
+            False,
+            existing,
+            skills,
+            reason=(
+                "сохранение навыков не подтверждено: наблюдаемое состояние чипов "
+                f"не совпало с планом (ожидалось {len(expected_keys)}, "
+                f"наблюдалось {len(observed_keys)})"
+            ),
+            acted=True,
+        )
+
+    # Preserve the spelling observed on hh.ru in the success report while
+    # keeping ``existing`` as the pre-write snapshot used for the "было" count.
+    remaining_existing = Counter(existing_keys)
+    observed_added: list[str] = []
+    for skill in observed:
+        key = _skill_key(skill)
+        if remaining_existing[key]:
+            remaining_existing[key] -= 1
+        else:
+            observed_added.append(skill)
+    return SkillsResult(True, existing, skills, tuple(observed_added), acted=True)
