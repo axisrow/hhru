@@ -171,7 +171,8 @@ def _is_write_command(args: argparse.Namespace) -> bool:
 
 def _write_lock_path(args: argparse.Namespace) -> Path:
     """Return the lock location for the state mutated by a write command."""
-    lock_root = Path(args.config if args.command == "config" else args.history)
+    writes_config = args.command == "config" or getattr(args, "write_config", False)
+    lock_root = Path(args.config if writes_config else args.history)
     return lock_root.expanduser().resolve().parent / ".hhru.lock"
 
 

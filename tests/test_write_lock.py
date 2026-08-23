@@ -91,6 +91,30 @@ def test_config_write_lock_uses_config_directory(tmp_path):
     assert _write_lock_path(args) == (tmp_path / "settings" / ".hhru.lock").resolve()
 
 
+@pytest.mark.parametrize("write_config", [False, True])
+def test_copy_resume_write_config_lock_uses_mutated_state_directory(
+    tmp_path, write_config
+):
+    parser = cli.build_parser()
+    argv = [
+        "--config",
+        str(tmp_path / "settings" / "config.yaml"),
+        "--history",
+        str(tmp_path / "other" / "history.db"),
+        "copy-resume",
+        "--resume",
+        "backend",
+    ]
+    if write_config:
+        argv.append("--write-config")
+
+    args = parser.parse_args(argv)
+    cli._resolve_paths(args)
+
+    expected_root = tmp_path / ("settings" if write_config else "other")
+    assert _write_lock_path(args) == (expected_root / ".hhru.lock").resolve()
+
+
 def test_account_list_is_read_only_and_bypasses_lock_and_logging(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
 
