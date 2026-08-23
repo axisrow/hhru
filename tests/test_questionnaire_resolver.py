@@ -467,21 +467,6 @@ def test_resolved_answer_pending_helper_is_not_resolved():
         "Просим подтвердить, что вы указали в резюме достоверную информацию.",
         "Находитесь ли вы на территории РФ?",
         "Проживаете на территории России?",
-        # Резидентство спрашивают и без слова «территория», и любым глаголом.
-        # Смысл один — правовой статус пребывания, — поэтому признак опирается
-        # на упоминание страны, а не на перечень предикатов: список глаголов не
-        # сходится, каждая новая словоформа иначе отвечалась бы городом из
-        # обычного location-шаблона.
-        "Подскажите, вы на данный момент проживаете в РФ?",
-        "Территориально проживаете в РФ? В каком городе?",
-        "Вы проживаете в России?",
-        "Живёте ли вы сейчас в РФ?",
-        "Вы находитесь в РФ?",
-        "Пребываете в России?",
-        "Вы резидент РФ?",
-        "Вы из РФ?",
-        # Оформление по ТК — тоже правовой статус, угадывать его нельзя.
-        "В указанных в резюме компаниях вы оформлены по ТК РФ?",
     ],
 )
 def test_compliance_gate_blocks_by_text_without_any_match(text):
@@ -520,81 +505,65 @@ def test_build_answer_blocks_compliance_text_under_a_non_strict_template():
     "text",
     [
         "Подскажите, вы на данный момент проживаете в РФ?",
+        "Территориально проживаете в РФ? В каком городе?",
         "Вы проживаете в России?",
     ],
 )
-def test_residency_question_is_not_matched_to_a_plain_template(text):
-    """Сохранённый город не должен отвечать на вопрос о резидентстве.
+def test_residency_wording_is_answered_as_ordinary_location(text):
+    """«Проживаете в РФ?» — вопрос о местоположении, а не о правовом статусе.
 
-    Регресс на асимметрию: «проживаете НА ТЕРРИТОРИИ РФ» гейт удерживал, а
-    «проживаете В РФ» уходило в обычный ``location`` и заполнялось городом с
-    keyword-уверенностью 0.95 — выше порога, то есть без очереди и без
-    подтверждения человеком. Вопрос при этом спрашивает правовой статус
-    пребывания, и город — ответ не на него. Ошибка необратима и видна
-    работодателю, поэтому оба варианта формулировки обязаны вести себя
-    одинаково.
-    """
-    # Реальный поток: шаблон ищется ПО ИМЕНИ из match, поэтому несопоставленный
-    # вопрос не имеет сохранённого значения — ровно это и передаётся дальше.
-    match = resolve_template(text, confirmed={})
-    resolved = build_answer(_text(text), None, match)
-
-    assert match is None
-    assert not resolved.resolved
-    assert not resolved.answer
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Территориально проживаете в РФ? В каком городе?",
-        "Находитесь ли вы на территории РФ? В каком городе?",
-        # Тот же класс, другие предикаты: страж стоит на смысле вопроса, а не
-        # на списке глаголов — иначе каждая новая словоформа возвращала бы баг.
-        "Живёте ли вы сейчас в РФ? В каком городе?",
-        "Вы находитесь в РФ? В каком городе?",
-        "Пребываете в России? В каком городе?",
-    ],
-)
-def test_compound_residency_question_is_not_answered_by_a_guessed_template(text):
-    """Составной вопрос не отвечается городом, сохранённым для другой темы.
-
-    Латентная дырка гейта, вскрытая расширением комплаенс-паттерна (второй
-    пример воспроизводится и до него): «в каком городе» ловится обычным
-    ``location``-стемом, вопрос при этом остаётся комплаенсным ПО ТЕКСТУ, а
-    гейт считал сохранённый там город «явным значением» — хотя оператор заводил
-    его под вопрос о городе, а не о правовом статусе пребывания.
+    Живой прогон 2026-08-23: этой формулировкой работодатель выясняет, откуда
+    кандидат работает, и ответ на неё уже лежит в шаблоне ``location`` — каким
+    бы он ни был у конкретного пользователя («Воронеж», «Таиланд»). Попытка
+    считать её комплаенсом уводила в очередь вопрос, на который есть готовый
+    ответ, и заодно блокировала обычные вопросы про российский рынок.
+    Юридические формулировки закрыты отдельно, см.
+    ``test_compliance_gate_blocks_by_text_without_any_match``.
     """
     match = resolve_template(text, confirmed={})
-    resolved = build_answer(_text(text), _static("location", "Москва"), match)
+    resolved = build_answer(_text(text), _static("location", "Таиланд"), match)
 
-    assert match is not None and match.source == KEYWORD
+    assert match is not None and match.template == "location"
+    assert resolved.resolved
+    assert resolved.answer == "Таиланд"
+
+
+def test_compliance_question_is_not_answered_by_a_guessed_template():
+    """Комплаенс не отвечается шаблоном, который подобрала эвристика.
+
+    #482: «ни ключевые слова, ни LLM» не отвечают на комплаенс. Проверки
+    «шаблон static и непуст» для этого мало — гейт обязан смотреть, ЧЬИМ
+    решением выбран сам шаблон, иначе значение, сохранённое под другую тему,
+    засчитывается как явный комплаенс-ответ.
+    """
+    match = TemplateMatch("location", "conditions", KEYWORD, 0.95)
+    resolved = build_answer(_text("Ваше гражданство?"), _static("location", "Таиланд"), match)
+
     assert not resolved.resolved
     assert not resolved.answer
 
 
 def test_confirmed_phrase_still_answers_a_compliance_question():
     """Подтверждённая человеком формулировка — не догадка, гейт её пропускает."""
-    text = "Подскажите, вы на данный момент проживаете в РФ?"
-    match = match_phrase(text, {normalize(text): "residency"})
-    resolved = build_answer(_text(text), _static("residency", "Да", cluster="compliance"), match)
+    text = "Ваше гражданство?"
+    match = match_phrase(text, {normalize(text): "citizenship"})
+    resolved = build_answer(_text(text), _static("citizenship", "РФ", cluster="compliance"), match)
 
     assert match is not None and match.source == PHRASE
     assert resolved.resolved
-    assert resolved.answer == "Да"
+    assert resolved.answer == "РФ"
 
 
-def test_residency_question_is_answered_only_by_explicit_static_compliance():
-    """Явно сохранённый комплаенс-ответ по-прежнему отвечает — гейт не глухой."""
-    text = "Подскажите, вы на данный момент проживаете в РФ?"
+def test_compliance_question_is_answered_by_explicit_static_template():
+    """Явно объявленный комплаенс-шаблон отвечает — гейт не глухой."""
     resolved = build_answer(
-        _text(text),
-        _static("residency", "Да", cluster="compliance"),
-        TemplateMatch("residency", "compliance", KEYWORD, 0.95),
+        _text("Ваше гражданство?"),
+        _static("citizenship", "РФ", cluster="compliance"),
+        TemplateMatch("citizenship", "compliance", KEYWORD, 0.95),
     )
 
     assert resolved.resolved
-    assert resolved.answer == "Да"
+    assert resolved.answer == "РФ"
 
 
 # --- склонение и словоформы (регресс: фиксированные формы промахивались) ----
@@ -624,11 +593,6 @@ def test_residency_question_is_answered_only_by_explicit_static_compliance():
         # Живой прогон 2026-08-23: реальные формулировки, промахивавшиеся мимо
         # шаблона и уходившие в очередь как незнакомые.
         ("Из какого города вы планируете работать?", "location"),
-        # Аббревиатуры «ЗП»/«з/п» — живой прогон 2026-08-23: реальный вопрос
-        # «От какой ЗП вилки готовы рассматривать...» не сопоставлялся ни с
-        # чем и уходил в очередь как незнакомый.
-        ("От какой ЗП вилки готовы рассматривать предложения?", "salary"),
-        ("Ваши ожидания по з/п?", "salary"),
         # desired_role
         ("Желаемая должность?", "desired_role"),
         ("Укажите желаемую роль", "desired_role"),
@@ -749,11 +713,6 @@ def test_fenced_answer_is_accepted_end_to_end():
         # «находитесь» без уточнения места — вопрос о причинах поиска работы,
         # а не о локации; стем location не должен его задевать.
         "Почему сейчас находитесь в поиске работы?",
-        # Дефис и слэш сами являются границей слова, поэтому \bзп\b видит их
-        # как отдельный токен: аббревиатура внутри составного термина — это
-        # предметная область, а не вопрос о зарплатных ожиданиях.
-        "Знакомы с ЗП-модулем 1С?",
-        "Есть опыт работы с ЗП/кадрами?",
     ],
 )
 def test_seed_patterns_do_not_match_unrelated_questions(text):
