@@ -336,19 +336,24 @@ def test_audit_prints_answer_confidence_and_template(capsys, tmp_path):
     assert "1.00" in out
     assert "data_accuracy" in out
     assert "static" in out
-    assert "Показано ответов: 1, без ответа: 0." in out
+    assert "Показано ответов: 1, без ответа: 0, не отправлено: 0." in out
 
 
 def test_audit_marks_a_refused_answer_instead_of_printing_an_empty_cell(capsys, tmp_path):
-    """Пустой answer — осознанный отказ отвечать, а не «ответили пустотой»."""
-    _record_audit(tmp_path, answer="", answer_source="llm", confidence=0.2, filled=False)
+    """Пустой answer — осознанный отказ отвечать, а не «ответили пустотой».
+
+    ``filled=True``: форму бот заполнил и отклик отправил, но по ЭТОМУ вопросу
+    отвечать отказался. Именно так отказ отличается от неотправленного батча,
+    у которого не заполнялось вообще ничего.
+    """
+    _record_audit(tmp_path, answer="", answer_source="llm", confidence=0.2, filled=True)
 
     cmd.run_audit(_audit_args(tmp_path))
 
     out = capsys.readouterr().out
     assert "[не заполнено]" in out
     assert "0.20" in out
-    assert "без ответа: 1." in out
+    assert "без ответа: 1" in out
 
 
 def test_audit_low_confidence_flag_keeps_only_unanswered_questions(capsys, tmp_path):
@@ -469,6 +474,39 @@ def test_audit_output_has_no_emoji(capsys, tmp_path):
 
     out = capsys.readouterr().out
     assert all(ord(char) < 0x2190 for char in out), "вывод CLI должен быть текст/ASCII-таблицы"
+
+
+def test_audit_does_not_present_a_never_filled_proposal_as_an_answer(capsys, tmp_path):
+    """Отсеянный батч — это НЕ ответы: форма не заполнялась вовсе.
+
+    ``pipeline.py:589`` при единственном неуверенном вопросе пишет ``filled=0``
+    ВСЕМУ скану и на ``:615`` отсеивает вакансию. Уверенный сосед сохраняется с
+    непустым ``answer``, хотя на hh.ru не ушёл ни один символ. Печатать его
+    неотличимо от отправленного — та же ложь про базу, ради которой писались
+    ``95e7b5d`` и ``c375eb2``, только этажом выше.
+    """
+    _record_audit(tmp_path, text="Готовы к переезду?", answer="Да", confidence=0.98, filled=False)
+    _record_audit(tmp_path, text="Какие редакторы?", answer="", confidence=0.2, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "Готовы к переезду?" in out, "строку не прячем — её всё ещё оценивают"
+    assert "[не отправлено]" in out, "но её нельзя показывать как отправленный ответ"
+    assert "Показано ответов: 0" in out, "ни одного ответа отправлено не было"
+
+
+def test_audit_counts_only_filled_rows_as_answers(capsys, tmp_path):
+    """Футер считает отправленное, а не сохранённое: иначе счётчик лжёт так же,
+    как лгала бы ячейка."""
+    _record_audit(tmp_path, text="Зарплата?", answer="200000", filled=True)
+    _record_audit(tmp_path, text="Переезд?", answer="Да", confidence=0.98, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "Показано ответов: 1" in out
+    assert "не отправлено: 1" in out
 
 
 # --- write-lock классификация (критерий приёмки #482) ----------------------

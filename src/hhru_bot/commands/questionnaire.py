@@ -224,6 +224,38 @@ def _clip(text: str | None, width: int = _AUDIT_TEXT_WIDTH) -> str:
     return text if len(text) <= width else text[: width - 3] + "..."
 
 
+def _was_filled(row: dict) -> bool:
+    """Дошёл ли ответ до формы вообще.
+
+    ``filled`` батчевый — ``pipeline.py:589`` пишет его всему скану сразу, — и
+    именно поэтому он верен ЗДЕСЬ и неверен как признак «низкой уверенности»:
+    вопрос «заполнялась ли форма» тоже решается на весь скан. При единственном
+    неуверенном вопросе вакансия отсеивается (``pipeline.py:615``), и уверенный
+    сосед с непустым ``answer`` на hh.ru не уходит.
+    """
+    return bool(row["filled"])
+
+
+def _answer_cell(row: dict) -> str:
+    """Ячейка ответа: отправленное, отказ отвечать и неотправленное — разные факты.
+
+    ГРАНИЦА ТОЧНОСТИ: ``filled`` фиксирует успешное ЗАПОЛНЕНИЕ формы, но не
+    подтверждённую отправку на hh.ru (инвариант ``history.py:2773``). Он пишется
+    на ``pipeline.py:628`` ДО submit-клика (``:645``), поэтому «заполнено» и
+    «отклик подтверждённо ушёл» этой строкой не различаются: исход submit живёт
+    в ``actions`` и сюда не джойнится (#488 этого не требует). Поэтому
+    ``[не отправлено]`` — утверждение достоверное (форма не заполнялась), а
+    отсутствие маркера означает «заполнено», а не «доставлено».
+    """
+    if not _was_filled(row):
+        # Предложение, которое никогда не отправлялось. Строку не прячем — её
+        # всё ещё оценивают, — но выдавать за отправленный ответ нельзя.
+        return "[не отправлено]"
+    # Пустой ответ — не «ответили пустотой», а осознанный отказ отвечать:
+    # показываем это словами, а не пустой ячейкой.
+    return _clip(row["answer"]) if row["answer"] else "[не заполнено]"
+
+
 def run_audit(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
@@ -258,16 +290,18 @@ def run_audit(args: argparse.Namespace) -> None:
                     row["resolver_source"] or row["answer_source"] or "-",
                     row["template"] or "-",
                     _clip(row["text"]),
-                    # Пустой ответ — не «ответили пустотой», а осознанный отказ
-                    # отвечать: показываем это словами, а не пустой ячейкой.
-                    _clip(row["answer"]) if row["answer"] else "[не заполнено]",
+                    _answer_cell(row),
                 ]
                 for row in rows
             ],
         )
     )
-    unfilled = sum(1 for row in rows if not row["answer"])
-    print(f"[INFO] Показано ответов: {len(rows)}, без ответа: {unfilled}.")
+    # Считаем ОТПРАВЛЕННОЕ, а не сохранённое: иначе счётчик повторил бы ту же
+    # ложь, что и ячейка, этажом ниже.
+    sent = sum(1 for row in rows if _was_filled(row) and row["answer"])
+    unsent = sum(1 for row in rows if not _was_filled(row))
+    unanswered = sum(1 for row in rows if _was_filled(row) and not row["answer"])
+    print(f"[INFO] Показано ответов: {sent}, без ответа: {unanswered}, не отправлено: {unsent}.")
 
 
 def run_set(args: argparse.Namespace) -> None:
