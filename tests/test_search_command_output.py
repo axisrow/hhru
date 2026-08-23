@@ -85,6 +85,10 @@ def test_record_seen_writes_all_cards(tmp_path):
             vacancy_text="Python and Docker",
             side_job=True,
             no_resume=False,
+            activity="Активно отвечает",
+            hh_rating="4,8",
+            hrbrand_winner=True,
+            metro_stations=["Таганская", "Марксистская"],
         ),
         VacancyCard(
             vacancy_id="2",
@@ -104,6 +108,10 @@ def test_record_seen_writes_all_cards(tmp_path):
     assert by_id["1"]["vacancy_text"] == "Python and Docker"
     assert by_id["1"]["side_job"] == 1
     assert by_id["1"]["no_resume"] == 0
+    assert by_id["1"]["activity"] == "Активно отвечает"
+    assert by_id["1"]["hh_rating"] == "4,8"
+    assert by_id["1"]["hrbrand_winner"] == 1
+    assert by_id["1"]["metro_stations"] == '["Таганская", "Марксистская"]'
     # вакансия без зарплаты тоже записана
     assert by_id["2"]["salary_from"] is None
 

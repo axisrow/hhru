@@ -95,6 +95,13 @@ class _VacancyCard:
             return _TextLocator(count=1 if self._side_job else 0)
         if selector == search.sel.VACANCY_CARD_NO_RESUME:
             return _TextLocator(count=1 if self._no_resume else 0)
+        if selector in {
+            search.sel.VACANCY_CARD_ACTIVITY,
+            search.sel.VACANCY_CARD_HH_RATING,
+            search.sel.VACANCY_CARD_HRBRAND_WINNER,
+            search.sel.VACANCY_CARD_METRO_STATION,
+        }:
+            return _TextLocator(count=0)
         raise AssertionError(f"unexpected card selector: {selector}")
 
     def inner_text(self):

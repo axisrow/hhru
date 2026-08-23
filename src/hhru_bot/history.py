@@ -233,6 +233,12 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     -- "Можно без резюме". NULL означает отсутствие наблюдения.
     side_job INTEGER,
     no_resume INTEGER,
+    -- Приоритет-3 из #551: редкие признаки карточки. metro_stations — JSON
+    -- массив строк, так как на карточке может быть несколько станций.
+    activity TEXT,
+    hh_rating TEXT,
+    hrbrand_winner INTEGER,
+    metro_stations TEXT,
     UNIQUE (vacancy_id, search_query)
 );
 
@@ -681,6 +687,10 @@ class History:
             # #516 priority-2: optional vacancy-card badges.
             _ensure_column(conn, "vacancies_seen", "side_job", "INTEGER")
             _ensure_column(conn, "vacancies_seen", "no_resume", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "activity", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "hh_rating", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "hrbrand_winner", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "metro_stations", "TEXT")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -1868,6 +1878,10 @@ class History:
         snippet_responsibility: str | None = None,
         side_job: bool | None = None,
         no_resume: bool | None = None,
+        activity: str | None = None,
+        hh_rating: str | None = None,
+        hrbrand_winner: bool | None = None,
+        metro_stations: str | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1932,8 +1946,9 @@ class History:
                      salary_currency, search_query, first_seen_at,
                      last_seen_at, employer_tier, vacancy_text, published_at,
                      address, is_remote, experience, snippet_requirement,
-                     snippet_responsibility, side_job, no_resume)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     snippet_responsibility, side_job, no_resume, activity,
+                     hh_rating, hrbrand_winner, metro_stations)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = COALESCE(NULLIF(excluded.title, ''), title),
                     company = COALESCE(NULLIF(excluded.company, ''), company),
@@ -1978,6 +1993,10 @@ class History:
                     ),
                     side_job = COALESCE(excluded.side_job, side_job),
                     no_resume = COALESCE(excluded.no_resume, no_resume),
+                    activity = COALESCE(NULLIF(excluded.activity, ''), activity),
+                    hh_rating = COALESCE(NULLIF(excluded.hh_rating, ''), hh_rating),
+                    hrbrand_winner = COALESCE(excluded.hrbrand_winner, hrbrand_winner),
+                    metro_stations = COALESCE(NULLIF(excluded.metro_stations, ''), metro_stations),
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -2000,6 +2019,10 @@ class History:
                     snippet_responsibility,
                     None if side_job is None else int(side_job),
                     None if no_resume is None else int(no_resume),
+                    activity,
+                    hh_rating,
+                    None if hrbrand_winner is None else int(hrbrand_winner),
+                    metro_stations,
                 ),
             )
 
@@ -2014,7 +2037,8 @@ class History:
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
                 "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
                 "published_at, address, is_remote, experience, snippet_requirement, "
-                "snippet_responsibility, side_job, no_resume "
+                "snippet_responsibility, side_job, no_resume, activity, hh_rating, "
+                "hrbrand_winner, metro_stations "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
         return [dict(row) for row in rows]

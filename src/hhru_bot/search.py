@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
@@ -321,6 +321,10 @@ class VacancyCard:
     # дал наблюдения; это не то же самое, что подтверждённое отсутствие бейджа.
     side_job: bool | None = None
     no_resume: bool | None = None
+    activity: str = ""
+    hh_rating: str = ""
+    hrbrand_winner: bool | None = None
+    metro_stations: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.portfolio_evidence_requirement is None and self.vacancy_text:
@@ -543,6 +547,16 @@ def search_vacancies(
             side_job = True if side_job_label.count() > 0 else None
             no_resume_label = card.locator(sel.VACANCY_CARD_NO_RESUME).first
             no_resume = True if no_resume_label.count() > 0 else None
+            activity = _optional_text(card, sel.VACANCY_CARD_ACTIVITY) or ""
+            hh_rating = _optional_text(card, sel.VACANCY_CARD_HH_RATING) or ""
+            hrbrand = card.locator(sel.VACANCY_CARD_HRBRAND_WINNER).first
+            hrbrand_winner = True if hrbrand.count() > 0 else None
+            metro_locator = card.locator(sel.VACANCY_CARD_METRO_STATION)
+            metro_stations = [
+                metro_locator.nth(index).inner_text().strip()
+                for index in range(metro_locator.count())
+                if metro_locator.nth(index).inner_text().strip()
+            ]
 
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
@@ -571,6 +585,10 @@ def search_vacancies(
                     snippet_responsibility=snippet_responsibility,
                     side_job=side_job,
                     no_resume=no_resume,
+                    activity=activity,
+                    hh_rating=hh_rating,
+                    hrbrand_winner=hrbrand_winner,
+                    metro_stations=metro_stations,
                 )
             )
 

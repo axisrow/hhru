@@ -86,6 +86,10 @@ def test_upsert_stores_extra_card_fields(tmp_path):
         snippet_responsibility="Развитие сервисов платформы.",
         side_job=True,
         no_resume=True,
+        activity="Активно отвечает",
+        hh_rating="4,8",
+        hrbrand_winner=True,
+        metro_stations='["Таганская", "Марксистская"]',
     )
     row = h.list_vacancies_seen()[0]
     assert row["address"] == "Москва"
@@ -95,6 +99,10 @@ def test_upsert_stores_extra_card_fields(tmp_path):
     assert row["snippet_responsibility"] == "Развитие сервисов платформы."
     assert row["side_job"] == 1
     assert row["no_resume"] == 1
+    assert row["activity"] == "Активно отвечает"
+    assert row["hh_rating"] == "4,8"
+    assert row["hrbrand_winner"] == 1
+    assert row["metro_stations"] == '["Таганская", "Марксистская"]'
 
 
 def test_upsert_extra_card_fields_default_to_null(tmp_path):
@@ -109,6 +117,10 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
     assert row["snippet_responsibility"] is None
     assert row["side_job"] is None
     assert row["no_resume"] is None
+    assert row["activity"] is None
+    assert row["hh_rating"] is None
+    assert row["hrbrand_winner"] is None
+    assert row["metro_stations"] is None
 
 
 def test_upsert_refreshes_extra_card_fields_with_new_nonempty_value(tmp_path):

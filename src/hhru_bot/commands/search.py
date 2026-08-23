@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import hashlib
 import logging
 from dataclasses import replace
@@ -104,6 +105,8 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
 
     side_job/no_resume (#516) — опциональные булевы бейджи карточки. None
     означает отсутствие наблюдения и не затирает уже сохранённое значение.
+    activity/hh_rating/hrbrand_winner/metro_stations (#551) — приоритет-3
+    признаки; станции сохраняются JSON-массивом, чтобы поддержать 0..N.
     """
     from ..scoring import classify_employer
 
@@ -151,6 +154,11 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 snippet_responsibility=card.snippet_responsibility or None,
                 side_job=card.side_job,
                 no_resume=card.no_resume,
+                activity=card.activity or None,
+                hh_rating=card.hh_rating or None,
+                hrbrand_winner=card.hrbrand_winner,
+                metro_stations=json.dumps(card.metro_stations, ensure_ascii=False)
+                if card.metro_stations else None,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)

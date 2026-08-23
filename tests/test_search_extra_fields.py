@@ -198,6 +198,10 @@ def test_vacancy_card_accepts_new_fields():
         snippet_responsibility="resp",
         side_job=True,
         no_resume=False,
+        activity="Активно отвечает",
+        hh_rating="4,8",
+        hrbrand_winner=True,
+        metro_stations=["Таганская", "Марксистская"],
     )
     assert c.address == "Москва"
     assert c.is_remote is True
@@ -206,3 +210,7 @@ def test_vacancy_card_accepts_new_fields():
     assert c.snippet_responsibility == "resp"
     assert c.side_job is True
     assert c.no_resume is False
+    assert c.activity == "Активно отвечает"
+    assert c.hh_rating == "4,8"
+    assert c.hrbrand_winner is True
+    assert c.metro_stations == ["Таганская", "Марксистская"]
