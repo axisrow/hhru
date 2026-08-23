@@ -9,12 +9,45 @@ from types import SimpleNamespace
 import pytest
 
 import hhru_bot.commands.edit_skills as command
+from hhru_bot.skills import Skill, SkillsResult
 
 pytestmark = pytest.mark.unit
 
 
 class _Page:
     url = "https://hh.ru/resume/wrong-resume"
+
+
+def test_success_output_reports_added_and_existing_skills(capsys):
+    result = SkillsResult(
+        success=True,
+        existing=("Python", "Git"),
+        proposed=(Skill("Python", "advanced"), Skill("Docker", "intermediate")),
+        added=("Docker",),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "навыков было 2, добавлено 1, стало 3" in output
+    assert "добавлены: Docker" in output
+    assert "уже были: Python" in output
+
+
+def test_success_output_reports_noop_append(capsys):
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("python", "advanced"),),
+        added=(),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "навыков было 1, добавлено 0, стало 1" in output
+    assert "уже были: python" in output
+    assert "добавлены:" not in output
 
 
 @contextmanager
