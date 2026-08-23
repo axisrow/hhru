@@ -3186,6 +3186,44 @@ class History:
                 total += cursor.rowcount
         return total
 
+    def rekey_questionnaire_pending(self, slug_to_resume_id: dict[str, str]) -> int:
+        """Перевести накопленные ``questionnaire_pending`` со slug на resume_id (#486).
+
+        Тот же дефект, что у ``rekey_questionnaire_scans``, но здесь нельзя
+        сделать голый ``UPDATE``: ``UNIQUE(resume_id, question_key)`` — если тот
+        же вопрос уже стоит в очереди и под slug, и под resume_id (после того,
+        как ``questionnaire learn`` без ``--resume`` уже пересеял его из
+        мигрированных сканов), прямой ``UPDATE`` упал бы на конфликте. Строка
+        под resume_id в этом случае новее (создана уже после фикса) и остаётся
+        как есть; осиротевшая slug-строка удаляется, а не апдейтится — иначе
+        она осталась бы висеть в очереди с обоими ключами навсегда,
+        недостижимая для ``resolve_pending_for_templates``/``clear_pending_skips``,
+        которые фильтруют по единственному переданному ``resume_id``.
+        """
+        if not slug_to_resume_id:
+            return 0
+        total = 0
+        with self._connect() as conn:
+            for slug, resume_id in slug_to_resume_id.items():
+                if not slug or not resume_id or slug == resume_id:
+                    continue
+                cursor = conn.execute(
+                    """
+                    DELETE FROM questionnaire_pending
+                    WHERE resume_id = ? AND question_key IN (
+                        SELECT question_key FROM questionnaire_pending WHERE resume_id = ?
+                    )
+                    """,
+                    (slug, resume_id),
+                )
+                total += cursor.rowcount
+                cursor = conn.execute(
+                    "UPDATE questionnaire_pending SET resume_id = ? WHERE resume_id = ?",
+                    (resume_id, slug),
+                )
+                total += cursor.rowcount
+        return total
+
     def resolve_pending_for_templates(
         self, templates: set[str], *, resume_id: str | None = None
     ) -> int:

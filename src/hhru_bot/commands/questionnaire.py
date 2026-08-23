@@ -125,15 +125,17 @@ def _scope(args: argparse.Namespace) -> str | None:
 
 
 def _rekey_scanned_slugs(args: argparse.Namespace, history) -> None:
-    """Перенести накопленные questionnaire_scans со slug на resume_id (#486).
+    """Перенести накопленные questionnaire_scans/pending со slug на resume_id (#486).
 
     До фикса ``probe --questionnaires-only`` ключевал сканы ``resume.id``
     (slug из config.yaml), а не реальным ``resume_id`` — той же историей
-    пользуется и ``_scope()`` выше. Вызывается здесь (WRITE-путь ``learn``,
+    пользуется и ``_scope()`` выше; ``_seed_queue_from_scans`` дальше
+    переносит эту ошибку в ``questionnaire_pending`` (сеет очередь под
+    тем же ключом, что был у скана). Вызывается здесь (WRITE-путь ``learn``,
     держит write-lock), а не только из ``probe``: пользователь, у которого уже
     накопились slug-строки старым бинарником, может никогда больше не
-    запустить ``probe`` заново — без вызова здесь его накопленные сканы
-    остались бы недостижимы через ``--resume`` навсегда.
+    запустить ``probe`` заново — без вызова здесь его накопленные сканы и
+    незакрытая очередь остались бы недостижимы через ``--resume`` навсегда.
 
     Маппинг строится из ВСЕХ резюме конфига, а не только из запрошенного
     ``--resume``: иначе (а) сканы других резюме остаются осиротевшими под
@@ -154,6 +156,7 @@ def _rekey_scanned_slugs(args: argparse.Namespace, history) -> None:
         return
     mapping = {resume.id: resume.resume_id for resume in config.resumes}
     history.rekey_questionnaire_scans(mapping)
+    history.rekey_questionnaire_pending(mapping)
 
 
 def run_pending(args: argparse.Namespace) -> None:

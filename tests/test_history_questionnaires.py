@@ -273,3 +273,43 @@ def test_rekey_questionnaire_scans_is_idempotent(tmp_path):
 def test_rekey_questionnaire_scans_ignores_empty_mapping(tmp_path):
     history = History(tmp_path / "history.db")
     assert history.rekey_questionnaire_scans({}) == 0
+
+
+def test_rekey_questionnaire_pending_migrates_slug_rows(tmp_path):
+    """#486: очередь наследует слаг-ключ от скана, из которого её засеяли —
+    та же миграция, что и у questionnaire_scans, но по своей таблице."""
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire_pending(
+        "python", [{"text": "Готовы к переезду?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    rekeyed = history.rekey_questionnaire_pending({"python": "hex123"})
+
+    assert rekeyed == 1
+    assert len(history.list_questionnaire_pending("hex123")) == 1
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_questionnaire_pending_deletes_the_slug_row_on_conflict(tmp_path):
+    """Один и тот же вопрос уже стоит в очереди под ОБОИМИ ключами — это
+    происходит, если questionnaire learn без --resume уже пересеял вопрос под
+    resume_id (после миграции scans), пока slug-строка ещё не убрана.
+    UNIQUE(resume_id, question_key) не позволяет их слить UPDATE'ом; строка
+    под resume_id новее и остаётся, осиротевшая slug-строка удаляется, а не
+    висит недостижимой навсегда."""
+    history = History(tmp_path / "history.db")
+    question = [{"text": "Готовы к переезду?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending("python", question)
+    history.record_questionnaire_pending("hex123", question)
+
+    rekeyed = history.rekey_questionnaire_pending({"python": "hex123"})
+
+    assert rekeyed == 1
+    rows = history.list_questionnaire_pending("hex123")
+    assert len(rows) == 1
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_questionnaire_pending_ignores_empty_mapping(tmp_path):
+    history = History(tmp_path / "history.db")
+    assert history.rekey_questionnaire_pending({}) == 0
