@@ -69,6 +69,24 @@ def test_success_output_names_skill_as_read_from_resume(capsys):
     assert "уже были: PYTHON" not in output
 
 
+def test_dry_run_output_does_not_claim_skills_were_added(capsys):
+    """A cancelled dry run must not report additions in the past tense (#528)."""
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("Python", "advanced"), Skill("Docker", "basic")),
+        added=("Docker",),
+    )
+
+    command._print_success("resume", result, dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "навыков сейчас 1, будет добавлено 1, станет 2" in output
+    assert "добавлено 1, стало 2" not in output
+    assert "будут добавлены: Docker" in output
+    assert "[INFO] Ничего не сохранено на hh.ru." in output
+
+
 @contextmanager
 def _launch_context(*_args, **_kwargs):
     yield SimpleNamespace(new_page=lambda: _Page())

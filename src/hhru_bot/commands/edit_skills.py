@@ -21,12 +21,24 @@ def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
         for skill in result.proposed
         if skill.name.casefold() not in added_keys
     )
-    print(
-        f"{prefix} {resume_id}: навыков было {len(result.existing)}, "
-        f"добавлено {len(result.added)}, стало {len(result.existing) + len(result.added)}"
-    )
+    # A dry run cancels the form, so nothing was added: state the counts in the
+    # future tense there.  The real run keeps the wording #528 asked for.
+    if dry_run:
+        counts = (
+            f"навыков сейчас {len(result.existing)}, "
+            f"будет добавлено {len(result.added)}, "
+            f"станет {len(result.existing) + len(result.added)}"
+        )
+    else:
+        counts = (
+            f"навыков было {len(result.existing)}, "
+            f"добавлено {len(result.added)}, "
+            f"стало {len(result.existing) + len(result.added)}"
+        )
+    print(f"{prefix} {resume_id}: {counts}")
     if result.added:
-        print(f"  добавлены: {', '.join(result.added)}")
+        label = "будут добавлены" if dry_run else "добавлены"
+        print(f"  {label}: {', '.join(result.added)}")
     if already_present:
         print(f"  уже были: {', '.join(already_present)}")
     for skill in result.proposed:
