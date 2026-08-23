@@ -66,7 +66,10 @@ def test_success_output_names_skill_as_read_from_resume(capsys):
 
     output = capsys.readouterr().out
     assert "уже были: Python" in output
-    assert "уже были: PYTHON" not in output
+    # The itemized line must agree with the line above it: both name the chip
+    # as read off the resume, not as the caller spelled it.
+    assert "  - Python [advanced] — сохранить" in output
+    assert "PYTHON" not in output
 
 
 def test_dry_run_output_does_not_claim_skills_were_added(capsys):

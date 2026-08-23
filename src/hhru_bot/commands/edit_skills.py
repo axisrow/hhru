@@ -43,7 +43,8 @@ def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
         print(f"  уже были: {', '.join(already_present)}")
     for skill in result.proposed:
         state = "добавить" if skill.name.casefold() in added_keys else "сохранить"
-        print(f"  - {skill.name} [{skill.level}] — {state}")
+        name = existing_by_key.get(skill.name.casefold(), skill.name)
+        print(f"  - {name} [{skill.level}] — {state}")
     if dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
 
