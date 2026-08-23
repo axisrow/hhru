@@ -140,6 +140,42 @@ def test_record_seen_preserves_history_when_company_selector_misses(tmp_path):
     assert row["is_remote"] == 1
 
 
+def test_record_seen_preserves_employer_tier_when_rating_selector_misses(tmp_path):
+    """Company-имя есть, но rating/reviews-блок не отрендерился (селектор-промах,
+    не «компания реально неизвестна») — ранее подтверждённый tier не должен
+    затираться на "unknown" (review-финдинг PR #539: classify_employer(company,
+    None) для нетоповой компании возвращает непустую строку "unknown", которая
+    раньше проходила COALESCE(NULLIF(...)) как достоверное новое значение)."""
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.history import History
+
+    history = History(tmp_path / "h.db")
+    history.upsert_vacancy_seen(
+        vacancy_id="1",
+        search_query="python",
+        title="Backend",
+        company="ООО Ромашка",
+        employer_tier="mid",
+    )
+
+    _record_seen(
+        [
+            VacancyCard(
+                vacancy_id="1",
+                title="Backend",
+                company="ООО Ромашка",
+                url="https://hh.ru/vacancy/1",
+                employer_info=None,  # rating/reviews-блок не найден на этом scrape
+            )
+        ],
+        "python",
+        history,
+    )
+
+    row = history.list_vacancies_seen()[0]
+    assert row["employer_tier"] == "mid"
+
+
 def test_record_seen_failure_does_not_raise(tmp_path):
     """Сбой записи НЕ должен валить поиск — рынок лишь удобство."""
     from hhru_bot.commands.search import _record_seen

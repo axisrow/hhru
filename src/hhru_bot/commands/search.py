@@ -111,7 +111,17 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
         # An empty company means that this scrape did not produce a usable
         # observation. Do not turn it into ``unknown`` and overwrite a
         # previously classified employer during selector drift (#532).
-        tier = classify_employer(company, getattr(card, "employer_info", None)) if company else None
+        employer_info = getattr(card, "employer_info", None) if company else None
+        tier = classify_employer(company, employer_info) if company else None
+        # Review-финдинг (#532): classify_employer("unknown") не отличает
+        # «компания реально неизвестна» от «rating/reviews-селектор не дал
+        # сигнала на этом scrape» — оба случая раньше схлопывались в строку
+        # "unknown", которая проходит COALESCE(NULLIF(...)) как непустая и
+        # затирает ранее подтверждённый tier (например "mid" из прошлого
+        # scrape). top_tech/big_corp матчатся по имени и не зависят от
+        # employer_info, поэтому им это не грозит — гейтим только unknown.
+        if tier == "unknown" and employer_info is None:
+            tier = None
         try:
             history.upsert_vacancy_seen(
                 vacancy_id=card.vacancy_id,

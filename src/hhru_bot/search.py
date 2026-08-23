@@ -516,8 +516,13 @@ def search_vacancies(
             # Доп. признаки карточки для статистики/ML (issue #517). Все блоки
             # опциональны — мягкий парсинг, отсутствие не роняет сбор карточки.
             address = _optional_text(card, sel.VACANCY_CARD_ADDRESS) or ""
+            # Карточка уже гарантированно распарсилась (card_text/title выше не
+            # упали) — отсутствие лейбла здесь не «дрейф селектора», а законное
+            # наблюдение «вакансия не удалённая» (#532 review-финдинг: тристейт
+            # был декоративен, т.к. search.py никогда не эмитил явный False, и
+            # ранее сохранённый True было невозможно скорректировать обратно).
             remote_label = card.locator(sel.VACANCY_CARD_REMOTE_LABEL).first
-            is_remote = True if remote_label.count() > 0 else None
+            is_remote = remote_label.count() > 0
             experience = _parse_experience(card)
             snippet_requirement = _optional_text(card, sel.VACANCY_CARD_SNIPPET_REQUIREMENT) or ""
             snippet_responsibility = (

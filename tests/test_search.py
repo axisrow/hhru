@@ -140,6 +140,23 @@ def test_search_waits_for_delayed_cards_before_declaring_empty(monkeypatch):
     )
 
 
+def test_search_reports_is_remote_false_for_healthy_card_without_label(monkeypatch):
+    """Review-финдинг PR #539: карточка уже успешно распарсилась (title/href
+    прочитаны выше), значит отсутствие remote-лейбла здесь — не селектор-дрейф,
+    а законное наблюдение «вакансия не удалённая». До фикса search_vacancies
+    маппил это в None, из-за чего is_remote физически не мог зафиксировать
+    False через боевой путь парсинга — только через прямой upsert в тестах."""
+    page = _SearchPage([_VacancyCard()])
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search, "_has_next_page", lambda *args: False)
+    monkeypatch.setattr(search, "_optional_text", lambda *args: None)
+    monkeypatch.setattr(search, "_parse_employer_info", lambda *args: None)
+
+    cards = search.search_vacancies(page, _search_filters(), max_pages=1)
+
+    assert cards[0].is_remote is False
+
+
 def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):
     """Нулевой count без подтверждённого empty-state не должен обрывать обход."""
     page = _SearchPage([])
