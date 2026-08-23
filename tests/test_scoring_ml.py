@@ -27,9 +27,9 @@ from hhru_bot.scoring import (
     HeuristicScoringProvider,
     KnownCompanyTier,
     LLMScoringProvider,
-    _parse_llm_score,
     classify_employer,
 )
+from hhru_bot.scoring.vacancy import _parse_llm_score
 from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.unit
@@ -208,7 +208,7 @@ def test_build_scoring_prompt_omits_trusted_badge():
     # Тот же дефект, что #118 чинит в prefilter: ~98% карточек несут
     # trusted-бейдж, поэтому «надёжный работодатель» в промпте не различал
     # бы вакансии, а только тратил токены на бесполезную похвалу.
-    from hhru_bot.scoring import _build_scoring_prompt
+    from hhru_bot.scoring.vacancy import _build_scoring_prompt
 
     c = card(employer_info=EmployerInfo(trusted=True, rating=4.0, reviews_count=10))
     messages = _build_scoring_prompt(c, None)
