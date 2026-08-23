@@ -119,6 +119,53 @@ def test_record_seen_failure_does_not_raise(tmp_path):
     _record_seen(cards, "python", history)  # не должно упасть
 
 
+def test_search_text_overrides_resume_without_mutating_config(monkeypatch):
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+    from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python", exclude_employers=["BadCorp"]),
+    )
+    config = AppConfig(
+        storage_state_file=__import__("pathlib").Path("state.json"),
+        throttle=ThrottleConfig(),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    args = argparse.Namespace(resume="python", text="Тестировщик")
+
+    actual = _resumes_for_search(config, args)
+
+    assert actual[0].search.text == "Тестировщик"
+    assert actual[0].search.exclude_employers == ["BadCorp"]
+    assert resume.search.text == "python"
+
+
+def test_search_text_without_resume_uses_empty_default_filters():
+    import argparse
+
+    from hhru_bot.commands.search import _resumes_for_search
+    from hhru_bot.config import AppConfig, SearchFilters, ThrottleConfig
+
+    config = AppConfig(
+        storage_state_file=__import__("pathlib").Path("state.json"),
+        throttle=ThrottleConfig(),
+        cover_letter_default="hello",
+        resumes=[],
+    )
+    args = argparse.Namespace(resume=None, text="Тестировщик")
+
+    actual = _resumes_for_search(config, args)
+
+    assert len(actual) == 1
+    assert actual[0].search == SearchFilters(text="Тестировщик")
+    assert actual[0].resume_id.startswith("adhoc-")
+
+
 # --- VacancySearchIndeterminate не должен выдаваться за успешный результат ---
 #
 # cycle-review PR #460 (round 1): удалённый `continue` после `failed = True`
