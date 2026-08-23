@@ -590,3 +590,57 @@ def test_rekey_is_idempotent_and_leaves_foreign_keys_alone(tmp_path):
     assert history.rekey_questionnaire_scans("python", real_id) == 0
     assert history.rekey_questionnaire_scans(real_id, real_id) == 0
     assert len(history.list_scanned_questions("marketing")) == 1
+
+
+def test_rekey_moves_the_pending_queue_not_only_the_scans(tmp_path):
+    """Очередь ключуется тем же слагом: `learn` БЕЗ --resume (обходной путь из
+    #486) сеет строки под ключом из скана, а не под scope.
+
+    Перенеся только сканы, мы бы заново засеяли те же вопросы под hex-ключом:
+    ON CONFLICT у очереди — (resume_id, question_key), слаг и hex не сталкиваются,
+    и получился бы дубль, одна половина которого недостижима навсегда.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "python", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(real_id)] == [
+        "Ваш опыт?"
+    ]
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_collapses_a_question_queued_under_both_keys(tmp_path):
+    """Тот же вопрос уже стоит под hex (боевой apply) и под слагом (probe+learn).
+
+    UNIQUE(resume_id, question_key) не даст перенести слаг поверх существующего
+    hex — перенос обязан схлопнуть дубль, а не упасть и не оставить сироту.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert len(history.list_questionnaire_pending(real_id)) == 1
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_set_rekeys_legacy_scans_without_a_tty(tmp_path):
+    """learn выходит по !isatty ДО нормализации, поэтому set — единственный её
+    неинтерактивный путь."""
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите проект")
+
+    cmd.run_set(_args(tmp_path, resume="python", answer="от 250000"))
+
+    assert len(history.list_scanned_questions(real_id)) == 1
+    assert history.list_scanned_questions("python") == []

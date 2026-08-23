@@ -125,7 +125,7 @@ def _scope(args: argparse.Namespace) -> str | None:
 
 
 def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
-    """Перевести сканы, записанные слагом конфига, на реальный resume_id (#486 п.1).
+    """Перевести анкеты, записанные слагом конфига, на реальный resume_id (#486 п.1).
 
     До исправления ``probe --questionnaires-only`` ключевал сканы ``resume.id``
     (слаг), а не hex-хвостом ``resume_url``, и накопленные строки остались бы
@@ -261,6 +261,9 @@ def run_set(args: argparse.Namespace) -> None:
 
     scope = _scope(args)
     history = History(args.history)
+    # Здесь, а не только в learn: learn выходит по !isatty ДО нормализации, и без
+    # этого вызова у неё не было бы неинтерактивного пути вовсе.
+    _rekey_legacy_scans(args, history)
     history.set_questionnaire_template(
         args.template,
         mode=args.mode,

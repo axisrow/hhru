@@ -2820,7 +2820,7 @@ class History:
             )
 
     def rekey_questionnaire_scans(self, old_resume_id: str, new_resume_id: str) -> int:
-        """Переключить накопленные сканы со слага конфига на реальный resume_id.
+        """Переключить накопленные анкеты со слага конфига на реальный resume_id.
 
         До #486 ``probe --questionnaires-only`` ключевал сканы слагом
         (``resume.id``), тогда как apply-путь и ``questionnaire._scope()``
@@ -2829,19 +2829,41 @@ class History:
         сотни — молча, без предупреждения. Тот же перекос задевал scoped
         ``stats``: ``questionnaire_answer_summary`` джойнит эту же таблицу.
 
-        Идемпотентно и узко: правит ровно строки со старым ключом, ничего не
-        создаёт и не удаляет. Системы миграций в проекте нет намеренно
-        (CLAUDE.md, «Схема SQLite»), поэтому разовая нормализация живёт как
-        обычный метод и вызывается командой, у которой на руках есть маппинг
-        слаг -> resume_id из конфига.
+        Переносятся ОБЕ таблицы. Очередь — не производная от сканов: обходной
+        путь из issue (``learn`` БЕЗ ``--resume``) сеет строки под ключом из
+        скана, а не под scope, поэтому в ``questionnaire_pending`` слаг-строк
+        накопилось больше, чем в сканах. Перенеся только сканы, следующий
+        ``learn`` заново засеял бы те же вопросы уже под hex-ключом: ON CONFLICT
+        очереди — ``(resume_id, question_key)``, слаг и hex не сталкиваются, и
+        вышел бы дубль, половина которого недостижима навсегда.
+
+        ``UPDATE OR IGNORE`` + удаление остатка: тот же вопрос мог уже стоять
+        под hex (боевой apply) и под слагом (probe+learn) — UNIQUE не даст
+        перенести второй, и его нужно схлопнуть, а не оставить сиротой.
+
+        Идемпотентно и узко: трогает ровно строки со старым ключом. Системы
+        миграций в проекте нет намеренно (CLAUDE.md, «Схема SQLite»), поэтому
+        разовая нормализация живёт как обычный метод и вызывается командой, у
+        которой на руках есть маппинг слаг -> resume_id из конфига.
+
+        Возвращает число перенесённых строк сканов (то, что видит пользователь
+        как «сколько анкет вернулось в оборот»).
         """
         if not old_resume_id or old_resume_id == new_resume_id:
             return 0
         with self._connect() as conn:
-            return conn.execute(
+            moved = conn.execute(
                 "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
                 (new_resume_id, old_resume_id),
             ).rowcount
+            conn.execute(
+                "UPDATE OR IGNORE questionnaire_pending SET resume_id = ? WHERE resume_id = ?",
+                (new_resume_id, old_resume_id),
+            )
+            # Остаток — строки, которым UNIQUE не дал переехать: тот же вопрос
+            # уже стоит под новым ключом, дубликат не нужен.
+            conn.execute("DELETE FROM questionnaire_pending WHERE resume_id = ?", (old_resume_id,))
+            return moved
 
     def questionnaire_answer_summary(
         self, resume_id: str | None = None, period: str = "all"
