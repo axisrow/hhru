@@ -2856,12 +2856,29 @@ class History:
                 "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
                 (new_resume_id, old_resume_id),
             ).rowcount
+            # Сначала «воскресить» hex-близнеца, если слаг-строка ещё активна:
+            # UNIQUE — по (resume_id, question_key), СТАТУС в ключ не входит,
+            # поэтому UPDATE OR IGNORE ниже откажется переносить слаг-строку при
+            # любом близнеце, включая resolved, а DELETE её уничтожит — вопрос
+            # исчезнет из очереди навсегда. Приоритет тот же, что у
+            # ``record_questionnaire_pending`` (ON CONFLICT ... SET
+            # status='pending'): заново увиденный вопрос возвращает строку в
+            # работу, а не наоборот.
+            conn.execute(
+                """UPDATE questionnaire_pending SET status = 'pending', updated_at = ?
+                   WHERE resume_id = ? AND status != 'pending' AND question_key IN (
+                       SELECT question_key FROM questionnaire_pending
+                       WHERE resume_id = ? AND status = 'pending'
+                   )""",
+                (datetime.now().isoformat(), new_resume_id, old_resume_id),
+            )
             conn.execute(
                 "UPDATE OR IGNORE questionnaire_pending SET resume_id = ? WHERE resume_id = ?",
                 (new_resume_id, old_resume_id),
             )
             # Остаток — строки, которым UNIQUE не дал переехать: тот же вопрос
-            # уже стоит под новым ключом, дубликат не нужен.
+            # уже стоит под новым ключом (и после promote выше — в актуальном
+            # статусе), дубликат не нужен.
             conn.execute("DELETE FROM questionnaire_pending WHERE resume_id = ?", (old_resume_id,))
             return moved
 

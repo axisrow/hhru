@@ -644,3 +644,92 @@ def test_set_rekeys_legacy_scans_without_a_tty(tmp_path):
 
     assert len(history.list_scanned_questions(real_id)) == 1
     assert history.list_scanned_questions("python") == []
+
+
+def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
+    """UNIQUE — по (resume_id, question_key), статус в ключ НЕ входит.
+
+    Поэтому UPDATE OR IGNORE отказывается переносить слаг-строку при ЛЮБОМ
+    hex-близнеце, в том числе resolved, и следующий DELETE её уничтожал: вопрос
+    исчезал из очереди навсегда. `record_questionnaire_pending` на этой же
+    таблице имеет ОБРАТНЫЙ приоритет (ON CONFLICT ... SET status='pending' —
+    заново увиденный вопрос воскрешает resolved-строку), и перенос обязан
+    совпадать с ним, а не противоречить.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending("python", question)
+    history.resolve_pending_for_questions(["Ваш опыт?"], resume_id=real_id)
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(real_id)] == [
+        "Ваш опыт?"
+    ]
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_learn_does_not_pin_a_resume_to_the_account_cluster(tmp_path, monkeypatch):
+    """Приоритет «сохранённого шаблона» обязан быть scope-ТОЧНЫМ.
+
+    get_questionnaire_templates(scope) возвращает и account-строки (resume_id=''),
+    поэтому нескопированная проверка закрепляла бы 'mixed' аккаунта за резюме —
+    ровно та деградация кластера, которую чинит #486 п.5, только с другого конца.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    # Account-шаблон с дефолтным кластером; резюме-переопределения ещё нет.
+    history.set_questionnaire_template(
+        "work_permit", mode="static", cluster="mixed", answer="Да", resume_id=None
+    )
+    history.record_questionnaire_pending(
+        real_id,
+        [
+            {
+                "text": "Есть ли разрешение на работу?",
+                "kind": "text",
+                "cluster": "compliance",
+                "reason": "нет шаблона",
+            }
+        ],
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    _answers = iter(["work_permit", "Да"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(_answers))
+
+    cmd.run_learn(_args(tmp_path, resume="python", limit=20))
+
+    stored = History(tmp_path / "h.db").get_questionnaire_templates(real_id)["work_permit"]
+    assert stored["cluster"] == "compliance"
+
+
+def test_static_example_resolves_only_within_the_given_scope(tmp_path):
+    """Скоупированный путь: тот же вопрос стоит у двух резюме, снимается один.
+
+    Тест выше вызывает set БЕЗ --resume, то есть scope=None и резолюция идёт
+    по всей базе — он проходил бы и при сломанной фильтрации по resume_id.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    other_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Данные достоверны?", "kind": "text", "reason": "комплаенс"}]
+    history.record_questionnaire_pending(real_id, question)
+    history.record_questionnaire_pending(other_id, question)
+
+    cmd.run_set(
+        _args(
+            tmp_path,
+            resume="python",
+            template="data_accuracy",
+            cluster="compliance",
+            answer="Да",
+            example=["Данные достоверны?"],
+        )
+    )
+
+    assert history.list_questionnaire_pending(real_id) == []
+    assert len(history.list_questionnaire_pending(other_id)) == 1

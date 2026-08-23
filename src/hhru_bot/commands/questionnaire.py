@@ -136,7 +136,18 @@ def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
     Вызывается только из WRITE-команд (``learn``/``set``): ``pending`` и ``list``
     классифицированы READ, не берут общий write-lock и писать не вправе.
     Операция идемпотентна — второй прогон не найдёт ни одной строки со слагом.
+
+    Проходит по ВСЕМ резюме конфига, а не только по ``--resume``: перекос ключей
+    общий для базы, и чинить его наполовину значит оставить мину под следующей
+    командой с другим ``--resume``.
+
+    Сбой SQLite глотается так же, как сбой конфига выше: это разовая уборка
+    накопленных данных, а не запрошенное пользователем действие — упавшая
+    нормализация не должна обрушивать саму ``set``/``learn``, которая идёт
+    следом (тот же контракт, что у ``record_questionnaire_pending``).
     """
+    import sqlite3
+
     from ..config import ConfigError, load_config
 
     try:
@@ -144,8 +155,12 @@ def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
     except (ConfigError, SystemExit, OSError):
         return
     moved = 0
-    for resume in config.resumes:
-        moved += history.rekey_questionnaire_scans(resume.id, resume.resume_id)
+    try:
+        for resume in config.resumes:
+            moved += history.rekey_questionnaire_scans(resume.id, resume.resume_id)
+    except sqlite3.Error as exc:
+        print(f"[INFO] Нормализация ключей анкет пропущена: {exc}")
+        return
     if moved:
         print(f"[INFO] Сканы анкет переключены со слага на resume_id: {moved}.")
 
@@ -436,8 +451,14 @@ def _learn_one(history, row: dict, scope: str | None) -> int:
     # п.7 (кластер ИЛИ текст) вырождался в одинарный, без единого предупреждения.
     # row["cluster"] (кластер строки очереди) тоже выведенный, поэтому стоит
     # ниже сохранённого; явную смену кластера по-прежнему делает `set --cluster`.
-    existing = history.get_questionnaire_templates(scope).get(template) or {}
-    cluster = existing.get("cluster") or row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER
+    #
+    # Сравнение scope ТОЧНОЕ: get_questionnaire_templates(scope) отдаёт и
+    # account-строки (resume_id=''), и без этой проверки 'mixed' аккаунта
+    # закрепился бы за резюме — та же деградация кластера, только с другого
+    # конца. Перезаписываем лишь то, что уже принадлежит этому же scope.
+    stored = history.get_questionnaire_templates(scope).get(template) or {}
+    own = stored if stored.get("resume_id") == (scope or "") else {}
+    cluster = own.get("cluster") or row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER
     history.set_questionnaire_template(
         template,
         mode="static",
