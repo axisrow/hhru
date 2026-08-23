@@ -3311,7 +3311,7 @@ class History:
         low_confidence: bool = False,
         limit: int | None = None,
     ) -> list[dict]:
-        """Сохранённый аудит ответов на анкеты — что бот ответил и почему (#488).
+        """Сохранённый аудит ответов на анкеты и исхода отклика (#488, #514).
 
         Только ``scan.source = 'apply'``: снимки ``probe --questionnaires-only``
         (#456) вопросы собирают, но ни на что не отвечают — колонки аудита у них
@@ -3343,10 +3343,16 @@ class History:
         Та же батчевость делает ``filled`` верным признаком ДРУГОГО вопроса —
         заполнялась ли форма вообще, — и командный слой печатает по нему
         ``[форма не заполнялась]``: вопрос «дошло ли до формы» тоже решается на
-        весь скан. Дальше этого признак не растягивается: он пишется ДО
-        submit-клика и доставку на hh.ru не подтверждает, поэтому ни здесь, ни
-        в выводе слово «отправлено» не употребляется. Строку отдаём вместе с
-        ``filled``, решение о формулировке — за вызывающим.
+        весь скан. Исход отклика добавляется отдельно из ``actions`` по тройке
+        ``run_id + resume_id + vacancy_id``. Поэтому заполненная форма может
+        иметь любой из независимых исходов ``success``, ``uncertain`` или
+        ``failed``.
+
+        Для старых строк ``actions`` с ``run_id IS NULL`` точного связывания нет:
+        при совпадении резюме и вакансии возвращается ``unknown``, а не ложное
+        ``no_action``. Если подходящей строки actions вообще нет, возвращается
+        ``no_action``. Джойн сворачивает несколько action-строк одной попытки к
+        последней по ``id`` и не размножает вопросы одной анкеты.
 
         COALESCE не нужен, но инвариант держит ВЫЗЫВАЮЩИЙ, а не схема: колонка
         nullable, и ``answer IS NULL`` под этот предикат не попадёт. Пишет
@@ -3369,13 +3375,43 @@ class History:
         # ответы, и восходящий ORDER BY отрезал бы LIMIT-ом не тот конец.
         # Обратно в хронологический порядок разворачиваем уже после среза.
         sql = f"""
+            WITH latest_apply AS (
+                SELECT action.id, action.resume_id, action.vacancy_id,
+                       action.run_id, action.status,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY action.resume_id, action.vacancy_id, action.run_id
+                           ORDER BY action.id DESC
+                       ) AS row_number
+                  FROM actions AS action
+                 WHERE action.action = 'apply'
+            ), legacy_apply AS (
+                SELECT DISTINCT resume_id, vacancy_id
+                  FROM actions
+                 WHERE action = 'apply' AND run_id IS NULL
+            )
             SELECT question.id, question.text, question.answer, question.answer_source,
                    question.confidence, question.filled, question.template,
                    question.cluster, question.resolver_source, question.run_id,
                    scan.resume_id, scan.vacancy_id, scan.vacancy_url,
-                   scan.title, scan.company, scan.detected_at
+                   scan.title, scan.company, scan.detected_at,
+                   CASE
+                       WHEN action.status IN ('success', 'uncertain', 'failed')
+                           THEN action.status
+                       WHEN legacy.resume_id IS NOT NULL THEN 'unknown'
+                       WHEN action.id IS NOT NULL THEN 'unknown'
+                       ELSE 'no_action'
+                   END AS delivery_status
             FROM questionnaire_questions AS question
             JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+            LEFT JOIN latest_apply AS action
+              ON action.row_number = 1
+             AND action.run_id IS NOT NULL
+             AND action.run_id = question.run_id
+             AND action.resume_id = scan.resume_id
+             AND action.vacancy_id = scan.vacancy_id
+            LEFT JOIN legacy_apply AS legacy
+              ON legacy.resume_id = scan.resume_id
+             AND legacy.vacancy_id = scan.vacancy_id
             WHERE {" AND ".join(where)}
             ORDER BY question.id DESC
         """
