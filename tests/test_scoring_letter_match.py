@@ -61,3 +61,28 @@ def test_letter_match_reuses_resume_token_matching_rules():
 
     assert positive.score_0_100 > 0.0
     assert negative.score_0_100 == 0.0
+
+
+@pytest.mark.parametrize("letter", ["без Python", "Python не требуется"])
+def test_letter_negation_does_not_score_as_full_match(letter: str):
+    """Ревью PR #549 (Codex): отрицание В САМОМ ПИСЬМЕ должно снимать
+    совпадение, а не давать 100 — кандидат явно заявляет об ОТСУТСТВИИ навыка,
+    это не то же самое, что «навык есть»."""
+    outcome = letter_match_score(card("Требуется Python"), letter)
+
+    assert outcome.score_0_100 == 0.0
+    assert outcome.rationale == "совпадений нет"
+
+
+def test_letter_negation_is_scoped_to_the_negated_token_not_whole_letter():
+    """Отрицание в письме точечное (как resume_match): вычёркивает конкретный
+    отрицаемый токен, а не всё письмо. Отличаем от «letter пуст после фильтра»
+    (см. соседний тест) сравнением с письмом, где ВСЕ токены под отрицанием."""
+    only_negation = letter_match_score(card("Требуется Python"), "без Python").rationale
+    mixed = letter_match_score(card("Требуется Python, Kubernetes"), "без Python, знаю Kubernetes")
+
+    # Оба случая дают rationale «совпадений нет» — это честный ноль
+    # (letter_text непустой), не NO_DATA_RATIONALE:
+    assert only_negation == "совпадений нет"
+    assert mixed.rationale == "keyword-match письма"
+    assert mixed.score_0_100 == 100.0  # непокрытый Kubernetes уже отфильтрован из letter

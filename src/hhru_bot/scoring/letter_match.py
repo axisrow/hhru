@@ -8,13 +8,28 @@
 Этап 1 — только вычисление и логирование score, без порога и без блокировки
 отправки. Как и resume-match, результат использует общую шкалу
 ``ScoreOutcome.score_0_100``.
+
+**Отрицание в самом письме тоже снимает совпадение (найдено ревью PR #549,
+Codex).** ``_matched_ratio(profile_text, vacancy_tokens)`` спроектирована для
+``AIProfile``: там отрицание в тексте профиля — шум («без опыта» в summary не
+навык), и функция намеренно отбрасывает такие токены из profile_text, проверяя
+отрицание только в vacancy_tokens. Для письма кандидата это неверно: письмо —
+не «облако токенов», а связный текст, где кандидат сам может явно ОТКАЗАТЬСЯ
+от навыка («без Python», «Python не требуется мне»). Пропущенное через
+``_matched_ratio`` как есть, такое письмо давало 100.0 против вакансии
+«Требуется Python» — отрицание молча терялось, потому что _matched_ratio
+фильтрует маркеры отрицания именно из первого (letter/profile) аргумента.
+Фикс: токены письма, стоящие под отрицанием В САМОМ ПИСЬМЕ (по той же
+``_is_negated``, что resume_match применяет к вакансии), исключаются ДО
+передачи в ``_matched_ratio`` — так «без Python» не подтверждает навык
+«python» у кандидата, а «Python» без отрицания — подтверждает, как раньше.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .resume_match import NO_DATA_RATIONALE, _matched_ratio, _tokenize
+from .resume_match import NO_DATA_RATIONALE, _is_negated, _matched_ratio, _tokenize
 from .types import ScoreOutcome
 
 if TYPE_CHECKING:
@@ -22,6 +37,19 @@ if TYPE_CHECKING:
 
 
 LETTER_MATCH_MODE = "letter_match"
+
+
+def _drop_letter_negated_tokens(letter_text: str) -> str:
+    """Убирает из письма токены, которые кандидат сам отрицает у себя.
+
+    «без Python» / «Python не требуется» в письме — кандидат явно заявляет об
+    ОТСУТСТВИИ навыка, а не о его наличии. Такие токены не должны попадать в
+    ``_matched_ratio`` как «подтверждённые письмом» — иначе явный отказ от
+    навыка засчитывается как идеальное совпадение с требованием вакансии.
+    """
+    letter_tokens = _tokenize(letter_text)
+    kept = [t for i, t in enumerate(letter_tokens) if not _is_negated(letter_tokens, i)]
+    return " ".join(kept)
 
 
 def letter_match_score(card: VacancyCard, letter: str | None) -> ScoreOutcome:
@@ -42,7 +70,19 @@ def letter_match_score(card: VacancyCard, letter: str | None) -> ScoreOutcome:
             breakdown={},
         )
 
-    score = round(_matched_ratio(letter_text, vacancy_tokens) * 100.0, 2)
+    affirmed_letter_text = _drop_letter_negated_tokens(letter_text)
+    if not affirmed_letter_text:
+        # Всё, что было в письме, кандидат сам же и отрицал — считать
+        # подтверждённым нечего, это честный ноль, а не «нет данных»
+        # (letter_text непустой, сопоставление реально происходило).
+        return ScoreOutcome(
+            score_0_100=0.0,
+            mode=LETTER_MATCH_MODE,
+            rationale="совпадений нет",
+            breakdown={"letter": 0.0},
+        )
+
+    score = round(_matched_ratio(affirmed_letter_text, vacancy_tokens) * 100.0, 2)
     rationale = "keyword-match письма" if score > 0.0 else "совпадений нет"
     return ScoreOutcome(
         score_0_100=score,
