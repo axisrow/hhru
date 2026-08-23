@@ -228,6 +228,45 @@ def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
     assert [r.id for r in load_config(config_path).resumes] == ["backend"]
 
 
+def test_write_resume_config_refuses_when_slug_points_at_another_resume(tmp_path, monkeypatch):
+    """Мало найти slug в кандидате — он обязан указывать на НОВОЕ резюме.
+    Совпадение имени при чужом resume_id значит, что копия не зарегистрирована,
+    а команда отчиталась бы об успехе."""
+    from hhru_bot.config import ConfigError, load_config
+
+    config_path = tmp_path / "config.yaml"
+    original = _loadable_config(
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    # Кандидат содержит slug, но с ЧУЖИМ resume_id (не NEW_ID).
+    def _wrong_id(text, resume, slug, new_resume_id):
+        return _loadable_config(
+            "resumes:\n"
+            "  - id: backend\n"
+            f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+            "    search:\n"
+            "      text: python\n"
+            f"  - id: {slug}\n"
+            f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+            "    search:\n"
+            "      text: python\n"
+        )
+
+    monkeypatch.setattr(cmd, "_config_with_resume", _wrong_id)
+
+    with pytest.raises(ConfigError, match="не читается"):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+
 def test_write_resume_config_refuses_duplicate_resumes_keys(tmp_path):
     """Два ключа resumes — валидный YAML, PyYAML берёт последний. Дописав в
     первый, мы бы отчитались об успехе, а резюме осталось бы незарегистрированным:
