@@ -965,7 +965,16 @@ def _log_resume_match(candidates: list[VacancyCard], profile) -> None:
     from .scoring import resume_match_score  # локальный импорт: разрыв цикла
 
     for card in candidates:
-        outcome = resume_match_score(card, profile)
+        # Наблюдение не имеет права ронять план откликов: этот вызов стоит
+        # внутри rank_candidates, поэтому необработанное исключение на одной
+        # карточке оборвало бы весь apply — ради строчки в логе. Тот же приём,
+        # что у остальных провайдеров скоринга (fallback внутри
+        # LLMScoringProvider): сбой логируется, цикл идёт дальше.
+        try:
+            outcome = resume_match_score(card, profile)
+        except Exception as exc:  # noqa: BLE001 — наблюдение не должно ронять apply
+            logger.warning("resume-match failed for %s '%s': %s", card.vacancy_id, card.title, exc)
+            continue
         logger.info(
             "resume-match %s '%s': %.1f/100 (%s)",
             card.vacancy_id,

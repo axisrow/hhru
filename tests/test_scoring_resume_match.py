@@ -122,6 +122,67 @@ def test_substring_does_not_count_as_match():
     assert outcome.score_0_100 == 0.0
 
 
+@pytest.mark.parametrize(
+    ("skill", "vacancy_text"),
+    [
+        # Разные слова, общий префикс >= 4 символов. Ни одна пара не является
+        # словоформой другой — засчитывать их как совпадение нельзя.
+        ("java", "Требуется JavaScript, React, Node.js"),
+        ("react", "Ищем инженера по reactive streams"),
+        ("админ", "Администратор торгового зала, график 2/2"),
+        ("план", "Планета развлечений приглашает аниматора"),
+        # Расхождение ровно в 2 символа — тоже чужое слово, а не словоформа.
+        # Держит порог _MAX_ENDING_LEN снизу: ослабление до 2 роняет этот кейс.
+        ("банк", "Организация банкет под ключ"),
+    ],
+)
+def test_unrelated_shared_prefix_does_not_count_as_match(skill, vacancy_text):
+    """Общий префикс != словоформа: «java» не должен матчить «javascript».
+
+    Префиксный матч введён ради русской морфологии («разработчик» ~
+    «разработчика»), но в обе стороны и без ограничения длины он засчитывает
+    несвязанные слова с общим началом. Направление ошибки — ЗАВЫШЕНИЕ score,
+    что противоречит fail-closed принципу модуля и загрязняет распределение,
+    ради наблюдения за которым сделан Этап 1.
+    """
+    outcome = resume_match_score(card(vacancy_text), profile(skills=[skill]))
+    assert outcome.score_0_100 == 0.0
+
+
+def test_yo_is_folded_to_ye_before_matching():
+    """«ё»/«е» — одно слово: hh.ru пишет его обоими способами.
+
+    Без сворачивания «учёт» в профиле и «учета» в вакансии — разные токены, и
+    совпадение терялось молча, ЗАНИЖАЯ score (обратное направление к дефекту
+    префиксного матча, но такой же шум в распределении Этапа 1).
+    """
+    assert (
+        resume_match_score(
+            card("Ведение бухгалтерского учета"), profile(skills=["учёт"])
+        ).score_0_100
+        > 0.0
+    )
+    # И симметрично: «ё» в тексте вакансии против «е» в профиле.
+    assert (
+        resume_match_score(card("Найдём специалиста"), profile(skills=["найдем"])).score_0_100 > 0.0
+    )
+
+
+def test_real_morphology_still_matches_after_prefix_tightening():
+    """Страж от «починки» через простое ужесточение порога длины.
+
+    Русская словоформа обязана продолжать матчиться — иначе фикс ложных
+    срабатываний убил бы то, ради чего стемминг вообще введён.
+    """
+    for skill, text in [
+        ("разработчик", "Требуется разработчика в команду"),
+        ("тестирование", "Тестирование веб-приложений"),
+        ("аналитик", "Ищем аналитика данных"),
+    ]:
+        outcome = resume_match_score(card(text), profile(skills=[skill]))
+        assert outcome.score_0_100 > 0.0, f"{skill!r} должен матчить {text!r}"
+
+
 # --- вырожденные входы -------------------------------------------------------
 
 
@@ -243,3 +304,36 @@ def test_rank_candidates_order_unchanged_by_resume_match():
     assert [c.vacancy_id for c, _, _ in with_profile] == [
         c.vacancy_id for c, _, _ in without_profile
     ]
+
+
+def test_rank_candidates_survives_resume_match_failure(monkeypatch, caplog):
+    """Сбой наблюдения не роняет план откликов (#492 Этап 1).
+
+    ``_log_resume_match`` вызывается ВНУТРИ ``rank_candidates``, поэтому
+    необработанное исключение оборвало бы весь apply ради строчки в логе.
+    Ранжирование обязано доработать и вернуть полный состав кандидатов.
+    """
+    from hhru_bot import scoring as scoring_pkg
+    from hhru_bot import search as search_mod
+    from hhru_bot.config import SearchFilters
+
+    def _boom(card, profile):
+        raise RuntimeError("scoring exploded")
+
+    # Импорт в _log_resume_match ленивый (``from .scoring import ...``), поэтому
+    # подменять надо атрибут пакета — он резолвится в момент вызова.
+    monkeypatch.setattr(scoring_pkg, "resume_match_score", _boom)
+
+    cards = [
+        VacancyCard("1", "Python-разработчик", "A", "u1", vacancy_text="Python"),
+        VacancyCard("2", "Java-разработчик", "B", "u2", vacancy_text="Java"),
+    ]
+    with caplog.at_level("WARNING", logger="hhru_bot.search"):
+        ranked = search_mod.rank_candidates(
+            cards,
+            SearchFilters(text="python"),
+            _resume_with_profile(profile(skills=["Python"])),
+        )
+
+    assert [c.vacancy_id for c, _, _ in ranked] == ["1", "2"]
+    assert any("resume-match failed" in record.message for record in caplog.records)
