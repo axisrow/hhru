@@ -36,7 +36,7 @@ issue): взвешенное пересечение токенов ``AIProfile``
    завысив score вакансии, которая явно требует ОТСУТСТВИЯ навыка. Полностью
    класс ошибки keyword-подходом не закрывается (это и зафиксировано в #490);
    здесь закрыт узкий, но реальный и дешёвый случай — явный маркер отрицания
-   в небольшом окне вокруг токена. Направление fail-closed: недосчитать
+   в небольшом окне внутри предложения/клаузы. Направление fail-closed: недосчитать
    совпадение безопаснее, чем завысить соответствие.
 
 Этап 1 (эта реализация) — только вычисление и логирование score, БЕЗ порога и
@@ -77,10 +77,6 @@ _FACTOR_WEIGHTS: dict[str, float] = {
     "summary": 0.15,
     "highlights": 0.10,
 }
-
-# Токенизация текста: те же границы, что _tokenize_name в employer.py —
-# разбиение по любым не-буквенно-цифровым символам, кириллица входит в \w с re.U.
-_TOKEN_SEP = re.compile(r"[^\w]+", re.UNICODE)
 
 # Русские окончания, снимаемые при нормализации токена к стему. Порядок важен:
 # длинные раньше коротких, иначе «иями» усеклось бы как «и» и стем разъехался.
@@ -186,13 +182,13 @@ _NEGATION_AFTER = frozenset({"требуется", "нужен", "нужно", "
 # исключений, а один устойчивый оборот русского языка.
 _NEGATION_CANCELLERS = frozenset({"только", "столько"})
 
-# Окно поиска маркера отрицания вокруг токена (в токенах). Узкое намеренно:
-# широкое окно гасило бы совпадения из соседних предложений («Требуется Django;
-# знание Python не требуется» гасило бы и Django), т.е. чинило бы один класс
-# ошибок, создавая другой. WINDOW_AFTER=2 означает: пара «не требуется» должна
-# стоять непосредственно за токеном.
-_NEGATION_WINDOW_BEFORE = 2
-_NEGATION_WINDOW_AFTER = 2
+# Окно поиска маркера отрицания вокруг токена (в токенах). Оно применяется
+# только внутри одной клаузы; границы пунктуации сохраняются отдельно при
+# токенизации.
+_NEGATION_WINDOW_BEFORE = 1
+# Сколько слов может стоять между навыком и парой «не требуется». Пара сама
+# занимает ещё два токена, поэтому фактический хвост длиннее этого числа.
+_NEGATION_WORDS_BEFORE_REQUIREMENT = 3
 
 
 def _tokenize(text: str) -> list[str]:
@@ -207,11 +203,42 @@ def _tokenize(text: str) -> list[str]:
     окно ``_is_negated`` и «Python не требуется» снова читалось бы как
     совпадение — ровно тот дефект #490, который эта функция и должна гасить.
     """
-    return [
-        t
-        for t in _TOKEN_SEP.split(text.lower().replace("ё", "е"))
-        if t and (t not in _STOPWORDS or t in _NEGATION_BEFORE or t in _NEGATION_AFTER)
-    ]
+    tokens, _ = _tokenize_with_boundaries(text)
+    return tokens
+
+
+_CLAUSE_SEP = re.compile(r"[.!?;\n•]+", re.UNICODE)
+_TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def _tokenize_with_boundaries(text: str) -> tuple[list[str], list[int]]:
+    """Возвращает токены и номер клаузы для каждого токена.
+
+    Пунктуация не попадает в токены, но её позиции сохраняются через номер
+    клаузы. Клауза — это ГРАНИЦА ПРЕДЛОЖЕНИЯ (#509: точка, ``;``, перевод
+    строки, bullet), а не любой знак препинания: запятая и двоеточие внутри
+    одного предложения («Не требуется: Python», «Python, больше не требуется»)
+    не разрывают связь маркера отрицания с навыком. Это не даёт окну отрицания
+    переносить маркер через границу ПРЕДЛОЖЕНИЯ. Стоп-слова сравниваются по стему:
+    например, ``опыта`` исчезает так же, как базовое ``опыт``, и обязательная
+    конструкция «без опыта Python» остаётся соседней после фильтрации.
+    """
+    normalized = text.lower().replace("ё", "е")
+    tokens: list[str] = []
+    clause_ids: list[int] = []
+    clause = 0
+    cursor = 0
+    for match in _TOKEN.finditer(normalized):
+        if _CLAUSE_SEP.search(normalized[cursor : match.start()]):
+            clause += 1
+        token = match.group()
+        if token and (
+            not _is_stopword(token) or token in _NEGATION_BEFORE or token in _NEGATION_AFTER
+        ):
+            tokens.append(token)
+            clause_ids.append(clause)
+        cursor = match.end()
+    return tokens, clause_ids
 
 
 def _stem(token: str) -> str:
@@ -227,6 +254,14 @@ def _stem(token: str) -> str:
         if token.endswith(suffix) and len(token) - len(suffix) >= _MIN_STEM_LEN:
             return token[: -len(suffix)]
     return token
+
+
+_STOPWORD_STEMS = frozenset(_stem(word) for word in _STOPWORDS)
+
+
+def _is_stopword(token: str) -> bool:
+    """Проверяет стоп-слово с той же нормализацией, что и матчинг."""
+    return token in _STOPWORDS or _stem(token) in _STOPWORD_STEMS
 
 
 def _tokens_match(profile_token: str, vacancy_token: str) -> bool:
@@ -251,37 +286,31 @@ def _tokens_match(profile_token: str, vacancy_token: str) -> bool:
     return _stem(profile_token) == _stem(vacancy_token)
 
 
-def _is_negated(vacancy_tokens: list[str], index: int) -> bool:
+def _is_negated(vacancy_tokens: list[str], index: int, clause_ids: list[int] | None = None) -> bool:
     """Стоит ли токен вакансии под отрицанием (#490: тема есть, намерение обратное).
 
-    Проверяется узкое окно: маркер отрицания в пределах ``_NEGATION_WINDOW_BEFORE``
-    токенов ПЕРЕД токеном («без опыта Python» — между маркером и навыком стоит
-    «опыта», поэтому окно шире одного токена обязательно) или отрицание + маркер
-    требования непосредственно ПОСЛЕ него («Python не требуется»).
-
-    Плата за это окно известна и не закрыта: маркер, относящийся к другому
-    слову, гасит соседний навык («Требуется Python без релокации Django» —
-    Django ложно снимается). Сузить окно до одного токена нельзя — это ломает
-    issue-mandated регрессию #490 («без опыта Python»), а отличить «без ОПЫТА
-    Python» от «без РЕЛОКАЦИИ Django» можно только по слову-посреднику, список
-    которых открыт («опыта», «знания», «коммерческого», «глубокого», ...) и
-    потому ненадёжен.
+    Проверяется узкое окно внутри одной клаузы: маркер отрицания стоит
+    непосредственно ПЕРЕД токеном («без опыта Python» после фильтрации
+    стоп-слов превращается в «без Python»), пара «маркер + требование» стоит
+    ПЕРЕД токеном («не требуется: Python» — двоеточие не рвёт клаузу, это одно
+    предложение), или та же пара находится ПОСЛЕ него («Python больше не
+    требуется»). Границы клаузы передаются отдельно от токенов, поэтому
+    пунктуация внутри предложения (запятая, двоеточие) не мешает распознать
+    пару, а граница ПРЕДЛОЖЕНИЯ (#509: точка, ``;``, перевод строки, bullet)
+    не даёт маркеру дотянуться до чужого токена из другого предложения.
 
     Маркер, за которым сразу идёт слово из ``_NEGATION_CANCELLERS``, отрицанием
     НЕ считается: «не только Python, но и SQL» — утвердительная конструкция,
     навык требуется.
 
-    Митигация остаётся НЕПОЛНОЙ — это зафиксировано в #490 и в докстринге
-    модуля. Известные незакрытые случаи (вынесены в follow-up, а не молча
-    проигнорированы): маркер из соседнего предложения («Не Java. Python
-    обязателен»), маркер, относящийся к другому слову («Требуется Python без
-    релокации Django»), и отрицание с вставленным словом после токена («Python
-    больше не требуется»). Все три требуют сохранения границ предложений вместо
-    плоского окна токенов; направление ошибки у первых двух — недосчёт
-    (fail-closed), у третьего — завышение.
+    Ограничение остаётся явным: конструкции с более чем
+    ``_NEGATION_WORDS_BEFORE_REQUIREMENT`` вставленными словами и неявное
+    смысловое отрицание без этих маркеров keyword-матчинг не распознаёт.
     """
     start = max(0, index - _NEGATION_WINDOW_BEFORE)
     for offset, token in enumerate(vacancy_tokens[start:index], start=start):
+        if clause_ids is not None and clause_ids[offset] != clause_ids[index]:
+            continue
         if token not in _NEGATION_BEFORE:
             continue
         following = vacancy_tokens[offset + 1] if offset + 1 < len(vacancy_tokens) else ""
@@ -289,19 +318,48 @@ def _is_negated(vacancy_tokens: list[str], index: int) -> bool:
             continue
         return True
 
-    # «Python не требуется»: ищем СМЕЖНУЮ пару отрицание+требование, а не два
-    # маркера порознь в окне. Порознь они склеивали бы разные предложения —
-    # «Требуется Django; знание Python не требуется» гасило бы и Django.
-    # strict=False обязателен: tail и tail[1:] заведомо разной длины (последний
-    # элемент пары не имеет), strict=True бросал бы ValueError на каждом вызове.
-    tail = vacancy_tokens[index + 1 : index + 1 + _NEGATION_WINDOW_AFTER]
-    return any(
-        first in _NEGATION_BEFORE and second in _NEGATION_AFTER
-        for first, second in zip(tail, tail[1:], strict=False)
-    )
+    # «Не требуется: Python» — пара отрицание+требование ПЕРЕД токеном, а не
+    # одиночный маркер в узком окне: «не» и «требуется» — два разных токена,
+    # а _NEGATION_WINDOW_BEFORE=1 не достаёт до «не». Ищем пару с тем же
+    # ограничением на число вставленных слов, что и у пары ПОСЛЕ токена.
+    head_start = max(0, index - 2 - _NEGATION_WORDS_BEFORE_REQUIREMENT)
+    head = vacancy_tokens[head_start:index]
+    for offset, token in enumerate(head, start=head_start):
+        if token not in _NEGATION_BEFORE:
+            continue
+        if clause_ids is not None and clause_ids[offset] != clause_ids[index]:
+            continue
+        following_index = offset + 1
+        if following_index >= index:
+            continue
+        if vacancy_tokens[following_index] not in _NEGATION_AFTER:
+            continue
+        if clause_ids is not None and clause_ids[following_index] != clause_ids[index]:
+            continue
+        return True
+
+    # «Python больше не требуется»: ищем пару отрицание+требование с ограниченным
+    # числом слов между навыком и «не». Проверяем границу клаузы для каждого
+    # токена, чтобы «Python. Не требуется Django» не склеилось в одну фразу.
+    tail = vacancy_tokens[index + 1 : index + 2 + _NEGATION_WORDS_BEFORE_REQUIREMENT]
+    for offset, token in enumerate(tail, start=index + 1):
+        if token not in _NEGATION_BEFORE:
+            continue
+        if clause_ids is not None and clause_ids[offset] != clause_ids[index]:
+            continue
+        following_index = offset + 1
+        if (
+            following_index < len(vacancy_tokens)
+            and vacancy_tokens[following_index] in _NEGATION_AFTER
+        ):
+            if clause_ids is None or clause_ids[following_index] == clause_ids[index]:
+                return True
+    return False
 
 
-def _matched_ratio(profile_text: str, vacancy_tokens: list[str]) -> float:
+def _matched_ratio(
+    profile_text: str, vacancy_tokens: list[str], clause_ids: list[int] | None = None
+) -> float:
     """Доля токенов профиля [0, 1], подтверждённых текстом вакансии без отрицания.
 
     Доля, а не абсолютное число хитов: длинный список навыков не должен
@@ -323,7 +381,7 @@ def _matched_ratio(profile_text: str, vacancy_tokens: list[str]) -> float:
         for index, v_token in enumerate(vacancy_tokens):
             if not _tokens_match(p_token, v_token):
                 continue
-            if _is_negated(vacancy_tokens, index):
+            if _is_negated(vacancy_tokens, index, clause_ids):
                 # Совпадение под отрицанием не засчитываем, но продолжаем искать:
                 # тот же навык может упоминаться в тексте ещё раз без отрицания.
                 continue
@@ -370,7 +428,7 @@ def resume_match_score(
             breakdown={},
         )
 
-    vacancy_tokens = _tokenize(getattr(card, "vacancy_text", "") or "")
+    vacancy_tokens, clause_ids = _tokenize_with_boundaries(getattr(card, "vacancy_text", "") or "")
     if not vacancy_tokens:
         return ScoreOutcome(
             score_0_100=0.0,
@@ -396,7 +454,7 @@ def resume_match_score(
             # четверть максимума за «пустые» summary/highlights.
             continue
         weight = _FACTOR_WEIGHTS[factor]
-        ratio = _matched_ratio(text, vacancy_tokens)
+        ratio = _matched_ratio(text, vacancy_tokens, clause_ids)
         breakdown[factor] = round(ratio * 100.0, 2)
         weighted_sum += ratio * weight
         weight_total += weight
