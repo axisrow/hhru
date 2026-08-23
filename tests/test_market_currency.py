@@ -162,6 +162,24 @@ class TestEstimatesRespectCurrency:
         assert estimate.currency == "RUB"
         assert estimate.salary_to == 300000
 
+    def test_point_estimate_skips_when_dominant_currency_unknown(self, tmp_path):
+        """Доминирующая группа без salary_currency не должна помечаться RUB.
+
+        Если у большинства вакансий с ЗП валюта не распознана (salary_currency
+        IS NULL), доминирующей группой становится NULL — эти строки нельзя
+        подписывать "RUB": реальных RUB-данных в оценке при этом может не
+        оказаться вовсе, а подпись RUB — недоказанная ложь ровно того рода,
+        ради недопущения которого #122/#529 и делались.
+        """
+        h = History(tmp_path / "h.db")
+        for i, amount in enumerate([200000, 250000, 300000, 350000, 400000]):
+            _seen(h, f"n{i}", "python", amount, None, tier="mid")
+        _seen(h, "r0", "python", 100000, "RUB", tier="mid")
+
+        estimate = h.estimate_salary("python", "mid")
+
+        assert estimate is None
+
 
 class TestSummaryRendering:
     def test_currency_column_present(self, tmp_path):
