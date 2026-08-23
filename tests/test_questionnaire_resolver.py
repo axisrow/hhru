@@ -846,6 +846,33 @@ def test_expectation_via_rasschityvat_is_not_suppressed(text):
 @pytest.mark.parametrize(
     "text",
     [
+        "Вели ли вы зарплату сотрудников?",
+        "Есть ли у вас опыт выплаты заработной платы сотрудникам?",
+        "Выплачивали ли вы зарплату сотрудникам?",
+    ],
+)
+def test_salary_experience_verbs_are_not_answered_with_expectations(text):
+    """Глагольные формы про зарплату описывают опыт, а не ожидания (#507)."""
+    assert match_keyword(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Желаемая величина зарплаты?",
+        "Величина зарплаты, на которую вы рассчитываете?",
+    ],
+)
+def test_vel_stem_does_not_suppress_salary_expectations(text):
+    """Формы «вести» не должны ловить другие слова с префиксом «вел» (#507)."""
+    match = match_keyword(text)
+
+    assert match is not None and match.template == "salary"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Учитывая ваш опыт ведения проектов, на какую зарплату рассчитываете?",
         "Для ведения проекта какие зарплатные ожидания у вас?",
         "Есть ли у вас опыт ведения команды? Какие зарплатные ожидания?",
