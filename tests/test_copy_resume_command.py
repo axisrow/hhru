@@ -228,6 +228,34 @@ def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
     assert [r.id for r in load_config(config_path).resumes] == ["backend"]
 
 
+def test_write_resume_config_refuses_duplicate_resumes_keys(tmp_path):
+    """Два ключа resumes — валидный YAML, PyYAML берёт последний. Дописав в
+    первый, мы бы отчитались об успехе, а резюме осталось бы незарегистрированным:
+    проверка «ничего не потеряли» такой промах не видит, состав ведь не изменился."""
+    from hhru_bot.config import ConfigError, load_config
+
+    config_path = tmp_path / "config.yaml"
+    original = _loadable_config(
+        "resumes:\n"
+        "  - id: first\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{NEW_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ConfigError):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+
 def test_write_resume_config_refuses_when_an_entry_would_disappear(tmp_path, monkeypatch):
     """Страховка на НЕизвестные написания ключа: если правка всё же потеряла бы
     резюме, отказываем. Потеря может остаться валидным YAML (дубль ключа —

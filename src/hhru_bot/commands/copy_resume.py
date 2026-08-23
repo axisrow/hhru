@@ -254,6 +254,18 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
                 f"{', '.join(sorted(lost))}. Файл не изменён — "
                 "проверьте, как записана секция resumes."
             )
+        # Отсутствие потерь ещё не значит, что запись состоялась. При дубле
+        # ключа resumes (валидный YAML — PyYAML берёт последний) элемент уходит
+        # в игнорируемую секцию: состав не изменился, проверка выше молчит, а
+        # копия на hh.ru остаётся незарегистрированной при отчёте об успехе.
+        # Поэтому требуем, чтобы новое резюме реально читалось из кандидата.
+        added = next((r for r in candidate_config.resumes if r.id == slug), None)
+        if added is None or added.resume_id != new_resume_id:
+            raise ConfigError(
+                f"Резюме '{slug}' не читается из обновлённого config.yaml — "
+                "запись не состоялась бы (возможен дубль ключа resumes). "
+                "Файл не изменён."
+            )
         os.replace(candidate, config_path)
     finally:
         candidate.unlink(missing_ok=True)
