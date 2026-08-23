@@ -92,9 +92,7 @@ def test_config_write_lock_uses_config_directory(tmp_path):
 
 
 @pytest.mark.parametrize("write_config", [False, True])
-def test_copy_resume_write_config_lock_uses_mutated_state_directory(
-    tmp_path, write_config
-):
+def test_copy_resume_write_config_lock_uses_mutated_state_directory(tmp_path, write_config):
     parser = cli.build_parser()
     argv = [
         "--config",
