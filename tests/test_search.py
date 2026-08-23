@@ -79,6 +79,13 @@ class _VacancyCard:
             return _TextLocator("Python developer", "/vacancy/42")
         if selector == search.sel.VACANCY_CARD_COMPANY:
             return _TextLocator(count=0)
+        # Доп. признаки карточки (#517) опциональны — как остальные блоки
+        # этого мока, "не найдено" по умолчанию для любого нового селектора.
+        if selector in (
+            search.sel.VACANCY_CARD_REMOTE_LABEL,
+            search.sel.VACANCY_CARD_EXPERIENCE,
+        ):
+            return _TextLocator(count=0)
         raise AssertionError(f"unexpected card selector: {selector}")
 
     def inner_text(self):

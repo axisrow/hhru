@@ -51,3 +51,16 @@ PAGINATION_BLOCK = "[data-qa='pager-block']"
 VACANCY_CARD_RESPONSE_STATUS = (
     "[data-qa='vacancy-serp__vacancy_response_status']"  # НЕ подтверждено
 )
+
+# Доп. признаки карточки для статистики/ML (issue #517, приоритет-1 из #516).
+# Подтверждено ВРУЧНУЮ через DevTools/JS в браузере 2026-08-23 (read-only
+# просмотр живой выдачи /search/vacancy) — НЕ curl-дамп и НЕ боевой
+# Playwright-лог, уровень подтверждения ниже, чем у остальных селекторов
+# этого файла. Все блоки опциональны (не у каждой карточки).
+VACANCY_CARD_ADDRESS = "[data-qa='vacancy-serp__vacancy-address']"
+VACANCY_CARD_REMOTE_LABEL = "[data-qa='vacancy-label-work-schedule-remote']"
+# Категория опыта закодирована в САМОМ суффиксе data-qa, а не в тексте
+# элемента: noExperience/between1And3/between3And6/moreThan6.
+VACANCY_CARD_EXPERIENCE = "[data-qa^='vacancy-serp__vacancy-work-experience-']"
+VACANCY_CARD_SNIPPET_REQUIREMENT = "[data-qa='vacancy-serp__vacancy_snippet_requirement']"
+VACANCY_CARD_SNIPPET_RESPONSIBILITY = "[data-qa='vacancy-serp__vacancy_snippet_responsibility']"

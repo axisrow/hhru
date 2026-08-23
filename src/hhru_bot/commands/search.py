@@ -97,6 +97,10 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
     estimate_salary (медиана salary_to по (search_query, tier) — оценка ЗП для
     вакансий без указанной). Локальный импорт classify_employer: scoring лениво
     тянет search (цикл), тащить его на уровень модуля search-команды не нужно.
+
+    address/is_remote/experience/snippet_requirement/snippet_responsibility
+    (#517) — доп. признаки карточки для статистики/ML, прокидываются как есть
+    из VacancyCard (пустая строка/False, если hh.ru не отдал блок).
     """
     from ..scoring import classify_employer
 
@@ -115,6 +119,11 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 employer_tier=tier,
                 vacancy_text=card.vacancy_text,
                 published_at=card.published_at.isoformat() if card.published_at else None,
+                address=card.address or None,
+                is_remote=card.is_remote,
+                experience=card.experience or None,
+                snippet_requirement=card.snippet_requirement or None,
+                snippet_responsibility=card.snippet_responsibility or None,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)
