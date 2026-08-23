@@ -500,7 +500,7 @@ def test_rank_candidates_with_provider_uses_provider_score():
     # Provider вызван на каждую карточку; сортировка по его score (desc).
     assert spy.called == ["1", "2"]
     assert [c.vacancy_id for c, _s, _b in ranked] == ["1", "2"]
-    assert ranked[0][2] == {"llm": 90.0}
+    assert ranked[0][2] == {"llm": 90.0, "resume_match": 0.0}
 
 
 # --- rank_candidates: shortlist-кэп LLM-запросов (#74 F3, анти-фрод) ---------

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .employer import TIER_BOOST, KnownCompanyTier, classify_employer
 from .prefilter import PREFILTER_SKIP_REASON, employer_passes_prefilter
+from .resume_match import score_resume_match
 from .types import EmployerInfo, ScoreOutcome, ScoringProvider
 from .vacancy import HeuristicScoringProvider, LLMScoringProvider, heuristic_score
 
@@ -32,4 +33,5 @@ __all__ = [
     "classify_employer",
     "employer_passes_prefilter",
     "heuristic_score",
+    "score_resume_match",
 ]

@@ -922,6 +922,7 @@ def rank_candidates(
             breakdown = outcome.breakdown
         else:
             score, breakdown = _score_card(card, filters, weights)
+        breakdown = _add_resume_match(card, profile, breakdown)
         scored.append((card, score, breakdown))
 
     # Стабильно: сортировка только по score; равные score сохраняют входной
@@ -929,6 +930,19 @@ def rank_candidates(
     # он переупорядочивал бы legacy candidates[:limit] при перемешанных id.
     scored.sort(key=lambda item: -item[1])
     return scored
+
+
+def _add_resume_match(card, profile, breakdown: dict[str, float]) -> dict[str, float]:
+    """Attach and log the observational stage-1 metric without changing rank."""
+    from .scoring import score_resume_match
+
+    outcome = score_resume_match(profile, card)
+    logger.info(
+        "vacancy %s resume_match score=%.2f",
+        card.vacancy_id,
+        outcome.score_0_100,
+    )
+    return {**breakdown, "resume_match": outcome.score_0_100}
 
 
 # Максимальный размер shortlist для LLM-скоринга по умолчанию (Codex #74 F3).
@@ -969,9 +983,11 @@ def _rank_with_llm_shortlist(
     for card, heur_score, heur_breakdown in heur:
         if card.vacancy_id in shortlist_ids:
             outcome = scoring_provider.score(card, profile)
-            scored.append((card, outcome.score_0_100, outcome.breakdown))
+            breakdown = _add_resume_match(card, profile, outcome.breakdown)
+            scored.append((card, outcome.score_0_100, breakdown))
         else:
-            scored.append((card, heur_score, heur_breakdown))
+            breakdown = _add_resume_match(card, profile, heur_breakdown)
+            scored.append((card, heur_score, breakdown))
 
     # Шаг 4: финальная стабильная сортировка по итоговому score.
     scored.sort(key=lambda item: -item[1])

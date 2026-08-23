@@ -144,7 +144,9 @@ def run(args: argparse.Namespace) -> bool:
             )
             for c, score, breakdown in ranked:
                 factors = ", ".join(
-                    f"{name}={value:+.2f}" for name, value in breakdown.items() if value
+                    f"{name}={value:+.2f}"
+                    for name, value in breakdown.items()
+                    if value or name == "resume_match"
                 )
                 detail = f" | {factors}" if factors else ""
                 print(f"  [candidate] score={score:+.2f} {_format_card_line(c)}{detail}")
