@@ -25,9 +25,46 @@ def _args(tmp_path, **overrides) -> argparse.Namespace:
         "instruction": None,
         "example": [],
         "cluster": None,
+        "low_confidence": False,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def _audit_args(tmp_path, **overrides) -> argparse.Namespace:
+    """``_args`` держит template='salary' — это дефолт для set/unset, а для audit
+    он означал бы фильтр по шаблону, молча прячущий все остальные строки."""
+    overrides.setdefault("template", None)
+    return _args(tmp_path, **overrides)
+
+
+def _record_audit(tmp_path, **overrides) -> None:
+    resume_id = overrides.pop("resume_id", "r1")
+    question = {
+        "body_index": 0,
+        "text": "Настоящим подтверждаю достоверность сведений",
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer": "Да",
+        "answer_source": "profile",
+        "confidence": 1.0,
+        "filled": True,
+        "template": "data_accuracy",
+        "cluster": "compliance",
+        "resolver_source": "static",
+    }
+    question.update(overrides)
+    History(tmp_path / "h.db").record_questionnaire(
+        resume_id,
+        "132855712",
+        "https://hh.ru/vacancy/132855712",
+        "Разработчик",
+        "Acme",
+        [question],
+        source="apply",
+        run_id="run-488",
+    )
 
 
 # --- set --------------------------------------------------------------------
@@ -286,6 +323,98 @@ def test_learn_returns_sigint_on_interrupt(capsys, tmp_path, monkeypatch):
     assert "Прервано" in capsys.readouterr().out
 
 
+# --- audit (#488) -----------------------------------------------------------
+
+
+def test_audit_prints_answer_confidence_and_template(capsys, tmp_path):
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "132855712" in out
+    assert "1.00" in out
+    assert "data_accuracy" in out
+    assert "static" in out
+    assert "Показано ответов: 1, без ответа: 0." in out
+
+
+def test_audit_marks_a_refused_answer_instead_of_printing_an_empty_cell(capsys, tmp_path):
+    """Пустой answer — осознанный отказ отвечать, а не «ответили пустотой»."""
+    _record_audit(tmp_path, answer="", answer_source="llm", confidence=0.2, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "[не заполнено]" in out
+    assert "0.20" in out
+    assert "без ответа: 1." in out
+
+
+def test_audit_low_confidence_flag_keeps_only_unanswered_questions(capsys, tmp_path):
+    _record_audit(tmp_path)
+    _record_audit(tmp_path, text="Какие редакторы?", answer="", confidence=0.2, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path, low_confidence=True))
+
+    out = capsys.readouterr().out
+    assert "Какие редакторы?" in out
+    assert "Настоящим подтверждаю" not in out
+
+
+def test_audit_clips_a_long_question_so_the_table_stays_readable(capsys, tmp_path):
+    _record_audit(tmp_path, text="Опишите ваш опыт " * 40)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "..." in out
+    assert max(len(line) for line in out.splitlines()) < 160
+
+
+def test_audit_template_flag_filters_by_template(capsys, tmp_path):
+    _record_audit(tmp_path)
+    _record_audit(tmp_path, text="Зарплатные ожидания?", template="salary")
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary"))
+
+    out = capsys.readouterr().out
+    assert "Зарплатные ожидания?" in out
+    assert "Настоящим подтверждаю" not in out
+
+
+def test_audit_empty_prints_info(capsys, tmp_path):
+    cmd.run_audit(_audit_args(tmp_path))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_rejects_a_negative_last(capsys, tmp_path):
+    """--last -5 в SQLite означало бы «без ограничения» — противоположность намерению."""
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_audit(_audit_args(tmp_path, limit=-5))
+
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
+
+
+def test_audit_last_flag_stores_into_limit():
+    """--last переиспользует dest=limit, иначе _limit() не увидел бы значение."""
+    args = build_parser().parse_args(["questionnaire", "audit", "--last", "5"])
+
+    assert args.limit == 5
+    assert args.low_confidence is False
+
+
+def test_audit_output_has_no_emoji(capsys, tmp_path):
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert all(ord(char) < 0x2190 for char in out), "вывод CLI должен быть текст/ASCII-таблицы"
+
+
 # --- write-lock классификация (критерий приёмки #482) ----------------------
 
 
@@ -296,7 +425,7 @@ def test_mutating_subcommands_take_the_write_lock(subcommand):
     assert _is_write_command(args) is True
 
 
-@pytest.mark.parametrize("subcommand", ["pending", "templates"])
+@pytest.mark.parametrize("subcommand", ["pending", "templates", "audit"])
 def test_read_subcommands_do_not_take_the_write_lock(subcommand):
     args = argparse.Namespace(command="questionnaire", questionnaire_command=subcommand)
 
@@ -331,7 +460,7 @@ def test_parser_registers_every_subcommand():
         if isinstance(action, argparse._SubParsersAction)
     )
 
-    assert set(nested.choices) == {"pending", "templates", "learn", "set", "unset"}
+    assert set(nested.choices) == {"pending", "templates", "audit", "learn", "set", "unset"}
 
 
 def test_set_requires_a_mode():

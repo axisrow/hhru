@@ -195,3 +195,116 @@ def test_questionnaire_answer_summary_scoped_by_resume_and_period(tmp_path):
         "unanswered": 0,
     }
     assert history.questionnaire_answer_summary() == {"profile": 2, "llm": 0, "unanswered": 0}
+
+
+# --- аудит сохранённых ответов (#488) ---------------------------------------
+
+
+def _audit_question(index: int, **overrides) -> dict:
+    question = {
+        "body_index": index,
+        "text": f"Вопрос {index}?",
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer": f"Ответ {index}",
+        "answer_source": "profile",
+        "confidence": 1.0,
+        "filled": True,
+        "template": "salary",
+        "cluster": "money",
+        "resolver_source": "static",
+    }
+    question.update(overrides)
+    return question
+
+
+def _record_audit(history: History, resume_id: str, vacancy_id: str, questions: list[dict]) -> None:
+    history.record_questionnaire(
+        resume_id,
+        vacancy_id,
+        f"https://hh.ru/vacancy/{vacancy_id}",
+        "Разработчик",
+        "Acme",
+        questions,
+        source="apply",
+        run_id=f"run-{vacancy_id}",
+    )
+
+
+def test_audit_returns_resolver_fields_and_skips_probe_scans(tmp_path):
+    """Снимки probe вопросы собирают, но ни на что не отвечают — им тут не место."""
+    history = History(tmp_path / "history.db")
+    _record_audit(history, "backend", "1", [_audit_question(0)])
+    history.record_questionnaire(
+        "backend", "2", "https://hh.ru/vacancy/2", "Разработчик", "Acme", [_audit_question(0)]
+    )
+
+    rows = history.list_questionnaire_audit()
+
+    assert len(rows) == 1
+    assert rows[0]["vacancy_id"] == "1"
+    assert rows[0]["answer"] == "Ответ 0"
+    assert rows[0]["template"] == "salary"
+    assert rows[0]["cluster"] == "money"
+    assert rows[0]["resolver_source"] == "static"
+    assert rows[0]["confidence"] == 1.0
+
+
+def test_audit_keeps_every_answer_of_a_repeated_question(tmp_path):
+    """В отличие от list_scanned_questions — дедупа по тексту тут быть не должно:
+    один и тот же вопрос у двух работодателей мог получить разные ответы."""
+    history = History(tmp_path / "history.db")
+    _record_audit(history, "backend", "1", [_audit_question(0, text="Зарплата?", answer="200")])
+    _record_audit(history, "backend", "2", [_audit_question(0, text="Зарплата?", answer="300")])
+
+    rows = history.list_questionnaire_audit()
+
+    assert [row["answer"] for row in rows] == ["200", "300"]
+
+
+def test_audit_last_n_keeps_the_freshest_rows_in_chronological_order(tmp_path):
+    """--last N — это последние N ответов, а не первые попавшиеся."""
+    history = History(tmp_path / "history.db")
+    for index in range(6):
+        _record_audit(history, "backend", str(index), [_audit_question(0, answer=f"a{index}")])
+
+    rows = history.list_questionnaire_audit(limit=2)
+
+    assert [row["answer"] for row in rows] == ["a4", "a5"]
+
+
+def test_audit_filters_by_resume_and_template(tmp_path):
+    history = History(tmp_path / "history.db")
+    _record_audit(history, "backend", "1", [_audit_question(0)])
+    _record_audit(history, "marketing", "2", [_audit_question(0)])
+    _record_audit(history, "backend", "3", [_audit_question(0, template="relocation")])
+
+    assert [row["vacancy_id"] for row in history.list_questionnaire_audit("backend")] == ["1", "3"]
+    assert [row["vacancy_id"] for row in history.list_questionnaire_audit(template="salary")] == [
+        "1",
+        "2",
+    ]
+    assert [
+        row["vacancy_id"]
+        for row in history.list_questionnaire_audit("backend", template="relocation")
+    ] == ["3"]
+
+
+def test_audit_low_confidence_selects_rows_the_resolver_refused_to_answer(tmp_path):
+    """Признак — пустой answer (pipeline пишет его намеренно), а не filled:
+    filled батчевый и у соседей неуверенного вопроса тоже равен нулю."""
+    history = History(tmp_path / "history.db")
+    _record_audit(
+        history,
+        "backend",
+        "1",
+        [
+            _audit_question(0, answer="Точно", confidence=1.0, filled=False),
+            _audit_question(1, answer="", answer_source="llm", confidence=0.2, filled=False),
+        ],
+    )
+
+    rows = history.list_questionnaire_audit(low_confidence=True)
+
+    assert [row["text"] for row in rows] == ["Вопрос 1?"]

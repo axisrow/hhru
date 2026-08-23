@@ -45,6 +45,26 @@ def register(subparsers) -> None:
     templates.add_argument("--resume", help="Slug резюме или resume_id")
     templates.set_defaults(func=run_templates)
 
+    audit = commands.add_parser(
+        "audit",
+        help="Показать сохранённые ответы на анкеты (READ)",
+        description="Что бот ответил в анкетах: ответ, уверенность, шаблон.",
+    )
+    audit.add_argument("--resume", help="Slug резюме или resume_id (по умолчанию — все)")
+    # dest="limit", чтобы переиспользовать _limit() — он уже охраняет от
+    # `LIMIT -1` («без ограничения» в SQLite), а своя проверка вернула бы
+    # ровно тот дефект, ради которого хелпер и написан.
+    audit.add_argument(
+        "--last", dest="limit", type=int, default=50, help="Сколько последних ответов показать"
+    )
+    audit.add_argument("--template", help="Только ответы этого шаблона")
+    audit.add_argument(
+        "--low-confidence",
+        action="store_true",
+        help="Только вопросы, на которые бот не стал отвечать из-за низкой уверенности",
+    )
+    audit.set_defaults(func=run_audit)
+
     learn = commands.add_parser(
         "learn",
         help="Разобрать очередь и задать ответы (WRITE-local)",
@@ -188,6 +208,55 @@ def run_templates(args: argparse.Namespace) -> None:
             ],
         )
     )
+
+
+#: Ширина текстовых колонок аудита. Обрезка живёт здесь, а не в
+#: ``report._ascii_table`` и не в ``History``: таблица рисуется по фактической
+#: ширине ячеек, и один вопрос на 300 символов растянул бы её до нечитаемости,
+#: а метод истории обязан отдавать значения целиком — по ним пишутся тесты.
+_AUDIT_TEXT_WIDTH = 48
+
+
+def _clip(text: str | None, width: int = _AUDIT_TEXT_WIDTH) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def run_audit(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..report import _ascii_table
+
+    rows = History(args.history).list_questionnaire_audit(
+        _scope(args),
+        template=args.template,
+        low_confidence=args.low_confidence,
+        limit=_limit(args),
+    )
+    if not rows:
+        print("[INFO] Сохранённых ответов на анкеты нет.")
+        return
+    print(
+        _ascii_table(
+            ["вакансия", "conf", "источник", "шаблон", "вопрос", "ответ"],
+            [
+                [
+                    row["vacancy_id"],
+                    # Уверенность печатается, но фильтровать по её порогу
+                    # нечем — порог в базу не пишется (см. list_questionnaire_audit).
+                    "-" if row["confidence"] is None else f"{row['confidence']:.2f}",
+                    row["resolver_source"] or row["answer_source"] or "-",
+                    row["template"] or "-",
+                    _clip(row["text"]),
+                    # Пустой ответ — не «ответили пустотой», а осознанный отказ
+                    # отвечать: показываем это словами, а не пустой ячейкой.
+                    _clip(row["answer"]) if row["answer"] else "[не заполнено]",
+                ]
+                for row in rows
+            ],
+        )
+    )
+    unfilled = sum(1 for row in rows if not row["answer"])
+    print(f"[INFO] Показано ответов: {len(rows)}, без ответа: {unfilled}.")
 
 
 def run_set(args: argparse.Namespace) -> None:

@@ -3151,6 +3151,68 @@ class History:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_questionnaire_audit(
+        self,
+        resume_id: str | None = None,
+        *,
+        template: str | None = None,
+        low_confidence: bool = False,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Сохранённый аудит ответов на анкеты — что бот ответил и почему (#488).
+
+        Только ``scan.source = 'apply'``: снимки ``probe --questionnaires-only``
+        (#456) вопросы собирают, но ни на что не отвечают — колонки аудита у них
+        пусты, и в отчёте «насколько верно бот ответил» им места нет. Это не
+        недосмотр фильтра: probe-вопросы читаются отдельно
+        (``list_scanned_questions``), и расширять выборку сюда не нужно.
+
+        Дедупликации по тексту НЕТ, в отличие от ``list_scanned_questions``: там
+        одна и та же формулировка разбирается один раз, здесь же каждый ответ
+        привязан к своей вакансии и своему прогону — именно они и оцениваются.
+
+        ``low_confidence=True`` отбирает строки с ``answer = ''`` — ответ,
+        который резолвер намеренно НЕ записал, потому что не прошёл свой порог
+        (``pipeline.py`` ~246). Не ``filled = 0``: этот флаг батчевый, он
+        пишется всему скану сразу, поэтому уверенные соседи неуверенного
+        вопроса тоже равны нулю и попали бы в выборку ложно. Фильтровать по
+        самому порогу нельзя: он живёт в ``AnswerProposal.threshold`` и в базу
+        не пишется, так что «уверенность ниже порога» из строки не
+        восстанавливается — восстанавливается только принятое по ней решение.
+        NULL-ов тут не бывает и COALESCE не нужен: писать ``source = 'apply'``
+        умеет лишь код после #473, а он всегда подставляет ``answer``.
+        """
+        where = ["scan.source = 'apply'"]
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        if template is not None:
+            where.append("question.template = ?")
+            params.append(template)
+        if low_confidence:
+            where.append("question.answer = ''")
+        # Свежие строки, а не первые попавшиеся: ``--last N`` про ПОСЛЕДНИЕ
+        # ответы, и восходящий ORDER BY отрезал бы LIMIT-ом не тот конец.
+        # Обратно в хронологический порядок разворачиваем уже после среза.
+        sql = f"""
+            SELECT question.id, question.text, question.answer, question.answer_source,
+                   question.confidence, question.filled, question.template,
+                   question.cluster, question.resolver_source, question.run_id,
+                   scan.resume_id, scan.vacancy_id, scan.vacancy_url,
+                   scan.title, scan.company, scan.detected_at
+            FROM questionnaire_questions AS question
+            JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+            WHERE {" AND ".join(where)}
+            ORDER BY question.id DESC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def resolve_pending_for_templates(
         self, templates: set[str], *, resume_id: str | None = None
     ) -> int:
