@@ -308,3 +308,27 @@ def test_audit_low_confidence_selects_rows_the_resolver_refused_to_answer(tmp_pa
     rows = history.list_questionnaire_audit(low_confidence=True)
 
     assert [row["text"] for row in rows] == ["Вопрос 1?"]
+
+
+def test_audit_shows_a_null_answer_but_low_confidence_does_not_select_it(tmp_path):
+    """Граница предиката: колонка nullable, а ``answer = ''`` NULL не ловит.
+
+    Инвариант «в apply-скане answer всегда заполнен» держит вызывающий, а не
+    схема: так пишет pipeline, тогда как probe ключи аудита опускает — но идёт
+    с source='probe' и отсекается первым условием. Строка со скана apply без
+    колонок аудита всё равно видна в общем списке (как «нет ответа»), и только
+    флагом не выбирается. Тест фиксирует это, чтобы поведение меняли осознанно.
+    """
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire(
+        "backend",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Разработчик",
+        "Acme",
+        [{"body_index": 0, "text": "Без аудита", "kind": "text", "is_radio": False, "options": []}],
+        source="apply",
+    )
+
+    assert [row["answer"] for row in history.list_questionnaire_audit()] == [None]
+    assert history.list_questionnaire_audit(low_confidence=True) == []
