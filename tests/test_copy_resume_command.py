@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+import yaml as yaml_module
 
 import hhru_bot.browser
 import hhru_bot.commands.copy_resume as cmd
@@ -57,11 +58,23 @@ def test_confirm_tty_prompt(answer, expected):
 
 def test_write_resume_config_appends_entry_without_rewriting_comments(tmp_path):
     config_path = tmp_path / "config.yaml"
-    original = "# keep this note\nresumes:\n  - id: backend\n    resume_url: old\n    search:\n      text: python\n\nthrottle:\n  daily_apply_limit: 40\n"
+    original = (
+        "# keep this note\n"
+        "account:\n"
+        '  storage_state_file: "storage_state/hh_session.json"\n'
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+        "\n"
+        "throttle:\n"
+        "  daily_apply_limit: 40\n"
+    )
     config_path.write_text(original, encoding="utf-8")
     resume = ResumeConfig(
         id="backend",
-        resume_url="https://hh.ru/resume/old",
+        resume_url=f"https://hh.ru/resume/{OLD_ID}",
         search=SearchFilters(text="python"),
     )
 
@@ -69,18 +82,131 @@ def test_write_resume_config_appends_entry_without_rewriting_comments(tmp_path):
 
     result = config_path.read_text(encoding="utf-8")
     assert "# keep this note\n" in result
-    assert "  - id: backend\n    resume_url: old\n    search:\n      text: python\n" in result
+    assert "  - id: backend\n" in result
     assert "  - id: backend-copy\n" in result
     assert f"    resume_url: https://hh.ru/resume/{NEW_ID}\n" in result
     assert "      text: python\n" in result
     assert "throttle:\n" in result
 
 
+def _loadable_config(body: str) -> str:
+    """Минимальный конфиг, который реально принимает load_config."""
+    return (
+        "account:\n"
+        '  storage_state_file: "storage_state/hh_session.json"\n'
+        "throttle:\n"
+        "  daily_apply_limit: 40\n"
+        'cover_letter_default: "hi"\n'
+    ) + body
+
+
+def _backend_resume() -> ResumeConfig:
+    return ResumeConfig(
+        id="backend",
+        resume_url=f"https://hh.ru/resume/{OLD_ID}",
+        search=SearchFilters(text="python"),
+    )
+
+
+def test_write_resume_config_keeps_flow_style_list_loadable(tmp_path):
+    """resumes: [] — поддержанная форма (#320); дописывание не должно её ломать."""
+    from hhru_bot.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_loadable_config("resumes: []\n"), encoding="utf-8")
+
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    config = load_config(config_path)
+    assert [r.id for r in config.resumes] == ["backend-copy"]
+
+
+def test_write_resume_config_keeps_file_without_trailing_newline_loadable(tmp_path):
+    """resumes — последняя секция и файл без финального перевода строки."""
+    from hhru_bot.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    body = (
+        'resumes:\n  - id: backend\n    resume_url: "https://hh.ru/resume/'
+        + OLD_ID
+        + '"\n    search:\n      text: python'
+    )
+    config_path.write_text(_loadable_config(body), encoding="utf-8")
+
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    config = load_config(config_path)
+    assert [r.id for r in config.resumes] == ["backend", "backend-copy"]
+
+
+def test_write_resume_config_rejects_candidate_the_loader_cannot_read(tmp_path, monkeypatch):
+    """Валидация кандидата — страховка от НЕизвестных форм порчи, а не только от
+    двух найденных: любая правка, после которой load_config не читает файл,
+    обязана оставить оригинал нетронутым и поднять ошибку."""
+    from hhru_bot.config import ConfigError
+
+    config_path = tmp_path / "config.yaml"
+    body = (
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+    )
+    original = _loadable_config(body)
+    config_path.write_text(original, encoding="utf-8")
+
+    # Кандидат, который безусловно не загрузится продакшн-загрузчиком.
+    monkeypatch.setattr(cmd, "_config_with_resume", lambda *a, **kw: "resumes: [oops\n")
+
+    with pytest.raises((ConfigError, yaml_module.YAMLError)):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert not list(tmp_path.glob(".config.yaml.*"))  # временный файл убран
+
+
+def test_write_resume_config_leaves_original_intact_when_candidate_invalid(tmp_path, monkeypatch):
+    """Невалидный кандидат не должен затирать рабочий конфиг (атомарность)."""
+    config_path = tmp_path / "config.yaml"
+    body = (
+        'resumes:\n  - id: backend\n    resume_url: "https://hh.ru/resume/'
+        + OLD_ID
+        + '"\n    search:\n      text: python\n'
+    )
+    original = _loadable_config(body)
+    config_path.write_text(original, encoding="utf-8")
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cmd.os, "replace", _boom)
+
+    with pytest.raises(OSError):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_run_refuses_write_config_for_bare_resume(tmp_path, capsys):
+    """Bare-резюме (raw id) нельзя регистрировать: search.text пуст → массовый apply без запроса."""
+    from hhru_bot.config import bare_resume
+
+    bare = bare_resume(OLD_ID)
+    assert bare.search.text == ""
+    with pytest.raises(SystemExit) as exc:
+        cmd.reject_bare_source(bare)
+    assert exc.value.code == 1
+    assert "search" in capsys.readouterr().out.lower()
+
+
 # --- run(): оркестрация с подменёнными браузером и конфигом ---
 
 
 def _fake_config(tmp_path):
-    resume = SimpleNamespace(id="backend", resume_id=OLD_ID)
+    # search задан: reject_bare_source отказывает резюме без настроек поиска,
+    # а этот двойник изображает нормальную запись конфига.
+    resume = SimpleNamespace(id="backend", resume_id=OLD_ID, search=SimpleNamespace(text="python"))
 
     def get_resume(rid):
         if rid != "backend":
@@ -299,3 +425,34 @@ def test_sigterm_after_clone_click_leaves_unresolved_uncertain_marker(env, tmp_p
         "a SIGTERM after the clone click must leave an unresolved uncertain "
         "actions marker, or a blind retry can create a duplicate resume"
     )
+
+
+def test_run_prints_snippet_when_config_write_fails(env, capsys, tmp_path, monkeypatch):
+    """Копия на hh.ru необратима: при отказе записи пользователь обязан получить
+    фрагмент для ручной вставки, иначе новый resume_id негде взять."""
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cmd, "write_resume_config", _boom)
+    cmd.run(_args(tmp_path, force=True, write_config=True, slug="backend-copy"))
+    out = capsys.readouterr().out
+    assert "config.yaml не обновлён" in out
+    assert f"https://hh.ru/resume/{NEW_ID}" in out
+
+
+def test_run_refuses_bare_resume_before_touching_browser(env, capsys, tmp_path, monkeypatch):
+    """Отказ должен произойти ДО браузера — иначе на hh.ru останется лишний дубль."""
+    bare = SimpleNamespace(id=OLD_ID, resume_id=OLD_ID, search=SimpleNamespace(text=""))
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: SimpleNamespace(
+            get_resume=lambda rid: bare,
+            storage_state_file=tmp_path / "session.json",
+            user_agent=None,
+        ),
+    )
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True, write_config=True, resume=OLD_ID))
+    assert exc.value.code == 1
+    assert env.calls == []  # браузерный шаг не вызывался

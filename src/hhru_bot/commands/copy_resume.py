@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
@@ -89,10 +91,35 @@ def _resume_mapping(resume, slug: str, new_resume_id: str) -> dict:
     return {key: value for key, value in values.items() if value is not None}
 
 
-def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str) -> None:
-    """Append a complete entry while leaving existing YAML/comments untouched."""
-    config_path = Path(path)
-    text = config_path.read_text(encoding="utf-8")
+def reject_bare_source(resume) -> None:
+    """Отказ регистрировать bare-резюме (#319) в конфиге.
+
+    ``resolve_resume`` отдаёт bare-резюме для сырого resume_id, которого нет в
+    конфиге: все секции None, ``search.text`` — пустая заглушка. Массовый
+    apply-путь (``resolve_resumes``) намеренно не использует bare именно потому,
+    что поиск без настроек не имеет смысла. Но ``--write-config`` — это и есть
+    регистрация: записав такую заглушку, мы бы добавили в config.yaml резюме с
+    пустым запросом, и следующий ``apply`` без ``--resume`` пошёл бы по нему
+    откликаться по неограниченной выдаче. Запрос виден работодателю, откат
+    невозможен — поэтому fail-closed отказ, а не запись с предупреждением.
+    """
+    if not resume.search.text.strip():
+        print(
+            f"[FAIL] У резюме '{resume.id}' нет настроек search в config.yaml — "
+            "нечего копировать в новую секцию. Добавьте исходное резюме в конфиг "
+            "и повторите."
+        )
+        sys.exit(1)
+
+
+def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str:
+    """Текст конфига с дописанной секцией нового резюме.
+
+    Правка текстовая, а не через safe_load+safe_dump всего файла: полный
+    round-trip уничтожил бы комментарии и форматирование пользователя (явное
+    требование #520). Валидность результата гарантирует не эта функция, а
+    проверка кандидата продакшн-загрузчиком в write_resume_config.
+    """
     dumped = yaml.safe_dump(
         [_resume_mapping(resume, slug, new_resume_id)],
         allow_unicode=True,
@@ -109,17 +136,59 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
         ),
         None,
     )
-    if resumes_line is None:
+    # Секции нет вовсе, либо она записана inline (`resumes: []`, `resumes:` со
+    # значением на той же строке): дописать элемент внутрь такой формы нельзя,
+    # поэтому заводим собственный блок в конце файла. Пустой inline-список при
+    # этом остаётся в файле и сливается с новым блоком при загрузке — нет, YAML
+    # запрещает дубль ключа, поэтому inline-форму сначала убираем.
+    inline = resumes_line is not None and bool(lines[resumes_line].split(":", 1)[1].strip())
+    if resumes_line is None or inline:
+        if resumes_line is not None:
+            del lines[resumes_line]
+            text = "".join(lines)
         suffix = "\n" if text and not text.endswith("\n") else ""
-        config_path.write_text(text + suffix + "resumes:\n" + entry + "\n", encoding="utf-8")
-        return
+        return text + suffix + "resumes:\n" + entry + "\n"
     insert_at = len(lines)
     for i in range(resumes_line + 1, len(lines)):
         if lines[i].strip() and not lines[i].startswith((" ", "\t", "#")):
             insert_at = i
             break
+    # Файл без финального перевода строки: без него дописанный элемент склеился
+    # бы с последней строкой в одну (`text: python  - id: ...`) и конфиг стал бы
+    # нечитаемым — а произошло бы это уже ПОСЛЕ успешного копирования на hh.ru.
+    if insert_at == len(lines) and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
     lines[insert_at:insert_at] = [entry + "\n"]
-    config_path.write_text("".join(lines), encoding="utf-8")
+    return "".join(lines)
+
+
+def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str) -> None:
+    """Append a complete entry while leaving existing YAML/comments untouched.
+
+    Кандидат сначала пишется во временный файл рядом с конфигом, проверяется
+    продакшн-загрузчиком и только потом атомарно подменяет оригинал — тот же
+    контракт, что у ``config_cmd._validated_replace``. Запись идёт после
+    подтверждённого копирования на hh.ru: испорченный или обрезанный config.yaml
+    тут уже не откатить, поэтому оригинал не трогается, пока кандидат не признан
+    загружаемым.
+    """
+    from ..config import load_config
+
+    config_path = Path(path)
+    text = config_path.read_text(encoding="utf-8")
+    candidate_text = _config_with_resume(text, resume, slug, new_resume_id)
+
+    fd, name = tempfile.mkstemp(
+        prefix=f".{config_path.name}.", suffix=".tmp", dir=config_path.parent
+    )
+    candidate = Path(name)
+    try:
+        os.close(fd)
+        candidate.write_text(candidate_text, encoding="utf-8")
+        load_config(candidate)
+        os.replace(candidate, config_path)
+    finally:
+        candidate.unlink(missing_ok=True)
 
 
 def run(args: argparse.Namespace):
@@ -147,6 +216,10 @@ def run(args: argparse.Namespace):
         if any(slug == item.id or slug == item.resume_id for item in existing):
             print(f"[FAIL] Резюме со slug '{slug}' уже есть в конфиге")
             sys.exit(1)
+        # Проверки записи — ДО браузера: отказ после успешного копирования на
+        # hh.ru оставил бы лишний дубль в аккаунте (та же логика, что у проверки
+        # коллизии слагов выше — «отказ до записи», #520).
+        reject_bare_source(resume)
     history = History(args.history)
 
     if args.dry_run:
@@ -217,8 +290,12 @@ def run(args: argparse.Namespace):
             if write_config:
                 try:
                     write_resume_config(args.config, resume, slug, result.new_resume_id)
-                except (OSError, yaml.YAMLError) as exc:
+                except (ConfigError, OSError, yaml.YAMLError) as exc:
+                    # Копия на hh.ru уже создана и необратима, а конфиг остался
+                    # прежним (подмена атомарная) — единственное, что осталось
+                    # дать пользователю, это фрагмент для ручной вставки.
                     print(f"[FAIL] Копия создана, но config.yaml не обновлён: {exc}")
+                    print(format_config_snippet(result.new_resume_id))
                     return True
                 print(f"[OK] Резюме '{slug}' добавлено в config.yaml")
             else:
