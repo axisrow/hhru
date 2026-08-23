@@ -59,7 +59,10 @@ READ-only анализ рынка с целью **максимизация до�
 > (#125). Считать одну медиану только по `salary_to` нельзя: вакансии «от N»
 > выпадают из расчёта целиком (до 28% выборки, смещение до 20%).
 > `salary_currency` НЕ нормализована — сравнивайте сферы в одной валюте (обычно
-> внутри одного `search_query` она однородна).
+> внутри одного `search_query` она однородна). Поэтому каждый запрос ниже либо
+> группирует результат по `salary_currency`, либо явно выбирает одну валюту.
+> Нельзя считать `AVG`/медиану по `salary_from` или `salary_to` без этого
+> ограничения: сумма в RUB, USD, EUR и KZT — разные шкалы.
 
 > Чего в этих рецептах намеренно НЕТ. `COALESCE(salary_to, salary_from)` в один
 > ряд — смешение разных величин: «от 300 000» и «до 300 000» это не одно и то же
@@ -79,13 +82,16 @@ READ-only анализ рынка с целью **максимизация до�
 ```
 SELECT
     search_query AS сфера,
+    salary_currency AS валюта,
     -- медиана нижних границ: среднее двух центральных значений
     COALESCE((
         SELECT AVG(salary_from) FROM (
             SELECT salary_from, ROW_NUMBER() OVER (ORDER BY salary_from) AS rn,
                    COUNT(*) OVER () AS total
             FROM vacancies_seen
-            WHERE search_query = v.search_query AND salary_from IS NOT NULL
+            WHERE search_query = v.search_query
+              AND salary_currency IS v.salary_currency
+              AND salary_from IS NOT NULL
         ) WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
     ), 0) AS медиана_от,
     COUNT(salary_from) AS n_от,
@@ -95,15 +101,22 @@ SELECT
             SELECT salary_to, ROW_NUMBER() OVER (ORDER BY salary_to) AS rn,
                    COUNT(*) OVER () AS total
             FROM vacancies_seen
-            WHERE search_query = v.search_query AND salary_to IS NOT NULL
+            WHERE search_query = v.search_query
+              AND salary_currency IS v.salary_currency
+              AND salary_to IS NOT NULL
         ) WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
     ), 0) AS медиана_до,
     COUNT(salary_to) AS n_до,
     COUNT(*) AS вакансий
 FROM vacancies_seen AS v
-GROUP BY search_query
+WHERE salary_currency IS NOT NULL
+GROUP BY search_query, salary_currency
 ORDER BY медиана_до DESC, вакансий DESC;
 ```
+
+Здесь каждая строка — отдельная пара «сфера + валюта». Если нужен только один
+рынок, добавьте, например, `WHERE salary_currency = 'RUB'` во внешний запрос и
+замените `IS v.salary_currency` на тот же явный фильтр во вложенных запросах.
 
 `n_от` / `n_до` — coverage каждой медианы по отдельности: выборки у них разные,
 и если `n` мал (в отчёте порог 5), медиана шаткая. Смотрите на `n` рядом с
@@ -115,24 +128,27 @@ ORDER BY медиана_до DESC, вакансий DESC;
 Те же данные, отфильтрованные по конкретным сферам:
 
 ```
-SELECT search_query AS сфера, COUNT(*) AS n,
+SELECT search_query AS сфера, salary_currency AS валюта, COUNT(*) AS n,
        ROUND(AVG(salary_to)) AS средняя_to,
        MIN(salary_to) AS минимум, MAX(salary_to) AS максимум
 FROM vacancies_seen
 WHERE search_query IN ('python', 'performance', 'data engineer')
+  AND salary_currency = 'RUB'
   AND salary_to IS NOT NULL
-GROUP BY search_query
+GROUP BY search_query, salary_currency
 ORDER BY средняя_to DESC;
 ```
 
 ## 3. Топ работодателей по сфере (кого массово нанимают)
 
 ```
-SELECT company AS работодатель, COUNT(*) AS вакансий,
+SELECT company AS работодатель, salary_currency AS валюта, COUNT(*) AS вакансий,
        ROUND(AVG(salary_to)) AS средняя_to
 FROM vacancies_seen
-WHERE search_query = 'python' AND salary_to IS NOT NULL
-GROUP BY company
+WHERE search_query = 'python'
+  AND salary_currency = 'RUB'
+  AND salary_to IS NOT NULL
+GROUP BY company, salary_currency
 ORDER BY вакансий DESC
 LIMIT 20;
 ```
@@ -152,7 +168,9 @@ SELECT
     END AS диапазон,
     COUNT(*) AS вакансий
 FROM vacancies_seen
-WHERE search_query = 'python' AND salary_to IS NOT NULL
+WHERE search_query = 'python'
+  AND salary_currency = 'RUB'
+  AND salary_to IS NOT NULL
 GROUP BY диапазон
 ORDER BY MIN(salary_to);
 ```

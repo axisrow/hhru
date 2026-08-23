@@ -2550,7 +2550,8 @@ class History:
           3. Иначе — None (данных вообще нет, оценки не существует).
 
         Возвращает ``SalaryInfo`` (#34) с from=to=медиана (фиксированная оценка),
-        currency подобранная из сферы (любая непустая), либо None. ``SalaryInfo``
+        в доминирующей валюте сферы. Остальные валюты не участвуют в оценке.
+        ``SalaryInfo``
         импортируется лениво — разрыв цикла history ↔ search (search тянет history
         на верхнем уровне через SKIP_REASONS).
 
@@ -2560,9 +2561,28 @@ class History:
         from .search import SalaryInfo
 
         with self._connect() as conn:
+            # salary_currency хранится как есть и может различаться внутри одного
+            # search_query. Выбираем ту же доминирующую валюту, что и market-отчёт,
+            # чтобы точечная оценка не смешивала, например, RUB и USD.
+            currency_row = conn.execute(
+                """
+                SELECT salary_currency
+                FROM vacancies_seen
+                WHERE search_query = ?
+                  AND (salary_from IS NOT NULL OR salary_to IS NOT NULL)
+                GROUP BY salary_currency
+                ORDER BY COUNT(*) DESC, salary_currency
+                LIMIT 1
+                """,
+                [search_query],
+            ).fetchone()
+            currency = currency_row["salary_currency"] if currency_row else None
+
             # 1. Медиана по (query, tier).
             median, n_tier = self._median_salary_to(
-                conn, "search_query = ? AND employer_tier = ?", [search_query, employer_tier]
+                conn,
+                "search_query = ? AND employer_tier = ? AND salary_currency IS ?",
+                [search_query, employer_tier, currency],
             )
             source_tier = False
             if median is not None and n_tier >= self._ESTIMATE_TIER_MIN_N:
@@ -2570,19 +2590,19 @@ class History:
 
             # 2. Fallback на всю сферу, если по tier мало/нет данных.
             if not source_tier:
-                median, _ = self._median_salary_to(conn, "search_query = ?", [search_query])
+                median, _ = self._median_salary_to(
+                    conn,
+                    "search_query = ? AND salary_currency IS ?",
+                    [search_query, currency],
+                )
 
             if median is None:
                 return None
 
-            # currency — любая непустая в сфере (внутри search_query она обычно
-            # однородна, см. upsert_vacancy_seen). NULL неприемлем для SalaryInfo.
-            currency_row = conn.execute(
-                "SELECT salary_currency FROM vacancies_seen "
-                "WHERE search_query = ? AND salary_currency IS NOT NULL LIMIT 1",
-                [search_query],
-            ).fetchone()
-            currency = currency_row["salary_currency"] if currency_row else "RUB"
+            # SalaryInfo требует строковую валюту. Для старых/повреждённых строк
+            # без кода валюты сохраняем прежний fallback, но значения всё равно
+            # остаются отделены от прочих валют через IS ? выше.
+            currency = currency or "RUB"
 
         return SalaryInfo(
             salary_from=median,

@@ -148,6 +148,20 @@ class TestEstimatesRespectCurrency:
         assert row["estimated"] is True
         assert row["median_to"] == 220000
 
+    def test_point_estimate_uses_dominant_currency(self, tmp_path):
+        """Прямая оценка не должна смешивать валюты внутри одной сферы."""
+        h = History(tmp_path / "h.db")
+        for i, amount in enumerate([200000, 250000, 300000, 350000, 400000]):
+            _seen(h, f"r{i}", "python", amount, "RUB", tier="mid")
+        for i, amount in enumerate([5000, 6000, 7000, 8000, 9000]):
+            _seen(h, f"u{i}", "python", amount, "USD", tier="mid")
+
+        estimate = h.estimate_salary("python", "mid")
+
+        assert estimate is not None
+        assert estimate.currency == "RUB"
+        assert estimate.salary_to == 300000
+
 
 class TestSummaryRendering:
     def test_currency_column_present(self, tmp_path):
