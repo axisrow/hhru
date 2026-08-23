@@ -130,6 +130,20 @@ def _strip_trailing_comment(value: str) -> str:
     return value.strip()
 
 
+def _split_trailing_comment(value: str) -> tuple[str, str]:
+    """Return an inline YAML value and its trailing comment separately."""
+    quote = ""
+    for i, char in enumerate(value):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].strip(), value[i:]
+    return value.strip(), ""
+
+
 def _resumes_key_line(lines: list[str]) -> int | None:
     """Номер строки с ключом верхнего уровня ``resumes``, определённый разбором.
 
@@ -176,30 +190,44 @@ def _config_with_resume(text: str, resume, slug: str, new_resume_id: str) -> str
     # загрузчиком проходила, а прежние резюме исчезали молча.
     resumes_line = _resumes_key_line(lines)
     # Секции нет вовсе, либо она записана inline (`resumes: []`, `resumes:` со
-    # значением на той же строке): дописать элемент внутрь такой формы нельзя,
-    # поэтому заводим собственный блок в конце файла. Inline-строку при этом
-    # приходится убирать — YAML запрещает дубль ключа верхнего уровня.
+    # значением на той же строке): для пустой формы заводим собственный блок в
+    # конце файла. Непустой flow-список пересобирается только на своей строке;
+    # остальные части файла остаются текстуально нетронутыми.
     # Значение inline-формы берём БЕЗ хвостового комментария: `resumes:  # мои
-    # резюме` — обычный блочный ключ, и приняв «# мои резюме» за значение, мы
-    # удалили бы строку ключа, осиротив весь блок под ней.
-    inline_value = (
-        _strip_trailing_comment(lines[resumes_line].split(":", 1)[1])
-        if resumes_line is not None
-        else ""
-    )
+    # резюме` — обычный блочный ключ, а не значение, которое надо пересобирать.
+    inline_value, inline_comment = ("", "")
+    if resumes_line is not None:
+        line_without_ending = lines[resumes_line].rstrip("\r\n")
+        inline_value, inline_comment = _split_trailing_comment(
+            line_without_ending.split(":", 1)[1]
+        )
     if resumes_line is None or inline_value:
-        # ...но удалить можно только ПУСТУЮ форму. В непустом inline-списке
-        # удаление строки унесло бы уже настроенные резюме, а результат остался
-        # бы валидным YAML — проверка кандидата загрузчиком такую потерю не
-        # поймает. Дешевле отказаться до подмены файла, чем молча стереть
-        # чужие настройки (fail-closed, как отказ по коллизии слагов).
-        if inline_value and yaml.safe_load(inline_value):
-            raise ConfigError(
-                "Секция resumes записана списком в одну строку и не пуста — "
-                "дописать в неё резюме нельзя, не переписав её целиком. "
-                "Переведите resumes в блочный вид (по элементу на строку) "
-                "и повторите."
-            )
+        if inline_value:
+            inline_resumes = yaml.safe_load(inline_value)
+            if inline_resumes:
+                # Пересобираем только flow-список. Остальной текст файла,
+                # включая написание ключа и хвостовой комментарий, остаётся
+                # нетронутым; потеря элементов невозможна, поскольку старый
+                # список добавляется в новый целиком.
+                if not isinstance(inline_resumes, list):
+                    raise ConfigError("Раздел 'resumes' должен быть списком")
+                inline_resumes.append(_resume_mapping(resume, slug, new_resume_id))
+                rendered = yaml.safe_dump(
+                    inline_resumes,
+                    allow_unicode=True,
+                    sort_keys=False,
+                    default_flow_style=True,
+                ).rstrip("\n")
+                line = lines[resumes_line]
+                line_ending = line[len(line.rstrip("\r\n")) :]
+                lines[resumes_line] = (
+                    line.split(":", 1)[0]
+                    + ": "
+                    + rendered
+                    + inline_comment
+                    + line_ending
+                )
+                return "".join(lines)
         if resumes_line is not None:
             del lines[resumes_line]
             text = "".join(lines)

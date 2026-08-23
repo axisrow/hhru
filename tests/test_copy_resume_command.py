@@ -207,11 +207,8 @@ def test_write_resume_config_appends_under_key_with_trailing_comment(tmp_path):
 
 
 def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
-    """Непустой inline-список (`resumes: [{...}]`) нельзя дописать, удалив строку:
-    вместе с ней исчезли бы уже настроенные резюме. Результат при этом остаётся
-    валидным YAML, поэтому проверка кандидата загрузчиком такую потерю не ловит —
-    нужен явный отказ ДО подмены файла."""
-    from hhru_bot.config import ConfigError, load_config
+    """Непустой inline-список дополняется без потери старых резюме."""
+    from hhru_bot.config import load_config
 
     config_path = tmp_path / "config.yaml"
     original = _loadable_config(
@@ -221,11 +218,30 @@ def test_write_resume_config_never_drops_entries_from_inline_list(tmp_path):
     config_path.write_text(original, encoding="utf-8")
     assert [r.id for r in load_config(config_path).resumes] == ["backend"]
 
-    with pytest.raises(ConfigError):
-        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
 
-    assert config_path.read_text(encoding="utf-8") == original
-    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+    result = config_path.read_text(encoding="utf-8")
+    assert result != original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend", "backend-copy"]
+
+
+def test_write_resume_config_appends_to_inline_list_with_trailing_comment(tmp_path):
+    """Пересборка inline-списка сохраняет комментарий после секции."""
+    from hhru_bot.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _loadable_config(
+            "resumes: [{id: backend, resume_url: "
+            f'"https://hh.ru/resume/{OLD_ID}", search: {{text: python}}}}]  # мои резюме\n'
+        ),
+        encoding="utf-8",
+    )
+
+    cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", NEW_ID)
+
+    assert [r.id for r in load_config(config_path).resumes] == ["backend", "backend-copy"]
+    assert "# мои резюме" in config_path.read_text(encoding="utf-8")
 
 
 def test_write_resume_config_refuses_when_slug_points_at_another_resume(tmp_path, monkeypatch):
