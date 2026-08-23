@@ -53,6 +53,13 @@ if TYPE_CHECKING:
 # (#74). Отдельное значение, чтобы смешанные логи/батчи было видно по источнику.
 RESUME_MATCH_MODE = "resume_match"
 
+# Отметка в ScoreOutcome.rationale для случая «считать было нечего» (нет профиля,
+# пустой профиль, пустой vacancy_text). Score при этом 0.0 — тот же, что у
+# «честно не совпало», поэтому различать их можно ТОЛЬКО по этой строке. Для
+# Этапа 1 это и есть смысл: распределение, по которому калибруется порог Этапа 2,
+# должно строиться на карточках, где скоринг реально что-то считал.
+NO_DATA_RATIONALE = "нет данных для сопоставления"
+
 # Веса факторов профиля. skills — самый прямой сигнал соответствия (конкретные
 # технологии), desired_role — сильный, но один; summary/highlights — рыхлый
 # свободный текст, поэтому вес ниже: иначе длинное «о себе» с общими словами
@@ -175,6 +182,8 @@ def _is_negated(vacancy_tokens: list[str], index: int) -> bool:
     # «Python не требуется»: ищем СМЕЖНУЮ пару отрицание+требование, а не два
     # маркера порознь в окне. Порознь они склеивали бы разные предложения —
     # «Требуется Django; знание Python не требуется» гасило бы и Django.
+    # strict=False обязателен: tail и tail[1:] заведомо разной длины (последний
+    # элемент пары не имеет), strict=True бросал бы ValueError на каждом вызове.
     tail = vacancy_tokens[index + 1 : index + 1 + _NEGATION_WINDOW_AFTER]
     return any(
         first in _NEGATION_BEFORE and second in _NEGATION_AFTER
@@ -235,11 +244,30 @@ def resume_match_score(
     ``vacancy_text``. Пустой текст вакансии — именно ноль, а не «идеальное
     совпадение»: отсутствие данных не доказывает соответствия (fail-closed —
     общий принцип проекта, ср. ``PageStateIndeterminate``).
+
+    Но ноль «нет данных» и ноль «честно не совпало» РАЗЛИЧАЮТСЯ в ``rationale``
+    (``NO_DATA_RATIONALE``). Для Этапа 1 это принципиально: оба вида нулей
+    попадают в одно значение шкалы, и без пометки распределение, по которому
+    Этап 2 будет калибровать порог, оказалось бы загрязнено карточками, где
+    скоринг просто нечего было считать. Отдельный ``mode``/шкала для этого не
+    заводятся — ``mode`` остаётся маркером ИСТОЧНИКА скоринга (#74).
     """
     if profile is None:
-        return ScoreOutcome(score_0_100=0.0, mode=RESUME_MATCH_MODE, breakdown={})
+        return ScoreOutcome(
+            score_0_100=0.0,
+            mode=RESUME_MATCH_MODE,
+            rationale=NO_DATA_RATIONALE,
+            breakdown={},
+        )
 
     vacancy_tokens = _tokenize(getattr(card, "vacancy_text", "") or "")
+    if not vacancy_tokens:
+        return ScoreOutcome(
+            score_0_100=0.0,
+            mode=RESUME_MATCH_MODE,
+            rationale=NO_DATA_RATIONALE,
+            breakdown={},
+        )
 
     sources: dict[str, str] = {
         "skills": " ".join(profile.skills or []),
@@ -264,7 +292,13 @@ def resume_match_score(
         weight_total += weight
 
     if weight_total <= 0.0:
-        return ScoreOutcome(score_0_100=0.0, mode=RESUME_MATCH_MODE, breakdown={})
+        # Профиль пуст — считать было нечего, это тоже «нет данных», а не «не совпало».
+        return ScoreOutcome(
+            score_0_100=0.0,
+            mode=RESUME_MATCH_MODE,
+            rationale=NO_DATA_RATIONALE,
+            breakdown={},
+        )
 
     score = round((weighted_sum / weight_total) * 100.0, 2)
     matched_factors = ", ".join(f"{k}={v:.0f}" for k, v in breakdown.items() if v > 0.0)

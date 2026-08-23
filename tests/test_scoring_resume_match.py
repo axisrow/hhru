@@ -17,6 +17,7 @@ import pytest
 
 from hhru_bot.config_sections.ai_profile import AIProfile
 from hhru_bot.scoring import RESUME_MATCH_MODE, resume_match_score
+from hhru_bot.scoring.resume_match import NO_DATA_RATIONALE
 from hhru_bot.search import VacancyCard
 
 pytestmark = pytest.mark.unit
@@ -143,6 +144,25 @@ def test_empty_vacancy_text_scores_zero():
 def test_both_empty_scores_zero_without_raising():
     outcome = resume_match_score(card(""), profile())
     assert outcome.score_0_100 == 0.0
+
+
+def test_no_data_zero_is_distinguishable_from_real_mismatch():
+    """Оба нуля на одной шкале — различает только rationale (#492 Этап 1).
+
+    Без этого распределение, по которому калибруется порог Этапа 2, смешало бы
+    «нечего было считать» с «честно не совпало» в одном бакете.
+    """
+    no_data = resume_match_score(card(""), profile(skills=["Python"]))
+    mismatch = resume_match_score(card("Требуется 1С и УТ 11"), profile(skills=["Python"]))
+
+    assert no_data.score_0_100 == mismatch.score_0_100 == 0.0
+    assert no_data.rationale == NO_DATA_RATIONALE
+    assert mismatch.rationale != NO_DATA_RATIONALE
+
+
+def test_empty_profile_is_marked_as_no_data():
+    assert resume_match_score(card("Требуется Python"), profile()).rationale == NO_DATA_RATIONALE
+    assert resume_match_score(card("Требуется Python"), None).rationale == NO_DATA_RATIONALE
 
 
 # --- regression на класс ошибки #490 (тема vs намерение) ---------------------
