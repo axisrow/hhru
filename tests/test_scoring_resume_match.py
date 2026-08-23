@@ -336,6 +336,24 @@ def test_negation_with_inserted_word_after_skill_is_detected():
     assert outcome.score_0_100 == 0.0
 
 
+def test_negation_before_marker_survives_colon_inside_sentence():
+    """Двоеточие внутри одного предложения не должно рвать клаузу маркера."""
+    outcome = resume_match_score(
+        card("Не требуется: Python"),
+        profile(skills=["Python"]),
+    )
+    assert outcome.score_0_100 == 0.0
+
+
+def test_negation_after_marker_survives_comma_inside_sentence():
+    """Запятая перед вставленным словом не должна рвать клаузу пары «не требуется»."""
+    outcome = resume_match_score(
+        card("Python, больше не требуется"),
+        profile(skills=["Python"]),
+    )
+    assert outcome.score_0_100 == 0.0
+
+
 # --- встраивание в rank_candidates (Этап 1: наблюдение без последствий) ------
 
 

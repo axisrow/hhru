@@ -207,7 +207,7 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-_CLAUSE_SEP = re.compile(r"[.!?;:,\n•]+", re.UNICODE)
+_CLAUSE_SEP = re.compile(r"[.!?;\n•]+", re.UNICODE)
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 
 
@@ -215,8 +215,11 @@ def _tokenize_with_boundaries(text: str) -> tuple[list[str], list[int]]:
     """Возвращает токены и номер клаузы для каждого токена.
 
     Пунктуация не попадает в токены, но её позиции сохраняются через номер
-    клаузы. Это не даёт окну отрицания переносить маркер через точку, ``;``,
-    запятую, перевод строки или bullet. Стоп-слова сравниваются по стему:
+    клаузы. Клауза — это ГРАНИЦА ПРЕДЛОЖЕНИЯ (#509: точка, ``;``, перевод
+    строки, bullet), а не любой знак препинания: запятая и двоеточие внутри
+    одного предложения («Не требуется: Python», «Python, больше не требуется»)
+    не разрывают связь маркера отрицания с навыком. Это не даёт окну отрицания
+    переносить маркер через границу ПРЕДЛОЖЕНИЯ. Стоп-слова сравниваются по стему:
     например, ``опыта`` исчезает так же, как базовое ``опыт``, и обязательная
     конструкция «без опыта Python» остаётся соседней после фильтрации.
     """
@@ -288,9 +291,13 @@ def _is_negated(vacancy_tokens: list[str], index: int, clause_ids: list[int] | N
 
     Проверяется узкое окно внутри одной клаузы: маркер отрицания стоит
     непосредственно ПЕРЕД токеном («без опыта Python» после фильтрации
-    стоп-слов превращается в «без Python») или конструкция «не ... требуется»
-    находится ПОСЛЕ него. Границы клаузы передаются отдельно от токенов, поэтому
-    пунктуация не теряется при токенизации.
+    стоп-слов превращается в «без Python»), пара «маркер + требование» стоит
+    ПЕРЕД токеном («не требуется: Python» — двоеточие не рвёт клаузу, это одно
+    предложение), или та же пара находится ПОСЛЕ него («Python больше не
+    требуется»). Границы клаузы передаются отдельно от токенов, поэтому
+    пунктуация внутри предложения (запятая, двоеточие) не мешает распознать
+    пару, а граница ПРЕДЛОЖЕНИЯ (#509: точка, ``;``, перевод строки, bullet)
+    не даёт маркеру дотянуться до чужого токена из другого предложения.
 
     Маркер, за которым сразу идёт слово из ``_NEGATION_CANCELLERS``, отрицанием
     НЕ считается: «не только Python, но и SQL» — утвердительная конструкция,
@@ -308,6 +315,26 @@ def _is_negated(vacancy_tokens: list[str], index: int, clause_ids: list[int] | N
             continue
         following = vacancy_tokens[offset + 1] if offset + 1 < len(vacancy_tokens) else ""
         if following in _NEGATION_CANCELLERS:
+            continue
+        return True
+
+    # «Не требуется: Python» — пара отрицание+требование ПЕРЕД токеном, а не
+    # одиночный маркер в узком окне: «не» и «требуется» — два разных токена,
+    # а _NEGATION_WINDOW_BEFORE=1 не достаёт до «не». Ищем пару с тем же
+    # ограничением на число вставленных слов, что и у пары ПОСЛЕ токена.
+    head_start = max(0, index - 2 - _NEGATION_WORDS_BEFORE_REQUIREMENT)
+    head = vacancy_tokens[head_start:index]
+    for offset, token in enumerate(head, start=head_start):
+        if token not in _NEGATION_BEFORE:
+            continue
+        if clause_ids is not None and clause_ids[offset] != clause_ids[index]:
+            continue
+        following_index = offset + 1
+        if following_index >= index:
+            continue
+        if vacancy_tokens[following_index] not in _NEGATION_AFTER:
+            continue
+        if clause_ids is not None and clause_ids[following_index] != clause_ids[index]:
             continue
         return True
 
