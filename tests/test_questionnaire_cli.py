@@ -85,6 +85,44 @@ def test_example_is_accepted_for_static_mode(tmp_path):
     assert history.get_confirmed_phrases()["доход?"] == "salary"
 
 
+def test_example_unblocks_a_compliance_template_end_to_end(tmp_path):
+    """#486 воспроизведение из живого прогона: questionnaire set --mode static
+    --cluster compliance --answer ... --example "<нестандартная формулировка>"
+    должен не только сохраниться, но и реально резолвить вопрос с этой
+    формулировкой через TemplateQuestionAnswerer — а не остаться недостижимым
+    из-за того, что gate не давал сохранить пример вместе с шаблоном."""
+    from hhru_bot.config_sections.questionnaires import QuestionnairesConfig
+    from hhru_bot.questionnaires.answerer import TemplateQuestionAnswerer
+
+    cmd.run_set(
+        _args(
+            tmp_path,
+            template="data_accuracy",
+            mode="static",
+            cluster="compliance",
+            answer="Да",
+            example=["Подтверждаете достоверность предоставленных данных?"],
+        )
+    )
+
+    history = History(tmp_path / "h.db")
+    answerer = TemplateQuestionAnswerer(
+        history,
+        "r1",
+        settings=QuestionnairesConfig(enabled=True),
+        confirm_fn=lambda **_: False,
+    )
+    from hhru_bot.ai.questions import Question
+
+    proposal = answerer.propose(
+        Question(0, "Подтверждаете достоверность предоставленных данных?", "text")
+    )
+
+    assert proposal.answer == "Да"
+    assert not proposal.low_confidence
+    assert answerer.pending == []
+
+
 def test_set_uses_the_seed_cluster_by_default(tmp_path):
     cmd.run_set(_args(tmp_path, answer="от 250000"))
 
@@ -452,6 +490,42 @@ def test_seeding_is_scoped_to_the_requested_resume(tmp_path, monkeypatch):
 
     assert len(history.list_questionnaire_pending("RID1")) == 1
     assert history.list_questionnaire_pending("RID2") == []
+
+
+def test_learn_rekeys_scans_stored_under_the_config_slug(tmp_path, monkeypatch):
+    """#486: до фикса probe --questionnaires-only ключевал questionnaire_scans
+    слагом резюме (resume.id), а не resume_id — questionnaire learn --resume
+    <slug> резолвит --resume в resume_id и находил почти ничего. learn обязан
+    сам мигрировать такие накопленные строки, а не только probe, потому что
+    пользователь мог никогда больше не перезапустить probe после апгрейда."""
+    import textwrap
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            account:
+              storage_state_file: data/storage_state/hh_session.json
+            resumes:
+              - id: python
+                resume_url: "https://hh.ru/resume/b3236ebbff10f60ff30039ed1f6d5876645331"
+                search:
+                  text: "python developer"
+            """
+        ),
+        encoding="utf-8",
+    )
+    history = History(tmp_path / "h.db")
+    # Записано под slug'ом — как это делал probe до фикса #486.
+    _scan(history, "python", "v1", "Опишите самый сложный проект")
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    cmd.run_learn(_args(tmp_path, resume="python", limit=20))
+
+    real_resume_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    assert len(history.list_questionnaire_pending(real_resume_id)) == 1
+    assert history.list_scanned_questions("python") == []
 
 
 # --- валидация аргументов ---------------------------------------------------

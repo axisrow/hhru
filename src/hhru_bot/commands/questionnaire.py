@@ -124,6 +124,38 @@ def _scope(args: argparse.Namespace) -> str | None:
         return args.resume
 
 
+def _rekey_scanned_slugs(args: argparse.Namespace, history) -> None:
+    """Перенести накопленные questionnaire_scans со slug на resume_id (#486).
+
+    До фикса ``probe --questionnaires-only`` ключевал сканы ``resume.id``
+    (slug из config.yaml), а не реальным ``resume_id`` — той же историей
+    пользуется и ``_scope()`` выше. Вызывается здесь (WRITE-путь ``learn``,
+    держит write-lock), а не только из ``probe``: пользователь, у которого уже
+    накопились slug-строки старым бинарником, может никогда больше не
+    запустить ``probe`` заново — без вызова здесь его накопленные сканы
+    остались бы недостижимы через ``--resume`` навсегда.
+
+    Маппинг строится из ВСЕХ резюме конфига, а не только из запрошенного
+    ``--resume``: иначе (а) сканы других резюме остаются осиротевшими под
+    своим slug, и (б) ``list_scanned_questions()`` без ``--resume`` группирует
+    вопросы по ``(resume_id, текст)`` — один и тот же вопрос, лежащий и под
+    slug, и под resume_id одного резюме, до полной нормализации считается
+    дважды.
+
+    Молча пропускается, если конфиг недоступен (та же деградация, что у
+    ``_scope()``) — работа с уже начатой очередью не должна падать из-за
+    отсутствующего config.yaml.
+    """
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(args.config)
+    except (ConfigError, SystemExit, OSError):
+        return
+    mapping = {resume.id: resume.resume_id for resume in config.resumes}
+    history.rekey_questionnaire_scans(mapping)
+
+
 def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
@@ -278,6 +310,7 @@ def run_learn(args: argparse.Namespace):
 
     scope = _scope(args)
     history = History(args.history)
+    _rekey_scanned_slugs(args, history)
     if seeded := _seed_queue_from_scans(history, scope):
         print(f"[INFO] Добавлено в очередь из ранее собранных анкет: {seeded}.")
     rows = history.list_questionnaire_pending(scope, limit=_limit(args))

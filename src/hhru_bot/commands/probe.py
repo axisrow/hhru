@@ -722,10 +722,14 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
     # #486: старые запуски этой команды ключевали questionnaire_scans слагом
     # резюме (resume.id) вместо реального resume_id — накопленные строки были
     # недостижимы через --resume в questionnaire learn/pending. Нормализация
-    # идемпотентна и затрагивает только резюме из текущего конфига.
+    # идемпотентна; маппинг строится из ВСЕХ резюме конфига (не только
+    # запрошенного --resume), иначе сканы прочих резюме остаются осиротевшими
+    # под своим slug (тот же приём в questionnaire._rekey_scanned_slugs,
+    # которая и есть основная точка вызова для уже накопленных до этого фикса
+    # данных — эта команда мутирует БД только при собственном запуске).
     if history is not None:
         rekeyed = history.rekey_questionnaire_scans(
-            {resume.id: resume.resume_id for resume in resumes}
+            {resume.id: resume.resume_id for resume in config.resumes}
         )
         if rekeyed:
             print(
