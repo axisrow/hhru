@@ -24,9 +24,24 @@ def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "questionnaire",
         help="Шаблоны ответов на анкеты работодателей",
-        description="Показать очередь и шаблоны, задать ответ или обучить шаблон.",
+        description="Показать очередь, аудит и шаблоны, задать ответ или обучить шаблон.",
     )
     commands = parser.add_subparsers(dest="questionnaire_command", required=True)
+
+    audit = commands.add_parser(
+        "audit",
+        help="Показать сохранённый аудит ответов на анкеты (READ)",
+        description="Последние ответы, предложенные при боевых откликах.",
+    )
+    audit.add_argument("--last", type=int, default=50, help="Сколько последних строк вывести")
+    audit.add_argument("--resume", help="Slug резюме или resume_id (по умолчанию — все)")
+    audit.add_argument("--template", help="Показать только указанный шаблон")
+    audit.add_argument(
+        "--low-confidence",
+        action="store_true",
+        help="Показать предложения, не прошедшие порог уверенности",
+    )
+    audit.set_defaults(func=run_audit)
 
     pending = commands.add_parser(
         "pending",
@@ -100,6 +115,14 @@ def _limit(args: argparse.Namespace) -> int:
     return limit
 
 
+def _last(args: argparse.Namespace) -> int:
+    last = getattr(args, "last", 0) or 0
+    if last < 1:
+        print("[FAIL] --last должен быть >= 1", file=sys.stderr)
+        sys.exit(1)
+    return last
+
+
 def _scope(args: argparse.Namespace) -> str | None:
     """Ключ хранения: реальный resume_id HH.ru, а не slug из конфига.
 
@@ -163,6 +186,37 @@ def run_pending(args: argparse.Namespace) -> None:
     print(f"[INFO] Ожидает решения: {len(rows)}. Разобрать: hhru questionnaire learn")
     if unseeded:
         print(f"[INFO] Ещё не в очереди, из собранных анкет: {unseeded}.")
+
+
+def run_audit(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..report import _ascii_table
+
+    rows = History(args.history).list_questionnaire_audit(
+        resume_id=_scope(args),
+        template=args.template,
+        low_confidence=args.low_confidence,
+        last=_last(args),
+    )
+    if not rows:
+        print("[INFO] Аудит ответов на анкеты пуст.")
+        return
+    print(
+        _ascii_table(
+            ["VACANCY", "CONF", "SOURCE", "TEMPLATE", "QUESTION", "ANSWER"],
+            [
+                [
+                    row["vacancy_id"],
+                    f"{row['confidence']:.2f}" if row["confidence"] is not None else "-",
+                    row["resolver_source"] or "-",
+                    row["template"] or "-",
+                    row["question"],
+                    row["answer"] or "[не заполнено]",
+                ]
+                for row in rows
+            ],
+        )
+    )
 
 
 def run_templates(args: argparse.Namespace) -> None:

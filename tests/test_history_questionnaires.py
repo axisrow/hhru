@@ -195,3 +195,145 @@ def test_questionnaire_answer_summary_scoped_by_resume_and_period(tmp_path):
         "unanswered": 0,
     }
     assert history.questionnaire_answer_summary() == {"profile": 2, "llm": 0, "unanswered": 0}
+
+
+def test_list_questionnaire_audit_filters_apply_rows_and_returns_latest_first(tmp_path):
+    history = History(tmp_path / "history.db")
+    base_question = {
+        "body_index": 0,
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer_source": "profile",
+        "cluster": "conditions",
+    }
+    history.record_questionnaire(
+        "marketing",
+        "probe-only",
+        "https://hh.ru/vacancy/probe-only",
+        "Маркетолог",
+        "Acme",
+        [{**base_question, "text": "Не показывать", "answer": "Да", "filled": True}],
+    )
+    history.record_questionnaire(
+        "marketing",
+        "1",
+        "https://hh.ru/vacancy/1",
+        "Маркетолог",
+        "Acme",
+        [
+            {
+                **base_question,
+                "text": "Желаемый доход?",
+                "answer": "250000",
+                "confidence": 0.95,
+                "filled": True,
+                "template": "salary",
+                "resolver_source": "static",
+            }
+        ],
+        source="apply",
+        run_id="run-1",
+    )
+    history.record_questionnaire(
+        "backend",
+        "2",
+        "https://hh.ru/vacancy/2",
+        "Разработчик",
+        "Beta",
+        [
+            {
+                **base_question,
+                "text": "Какие редакторы?",
+                "answer": "",
+                "answer_source": "llm",
+                "confidence": 0.2,
+                "filled": False,
+                "template": "skills",
+                "cluster": "experience",
+                "resolver_source": "fallback",
+            }
+        ],
+        source="apply",
+        run_id="run-2",
+    )
+
+    rows = history.list_questionnaire_audit(last=1)
+
+    assert len(rows) == 1
+    assert rows[0] == {
+        "id": rows[0]["id"],
+        "resume_id": "backend",
+        "vacancy_id": "2",
+        "vacancy_url": "https://hh.ru/vacancy/2",
+        "detected_at": rows[0]["detected_at"],
+        "question": "Какие редакторы?",
+        "answer": "",
+        "answer_source": "llm",
+        "confidence": 0.2,
+        "filled": 0,
+        "template": "skills",
+        "cluster": "experience",
+        "resolver_source": "fallback",
+        "run_id": "run-2",
+    }
+
+
+def test_list_questionnaire_audit_supports_resume_template_and_low_confidence_filters(tmp_path):
+    history = History(tmp_path / "history.db")
+    questions = [
+        {
+            "body_index": 0,
+            "text": "Доход?",
+            "kind": "text",
+            "is_radio": False,
+            "options": [],
+            "answer": "250000",
+            "answer_source": "profile",
+            "confidence": 1.0,
+            "filled": True,
+            "template": "salary",
+            "cluster": "conditions",
+            "resolver_source": "static",
+        },
+        {
+            "body_index": 1,
+            "text": "Опыт?",
+            "kind": "text",
+            "is_radio": False,
+            "options": [],
+            "answer": "",
+            "answer_source": "llm",
+            "confidence": 0.4,
+            "filled": False,
+            "template": "experience",
+            "cluster": "experience",
+            "resolver_source": "contextual",
+        },
+    ]
+    history.record_questionnaire(
+        "backend",
+        "3",
+        "https://hh.ru/vacancy/3",
+        "Разработчик",
+        "Acme",
+        questions,
+        source="apply",
+    )
+    history.record_questionnaire(
+        "marketing",
+        "4",
+        "https://hh.ru/vacancy/4",
+        "Маркетолог",
+        "Beta",
+        questions,
+        source="apply",
+    )
+
+    rows = history.list_questionnaire_audit(
+        resume_id="backend", template="experience", low_confidence=True
+    )
+
+    assert [(row["resume_id"], row["template"], row["filled"]) for row in rows] == [
+        ("backend", "experience", 0)
+    ]

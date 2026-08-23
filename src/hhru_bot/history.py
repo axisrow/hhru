@@ -2853,6 +2853,52 @@ class History:
             ).fetchone()
         return {key: int(row[key]) for key in ("profile", "llm", "unanswered")}
 
+    def list_questionnaire_audit(
+        self,
+        resume_id: str | None = None,
+        template: str | None = None,
+        low_confidence: bool = False,
+        last: int = 50,
+    ) -> list[dict]:
+        """Return recent per-question answer audits recorded by ``apply``.
+
+        ``filled`` is the persisted decision that the proposal cleared the
+        configured confidence gate.  It is therefore used for
+        ``low_confidence`` instead of inventing a report-time threshold which
+        may differ from the one used by the original apply run.
+        """
+        if last < 1:
+            raise ValueError("last must be >= 1")
+        where = ["scan.source = 'apply'"]
+        params: list = []
+        if resume_id is not None:
+            where.append("scan.resume_id = ?")
+            params.append(resume_id)
+        if template is not None:
+            where.append("question.template = ?")
+            params.append(template)
+        if low_confidence:
+            where.append("question.filled = 0")
+        params.append(last)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT question.id, scan.resume_id, scan.vacancy_id,
+                       scan.vacancy_url, scan.detected_at,
+                       question.text AS question, question.answer,
+                       question.answer_source, question.confidence,
+                       question.filled, question.template, question.cluster,
+                       question.resolver_source, question.run_id
+                FROM questionnaire_questions AS question
+                JOIN questionnaire_scans AS scan ON scan.id = question.scan_id
+                WHERE {" AND ".join(where)}
+                ORDER BY question.id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # --- обучаемые шаблоны ответов на анкеты (#482) ---------------------
     #
     # Скоуп хранится строкой resume_id: '' — уровень аккаунта, непустая —

@@ -172,7 +172,60 @@ def test_unset_missing_template_reports_info(capsys, tmp_path):
     assert "[INFO]" in capsys.readouterr().out
 
 
-# --- templates / pending ----------------------------------------------------
+# --- audit / templates / pending --------------------------------------------
+
+
+def test_audit_prints_saved_answers_and_unfilled_marker(capsys, tmp_path):
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire(
+        "r1",
+        "132855712",
+        "https://hh.ru/vacancy/132855712",
+        "Разработчик",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Настоящим подтверждаю...",
+                "kind": "choice",
+                "is_radio": True,
+                "options": ["Да", "Нет"],
+                "answer": "Да",
+                "answer_source": "profile",
+                "confidence": 1.0,
+                "filled": True,
+                "template": "data_accuracy",
+                "cluster": "compliance",
+                "resolver_source": "static",
+            },
+            {
+                "body_index": 1,
+                "text": "Какие редакторы?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "",
+                "answer_source": "llm",
+                "confidence": 0.0,
+                "filled": False,
+            },
+        ],
+        source="apply",
+    )
+
+    cmd.run_audit(_args(tmp_path, last=50, template=None, low_confidence=False))
+
+    out = capsys.readouterr().out
+    assert "VACANCY" in out and "+---" in out
+    assert "132855712" in out
+    assert "1.00" in out and "static" in out and "data_accuracy" in out
+    assert "[не заполнено]" in out
+
+
+def test_audit_empty_prints_info(capsys, tmp_path):
+    cmd.run_audit(_args(tmp_path, last=50, template=None, low_confidence=False))
+
+    assert "[INFO]" in capsys.readouterr().out
 
 
 def test_templates_prints_an_ascii_table(capsys, tmp_path):
@@ -296,7 +349,7 @@ def test_mutating_subcommands_take_the_write_lock(subcommand):
     assert _is_write_command(args) is True
 
 
-@pytest.mark.parametrize("subcommand", ["pending", "templates"])
+@pytest.mark.parametrize("subcommand", ["pending", "templates", "audit"])
 def test_read_subcommands_do_not_take_the_write_lock(subcommand):
     args = argparse.Namespace(command="questionnaire", questionnaire_command=subcommand)
 
@@ -331,7 +384,28 @@ def test_parser_registers_every_subcommand():
         if isinstance(action, argparse._SubParsersAction)
     )
 
-    assert set(nested.choices) == {"pending", "templates", "learn", "set", "unset"}
+    assert set(nested.choices) == {"audit", "pending", "templates", "learn", "set", "unset"}
+
+
+def test_audit_parser_registers_filters():
+    args = build_parser().parse_args(
+        [
+            "questionnaire",
+            "audit",
+            "--last",
+            "12",
+            "--resume",
+            "backend",
+            "--template",
+            "salary",
+            "--low-confidence",
+        ]
+    )
+
+    assert args.last == 12
+    assert args.resume == "backend"
+    assert args.template == "salary"
+    assert args.low_confidence is True
 
 
 def test_set_requires_a_mode():
