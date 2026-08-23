@@ -84,6 +84,47 @@ def test_history_creates_search_query_column(tmp_path):
     assert "search_query" in cols
 
 
+def test_history_migrates_priority_two_vacancy_badges(tmp_path):
+    """Existing vacancies_seen tables receive the #516 columns idempotently."""
+    db = tmp_path / "h.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE vacancies_seen (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vacancy_id TEXT NOT NULL,
+                title TEXT,
+                company TEXT,
+                salary_from INTEGER,
+                salary_to INTEGER,
+                salary_currency TEXT,
+                search_query TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                employer_tier TEXT,
+                vacancy_text TEXT,
+                published_at TEXT,
+                address TEXT,
+                is_remote INTEGER,
+                experience TEXT,
+                snippet_requirement TEXT,
+                snippet_responsibility TEXT,
+                UNIQUE (vacancy_id, search_query)
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    history = History(db)
+    history.upsert_vacancy_seen("v1", "python", side_job=True, no_resume=False)
+    row = history.list_vacancies_seen()[0]
+    assert row["side_job"] == 1
+    assert row["no_resume"] == 0
+
+
 def test_letter_variant_added_idempotently_on_reopen(tmp_path):
     # CAVEAT #51: повторное открытие той же БД не падает на 'duplicate column'.
     History(tmp_path / "h.db")
