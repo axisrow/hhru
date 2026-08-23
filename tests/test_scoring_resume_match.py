@@ -277,6 +277,23 @@ def test_empty_profile_is_marked_as_no_data():
 # --- regression на класс ошибки #490 (тема vs намерение) ---------------------
 
 
+@pytest.mark.parametrize(
+    "inflected_stopword",
+    ["опыта", "опыту", "опытом", "работы", "знания", "года", "команды", "компании", "умения"],
+)
+def test_inflected_stopwords_are_still_recognized(inflected_stopword):
+    """Snowball-стем инфлексии не обязан совпадать со стемом базовой формы.
+
+    «опыт» стеммится в «оп», а «опыта» — в «опыт»: разные стемы одного слова.
+    Простое добавление словоформы в ``_STOPWORDS`` тоже прошло бы regression-тест
+    ниже, но не эту проверку — застрахован сам факт распознавания инфлексии,
+    а не конкретный кейс из #490.
+    """
+    from hhru_bot.scoring.resume_match import _is_stopword
+
+    assert _is_stopword(inflected_stopword)
+
+
 def test_negated_requirement_is_not_counted_as_match():
     """#490: «без опыта Python» — тема совпала, намерение противоположное.
 
