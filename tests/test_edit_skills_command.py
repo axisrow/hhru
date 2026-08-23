@@ -90,6 +90,56 @@ def test_dry_run_output_does_not_claim_skills_were_added(capsys):
     assert "[INFO] Ничего не сохранено на hh.ru." in output
 
 
+def test_success_output_normalizes_internal_whitespace_in_added_chip(capsys):
+    """An added chip rendered with double internal whitespace must still be
+    classified as added, not already-present (#536 round 3).
+
+    ``_print_success`` used bare ``casefold()`` while the pipeline normalizes via
+    ``_skill_key`` (``" ".join(split).casefold()``); a chip "Machine  Learning"
+    (double space) mismatched the single-spaced plan key and was reported as
+    "уже были" / "сохранить" instead of "добавлены" / "добавить".
+    """
+    result = SkillsResult(
+        success=True,
+        existing=("Python",),
+        proposed=(Skill("Machine Learning", "intermediate"),),
+        added=("Machine  Learning",),  # double space from hh.ru chip
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    # The chip spelling observed on hh.ru is preserved in the roll-up.
+    assert "добавлены: Machine  Learning" in output
+    # The proposed skill is classified as an addition despite the whitespace gap.
+    assert "добавить" in output
+    assert "сохранить" not in output
+    assert "уже были: Machine" not in output
+
+
+def test_success_output_normalizes_internal_whitespace_in_existing_chip(capsys):
+    """An existing chip with double internal whitespace must match a same-spelling
+    plan entry as already-present (#536 round 3).
+
+    Without normalizing the existing-chip key, "Python  Dev" (double space) would
+    not match the plan's "Python Dev" (single space); the skill would fall through
+    to the ``skill.name`` fallback and be reported as an addition.
+    """
+    result = SkillsResult(
+        success=True,
+        existing=("Python  Dev",),  # double space from hh.ru chip
+        proposed=(Skill("Python Dev", "advanced"),),  # single space from plan
+        added=(),
+    )
+
+    command._print_success("resume", result, dry_run=False)
+
+    output = capsys.readouterr().out
+    assert "уже были: Python  Dev" in output  # chip spelling preserved
+    assert "  - Python  Dev [advanced] — сохранить" in output
+    assert "добавлены:" not in output
+
+
 @contextmanager
 def _launch_context(*_args, **_kwargs):
     yield SimpleNamespace(new_page=lambda: _Page())

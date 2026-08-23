@@ -5,21 +5,27 @@ from __future__ import annotations
 import argparse
 from urllib.parse import urlsplit
 
+from ..skills import _skill_key
 from .copy_resume import confirm_write
 
 
 def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
     """Print counts that distinguish additions from skills already present."""
     prefix = "[DRY-RUN]" if dry_run else "[OK]"
-    added_keys = {name.casefold() for name in result.added}
+    # Match the pipeline's normalization (_skill_key): a chip rendered with a
+    # double internal space or nbsp must still classify against the single-spaced
+    # plan.  Bare casefold() here diverged from skills.py and reported an added
+    # chip as "уже были" / "сохранить" (#536 round 3).  The raw chip spelling is
+    # preserved in the report; _skill_key is only for the equality key.
+    added_keys = {_skill_key(name) for name in result.added}
     # Report the chip as it was read off the resume, not as the caller spelled
-    # it: matching is casefolded, and #528 exists so the output confirms what
+    # it: matching is normalized, and #528 exists so the output confirms what
     # is actually on hh.ru.  ``existing`` is the DOM-read source of truth.
-    existing_by_key = {name.casefold(): name for name in result.existing}
+    existing_by_key = {_skill_key(name): name for name in result.existing}
     already_present = tuple(
-        existing_by_key.get(skill.name.casefold(), skill.name)
+        existing_by_key.get(_skill_key(skill.name), skill.name)
         for skill in result.proposed
-        if skill.name.casefold() not in added_keys
+        if _skill_key(skill.name) not in added_keys
     )
     # A dry run cancels the form, so nothing was added: state the counts in the
     # future tense there.  The real run keeps the wording #528 asked for.
@@ -42,8 +48,8 @@ def _print_success(resume_id: str, result, *, dry_run: bool) -> None:
     if already_present:
         print(f"  уже были: {', '.join(already_present)}")
     for skill in result.proposed:
-        state = "добавить" if skill.name.casefold() in added_keys else "сохранить"
-        name = existing_by_key.get(skill.name.casefold(), skill.name)
+        state = "добавить" if _skill_key(skill.name) in added_keys else "сохранить"
+        name = existing_by_key.get(_skill_key(skill.name), skill.name)
         print(f"  - {name} [{skill.level}] — {state}")
     if dry_run:
         print("[INFO] Ничего не сохранено на hh.ru.")
