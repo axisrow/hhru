@@ -739,6 +739,27 @@ def test_seed_patterns_do_not_match_unrelated_questions(text):
         "Есть ли у вас опыт в расчете заработной платы?",
         "Какой опыт по начислению зарплаты?",
         "Опыт начисления окладов?",
+        # Глагольные формы: тот же вопрос об опыте, но одни лишь именные стемы
+        # («начислен») их пропускали.
+        "Приходилось ли начислять зарплату?",
+        "Вы считали зарплату сотрудникам?",
+        "Вели ли вы расчет заработной платы?",
+        "Вы начисляете зарплату сотрудникам?",
+        "Кто у вас начислял зарплату?",
+        "Умеете ли вы рассчитывать зарплату?",
+        "Приходилось ли вам считать зарплату сотрудникам?",
+        # Слова между действием и деньгами.
+        "Знаком ли вам процесс начисления премий и окладов?",
+        "Вы занимались начислением окладов?",
+        # Приставка «пере-»: \b требует, чтобы слово начиналось со стема, и без
+        # явного разрешения «перерасчёт» проходил бы мимо контр-признака.
+        "Есть ли опыт перерасчета заработной платы?",
+        "Опыт перерасчёта зарплаты?",
+        "Вы занимались перерасчетом зарплаты?",
+        # «Зарплатный проект»/«ведомость» — банковская услуга и документ,
+        # а не мои ожидания.
+        "Есть опыт работы с зарплатными проектами?",
+        "Опыт формирования зарплатной ведомости?",
     ],
 )
 def test_match_keyword_skips_salary_experience_question(text):
@@ -795,6 +816,27 @@ def test_salary_corpus_still_matches_after_intent_filter(text):
     assert match.template == "salary"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Рассчитываете на какой оклад?",
+        "На какую зарплату рассчитываете?",
+        "Сколько рассчитываете получать?",
+    ],
+)
+def test_expectation_via_rasschityvat_is_not_suppressed(text):
+    """«Рассчитывать НА» — это ожидания, а не расчёт зарплаты (#490).
+
+    Стем выглядит однокоренным с «расчёт», и добавить его в контр-признаки
+    заманчиво: тогда подавились бы ровно те вопросы, ради которых шаблон
+    существует. Тест держит эту границу — без него расширение контр-признака
+    «заодно на однокоренные» прошло бы незамеченным.
+    """
+    match = match_keyword(text)
+
+    assert match is not None and match.template == "salary"
+
+
 def test_salary_abbreviation_question_stays_unmatched():
     """Вопрос про «ЗП вилку» по-прежнему уходит в очередь (решение #487).
 
@@ -836,10 +878,21 @@ def test_suppressed_salary_leaves_composite_question_to_the_other_template():
     assert match is not None and match.template == "location"
 
 
-def test_only_salary_carries_excludes():
-    """«Нет утечки» на остальные seed'ы — исполняемое утверждение, не обещание."""
+def test_excludes_suppress_only_their_own_seed():
+    """Контр-признаки salary не влияют на чужие шаблоны.
+
+    Проверяется поведение, а не список seed'ов с ``excludes``: заводить
+    контр-признаки другому шаблону — законный шаг, и тест не должен падать
+    просто из-за этого. Падать он обязан, если подавление протечёт наружу.
+    """
     from hhru_bot.questionnaires.templates import SEED_TEMPLATES
 
-    with_excludes = {seed.name for seed in SEED_TEMPLATES if seed.excludes}
+    salary = next(seed for seed in SEED_TEMPLATES if seed.name == "salary")
+    others = [seed for seed in SEED_TEMPLATES if seed.name != "salary"]
 
-    assert with_excludes == {"salary"}
+    # Текст, который salary обязан подавить...
+    assert not salary.matches(normalize("Есть ли опыт расчета зарплаты сотрудников?"))
+    # ...остальные шаблоны и так не трогают, но по своим признакам, а не по
+    # чужим контр-признакам: вопрос про город рядом с зарплатой отвечается.
+    location = next(seed for seed in others if seed.name == "location")
+    assert location.matches(normalize("Есть ли опыт расчета зарплаты? В каком городе вы живёте?"))
