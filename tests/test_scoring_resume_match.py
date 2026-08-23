@@ -309,6 +309,33 @@ def test_negation_does_not_suppress_other_matches_in_same_text():
     assert 0.0 < negated < clean
 
 
+def test_negation_does_not_cross_sentence_boundary():
+    """Маркер из предыдущего предложения не относится к следующему навыку."""
+    outcome = resume_match_score(
+        card("Опыт не требуется. Python обязателен"),
+        profile(skills=["Python"]),
+    )
+    assert outcome.score_0_100 > 0.0
+
+
+def test_negation_for_another_phrase_does_not_suppress_following_skill():
+    """«без релокации Django» не означает отсутствие Django."""
+    outcome = resume_match_score(
+        card("Требуется Python без релокации Django"),
+        profile(skills=["Django"]),
+    )
+    assert outcome.score_0_100 > 0.0
+
+
+def test_negation_with_inserted_word_after_skill_is_detected():
+    """Вставленное слово не должно скрывать пару «не требуется»."""
+    outcome = resume_match_score(
+        card("Python больше не требуется"),
+        profile(skills=["Python"]),
+    )
+    assert outcome.score_0_100 == 0.0
+
+
 # --- встраивание в rank_candidates (Этап 1: наблюдение без последствий) ------
 
 
