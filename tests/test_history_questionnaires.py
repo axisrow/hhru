@@ -332,3 +332,34 @@ def test_audit_shows_a_null_answer_but_low_confidence_does_not_select_it(tmp_pat
 
     assert [row["answer"] for row in history.list_questionnaire_audit()] == [None]
     assert history.list_questionnaire_audit(low_confidence=True) == []
+
+
+@pytest.mark.parametrize("status", ["success", "uncertain", "failed"])
+def test_audit_joins_the_apply_outcome_by_run_and_keeps_one_row_per_question(tmp_path, status):
+    """One apply action must annotate every question without multiplying rows."""
+    history = History(tmp_path / "history.db")
+    _record_audit(
+        history,
+        "backend",
+        "1",
+        [_audit_question(0), _audit_question(1, text="Второй вопрос?")],
+    )
+    history.record_action("backend", "1", "apply", status, run_id="run-1")
+    # Same vacancy in another run must not shadow the exact run join.
+    history.record_action("backend", "1", "apply", "failed", run_id="other-run")
+
+    rows = history.list_questionnaire_audit()
+
+    assert len(rows) == 2
+    assert [row["delivery_status"] for row in rows] == [status, status]
+
+
+def test_audit_separates_no_action_from_unlinkable_legacy_action(tmp_path):
+    history = History(tmp_path / "history.db")
+    _record_audit(history, "backend", "legacy", [_audit_question(0)])
+    _record_audit(history, "backend", "missing", [_audit_question(0)])
+    history.record_action("backend", "legacy", "apply", "success")
+
+    rows = history.list_questionnaire_audit()
+
+    assert [row["delivery_status"] for row in rows] == ["unknown", "no_action"]

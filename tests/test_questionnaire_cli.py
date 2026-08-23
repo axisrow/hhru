@@ -396,6 +396,52 @@ def test_audit_prints_answer_confidence_and_template(capsys, tmp_path):
     assert "Заполнено ответов: 1, без ответа: 0, форма не заполнялась: 0." in out
 
 
+@pytest.mark.parametrize("status", ["success", "uncertain", "failed"])
+def test_audit_prints_the_apply_outcome_separately_from_form_fill(capsys, tmp_path, status):
+    _record_audit(tmp_path)
+    History(tmp_path / "h.db").record_action("r1", "132855712", "apply", status, run_id="run-488")
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "исход" in out
+    assert f"| {status} |" in out
+
+
+def test_audit_prints_distinct_legacy_and_missing_action_states(capsys, tmp_path):
+    _record_audit(tmp_path)
+    history = History(tmp_path / "h.db")
+    history.record_action("r1", "132855712", "apply", "success")
+
+    # A separate row without a matching action exercises the no-action state.
+    history.record_questionnaire(
+        "r1",
+        "missing",
+        "https://hh.ru/vacancy/missing",
+        "Разработчик",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Другой вопрос?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+                "answer": "Да",
+                "filled": True,
+            }
+        ],
+        source="apply",
+        run_id="run-missing",
+    )
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "[исход неизвестен]" in out
+    assert "[действия нет]" in out
+
+
 def test_audit_marks_a_refused_answer_instead_of_printing_an_empty_cell(capsys, tmp_path):
     """Пустой answer — осознанный отказ отвечать, а не «ответили пустотой».
 
