@@ -552,6 +552,7 @@ def run_supervised_command(
     requested_limit: int | None,
     body: Callable[[ApplyProgress], bool],
     reconcile: Callable[[ApplyProgress, History, str], None] | None = None,
+    print_summary: bool = True,
 ) -> bool | CommandExitCode:
     """Run ``body`` under a durable command_run ledger row + typed signal supervision.
 
@@ -658,7 +659,8 @@ def run_supervised_command(
                 skipped=progress.skipped_count,
                 detail=detail,
             )
-            print(progress.summary(final_status))
+            if print_summary:
+                print(progress.summary(final_status))
         except Exception:
             logger.exception(
                 "%s: не удалось финализировать durable ledger run_id=%s "

@@ -63,3 +63,29 @@ def test_run_get_missing_key_reports_info_not_silence(tmp_path, capsys):
     """
     settings.run(_args(tmp_path / "history.db", key="missing"))
     assert capsys.readouterr().out == '[INFO] настройка "missing" не найдена\n'
+
+
+def test_run_set_records_completed_command_run(tmp_path, capsys):
+    path = tmp_path / "history.db"
+
+    settings.run(_args(path, key="answer", value="42"))
+
+    assert capsys.readouterr().out == "[OK]\n"
+    row = History(path).command_runs()[-1]
+    assert row["command"] == "settings"
+    assert row["status"] == "completed"
+    assert row["requested_limit"] == 1
+    assert row["attempted"] == 1
+    assert row["success"] == 1
+
+
+def test_run_set_respects_command_run_lease(tmp_path, capsys):
+    path = tmp_path / "history.db"
+    history = History(path)
+    history.start_command_run(command="copy-resume", requested_limit=None)
+
+    result = settings.run(_args(path, key="answer", value="42"))
+
+    assert result is True
+    assert "supervised-команда уже выполняется" in capsys.readouterr().out
+    assert history.get_setting("answer") is None

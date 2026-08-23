@@ -24,6 +24,7 @@ def _value_type(value: str) -> str:
 
 def run(args: argparse.Namespace) -> None:
     from ..history import History
+    from ._common import ApplyProgress, run_supervised_command
 
     history = History(args.history)
     if args.key is None:
@@ -41,5 +42,21 @@ def run(args: argparse.Namespace) -> None:
         else:
             print(f'[INFO] настройка "{args.key}" не найдена')
     else:
-        history.set_setting(args.key, args.value)
-        print("[OK]")
+        def _set_setting(progress: ApplyProgress) -> bool:
+            progress.begin_attempt()
+            history.set_setting(args.key, args.value)
+            progress.applied_count += 1
+            print("[OK]")
+            return False
+
+        # Keep settings writes in the same SQLite lease as other durable
+        # commands.  This matters when --config and --history point at
+        # different roots: copy-resume's fcntl lock then cannot protect this
+        # direct history.db mutation by itself.
+        return run_supervised_command(
+            command="settings",
+            history=history,
+            requested_limit=1,
+            body=_set_setting,
+            print_summary=False,
+        )
