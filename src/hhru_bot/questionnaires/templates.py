@@ -116,13 +116,21 @@ class SeedTemplate:
     name: str
     cluster: str
     patterns: tuple[re.Pattern[str], ...]
+    excludes: tuple[re.Pattern[str], ...] = ()
 
     def matches(self, normalized_text: str) -> bool:
+        if any(pattern.search(normalized_text) for pattern in self.excludes):
+            return False
         return any(pattern.search(normalized_text) for pattern in self.patterns)
 
 
-def _seed(name: str, cluster: str, *patterns: str) -> SeedTemplate:
-    return SeedTemplate(name, cluster, tuple(re.compile(p) for p in patterns))
+def _seed(name: str, cluster: str, *patterns: str, excludes: tuple[str, ...] = ()) -> SeedTemplate:
+    return SeedTemplate(
+        name,
+        cluster,
+        tuple(re.compile(p) for p in patterns),
+        tuple(re.compile(p) for p in excludes),
+    )
 
 
 #: Seed-поля #482. Признаки выведены из формулировок, реально встречавшихся в
@@ -153,6 +161,26 @@ SEED_TEMPLATES: tuple[SeedTemplate, ...] = (
         r"\bожидани\w*\s+по\s+доход",
         r"\bжелаем\w*\s+доход",
         r"\bсколько\s+\w*\s*(хотите|хотели|рассчитываете)\s+(зарабатывать|получать)",
+        # #490: тема (голая «зарплата»/«оклад») ещё не означает намерение
+        # спросить желаемую сумму. «Есть ли опыт расчета зарплаты сотрудников?»
+        # задевает \bзарплат, но спрашивает про опыт кандидата в начислении ЧУЖОЙ
+        # зарплаты, а не про его ожидания — уверенный ответ суммой уходил бы не
+        # по адресу. Различитель — маркер «это чужие деньги, а не мои
+        # ожидания»: расчёт/начисление зарплаты СОТРУДНИКОВ. Стем узкий
+        # намеренно (не голое «опыт» — оно легитимно у business_segments,
+        # «В каких сферах у вас опыт?»): ложное срабатывание здесь снимает
+        # весь matching и топит реальный salary-вопрос в очереди, поэтому
+        # exclude должен ловить только доказанный класс, а не любое упоминание
+        # опыта рядом со словом «зарплата».
+        # \b перед альтернацией обязателен по тому же принципу, что и в
+        # основных стемах выше: без границы «ведени» ловит «сведений»
+        # («достоверность сведений о зарплате сотрудников») и «заведениях»
+        # («опыт работы в заведениях, зарплата, сотрудники») — оба реальные
+        # формы, не имеющие отношения к расчёту чужой зарплаты.
+        excludes=(
+            r"\bопыт\w*\s+(расчет|начислени|ведени)\w*\s+.*(зарплат|заработн\w*\s+плат)",
+            r"\b(расчет|начислени|ведени)\w*\s+.*(зарплат|заработн\w*\s+плат).*\bсотрудник",
+        ),
     ),
     _seed(
         "location",
