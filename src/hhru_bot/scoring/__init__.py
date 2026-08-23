@@ -7,7 +7,8 @@
 #85). Раскладка по модулям: ``types`` (общие типы), ``employer`` (классификатор
 известности), ``prefilter`` (pre-LLM фильтр), ``vacancy`` (эвристика + LLM
 провайдер), ``resume_match`` (keyword-соответствие профиля кандидата вакансии,
-#492). Этот файл — публичный API пакета (#491): ре-экспортирует всё, что
+#492), ``letter_match`` (keyword-соответствие сопроводительного письма вакансии,
+#493). Этот файл — публичный API пакета (#491): ре-экспортирует всё, что
 было публичным в дореформенном ``scoring.py``, без изменений. Приватные
 хелперы (``_parse_llm_score``, ``_build_scoring_prompt`` и т.п.) остаются
 деталями своих модулей и сюда не поднимаются — тесты, которым они нужны
@@ -17,6 +18,7 @@
 from __future__ import annotations
 
 from .employer import TIER_BOOST, KnownCompanyTier, classify_employer
+from .letter_match import LETTER_MATCH_MODE, letter_match_score
 from .prefilter import PREFILTER_SKIP_REASON, employer_passes_prefilter
 from .resume_match import RESUME_MATCH_MODE, resume_match_score
 from .types import EmployerInfo, ScoreOutcome, ScoringProvider
@@ -29,11 +31,13 @@ __all__ = [
     "EmployerInfo",
     "HeuristicScoringProvider",
     "KnownCompanyTier",
+    "LETTER_MATCH_MODE",
     "LLMScoringProvider",
     "ScoreOutcome",
     "ScoringProvider",
     "classify_employer",
     "employer_passes_prefilter",
     "heuristic_score",
+    "letter_match_score",
     "resume_match_score",
 ]

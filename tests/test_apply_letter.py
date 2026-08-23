@@ -31,8 +31,14 @@ from hhru_bot.search import VacancyCard
 pytestmark = pytest.mark.unit
 
 
-def _card(title: str, company: str) -> VacancyCard:
-    return VacancyCard(vacancy_id="1", title=title, company=company, url="https://hh.ru/vacancy/1")
+def _card(title: str, company: str, vacancy_text: str = "") -> VacancyCard:
+    return VacancyCard(
+        vacancy_id="1",
+        title=title,
+        company=company,
+        url="https://hh.ru/vacancy/1",
+        vacancy_text=vacancy_text,
+    )
 
 
 # --- characterization: render_cover_letter не изменился (#17 не ломает API) ---
@@ -70,6 +76,15 @@ def test_template_provider_works_without_resume_profile():
     provider = TemplateCoverLetterProvider("Привет, {company_name}")
     outcome = provider.render(_card("Dev", "Acme"), resume_profile=None)
     assert outcome.variant == "template"
+
+
+def test_template_provider_logs_letter_match_score(caplog):
+    provider = TemplateCoverLetterProvider("Python и Django")
+
+    with caplog.at_level("INFO", logger="hhru_bot.apply.letter"):
+        provider.render(_card("Dev", "Acme", "Требуется Python и Django"))
+
+    assert "letter-match 1 'Dev': 100.0/100" in caplog.text
 
 
 # --- AI-провайдер через мок LLMClient (#16 контракт: chat()->NormalizedResponse) ---
@@ -116,6 +131,19 @@ def test_ai_provider_success_personalized_letter():
     assert llm.calls, "LLM не был вызван"
     prompt = str(llm.calls[0][0])
     assert "Python Dev" in prompt or "Acme" in prompt
+
+
+def test_ai_provider_logs_letter_match_score(caplog):
+    from hhru_bot.ai.letters import AICoverLetterProvider
+
+    provider = AICoverLetterProvider(
+        llm_client=_RecordingLLM("Python и Django"),
+        fallback_template="fallback",
+    )
+    with caplog.at_level("INFO", logger="hhru_bot.apply.letter"):
+        provider.render(_card("Dev", "Acme", "Требуется Python и Django"))
+
+    assert "letter-match 1 'Dev': 100.0/100" in caplog.text
 
 
 def test_ai_provider_none_content_falls_back_to_template():

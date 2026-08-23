@@ -25,12 +25,15 @@ title}`` без ``|`` не матчится и остаётся для ``.format
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..search import VacancyCard
+
+logger = logging.getLogger("hhru_bot.apply.letter")
 
 if TYPE_CHECKING:
     from ..config_sections.ai_profile import AIProfile
@@ -82,10 +85,12 @@ class TemplateCoverLetterProvider:
         vacancy: VacancyCard,
         resume_profile: AIProfile | None = None,  # noqa: ARG002
     ) -> LetterOutcome:
-        return LetterOutcome(
+        outcome = LetterOutcome(
             text=_format_template(self._template, vacancy),
             variant=VARIANT_TEMPLATE,
         )
+        _log_letter_match(vacancy, outcome.text)
+        return outcome
 
 
 # Рандомизация альтернатив {a|b|c} (#86): матчит {вариант1|вариант2|...} —
@@ -129,5 +134,27 @@ def render_cover_letter(
     провайдер задан; без провайдера вариант всегда 'template'.
     """
     if provider is None:
-        return _format_template(template, vacancy)
+        letter = _format_template(template, vacancy)
+        _log_letter_match(vacancy, letter)
+        return letter
     return provider.render(vacancy).text
+
+
+def _log_letter_match(vacancy: VacancyCard, letter: str) -> None:
+    """Log observation-only letter↔vacancy keyword score (#493, stage 1)."""
+    from ..scoring import letter_match_score
+
+    try:
+        outcome = letter_match_score(vacancy, letter)
+    except Exception as exc:  # noqa: BLE001 — observation must not break apply
+        logger.warning(
+            "letter-match failed for %s '%s': %s", vacancy.vacancy_id, vacancy.title, exc
+        )
+        return
+    logger.info(
+        "letter-match %s '%s': %.1f/100 (%s)",
+        vacancy.vacancy_id,
+        vacancy.title,
+        outcome.score_0_100,
+        outcome.rationale,
+    )
