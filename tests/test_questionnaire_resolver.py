@@ -113,6 +113,21 @@ def test_match_keyword_resolves_salary_question():
     assert match.confidence == pytest.approx(0.95)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Есть ли опыт расчета зарплаты сотрудников?",
+        "Рассчитывали ли вы заработную плату сотрудникам?",
+        "Есть ли опыт формирования окладов?",
+        "Разрабатывали ли вы уровни оплаты труда?",
+        "Есть ли опыт расчета зарплаты и какие ожидания от новой работы?",
+    ],
+)
+def test_match_keyword_does_not_confuse_salary_topic_with_candidate_expectations(text):
+    """Зарплатный термин без намерения узнать ожидания не даёт static-ответ."""
+    assert match_keyword(text) is None
+
+
 def test_match_keyword_resolves_each_seed_field():
     resolved = {
         match_keyword(text).template
@@ -153,6 +168,15 @@ def test_resolve_template_falls_back_to_keyword():
     match = resolve_template("Какие у вас зарплатные ожидания?", confirmed={})
 
     assert match is not None and match.template == "salary" and match.source == KEYWORD
+
+
+def test_resolve_template_allows_user_to_confirm_non_expectation_salary_wording():
+    text = "Есть ли опыт расчета зарплаты сотрудников?"
+
+    match = resolve_template(text, confirmed={normalize(text): "payroll_experience"})
+
+    assert match is not None
+    assert (match.template, match.source) == ("payroll_experience", PHRASE)
 
 
 def test_resolve_template_returns_none_when_nothing_matches():
@@ -577,6 +601,9 @@ def test_compliance_question_is_answered_by_explicit_static_template():
         ("Укажите желаемую зарплату", "salary"),
         ("Зарплата?", "salary"),
         ("Какая зарплата вас интересует?", "salary"),
+        ("На какую заработную плату Вы рассчитываете?", "salary"),
+        ("Какой оклад на руки вам интересен?", "salary"),
+        ("Какую зарплату готовы рассматривать?", "salary"),
         ("Ваши пожелания по окладу", "salary"),
         ("Желаемый оклад", "salary"),
         ("Заработная плата?", "salary"),
