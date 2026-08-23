@@ -367,6 +367,12 @@ non-dry-run `apply` — диагностировать по `[WARN indeterminate
   `load_config` делегирует resume-подсекции реестру. Новая секция = новый файл
   `config_sections/<name>.py`, `ResumeConfig` не трогается (для scoring/ai_profile там
   пред-добавлены нейтральные `Optional`-поля `= None`).
+- **`scoring/`** — виды скоринга, каждый в своём модуле: `employer.py` (tier
+  работодателя #74), `prefilter.py` (pre-LLM отсев #85), `vacancy.py`
+  (релевантность вакансии: эвристика #15 + LLM), `types.py` (общие `ScoreOutcome`/
+  `ScoringProvider`/`EmployerInfo`). Новый вид скоринга = новый файл + ре-экспорт
+  в `__init__.py`, НЕ top-level модуль рядом с пакетом. Конфиг-секция скоринга
+  живёт отдельно — в `config_sections/scoring.py`.
 - **Схема SQLite — одна константа `SCHEMA` в `history.py`** (а не пакет `migrations/`):
   `CREATE TABLE IF NOT EXISTS` для всех таблиц (`actions`, `responses`, `manual_offers`,
   `skipped`, `replies` и другие — полный список см. `history.py`), применяется
