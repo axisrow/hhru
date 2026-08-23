@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 
 import pytest
 
@@ -669,6 +670,120 @@ def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
         "Ваш опыт?"
     ]
     assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
+    """Схлопывание близнецов обязано переносить смысловые поля, а не только статус.
+
+    ``record_questionnaire_pending`` на этой же таблице при ON CONFLICT переносит
+    ВСЁ (cluster, template, kind, options_json, reason, vacancy_id), а не один
+    статус. Перенос со слага обязан совпадать с ним: слаг-строка — более свежая
+    (её писал probe+learn уже с детектом кластера), а hex-близнец мог быть
+    записан ранним apply вовсе без cluster.
+
+    Цена расхождения — та же деградация строгости, которую чинит п.5 этого же
+    PR, только с другого конца: ``cluster='compliance'`` — один из ДВУХ
+    независимых признаков комплаенса (CLAUDE.md п.7), а ``_learn_one`` берёт
+    ``row["cluster"]`` вторым приоритетом. Потеряв его при rekey, learn молча
+    получит 'mixed' там, где стоял 'compliance'.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    # hex-близнец: ранний apply, без кластера и без шаблона.
+    history.record_questionnaire_pending(
+        real_id, [{"text": "Данные достоверны?", "kind": "text", "reason": "старая причина"}]
+    )
+    # слаг-строка: свежая, с распознанным комплаенс-кластером и шаблоном.
+    history.record_questionnaire_pending(
+        "python",
+        [
+            {
+                "text": "Данные достоверны?",
+                "kind": "text",
+                "cluster": "compliance",
+                "template": "data_accuracy",
+                "reason": "комплаенс без значения",
+            }
+        ],
+        vacancy_id="v42",
+        vacancy_url="https://hh.ru/vacancy/v42",
+    )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    (row,) = history.list_questionnaire_pending(real_id)
+    assert row["cluster"] == "compliance", "rekey потерял признак строгости комплаенса"
+    assert row["template"] == "data_accuracy"
+    assert row["reason"] == "комплаенс без значения"
+    assert row["vacancy_id"] == "v42"
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_path, capsys):
+    """Коллизия «слаг A == реальный resume_id B» — поддерживаемый конфиг, не абсурд.
+
+    ``AppConfig.get_resume`` (config.py) прямо документирует эту коллизию и
+    решает её в пользу слага, а ``load_config`` проверяет только дубли слагов.
+    Rekey же трактует каждую пару (id -> resume_id) как безусловный ренейм и
+    без проверки унёс бы законные данные резюме B под ключ резюме A: ответы
+    анкет и аудит смешались бы между резюме, а совпавшие ``question_key``
+    удалил бы ``DELETE`` навсегда.
+
+    Разовая уборка обязана отказаться на неоднозначном маппинге целиком, а не
+    чинить его наполовину: восстановить провенанс перемешанных строк потом
+    нечем.
+    """
+    from hhru_bot.commands.questionnaire import rekey_legacy_scans
+
+    b_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    a_real = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    config = SimpleNamespace(
+        resumes=[
+            SimpleNamespace(id=b_real, resume_id=a_real),  # слаг A == реальный id B
+            SimpleNamespace(id="python", resume_id=b_real),
+        ]
+    )
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        b_real, [{"text": "Вопрос резюме B", "kind": "text", "reason": "нет шаблона"}]
+    )
+    _scan(history, b_real, "v9", "Скан резюме B")
+
+    rekey_legacy_scans(config, history)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(b_real)] == [
+        "Вопрос резюме B"
+    ], "данные резюме B уехали под ключ другого резюме"
+    assert history.list_questionnaire_pending(a_real) == []
+    assert len(history.list_scanned_questions(b_real)) == 1
+    assert history.list_scanned_questions(a_real) == []
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_rekey_still_runs_when_a_slug_equals_its_own_real_id(tmp_path):
+    """Слаг, уже равный СВОЕМУ resume_id, — не коллизия, а нормализованный конфиг.
+
+    Проверка неоднозначности обязана игнорировать эту пару: иначе первый же
+    пользователь, назвавший резюме его настоящим id, отменял бы уборку целиком
+    и навсегда — причём молча для остальных резюме того же конфига.
+    """
+    from hhru_bot.commands.questionnaire import rekey_legacy_scans
+
+    self_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    other_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    config = SimpleNamespace(
+        resumes=[
+            SimpleNamespace(id=self_id, resume_id=self_id),  # слаг == свой же id
+            SimpleNamespace(id="python", resume_id=other_real),
+        ]
+    )
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Скан под слагом")
+
+    rekey_legacy_scans(config, history)
+
+    assert len(history.list_scanned_questions(other_real)) == 1
+    assert history.list_scanned_questions("python") == []
 
 
 def test_learn_does_not_pin_a_resume_to_the_account_cluster(tmp_path, monkeypatch):

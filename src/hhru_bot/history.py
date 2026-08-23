@@ -2856,20 +2856,40 @@ class History:
                 "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
                 (new_resume_id, old_resume_id),
             ).rowcount
-            # Сначала «воскресить» hex-близнеца, если слаг-строка ещё активна:
-            # UNIQUE — по (resume_id, question_key), СТАТУС в ключ не входит,
-            # поэтому UPDATE OR IGNORE ниже откажется переносить слаг-строку при
-            # любом близнеце, включая resolved, а DELETE её уничтожит — вопрос
-            # исчезнет из очереди навсегда. Приоритет тот же, что у
-            # ``record_questionnaire_pending`` (ON CONFLICT ... SET
-            # status='pending'): заново увиденный вопрос возвращает строку в
-            # работу, а не наоборот.
+            # Сначала слить слаг-строку в её hex-близнеца — ровно тот же набор
+            # колонок и тот же приоритет, что у ``record_questionnaire_pending``
+            # (ON CONFLICT DO UPDATE): статус возвращается в 'pending', а
+            # смысловые поля берутся со слаг-строки. Переносить один статус
+            # нельзя: слаг-строку писал probe+learn уже с распознанным
+            # кластером, а hex-близнец мог быть записан ранним apply вовсе без
+            # него — и следующий DELETE унёс бы cluster='compliance' вместе со
+            # строкой. Это один из ДВУХ независимых признаков строгости
+            # комплаенса (CLAUDE.md п.7), а ``_learn_one`` берёт row["cluster"]
+            # вторым приоритетом: молча потеряв его, learn закрепил бы 'mixed'
+            # там, где стоял 'compliance' — та же деградация, что чинит п.5.
+            #
+            # Отдельным шагом до переноса, а не после: UNIQUE — по
+            # (resume_id, question_key), СТАТУС в ключ не входит, поэтому
+            # UPDATE OR IGNORE ниже откажется переносить слаг-строку при любом
+            # близнеце, включая resolved, а DELETE её уничтожит — вопрос
+            # исчезнет из очереди навсегда.
             conn.execute(
-                """UPDATE questionnaire_pending SET status = 'pending', updated_at = ?
-                   WHERE resume_id = ? AND status != 'pending' AND question_key IN (
-                       SELECT question_key FROM questionnaire_pending
-                       WHERE resume_id = ? AND status = 'pending'
-                   )""",
+                """UPDATE questionnaire_pending AS hex SET
+                       status = 'pending',
+                       updated_at = ?,
+                       vacancy_id = slug.vacancy_id,
+                       vacancy_url = slug.vacancy_url,
+                       question_text = slug.question_text,
+                       kind = slug.kind,
+                       is_radio = slug.is_radio,
+                       options_json = slug.options_json,
+                       template = slug.template,
+                       cluster = slug.cluster,
+                       reason = slug.reason,
+                       run_id = slug.run_id
+                   FROM questionnaire_pending AS slug
+                   WHERE hex.resume_id = ? AND slug.resume_id = ?
+                     AND slug.question_key = hex.question_key""",
                 (datetime.now().isoformat(), new_resume_id, old_resume_id),
             )
             conn.execute(
