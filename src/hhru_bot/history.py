@@ -2954,6 +2954,12 @@ class History:
                 "SELECT * FROM questionnaire_pending WHERE resume_id = ?",
                 (old_resume_id,),
             ).fetchall()
+            # ``created_at`` намеренно исключён: как и в ``ON CONFLICT DO
+            # UPDATE`` у ``record_questionnaire_pending``, это момент первого
+            # появления вопроса У ВЫЖИВШЕЙ строки, а не последнего обновления —
+            # затирать его временем слаг-строки значило бы терять provenance
+            # «когда вопрос впервые встречен» тем же способом, каким остальные
+            # поля здесь его сохраняют.
             payload_columns = (
                 "vacancy_id",
                 "vacancy_url",
@@ -2966,7 +2972,6 @@ class History:
                 "reason",
                 "status",
                 "run_id",
-                "created_at",
                 "updated_at",
             )
             for slug in slug_rows:

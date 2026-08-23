@@ -1027,6 +1027,47 @@ def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
     assert history.list_questionnaire_pending("python") == []
 
 
+def test_rekey_preserves_the_surviving_rows_original_created_at(tmp_path):
+    """Слияние близнецов обязано сохранять ``created_at`` выжившей строки.
+
+    ``record_questionnaire_pending`` на этой же таблице (``ON CONFLICT DO
+    UPDATE``) намеренно не включает ``created_at`` в список обновляемых полей —
+    первое появление вопроса не должно переписываться повторной встречей.
+    Перенос при rekey обязан следовать тому же соглашению: копирует более
+    свежие смысловые поля со слаг-строки, но ``created_at`` хранит момент, когда
+    вопрос вообще впервые увиден, а не момент последнего обновления — его
+    затирать нельзя, даже когда слаг-строка новее по ``updated_at``.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    question = [{"text": "Данные достоверны?", "kind": "text", "reason": "нет шаблона"}]
+    # hex-близнец: записан первым, его created_at — исходный момент встречи.
+    history.record_questionnaire_pending(real_id, question)
+    with history._connect() as conn:
+        conn.execute(
+            "UPDATE questionnaire_pending SET created_at = ?, updated_at = ? WHERE resume_id = ?",
+            ("2020-01-01T00:00:00", "2020-01-01T00:00:00", real_id),
+        )
+    # слаг-строка: свежее по updated_at и потому побеждает при слиянии полей.
+    history.record_questionnaire_pending("python", question)
+    with history._connect() as conn:
+        conn.execute(
+            "UPDATE questionnaire_pending SET created_at = ?, updated_at = ? WHERE resume_id = ?",
+            ("2026-06-01T00:00:00", "2026-06-01T00:00:00", "python"),
+        )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    with history._connect() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM questionnaire_pending WHERE resume_id = ?",
+            (real_id,),
+        ).fetchone()
+    assert row["created_at"] == "2020-01-01T00:00:00", (
+        "rekey затёр исходный created_at выжившей строки временем слаг-строки"
+    )
+
+
 def test_rekey_does_not_revive_a_question_resolved_under_both_keys(tmp_path):
     """Перенос полей не смеет воскрешать уже отвеченный вопрос.
 
