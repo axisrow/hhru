@@ -908,6 +908,12 @@ def rank_candidates(
     if scoring is None and scoring_provider is not None:
         weights = ScoringWeights()
 
+    # #492 Этап 1: keyword-соответствие профиля вакансии — ТОЛЬКО наблюдение.
+    # Score не участвует в ранжировании и никого не отсеивает: сначала нужно
+    # увидеть реальное распределение на живых прогонах, иначе порог Этапа 2
+    # калибруется вслепую. Стоит до ветвления на shortlist, чтобы покрыть оба пути.
+    _log_resume_match(candidates, profile)
+
     # Shortlist-режим (Codex #74 F3): предранжируем эвристикой, LLM — только топ-K.
     if scoring_provider is not None and llm_shortlist and llm_shortlist > 0:
         return _rank_with_llm_shortlist(
@@ -929,6 +935,53 @@ def rank_candidates(
     # он переупорядочивал бы legacy candidates[:limit] при перемешанных id.
     scored.sort(key=lambda item: -item[1])
     return scored
+
+
+def _log_resume_match(candidates: list[VacancyCard], profile) -> None:
+    """Логирует keyword-соответствие профиля каждой карточке (#492, Этап 1).
+
+    Наблюдение без последствий: ничего не ранжирует и не отсеивает. Цель —
+    накопить в логе реальное распределение значений, чтобы порог Этапа 2
+    калибровался по факту, а не наугад.
+
+    Профиль отсутствует или у карточек нет ``vacancy_text`` — логировать нечего,
+    выходим молча. Импорт ленивый: тот же разрыв цикла search <-> scoring, что
+    в ``filter_candidates``.
+
+    **Известное ограничение выборки.** Все три вызова ``rank_candidates``
+    (``commands/search.py``, ``commands/_common.py``, ``apply/router.py``) идут
+    ПОСЛЕ ``filter_candidates``, поэтому в лог попадают только выжившие карточки
+    — распределение смещено на величину отсева. Для калибровки порога Этапа 2
+    это приемлемо: prefilter работодателя (#85) по умолчанию ВЫКЛЮЧЕН, а
+    остальные причины отсева (уже откликались, стоп-слова, кэш ``skipped``) —
+    решения, принятые не по смыслу вакансии, то есть не тот класс карточек,
+    который порог Этапа 2 вообще должен судить. Если при калибровке выборки
+    окажется мало, логирование переносится до ``filter_candidates`` — но там
+    профиль сейчас недоступен без правки сигнатур, и ради Этапа 1 это лишнее.
+    """
+    if profile is None or not candidates:
+        return
+
+    from .scoring import resume_match_score  # локальный импорт: разрыв цикла
+
+    for card in candidates:
+        # Наблюдение не имеет права ронять план откликов: этот вызов стоит
+        # внутри rank_candidates, поэтому необработанное исключение на одной
+        # карточке оборвало бы весь apply — ради строчки в логе. Тот же приём,
+        # что у остальных провайдеров скоринга (fallback внутри
+        # LLMScoringProvider): сбой логируется, цикл идёт дальше.
+        try:
+            outcome = resume_match_score(card, profile)
+        except Exception as exc:  # noqa: BLE001 — наблюдение не должно ронять apply
+            logger.warning("resume-match failed for %s '%s': %s", card.vacancy_id, card.title, exc)
+            continue
+        logger.info(
+            "resume-match %s '%s': %.1f/100 (%s)",
+            card.vacancy_id,
+            card.title,
+            outcome.score_0_100,
+            outcome.rationale,
+        )
 
 
 # Максимальный размер shortlist для LLM-скоринга по умолчанию (Codex #74 F3).
