@@ -157,7 +157,7 @@ def test_snippets_missing_block_returns_none():
 def test_vacancy_card_new_fields_default_to_empty():
     c = VacancyCard(vacancy_id="1", title="T", company="C", url="https://hh.ru/vacancy/1")
     assert c.address == ""
-    assert c.is_remote is False
+    assert c.is_remote is None
     assert c.experience == ""
     assert c.snippet_requirement == ""
     assert c.snippet_responsibility == ""

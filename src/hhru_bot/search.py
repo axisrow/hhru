@@ -307,10 +307,10 @@ class VacancyCard:
     vacancy_text: str = ""
     portfolio_evidence_requirement: PortfolioEvidenceRequirement | None = None
     # Доп. признаки карточки для статистики/ML (issue #517, приоритет-1 из
-    # #516). Все блоки опциональны в разметке hh.ru — пустая строка/False,
-    # если карточка их не отдала (тот же паттерн, что salary/published_at).
+    # #516). Все блоки опциональны в разметке hh.ru — пустая строка/None,
+    # если карточка их не отдала (None не должен затирать историю в upsert).
     address: str = ""
-    is_remote: bool = False
+    is_remote: bool | None = None
     # Категория опыта как есть из data-qa (напр. "between1And3"), пустая
     # строка если блок не найден. Не нормализуем в enum — источник истины
     # для дальнейшего анализа остаётся значение hh.ru.
@@ -516,7 +516,17 @@ def search_vacancies(
             # Доп. признаки карточки для статистики/ML (issue #517). Все блоки
             # опциональны — мягкий парсинг, отсутствие не роняет сбор карточки.
             address = _optional_text(card, sel.VACANCY_CARD_ADDRESS) or ""
-            is_remote = bool(card.locator(sel.VACANCY_CARD_REMOTE_LABEL).first.count())
+            # is_remote — тристейт (#532): True если remote-лейбл найден (confident),
+            # None если нет. Locator.count() == 0 неоднозначен — это либо «вакансия
+            # не удалённая», либо дрейф/переименование НЕЗАВИСИМОГО remote-селектора;
+            # успешный парсинг title/href выше не доказывает его здоровье. Эмитить
+            # False (non-NULL) значило бы затирать ранее подтверждённый True при
+            # любом селектор-промахе — ровно класс бага #532. None → COALESCE в
+            # upsert_vacancy_seen сохранит прежнее значение. False намеренно не
+            # эмитится вовсе: вакансия не меняет remote-статус, поэтому
+            # подтверждённый True не нуждается в «корректировке обратно».
+            remote_label = card.locator(sel.VACANCY_CARD_REMOTE_LABEL).first
+            is_remote = True if remote_label.count() > 0 else None
             experience = _parse_experience(card)
             snippet_requirement = _optional_text(card, sel.VACANCY_CARD_SNIPPET_REQUIREMENT) or ""
             snippet_responsibility = (

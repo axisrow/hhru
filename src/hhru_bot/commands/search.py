@@ -100,24 +100,46 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
 
     address/is_remote/experience/snippet_requirement/snippet_responsibility
     (#517) — доп. признаки карточки для статистики/ML, прокидываются как есть
-    из VacancyCard (пустая строка/False, если hh.ru не отдал блок).
+    из VacancyCard (пустая строка/None, если hh.ru не отдал блок).
     """
     from ..scoring import classify_employer
 
     for card in cards:
         salary = card.salary
-        tier = classify_employer(card.company, getattr(card, "employer_info", None))
+        title = card.title.strip() or None
+        company = card.company.strip() or None
+        # An empty company means that this scrape did not produce a usable
+        # observation. Do not turn it into ``unknown`` and overwrite a
+        # previously classified employer during selector drift (#532).
+        employer_info = getattr(card, "employer_info", None) if company else None
+        tier = classify_employer(company, employer_info) if company else None
+        # Review-финдинг (#532): classify_employer("unknown") не отличает
+        # «компания реально неизвестна» от «reviews-селектор не дал сигнала на
+        # этом scrape» — оба случая раньше схлопывались в строку "unknown",
+        # которая проходит COALESCE(NULLIF(...)) как непустая и затирала ранее
+        # подтверждённый tier (например "mid" из прошлого scrape). top_tech/
+        # big_corp матчатся по имени и не зависят от employer_info, поэтому им
+        # это не грозит — гейтим только unknown. Гейт широкий: «unknown»
+        # достоверен лишь когда reviews_count РЕАЛЬНО прочитан (и оказался ниже
+        # порога). Если reviews_count не прочитан — либо весь блок
+        # employer_info=None (селектор-промах), либо partial-failure (rating/
+        # trusted выжили, но reviews_count-селектор дрейфнул) — оба случая
+        # неоднозначны, подавляем в None, оставляя COALESCE прежнее значение.
+        # reviews_count прочитан, но мал (вкл. 0) → настоящий «небольшой
+        # работодатель», unknown не подавляется.
+        if tier == "unknown" and (employer_info is None or employer_info.reviews_count is None):
+            tier = None
         try:
             history.upsert_vacancy_seen(
                 vacancy_id=card.vacancy_id,
                 search_query=search_query,
-                title=card.title,
-                company=card.company,
+                title=title,
+                company=company,
                 salary_from=salary.salary_from if salary else None,
                 salary_to=salary.salary_to if salary else None,
                 salary_currency=salary.currency if salary else None,
                 employer_tier=tier,
-                vacancy_text=card.vacancy_text,
+                vacancy_text=card.vacancy_text or None,
                 published_at=card.published_at.isoformat() if card.published_at else None,
                 address=card.address or None,
                 is_remote=card.is_remote,
