@@ -3151,6 +3151,41 @@ class History:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def rekey_questionnaire_scans(self, slug_to_resume_id: dict[str, str]) -> int:
+        """Перевести накопленные ``questionnaire_scans`` со slug на resume_id (#486).
+
+        `probe --questionnaires-only` до этого фикса ключевал сканы `resume.id`
+        (slug из config.yaml), тогда как apply-путь и `questionnaire._scope()`
+        используют реальный `resume_id` (хвост `resume_url`) — см. probe.py.
+        Одна и та же history.db поэтому могла держать вперемешку оба вида
+        ключей: `list_scanned_questions`/`questionnaire learn --resume <slug>`
+        фильтрует по `scan.resume_id`, и старые slug-строки для этого resume
+        были структурно недостижимы через `--resume`.
+
+        Идемпотентная нормализация данных, а не миграция схемы (в проекте
+        миграций нет намеренно, см. CLAUDE.md «Схема SQLite»): `UPDATE` по
+        известным парам slug→resume_id из текущего конфига. Строки, чей
+        `resume_id` не совпал ни с одним slug (уже resume_id, или slug из
+        резюме, отсутствующего в текущем конфиге), не трогаются — есть чем
+        сопоставить, только когда slug известен здесь и сейчас.
+        `questionnaire_scans` без UNIQUE-индекса на `resume_id` (append-only
+        research snapshot), поэтому переезд строки на уже занятый resume_id не
+        может конфликтовать.
+        """
+        if not slug_to_resume_id:
+            return 0
+        total = 0
+        with self._connect() as conn:
+            for slug, resume_id in slug_to_resume_id.items():
+                if not slug or not resume_id or slug == resume_id:
+                    continue
+                cursor = conn.execute(
+                    "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
+                    (resume_id, slug),
+                )
+                total += cursor.rowcount
+        return total
+
     def resolve_pending_for_templates(
         self, templates: set[str], *, resume_id: str | None = None
     ) -> int:

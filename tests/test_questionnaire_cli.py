@@ -73,11 +73,16 @@ def test_set_contextual_stores_instruction_and_examples(tmp_path):
     assert len(history.get_confirmed_phrases()) == 2
 
 
-def test_example_is_rejected_for_static_mode(capsys, tmp_path):
-    with pytest.raises(SystemExit):
-        cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
+def test_example_is_accepted_for_static_mode(tmp_path):
+    """#486: match_phrase (confirm_questionnaire_example) не зависит от mode —
+    static-шаблон с формулировкой, не совпадающей ни с одним seed-шаблоном,
+    иначе недостижим неинтерактивно (критично для strict-кластеров compliance,
+    где ответ разрешён только явным static-значением)."""
+    cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
 
-    assert "--example" in capsys.readouterr().err
+    history = History(tmp_path / "h.db")
+    assert history.get_questionnaire_templates()["salary"]["answer"] == "от 250000"
+    assert history.get_confirmed_phrases()["доход?"] == "salary"
 
 
 def test_set_uses_the_seed_cluster_by_default(tmp_path):

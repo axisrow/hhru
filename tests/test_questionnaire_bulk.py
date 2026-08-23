@@ -163,7 +163,7 @@ def _config(resumes):
 def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, capsys):
     card1 = _card("201")
     card2 = _card("202")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     page = object()
     pages = []
@@ -227,7 +227,7 @@ def test_bulk_uses_one_page_dedupes_and_retries_without_history(monkeypatch, cap
 
 def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
     card = _card("301")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     page = object()
 
@@ -270,7 +270,7 @@ def test_bulk_counts_unauthenticated_as_failure(monkeypatch, capsys):
 
 def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
     card = _card("401")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     page = object()
 
@@ -315,7 +315,7 @@ def test_bulk_counts_unknown_as_failure(monkeypatch, capsys):
 
 def test_bulk_already_responded_does_not_fail_the_scan(monkeypatch, capsys):
     card = _card("501")
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     page = object()
 
@@ -465,7 +465,7 @@ def _bulk_args(**overrides):
 
 def _bulk_env(monkeypatch, cards, scan, *, events=None):
     """Wire run_questionnaires to fakes; optionally record a print/scan event log."""
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     page = object()
 
@@ -628,7 +628,7 @@ def test_limit_zero_scans_every_vacancy(monkeypatch, capsys):
 
 
 def test_negative_limit_is_rejected_before_launching_a_browser(monkeypatch, capsys):
-    resume = SimpleNamespace(id="python", search=object())
+    resume = SimpleNamespace(id="python", resume_id="python_hex", search=object())
     config = _config([resume])
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
 
@@ -866,9 +866,37 @@ class _FakeHistory:
 
     def __init__(self, *args, **kwargs):
         self.calls = []
+        self.resume_ids = []
+        self.rekey_calls = []
 
     def record_questionnaire(self, resume_id, vacancy_id, vacancy_url, title, company, questions):
         self.calls.append(vacancy_id)
+        self.resume_ids.append(resume_id)
+
+    def rekey_questionnaire_scans(self, slug_to_resume_id):
+        self.rekey_calls.append(slug_to_resume_id)
+        return 0
+
+
+def test_scan_is_recorded_under_resume_id_not_slug(monkeypatch, capsys):
+    """#486: history ключуется реальным resume_id (хвост resume_url), а не
+    resume.id (slug из config.yaml) — apply-путь и questionnaire._scope()
+    резолвят --resume тоже в resume_id, слаг делал сканы недостижимыми."""
+    card = _card("999")
+
+    def scan(page_arg, vacancy, **kwargs):
+        return questionnaire.QuestionnaireScanResult(
+            vacancy, questionnaire.QUESTIONNAIRE, "task-body", (), 0
+        )
+
+    probe = _bulk_env(monkeypatch, [card], scan)
+    fake_history = _FakeHistory()
+    monkeypatch.setattr("hhru_bot.history.History", lambda path: fake_history)
+    probe.run_questionnaires(_bulk_args(history="history.db"))
+    capsys.readouterr()
+
+    assert fake_history.resume_ids == ["python_hex"]
+    assert fake_history.rekey_calls == [{"python": "python_hex"}]
 
 
 def test_retry_confirmed_questionnaire_is_persisted_to_history(monkeypatch, capsys):

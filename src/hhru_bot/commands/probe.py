@@ -719,6 +719,20 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
         print("Ошибка: --limit-questionnaires не может быть отрицательным.", file=sys.stderr)
         return True
 
+    # #486: старые запуски этой команды ключевали questionnaire_scans слагом
+    # резюме (resume.id) вместо реального resume_id — накопленные строки были
+    # недостижимы через --resume в questionnaire learn/pending. Нормализация
+    # идемпотентна и затрагивает только резюме из текущего конфига.
+    if history is not None:
+        rekeyed = history.rekey_questionnaire_scans(
+            {resume.id: resume.resume_id for resume in resumes}
+        )
+        if rekeyed:
+            print(
+                f"[INFO] questionnaires-only: перепривязано {rekeyed} старых "
+                "записей questionnaire_scans со slug на resume_id (#486)"
+            )
+
     all_results: list[QuestionnaireScanResult] = []
     interrupted = False
     # cycle-review PR #456 round 2 (Codex): накапливает потери записи в
@@ -763,7 +777,13 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results.append(result)
                     all_results.append(result)
-                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                    # #486: resume.resume_id (хвост resume_url), а НЕ resume.id
+                    # (слаг конфига) — questionnaire._scope() и apply-путь
+                    # ключуют историю анкет реальным resume_id, слаг делал
+                    # накопленные сканы недостижимыми через --resume.
+                    if not _record_questionnaire_if_confirmed(
+                        history, resume.resume_id, vacancy, result
+                    ):
                         history_write_failed = True
                     result_positions[vacancy.vacancy_id] = len(all_results) - 1
                     _print_questionnaire_progress(result, len(resume_results), len(vacancies))
@@ -809,7 +829,9 @@ def run_questionnaires(args: argparse.Namespace) -> bool | CommandExitCode:
                     )
                     resume_results[result_index] = result
                     all_results[result_positions[vacancy_id]] = result
-                    if not _record_questionnaire_if_confirmed(history, resume.id, vacancy, result):
+                    if not _record_questionnaire_if_confirmed(
+                        history, resume.resume_id, vacancy, result
+                    ):
                         history_write_failed = True
                     # Позиция самой перепроверяемой вакансии, а не длина списка:
                     # retry вакансии 3 из 10 иначе печатал бы «проверено 10/10».

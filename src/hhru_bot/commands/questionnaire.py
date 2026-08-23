@@ -214,9 +214,6 @@ def run_set(args: argparse.Namespace) -> None:
         # понятная строка [FAIL] и код возврата 1, а не argparse-usage.
         print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
-    if args.example and args.mode != "contextual":
-        print("[FAIL] --example имеет смысл только для --mode contextual", file=sys.stderr)
-        sys.exit(1)
     from ..questionnaires.templates import is_strict
 
     if is_strict(cluster) and args.mode != "static":

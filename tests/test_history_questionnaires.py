@@ -195,3 +195,81 @@ def test_questionnaire_answer_summary_scoped_by_resume_and_period(tmp_path):
         "unanswered": 0,
     }
     assert history.questionnaire_answer_summary() == {"profile": 2, "llm": 0, "unanswered": 0}
+
+
+def test_rekey_questionnaire_scans_migrates_slug_rows_to_resume_id(tmp_path):
+    """#486: старые запуски probe --questionnaires-only ключевали
+    questionnaire_scans слагом резюме из config.yaml вместо реального
+    resume_id — list_scanned_questions()/questionnaire._scope() фильтруют по
+    resume_id, поэтому такие строки были недостижимы через --resume."""
+    history = History(tmp_path / "history.db")
+    history.record_questionnaire(
+        "python",
+        "111",
+        "https://hh.ru/vacancy/111",
+        "Backend",
+        "Acme",
+        [
+            {
+                "body_index": 0,
+                "text": "Готовы к переезду?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+            }
+        ],
+    )
+    history.record_questionnaire(
+        "b3236ebbff10f60ff30039ed1f6d5876645331",
+        "222",
+        "https://hh.ru/vacancy/222",
+        "Backend",
+        "Beta",
+        [
+            {
+                "body_index": 0,
+                "text": "Ваш опыт с Django?",
+                "kind": "text",
+                "is_radio": False,
+                "options": [],
+            }
+        ],
+    )
+
+    rekeyed = history.rekey_questionnaire_scans(
+        {"python": "b3236ebbff10f60ff30039ed1f6d5876645331", "unrelated_slug": "deadbeef"}
+    )
+
+    assert rekeyed == 1
+    scoped = history.list_scanned_questions("b3236ebbff10f60ff30039ed1f6d5876645331")
+    assert {row["vacancy_id"] for row in scoped} == {"111", "222"}
+    assert history.list_scanned_questions("python") == []
+
+
+def test_rekey_questionnaire_scans_is_idempotent(tmp_path):
+    history = History(tmp_path / "history.db")
+    questions = [
+        {
+            "body_index": 0,
+            "text": "Готовы к переезду?",
+            "kind": "text",
+            "is_radio": False,
+            "options": [],
+        }
+    ]
+    history.record_questionnaire(
+        "python", "111", "https://hh.ru/vacancy/111", "Backend", "Acme", questions
+    )
+    mapping = {"python": "hex123"}
+
+    first = history.rekey_questionnaire_scans(mapping)
+    second = history.rekey_questionnaire_scans(mapping)
+
+    assert first == 1
+    assert second == 0
+    assert history.list_scanned_questions("hex123")[0]["vacancy_id"] == "111"
+
+
+def test_rekey_questionnaire_scans_ignores_empty_mapping(tmp_path):
+    history = History(tmp_path / "history.db")
+    assert history.rekey_questionnaire_scans({}) == 0
