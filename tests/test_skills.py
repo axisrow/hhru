@@ -193,3 +193,65 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
     assert result.success is True
     assert trigger.click.call_count == 1
     assert editor.wait_for.call_count == 1
+
+
+def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None:
+    """A closed editor is not enough: the saved chip set must match the plan."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    read_skills = MagicMock(side_effect=[("Python",), ("Python", "Docker")])
+    monkeypatch.setattr(skills_module, "read_skills", read_skills)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
+    )
+
+    assert result.success is True
+    assert result.added == ("Docker",)
+    assert result.acted is True
+    assert read_skills.call_count == 2
+
+
+def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
+    """A successful save click with a missing chip must not produce [OK]."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(
+        skills_module, "read_skills", MagicMock(side_effect=[("Python",), ("Python",)])
+    )
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
+    )
+
+    assert result.success is False
+    assert result.acted is True
+    assert "не совпало с планом" in result.reason
