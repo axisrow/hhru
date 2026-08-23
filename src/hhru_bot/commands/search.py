@@ -158,7 +158,8 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
                 hh_rating=card.hh_rating or None,
                 hrbrand_winner=card.hrbrand_winner,
                 metro_stations=json.dumps(card.metro_stations, ensure_ascii=False)
-                if card.metro_stations else None,
+                if card.metro_stations
+                else None,
             )
         except Exception as e:  # noqa: BLE001 — рынок не должен валить поиск
             logger.warning("Не записать вакансию %s в рынок: %s", card.vacancy_id, e)

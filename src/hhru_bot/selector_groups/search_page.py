@@ -73,7 +73,5 @@ VACANCY_CARD_NO_RESUME = "[data-qa='vacancy-label-no-resume']"
 # как наблюдены, без попытки угадать их семантику или формат.
 VACANCY_CARD_ACTIVITY = "[data-qa='vacancy-serp-item-activity']"
 VACANCY_CARD_HH_RATING = "[data-qa='vacancy-serp__vacancy_employer-hh-rating']"
-VACANCY_CARD_HRBRAND_WINNER = (
-    ".vacancy-serp__vacancy_hrbrand.vacancy-serp__vacancy_hrbrand_winners"
-)
+VACANCY_CARD_HRBRAND_WINNER = ".vacancy-serp__vacancy_hrbrand.vacancy-serp__vacancy_hrbrand_winners"
 VACANCY_CARD_METRO_STATION = "[data-qa='address-metro-station-name']"
