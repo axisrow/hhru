@@ -849,6 +849,15 @@ def test_rekey_collapses_a_question_queued_under_both_keys(tmp_path):
     question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
     history.record_questionnaire_pending(real_id, question)
     history.record_questionnaire_pending("python", question)
+    with history._connect() as conn:
+        conn.execute(
+            "UPDATE questionnaire_pending SET updated_at = ? WHERE resume_id = ?",
+            ("2026-01-01T00:00:00", real_id),
+        )
+        conn.execute(
+            "UPDATE questionnaire_pending SET updated_at = ? WHERE resume_id = ?",
+            ("2026-01-02T00:00:00", "python"),
+        )
 
     history.rekey_questionnaire_scans("python", real_id)
 
@@ -883,9 +892,11 @@ def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
     real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
     history = History(tmp_path / "h.db")
     question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    # The resolved hex twin is older. Rekey must use the newer pending slug
+    # row, rather than treating the key itself as proof of freshness.
     history.record_questionnaire_pending(real_id, question)
-    history.record_questionnaire_pending("python", question)
     history.resolve_pending_for_questions(["Ваш опыт?"], resume_id=real_id)
+    history.record_questionnaire_pending("python", question)
 
     history.rekey_questionnaire_scans("python", real_id)
 
@@ -893,6 +904,80 @@ def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
         "Ваш опыт?"
     ]
     assert history.list_questionnaire_pending("python") == []
+
+
+@pytest.mark.parametrize(
+    ("slug_status", "hex_status", "slug_updated", "hex_updated", "expected_cluster"),
+    [
+        ("pending", "resolved", "2026-01-02T00:00:00", "2026-01-01T00:00:00", "slug"),
+        ("pending", "resolved", "2026-01-01T00:00:00", "2026-01-02T00:00:00", "hex"),
+        ("resolved", "pending", "2026-01-02T00:00:00", "2026-01-01T00:00:00", "slug"),
+        ("resolved", "pending", "2026-01-01T00:00:00", "2026-01-02T00:00:00", "hex"),
+    ],
+)
+def test_rekey_uses_updated_at_for_pending_twin_merge(
+    tmp_path, slug_status, hex_status, slug_updated, hex_updated, expected_cluster
+):
+    """Neither status nor key order substitutes for a chronological merge.
+
+    Both pending/resolved directions must retain the complete newer row. In
+    particular, an old slug row must not erase a newer hex row's cluster.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    item = [{"text": "Данные достоверны?", "kind": "text", "reason": "reason"}]
+    history.record_questionnaire_pending(real_id, item)
+    history.record_questionnaire_pending("python", item)
+    with history._connect() as conn:
+        conn.execute(
+            """UPDATE questionnaire_pending
+                  SET status = ?, cluster = ?, updated_at = ?
+                WHERE resume_id = ?""",
+            (hex_status, "hex", hex_updated, real_id),
+        )
+        conn.execute(
+            """UPDATE questionnaire_pending
+                  SET status = ?, cluster = ?, updated_at = ?
+                WHERE resume_id = ?""",
+            (slug_status, "slug", slug_updated, "python"),
+        )
+
+    history.rekey_questionnaire_scans("python", real_id)
+
+    with history._connect() as conn:
+        row = conn.execute(
+            """SELECT status, cluster, updated_at
+                 FROM questionnaire_pending
+                WHERE resume_id = ?""",
+            (real_id,),
+        ).fetchone()
+    assert dict(row) == {
+        "status": slug_status if expected_cluster == "slug" else hex_status,
+        "cluster": expected_cluster,
+        "updated_at": slug_updated if expected_cluster == "slug" else hex_updated,
+    }
+    assert history.questionnaire_resume_ids() == {real_id}
+
+
+def test_rekey_is_all_or_nothing_when_pending_timestamps_are_ambiguous(tmp_path):
+    """An equal timestamp must not split scans from the still-unmerged queue."""
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    item = [{"text": "Неоднозначный вопрос", "kind": "text", "reason": "reason"}]
+    history.record_questionnaire_pending(real_id, item)
+    history.record_questionnaire_pending("python", item)
+    _scan(history, "python", "v1", "Скан")
+    with history._connect() as conn:
+        conn.execute(
+            "UPDATE questionnaire_pending SET updated_at = ?",
+            ("2026-01-01T00:00:00",),
+        )
+
+    assert history.rekey_questionnaire_scans("python", real_id) == 0
+    assert len(history.list_scanned_questions("python")) == 1
+    assert history.list_scanned_questions(real_id) == []
+    assert len(history.list_questionnaire_pending("python")) == 1
+    assert len(history.list_questionnaire_pending(real_id)) == 1
 
 
 def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
@@ -1006,6 +1091,35 @@ def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_pat
     assert history.list_questionnaire_pending(a_real) == []
     assert len(history.list_scanned_questions(b_real)) == 1
     assert history.list_scanned_questions(a_real) == []
+    assert "[INFO] Нормализация ключей анкет отменена" in capsys.readouterr().out
+
+
+def test_rekey_refuses_a_slug_matching_a_removed_resume_history_key(tmp_path, capsys):
+    """Config is an overlay, not a complete registry of historical resumes.
+
+    A current slug may equal the canonical key of a resume removed from the
+    config. The durable questionnaire rows make that key ambiguous, so the
+    cleanup must leave both queue and scans untouched.
+    """
+    from hhru_bot.commands.questionnaire import rekey_legacy_scans
+
+    gone = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    current_real = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
+    config = SimpleNamespace(resumes=[SimpleNamespace(id=gone, resume_id=current_real)])
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        gone, [{"text": "Вопрос выбывшего", "kind": "text", "reason": "reason"}]
+    )
+    _scan(history, gone, "v9", "Скан выбывшего")
+
+    rekey_legacy_scans(config, history)
+
+    assert [row["question_text"] for row in history.list_questionnaire_pending(gone)] == [
+        "Вопрос выбывшего"
+    ]
+    assert history.list_questionnaire_pending(current_real) == []
+    assert len(history.list_scanned_questions(gone)) == 1
+    assert history.list_scanned_questions(current_real) == []
     assert "[INFO] Нормализация ключей анкет отменена" in capsys.readouterr().out
 
 
