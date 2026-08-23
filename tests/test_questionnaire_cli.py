@@ -73,11 +73,49 @@ def test_set_contextual_stores_instruction_and_examples(tmp_path):
     assert len(history.get_confirmed_phrases()) == 2
 
 
-def test_example_is_rejected_for_static_mode(capsys, tmp_path):
-    with pytest.raises(SystemExit):
-        cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
+def test_example_is_accepted_for_static_mode(tmp_path):
+    """#486 п.2: механизм подтверждения формулировки от режима не зависит —
+    без него static-шаблон с несидовым именем недостижим неинтерактивно."""
+    cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
 
-    assert "--example" in capsys.readouterr().err
+    assert History(tmp_path / "h.db").get_confirmed_phrases()["доход?"] == "salary"
+
+
+def test_static_example_resolves_the_queued_question_and_unblocks_the_vacancy(tmp_path):
+    """#486 п.2: вопрос попал в очередь БЕЗ шаблона (ни один не совпал), поэтому
+    resolve по имени шаблона его не снимет — снимает подтверждённая формулировка."""
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1",
+        [{"text": "Данные достоверны?", "kind": "text", "reason": "комплаенс без значения"}],
+        vacancy_id="v1",
+    )
+    history.record_skip("r1", "v1", SKIP_REASONS.QUESTIONNAIRE_PENDING)
+
+    cmd.run_set(
+        _args(
+            tmp_path,
+            template="data_accuracy",
+            cluster="compliance",
+            answer="Да",
+            example=["Данные достоверны?"],
+        )
+    )
+
+    assert history.list_questionnaire_pending("r1") == []
+    assert history.is_skipped("r1", "v1") is False
+
+
+def test_static_example_without_a_matching_question_leaves_the_queue_alone(tmp_path):
+    """Снимается ровно подтверждённая формулировка, а не вся очередь."""
+    history = History(tmp_path / "h.db")
+    history.record_questionnaire_pending(
+        "r1", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
+    )
+
+    cmd.run_set(_args(tmp_path, answer="от 250000", example=["Доход?"]))
+
+    assert len(history.list_questionnaire_pending("r1")) == 1
 
 
 def test_set_uses_the_seed_cluster_by_default(tmp_path):
@@ -252,6 +290,24 @@ def test_learn_stores_answer_and_resolves_the_queue(capsys, tmp_path, monkeypatc
     assert history.list_questionnaire_pending("r1") == []
     assert history.is_skipped("r1", "v1") is False
     assert "Разобрано вопросов: 1" in capsys.readouterr().out
+
+
+def test_learn_keeps_the_cluster_of_an_existing_template(tmp_path, monkeypatch):
+    """#486 п.5: learn не знает пользовательских имён и раньше писал 'mixed'
+    поверх сохранённого 'compliance' — двойной признак строгости из CLAUDE.md
+    п.7 вырождался в одинарный, молча."""
+    history = History(tmp_path / "h.db")
+    cmd.run_set(_args(tmp_path, template="data_accuracy", cluster="compliance", answer="Да"))
+    history.record_questionnaire_pending(
+        "r1", [{"text": "Сведения верны?", "kind": "text", "reason": "нет шаблона"}]
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    _answers = iter(["data_accuracy", "Да"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(_answers))
+
+    cmd.run_learn(_args(tmp_path, limit=20))
+
+    assert history.get_questionnaire_templates()["data_accuracy"]["cluster"] == "compliance"
 
 
 def test_learn_keeps_the_question_when_the_answer_is_empty(capsys, tmp_path, monkeypatch):
@@ -486,3 +542,51 @@ def test_compliance_cluster_accepts_a_static_template(tmp_path):
     )
 
     assert History(tmp_path / "h.db").get_questionnaire_templates()["work_permit"]["answer"]
+
+
+# --- #486 п.1: расщепление ключей probe/learn --------------------------------
+
+
+def _write_config(tmp_path, slug: str, resume_url: str) -> None:
+    (tmp_path / "config.yaml").write_text(
+        "account:\n"
+        "  storage_state_file: data/storage_state/hh_session.json\n"
+        "resumes:\n"
+        f"  - id: {slug}\n"
+        f'    resume_url: "{resume_url}"\n'
+        "    search:\n"
+        '      text: "python developer"\n',
+        encoding="utf-8",
+    )
+
+
+def test_learn_rekeys_scans_recorded_under_the_config_slug(tmp_path, monkeypatch):
+    """probe до #486 писал сканы слагом, apply-путь — реальным resume_id.
+
+    После правки самого probe накопленные строки остались бы недостижимы через
+    --resume: learn находил бы единицы вопросов вместо сотни, молча.
+    """
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите самый сложный проект")
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+    cmd.run_learn(_args(tmp_path, resume="python", limit=20))
+
+    queued = {row["question_text"] for row in history.list_questionnaire_pending(real_id)}
+    assert queued == {"Опишите самый сложный проект"}
+    assert history.list_questionnaire_pending("python") == []
+
+
+def test_rekey_is_idempotent_and_leaves_foreign_keys_alone(tmp_path):
+    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    history = History(tmp_path / "h.db")
+    _scan(history, "python", "v1", "Опишите проект")
+    _scan(history, "marketing", "v2", "Ваш опыт?")
+
+    assert history.rekey_questionnaire_scans("python", real_id) == 1
+    assert history.rekey_questionnaire_scans("python", real_id) == 0
+    assert history.rekey_questionnaire_scans(real_id, real_id) == 0
+    assert len(history.list_scanned_questions("marketing")) == 1

@@ -124,6 +124,32 @@ def _scope(args: argparse.Namespace) -> str | None:
         return args.resume
 
 
+def _rekey_legacy_scans(args: argparse.Namespace, history) -> None:
+    """Перевести сканы, записанные слагом конфига, на реальный resume_id (#486 п.1).
+
+    До исправления ``probe --questionnaires-only`` ключевал сканы ``resume.id``
+    (слаг), а не hex-хвостом ``resume_url``, и накопленные строки остались бы
+    недостижимы через ``--resume`` после правки самого probe. Нормализуем их
+    здесь, а не в ``History``: маппинг «слаг -> resume_id» живёт в конфиге, до
+    которого история не достаёт.
+
+    Вызывается только из WRITE-команд (``learn``/``set``): ``pending`` и ``list``
+    классифицированы READ, не берут общий write-lock и писать не вправе.
+    Операция идемпотентна — второй прогон не найдёт ни одной строки со слагом.
+    """
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(args.config)
+    except (ConfigError, SystemExit, OSError):
+        return
+    moved = 0
+    for resume in config.resumes:
+        moved += history.rekey_questionnaire_scans(resume.id, resume.resume_id)
+    if moved:
+        print(f"[INFO] Сканы анкет переключены со слага на resume_id: {moved}.")
+
+
 def run_pending(args: argparse.Namespace) -> None:
     from ..history import History
     from ..report import _ascii_table
@@ -214,9 +240,12 @@ def run_set(args: argparse.Namespace) -> None:
         # понятная строка [FAIL] и код возврата 1, а не argparse-usage.
         print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
-    if args.example and args.mode != "contextual":
-        print("[FAIL] --example имеет смысл только для --mode contextual", file=sys.stderr)
-        sys.exit(1)
+    # #486 п.2: --example разрешён в обоих режимах. Подтверждение формулировки
+    # (confirm_questionnaire_example -> phrase-стратегия) от режима шаблона не
+    # зависит, а запрет делал static-шаблон с несидовым именем недостижимым
+    # неинтерактивно: сохранить его было можно, а связать с вопросом — нечем.
+    # Больнее всего это било по комплаенсу, где ответ разрешён ТОЛЬКО явным
+    # static-значением, то есть путь без интерактива был закрыт полностью.
     from ..questionnaires.templates import is_strict
 
     if is_strict(cluster) and args.mode != "static":
@@ -252,6 +281,10 @@ def run_set(args: argparse.Namespace) -> None:
     # настроенного LLM по-прежнему неисполним, снимать его с очереди рано.
     if args.mode == "static":
         history.resolve_pending_for_templates({args.template}, resume_id=scope)
+        # ...и по самой формулировке (#486 п.2): вопрос, не совпавший ни с одним
+        # шаблоном, стоит в очереди с template IS NULL — по имени шаблона его не
+        # снять, хотя подтверждённый пример только что сделал ответ известным.
+        history.resolve_pending_for_questions(list(args.example), resume_id=scope)
     _unblock(history, scope)
 
 
@@ -281,6 +314,7 @@ def run_learn(args: argparse.Namespace):
 
     scope = _scope(args)
     history = History(args.history)
+    _rekey_legacy_scans(args, history)
     if seeded := _seed_queue_from_scans(history, scope):
         print(f"[INFO] Добавлено в очередь из ранее собранных анкет: {seeded}.")
     rows = history.list_questionnaire_pending(scope, limit=_limit(args))
@@ -392,10 +426,19 @@ def _learn_one(history, row: dict, scope: str | None) -> int:
 
     from ..questionnaires.templates import DEFAULT_CLUSTER, cluster_for
 
+    # #486 п.5: кластер УЖЕ сохранённого шаблона имеет приоритет над всем
+    # выведенным. cluster_for() знает только seed-имена и для пользовательского
+    # возвращает DEFAULT_CLUSTER ('mixed'), поэтому learn молча понижал явно
+    # заданный 'compliance' до 'mixed' — двойной признак строгости из CLAUDE.md
+    # п.7 (кластер ИЛИ текст) вырождался в одинарный, без единого предупреждения.
+    # row["cluster"] (кластер строки очереди) тоже выведенный, поэтому стоит
+    # ниже сохранённого; явную смену кластера по-прежнему делает `set --cluster`.
+    existing = history.get_questionnaire_templates(scope).get(template) or {}
+    cluster = existing.get("cluster") or row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER
     history.set_questionnaire_template(
         template,
         mode="static",
-        cluster=row["cluster"] or cluster_for(template) or DEFAULT_CLUSTER,
+        cluster=cluster,
         answer=answer,
         resume_id=scope,
     )

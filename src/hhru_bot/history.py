@@ -2819,6 +2819,30 @@ class History:
                 ],
             )
 
+    def rekey_questionnaire_scans(self, old_resume_id: str, new_resume_id: str) -> int:
+        """Переключить накопленные сканы со слага конфига на реальный resume_id.
+
+        До #486 ``probe --questionnaires-only`` ключевал сканы слагом
+        (``resume.id``), тогда как apply-путь и ``questionnaire._scope()``
+        используют hex-хвост ``resume_url``. В одной таблице оказались оба вида
+        ключей, и ``learn --resume python`` находил единицы вопросов вместо
+        сотни — молча, без предупреждения. Тот же перекос задевал scoped
+        ``stats``: ``questionnaire_answer_summary`` джойнит эту же таблицу.
+
+        Идемпотентно и узко: правит ровно строки со старым ключом, ничего не
+        создаёт и не удаляет. Системы миграций в проекте нет намеренно
+        (CLAUDE.md, «Схема SQLite»), поэтому разовая нормализация живёт как
+        обычный метод и вызывается командой, у которой на руках есть маппинг
+        слаг -> resume_id из конфига.
+        """
+        if not old_resume_id or old_resume_id == new_resume_id:
+            return 0
+        with self._connect() as conn:
+            return conn.execute(
+                "UPDATE questionnaire_scans SET resume_id = ? WHERE resume_id = ?",
+                (new_resume_id, old_resume_id),
+            ).rowcount
+
     def questionnaire_answer_summary(
         self, resume_id: str | None = None, period: str = "all"
     ) -> dict[str, int]:
@@ -3170,6 +3194,36 @@ class History:
             f"WHERE status = 'pending' AND template IN ({placeholders})"
         )
         params: list = [datetime.now().isoformat(), *sorted(templates)]
+        if resume_id is not None:
+            sql += " AND resume_id = ?"
+            params.append(resume_id)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
+    def resolve_pending_for_questions(
+        self, question_texts: list[str], *, resume_id: str | None = None
+    ) -> int:
+        """Пометить решёнными вопросы очереди с этими формулировками (#486 п.2).
+
+        Дополняет ``resolve_pending_for_templates``, которая матчит по имени
+        шаблона: вопрос, не совпавший НИ с одним шаблоном, стоит в очереди с
+        ``template IS NULL``, и снять его по имени нечем. Именно так туда
+        попадает комплаенс-вопрос, ради которого ``set --example`` и нужен —
+        подтверждённая формулировка и есть то, что делает шаблон применимым.
+
+        Сопоставление по ``question_key`` (``normalize(text)``) — тому же ключу,
+        которым ``confirm_questionnaire_example`` пишет пример, а
+        ``record_questionnaire_pending`` — строку очереди.
+        """
+        keys = {normalize(text) for text in question_texts if text.strip()}
+        if not keys:
+            return 0
+        placeholders = ",".join("?" for _ in keys)
+        sql = (
+            f"UPDATE questionnaire_pending SET status = 'resolved', updated_at = ? "
+            f"WHERE status = 'pending' AND question_key IN ({placeholders})"
+        )
+        params: list = [datetime.now().isoformat(), *sorted(keys)]
         if resume_id is not None:
             sql += " AND resume_id = ?"
             params.append(resume_id)
