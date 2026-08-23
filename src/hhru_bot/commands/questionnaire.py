@@ -24,7 +24,7 @@ def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "questionnaire",
         help="Шаблоны ответов на анкеты работодателей",
-        description="Показать очередь и шаблоны, задать ответ или обучить шаблон.",
+        description="Показать очередь, аудит и шаблоны, задать ответ или обучить шаблон.",
     )
     commands = parser.add_subparsers(dest="questionnaire_command", required=True)
 
@@ -44,6 +44,28 @@ def register(subparsers) -> None:
     )
     templates.add_argument("--resume", help="Slug резюме или resume_id")
     templates.set_defaults(func=run_templates)
+
+    audit = commands.add_parser(
+        "audit",
+        help="Показать сохранённые ответы на анкеты (READ)",
+        description="Что бот ответил в анкетах: ответ, уверенность, шаблон.",
+    )
+    audit.add_argument("--resume", help="Slug резюме или resume_id (по умолчанию — все)")
+    # dest="limit", чтобы переиспользовать _limit() — он уже охраняет от
+    # `LIMIT -1` («без ограничения» в SQLite), а своя проверка вернула бы
+    # ровно тот дефект, ради которого хелпер и написан.
+    audit.add_argument(
+        "--last", dest="limit", type=int, default=50, help="Сколько последних ответов показать"
+    )
+    audit.add_argument("--template", help="Только ответы этого шаблона")
+    audit.add_argument(
+        "--low-confidence",
+        action="store_true",
+        # Причину «низкая уверенность» база не хранит — в ней записано только
+        # решение не сохранять ответ, а к нему приводит и отказ compliance-гейта.
+        help="Только вопросы, на которые бот не стал отвечать",
+    )
+    audit.set_defaults(func=run_audit)
 
     learn = commands.add_parser(
         "learn",
@@ -268,6 +290,111 @@ def run_templates(args: argparse.Namespace) -> None:
                 for row in rows
             ],
         )
+    )
+
+
+#: Ширина текстовых колонок аудита. Обрезка живёт здесь, а не в
+#: ``report._ascii_table`` и не в ``History``: таблица рисуется по фактической
+#: ширине ячеек, и один вопрос на 300 символов растянул бы её до нечитаемости,
+#: а метод истории обязан отдавать значения целиком — по ним пишутся тесты.
+_AUDIT_TEXT_WIDTH = 48
+
+
+def _clip(text: str | None, width: int = _AUDIT_TEXT_WIDTH) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _was_filled(row: dict) -> bool:
+    """Попал ли ответ в форму вообще.
+
+    ``filled`` батчевый — ``pipeline.py:589`` пишет его всему скану сразу, — и
+    именно поэтому он верен ЗДЕСЬ и неверен как признак «низкой уверенности»:
+    вопрос «заполнялась ли форма» тоже решается на весь скан. При единственном
+    неуверенном вопросе вакансия отсеивается (``pipeline.py:615``), и уверенный
+    сосед с непустым ``answer`` в форму не попадает.
+
+    Признак отвечает ровно на этот вопрос и ни на какой более сильный:
+    доставку на hh.ru он не подтверждает (см. ``_answer_cell``).
+    """
+    return bool(row["filled"])
+
+
+def _answer_cell(row: dict) -> str:
+    """Ячейка ответа: заполненное, отказ отвечать и незаполненное — разные факты.
+
+    ГРАНИЦА ТОЧНОСТИ, и она же — причина формулировок. ``filled`` фиксирует
+    успешное ЗАПОЛНЕНИЕ формы, но НЕ подтверждённую отправку на hh.ru (инвариант
+    ``history.py``): он пишется на ``pipeline.py:628`` ДО анти-бот проверки,
+    резервирования действия, письма и submit-клика (``:645``). Поэтому команда
+    говорит только про заполнение формы и нигде не употребляет «отправлено»:
+    заполненная форма могла не доехать (анти-бот, сбой submit, ``uncertain``), и
+    подпись «отправлено» удостоверяла бы доставку чувствительных ответов
+    работодателю, не имея тому доказательства. Исход submit лежит в ``actions``
+    и сюда не джойнится — различать доставку #488 не берётся.
+
+    Два маркера намеренно НЕ однокоренные: «форма не заполнялась» и «без
+    ответа» — разные состояния, и общий корень делал бы их неразличимыми
+    беглым взглядом по колонке.
+    """
+    if not _was_filled(row):
+        # Предложение, которое в форму никогда не попадало. Строку не прячем —
+        # её всё ещё оценивают, — но выдавать за заполненный ответ нельзя.
+        return "[форма не заполнялась]"
+    # Пустой ответ — не «ответили пустотой», а осознанный отказ отвечать
+    # внутри заполненной формы: показываем это словами, а не пустой ячейкой.
+    return _clip(row["answer"]) if row["answer"] else "[без ответа]"
+
+
+def run_audit(args: argparse.Namespace) -> None:
+    from ..history import History
+    from ..report import _ascii_table
+
+    rows = History(args.history).list_questionnaire_audit(
+        _scope(args),
+        template=args.template,
+        low_confidence=args.low_confidence,
+        limit=_limit(args),
+    )
+    if not rows:
+        # «Аудит пуст» и «под фильтр ничего не попало» — разные факты. Слить их
+        # в одну строку значит отправить оператора обратно в прямой SQL, ровно
+        # от которого команда и избавляет.
+        # Признак тот же, по которому фильтр ставится в SQL (``is not None``), а
+        # не truthiness: `--template ""` — фильтр реальный, совпадений у него
+        # просто нет, и сообщение «ответов нет» было бы ложью про базу.
+        if args.template is not None or args.low_confidence or args.resume:
+            print("[INFO] Под заданный фильтр не попало ни одного ответа.")
+        else:
+            print("[INFO] Сохранённых ответов на анкеты нет.")
+        return
+    print(
+        _ascii_table(
+            ["вакансия", "conf", "источник", "шаблон", "вопрос", "ответ"],
+            [
+                [
+                    row["vacancy_id"],
+                    # Уверенность печатается, но фильтровать по её порогу
+                    # нечем — порог в базу не пишется (см. list_questionnaire_audit).
+                    "-" if row["confidence"] is None else f"{row['confidence']:.2f}",
+                    row["resolver_source"] or row["answer_source"] or "-",
+                    row["template"] or "-",
+                    _clip(row["text"]),
+                    _answer_cell(row),
+                ]
+                for row in rows
+            ],
+        )
+    )
+    # Считаем ЗАПОЛНЕННОЕ, а не сохранённое: иначе счётчик повторил бы ту же
+    # ложь, что и ячейка, этажом ниже. Про доставку счётчик молчит по той же
+    # причине, что и ячейка, — ``filled`` её не доказывает (см. _answer_cell).
+    answered = sum(1 for row in rows if _was_filled(row) and row["answer"])
+    not_a_form = sum(1 for row in rows if not _was_filled(row))
+    unanswered = sum(1 for row in rows if _was_filled(row) and not row["answer"])
+    print(
+        f"[INFO] Заполнено ответов: {answered}, без ответа: {unanswered}, "
+        f"форма не заполнялась: {not_a_form}."
     )
 
 

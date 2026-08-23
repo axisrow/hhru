@@ -26,9 +26,46 @@ def _args(tmp_path, **overrides) -> argparse.Namespace:
         "instruction": None,
         "example": [],
         "cluster": None,
+        "low_confidence": False,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def _audit_args(tmp_path, **overrides) -> argparse.Namespace:
+    """``_args`` держит template='salary' — это дефолт для set/unset, а для audit
+    он означал бы фильтр по шаблону, молча прячущий все остальные строки."""
+    overrides.setdefault("template", None)
+    return _args(tmp_path, **overrides)
+
+
+def _record_audit(tmp_path, **overrides) -> None:
+    resume_id = overrides.pop("resume_id", "r1")
+    question = {
+        "body_index": 0,
+        "text": "Настоящим подтверждаю достоверность сведений",
+        "kind": "text",
+        "is_radio": False,
+        "options": [],
+        "answer": "Да",
+        "answer_source": "profile",
+        "confidence": 1.0,
+        "filled": True,
+        "template": "data_accuracy",
+        "cluster": "compliance",
+        "resolver_source": "static",
+    }
+    question.update(overrides)
+    History(tmp_path / "h.db").record_questionnaire(
+        resume_id,
+        "132855712",
+        "https://hh.ru/vacancy/132855712",
+        "Разработчик",
+        "Acme",
+        [question],
+        source="apply",
+        run_id="run-488",
+    )
 
 
 # --- set --------------------------------------------------------------------
@@ -343,6 +380,192 @@ def test_learn_returns_sigint_on_interrupt(capsys, tmp_path, monkeypatch):
     assert "Прервано" in capsys.readouterr().out
 
 
+# --- audit (#488) -----------------------------------------------------------
+
+
+def test_audit_prints_answer_confidence_and_template(capsys, tmp_path):
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "132855712" in out
+    assert "1.00" in out
+    assert "data_accuracy" in out
+    assert "static" in out
+    assert "Заполнено ответов: 1, без ответа: 0, форма не заполнялась: 0." in out
+
+
+def test_audit_marks_a_refused_answer_instead_of_printing_an_empty_cell(capsys, tmp_path):
+    """Пустой answer — осознанный отказ отвечать, а не «ответили пустотой».
+
+    ``filled=True``: форму бот заполнил и отклик отправил, но по ЭТОМУ вопросу
+    отвечать отказался. Именно так отказ отличается от отсеянного батча,
+    у которого не заполнялось вообще ничего.
+    """
+    _record_audit(tmp_path, answer="", answer_source="llm", confidence=0.2, filled=True)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "[без ответа]" in out
+    assert "0.20" in out
+    assert "без ответа: 1" in out
+
+
+def test_audit_low_confidence_flag_keeps_only_unanswered_questions(capsys, tmp_path):
+    _record_audit(tmp_path)
+    _record_audit(tmp_path, text="Какие редакторы?", answer="", confidence=0.2, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path, low_confidence=True))
+
+    out = capsys.readouterr().out
+    assert "Какие редакторы?" in out
+    assert "Настоящим подтверждаю" not in out
+
+
+def test_audit_clips_a_long_question_so_the_table_stays_readable(capsys, tmp_path):
+    _record_audit(tmp_path, text="Опишите ваш опыт " * 40)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "..." in out
+    assert max(len(line) for line in out.splitlines()) < 160
+
+
+def test_audit_template_flag_filters_by_template(capsys, tmp_path):
+    _record_audit(tmp_path)
+    _record_audit(tmp_path, text="Зарплатные ожидания?", template="salary")
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary"))
+
+    out = capsys.readouterr().out
+    assert "Зарплатные ожидания?" in out
+    assert "Настоящим подтверждаю" not in out
+
+
+def test_audit_renders_legacy_rows_without_resolver_columns(capsys, tmp_path):
+    """template/cluster/resolver_source добавлены ALTER'ом задним числом (#482),
+    поэтому в базе есть apply-строки, где они NULL. Таблица не должна падать и
+    обязана показать прочерк, а не пустую ячейку или None."""
+    _record_audit(tmp_path, template=None, cluster=None, resolver_source=None)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "None" not in out
+    assert "| -" in out
+    assert "Заполнено ответов: 1" in out
+
+
+def test_audit_empty_prints_info(capsys, tmp_path):
+    cmd.run_audit(_audit_args(tmp_path))
+
+    assert "[INFO]" in capsys.readouterr().out
+
+
+def test_audit_distinguishes_an_empty_audit_from_an_empty_filter(capsys, tmp_path):
+    """«Ответов нет» и «под фильтр ничего не попало» — разные факты: первый
+    отправил бы оператора в прямой SQL проверять, правда ли база пуста."""
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary"))
+
+    assert "Под заданный фильтр" in capsys.readouterr().out
+
+
+def test_audit_rejects_a_negative_last(capsys, tmp_path):
+    """--last -5 в SQLite означало бы «без ограничения» — противоположность намерению."""
+    with pytest.raises(SystemExit) as exc:
+        cmd.run_audit(_audit_args(tmp_path, limit=-5))
+
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
+
+
+def test_audit_last_flag_stores_into_limit():
+    """--last переиспользует dest=limit, иначе _limit() не увидел бы значение.
+
+    Здесь же сверяются дефолты, на которые опирается ``_audit_args``: без этого
+    контур незамкнут — появись у ``--template`` не-None дефолт, CLI-тесты audit
+    продолжили бы проходить против фикстуры, разошедшейся с парсером.
+    """
+    args = build_parser().parse_args(["questionnaire", "audit", "--last", "5"])
+
+    assert args.limit == 5
+    assert args.low_confidence is False
+    assert args.template is None
+    assert args.resume is None
+
+
+def test_audit_empty_template_is_a_real_filter_not_an_empty_audit(capsys, tmp_path):
+    """``--template ""`` — фильтр реальный (SQL ставит его по is not None),
+    совпадений у него просто нет. Сообщение «ответов нет» было бы ложью про базу."""
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path, template=""))
+
+    assert "Под заданный фильтр" in capsys.readouterr().out
+
+
+def test_audit_last_n_applies_after_the_filter(capsys, tmp_path):
+    """LIMIT + WHERE + reversed() вместе: срез берётся от отфильтрованных строк."""
+    for index in range(4):
+        _record_audit(tmp_path, text=f"Зарплата {index}?", template="salary")
+        _record_audit(tmp_path, text=f"Комплаенс {index}?", template="data_accuracy")
+
+    cmd.run_audit(_audit_args(tmp_path, template="salary", limit=2))
+
+    out = capsys.readouterr().out
+    assert "Зарплата 2?" in out and "Зарплата 3?" in out
+    assert "Зарплата 1?" not in out
+    assert "Комплаенс" not in out
+    assert "Заполнено ответов: 2" in out
+
+
+def test_audit_output_has_no_emoji(capsys, tmp_path):
+    _record_audit(tmp_path)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert all(ord(char) < 0x2190 for char in out), "вывод CLI должен быть текст/ASCII-таблицы"
+
+
+def test_audit_does_not_present_a_never_filled_proposal_as_an_answer(capsys, tmp_path):
+    """Отсеянный батч — это НЕ ответы: форма не заполнялась вовсе.
+
+    ``pipeline.py:589`` при единственном неуверенном вопросе пишет ``filled=0``
+    ВСЕМУ скану и на ``:615`` отсеивает вакансию. Уверенный сосед сохраняется с
+    непустым ``answer``, хотя в форму не попал ни один символ. Печатать его
+    неотличимо от заполненного — та же ложь про базу, ради которой писались
+    ``95e7b5d`` и ``c375eb2``, только этажом выше.
+    """
+    _record_audit(tmp_path, text="Готовы к переезду?", answer="Да", confidence=0.98, filled=False)
+    _record_audit(tmp_path, text="Какие редакторы?", answer="", confidence=0.2, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "Готовы к переезду?" in out, "строку не прячем — её всё ещё оценивают"
+    assert "[форма не заполнялась]" in out, "но её нельзя показывать как заполненный ответ"
+    assert "Заполнено ответов: 0" in out, "ни один ответ в форму не попал"
+
+
+def test_audit_counts_only_filled_rows_as_answers(capsys, tmp_path):
+    """Футер считает заполненное, а не сохранённое: иначе счётчик лжёт так же,
+    как лгала бы ячейка."""
+    _record_audit(tmp_path, text="Зарплата?", answer="200000", filled=True)
+    _record_audit(tmp_path, text="Переезд?", answer="Да", confidence=0.98, filled=False)
+
+    cmd.run_audit(_audit_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "Заполнено ответов: 1" in out
+    assert "форма не заполнялась: 1" in out
+
+
 # --- write-lock классификация (критерий приёмки #482) ----------------------
 
 
@@ -353,7 +576,7 @@ def test_mutating_subcommands_take_the_write_lock(subcommand):
     assert _is_write_command(args) is True
 
 
-@pytest.mark.parametrize("subcommand", ["pending", "templates"])
+@pytest.mark.parametrize("subcommand", ["pending", "templates", "audit"])
 def test_read_subcommands_do_not_take_the_write_lock(subcommand):
     args = argparse.Namespace(command="questionnaire", questionnaire_command=subcommand)
 
@@ -388,7 +611,7 @@ def test_parser_registers_every_subcommand():
         if isinstance(action, argparse._SubParsersAction)
     )
 
-    assert set(nested.choices) == {"pending", "templates", "learn", "set", "unset"}
+    assert set(nested.choices) == {"pending", "templates", "audit", "learn", "set", "unset"}
 
 
 def test_set_requires_a_mode():
