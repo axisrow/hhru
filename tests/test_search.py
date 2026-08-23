@@ -74,6 +74,10 @@ class _TextLocator:
 
 
 class _VacancyCard:
+    def __init__(self, remote: bool = False):
+        # remote=True → на карточке есть remote-лейбл (count=1); False → нет.
+        self._remote = remote
+
     def locator(self, selector: str):
         if selector == search.sel.VACANCY_CARD_TITLE_LINK:
             return _TextLocator("Python developer", "/vacancy/42")
@@ -81,10 +85,9 @@ class _VacancyCard:
             return _TextLocator(count=0)
         # Доп. признаки карточки (#517) опциональны — как остальные блоки
         # этого мока, "не найдено" по умолчанию для любого нового селектора.
-        if selector in (
-            search.sel.VACANCY_CARD_REMOTE_LABEL,
-            search.sel.VACANCY_CARD_EXPERIENCE,
-        ):
+        if selector == search.sel.VACANCY_CARD_REMOTE_LABEL:
+            return _TextLocator(count=1 if self._remote else 0)
+        if selector == search.sel.VACANCY_CARD_EXPERIENCE:
             return _TextLocator(count=0)
         raise AssertionError(f"unexpected card selector: {selector}")
 
@@ -140,12 +143,14 @@ def test_search_waits_for_delayed_cards_before_declaring_empty(monkeypatch):
     )
 
 
-def test_search_reports_is_remote_false_for_healthy_card_without_label(monkeypatch):
-    """Review-финдинг PR #539: карточка уже успешно распарсилась (title/href
-    прочитаны выше), значит отсутствие remote-лейбла здесь — не селектор-дрейф,
-    а законное наблюдение «вакансия не удалённая». До фикса search_vacancies
-    маппил это в None, из-за чего is_remote физически не мог зафиксировать
-    False через боевой путь парсинга — только через прямой upsert в тестах."""
+def test_search_reports_is_remote_none_when_remote_label_absent(monkeypatch):
+    """Review-финдинг PR #539 (cycle 2): Locator.count() == 0 неоднозначен —
+    это либо «вакансия не удалённая», либо дрейф/переименование remote-селектора.
+    Успешный парсинг title/href выше НЕ доказывает здоровье НЕЗАВИСИМОГО
+    remote-селектора. Эмитить False (non-NULL) значило бы затирать ранее
+    подтверждённый True при любом селектор-промахе — ровно класс бага #532.
+    Поэтому отсутствие лейбла → None (COALESCE в upsert сохранит прежнее
+    значение), присутствие → True (confident)."""
     page = _SearchPage([_VacancyCard()])
     monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
     monkeypatch.setattr(search, "_has_next_page", lambda *args: False)
@@ -154,7 +159,22 @@ def test_search_reports_is_remote_false_for_healthy_card_without_label(monkeypat
 
     cards = search.search_vacancies(page, _search_filters(), max_pages=1)
 
-    assert cards[0].is_remote is False
+    assert cards[0].is_remote is None
+
+
+def test_search_reports_is_remote_true_when_remote_label_present(monkeypatch):
+    """PR #539 (cycle 2): remote-лейбл найден (count > 0) — confident True.
+    Контр-тест к отсутствию: присутствие лейбла обязано давать True, иначе
+    тристейт вырождается и confirmed-True никогда не фиксируется."""
+    page = _SearchPage([_VacancyCard(remote=True)])
+    monkeypatch.setattr(search, "goto_hh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(search, "_has_next_page", lambda *args: False)
+    monkeypatch.setattr(search, "_optional_text", lambda *args: None)
+    monkeypatch.setattr(search, "_parse_employer_info", lambda *args: None)
+
+    cards = search.search_vacancies(page, _search_filters(), max_pages=1)
+
+    assert cards[0].is_remote is True
 
 
 def test_search_timeout_is_indeterminate_not_empty_result(monkeypatch):

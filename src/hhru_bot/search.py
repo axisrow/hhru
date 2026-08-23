@@ -516,13 +516,17 @@ def search_vacancies(
             # Доп. признаки карточки для статистики/ML (issue #517). Все блоки
             # опциональны — мягкий парсинг, отсутствие не роняет сбор карточки.
             address = _optional_text(card, sel.VACANCY_CARD_ADDRESS) or ""
-            # Карточка уже гарантированно распарсилась (card_text/title выше не
-            # упали) — отсутствие лейбла здесь не «дрейф селектора», а законное
-            # наблюдение «вакансия не удалённая» (#532 review-финдинг: тристейт
-            # был декоративен, т.к. search.py никогда не эмитил явный False, и
-            # ранее сохранённый True было невозможно скорректировать обратно).
+            # is_remote — тристейт (#532): True если remote-лейбл найден (confident),
+            # None если нет. Locator.count() == 0 неоднозначен — это либо «вакансия
+            # не удалённая», либо дрейф/переименование НЕЗАВИСИМОГО remote-селектора;
+            # успешный парсинг title/href выше не доказывает его здоровье. Эмитить
+            # False (non-NULL) значило бы затирать ранее подтверждённый True при
+            # любом селектор-промахе — ровно класс бага #532. None → COALESCE в
+            # upsert_vacancy_seen сохранит прежнее значение. False намеренно не
+            # эмитится вовсе: вакансия не меняет remote-статус, поэтому
+            # подтверждённый True не нуждается в «корректировке обратно».
             remote_label = card.locator(sel.VACANCY_CARD_REMOTE_LABEL).first
-            is_remote = remote_label.count() > 0
+            is_remote = True if remote_label.count() > 0 else None
             experience = _parse_experience(card)
             snippet_requirement = _optional_text(card, sel.VACANCY_CARD_SNIPPET_REQUIREMENT) or ""
             snippet_responsibility = (

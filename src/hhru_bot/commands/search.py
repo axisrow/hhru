@@ -114,13 +114,20 @@ def _record_seen(cards: list[VacancyCard], search_query: str, history: History) 
         employer_info = getattr(card, "employer_info", None) if company else None
         tier = classify_employer(company, employer_info) if company else None
         # Review-финдинг (#532): classify_employer("unknown") не отличает
-        # «компания реально неизвестна» от «rating/reviews-селектор не дал
-        # сигнала на этом scrape» — оба случая раньше схлопывались в строку
-        # "unknown", которая проходит COALESCE(NULLIF(...)) как непустая и
-        # затирает ранее подтверждённый tier (например "mid" из прошлого
-        # scrape). top_tech/big_corp матчатся по имени и не зависят от
-        # employer_info, поэтому им это не грозит — гейтим только unknown.
-        if tier == "unknown" and employer_info is None:
+        # «компания реально неизвестна» от «reviews-селектор не дал сигнала на
+        # этом scrape» — оба случая раньше схлопывались в строку "unknown",
+        # которая проходит COALESCE(NULLIF(...)) как непустая и затирала ранее
+        # подтверждённый tier (например "mid" из прошлого scrape). top_tech/
+        # big_corp матчатся по имени и не зависят от employer_info, поэтому им
+        # это не грозит — гейтим только unknown. Гейт широкий: «unknown»
+        # достоверен лишь когда reviews_count РЕАЛЬНО прочитан (и оказался ниже
+        # порога). Если reviews_count не прочитан — либо весь блок
+        # employer_info=None (селектор-промах), либо partial-failure (rating/
+        # trusted выжили, но reviews_count-селектор дрейфнул) — оба случая
+        # неоднозначны, подавляем в None, оставляя COALESCE прежнее значение.
+        # reviews_count прочитан, но мал (вкл. 0) → настоящий «небольшой
+        # работодатель», unknown не подавляется.
+        if tier == "unknown" and (employer_info is None or employer_info.reviews_count is None):
             tier = None
         try:
             history.upsert_vacancy_seen(

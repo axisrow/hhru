@@ -176,6 +176,81 @@ def test_record_seen_preserves_employer_tier_when_rating_selector_misses(tmp_pat
     assert row["employer_tier"] == "mid"
 
 
+def test_record_seen_preserves_tier_when_reviews_count_selector_drifts(tmp_path):
+    """PR #539 (cycle 2): partial-failure path. employer_info есть (rating/trusted
+    выжили), но reviews_count-селектор дрейфнул → reviews_count is None. Для
+    нетоповой компании classify_employer возвращает "unknown" (mid требует
+    reviews_count >= порога), и round-1 гейт (employer_info is None) её не
+    ловил — employer_info-то не None. «unknown» затирал подтверждённый "mid"."""
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.history import History
+    from hhru_bot.scoring import EmployerInfo
+
+    history = History(tmp_path / "h.db")
+    history.upsert_vacancy_seen(
+        vacancy_id="1",
+        search_query="python",
+        title="Backend",
+        company="ООО Ромашка",
+        employer_tier="mid",
+    )
+
+    _record_seen(
+        [
+            VacancyCard(
+                vacancy_id="1",
+                title="Backend",
+                company="ООО Ромашка",
+                url="https://hh.ru/vacancy/1",
+                # rating/trusted выжили, reviews_count-селектор промахнулся
+                employer_info=EmployerInfo(rating=4.5, reviews_count=None, trusted=True),
+            )
+        ],
+        "python",
+        history,
+    )
+
+    row = history.list_vacancies_seen()[0]
+    assert row["employer_tier"] == "mid"
+
+
+def test_record_seen_downgrades_to_unknown_when_reviews_count_genuinely_low(tmp_path):
+    """PR #539 (cycle 2): контр-тест к over-suppression. reviews_count реально
+    прочитан и ниже порога — это достоверное наблюдение «небольшой работодатель»,
+    «unknown» обязан затереть прежний «mid» (гейт не должен перегащивать
+    настоящий downgrade)."""
+    from hhru_bot.commands.search import _record_seen
+    from hhru_bot.history import History
+    from hhru_bot.scoring import EmployerInfo
+
+    history = History(tmp_path / "h.db")
+    history.upsert_vacancy_seen(
+        vacancy_id="1",
+        search_query="python",
+        title="Backend",
+        company="ООО Ромашка",
+        employer_tier="mid",
+    )
+
+    _record_seen(
+        [
+            VacancyCard(
+                vacancy_id="1",
+                title="Backend",
+                company="ООО Ромашка",
+                url="https://hh.ru/vacancy/1",
+                # reviews_count прочитан, но мал — genuine unknown
+                employer_info=EmployerInfo(rating=3.0, reviews_count=2, trusted=False),
+            )
+        ],
+        "python",
+        history,
+    )
+
+    row = history.list_vacancies_seen()[0]
+    assert row["employer_tier"] == "unknown"
+
+
 def test_record_seen_failure_does_not_raise(tmp_path):
     """Сбой записи НЕ должен валить поиск — рынок лишь удобство."""
     from hhru_bot.commands.search import _record_seen
