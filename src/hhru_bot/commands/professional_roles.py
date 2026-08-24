@@ -78,10 +78,7 @@ def run(args: argparse.Namespace) -> bool:
         except BrowserLaunchError:
             raise
         except (OSError, ProfessionalRoleCacheError, RuntimeError) as exc:
-            print(
-                f"[FAIL] Кэш каталога не обновлён: {exc}. "
-                "Предыдущий валидный снимок сохранён."
-            )
+            print(f"[FAIL] Кэш каталога не обновлён: {exc}. Предыдущий валидный снимок сохранён.")
             return True
         print(
             f"[OK] Кэш каталога профессий обновлён: "
@@ -107,12 +104,11 @@ def run(args: argparse.Namespace) -> bool:
     if not roles:
         print(
             "[INFO] Кандидаты не найдены. Используйте короткий русский термин "
-            "профессии, например: hhru professional-roles --query \"разработчик\""
+            'профессии, например: hhru professional-roles --query "разработчик"'
         )
         return False
     rows = [
-        [role.role_id, role.label, ", ".join(role.categories) or role.category]
-        for role in roles
+        [role.role_id, role.label, ", ".join(role.categories) or role.category] for role in roles
     ]
     print(_ascii_table(["role_id", "profession", "category"], rows))
     print("[INFO] Это кандидаты из каталога, а не автоматическая классификация.")

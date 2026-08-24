@@ -194,9 +194,7 @@ def test_run_plain_failure_is_not_recorded_or_counted(env, capsys, tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
 
 
-def test_professional_role_blocker_prints_actionable_cached_catalog_workflow(
-    env, capsys, tmp_path
-):
+def test_professional_role_blocker_prints_actionable_cached_catalog_workflow(env, capsys, tmp_path):
     env.result = PublishResumeResult(
         "python",
         False,

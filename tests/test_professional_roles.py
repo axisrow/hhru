@@ -142,12 +142,8 @@ def test_cache_staleness_uses_seven_day_boundary():
     fetched = datetime(2026, 8, 1, tzinfo=UTC)
     catalog = _catalog(fetched_at=fetched)
 
-    assert not professional_role_cache_is_stale(
-        catalog, now=fetched + timedelta(days=7)
-    )
-    assert professional_role_cache_is_stale(
-        catalog, now=fetched + timedelta(days=7, seconds=1)
-    )
+    assert not professional_role_cache_is_stale(catalog, now=fetched + timedelta(days=7))
+    assert professional_role_cache_is_stale(catalog, now=fetched + timedelta(days=7, seconds=1))
 
 
 def test_cached_search_ranks_exact_then_prefix_then_substring_and_ors_queries():
@@ -162,9 +158,7 @@ def test_cached_search_ranks_exact_then_prefix_then_substring_and_ors_queries():
         ),
     )
 
-    roles = search_cached_professional_roles(
-        catalog, ["программист", "аналитик данных"], limit=3
-    )
+    roles = search_cached_professional_roles(catalog, ["программист", "аналитик данных"], limit=3)
 
     assert [role.role_id for role in roles] == ["2", "4", "3"]
 
@@ -181,9 +175,7 @@ def test_full_catalog_collection_keeps_category_binding(monkeypatch):
         lambda _page: (object(), search),
     )
     monkeypatch.setattr(professional_roles_module, "_wait_for_tree", lambda *_a: None)
-    monkeypatch.setattr(
-        professional_roles_module, "_collect_categories", lambda *_a: categories
-    )
+    monkeypatch.setattr(professional_roles_module, "_collect_categories", lambda *_a: categories)
     monkeypatch.setattr(
         professional_roles_module,
         "_collect_category_roles",
@@ -206,9 +198,7 @@ def test_full_catalog_collection_keeps_category_binding(monkeypatch):
 def test_full_catalog_merges_same_role_id_across_categories(monkeypatch):
     categories = [
         professional_roles_module.ProfessionalRoleCategory("1", "Административный персонал"),
-        professional_roles_module.ProfessionalRoleCategory(
-            "2", "Домашний, обслуживающий персонал"
-        ),
+        professional_roles_module.ProfessionalRoleCategory("2", "Домашний, обслуживающий персонал"),
     ]
     monkeypatch.setattr(
         professional_roles_module,
@@ -216,15 +206,11 @@ def test_full_catalog_merges_same_role_id_across_categories(monkeypatch):
         lambda _page: (object(), MagicMock()),
     )
     monkeypatch.setattr(professional_roles_module, "_wait_for_tree", lambda *_a: None)
-    monkeypatch.setattr(
-        professional_roles_module, "_collect_categories", lambda *_a: categories
-    )
+    monkeypatch.setattr(professional_roles_module, "_collect_categories", lambda *_a: categories)
     monkeypatch.setattr(
         professional_roles_module,
         "_collect_category_roles",
-        lambda _page, _dialog, category: [
-            ProfessionalRole("8", "Администратор", category.label)
-        ],
+        lambda _page, _dialog, category: [ProfessionalRole("8", "Администратор", category.label)],
     )
 
     catalog = professional_roles_module.collect_professional_role_catalog(object())

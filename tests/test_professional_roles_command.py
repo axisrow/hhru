@@ -22,11 +22,7 @@ def _catalog(*, stale: bool = False) -> ProfessionalRoleCatalog:
     return ProfessionalRoleCatalog(
         fetched_at=fetched_at,
         categories=("Информационные технологии",),
-        roles=(
-            ProfessionalRole(
-                "96", "Программист, разработчик", "Информационные технологии"
-            ),
-        ),
+        roles=(ProfessionalRole("96", "Программист, разработчик", "Информационные технологии"),),
     )
 
 
