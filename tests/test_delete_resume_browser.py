@@ -67,6 +67,8 @@ class Locator:
                 self.page._recovery_hydrated = True
         else:
             assert state == "detached"
+            if self.selector == RESUME_DELETE_CONFIRM:
+                self.page.profile_completion_waited = timeout
             self.page.waited = timeout
         self.page.waited = timeout
         if self.detached_error:
@@ -90,6 +92,7 @@ class Page:
         self.waited = None
         self.ready_waited = None
         self.confirm_waited = None
+        self.profile_completion_waited = None
         self.reloaded = None
         self.detached_error = detached_error
         self.readiness_error = readiness_error
@@ -205,6 +208,7 @@ def test_profile_action_preserves_confirm_and_post_delete_verification(monkeypat
     assert page.profile_opened is True
     assert page.dialog_opened is True
     assert page.clicked is True
+    assert page.profile_completion_waited == 30_000
 
 
 def test_profile_action_rejects_identity_mismatch_before_click(monkeypatch):

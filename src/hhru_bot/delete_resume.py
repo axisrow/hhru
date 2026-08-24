@@ -215,13 +215,20 @@ def delete_resume_on_hh(
         return DeleteResumeResult(resume_id, False, f"ошибка destructive-клика: {exc}", True)
 
     # On the list-card path, detachment is a useful transition signal.  The
-    # published-resume profile fallback has no list card in the current DOM, so
-    # detachment can return immediately there; the fresh list reload and exact
-    # target absence below remain the authoritative proof for both paths.  Any
-    # verification error stays uncertain because hh.ru may already have
-    # accepted the deletion.
+    # published-resume profile fallback has no list card in the current DOM;
+    # wait for the profile-side confirm control to leave the DOM instead.  The
+    # dialog is kept mounted until the profile delete action completes, so this
+    # prevents a reload from racing the asynchronous mutation.  The fresh list
+    # reload and exact target absence below remain the authoritative proof for
+    # both paths.  Any verification error stays uncertain because hh.ru may
+    # already have accepted the deletion.
     try:
-        card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+        if profile_fallback_used:
+            page.locator(RESUME_DELETE_CONFIRM).first.wait_for(
+                state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS
+            )
+        else:
+            card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
         # A different card may have existed before the click.  Waiting for
         # that card alone can therefore succeed before the post-delete render
         # settles.  Force a fresh list document so the readiness marker below
