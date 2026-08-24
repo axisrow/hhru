@@ -109,3 +109,23 @@ def test_letter_negation_does_not_cross_sentence_boundary():
     # python из первого предложения не под отрицанием — совпадение должно
     # засчитаться (score > 0), а не обнулиться из-за «не требуется» во втором:
     assert outcome.score_0_100 > 0.0
+
+
+def test_vacancy_negation_does_not_cross_sentence_boundary():
+    """Ревью PR #549 (/review, cycle 4): то же ограничение, но на VACANCY-стороне.
+
+    ``letter_match_score`` токенизировал ``vacancy_text`` простым ``_tokenize()``
+    и звал ``_matched_ratio(affirmed_letter_text, vacancy_tokens)`` без
+    ``clause_ids`` — в отличие от ``resume_match_score``, который передаёт их из
+    ``_tokenize_with_boundaries``. Из-за этого отрицание из ВТОРОГО предложения
+    вакансии («Не требуется SQL») ложно гасило совпавший токен из ПЕРВОГО
+    («Python»), хотя в вакансии он ничем не отрицается.
+    """
+    baseline = letter_match_score(card("Python"), "Знаю Python").score_0_100
+    outcome = letter_match_score(card("Python. Не требуется SQL"), "Знаю Python")
+
+    # Python в вакансии не отрицается («Не требуется SQL» — про другой токен в
+    # другом предложении) — score не должен отличаться от бейзлайна без
+    # второго предложения:
+    assert outcome.score_0_100 == baseline
+    assert outcome.score_0_100 > 0.0

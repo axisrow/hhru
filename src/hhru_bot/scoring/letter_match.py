@@ -30,6 +30,17 @@ Codex).** ``_matched_ratio(profile_text, vacancy_tokens)`` спроектиро�
 adversarial-review). PR #550 сделал ``_is_negated``/``_tokenize`` clause-aware
 и закрыл именно этот случай; letter_match получает исправление автоматически
 через переиспользование, без изменений в этом модуле.
+
+**Clause boundary нужна на ОБЕИХ сторонах, не только у письма (найдено ревью
+PR #549, /review, cycle 4).** ``letter_match_score`` изначально токенизировал
+``vacancy_text`` простым ``_tokenize()`` и звал ``_matched_ratio`` без
+``clause_ids`` — в отличие от ``resume_match_score``, который передаёт их из
+``_tokenize_with_boundaries(vacancy_text)``. Из-за этого отрицание из ВТОРОГО
+предложения вакансии («Python. Не требуется SQL») ложно гасило совпавший
+токен из ПЕРВОГО предложения («python»), хотя в вакансии он ничем не
+отрицается. Фикс: ``vacancy_tokens``/``vacancy_clause_ids`` берутся вместе
+через ``_tokenize_with_boundaries``, как в ``resume_match_score`` — letter_match
+теперь clause-aware симметрично на обеих сторонах сравнения.
 """
 
 from __future__ import annotations
@@ -78,7 +89,9 @@ def letter_match_score(card: VacancyCard, letter: str | None) -> ScoreOutcome:
     не смешивать в наблюдаемом распределении реальные нулевые матчи с
     карточками, для которых сопоставление было невозможно.
     """
-    vacancy_tokens = _tokenize(getattr(card, "vacancy_text", "") or "")
+    vacancy_tokens, vacancy_clause_ids = _tokenize_with_boundaries(
+        getattr(card, "vacancy_text", "") or ""
+    )
     letter_text = letter or ""
     if not vacancy_tokens or not _tokenize(letter_text):
         return ScoreOutcome(
@@ -100,7 +113,9 @@ def letter_match_score(card: VacancyCard, letter: str | None) -> ScoreOutcome:
             breakdown={"letter": 0.0},
         )
 
-    score = round(_matched_ratio(affirmed_letter_text, vacancy_tokens) * 100.0, 2)
+    score = round(
+        _matched_ratio(affirmed_letter_text, vacancy_tokens, vacancy_clause_ids) * 100.0, 2
+    )
     rationale = "keyword-match письма" if score > 0.0 else "совпадений нет"
     return ScoreOutcome(
         score_0_100=score,
