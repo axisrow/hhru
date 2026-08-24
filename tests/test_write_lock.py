@@ -92,7 +92,7 @@ def test_config_write_lock_uses_config_directory(tmp_path):
 
 
 @pytest.mark.parametrize("write_config", [False, True])
-def test_copy_resume_write_config_lock_uses_mutated_state_directory(tmp_path, write_config):
+def test_copy_resume_lock_uses_account_config_directory(tmp_path, write_config):
     parser = cli.build_parser()
     argv = [
         "--config",
@@ -109,8 +109,30 @@ def test_copy_resume_write_config_lock_uses_mutated_state_directory(tmp_path, wr
     args = parser.parse_args(argv)
     cli._resolve_paths(args)
 
-    expected_root = tmp_path / ("settings" if write_config else "other")
-    assert _write_lock_path(args) == (expected_root / ".hhru.lock").resolve()
+    assert _write_lock_path(args) == (tmp_path / "settings" / ".hhru.lock").resolve()
+
+
+def test_copy_resume_different_history_files_share_account_lock(tmp_path):
+    parser = cli.build_parser()
+    config = tmp_path / "account" / "config.yaml"
+    lock_paths = set()
+
+    for history_name in ("first.db", "isolated-live-test.db"):
+        args = parser.parse_args(
+            [
+                "--config",
+                str(config),
+                "--history",
+                str(tmp_path / "history" / history_name),
+                "copy-resume",
+                "--resume",
+                "backend",
+            ]
+        )
+        cli._resolve_paths(args)
+        lock_paths.add(_write_lock_path(args))
+
+    assert lock_paths == {(tmp_path / "account" / ".hhru.lock").resolve()}
 
 
 def test_account_list_is_read_only_and_bypasses_lock_and_logging(tmp_path, monkeypatch, capsys):

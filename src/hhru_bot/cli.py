@@ -172,7 +172,14 @@ def _is_write_command(args: argparse.Namespace) -> bool:
 def _write_lock_path(args: argparse.Namespace) -> Path:
     """Return the lock location for the state mutated by a write command."""
     writes_config = args.command == "config" or getattr(args, "write_config", False)
-    lock_root = Path(args.config if writes_config else args.history)
+    # copy-resume's post-click list diff is an account-wide reconciliation.
+    # Serialize by the config/session identity even when callers intentionally
+    # use separate history DBs (for example an isolated live-test audit).  A
+    # history-scoped lock would let two processes clone the same source at once;
+    # both new cards have the same parentResumeId, so either process could then
+    # apply --title to the other's clone and persist the wrong resume id.
+    mutates_external_resume_list = args.command == "copy-resume"
+    lock_root = Path(args.config if writes_config or mutates_external_resume_list else args.history)
     return lock_root.expanduser().resolve().parent / ".hhru.lock"
 
 
