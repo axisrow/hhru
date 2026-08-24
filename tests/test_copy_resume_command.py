@@ -283,6 +283,27 @@ def test_write_resume_config_refuses_when_slug_points_at_another_resume(tmp_path
     assert [r.id for r in load_config(config_path).resumes] == ["backend"]
 
 
+def test_write_resume_config_refuses_existing_resume_id(tmp_path):
+    """Новый slug не должен создавать второй алиас на уже настроенное резюме."""
+    from hhru_bot.config import ConfigError, load_config
+
+    config_path = tmp_path / "config.yaml"
+    original = _loadable_config(
+        "resumes:\n"
+        "  - id: backend\n"
+        f'    resume_url: "https://hh.ru/resume/{OLD_ID}"\n'
+        "    search:\n"
+        "      text: python\n"
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="уже есть"):
+        cmd.write_resume_config(config_path, _backend_resume(), "backend-copy", OLD_ID)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert [r.id for r in load_config(config_path).resumes] == ["backend"]
+
+
 def test_write_resume_config_refuses_duplicate_resumes_keys(tmp_path):
     """Два ключа resumes — валидный YAML, PyYAML берёт последний. Дописав в
     первый, мы бы отчитались об успехе, а резюме осталось бы незарегистрированным:

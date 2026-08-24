@@ -255,7 +255,13 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
 
     config_path = Path(path)
     text = config_path.read_text(encoding="utf-8")
-    before = {r.id for r in load_config(config_path).resumes}
+    existing_resumes = load_config(config_path).resumes
+    before = {r.id for r in existing_resumes}
+    if any(resume.resume_id == new_resume_id for resume in existing_resumes):
+        raise ConfigError(
+            f"Новое резюме с resume_id '{new_resume_id}' уже есть в config.yaml. "
+            "Файл не изменён."
+        )
     candidate_text = _config_with_resume(text, resume, slug, new_resume_id)
 
     fd, name = tempfile.mkstemp(
