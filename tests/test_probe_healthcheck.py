@@ -492,6 +492,8 @@ def test_healthcheck_cli_exit_code(monkeypatch, pages, expected_exit, capsys):
     """The healthcheck result reaches CLI's real fail-closed exit contract."""
     from hhru_bot import cli
 
+    monkeypatch.delenv("CODEX_SANDBOX", raising=False)
+
     class _Context:
         def __enter__(self):
             return self

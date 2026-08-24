@@ -25,7 +25,8 @@ def test_write_lock_can_be_reused_after_release(tmp_path):
         pass
 
 
-def test_cli_rejects_concurrent_write_command(tmp_path, capsys):
+def test_cli_rejects_concurrent_write_command(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("CODEX_SANDBOX", raising=False)
     history = tmp_path / "history.db"
     lock = tmp_path / ".hhru.lock"
     with acquire_write_lock(lock):

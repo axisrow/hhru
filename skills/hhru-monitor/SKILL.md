@@ -15,6 +15,15 @@ argument-hint: "[--resume <id>]"
 нестандартные задачи поэтапно из существующих команд; общий пример для разделов
 резюме приведён в `skills/hhru/SKILL.md`.
 
+## Разрешение браузера в Codex
+
+Живые `list-resumes`, `responses` и `whoami --online` открывают Chromium: их
+первый запуск сразу выполняй с `sandbox_permissions=require_escalated`, без
+пробной попытки в sandbox. Это правило действует и с `--headless`. Обычный
+`whoami`, `list-resumes --local`, `stats` и `funnel` остаются локальными и не
+требуют elevated. Elevated-разрешение даёт только право запуска процесса и не
+является подтверждением любого WRITE-действия на hh.ru.
+
 ## Статус сессии и резюме
 
 ```bash

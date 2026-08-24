@@ -74,24 +74,31 @@ hhru <command> [flags]
    невалидна — `login` (интерактивный вход, требует пользователя).
 3. **Резюме** — `hhru list-resumes`.
 
-## Диагностика sandbox Codex
+## Запуск Chromium из Codex
 
-Если запуск Chromium (headed или headless) завершается с маркером
-`CODEX_SANDBOX_BROWSER_FAILURE` или в выводе есть
-`Operation not permitted`, `Crashpad`, `NSApplication` или
-`NSMenuBarPresentationInstance`, это проблема разрешений sandbox среды
-исполнения Codex, а не Chromium, Playwright, hh.ru или сессии аккаунта.
-Сочетание `Permission denied` считается таким сбоем только вместе с Apple
-Mach-port диагностикой (`mach_port_rendezvous_mac` или
-`MachPortRendezvousServer`).
+Любую команду, которая открывает Chromium, запускай из Codex **с первого раза** с
+`sandbox_permissions=require_escalated`. Не делай пробный запуск в sandbox:
+на macOS он заведомо упирается в Crashpad/Mach-port permissions, а для
+WRITE-workflow создаёт лишний риск вокруг durable-аудита. Это правило одинаково
+для headed и `--headless` режимов.
 
-В этом случае не переустанавливай Chromium и не объявляй багом проекта:
-повтори ту же read-only-команду с elevated/system permission. Для headed
-команды, если elevated-запуск недоступен, можно использовать
-`hhru --headless <command>` как безопасный обход. Если сбой произошёл уже в
-headless-режиме, повторять `--headless` бессмысленно — нужен elevated/system
-permission или решение проблемы разрешений среды. Сообщи пользователю, что
-причина классифицирована как `CODEX_SANDBOX_BROWSER_FAILURE`.
+Всегда требуют Chromium: `login`, `login-code`, `search`, `apply`, `bump`,
+`run`, `probe`, `responses`, `refresh-token`, `call-api`, `fill-form`, команды
+создания, копирования, переименования, публикации, удаления и браузерного
+редактирования резюме. Условно требуют Chromium: `list-resumes` без `--local`
+и `whoami --online`. Обычный `whoami`, `list-resumes --local`, `stats`, `query`,
+`funnel`, `market` и другие локальные команды можно выполнять в sandbox.
+
+Elevated-разрешение разрешает только технический запуск процесса и **не является
+подтверждением WRITE-действия на hh.ru**. Для внешних изменений по-прежнему
+обязательны dry-run, показ плана и отдельное явное подтверждение пользователя.
+
+Если браузерную команду всё же запустили в sandbox, CLI завершится до браузера,
+write-lock и durable run с маркером `CODEX_SANDBOX_BROWSER_REQUIRED`; повтори
+ровно ту же команду с `sandbox_permissions=require_escalated`. Старый маркер
+`CODEX_SANDBOX_BROWSER_FAILURE` остаётся резервной диагностикой для среды, где
+preflight не смог распознать ограничение. Не переустанавливай Chromium и не
+считай это ошибкой hh.ru или сохранённой сессии.
 
 ## Справочник команд
 

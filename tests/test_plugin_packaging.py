@@ -54,3 +54,14 @@ def test_shared_skills_use_the_installed_hhru_cli():
 
     assert "CLAUDE_PLUGIN_ROOT" not in skill_text
     assert "hhru " in skill_text
+
+
+def test_all_codex_skills_request_browser_permission_before_first_launch():
+    root = _repo_root()
+    skills = sorted((root / "skills").glob("*/SKILL.md"))
+
+    for path in skills:
+        text = path.read_text()
+        assert "sandbox_permissions=require_escalated" in text, path
+        assert "перв" in text.casefold(), path
+        assert "elevated-разрешение" in text.casefold(), path
