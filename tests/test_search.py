@@ -405,8 +405,33 @@ def test_filter_candidates_excludes_current_employer_and_unknown_company():
     assert [item.vacancy_id for item in candidates] == ["3"]
     assert [item.vacancy_id for item, _ in skipped] == ["1", "2"]
     assert all(reason == "текущий работодатель" for _, reason in skipped)
+    # Совпадение работодателя (реальные данные) — в постоянный кэш skipped.
     assert ("r1", "1", SKIP_REASONS.CURRENT_EMPLOYER) in history.recorded_skips
-    assert ("r1", "2", SKIP_REASONS.CURRENT_EMPLOYER) in history.recorded_skips
+    # Пустая company (сбой парсинга) — НЕ кэшируется: вакансия пересматривается,
+    # когда компания станет читаемой (см. тест ..._unknown_company_not_cached).
+    assert ("r1", "2", SKIP_REASONS.CURRENT_EMPLOYER) not in history.recorded_skips
+
+
+def test_filter_candidates_current_employer_unknown_company_not_cached():
+    """Fail-closed по пустой company — скип на прогон, но не в постоянный кэш
+    skipped: компания может не прочитаться из-за временного дрейфа селектора/
+    частичного рендера, и после восстановления данных вакансия должна
+    пересматриваться, а не остаться заблокированной навсегда."""
+
+    filters = SearchFilters(text="x", current_employers=["Пример"])
+    history = FakeHistory()
+    # Прогон 1: компания не прочиталась — fail-closed скип без записи в кэш.
+    _, skipped = filter_candidates([card("1", company="")], filters, "r1", history)
+    assert [item.vacancy_id for item, _ in skipped] == ["1"]
+    # Ни под какой причиной: is_skipped не различает причины, любая запись
+    # заблокировала бы вакансию навсегда.
+    assert history.recorded_skips == []
+    # Прогон 2: компания прочиталась и не совпадает — вакансия снова в рассмотрении.
+    candidates, skipped = filter_candidates(
+        [card("1", company="OtherCorp")], filters, "r1", history
+    )
+    assert [item.vacancy_id for item in candidates] == ["1"]
+    assert skipped == []
 
 
 def test_filter_candidates_excludes_keywords():
