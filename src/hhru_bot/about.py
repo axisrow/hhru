@@ -141,7 +141,7 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
             click_trigger=True,
             trigger_error="кнопка редактирования «Обо мне» не найдена однозначно",
             open_error="форма «Обо мне» не открылась",
-            wrong_route_error="форма «Обо мне» открыта не для того резюме",
+            wrong_route_error="маршрут формы «Обо мне» не подтверждён",
         )
     except RuntimeError as exc:
         raise AboutGenerationError(str(exc)) from exc
