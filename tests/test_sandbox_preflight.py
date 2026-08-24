@@ -41,7 +41,7 @@ def test_browser_command_registry_is_complete() -> None:
         "run",
         "search",
     }
-    for command in cli.BROWSER_COMMANDS:
+    for command in cli.BROWSER_COMMANDS - {"clear-negotiations"}:
         assert cli._requires_browser(Namespace(command=command))
 
 
@@ -63,6 +63,22 @@ def test_registry_covers_command_modules_that_call_launch_context() -> None:
         (Namespace(command="list-resumes", local=True), False),
         (Namespace(command="whoami", online=True), True),
         (Namespace(command="whoami", online=False), False),
+        (
+            Namespace(command="clear-negotiations", account_wide=False, topic="77", dry_run=True),
+            False,
+        ),
+        (
+            Namespace(command="clear-negotiations", account_wide=False, topic="77", dry_run=False),
+            True,
+        ),
+        (
+            Namespace(command="clear-negotiations", account_wide=True, topic=None, dry_run=True),
+            True,
+        ),
+        (
+            Namespace(command="clear-negotiations", account_wide=False, topic=None, dry_run=False),
+            False,
+        ),
         (Namespace(command="stats"), False),
         (Namespace(command="import-cookies"), False),
     ],

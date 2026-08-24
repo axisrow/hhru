@@ -38,7 +38,8 @@ DEFAULT_CONFIG_PATH = Path("data") / "config.yaml"
 DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 
 # Commands that always start Playwright Chromium.  Keep conditional browser
-# modes (list-resumes --local and whoami --online) in _requires_browser().
+# modes (list-resumes --local, whoami --online, and clear-negotiations plan
+# modes) in _requires_browser().
 # This registry lives at the CLI boundary deliberately: the Codex sandbox must
 # be rejected before path resolution, logging, a write lock, History(), or a
 # durable command_run can create local state (#568).
@@ -198,6 +199,14 @@ def _requires_browser(args: argparse.Namespace) -> bool:
         return not getattr(args, "local", False)
     if args.command == "whoami":
         return bool(getattr(args, "online", False))
+    if args.command == "clear-negotiations":
+        # Filter-only plans and topic dry-runs return before config/History and
+        # never open Chromium. Account-wide collection and a live topic
+        # withdrawal do need the browser (#572 Codex review).
+        return bool(
+            getattr(args, "account_wide", False)
+            or (getattr(args, "topic", None) and not getattr(args, "dry_run", False))
+        )
     return args.command in BROWSER_COMMANDS
 
 

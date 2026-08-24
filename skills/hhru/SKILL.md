@@ -85,9 +85,12 @@ WRITE-workflow создаёт лишний риск вокруг durable-ауд�
 Всегда требуют Chromium: `login`, `login-code`, `search`, `apply`, `bump`,
 `run`, `probe`, `responses`, `refresh-token`, `call-api`, `fill-form`, команды
 создания, копирования, переименования, публикации, удаления и браузерного
-редактирования резюме. Условно требуют Chromium: `list-resumes` без `--local`
-и `whoami --online`. Обычный `whoami`, `list-resumes --local`, `stats`, `query`,
-`funnel`, `market` и другие локальные команды можно выполнять в sandbox.
+редактирования резюме. `clear-negotiations` требует его только для
+`--account-wide` или боевого `--topic`; фильтры `--vacancy`/`--resume` и
+`--topic --dry-run` являются plan-only. Условно требуют Chromium:
+`list-resumes` без `--local` и `whoami --online`. Обычный `whoami`,
+`list-resumes --local`, `stats`, `query`, `funnel`, `market` и другие локальные
+команды можно выполнять в sandbox.
 
 Elevated-разрешение разрешает только технический запуск процесса и **не является
 подтверждением WRITE-действия на hh.ru**. Для внешних изменений по-прежнему

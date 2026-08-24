@@ -59,6 +59,7 @@ Codex на macOS не может запустить Playwright Chromium внут
 |-------|------------------|
 | `login`, `login-code`, `search`, `apply`, `bump`, `run`, `probe`, `responses`, `refresh-token`, `call-api`, `fill-form` | всегда |
 | Создание, копирование, переименование, публикация, удаление и браузерное редактирование резюме | всегда |
+| `clear-negotiations` | только `--account-wide` или боевой `--topic`; plan-only фильтры и `--topic --dry-run` — без браузера |
 | `list-resumes` | да, кроме `--local` |
 | `whoami` | только с `--online` |
 | `stats`, `query`, `funnel`, `market`, `list-resumes --local`, обычный `whoami`, `import-cookies` | нет |
