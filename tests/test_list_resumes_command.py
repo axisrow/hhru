@@ -345,6 +345,15 @@ def test_live_rows_status_columns():
     assert rows[1] == ["99999999", "—", "—", "черновик", "да", "—"]
 
 
+def test_live_rows_visibility_column_when_available():
+    cards = [_FakeCard("11111111", "Backend", "modified")]
+    cards[0].is_searchable = False
+    rows = list_resumes_cmd._live_rows(
+        cards, {}, with_status=True, throttle=_StubThrottle(), history=_StubHistory()
+    )
+    assert rows == [["11111111", "—", "Backend", "опубликовано", "не видно в поиске", "да", "—"]]
+
+
 def test_default_live_prints_unified_table(capsys, tmp_path, monkeypatch):
     """#320: без флагов — live-таблица HH.ru с alias из конфига; remote-only
     резюме видно с alias «—» и YAML-подсказкой опциональных настроек."""
@@ -443,6 +452,20 @@ def test_default_live_status_adds_bump_columns(capsys, tmp_path, monkeypatch):
     # 11111111 с недавним bump — «нет (кулдаун)»; 99999999 без истории — «да»
     assert "нет" in out
     assert "да" in out
+
+
+def test_default_live_status_warns_about_published_hidden_resume(capsys, tmp_path, monkeypatch):
+    config = _live_env(tmp_path, monkeypatch)
+    card = _FakeCard("11111111", "Backend developer", "modified")
+    card.is_searchable = False
+    _patch_live(monkeypatch, [card])
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db", status=True))
+
+    out = capsys.readouterr().out
+    assert "видимость" in out
+    assert "не видно в поиске" in out
+    assert "Опубликованные резюме не видны" in out
 
 
 def test_default_live_invalid_session_fail_without_fallback(capsys, tmp_path, monkeypatch):
