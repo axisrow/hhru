@@ -469,6 +469,16 @@
   `action='rename_resume'`. До подтверждения селектора поля названия в живом DOM
   команда обязана отказать fail-closed и ничего не менять.
 
+#### `resume-visibility` — изменить видимость резюме (#566)
+
+- **Природа:** WRITE-hh-ru, опасная мутационная категория `live_write_danger`.
+- **Сигнатура:** `hhru_bot resume-visibility --resume <id> --mode everyone|no-one|link-only|whitelist|blacklist [--dry-run] --force`
+- `--mode` обязателен; `--force` или подтверждение в TTY требуется для боевого режима.
+  `--dry-run` только показывает выбранный режим.
+- Запись должна выполняться через `DurableMutationAttempt` с
+  `action='resume_visibility'`. До подтверждения селектора блока видимости в
+  живом DOM команда обязана отказать fail-closed и ничего не менять.
+
 #### `create-resume` — создать пустой черновик резюме
 
 - **Природа:** WRITE-hh-ru
@@ -741,6 +751,7 @@ READ-команды (быстрые, безопасные) → WRITE-local → W
 | 3 (HH-RU) | `reply-employers`   | WRITE-hh-ru | `responses` #12 + idempotency     |
 | 3 (HH-RU) | `copy-resume`       | WRITE-hh-ru | селекторы страницы резюме (#116)  |
 | 3 (HH-RU) | `rename-resume`     | WRITE-hh-ru | подтвержденный селектор названия (#522) |
+| 4 (ОПАСН) | `resume-visibility`  | `live_write_danger` | подтвержденный селектор блока видимости (#566) |
 | 4 (ОПАСН) | `clear-negotiations`| WRITE-hh-ru | `responses` #12, `--force`+аудит  |
 
 ## 6. Критерии готовности feature-ишью (реализующих эту спеку)

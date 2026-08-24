@@ -43,6 +43,7 @@ def test_lock_covers_all_hhru_write_commands():
         "copy-resume",
         "rename-resume",
         "publish-resume",
+        "resume-visibility",
         "edit-experience",
         "about",
         "reply-employers",
