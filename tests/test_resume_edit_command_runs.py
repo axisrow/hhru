@@ -522,7 +522,8 @@ def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
     uncertain_count, losing the "may have landed" fail-closed semantic.
     """
     import hhru_bot.commands.resume_position as command
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=object())
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=object())
@@ -550,7 +551,12 @@ def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionValues(title="старая"),
+        lambda page, resume: PositionFlowContext(
+            "editor",
+            resume.resume_id,
+            PositionValues(title="старая"),
+            ResumeState(status="new", is_searchable=True),
+        ),
     )
     monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
 
@@ -590,7 +596,8 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
 ) -> None:
     import hhru_bot.commands.resume_position as command
     from hhru_bot.professional_roles import ProfessionalRole
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
@@ -606,7 +613,12 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda _page, _resume: PositionValues(title="AI Team Lead"),
+        lambda _page, _resume: PositionFlowContext(
+            "wizard",
+            _resume.resume_id,
+            PositionValues(title="AI Team Lead"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
     )
     monkeypatch.setattr(
         "hhru_bot.professional_roles.resolve_explicit_role",

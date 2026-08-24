@@ -14,6 +14,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
 from .browser import RESUMES_FULL_LIST_URL, goto_hh
+from .logging_setup import LOG_DIR
 from .selector_groups.resume_list import (
     RESUME_DELETE_MENU_ACTION,
     RESUME_LIST_ACTION_MORE,
@@ -27,6 +28,8 @@ from .selector_groups.resume_page import (
 )
 
 DELETE_VERIFY_TIMEOUT_MS = 30_000
+DELETE_MENU_TRANSITION_ATTEMPTS = 3
+DELETE_MENU_TRANSITION_TIMEOUT_MS = 5_000
 
 
 @dataclass
@@ -72,31 +75,59 @@ def _resolve_delete_action(page: Page, card) -> tuple[Locator | None, str]:
     if more.count() != 1:
         return None, "меню действий карточки не подтверждено однозначно"
 
-    menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
-    try:
-        more.first.click()
-        menu_action.first.wait_for(state="visible", timeout=15000)
-    except PlaywrightError:
+    last_error: PlaywrightError | None = None
+    for load_attempt in range(2):
+        menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
+        for _ in range(DELETE_MENU_TRANSITION_ATTEMPTS):
+            try:
+                more.first.click()
+            except PlaywrightError as exc:
+                last_error = exc
+                break
+            try:
+                menu_action.first.wait_for(
+                    state="visible", timeout=DELETE_MENU_TRANSITION_TIMEOUT_MS
+                )
+            except PlaywrightError as exc:
+                last_error = exc
+                continue
+            menu_count = menu_action.count()
+            if menu_count == 1:
+                return menu_action.first, ""
+            if menu_count > 1:
+                return None, "действие удаления в меню не подтверждено однозначно"
+
+        if load_attempt == 1:
+            break
         # The SSR actions button can accept a Playwright click before its React
-        # handler is hydrated. Reload once and resolve the same card again so
-        # the second click is a real menu-open attempt, not a stale locator.
+        # handler is hydrated. Reload once, then re-bind the same card and menu.
         try:
             page.reload(wait_until="domcontentloaded")
             card.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
-            if card.count() != 1:
-                return None, "карточка для recovery меню не подтверждена однозначно"
-            more = card.locator(RESUME_LIST_ACTION_MORE)
-            if more.count() != 1:
-                return None, "меню действий карточки не подтверждено после recovery"
-            more.first.click()
-            menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
-            menu_action.first.wait_for(state="visible", timeout=15000)
-        except PlaywrightError as recovery_exc:
-            return None, f"не удалось открыть действие удаления в меню: {recovery_exc}"
-    menu_count = menu_action.count()
-    if menu_count != 1:
-        return None, "действие удаления в меню не подтверждено однозначно"
-    return menu_action.first, ""
+        except PlaywrightError as exc:
+            last_error = exc
+            break
+        if card.count() != 1:
+            return None, "карточка для recovery меню не подтверждена однозначно"
+        more = card.locator(RESUME_LIST_ACTION_MORE)
+        if more.count() != 1:
+            return None, "меню действий карточки не подтверждено после recovery"
+
+    dump = _dump_delete_failure(page, "menu_action_missing")
+    suffix = f": {last_error}" if last_error is not None else ""
+    return None, f"не удалось открыть действие удаления в меню; диагностика={dump}{suffix}"
+
+
+def _dump_delete_failure(page: Page, reason: str) -> str:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    html_path = LOG_DIR / f"delete_resume_{reason}.html"
+    screenshot_path = LOG_DIR / f"delete_resume_{reason}.png"
+    try:
+        html_path.write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(screenshot_path), full_page=True)
+    except (PlaywrightError, AttributeError):
+        pass
+    return str(html_path)
 
 
 def delete_resume_on_hh(

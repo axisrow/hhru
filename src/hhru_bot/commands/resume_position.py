@@ -164,8 +164,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            current = open_position_form(page, resume)
-            wizard = is_position_wizard(page, resume.resume_id)
+            flow = open_position_form(page, resume)
+            current = flow.values
+            wizard = flow.kind == "wizard"
             if manual:
                 plan = PositionValues(
                     title=getattr(args, "title", None),
@@ -294,8 +295,12 @@ def _run(args: argparse.Namespace, progress) -> bool:
             if wizard:
                 # Catalog resolution navigates to the read-only vacancy filter;
                 # reopen and re-bind the exact draft immediately before WRITE.
-                open_position_form(page, resume)
-                if not is_position_wizard(page, resume.resume_id):
+                write_flow = open_position_form(page, resume)
+                if (
+                    write_flow.kind != "wizard"
+                    or write_flow.resume_id != resume.resume_id
+                    or not is_position_wizard(page, resume.resume_id)
+                ):
                     raise RuntimeError("professional_role identity потерян перед WRITE")
                 progress.begin_attempt()
                 first_click_started = False
@@ -312,7 +317,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         role_id=role.role_id,
                         before_first_click=mark_first_click_started,
                     )
-                    verify_wizard_save(page, resume, expected_title=plan.title or "")
+                    verified_state = verify_wizard_save(
+                        page,
+                        resume,
+                        expected_title=plan.title or "",
+                        expected_role_id=role.role_id,
+                        expected_role_label=role.label,
+                    )
                 except Exception as exc:
                     if not first_click_started:
                         raise
@@ -321,6 +332,15 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     ) from exc
                 progress.finish(MutationOutcome(success=True))
                 print(f"[OK] professional_role резюме '{resume.id}' сохранён и проверен.")
+                from ..resume_state import is_published
+
+                if is_published(verified_state):
+                    print("[INFO] hh.ru подтвердил автоматическую публикацию: isSearchable=true.")
+                else:
+                    print(
+                        "[INFO] professional_role завершён; публикация требует "
+                        "отдельной read-only проверки."
+                    )
                 return False
             progress.begin_attempt()
             apply_position(page, plan)

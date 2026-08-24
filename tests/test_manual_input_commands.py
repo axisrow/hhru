@@ -217,12 +217,18 @@ def test_about_manual_text_dry_run_does_not_save(tmp_path, capsys, monkeypatch):
 
 
 def test_resume_position_manual_title_dry_run_without_ai(tmp_path, capsys, monkeypatch):
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionValues(title="старая"),
+        lambda page, resume: PositionFlowContext(
+            "editor",
+            resume.resume_id,
+            PositionValues(title="старая"),
+            ResumeState(status="new", is_searchable=True),
+        ),
     )
     applied = {}
     monkeypatch.setattr(
@@ -245,12 +251,18 @@ def test_resume_position_manual_conflicts_with_mode(tmp_path, capsys):
 
 def test_resume_position_manual_allows_explicit_fill_mode(tmp_path, capsys, monkeypatch):
     """--mode fill matches the implicit manual default and must not be rejected (#327)."""
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionValues(title="старая"),
+        lambda page, resume: PositionFlowContext(
+            "editor",
+            resume.resume_id,
+            PositionValues(title="старая"),
+            ResumeState(status="new", is_searchable=True),
+        ),
     )
     result = resume_position_cmd.run(_args(tmp_path, title="新职位", mode="fill"))
     assert result is False
@@ -259,7 +271,8 @@ def test_resume_position_manual_allows_explicit_fill_mode(tmp_path, capsys, monk
 
 def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, capsys, monkeypatch):
     from hhru_bot.professional_roles import ProfessionalRole
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     class _WizardPage(_FakePage):
         url = "https://hh.ru/profile/resume/professional_role?resume=" + REMOTE_ONLY_HASH
@@ -271,7 +284,12 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
     monkeypatch.setattr("hhru_bot.browser.launch_context", _wizard_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionValues(title="AI Team Lead"),
+        lambda page, resume: PositionFlowContext(
+            "wizard",
+            resume.resume_id,
+            PositionValues(title="AI Team Lead"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
     )
     monkeypatch.setattr(
         "hhru_bot.professional_roles.resolve_explicit_role",
@@ -297,6 +315,60 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
     save.assert_not_called()
 
 
+def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
+    tmp_path, capsys, monkeypatch
+):
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    class _WizardPage(_FakePage):
+        url = "https://hh.ru/profile/resume/professional_role?resume=" + REMOTE_ONLY_HASH
+
+    @contextmanager
+    def _wizard_context(*_args, **_kwargs):
+        yield _WizardPage()
+
+    flow = PositionFlowContext(
+        "wizard",
+        REMOTE_ONLY_HASH,
+        PositionValues(title="AI Engineer"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+    )
+    open_flow = MagicMock(return_value=flow)
+    save = MagicMock()
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _wizard_context)
+    monkeypatch.setattr("hhru_bot.resume_position.open_position_form", open_flow)
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda page, label: ProfessionalRole("10", label, "Информационные технологии"),
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        lambda *_args, **_kwargs: ResumeState(status="new", is_searchable=True),
+    )
+
+    result = resume_position_cmd.run(
+        _args(
+            tmp_path,
+            title="AI Engineer",
+            specialization=["Аналитик"],
+            mode=None,
+            dry_run=False,
+            force=True,
+        )
+    )
+
+    out = capsys.readouterr().out
+    assert result is False
+    assert open_flow.call_count == 2
+    save.assert_called_once()
+    assert "[OK] professional_role" in out
+    assert "автоматическую публикацию" in out
+    assert "[OK] Раздел желаемой работы" not in out
+
+
 def test_resume_position_write_success_does_not_double_count_on_exit_error(
     tmp_path, capsys, monkeypatch
 ):
@@ -310,7 +382,8 @@ def test_resume_position_write_success_does_not_double_count_on_exit_error(
     land, per the applied_count already recorded).
     """
     from hhru_bot.history import History
-    from hhru_bot.resume_position import PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
 
     @contextmanager
     def _exploding_launch_context(*_args, **_kwargs):
@@ -320,7 +393,12 @@ def test_resume_position_write_success_does_not_double_count_on_exit_error(
     monkeypatch.setattr("hhru_bot.browser.launch_context", _exploding_launch_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionValues(title="старая"),
+        lambda page, resume: PositionFlowContext(
+            "editor",
+            resume.resume_id,
+            PositionValues(title="старая"),
+            ResumeState(status="new", is_searchable=True),
+        ),
     )
     monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
 

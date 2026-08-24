@@ -148,6 +148,22 @@ def test_parse_resume_state_reads_page_scoped_incomplete_screen_for_target():
     assert state.next_incomplete_screen_id == "professional_role"
 
 
+def test_parse_resume_state_reads_roles_beside_identity_attributes():
+    markup = (
+        '{"scheme":{"nextIncompleteScreenId":"professional_role"},'
+        f'"resume":{{"_attributes":{{"hash":"{RESUME_ID}",'
+        '"status":"not_finished","isSearchable":false,"canPublishOrUpdate":true},'
+        '"professionalRole":[{"string":10},{"id":96,"text":"Программист, разработчик"}]}}}'
+    )
+
+    state = parse_resume_state(markup, RESUME_ID)
+
+    assert [(role.role_id, role.label) for role in state.professional_roles] == [
+        ("10", None),
+        ("96", "Программист, разработчик"),
+    ]
+
+
 def test_publish_rejects_identity_mismatch_before_button_lookup(monkeypatch):
     page = _Page(_markup())
     page.url = "https://hh.ru/resume/" + "b" * 38
