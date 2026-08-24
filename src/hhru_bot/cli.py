@@ -43,6 +43,7 @@ WRITE_COMMANDS = frozenset(
         "copy-resume",
         "rename-resume",
         "publish-resume",
+        "resume-visibility",
         "edit-experience",
         "about",
         "reply-employers",
