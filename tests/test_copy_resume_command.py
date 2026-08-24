@@ -505,6 +505,51 @@ def test_run_success_prints_ok_and_yaml_snippet(env, capsys, tmp_path):
     )
 
 
+def test_run_title_is_applied_after_clone(env, capsys, tmp_path, monkeypatch):
+    applied = []
+    monkeypatch.setattr(
+        cmd,
+        "_set_copy_title",
+        lambda page, resume_id, title: applied.append((page, resume_id, title)),
+    )
+
+    cmd.run(_args(tmp_path, force=True, title="Python-разработчик"))
+
+    assert len(applied) == 1
+    assert applied[0][1:] == (NEW_ID, "Python-разработчик")
+    assert "[OK] Резюме backend скопировано" in capsys.readouterr().out
+
+
+def test_run_title_failure_is_uncertain_and_mentions_created_copy(env, capsys, tmp_path, monkeypatch):
+    def fail_title(*_args):
+        raise RuntimeError("save failed")
+
+    monkeypatch.setattr(cmd, "_set_copy_title", fail_title)
+
+    cmd.run(_args(tmp_path, force=True, title="Python-разработчик"))
+
+    out = capsys.readouterr().out
+    assert "Копия создана" in out
+    assert "title не установлен" in out
+    history = History(tmp_path / "h.db")
+    with history._connect() as conn:
+        row = conn.execute(
+            "SELECT status, reason FROM actions WHERE resume_id = ? AND action = 'copy_resume'",
+            (OLD_ID,),
+        ).fetchone()
+    assert row["status"] == "uncertain"
+    assert "title не установлен" in row["reason"]
+
+
+def test_run_rejects_empty_title_before_clone(env, capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True, title=""))
+
+    assert exc.value.code == 1
+    assert "Пустой title" in capsys.readouterr().out
+    assert env.calls == []
+
+
 def test_run_without_force_non_tty_exits_1(env, capsys, tmp_path, monkeypatch):
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
     with pytest.raises(SystemExit) as exc:

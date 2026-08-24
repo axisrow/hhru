@@ -53,6 +53,10 @@ def register(subparsers) -> None:
         "--write-config", action="store_true", help="Добавить новое резюме в config.yaml"
     )
     p.add_argument("--slug", help="Slug нового резюме (по умолчанию <исходный>-copy)")
+    p.add_argument(
+        "--title",
+        help="Желаемая должность для созданной копии (после клонирования)",
+    )
     p.set_defaults(func=run)
 
 
@@ -298,6 +302,26 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
         candidate.unlink(missing_ok=True)
 
 
+def _set_copy_title(page, new_resume_id: str, title: str) -> None:
+    """Set the title on an already-created copy using resume-position logic."""
+    from ..config import bare_resume
+    from ..resume_position import SAVE, PositionValues, apply_position, open_position_form
+
+    copied_resume = bare_resume(new_resume_id)
+    open_position_form(page, copied_resume)
+    apply_position(page, PositionValues(title=title))
+    save = page.locator(SAVE)
+    if save.count() != 1:
+        raise RuntimeError("кнопка сохранения формы не подтверждена")
+    try:
+        save.click()
+        page.locator("[data-qa='resume-edit-position-form']").wait_for(
+            state="hidden", timeout=10_000
+        )
+    except Exception as exc:
+        raise RuntimeError(f"сохранение title не подтверждено после клика: {exc}") from exc
+
+
 def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -314,6 +338,13 @@ def run(args: argparse.Namespace):
         print(f"[FAIL] {e}")
         sys.exit(1)
     write_config = bool(getattr(args, "write_config", False))
+    title = getattr(args, "title", None)
+    if title is not None and not title.strip():
+        print(
+            "[FAIL] Пустой title отклоняется hh.ru. Укажите значение, например: "
+            '--title "Python-разработчик".'
+        )
+        sys.exit(1)
     slug = getattr(args, "slug", None) or f"{resume.id}-copy"
     if write_config:
         if not slug.strip() or any(char in slug for char in "\r\n"):
@@ -331,6 +362,8 @@ def run(args: argparse.Namespace):
 
     if args.dry_run:
         print(f"[DRY-RUN] Копирование резюме {resume.id} (resume_id {resume.resume_id})")
+        if title is not None:
+            print(f"[DRY-RUN] После копирования установил бы title: {title}")
     else:
         if not confirm_write(args.force, prompt=f"Создать копию резюме '{resume.id}' на hh.ru?"):
             print(
@@ -381,6 +414,26 @@ def run(args: argparse.Namespace):
             if not result.new_resume_id or result.new_resume_id == resume.resume_id:
                 result.success = False
                 result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
+
+        if result.success and title is not None and not args.dry_run:
+            try:
+                _set_copy_title(page, result.new_resume_id, title)
+            except Exception as exc:
+                # Копия уже создана и необратима. Даже если SAVE не был нажат,
+                # повторный запуск вслепую создаст ещё одну копию, поэтому это
+                # unresolved uncertain, а не обычный failed результат.
+                result.success = False
+                result.uncertain = True
+                result.reason = (
+                    f"Копия создана ({result.new_resume_id}), но title не установлен: "
+                    f"{exc} (uncertain; проверьте резюме на hh.ru вручную)"
+                )
+            except BaseException as exc:
+                # A signal/interruption during the second WRITE must also block
+                # blind retries; the clone is already irreversible.
+                if attempt is not None:
+                    attempt.interrupt(exc)
+                raise
 
         if attempt is not None:
             if result.success:
