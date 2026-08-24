@@ -520,6 +520,35 @@ def test_run_title_is_applied_after_clone(env, capsys, tmp_path, monkeypatch):
     assert "[OK] Резюме backend скопировано" in capsys.readouterr().out
 
 
+def test_run_title_is_set_before_browser_context_closes(env, capsys, tmp_path, monkeypatch):
+    """#569 live-run: title должен ставиться на той же (ещё живой) странице,
+    что и сама копия — не после закрытия context/browser в launch_context."""
+    events = []
+
+    class FakeContext:
+        def new_page(self):
+            return SimpleNamespace(closed=False)
+
+    @contextmanager
+    def fake_launch(*a, **kw):
+        context = FakeContext()
+        try:
+            yield context
+        finally:
+            events.append("context_closed")
+
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
+
+    def fake_set_title(page, resume_id, title):
+        events.append("title_set")
+
+    monkeypatch.setattr(cmd, "_set_copy_title", fake_set_title)
+
+    cmd.run(_args(tmp_path, force=True, title="Python-разработчик"))
+
+    assert events == ["title_set", "context_closed"]
+
+
 def test_run_title_failure_is_uncertain_and_mentions_created_copy(
     env, capsys, tmp_path, monkeypatch
 ):
@@ -731,3 +760,52 @@ def test_run_refuses_bare_resume_before_touching_browser(env, capsys, tmp_path, 
         cmd.run(_args(tmp_path, force=True, write_config=True, resume=OLD_ID))
     assert exc.value.code == 1
     assert env.calls == []  # браузерный шаг не вызывался
+
+
+# --- _set_copy_title(): подтверждение title после SAVE (#569) ---
+
+
+def _patch_set_title_deps(monkeypatch, *, displayed_title):
+    """Заглушки browser/resume_position шагов, которые _set_copy_title вызывает
+    как локальные импорты; остаётся реальным только хвост функции — SAVE-клик
+    и сверка displayed_title с запрошенным."""
+    import hhru_bot.browser as browser_module
+    import hhru_bot.resume_position as resume_position
+
+    monkeypatch.setattr(resume_position, "open_position_form", lambda page, resume: None)
+    monkeypatch.setattr(resume_position, "apply_position", lambda page, plan: None)
+    monkeypatch.setattr(
+        resume_position,
+        "read_display_position",
+        lambda page: resume_position.PositionValues(title=displayed_title),
+    )
+    goto_calls = []
+    monkeypatch.setattr(browser_module, "goto_hh", lambda page, url: goto_calls.append(url))
+    return goto_calls
+
+
+def test_set_copy_title_confirms_via_profile_page_after_save(monkeypatch):
+    goto_calls = _patch_set_title_deps(monkeypatch, displayed_title="Python-разработчик")
+    page = SimpleNamespace(
+        locator=lambda selector: SimpleNamespace(
+            count=lambda: 1, click=lambda: None, wait_for=lambda **kw: None
+        )
+    )
+
+    cmd._set_copy_title(page, NEW_ID, "Python-разработчик")
+
+    assert goto_calls == [f"https://hh.ru/resume/{NEW_ID}"]
+
+
+def test_set_copy_title_raises_when_displayed_title_does_not_match(monkeypatch):
+    """#569: скрытие формы не доказывает сохранение — нужна сверка прочитанного
+    значения с запрошенным, иначе тихий untitled draft остаётся success."""
+    _patch_set_title_deps(monkeypatch, displayed_title="")
+    page = SimpleNamespace(
+        locator=lambda selector: SimpleNamespace(
+            count=lambda: 1, click=lambda: None, wait_for=lambda **kw: None
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="title после сохранения не подтверждён"):
+        cmd._set_copy_title(page, NEW_ID, "Python-разработчик")
