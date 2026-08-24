@@ -19,6 +19,7 @@ def test_browser_command_registry_is_complete() -> None:
         "bump",
         "call-api",
         "clear-negotiations",
+        "competitors",
         "copy-resume",
         "create-resume",
         "delete-resume",
@@ -43,7 +44,11 @@ def test_browser_command_registry_is_complete() -> None:
         "run",
         "search",
     }
-    for command in cli.BROWSER_COMMANDS - {"clear-negotiations", "professional-roles"}:
+    for command in cli.BROWSER_COMMANDS - {
+        "clear-negotiations",
+        "competitors",
+        "professional-roles",
+    }:
         assert cli._requires_browser(Namespace(command=command))
 
 
@@ -67,6 +72,8 @@ def test_registry_covers_command_modules_that_call_launch_context() -> None:
         (Namespace(command="whoami", online=False), False),
         (Namespace(command="professional-roles", refresh=False), False),
         (Namespace(command="professional-roles", refresh=True), True),
+        (Namespace(command="competitors", competitors_command="collect"), True),
+        (Namespace(command="competitors", competitors_command="report"), False),
         (
             Namespace(command="clear-negotiations", account_wide=False, topic="77", dry_run=True),
             False,

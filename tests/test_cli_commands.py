@@ -118,6 +118,7 @@ def test_all_commands_registered():
         "profile",
         "questionnaire",
         "config",
+        "competitors",
         "call-api",
         "learn",
         "settings",
@@ -183,6 +184,7 @@ def test_register_commands_returns_names():
         "profile",
         "questionnaire",
         "config_cmd",
+        "competitors",
         "call_api",
         "learn",
         "settings",
@@ -217,6 +219,32 @@ def test_search_text_is_optional_without_resume():
 
     assert args.text == "Тестировщик"
     assert args.resume is None
+
+
+def test_competitors_collect_and_report_arguments():
+    parser = _build()
+    collect = parser.parse_args(["competitors", "collect", "--text", "AI"])
+    assert collect.competitors_command == "collect"
+    assert collect.text == "AI"
+    assert collect.max_pages == 5
+
+    report = parser.parse_args(["competitors", "report", "--text", "AI", "--top", "7"])
+    assert report.competitors_command == "report"
+    assert report.text == "AI"
+    assert report.top == 7
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["competitors", "collect"],
+        ["competitors", "collect", "--text", "AI", "--max-pages", "0"],
+        ["competitors", "report", "--top", "0"],
+    ],
+)
+def test_competitors_rejects_missing_or_nonpositive_args(argv):
+    with pytest.raises(SystemExit):
+        _build().parse_args(argv)
 
 
 def test_apply_has_limit():
