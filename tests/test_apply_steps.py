@@ -136,6 +136,8 @@ class _FakeLocator:
                     f"elements (resume_id={self._option_resume_id!r})"
                 )
             self._state.selected_resume_id = matches[0]
+            if self._state.dropdown_auto_closes:
+                self._state.dropdown_opened = False
         else:
             if self._resume_toggle:
                 # Live DOM: resume-title is nested inside div[role="button"];
@@ -229,6 +231,9 @@ class _SelectorState:
         # живой DOM: какой resume_id реально был кликнут (заменяет current_href).
         self.selected_resume_id: str | None = None
         self.dropdown_opened = False
+        # Current live behavior: selecting an option closes drop-base. Set False
+        # to model the older/stuck shape that needs the toggle fallback.
+        self.dropdown_auto_closes = True
         self.resume_title_clicks = 0
         self.resume_toggle_clicks = 0
         # Боевой случай 2026-08-20: после клика по опции React не закрыл dropdown,
@@ -785,6 +790,7 @@ def test_fill_form_open_dropdown_blocks_submit_and_refuses():
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
+    st.dropdown_auto_closes = False
     st.dropdown_stays_open = True
     page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
     page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
@@ -811,14 +817,28 @@ def test_fill_form_closed_dropdown_proceeds_to_submit():
 
 
 def test_fill_form_closes_resume_panel_before_submit():
-    """Панель выбора резюме hh.ru НЕ закрывается сама после клика по опции —
-    проверено живыми probe-дампами 2026-08-20 (drop-base: 0 элементов до клика
-    по триггеру, 1 после клика по опции). Пока она открыта, её абсолютно
-    спозиционированный оверлей перекрывает submit в футере модалки.
+    """Если option-click не закрыл панель, закрываем её toggle-контейнером."""
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+    st.option_resume_ids = ["RID"]
+    st.dropdown_auto_closes = False
+    page.set_visible(apply_form.APPLY_COVER_LETTER_TEXTAREA, True)
+    page.set_visible(apply_form.APPLY_SUBMIT_BUTTON, True)
 
-    Поэтому шаг обязан закрыть панель явно кликом по контейнеру
-    `div[role="button"]`; Escape не используем — в модалке он может закрыть
-    всю форму."""
+    result = steps.fill_response_form(page, "RID", "письмо")
+
+    assert result is None
+    # 3 клика: открыть, выбрать опцию, закрыть fallback-toggle.
+    assert st.clicks == 3
+    assert st.resume_title_clicks == 1
+    assert st.resume_toggle_clicks == 1
+    assert st.dropdown_opened is False
+    assert st.selected_resume_id == "RID"
+    assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_fill_form_does_not_reopen_dropdown_after_option_auto_closes():
+    """Live 2026-08-25: option-click уже закрыл drop-base; toggle открыл бы его снова."""
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
@@ -828,14 +848,9 @@ def test_fill_form_closes_resume_panel_before_submit():
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
-    # 3 клика: открыть внутренним resume-title, выбрать опцию, закрыть
-    # контейнером role=button. Повторный клик по внутреннему div сам по себе
-    # не закрыл бы live drop-base.
-    assert st.clicks == 3
-    assert st.resume_title_clicks == 1
-    assert st.resume_toggle_clicks == 1
-    assert st.dropdown_opened is False
     assert st.selected_resume_id == "RID"
+    assert st.dropdown_opened is False
+    assert st.resume_toggle_clicks == 0
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
 
 
