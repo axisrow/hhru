@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -22,6 +24,21 @@ from .browser import HH_BASE_URL, goto_hh, has_login_form, open_hydrated_resume_
 from .config import ResumeConfig
 from .logging_setup import LOG_DIR
 from .responses import NotAuthenticated
+from .selector_groups.resume_page import (
+    RESUME_CREATION_CATEGORY_INPUT as WIZARD_CATEGORY_INPUT,
+)
+from .selector_groups.resume_page import (
+    RESUME_CREATION_CATEGORY_SEARCH as WIZARD_CATEGORY_SEARCH,
+)
+from .selector_groups.resume_page import (
+    RESUME_CREATION_CATEGORY_SUBMIT as WIZARD_CATEGORY_SUBMIT,
+)
+from .selector_groups.resume_page import RESUME_CREATION_NEXT as WIZARD_NEXT
+from .selector_groups.resume_page import RESUME_CREATION_POSITION as WIZARD_POSITION
+from .selector_groups.resume_page import (
+    RESUME_CREATION_SELECT_JOB as WIZARD_SELECT_JOB,
+)
+from .selector_groups.resume_page import RESUME_CREATION_URL as WIZARD_PATH
 from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
 from .selector_groups.resume_page import (
     RESUME_SPECIALIZATION_ADD as SPECIALIZATION_ADD,
@@ -61,6 +78,7 @@ TRAVEL = "[data-qa='resume-edit-travel-time']"
 BUSINESS_TRIPS = "[data-qa='resume-edit-business-trip-readiness']"
 CANCEL = "[data-qa='resume-partial-edit-cancel']"
 SAVE = "[data-qa='resume-partial-edit-save']"
+WIZARD_WAIT_MS = 15_000
 
 EMPLOYMENT_LABELS = {
     "full_time": "Полная занятость",
@@ -263,6 +281,26 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     if has_login_form(page):
         raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
+    if _is_wizard_path(getattr(page, "url", "")):
+        if not is_position_wizard(page, resume.resume_id):
+            raise RuntimeError("визард professional_role открыт не для того резюме")
+        position = page.locator(WIZARD_POSITION)
+        if position.count() == 0:
+            select_job = page.locator(WIZARD_SELECT_JOB)
+            try:
+                select_job.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+            except PlaywrightError as exc:
+                raise RuntimeError(f"визард professional_role не отрисовался: {exc}") from exc
+            if select_job.count() != 1:
+                raise RuntimeError(f"карточка выбора профессии неоднозначна: {select_job.count()}")
+            select_job.click()
+            try:
+                position.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+            except PlaywrightError as exc:
+                raise RuntimeError(f"поле должности визарда не появилось: {exc}") from exc
+        if position.count() != 1:
+            raise RuntimeError(f"поле должности визарда неоднозначно: {position.count()}")
+        return PositionValues(title=_value(position))
     current = read_display_position(page)
     edit_path = f"/resume/edit/{resume.resume_id}/position"
     open_hydrated_resume_editor(
@@ -287,6 +325,132 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
         if form_values.business_trips is not None
         else current.business_trips,
     )
+
+
+def _is_wizard_path(url: object) -> bool:
+    return isinstance(url, str) and urlsplit(url).path == WIZARD_PATH
+
+
+def is_position_wizard(page: Page, resume_id: str) -> bool:
+    """Return true only for the requested draft's professional-role wizard."""
+    url = getattr(page, "url", "")
+    if not _is_wizard_path(url):
+        return False
+    query = parse_qs(urlsplit(url).query)
+    return query.get("resume") == [resume_id]
+
+
+def validate_wizard_plan(plan: PositionValues) -> None:
+    """Reject fields the first draft wizard cannot save without dropping data."""
+    if plan.title == "":
+        raise ValueError("Пустой title отклоняется hh.ru")
+    if not plan.title:
+        raise RuntimeError("для professional_role требуется непустой --title")
+    if not plan.specializations or len(plan.specializations) != 1:
+        raise RuntimeError("для professional_role требуется ровно одна профессия каталога")
+    unsupported = {
+        "salary": plan.salary,
+        "currency": plan.currency,
+        "employment": plan.employment,
+        "work_format": plan.work_format,
+        "commute": plan.commute,
+        "business_trips": plan.business_trips,
+    }
+    supplied = [name for name, value in unsupported.items() if value not in (None, [])]
+    if supplied:
+        raise RuntimeError(
+            "визард professional_role не сохраняет остальные поля за один шаг: "
+            + ", ".join(supplied)
+        )
+
+
+def save_position_wizard(
+    page: Page,
+    resume: ResumeConfig,
+    plan: PositionValues,
+    *,
+    role_id: str,
+    before_first_click: Callable[[], None] | None = None,
+) -> None:
+    """Save one title/role pair in the draft wizard after caller confirmation."""
+    validate_wizard_plan(plan)
+    if not is_position_wizard(page, resume.resume_id):
+        raise RuntimeError("professional_role identity не подтверждён перед сохранением")
+
+    position = page.locator(WIZARD_POSITION)
+    if position.count() != 1:
+        raise RuntimeError(f"поле должности визарда неоднозначно: {position.count()}")
+    position.fill(plan.title or "")
+    next_button = page.locator(WIZARD_NEXT)
+    try:
+        next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError(f"кнопка продолжения визарда не появилась: {exc}") from exc
+    if next_button.count() != 1:
+        raise RuntimeError(f"кнопка продолжения визарда неоднозначна: {next_button.count()}")
+    if before_first_click is not None:
+        before_first_click()
+    next_button.click()
+
+    search = page.locator(WIZARD_CATEGORY_SEARCH)
+    search.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    if search.count() != 1:
+        raise RuntimeError(f"поиск профессий визарда неоднозначен: {search.count()}")
+    expected_label = plan.specializations[0]
+    search.fill(expected_label)
+    checkbox = page.locator(WIZARD_CATEGORY_INPUT.format(role_id))
+    checkbox.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    if checkbox.count() != 1:
+        raise RuntimeError(f"профессия «{expected_label}» не подтверждена по role_id={role_id}")
+    row = checkbox.locator("xpath=ancestor::label[1]")
+    text = row.locator("[data-qa='cell-text-content']")
+    if (
+        row.count() != 1
+        or text.count() != 1
+        or (text.first.inner_text() or "").strip() != expected_label
+    ):
+        raise RuntimeError("label профессии не совпал с согласованным live-каталогом")
+    checkbox.check()
+    submit = page.locator(WIZARD_CATEGORY_SUBMIT)
+    if submit.count() != 1:
+        raise RuntimeError(f"кнопка подтверждения каталога неоднозначна: {submit.count()}")
+    submit.click()
+
+    next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    if next_button.count() != 1:
+        raise RuntimeError(
+            f"финальная кнопка продолжения визарда неоднозначна: {next_button.count()}"
+        )
+    next_button.click()
+    page.wait_for_url(
+        lambda url: urlsplit(str(url)).path != WIZARD_PATH,
+        wait_until="commit",
+        timeout=30_000,
+    )
+
+
+def verify_wizard_save(page: Page, resume: ResumeConfig, *, expected_title: str) -> None:
+    """Server-backed readback: title persisted and role step is complete."""
+    from .browser import RESUMES_FULL_LIST_URL
+    from .copy_resume import list_resume_cards
+    from .publish_resume import parse_resume_state
+
+    goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
+    state = parse_resume_state(page.content(), resume.resume_id)
+    if state.status is None:
+        raise RuntimeError("post-save readback не подтвердил состояние резюме")
+    if state.next_incomplete_screen_id == "professional_role":
+        raise RuntimeError("post-save readback всё ещё показывает professional_role")
+
+    cards = list_resume_cards(page, navigate=True, url=RESUMES_FULL_LIST_URL)
+    matches = [card for card in cards if card.resume_id == resume.resume_id]
+    if len(matches) != 1:
+        raise RuntimeError(f"post-save readback карточки резюме неоднозначен: {len(matches)}")
+    if matches[0].title.strip() != expected_title.strip():
+        raise RuntimeError(
+            f"post-save title не совпал: ожидалось «{expected_title}», "
+            f"прочитано «{matches[0].title}»"
+        )
 
 
 def _dump_control_failure(page: Page, selector: str, exc: Exception) -> None:
