@@ -152,6 +152,26 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
     if page.locator(sel.PAGINATION_NEXT).count() > 0:
         return True
     pages = page.locator(sel.PAGINATION_PAGE)
+    links = page.locator(sel.PAGINATION_LINK)
+    pagination = page.locator(sel.PAGINATION_BLOCK)
+    if pagination.count() == 0:
+        # Current applicant layout may render numbered links without data-qa.
+        return _has_next_search_link(links, page_num)
+
+    if pages.count() == 0 and links.count() == 0:
+        try:
+            pages.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+        except PlaywrightError:
+            raise CompetitorSearchIndeterminate(
+                f"пагинация страницы поиска резюме {page_num} не подтверждена: "
+                f"маркер страницы не появился за {RENDER_TIMEOUT_MS} мс"
+            ) from None
+        if pages.count() == 0 and links.count() == 0:
+            raise CompetitorSearchIndeterminate(
+                f"пагинация страницы поиска резюме {page_num} не подтверждена: "
+                "маркер страницы исчез после ожидания"
+            )
+
     for index in range(pages.count()):
         label = pages.nth(index).inner_text().strip()
         try:
@@ -159,8 +179,10 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
                 return True
         except ValueError:
             continue
-    # Current applicant layout may render numbered links without data-qa.
-    links = page.locator(sel.PAGINATION_LINK)
+    return _has_next_search_link(links, page_num)
+
+
+def _has_next_search_link(links, page_num: int) -> bool:
     for index in range(links.count()):
         href = links.nth(index).get_attribute("href") or ""
         raw_page = parse_qs(urlsplit(href).query).get("page", [])
@@ -192,22 +214,16 @@ _PROFICIENCY = {
 _SALARY_HEADING_RE = re.compile(
     r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|на руки)", re.IGNORECASE
 )
-_CONTACT_RE = re.compile(
-    r"(?:[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|https?://\S+|www\.\S+|@[A-Za-z0-9_.-]+|"
-    r"(?:\+?\d[\d\s().-]{8,}\d))",
-    re.IGNORECASE,
-)
-_NAME_LIKE_RE = re.compile(
-    r"(?:\b[А-ЯЁ][а-яё]{2,}\s+[А-ЯЁ][а-яё]{2,}\b|\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b)"
-)
 
 
-def redact_free_text(value: str) -> str | None:
-    """Remove contact tokens; drop text that still looks like a person's name."""
-    text = _CONTACT_RE.sub("[redacted]", value).strip()
-    if not text or "меня зовут" in text.casefold() or _NAME_LIKE_RE.search(text):
-        return None
-    return text
+def redact_free_text(_value: str) -> None:
+    """Never retain unstructured third-party resume text.
+
+    Regex redaction cannot reliably identify all names, demographics, and
+    locations in free-form applicant text. Structured professional fields are
+    parsed separately; free-form sections are dropped rather than persisted.
+    """
+    return None
 
 
 def _months(text: str) -> int | None:
@@ -326,6 +342,14 @@ def parse_competitor_resume_text(
     )
 
 
+def _median(values: list[int]) -> int:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return round((ordered[middle - 1] + ordered[middle]) / 2)
+
+
 def fetch_competitor_resume(page: Page, card: CompetitorSearchCard) -> CompetitorResume:
     goto_hh(page, card.resume_url)
     raise_for_antibot(page)
@@ -390,13 +414,11 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
     else:
         lines.append("  (нет данных)")
     if experience:
-        ordered = sorted(experience)
-        lines.append(f"\nМедианный опыт: {ordered[len(ordered) // 2]} мес.")
+        lines.append(f"\nМедианный опыт: {_median(experience)} мес.")
     if salaries:
         lines.append("\nЗарплата (медиана верхней границы, иначе нижней):")
         for currency, amounts in sorted(salaries.items()):
-            ordered = sorted(amounts)
-            lines.append(f"  {currency}: {ordered[len(ordered) // 2]} (n={len(ordered)})")
+            lines.append(f"  {currency}: {_median(amounts)} (n={len(amounts)})")
 
     lines.extend(
         [

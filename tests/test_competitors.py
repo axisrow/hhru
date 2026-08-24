@@ -4,12 +4,15 @@ import pytest
 
 from hhru_bot.competitors import (
     CompetitorResumeIndeterminate,
+    CompetitorSearchIndeterminate,
     build_competitor_search_url,
+    has_next_search_page,
     parse_competitor_resume_text,
     parse_search_links,
     redact_free_text,
     report_competitors,
 )
+from hhru_bot.selector_groups import competitor_resume as selectors
 
 pytestmark = pytest.mark.unit
 
@@ -137,16 +140,99 @@ def test_thin_space_salary_and_dashless_specialization_are_normalized():
 
 
 @pytest.mark.parametrize(
-    "raw, expected",
+    "raw",
     [
-        ("Пишите test@example.com или +7 999 123-45-67", "Пишите [redacted] или [redacted]"),
-        ("Меня зовут Иван", None),
-        ("Связаться с Иван Петров", None),
-        ("Построил RAG-поиск и сократил latency", "Построил RAG-поиск и сократил latency"),
+        "Пишите test@example.com или +7 999 123-45-67",
+        "Меня зовут Иван",
+        "Связаться с Иван Петров",
+        "Живу в Москве, мне 35 лет",
+        "Построил RAG-поиск и сократил latency",
     ],
 )
-def test_redact_free_text(raw, expected):
-    assert redact_free_text(raw) == expected
+def test_redact_free_text_drops_unstructured_third_party_text(raw):
+    assert redact_free_text(raw) is None
+
+
+def test_parse_detail_drops_free_text_even_without_obvious_name_or_contact():
+    snapshot = parse_competitor_resume_text(
+        "AI Engineer\nОбо мне\nЖиву в Москве, мне 35 лет\n"
+        "Ключевые достижения\nСократил расходы на 20%",
+        resume_id="free-text",
+        resume_url="https://hh.ru/resume/free-text",
+        headings=["AI Engineer"],
+    )
+    assert snapshot.experience_summary is None
+    assert snapshot.achievements is None
+
+
+class _Locator:
+    def __init__(self, values, delayed=None, *, links=False):
+        self.values = list(values)
+        self.delayed = list(delayed or [])
+        self.links = links
+        self.wait_calls = []
+
+    def count(self):
+        return len(self.values)
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state, timeout):
+        self.wait_calls.append((state, timeout))
+        self.values.extend(self.delayed)
+
+    def nth(self, index):
+        return _Text(self.values[index], links=self.links)
+
+    def inner_text(self):
+        return self.values[0]
+
+    def get_attribute(self, name):
+        assert self.links and name == "href"
+        return self.values[0]
+
+
+class _Text:
+    def __init__(self, value, *, links=False):
+        self.value = value
+        self.links = links
+
+    def inner_text(self):
+        return self.value
+
+    def get_attribute(self, name):
+        assert self.links and name == "href"
+        return self.value
+
+
+class _PaginationPage:
+    def __init__(self, pages, delayed_pages=None):
+        self.next = _Locator([])
+        self.block = _Locator(["block"])
+        self.pages = _Locator(pages, delayed_pages)
+        self.links = _Locator([])
+
+    def locator(self, selector):
+        return {
+            selectors.PAGINATION_NEXT: self.next,
+            selectors.PAGINATION_BLOCK: self.block,
+            selectors.PAGINATION_PAGE: self.pages,
+            selectors.PAGINATION_LINK: self.links,
+        }[selector]
+
+
+def test_pagination_waits_for_delayed_page_markers():
+    page = _PaginationPage([], delayed_pages=["1", "2"])
+    assert has_next_search_page(page, 0) is True
+    assert page.pages.wait_calls == [("attached", 30_000)]
+
+
+def test_pagination_timeout_is_indeterminate_not_last_page():
+    page = _PaginationPage([])
+    with pytest.raises(CompetitorSearchIndeterminate, match="не подтверждена"):
+        has_next_search_page(page, 0)
 
 
 def test_report_is_deterministic_and_warns_about_limited_coverage():
@@ -174,5 +260,6 @@ def test_report_is_deterministic_and_warns_about_limited_coverage():
     assert "2  AI Engineer" in report
     assert "2  Python" in report
     assert "1  Python + RAG" in report
-    assert "RUB: 200000 (n=2)" in report
+    assert "Медианный опыт: 42 мес." in report
+    assert "RUB: 150000 (n=2)" in report
     assert "Добавляйте навык только если он подтверждён" in report
