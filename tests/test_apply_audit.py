@@ -321,3 +321,70 @@ def test_approved_apply_from_pre_migration_queue_row_falls_back_to_vacancies_see
         "pre-migration queue row should still fall back to vacancies_seen, "
         f"got {attributed_to_seen_queries}"
     )
+
+
+def test_approved_apply_blocks_current_employer(tmp_path, monkeypatch):
+    """#524 safety-гейт действует и на явном пути --approved: запись очереди,
+    одобренная до настройки account.current_employer (или до смены работодателя),
+    не должна уйти текущему работодателю — отклик необратим."""
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="devops", current_employers=["ООО Пример"]),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="ООО ПРИМЕР-Строй",  # текущий работодатель: casefold-подстрока
+        url="https://hh.ru/vacancy/123",
+    )
+    item_id = history.enqueue_review("AAA111", card, 1.0, {}, "cover letter", search_query="devops")
+    permit = history.approve_review(item_id)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+        approved=item_id,
+        permit=permit,
+    )
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    applied: list[bool] = []
+
+    def fail_if_applied(*args, **kwargs):  # noqa: ANN002, ANN003
+        applied.append(True)
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="approved",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", fail_if_applied)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    assert applied == []  # отклик текущему работодателю не отправлен
+    with history._connect() as conn:
+        review_status = conn.execute(
+            "SELECT status FROM review_queue WHERE id=?", (item_id,)
+        ).fetchone()
+        skip_row = conn.execute(
+            "SELECT reason FROM skipped WHERE resume_id='AAA111' AND vacancy_id='123'"
+        ).fetchone()
+    assert review_status["status"] == "skipped"
+    assert skip_row["reason"] == "current_employer"

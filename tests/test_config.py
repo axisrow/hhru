@@ -112,6 +112,26 @@ def test_load_config_full_search_filters(tmp_path):
     assert search.exclude_keywords == ["1С"]
 
 
+def test_load_config_applies_current_employer_to_every_resume(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+          current_employer: [" ООО Пример ", "Пример"]
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/BBB222"
+            search:
+              text: "x"
+              exclude_employers: ["OtherCorp"]
+        """,
+    )
+    search = load_config(path).resumes[0].search
+    assert search.current_employers == ["ООО Пример", "Пример"]
+    assert search.exclude_employers == ["OtherCorp", "ООО Пример", "Пример"]
+
+
 def test_load_config_cover_letter_default_fallback(tmp_path):
     path = _write_config(
         tmp_path,
