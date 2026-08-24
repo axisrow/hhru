@@ -298,6 +298,57 @@ def test_save_position_wizard_clears_inherited_role_and_selects_exact_catalog_ro
     submit.click.assert_called_once_with()
 
 
+def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal():
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+    position = MagicMock()
+    position.count.return_value = 1
+    position.input_value.return_value = ""
+    clear = MagicMock()
+    clear.count.return_value = 1
+    next_button = MagicMock()
+    next_button.count.return_value = 1
+    next_button.first = next_button
+    search = MagicMock()
+    search.count.return_value = 1
+    search.first = search
+    checkbox = MagicMock()
+    checkbox.count.return_value = 1
+    checkbox.first = checkbox
+    checkbox.nth.return_value = checkbox
+    row = MagicMock()
+    row.count.return_value = 1
+    text = MagicMock()
+    text.count.return_value = 1
+    text.first = text
+    text.inner_text.return_value = "Аналитик"
+    checkbox.locator.return_value = row
+    row.locator.return_value = text
+    submit = MagicMock()
+    submit.count.return_value = 1
+    next_button.click.side_effect = lambda: setattr(
+        page, "url", "https://hh.ru/applicant/resumes/suitable_vacancies?published=true"
+    )
+    page.locator.side_effect = lambda selector: {
+        resume_position.WIZARD_POSITION: position,
+        resume_position.WIZARD_POSITION_CLEAR: clear,
+        resume_position.WIZARD_NEXT: next_button,
+        resume_position.WIZARD_CATEGORY_SEARCH: search,
+        resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
+        resume_position.WIZARD_CATEGORY_SUBMIT: submit,
+    }[selector]
+
+    resume_position.save_position_wizard(
+        page,
+        resume,
+        PositionValues(title="AI Engineer", specializations=["Аналитик"]),
+        role_id="10",
+    )
+
+    next_button.click.assert_called_once_with()
+
+
 def test_apply_position_rejects_empty_title_without_touching_dom():
     page = MagicMock()
 

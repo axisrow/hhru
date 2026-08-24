@@ -557,6 +557,22 @@ def save_position_wizard(
     if submit.count() != 1:
         raise RuntimeError(f"кнопка подтверждения каталога неоднозначна: {submit.count()}")
     submit.click()
+
+    # Current hh.ru builds may commit the selected role from the modal itself;
+    # older wizard builds only close the modal and require the final NEXT.  In
+    # the latter case, waiting for a route change before clicking NEXT would
+    # turn a valid save into an unnecessary uncertain timeout.
+    if _is_wizard_path(getattr(page, "url", "")):
+        next_button = page.locator(WIZARD_NEXT)
+        try:
+            next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+        except PlaywrightError as exc:
+            raise RuntimeError(f"финальная кнопка продолжения визарда не появилась: {exc}") from exc
+        if next_button.count() != 1:
+            raise RuntimeError(
+                f"финальная кнопка продолжения визарда неоднозначна: {next_button.count()}"
+            )
+        next_button.click()
     page.wait_for_url(
         lambda url: urlsplit(str(url)).path != WIZARD_PATH,
         wait_until="commit",
