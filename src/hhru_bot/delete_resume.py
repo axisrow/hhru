@@ -1,6 +1,7 @@
-"""Browser step for irreversible resume deletion (#293).
+"""Browser step for irreversible resume deletion (#293/#573).
 
-The operation is intentionally bound to one card containing the requested hash.
+The operation is first bound to one list card containing the requested hash.
+Published resumes then repeat the identity proof on the exact resume page.
 No endpoint is called directly: both destructive steps are UI clicks.
 """
 
@@ -13,10 +14,8 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import RESUMES_FULL_LIST_URL, goto_hh
+from .browser import RESUMES_FULL_LIST_URL, goto_hh, open_confirmed_resume
 from .selector_groups.resume_list import (
-    RESUME_DELETE_MENU_ACTION,
-    RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
 )
@@ -52,51 +51,44 @@ def _wait_resume_list_ready(page: Page) -> None:
     )
 
 
-def _resolve_delete_action(page: Page, card) -> tuple[Locator | None, str]:
-    """Resolve one delete control without losing the card identity boundary.
+def _resolve_profile_delete_action(page: Page, resume_id: str) -> tuple[Locator | None, str]:
+    """Resolve deletion on the identity-confirmed resume page.
 
-    Draft cards render ``resume-delete`` inside the card.  A different list
-    renderer may put the delete item in a portal after opening the card's
-    actions menu, so that item must be searched globally only after the menu
-    was opened from this exact card.  Missing or duplicate controls remain a
-    normal fail-closed result.
+    The live published-resume menu has visibility/edit/duplicate/share actions
+    but no delete action.  Navigating to the exact public resume URL is safe
+    only after the list card was already bound to ``resume_id``;
+    ``open_confirmed_resume`` independently proves the same identity before
+    this resolver can authorize a click.
     """
+    try:
+        open_confirmed_resume(page, resume_id)
+    except (ValueError, PlaywrightError) as exc:
+        return None, f"страница целевого резюме не подтверждена: {exc}"
+
+    button = page.locator(RESUME_DELETE_BUTTON)
+    button_count = button.count()
+    if button_count > 1:
+        return None, "кнопка удаления на странице резюме подтверждена неоднозначно"
+    try:
+        button.first.wait_for(state="visible", timeout=DELETE_VERIFY_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        return None, f"кнопка удаления на странице резюме не появилась: {exc}"
+    if button.count() != 1:
+        return None, "кнопка удаления на странице резюме не подтверждена однозначно"
+    return button.first, ""
+
+
+def _resolve_delete_action(page: Page, card, resume_id: str) -> tuple[Locator | None, str, bool]:
+    """Resolve an inline draft action or an identity-confirmed profile action."""
     direct = card.locator(RESUME_DELETE_BUTTON)
     direct_count = direct.count()
     if direct_count > 1:
-        return None, "кнопка удаления не подтверждена однозначно"
+        return None, "кнопка удаления в карточке подтверждена неоднозначно", False
     if direct_count == 1:
-        return direct.first, ""
+        return direct.first, "", False
 
-    more = card.locator(RESUME_LIST_ACTION_MORE)
-    if more.count() != 1:
-        return None, "меню действий карточки не подтверждено однозначно"
-
-    menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
-    try:
-        more.first.click()
-        menu_action.first.wait_for(state="visible", timeout=15000)
-    except PlaywrightError:
-        # The SSR actions button can accept a Playwright click before its React
-        # handler is hydrated. Reload once and resolve the same card again so
-        # the second click is a real menu-open attempt, not a stale locator.
-        try:
-            page.reload(wait_until="domcontentloaded")
-            card.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
-            if card.count() != 1:
-                return None, "карточка для recovery меню не подтверждена однозначно"
-            more = card.locator(RESUME_LIST_ACTION_MORE)
-            if more.count() != 1:
-                return None, "меню действий карточки не подтверждено после recovery"
-            more.first.click()
-            menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
-            menu_action.first.wait_for(state="visible", timeout=15000)
-        except PlaywrightError as recovery_exc:
-            return None, f"не удалось открыть действие удаления в меню: {recovery_exc}"
-    menu_count = menu_action.count()
-    if menu_count != 1:
-        return None, "действие удаления в меню не подтверждено однозначно"
-    return menu_action.first, ""
+    button, error = _resolve_profile_delete_action(page, resume_id)
+    return button, error, button is not None
 
 
 def delete_resume_on_hh(
@@ -131,9 +123,14 @@ def delete_resume_on_hh(
         return DeleteResumeResult(
             resume_id, False, f"карточка resume_id={resume_id} не подтверждена однозначно", False
         )
-    button, action_error = _resolve_delete_action(page, card)
-    if action_error:
-        return DeleteResumeResult(resume_id, False, action_error, False)
+    button, action_error, profile_fallback_used = _resolve_delete_action(page, card, resume_id)
+    if action_error or button is None:
+        return DeleteResumeResult(
+            resume_id,
+            False,
+            action_error or "кнопка удаления не подтверждена",
+            False,
+        )
     if dry_run:
         return DeleteResumeResult(resume_id, True, "dry-run; кнопка удаления не нажата")
 
@@ -154,6 +151,24 @@ def delete_resume_on_hh(
                 return DeleteResumeResult(
                     resume_id, False, f"не удалось открыть подтверждение: {exc}"
                 )
+            if profile_fallback_used:
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                except PlaywrightError as reload_exc:
+                    return DeleteResumeResult(
+                        resume_id,
+                        False,
+                        f"recovery страницы резюме не завершён: {reload_exc}",
+                    )
+                button, action_error = _resolve_profile_delete_action(page, resume_id)
+                if action_error or button is None:
+                    return DeleteResumeResult(
+                        resume_id,
+                        False,
+                        action_error or "кнопка удаления не подтверждена после recovery",
+                        False,
+                    )
+                continue
             page.reload(wait_until="domcontentloaded")
             # Same commit-vs-hydration guard as above: after domcontentloaded the
             # React card may not be attached yet, so a bare count()==0 right after
@@ -176,9 +191,16 @@ def delete_resume_on_hh(
                     f"карточка resume_id={resume_id} не подтверждена после recovery reload",
                     False,
                 )
-            button, action_error = _resolve_delete_action(page, card)
-            if action_error:
-                return DeleteResumeResult(resume_id, False, action_error, False)
+            button, action_error, profile_fallback_used = _resolve_delete_action(
+                page, card, resume_id
+            )
+            if action_error or button is None:
+                return DeleteResumeResult(
+                    resume_id,
+                    False,
+                    action_error or "кнопка удаления не подтверждена после recovery",
+                    False,
+                )
 
     confirm = page.locator(RESUME_DELETE_CONFIRM)
     if page.locator(RESUME_DELETE_HIDE_CONFIRM).count() > 1 or confirm.count() != 1:
@@ -192,13 +214,21 @@ def delete_resume_on_hh(
     except PlaywrightError as exc:
         return DeleteResumeResult(resume_id, False, f"ошибка destructive-клика: {exc}", True)
 
-    # The list URL already matches before the click, so wait_for_url alone is
-    # not a post-click signal: Playwright may return immediately.  Waiting for
-    # this identity-bound card to detach proves the rendered list changed after
-    # the destructive click.  Any verification error stays uncertain because
-    # hh.ru may already have accepted the deletion.
+    # On the list-card path, detachment is a useful transition signal.  The
+    # published-resume profile fallback has no list card in the current DOM;
+    # wait for the profile-side confirm control to leave the DOM instead.  The
+    # dialog is kept mounted until the profile delete action completes, so this
+    # prevents a reload from racing the asynchronous mutation.  The fresh list
+    # reload and exact target absence below remain the authoritative proof for
+    # both paths.  Any verification error stays uncertain because hh.ru may
+    # already have accepted the deletion.
     try:
-        card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+        if profile_fallback_used:
+            page.locator(RESUME_DELETE_CONFIRM).first.wait_for(
+                state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS
+            )
+        else:
+            card.wait_for(state="detached", timeout=DELETE_VERIFY_TIMEOUT_MS)
         # A different card may have existed before the click.  Waiting for
         # that card alone can therefore succeed before the post-delete render
         # settles.  Force a fresh list document so the readiness marker below

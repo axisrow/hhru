@@ -83,10 +83,10 @@ RESUME_LANGUAGE_FORM_DEGREE_SELECT = (
 RESUME_LANGUAGE_DEGREE_OPTION = "[data-qa='magritte-select-option-{}']"  # lowercase CEFR code
 RESUME_LANGUAGE_SAVE = "[data-qa='profile-modal-button-save']"
 
-# Live read-only research for issue #293 (2026-08-18).  These controls are
-# rendered on the resume list card, but are kept here with the resume-page
-# controls because they address one resume and the dialog is shared by both
-# list/profile renderers.  The destructive confirm is deliberately distinct
+# Live read-only research for issues #293/#573 (2026-08-18, 2026-08-25).
+# Drafts expose the delete control on the resume-list card; published resumes
+# expose it only on the identity-confirmed resume page.  The confirmation dialog
+# is shared by both renderers.  The destructive confirm is deliberately distinct
 # from the reversible "hide" action.
 RESUME_DELETE_BUTTON = "[data-qa='resume-delete']"
 RESUME_DELETE_TITLE = "[data-qa='resume-delete-title']"
