@@ -76,6 +76,26 @@ def test_config_read_commands_are_not_write_locked():
         assert _is_write_command(args)
 
 
+def test_professional_roles_is_write_locked_only_for_refresh():
+    parser = cli.build_parser()
+
+    search = parser.parse_args(["professional-roles", "--query", "разработчик"])
+    refresh = parser.parse_args(["professional-roles", "--refresh"])
+
+    assert not _is_write_command(search)
+    assert _is_write_command(refresh)
+
+
+def test_professional_roles_refresh_uses_cache_specific_lock(monkeypatch, tmp_path):
+    from hhru_bot import professional_roles
+
+    cache = tmp_path / "cache" / "professional_roles.json"
+    monkeypatch.setattr(professional_roles, "DEFAULT_CACHE_PATH", cache)
+    args = cli.build_parser().parse_args(["professional-roles", "--refresh"])
+
+    assert _write_lock_path(args) == (cache.parent / ".professional_roles.lock").resolve()
+
+
 def test_config_write_lock_uses_config_directory(tmp_path):
     parser = cli.build_parser()
     args = parser.parse_args(

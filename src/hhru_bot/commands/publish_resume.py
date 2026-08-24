@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
+from ._professional_role_guidance import print_professional_role_guidance
 
 
 def register(subparsers) -> None:
@@ -88,6 +89,8 @@ def run(args: argparse.Namespace):
         if not result.success:
             prefix = "[FAIL]" if not result.uncertain else "[FAIL] (uncertain)"
             print(f"{prefix} {resume.id} — {result.reason}")
+            if result.next_incomplete_screen_id == "professional_role":
+                print_professional_role_guidance(resume, include_publish=True)
             return True
         if args.dry_run:
             print(f"[DRY-RUN] Резюме {resume.id}: {result.reason}")
