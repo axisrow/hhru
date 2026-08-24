@@ -90,6 +90,22 @@ def test_apply_position_none_title_leaves_unchanged():
     title.fill.assert_not_called()
 
 
+def test_apply_position_clicks_visible_currency_button_not_hidden_input():
+    page = MagicMock()
+    currency_input = MagicMock()
+    currency_input.count.return_value = 1
+    currency_button = MagicMock()
+    currency_button.count.return_value = 1
+    page.locator.return_value = currency_input
+    page.get_by_role.return_value = currency_button
+
+    resume_position.apply_position(page, PositionValues(currency="RUR"))
+
+    currency_input.click.assert_not_called()
+    page.get_by_role.assert_called_once_with("button", name="Рубли", exact=True)
+    currency_button.click.assert_called_once_with()
+
+
 def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")

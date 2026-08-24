@@ -25,6 +25,7 @@ EDIT = "[data-qa='edit-position-button']"
 TITLE = "[data-qa='resume-edit-title-suggest']"
 SALARY = "[data-qa='resume-salary-amount']"
 CURRENCY = {code: f"[data-qa='resume-currency-input-{code}']" for code in ("RUR", "EUR", "USD")}
+CURRENCY_LABELS = {"RUR": "Рубли", "EUR": "Евро", "USD": "Доллары"}
 EMPLOYMENT = "[data-qa='resume-edit-employment-forms']"
 WORK_FORMAT = "[data-qa='resume-edit-work-formats']"
 TRAVEL = "[data-qa='resume-edit-travel-time']"
@@ -289,10 +290,19 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     if plan.salary is not None:
         page.locator(SALARY).fill(str(plan.salary))
     if plan.currency is not None:
-        currency = page.locator(CURRENCY[plan.currency])
-        if currency.count() != 1:
+        # The data-qa input is a hidden radio behind the visible Magritte
+        # button. Clicking it directly is intercepted by the button content.
+        # Use the confirmed accessible button instead of force-clicking the
+        # hidden input (which would bypass Playwright's hit-target checks).
+        currency_input = page.locator(CURRENCY[plan.currency])
+        if currency_input.count() != 1:
             raise RuntimeError(f"селектор валюты не подтверждён: {plan.currency}")
-        currency.click()
+        currency_button = page.get_by_role(
+            "button", name=CURRENCY_LABELS[plan.currency], exact=True
+        )
+        if currency_button.count() != 1:
+            raise RuntimeError(f"кнопка валюты не подтверждена: {plan.currency}")
+        currency_button.click()
     if plan.employment:
         for value in plan.employment:
             _set_control(page, EMPLOYMENT, value, EMPLOYMENT_LABELS)
