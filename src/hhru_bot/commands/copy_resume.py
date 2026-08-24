@@ -18,6 +18,7 @@ import sys
 import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -53,6 +54,10 @@ def register(subparsers) -> None:
         "--write-config", action="store_true", help="Добавить новое резюме в config.yaml"
     )
     p.add_argument("--slug", help="Slug нового резюме (по умолчанию <исходный>-copy)")
+    p.add_argument(
+        "--title",
+        help="Желаемая должность для созданной копии (после клонирования)",
+    )
     p.set_defaults(func=run)
 
 
@@ -298,6 +303,58 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
         candidate.unlink(missing_ok=True)
 
 
+def _set_copy_title(page, new_resume_id: str, title: str) -> None:
+    """Set and confirm the title on an already-created copy.
+
+    Fresh hh.ru clones are unfinished drafts.  Their profile URL redirects to
+    the ``professional_role`` wizard and therefore has no profile edit trigger;
+    the dedicated position editor remains the identity-bound surface that can
+    accept the requested title.
+    """
+    from ..browser import HH_BASE_URL, goto_hh, has_login_form
+    from ..responses import NotAuthenticated
+    from ..resume_position import (
+        FORM,
+        SAVE,
+        PositionValues,
+        apply_position,
+        read_display_position,
+    )
+
+    edit_path = f"/resume/edit/{new_resume_id}/position"
+    goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+    if has_login_form(page):
+        raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
+    form = page.locator(FORM)
+    form.first.wait_for(state="visible", timeout=30_000)
+    if form.count() != 1 or urlsplit(page.url).path.rstrip("/") != edit_path:
+        raise RuntimeError("форма редактирования title открыта не для созданной копии")
+    apply_position(page, PositionValues(title=title))
+    save = page.locator(SAVE)
+    if save.count() != 1:
+        raise RuntimeError("кнопка сохранения формы не подтверждена")
+    try:
+        save.click()
+        page.locator(FORM).wait_for(state="hidden", timeout=10_000)
+    except Exception as exc:
+        raise RuntimeError(f"сохранение title не подтверждено после клика: {exc}") from exc
+
+    # #569 live-run finding: скрытие inline-формы редактора — не доказательство,
+    # что hh.ru сохранил именно запрошенное значение (сеть, откат, неполный
+    # submit). read_display_position читает селекторы СТРАНИЦЫ ПРОСМОТРА
+    # резюме (resume-block-title-position), а не формы редактора — тот же
+    # контракт, что уже использует open_position_form. После SAVE страница
+    # остаётся на /resume/edit/<id>/position, поэтому подтверждение требует
+    # отдельного read-перехода на /resume/<id> (чтение уже открытой сессии,
+    # не мутирующий запрос).
+    goto_hh(page, f"{HH_BASE_URL}/resume/{new_resume_id}")
+    confirmed = read_display_position(page).title.strip()
+    if confirmed != title.strip():
+        raise RuntimeError(
+            f"title после сохранения не подтверждён: ожидался '{title}', прочитан '{confirmed}'"
+        )
+
+
 def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
@@ -314,6 +371,13 @@ def run(args: argparse.Namespace):
         print(f"[FAIL] {e}")
         sys.exit(1)
     write_config = bool(getattr(args, "write_config", False))
+    title = getattr(args, "title", None)
+    if title is not None and not title.strip():
+        print(
+            "[FAIL] Пустой title отклоняется hh.ru. Укажите значение, например: "
+            '--title "Python-разработчик".'
+        )
+        sys.exit(1)
     slug = getattr(args, "slug", None) or f"{resume.id}-copy"
     if write_config:
         if not slug.strip() or any(char in slug for char in "\r\n"):
@@ -331,6 +395,8 @@ def run(args: argparse.Namespace):
 
     if args.dry_run:
         print(f"[DRY-RUN] Копирование резюме {resume.id} (resume_id {resume.resume_id})")
+        if title is not None:
+            print(f"[DRY-RUN] После копирования установил бы title: {title}")
     else:
         if not confirm_write(args.force, prompt=f"Создать копию резюме '{resume.id}' на hh.ru?"):
             print(
@@ -367,6 +433,37 @@ def run(args: argparse.Namespace):
                     args.dry_run,
                     before_click=attempt.before_click if attempt is not None else None,
                 )
+
+                # Fail-closed (#116): success без нового id или с id, совпавшим с
+                # исходным, успехом не считается — копия не подтверждена.
+                if result.success and not args.dry_run:
+                    if not result.new_resume_id or result.new_resume_id == resume.resume_id:
+                        result.success = False
+                        result.reason = (
+                            "новый resume_id не подтверждён (совпал с исходным или пуст)"
+                        )
+
+                # Title устанавливается той же страницей/контекстом, что и сама
+                # копия (#569 live-run finding): вне `with` context/browser уже
+                # закрыты, и любой боевой --title неизбежно уходил в uncertain
+                # независимо от реального состояния hh.ru.
+                if result.success and title is not None and not args.dry_run:
+                    try:
+                        _set_copy_title(page, result.new_resume_id, title)
+                    except Exception as exc:
+                        # Копия уже создана и необратима. Даже если SAVE не был
+                        # нажат, повторный запуск вслепую создаст ещё одну копию,
+                        # поэтому это unresolved uncertain, а не обычный failed.
+                        # BaseException (сигнал/interrupt) сюда не попадает —
+                        # её ловит и финализирует единственный внешний handler
+                        # ниже (interrupt вызывается ровно один раз за attempt).
+                        result.success = False
+                        result.uncertain = True
+                        result.reason = (
+                            f"Копия создана ({result.new_resume_id}), но title не "
+                            f"установлен: {exc} (uncertain; проверьте резюме на "
+                            "hh.ru вручную)"
+                        )
         except NotAuthenticated as e:
             print(f"[FAIL] {resume.id} — Сессия недействительна: {e}")
             return True
@@ -374,13 +471,6 @@ def run(args: argparse.Namespace):
             if attempt is not None:
                 attempt.interrupt(e)
             raise
-
-        # Fail-closed (#116): success без нового id или с id, совпавшим с исходным,
-        # успехом не считается — копия не подтверждена.
-        if result.success and not args.dry_run:
-            if not result.new_resume_id or result.new_resume_id == resume.resume_id:
-                result.success = False
-                result.reason = "новый resume_id не подтверждён (совпал с исходным или пуст)"
 
         if attempt is not None:
             if result.success:

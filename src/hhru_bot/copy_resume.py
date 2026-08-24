@@ -94,6 +94,14 @@ class ResumeCard:
     ssr_unavailable: bool = False  # True если SSR данные недоступны или некорректны
 
 
+@dataclass(frozen=True)
+class ResumeLineage:
+    """Server identities used to bind a new draft to its clone source."""
+
+    numeric_id: str
+    parent_numeric_id: str
+
+
 class ResumeListIndeterminate(PageStateIndeterminate):
     """Не удалось подтвердить состояние /applicant/resumes (#135, Codex review).
 
@@ -318,6 +326,45 @@ def _card_hashes(page: Page) -> set[str]:
         if qa.startswith(_CARD_LINK_PREFIX):
             hashes.add(qa[len(_CARD_LINK_PREFIX) :])
     return hashes
+
+
+def _resume_lineage(page: Page) -> dict[str, ResumeLineage]:
+    """Read hash/numeric parentage from the resume-list SSR state.
+
+    ``parentResumeId`` is the server-provided clone relation.  Unlike an
+    account-wide card diff, it lets the post-WRITE fallback prove that the new
+    draft belongs to the exact source resume even when hh.ru leaves the SPA on
+    ``/profile/resume/professional_role`` and never exposes the new hash in the
+    browser URL.
+
+    An empty mapping is an unavailable proof, never evidence that a relation
+    is absent.  Callers retain the URL-bound fallback and otherwise fail closed.
+    """
+    try:
+        state = parse_initial_state(page.content())
+    except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    resumes = state.get("applicantResumes")
+    if not isinstance(resumes, list):
+        return {}
+
+    result: dict[str, ResumeLineage] = {}
+    for item in resumes:
+        attrs = item.get("_attributes") if isinstance(item, dict) else None
+        if not isinstance(attrs, dict):
+            continue
+        resume_hash = attrs.get("hash")
+        numeric_id = attrs.get("id")
+        parent_numeric_id = attrs.get("parentResumeId")
+        if not isinstance(resume_hash, str) or not resume_hash or numeric_id is None:
+            continue
+        result[resume_hash] = ResumeLineage(
+            numeric_id=str(numeric_id),
+            parent_numeric_id="" if parent_numeric_id is None else str(parent_numeric_id),
+        )
+    return result
 
 
 def list_resume_cards(
@@ -555,6 +602,7 @@ def _reconcile_created_resume(
     page: Page,
     before: set[str],
     url_candidate: str,
+    source_numeric_id: str,
 ) -> tuple[str, str]:
     """Confirm the clone in the stable list after the WRITE click (#311).
 
@@ -584,18 +632,31 @@ def _reconcile_created_resume(
 
     created_id = created.pop()
     # Identity-bound success (#311): a bare account-wide list diff is not proof
-    # the clone was this click's product.  Without a URL candidate matching the
-    # list, the new card could be a concurrent creation (or a pre-existing
-    # unrelated resume) — recording it as the clone would write a wrong id into
-    # config.  Fail closed and let the user reconcile manually.
+    # the clone was this click's product.  The live SPA now stays on the generic
+    # professional_role wizard, so URL identity is often unavailable.  In that
+    # case require the server's explicit clone relation instead: the new card's
+    # parentResumeId must equal the source resume's numeric id from the pre-click
+    # SSR snapshot.  A concurrent unrelated creation therefore remains unable
+    # to satisfy the success contract.
     if not url_candidate:
-        return "", (
-            f"URL после дублирования не подтвердил новый resume_id, а список "
-            f"показал {created_id} — связать копию с этим кликом однозначно "
-            "нельзя (fail-closed; сверьте список резюме вручную)"
-        )
+        created_lineage = _resume_lineage(page).get(created_id)
+        if (
+            not source_numeric_id
+            or created_lineage is None
+            or created_lineage.parent_numeric_id != source_numeric_id
+        ):
+            observed_parent = (
+                created_lineage.parent_numeric_id if created_lineage is not None else "не прочитан"
+            )
+            return created_id, (
+                f"URL после дублирования не подтвердил новый resume_id; список "
+                f"показал {created_id}, но parentResumeId={observed_parent} не "
+                f"подтвердил исходное резюме id={source_numeric_id or 'не прочитан'} "
+                "(fail-closed; сверьте список резюме вручную)"
+            )
+        return created_id, ""
     if url_candidate != created_id:
-        return "", (
+        return created_id, (
             f"URL после дублирования указывает на {url_candidate}, а список "
             f"подтвердил {created_id} — состояние копии не подтверждено "
             "(fail-closed)"
@@ -701,6 +762,8 @@ def copy_resume_on_hh(
     assert duplicate is not None
     # Снимок для post-WRITE diff делаем только после полной pre-write готовности.
     before = _card_hashes(page)
+    source_lineage = _resume_lineage(page).get(resume.resume_id)
+    source_numeric_id = source_lineage.numeric_id if source_lineage is not None else ""
 
     try:
         if before_click is not None:
@@ -721,7 +784,12 @@ def copy_resume_on_hh(
         # click may have produced a SPA navigation without creating a resume, and
         # the URL alone does not prove that the clone is visible in the account.
         url_candidate = "" if new_id == resume.resume_id else new_id
-        new_id, reconciliation_failure = _reconcile_created_resume(page, before, url_candidate)
+        new_id, reconciliation_failure = _reconcile_created_resume(
+            page,
+            before,
+            url_candidate,
+            source_numeric_id,
+        )
     except (NotAuthenticated, ResumeListIndeterminate, PlaywrightError) as exc:
         # WRITE-клик уже отправлен; исключение здесь не доказывает, что копия
         # не создана (таймаут, отзыв сессии, stale DOM) — fail-closed, uncertain.
@@ -733,7 +801,13 @@ def copy_resume_on_hh(
         )
 
     if reconciliation_failure:
-        return CopyResumeResult(resume.id, False, uncertain=True, reason=reconciliation_failure)
+        return CopyResumeResult(
+            resume.id,
+            False,
+            new_resume_id=new_id,
+            uncertain=True,
+            reason=reconciliation_failure,
+        )
 
     logger.info("Резюме '%s' скопировано, новый resume_id: %s", resume.id, new_id)
     return CopyResumeResult(resume.id, True, new_resume_id=new_id)
