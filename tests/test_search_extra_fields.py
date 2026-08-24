@@ -188,6 +188,18 @@ def test_parse_metro_stations_distinguishes_missing_and_empty_blocks():
     assert _parse_metro_stations(_EmptyCard()) == []
 
 
+def test_parse_metro_stations_uses_observed_address_for_empty_snapshot():
+    class _AddressOnlyCard:
+        def locator(self, selector):
+            if selector == search.sel.VACANCY_CARD_ADDRESS:
+                return _TextLocator("Москва", count=1)
+            if selector == search.sel.VACANCY_CARD_METRO_STATION:
+                return _TextLocator("", count=0)
+            return _TextLocator("", count=0)
+
+    assert _parse_metro_stations(_AddressOnlyCard()) == []
+
+
 # --- side_job / no_resume ----------------------------------------------------
 
 

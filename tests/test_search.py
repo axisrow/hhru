@@ -91,6 +91,8 @@ class _VacancyCard:
             return _TextLocator(count=1 if self._remote else 0)
         if selector == search.sel.VACANCY_CARD_EXPERIENCE:
             return _TextLocator(count=0)
+        if selector == search.sel.VACANCY_CARD_ADDRESS:
+            return _TextLocator(count=0)
         if selector == search.sel.VACANCY_CARD_SIDE_JOB:
             return _TextLocator(count=1 if self._side_job else 0)
         if selector == search.sel.VACANCY_CARD_NO_RESUME:
