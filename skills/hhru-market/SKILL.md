@@ -16,6 +16,14 @@ argument-hint: "[--resume <id>] [--max-pages N]"
 нестандартные задачи поэтапно из существующих команд; общий пример для разделов
 резюме приведён в `skills/hhru/SKILL.md`.
 
+## Разрешение браузера в Codex
+
+Сбор через `search` открывает Chromium: первый запуск сразу выполняй с
+`sandbox_permissions=require_escalated`, без пробной попытки в sandbox. Это
+нужно и для `--headless`. Локальные `market` и `query` выполняй без elevated.
+Elevated-разрешение даёт только право запуска процесса и не разрешает никаких
+WRITE-действий на hh.ru.
+
 ## Шаг 1 — собрать вакансии (search, READ)
 
 ```bash

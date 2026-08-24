@@ -1,8 +1,9 @@
 """Точка входа CLI: skeleton build_parser с авторегистрацией команд + main().
 
 Команды живут в пакете commands/, каждый модуль реализует register(subparsers).
-build_parser обходит их через pkgutil.iter_modules и вызывает register — добавление
-команды не требует правок этого файла.
+build_parser обходит их через pkgutil.iter_modules и вызывает register. Новая
+команда авторегистрируется без правок этого файла; если она запускает Chromium,
+её дополнительно нужно классифицировать в BROWSER_COMMANDS (#568).
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
+import os
 import pkgutil
 import sys
 from pathlib import Path
@@ -34,6 +36,44 @@ from .write_lock import WriteLockBusy, acquire_write_lock
 # целиком в .gitignore одной строкой.
 DEFAULT_CONFIG_PATH = Path("data") / "config.yaml"
 DEFAULT_HISTORY_PATH = Path("data") / "history.db"
+
+# Commands that always start Playwright Chromium.  Keep conditional browser
+# modes (list-resumes --local, whoami --online, and clear-negotiations plan
+# modes) in _requires_browser().
+# This registry lives at the CLI boundary deliberately: the Codex sandbox must
+# be rejected before path resolution, logging, a write lock, History(), or a
+# durable command_run can create local state (#568).
+BROWSER_COMMANDS = frozenset(
+    {
+        "about",
+        "apply",
+        "bump",
+        "call-api",
+        "clear-negotiations",
+        "copy-resume",
+        "create-resume",
+        "delete-resume",
+        "edit-education",
+        "edit-experience",
+        "edit-languages",
+        "edit-skills",
+        "fill-form",
+        "login",
+        "login-code",
+        "probe",
+        "publish-resume",
+        "refresh-token",
+        "rename-resume",
+        "reply-employers",
+        "responses",
+        "resume-position",
+        "resume-sections",
+        "resume-visibility",
+        "resume-views",
+        "run",
+        "search",
+    }
+)
 
 WRITE_COMMANDS = frozenset(
     {
@@ -127,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _reject_sandboxed_browser_command(args)
     try:
         _resolve_paths(args)
     except AccountError as exc:
@@ -152,6 +193,44 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"[FAIL] другой процесс уже выполняет WRITE-действие{detail}")
         sys.exit(1)
+
+
+def _requires_browser(args: argparse.Namespace) -> bool:
+    """Whether the parsed invocation will start Playwright Chromium."""
+    if args.command == "list-resumes":
+        return not getattr(args, "local", False)
+    if args.command == "whoami":
+        return bool(getattr(args, "online", False))
+    if args.command == "clear-negotiations":
+        # Filter-only plans and topic dry-runs return before config/History and
+        # never open Chromium. Account-wide collection and a live topic
+        # withdrawal do need the browser (#572 Codex review).
+        return bool(
+            getattr(args, "account_wide", False)
+            or (getattr(args, "topic", None) and not getattr(args, "dry_run", False))
+        )
+    return args.command in BROWSER_COMMANDS
+
+
+def _reject_sandboxed_browser_command(args: argparse.Namespace) -> None:
+    """Fail before local state exists when Codex cannot launch Chromium.
+
+    Codex sets ``CODEX_SANDBOX`` (currently ``seatbelt`` on macOS) only for the
+    restricted execution path.  Elevated/system-permission commands receive an
+    empty value.  ``CODEX_SANDBOX_NETWORK_DISABLED`` is intentionally ignored:
+    it remains set on the permitted path and would reject valid launches.
+    """
+    if not os.environ.get("CODEX_SANDBOX") or not _requires_browser(args):
+        return
+    print(
+        "[ENVIRONMENT] CODEX_SANDBOX_BROWSER_REQUIRED: "
+        f"команда '{args.command}' запускает Chromium и должна быть сразу "
+        "запущена вне sandbox с системным разрешением "
+        "(sandbox_permissions=require_escalated). Браузерное действие, "
+        "write-lock и durable run не начинались.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _is_write_command(args: argparse.Namespace) -> bool:
