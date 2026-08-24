@@ -36,10 +36,7 @@ def register(subparsers) -> None:
     p.add_argument(
         "--specialization",
         action="append",
-        help=(
-            "Специализация (можно несколько); селектор hh.ru не подтверждён — "
-            "запись упадёт fail-closed"
-        ),
+        help="Специализация (можно несколько); заменяет выбранные специализации",
     )
     p.add_argument("--salary", type=int, help="Зарплата (целое число, без LLM)")
     p.add_argument("--currency", choices=("RUR", "EUR", "USD"), help="Валюта зарплаты")

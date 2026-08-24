@@ -38,6 +38,20 @@ RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
 
+# Specializations in the position editor are a nested, multi-select tree.  The
+# full tree (including the search and confirmation controls) was confirmed in
+# the authenticated live DOM of the position editor on 2026-08-24 (issue
+# #521).  The modal can remain open after selecting an option, so callers must
+# wait for this dialog to hide after submitting it.
+RESUME_SPECIALIZATION_ADD = "[data-qa='resume-position-professional-role-add-button']"
+RESUME_SPECIALIZATION_MODAL = "[data-qa='professional-roles-modal']"
+RESUME_SPECIALIZATION_SEARCH = "[data-qa='tree-selector-search-input']"
+RESUME_SPECIALIZATION_OPTION = (
+    "[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']"
+)
+RESUME_SPECIALIZATION_DELETE = "[data-qa='resume-position-professional-role-card-delete']"
+RESUME_SPECIALIZATION_SUBMIT = "[data-qa='professional-roles-submit']"
+
 # Language block and modal selectors confirmed on the authenticated read-only
 # DOM of /applicant/profile/me on 2026-08-20 (issue #265).  Languages are a
 # profile-level entity, not a resume-level one: /resume/{id} never renders a

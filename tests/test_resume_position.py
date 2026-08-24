@@ -106,6 +106,16 @@ def test_apply_position_clicks_visible_currency_button_not_hidden_input():
     currency_button.click.assert_called_once_with()
 
 
+def test_apply_position_sets_confirmed_specializations(monkeypatch):
+    page = MagicMock()
+    set_specializations = MagicMock()
+    monkeypatch.setattr(resume_position, "_set_specializations", set_specializations)
+
+    resume_position.apply_position(page, PositionValues(specializations=["Аналитик"]))
+
+    set_specializations.assert_called_once_with(page, ["Аналитик"])
+
+
 def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")
