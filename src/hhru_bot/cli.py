@@ -61,6 +61,7 @@ BROWSER_COMMANDS = frozenset(
         "login",
         "login-code",
         "probe",
+        "professional-roles",
         "publish-resume",
         "refresh-token",
         "rename-resume",
@@ -209,6 +210,8 @@ def _requires_browser(args: argparse.Namespace) -> bool:
             getattr(args, "account_wide", False)
             or (getattr(args, "topic", None) and not getattr(args, "dry_run", False))
         )
+    if args.command == "professional-roles":
+        return bool(getattr(args, "refresh", False))
     return args.command in BROWSER_COMMANDS
 
 
@@ -241,6 +244,8 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         return bool(args.set is not None or args.unset or args.edit)
     if args.command == "probe" and getattr(args, "questionnaires_only", False):
         return True
+    if args.command == "professional-roles":
+        return bool(getattr(args, "refresh", False))
     subcommand_dest = SUBCOMMAND_DESTS.get(args.command)
     subcommand = getattr(args, subcommand_dest, None) if subcommand_dest else None
     return (
@@ -252,6 +257,10 @@ def _is_write_command(args: argparse.Namespace) -> bool:
 
 def _write_lock_path(args: argparse.Namespace) -> Path:
     """Return the lock location for the state mutated by a write command."""
+    if args.command == "professional-roles" and getattr(args, "refresh", False):
+        from .professional_roles import DEFAULT_CACHE_PATH
+
+        return DEFAULT_CACHE_PATH.expanduser().resolve().parent / ".professional_roles.lock"
     writes_config = args.command == "config" or getattr(args, "write_config", False)
     # copy-resume's post-click list diff is an account-wide reconciliation.
     # Serialize by the config/session identity even when callers intentionally

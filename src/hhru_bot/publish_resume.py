@@ -50,6 +50,7 @@ class PublishResumeResult:
     status: str | None = None
     is_searchable: bool | None = None
     uncertain: bool = False
+    next_incomplete_screen_id: str | None = None
 
 
 def _is_published(state: ResumePublishState) -> bool:
@@ -169,6 +170,8 @@ def publish_resume_on_hh(
             f"nextIncompleteScreenId={state.next_incomplete_screen_id}; клик запрещён",
             state.status,
             state.is_searchable,
+            False,
+            state.next_incomplete_screen_id,
         )
     if state.can_publish_or_update is not True:
         return PublishResumeResult(
