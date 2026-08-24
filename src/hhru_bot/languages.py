@@ -14,11 +14,13 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
+from .browser import HH_BASE_URL, LOGIN_FORM, goto_hh, has_auth_cookie, has_login_form
 from .config import ResumeConfig
 from .selector_groups import resume_page
 
 CEFR_LEVELS = frozenset(("A1", "A2", "B1", "B2", "C1", "C2"))
+_LANGUAGE_PROFILE_PATH = "/applicant/profile/me"
+_LANGUAGE_PROFILE_READY_SELECTOR = f"{resume_page.RESUME_LANGUAGE_CARD}:visible, {LOGIN_FORM}"
 
 
 @dataclass(frozen=True)
@@ -111,8 +113,32 @@ def wait_for_language_card(page):
     try:
         card.first.wait_for(state="visible", timeout=15000)
     except PlaywrightError:
-        pass
+        return None
     return card if card.count() == 1 else None
+
+
+def _open_language_profile(page):
+    """Open the shared language profile after its hydrated marker appears.
+
+    React #418/#423 is diagnostic: hh.ru may recover by client-rendering the
+    profile.  Readiness is therefore proved by the language card, not by a
+    clean console.  The login form is included in the navigation marker so an
+    expired session can be rejected immediately instead of waiting through
+    every hydration retry.
+    """
+    goto_hh(
+        page,
+        f"{HH_BASE_URL}{_LANGUAGE_PROFILE_PATH}",
+        ready_selector=_LANGUAGE_PROFILE_READY_SELECTOR,
+    )
+    if not has_auth_cookie(page) or has_login_form(page):
+        raise RuntimeError("сессия hh.ru не подтверждена")
+    if urlsplit(page.url).path != _LANGUAGE_PROFILE_PATH:
+        raise RuntimeError("страница профиля не подтверждена")
+    card = wait_for_language_card(page)
+    if card is None:
+        raise RuntimeError("карточка языков не найдена однозначно")
+    return card
 
 
 def read_existing_languages(card) -> tuple[str, ...]:
@@ -156,16 +182,14 @@ def edit_languages_on_hh(
     """
     if dry_run:
         return LanguagesResult(True, languages)
+    acted = False
     try:
-        goto_hh(page, f"{HH_BASE_URL}/applicant/profile/me")
-        if not has_auth_cookie(page) or has_login_form(page):
-            return LanguagesResult(False, languages, "сессия hh.ru не подтверждена")
-        if urlsplit(page.url).path != "/applicant/profile/me":
-            return LanguagesResult(False, languages, "страница профиля не подтверждена")
-        card = wait_for_language_card(page)
+        card = _open_language_profile(page)
         add_button = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
-        if card is None or add_button.count() != 1:
-            return LanguagesResult(False, languages, "карточка языков не найдена однозначно")
+        if add_button.count() != 1:
+            return LanguagesResult(
+                False, languages, "кнопка добавления языка не найдена однозначно"
+            )
         existing = read_existing_languages(card)
         existing_keys = {value.casefold() for value in existing}
         if mode == "fresh" and existing:
@@ -201,7 +225,12 @@ def edit_languages_on_hh(
             form.wait_for(state="visible")
             _choose_language(page, form, item.name)
             _choose_degree(page, form, item.level)
-            _save_language(dialog)
+            save = _language_save_button(dialog)
+            # The save click is the first operation that can persist data on
+            # hh.ru.  Mark it before clicking because Playwright may throw
+            # after the request has already left the browser.
+            acted = True
+            save.click()
             dialog.wait_for(state="hidden")
             # #265 code-review round 2 (Codex): the dialog closing is not proof
             # the write persisted — a rerender, an ambiguous server response,
@@ -221,7 +250,7 @@ def edit_languages_on_hh(
         return LanguagesResult(True, languages, acted=bool(additions))
     except (PlaywrightError, RuntimeError) as exc:
         return LanguagesResult(
-            False, languages, f"сохранение языка не подтверждено: {exc}", acted=True
+            False, languages, f"сохранение языка не подтверждено: {exc}", acted=acted
         )
 
 
@@ -246,8 +275,9 @@ def _choose_degree(page, form, level: str) -> None:
     option.click()
 
 
-def _save_language(dialog) -> None:
+def _language_save_button(dialog):
+    """Return the single confirmed save control without clicking it."""
     save = dialog.locator(resume_page.RESUME_LANGUAGE_SAVE)
     if save.count() != 1:
         raise PlaywrightError("кнопка сохранения языка не найдена однозначно")
-    save.click()
+    return save

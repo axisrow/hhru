@@ -13,7 +13,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, LOGIN_FORM, goto_hh
 from .history import History
 from .selector_groups import account_profile
 
@@ -24,6 +24,8 @@ PROFILE_FIELDS = (
     ("Телефон", account_profile.ACCOUNT_PROFILE_PHONE),
     ("Email", account_profile.ACCOUNT_PROFILE_EMAIL),
 )
+
+_PROFILE_READY_SELECTOR = f"{account_profile.ACCOUNT_PROFILE_READY}:visible, {LOGIN_FORM}"
 
 
 def _warn(message: str) -> None:
@@ -38,24 +40,27 @@ def read_account_profile(page: Page, history_path: str | Path) -> int:
     be non-empty before writing an ``hh_ru`` field.
     """
     try:
-        goto_hh(page, f"{HH_BASE_URL}{account_profile.ACCOUNT_PROFILE_PATH}")
+        goto_hh(
+            page,
+            f"{HH_BASE_URL}{account_profile.ACCOUNT_PROFILE_PATH}",
+            ready_selector=_PROFILE_READY_SELECTOR,
+        )
     except PlaywrightError as exc:
         _warn(f"страница недоступна: {exc}")
         print("[INFO] Профиль обновлён: 0 полей")
         return 0
 
-    # A successful navigation alone is not enough: hh.ru can return an error,
-    # auth, or not-yet-rendered page with a zero count for every field. The
-    # confirmed name card is the profile-specific positive marker that permits
-    # absence-based cleanup below.
+    # Page readiness and field-schema readiness are separate gates.  The live
+    # profile shell proves hydration recovered, but only the historical name
+    # marker proves that absence-based cleanup below is safe for this schema.
     try:
         page_marker = page.locator(account_profile.ACCOUNT_PROFILE_FIRST_NAME)
         if page_marker.count() != 1:
-            _warn("страница профиля не подтверждена — старые данные сохранены")
+            _warn("схема полей профиля не подтверждена — старые данные сохранены")
             print("[INFO] Профиль обновлён: 0 полей")
             return 0
     except PlaywrightError as exc:
-        _warn(f"страница профиля не подтверждена: {exc}")
+        _warn(f"схема полей профиля не подтверждена: {exc}")
         print("[INFO] Профиль обновлён: 0 полей")
         return 0
 
