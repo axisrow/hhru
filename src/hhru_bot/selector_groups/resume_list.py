@@ -41,7 +41,7 @@ RESUME_DELETE_MENU_ACTION = (
     "[data-qa='operations-list-delete-resume'], "
     "[data-qa='resume-delete-action'], "
     "[data-qa='resume-delete-menu-item'], "
-    "button:has-text('Удалить резюме')"
+    "[role='dialog'] button:has-text('Удалить резюме')"
 )
 
 # Дополнительный (не обязательный) маркер завершённого client render. Карточка

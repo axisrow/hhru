@@ -229,3 +229,8 @@ def test_ambiguous_menu_delete_action_fails_closed(monkeypatch):
     assert result.success is False
     assert result.uncertain is False
     assert "однозначно" in result.reason
+
+
+def test_menu_text_fallback_is_scoped_to_portal_dialog():
+    assert "[role='dialog'] button:has-text('Удалить резюме')" in RESUME_DELETE_MENU_ACTION
+    assert ", button:has-text('Удалить резюме')" not in RESUME_DELETE_MENU_ACTION
