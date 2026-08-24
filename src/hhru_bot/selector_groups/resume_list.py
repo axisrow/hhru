@@ -34,6 +34,16 @@ RESUME_LIST_CARD_LINK_TPL = "[data-qa='resume-card-link-{resume_id}']"
 # Кнопка «...» (меню действий) на карточке резюме.
 RESUME_LIST_ACTION_MORE = "[data-qa='resume-list-action-more']"
 
+# Delete is normally an inline action on an unpublished resume card.  Some
+# list renderers expose the same action through the portal-backed actions menu,
+# so keep the menu candidates separate from the identity-bound card selector.
+RESUME_DELETE_MENU_ACTION = (
+    "[data-qa='operations-list-delete-resume'], "
+    "[data-qa='resume-delete-action'], "
+    "[data-qa='resume-delete-menu-item'], "
+    "button:has-text('Удалить резюме')"
+)
+
 # Дополнительный (не обязательный) маркер завершённого client render. Карточка
 # приходит из SSR раньше, но actions ещё не подключены: на наблюдавшемся живом
 # hh.ru кнопка «...» начинала работать после появления этого текста. Истиной

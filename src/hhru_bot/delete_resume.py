@@ -11,10 +11,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from .browser import RESUMES_FULL_LIST_URL, goto_hh
 from .selector_groups.resume_list import (
+    RESUME_DELETE_MENU_ACTION,
+    RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
     RESUME_LIST_CARD_LINK_TPL,
 )
@@ -50,6 +52,38 @@ def _wait_resume_list_ready(page: Page) -> None:
     )
 
 
+def _resolve_delete_action(page: Page, card) -> tuple[Locator | None, str]:
+    """Resolve one delete control without losing the card identity boundary.
+
+    Draft cards render ``resume-delete`` inside the card.  A different list
+    renderer may put the delete item in a portal after opening the card's
+    actions menu, so that item must be searched globally only after the menu
+    was opened from this exact card.  Missing or duplicate controls remain a
+    normal fail-closed result.
+    """
+    direct = card.locator(RESUME_DELETE_BUTTON)
+    direct_count = direct.count()
+    if direct_count > 1:
+        return None, "кнопка удаления не подтверждена однозначно"
+    if direct_count == 1:
+        return direct.first, ""
+
+    more = card.locator(RESUME_LIST_ACTION_MORE)
+    if more.count() != 1:
+        return None, "меню действий карточки не подтверждено однозначно"
+
+    menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
+    try:
+        more.first.click()
+        menu_action.first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return None, f"не удалось открыть действие удаления в меню: {exc}"
+    menu_count = menu_action.count()
+    if menu_count != 1:
+        return None, "действие удаления в меню не подтверждено однозначно"
+    return menu_action.first, ""
+
+
 def delete_resume_on_hh(
     page: Page,
     resume,
@@ -82,11 +116,9 @@ def delete_resume_on_hh(
         return DeleteResumeResult(
             resume_id, False, f"карточка resume_id={resume_id} не подтверждена однозначно", False
         )
-    button = card.locator(RESUME_DELETE_BUTTON)
-    if button.count() != 1:
-        return DeleteResumeResult(
-            resume_id, False, "кнопка удаления не подтверждена однозначно", False
-        )
+    button, action_error = _resolve_delete_action(page, card)
+    if action_error:
+        return DeleteResumeResult(resume_id, False, action_error, False)
     if dry_run:
         return DeleteResumeResult(resume_id, True, "dry-run; кнопка удаления не нажата")
 
@@ -95,7 +127,7 @@ def delete_resume_on_hh(
             # The action can be present in SSR while its React handler is not
             # attached yet.  A bounded pre-click wait plus one safe reload
             # avoids treating that hydration race as a permanent failure.
-            button.first.wait_for(state="visible", timeout=15000)
+            button.wait_for(state="visible", timeout=15000)
             button.first.click()
             # The confirm dialog renders asynchronously after the click (React);
             # an immediate count() can observe the DOM before it mounts (same
@@ -129,14 +161,9 @@ def delete_resume_on_hh(
                     f"карточка resume_id={resume_id} не подтверждена после recovery reload",
                     False,
                 )
-            button = card.locator(RESUME_DELETE_BUTTON)
-            if button.count() != 1:
-                return DeleteResumeResult(
-                    resume_id,
-                    False,
-                    "кнопка удаления не подтверждена после recovery reload",
-                    False,
-                )
+            button, action_error = _resolve_delete_action(page, card)
+            if action_error:
+                return DeleteResumeResult(resume_id, False, action_error, False)
 
     confirm = page.locator(RESUME_DELETE_CONFIRM)
     if page.locator(RESUME_DELETE_HIDE_CONFIRM).count() > 1 or confirm.count() != 1:

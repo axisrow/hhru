@@ -10,7 +10,11 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.delete_resume as delete
-from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
+from hhru_bot.selector_groups.resume_list import (
+    RESUME_DELETE_MENU_ACTION,
+    RESUME_LIST_ACTION_MORE,
+    RESUME_LIST_CARD,
+)
 from hhru_bot.selector_groups.resume_page import RESUME_DELETE_BUTTON, RESUME_DELETE_CONFIRM
 
 pytestmark = pytest.mark.integration
@@ -34,15 +38,20 @@ class Locator:
         return self._count
 
     def locator(self, selector):
-        assert selector == RESUME_DELETE_BUTTON
-        return Locator(self.page, selector)
+        if selector == RESUME_DELETE_BUTTON:
+            return Locator(self.page, selector, self.page.direct_count)
+        if selector == RESUME_LIST_ACTION_MORE:
+            return Locator(self.page, selector, self.page.more_count)
+        raise AssertionError(selector)
 
     @property
     def first(self):
         return self
 
     def click(self):
-        if self.selector == RESUME_DELETE_BUTTON:
+        if self.selector == RESUME_LIST_ACTION_MORE:
+            self.page.menu_opened = True
+        elif self.selector in (RESUME_DELETE_BUTTON, RESUME_DELETE_MENU_ACTION):
             self.page.dialog_opened = True
         else:
             assert self.selector == RESUME_DELETE_CONFIRM
@@ -50,6 +59,8 @@ class Locator:
 
     def wait_for(self, *, state, timeout):
         if state == "visible":
+            if self.selector == RESUME_DELETE_MENU_ACTION and not self.page.menu_opened:
+                raise PlaywrightError("menu action not mounted")
             if (
                 self.selector == RESUME_DELETE_CONFIRM
                 and self.page.confirm_error
@@ -79,6 +90,9 @@ class Page:
         remaining=0,
         ready_count=1,
         confirm_error=None,
+        direct_count=1,
+        more_count=1,
+        menu_count=0,
     ):
         self.url = delete.RESUMES_FULL_LIST_URL
         self.dialog_opened = False
@@ -95,6 +109,10 @@ class Page:
         self._confirm_failed = False
         self.recovery_hydration = False
         self._recovery_hydrated = False
+        self.direct_count = direct_count
+        self.more_count = more_count
+        self.menu_count = menu_count
+        self.menu_opened = False
 
     def reload(self, *, wait_until):
         self.reloaded = wait_until
@@ -105,6 +123,8 @@ class Page:
     def locator(self, selector):
         if selector == RESUME_DELETE_CONFIRM:
             return Locator(self, selector)
+        if selector == RESUME_DELETE_MENU_ACTION:
+            return Locator(self, selector, self.menu_count)
         if self.clicked:
             if selector == RESUME_LIST_CARD:
                 return Locator(
@@ -163,3 +183,49 @@ def test_recovery_reload_waits_for_card_hydration(monkeypatch):
     result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
     assert result.success is True
     assert page.reloaded == "domcontentloaded"
+
+
+def test_dry_run_resolves_direct_delete_action_without_menu(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page()
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=True)
+    assert result.success is True
+    assert page.menu_opened is False
+    assert page.clicked is False
+
+
+def test_dry_run_resolves_menu_delete_action(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page(direct_count=0, menu_count=1)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=True)
+    assert result.success is True
+    assert page.menu_opened is True
+    assert page.clicked is False
+
+
+def test_menu_delete_action_preserves_post_click_verification(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page(direct_count=0, menu_count=1)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
+    assert result.success is True
+    assert result.uncertain is False
+    assert page.menu_opened is True
+    assert page.clicked is True
+
+
+def test_missing_menu_delete_action_fails_closed(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page(direct_count=0, menu_count=0)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=True)
+    assert result.success is False
+    assert result.uncertain is False
+    assert "действие удаления" in result.reason
+
+
+def test_ambiguous_menu_delete_action_fails_closed(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page(direct_count=0, menu_count=2)
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=True)
+    assert result.success is False
+    assert result.uncertain is False
+    assert "однозначно" in result.reason
