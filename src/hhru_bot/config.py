@@ -243,8 +243,11 @@ def load_config(path: str | Path) -> AppConfig:
                 resume.search,
                 exclude_employers=[
                     *configured,
-                    *(name for name in current_employers
-                      if name.casefold() not in {item.casefold() for item in configured}),
+                    *(
+                        name
+                        for name in current_employers
+                        if name.casefold() not in {item.casefold() for item in configured}
+                    ),
                 ],
                 current_employers=list(current_employers),
             )
