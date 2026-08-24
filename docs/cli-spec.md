@@ -457,6 +457,16 @@
   короткий срок должно предупреждать (`[INFO] Уже копировали X сегодня`), чтобы не
   плодить дубли на hh.ru. Дневной лимит на копирование — на усмотрение feature-ишью.
 
+#### `rename-resume` — переименовать резюме в списке (#522)
+
+- **Природа:** WRITE-hh-ru; действие обратимо и не видно посторонним.
+- **Сигнатура:** `hhru_bot rename-resume --resume <id> --name "..." [--dry-run] --force`
+- `--force` или подтверждение в TTY требуется для боевого режима; `--dry-run`
+  только показывает план.
+- Запись в `actions` выполняется через `DurableMutationAttempt` с
+  `action='rename_resume'`. До подтверждения селектора поля названия в живом DOM
+  команда обязана отказать fail-closed и ничего не менять.
+
 #### `create-resume` — создать пустой черновик резюме
 
 - **Природа:** WRITE-hh-ru
@@ -728,6 +738,7 @@ READ-команды (быстрые, безопасные) → WRITE-local → W
 | 2 (LOCAL) | `clear-skipped`     | WRITE-local | решение о таблице `skipped`       |
 | 3 (HH-RU) | `reply-employers`   | WRITE-hh-ru | `responses` #12 + idempotency     |
 | 3 (HH-RU) | `copy-resume`       | WRITE-hh-ru | селекторы страницы резюме (#116)  |
+| 3 (HH-RU) | `rename-resume`     | WRITE-hh-ru | подтвержденный селектор названия (#522) |
 | 4 (ОПАСН) | `clear-negotiations`| WRITE-hh-ru | `responses` #12, `--force`+аудит  |
 
 ## 6. Критерии готовности feature-ишью (реализующих эту спеку)
