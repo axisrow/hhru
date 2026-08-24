@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.languages as languages
 from hhru_bot.languages import (
@@ -75,14 +76,86 @@ def test_write_navigates_to_profile_not_resume_page(monkeypatch) -> None:
     page.locator.return_value = card
 
     calls = []
-    monkeypatch.setattr(languages, "goto_hh", lambda _page, url: calls.append(url))
+
+    def goto(_page, url, *, ready_selector=None):
+        calls.append((url, ready_selector))
+
+    monkeypatch.setattr(languages, "goto_hh", goto)
     monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
 
     result = edit_languages_on_hh(page, resume, (), dry_run=False, mode="append")
 
-    assert calls == ["https://hh.ru/applicant/profile/me"]
+    assert calls == [
+        (
+            "https://hh.ru/applicant/profile/me",
+            languages._LANGUAGE_PROFILE_READY_SELECTOR,
+        )
+    ]
     assert result.success
+
+
+def test_profile_marker_timeout_fails_before_any_write(monkeypatch) -> None:
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    add_button = MagicMock()
+    page.locator.return_value = add_button
+    monkeypatch.setattr(
+        languages,
+        "goto_hh",
+        MagicMock(side_effect=PlaywrightError("profile marker did not appear")),
+    )
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is False
+    assert "profile marker did not appear" in result.reason
+    add_button.click.assert_not_called()
+
+
+def test_attached_but_hidden_language_card_is_not_ready() -> None:
+    page = MagicMock()
+    card = MagicMock()
+    card.count.return_value = 1
+    card.first.wait_for.side_effect = PlaywrightError("still hidden")
+    page.locator.return_value = card
+
+    assert languages.wait_for_language_card(page) is None
+
+
+def test_ambiguous_language_card_fails_before_any_write(monkeypatch) -> None:
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+    card = MagicMock()
+    card.count.return_value = 2
+    add_button = MagicMock()
+
+    def locator(selector):
+        from hhru_bot.selector_groups import resume_page
+
+        if selector == resume_page.RESUME_LANGUAGE_CARD:
+            return card
+        if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        return MagicMock()
+
+    page.locator.side_effect = locator
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is False
+    assert "не найдена однозначно" in result.reason
+    add_button.click.assert_not_called()
 
 
 class _StrictLastLocator:
@@ -151,7 +224,7 @@ def test_add_language_flow_uses_last_as_a_property_not_a_call(monkeypatch) -> No
     dialog.locator.return_value = form
     page.get_by_role.return_value = _StrictLastLocator(dialog)
 
-    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
 
@@ -186,7 +259,7 @@ def test_unconfirmed_level_aborts_before_any_click(monkeypatch) -> None:
         else MagicMock()
     )
 
-    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
 
@@ -202,6 +275,95 @@ def test_unconfirmed_level_aborts_before_any_click(monkeypatch) -> None:
     assert result.acted is False
     assert "German" in result.reason
     add_button.click.assert_not_called()
+
+
+def test_failure_after_opening_modal_but_before_save_is_not_acted(monkeypatch) -> None:
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+    card = MagicMock()
+    card.count.return_value = 1
+    card.locator.return_value.all.return_value = []
+    add_button = MagicMock()
+    add_button.count.return_value = 1
+
+    def locator(selector):
+        from hhru_bot.selector_groups import resume_page
+
+        if selector == resume_page.RESUME_LANGUAGE_CARD:
+            return card
+        if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        return MagicMock()
+
+    page.locator.side_effect = locator
+    dialog = MagicMock()
+    form = MagicMock()
+    dialog.locator.return_value = form
+    page.get_by_role.return_value = _StrictLastLocator(dialog)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(
+        languages,
+        "_choose_language",
+        MagicMock(side_effect=PlaywrightError("selector rerendered")),
+    )
+    save_lookup = MagicMock()
+    monkeypatch.setattr(languages, "_language_save_button", save_lookup)
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is False
+    assert "selector rerendered" in result.reason
+    add_button.click.assert_called_once_with()
+    save_lookup.assert_not_called()
+
+
+def test_save_click_error_is_acted_and_unconfirmed(monkeypatch) -> None:
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+    card = MagicMock()
+    card.count.return_value = 1
+    card.locator.return_value.all.return_value = []
+    add_button = MagicMock()
+    add_button.count.return_value = 1
+
+    def locator(selector):
+        from hhru_bot.selector_groups import resume_page
+
+        if selector == resume_page.RESUME_LANGUAGE_CARD:
+            return card
+        if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        return MagicMock()
+
+    page.locator.side_effect = locator
+    dialog = MagicMock()
+    form = MagicMock()
+    dialog.locator.return_value = form
+    page.get_by_role.return_value = _StrictLastLocator(dialog)
+    save = MagicMock()
+    save.click.side_effect = PlaywrightError("navigation during save")
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(languages, "_choose_language", MagicMock())
+    monkeypatch.setattr(languages, "_choose_degree", MagicMock())
+    monkeypatch.setattr(languages, "_language_save_button", MagicMock(return_value=save))
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is True
+    assert "navigation during save" in result.reason
+    save.click.assert_called_once_with()
 
 
 def test_dialog_hidden_is_not_trusted_as_proof_of_persistence(monkeypatch) -> None:
@@ -240,7 +402,7 @@ def test_dialog_hidden_is_not_trusted_as_proof_of_persistence(monkeypatch) -> No
     dialog.locator.return_value = form
     page.get_by_role.return_value = _StrictLastLocator(dialog)
 
-    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
 
@@ -271,7 +433,7 @@ def test_existing_languages_are_read_from_cell_text_not_split_on_comma(monkeypat
     card.locator.return_value.all.return_value = [row]
     page.locator.return_value = card
 
-    monkeypatch.setattr(languages, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(languages, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(languages, "has_login_form", lambda _page: False)
 

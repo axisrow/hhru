@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -55,11 +54,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..languages import (
+        _open_language_profile,
         build_languages_prompt,
         edit_languages_on_hh,
         parse_language_plan,
         read_existing_languages,
-        wait_for_language_card,
     )
 
     config = load_config_or_exit(args.config)
@@ -143,19 +142,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            from ..browser import HH_BASE_URL, goto_hh, has_auth_cookie, has_login_form
 
             # Languages are a profile-level entity on hh.ru, confirmed live
             # (#265): /resume/{id} never renders a languages block, only
             # /applicant/profile/me does, and a saved language applies to
             # every resume on the account.
-            goto_hh(page, f"{HH_BASE_URL}/applicant/profile/me")
-            if not has_auth_cookie(page) or has_login_form(page):
-                print("[FAIL] Сессия hh.ru не подтверждена")
-                return True
-            if urlsplit(page.url).path != "/applicant/profile/me":
-                print("[FAIL] Страница профиля не подтверждена")
-                return True
             # #265 code-review round 1: fail closed on an indeterminate card
             # instead of silently feeding the LLM a false "no existing
             # languages" premise (PageStateIndeterminate invariant, CLAUDE.md).
@@ -167,12 +158,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
             # like every other failure path in this command, instead of
             # letting a bare traceback surface.
             try:
-                card = wait_for_language_card(page)
-                if card is None:
-                    print("[FAIL] Карточка языков не найдена однозначно")
-                    return True
+                card = _open_language_profile(page)
                 existing = read_existing_languages(card)
-            except PlaywrightError as exc:
+            except (PlaywrightError, RuntimeError) as exc:
                 print(f"[FAIL] Карточка языков не подтверждена: {exc}")
                 return True
             try:

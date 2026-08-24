@@ -1,6 +1,6 @@
 """Контактные данные аккаунта на ``/profile/me`` и в резюме.
 
-Проверено live-дампом залогиненной сессии 2026-08-18 (read-only).
+Проверено live-дампом залогиненной сессии 2026-08-24 (read-only).
 
 Каноничный account-level источник — ``/profile/me`` (ссылка из меню
 профиля), а не указанный в первоначальном плане ``/applicant/personal``:
@@ -16,8 +16,15 @@
 
 from __future__ import annotations
 
-# Account-level fields: confirmed in the authenticated live DOM of /profile/me.
+# ``/profile/me`` redirects to ``/applicant/profile/me``.  Its single visible,
+# non-empty h1 is the current name/readiness marker; it must not by itself
+# authorize absence-based cleanup of the older field schema below.
 ACCOUNT_PROFILE_PATH = "/profile/me"
+ACCOUNT_PROFILE_READY = "h1[data-qa='title']"
+
+# Account-level fields from the authenticated live DOM observed on 2026-08-18.
+# The common-card name/city selectors were absent on 2026-08-24, so the first
+# name remains a separate schema marker before any stale values may be removed.
 ACCOUNT_PROFILE_FIRST_NAME = "[data-qa='profile-common-card-firstname']"
 ACCOUNT_PROFILE_LAST_NAME = "[data-qa='profile-common-card-lastname']"
 ACCOUNT_PROFILE_CITY = "[data-qa='profile-common-card-city']"

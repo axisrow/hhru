@@ -41,9 +41,15 @@ def test_read_account_profile_persists_only_confirmed_fields(monkeypatch, tmp_pa
             selectors.ACCOUNT_PROFILE_PHONE: " +7 900 ",
         },
     )
-    monkeypatch.setattr(account_profile, "goto_hh", MagicMock())
+    goto = MagicMock()
+    monkeypatch.setattr(account_profile, "goto_hh", goto)
 
     assert account_profile.read_account_profile(page, tmp_path / "history.db") == 2
+    goto.assert_called_once_with(
+        page,
+        "https://hh.ru/profile/me",
+        ready_selector=account_profile._PROFILE_READY_SELECTOR,
+    )
 
     fields = History(tmp_path / "history.db").list_profile_fields()
     assert {(field["question_key"], field["value"]) for field in fields} == {
@@ -59,6 +65,21 @@ def test_read_account_profile_is_fail_open_when_page_unavailable(monkeypatch, tm
     assert account_profile.read_account_profile(page, tmp_path / "history.db") == 0
     assert "[WARN] Профиль: страница недоступна" in capsys.readouterr().out
     assert not (tmp_path / "history.db").exists()
+
+
+def test_read_account_profile_preserves_values_when_hydration_never_recovers(monkeypatch, tmp_path):
+    history = History(tmp_path / "history.db")
+    history.upsert_profile_field("Телефон", "+7", source="hh_ru")
+    page = MagicMock(name="Page")
+    monkeypatch.setattr(
+        account_profile,
+        "goto_hh",
+        MagicMock(side_effect=PlaywrightError("profile marker did not appear")),
+    )
+
+    assert account_profile.read_account_profile(page, tmp_path / "history.db") == 0
+    assert history.get_profile_answers() == {"телефон": "+7"}
+    page.locator.assert_not_called()
 
 
 def test_read_account_profile_does_not_write_empty_or_ambiguous_values(
