@@ -719,10 +719,11 @@ def _optional_text(card, selector: str) -> str | None:
 def _parse_metro_stations(card) -> list[str] | None:
     """Parse the observed metro block, preserving its tri-state meaning.
 
-    A station element is the strongest observation.  When no station names
-    render, an observed address block is the independent signal that the card
-    was complete enough to record an empty station snapshot; without either
-    signal, preserve the previous history value.
+    Only station-specific elements are evidence about the metro block.  A
+    generic address match is deliberately not treated as evidence: if the
+    station selector drifts, clearing a previously known station list would
+    lose data.  A matching station element with no usable text is an observed
+    empty block; without one, preserve the previous history value.
     """
     locator = card.locator(sel.VACANCY_CARD_METRO_STATION)
     station_count = locator.count()
@@ -731,9 +732,7 @@ def _parse_metro_stations(card) -> list[str] | None:
         station = locator.nth(index).inner_text().strip()
         if station and station not in stations:
             stations.append(station)
-    if station_count:
-        return stations
-    return [] if card.locator(sel.VACANCY_CARD_ADDRESS).count() else None
+    return stations if station_count else None
 
 
 # --- парсинг инфо о работодателе из карточки (issue #74, Этап 1) -------------
