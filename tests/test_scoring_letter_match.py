@@ -96,3 +96,16 @@ def test_letter_negation_is_scoped_to_the_negated_token_not_whole_letter():
     # Python отрицаем в письме — не должен внести вклад в 100%; Kubernetes не
     # отрицаем и есть в вакансии — совпадение не должно быть занулено:
     assert 0.0 < mixed.score_0_100 < 100.0
+
+
+def test_letter_negation_does_not_cross_sentence_boundary():
+    """Ревью PR #549 (/review, cycle 3): маркер отрицания в одном предложении
+    письма не должен гасить токен навыка из другого предложения. Clause-aware
+    ``_is_negated`` (#509) требует передачи ``clause_ids`` — letter-путь обязан
+    её использовать, иначе «Я знаю Python. Не требуется SQL» ложно вычёркивает
+    python."""
+    outcome = letter_match_score(card("Требуется Python, SQL"), "Я знаю Python. Не требуется SQL")
+
+    # python из первого предложения не под отрицанием — совпадение должно
+    # засчитаться (score > 0), а не обнулиться из-за «не требуется» во втором:
+    assert outcome.score_0_100 > 0.0

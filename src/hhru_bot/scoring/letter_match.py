@@ -36,7 +36,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .resume_match import NO_DATA_RATIONALE, _is_negated, _matched_ratio, _tokenize
+from .resume_match import (
+    NO_DATA_RATIONALE,
+    _is_negated,
+    _matched_ratio,
+    _tokenize,
+    _tokenize_with_boundaries,
+)
 from .types import ScoreOutcome
 
 if TYPE_CHECKING:
@@ -53,9 +59,14 @@ def _drop_letter_negated_tokens(letter_text: str) -> str:
     ОТСУТСТВИИ навыка, а не о его наличии. Такие токены не должны попадать в
     ``_matched_ratio`` как «подтверждённые письмом» — иначе явный отказ от
     навыка засчитывается как идеальное совпадение с требованием вакансии.
+
+    ``clause_ids`` передаются в ``_is_negated`` (фича #509): без них маркер
+    отрицания из одного предложения письма гасил бы токен навыка из другого
+    («Я знаю Python. Не требуется SQL» ложно вычёркивало python) — найдено
+    ревью PR #549 (/review, cycle 3).
     """
-    letter_tokens = _tokenize(letter_text)
-    kept = [t for i, t in enumerate(letter_tokens) if not _is_negated(letter_tokens, i)]
+    letter_tokens, clause_ids = _tokenize_with_boundaries(letter_text)
+    kept = [t for i, t in enumerate(letter_tokens) if not _is_negated(letter_tokens, i, clause_ids)]
     return " ".join(kept)
 
 
