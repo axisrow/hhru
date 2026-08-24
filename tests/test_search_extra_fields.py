@@ -175,6 +175,7 @@ def test_parse_metro_stations_distinguishes_missing_and_empty_blocks():
     class _EmptyCard:
         def locator(self, selector):
             if selector == search.sel.VACANCY_CARD_METRO_STATION:
+
                 class _EmptyLocator(_TextLocator):
                     def nth(self, index):
                         assert index == 0

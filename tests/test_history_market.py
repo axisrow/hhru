@@ -125,9 +125,7 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
 
 def test_empty_metro_snapshot_is_persisted_and_missing_snapshot_is_preserved(tmp_path):
     h = History(tmp_path / "h.db")
-    h.upsert_vacancy_seen(
-        vacancy_id="123", search_query="python", metro_stations='["Динамо"]'
-    )
+    h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations='["Динамо"]')
     h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations="[]")
     assert h.list_vacancies_seen()[0]["metro_stations"] == "[]"
 
