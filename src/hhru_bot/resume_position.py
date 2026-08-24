@@ -10,14 +10,17 @@ never clicked by the dry-run path.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from .browser import HH_BASE_URL, goto_hh, has_login_form, open_hydrated_resume_editor
 from .config import ResumeConfig
+from .logging_setup import LOG_DIR
 from .responses import NotAuthenticated
 from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
 from .selector_groups.resume_page import (
@@ -38,6 +41,13 @@ from .selector_groups.resume_page import (
 from .selector_groups.resume_page import (
     RESUME_SPECIALIZATION_SUBMIT as SPECIALIZATION_SUBMIT,
 )
+
+logger = logging.getLogger("hhru_bot.resume_position")
+
+# Explicit, generous but bounded — avoids a silent 30s-default hang per call
+# (CLAUDE.md requires an inline timeout with a comment for every post-render
+# wait; the position editor has none of its own dedicated helper).
+_CONTROL_WAIT_TIMEOUT_MS = 5_000
 
 FORM = "[data-qa='resume-edit-position-form']"
 EDIT = "[data-qa='edit-position-button']"
@@ -279,6 +289,26 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionValues:
     )
 
 
+def _dump_control_failure(page: Page, selector: str, exc: Exception) -> None:
+    """Best-effort DOM/screenshot dump on a _set_control failure (#561 review).
+
+    A live single-value run failed without a captured trace, leaving the
+    RESUME_POSITION_DROPDOWN geometry unverified (cycle-review UNVERIFIED).
+    This dump turns the next live failure into recoverable evidence instead
+    of silence.
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "_", selector.strip("[]").replace("data-qa='", ""))
+    try:
+        (LOG_DIR / f"resume_position_{slug}_failure.html").write_text(
+            page.content(), encoding="utf-8"
+        )
+        page.screenshot(path=str(LOG_DIR / f"resume_position_{slug}_failure.png"), full_page=True)
+        logger.warning("resume_position: %s — дамп сохранён (%s)", selector, exc)
+    except PlaywrightError as dump_exc:
+        logger.warning("resume_position: %s — дамп недоступен: %s", selector, dump_exc)
+
+
 def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) -> None:
     loc = page.locator(selector)
     if loc.count() != 1:
@@ -289,20 +319,26 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         el.fill(value)
         return
     panel = page.locator(RESUME_POSITION_DROPDOWN)
-    # Magritte leaves the previous panel mounted after a selection.  Waiting
-    # for the panel itself avoids both an intercepted trigger click and a
-    # stale option lookup on the next value.
-    panel.wait_for(state="hidden")
-    el.click()
-    panel.wait_for(state="visible")
-    option = panel.get_by_role("option", name=labels[value], exact=True)
-    if option.count() != 1:
-        raise RuntimeError(f"вариант формы не найден: {labels[value]}")
-    option.click()
-    # Selecting an option does not close this dropdown.  Escape is deliberately
-    # avoided because it can close the whole editor form.
-    el.click()
-    panel.wait_for(state="hidden")
+    try:
+        # Magritte leaves the previous panel mounted after a selection.
+        # Waiting for the panel itself avoids both an intercepted trigger
+        # click and a stale option lookup on the next value. Explicit,
+        # bounded timeouts (CLAUDE.md) turn a silent hang into a fast,
+        # labeled failure instead of the default 30s per wait.
+        panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+        el.click()
+        panel.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+        option = panel.get_by_role("option", name=labels[value], exact=True)
+        if option.count() != 1:
+            raise RuntimeError(f"вариант формы не найден: {labels[value]}")
+        option.click()
+        # Selecting an option does not close this dropdown.  Escape is
+        # deliberately avoided because it can close the whole editor form.
+        el.click()
+        panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        _dump_control_failure(page, selector, exc)
+        raise
 
 
 def _set_specializations(page: Page, values: list[str]) -> None:
@@ -354,14 +390,14 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     if plan.employment and len(plan.employment) > 1:
         raise RuntimeError(
             "несколько значений --employment не подтверждены на форме hh.ru: "
-            "live-прогон показал, что control сохраняет только последнее "
-            "переданное значение (issue #526 review). Передайте одно значение."
+            "два независимых live-прогона (issue #526 review) не подтвердили, что "
+            "сохраняются все переданные значения. Передайте одно значение."
         )
     if plan.work_format and len(plan.work_format) > 1:
         raise RuntimeError(
             "несколько значений --work-format не подтверждены на форме hh.ru: "
-            "live-прогон показал, что control сохраняет только последнее "
-            "переданное значение (issue #526 review). Передайте одно значение."
+            "два независимых live-прогона (issue #526 review) не подтвердили, что "
+            "сохраняются все переданные значения. Передайте одно значение."
         )
     if plan.specializations:
         _set_specializations(page, plan.specializations)

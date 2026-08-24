@@ -141,7 +141,7 @@ def test_set_control_reopens_dropdown_for_each_value():
             self.open = False
             self.selected = []
 
-        def wait_for(self, *, state):
+        def wait_for(self, *, state, timeout=None):
             assert self.open is (state == "visible")
 
         def get_by_role(self, role, *, name, exact):
@@ -180,6 +180,57 @@ def test_set_control_reopens_dropdown_for_each_value():
 
     assert panel.selected == ["Удалённо", "Гибрид"]
     assert control.clicks == 4
+
+
+def test_set_control_passes_explicit_timeout_to_panel_waits():
+    """#561 review: an unlabeled 30s default hang read as CLI silence."""
+    panel = MagicMock()
+    panel.wait_for.return_value = None
+    option = MagicMock()
+    option.count.return_value = 1
+    panel.get_by_role.return_value = option
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+
+    for call in panel.wait_for.call_args_list:
+        assert call.kwargs["timeout"] == resume_position._CONTROL_WAIT_TIMEOUT_MS
+
+
+def test_set_control_dumps_dom_on_timeout(monkeypatch):
+    """#561 review: a live single-value run failed with no captured evidence."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    panel = MagicMock()
+    panel.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+    dump = MagicMock()
+    monkeypatch.setattr(resume_position, "_dump_control_failure", dump)
+
+    with pytest.raises(PlaywrightError):
+        resume_position._set_control(
+            page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+        )
+
+    dump.assert_called_once()
+    assert dump.call_args.args[0] is page
+    assert dump.call_args.args[1] == resume_position.WORK_FORMAT
 
 
 def test_apply_position_sets_confirmed_specializations(monkeypatch):
