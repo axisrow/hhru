@@ -18,6 +18,7 @@ import sys
 import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -303,20 +304,31 @@ def write_resume_config(path: str | Path, resume, slug: str, new_resume_id: str)
 
 
 def _set_copy_title(page, new_resume_id: str, title: str) -> None:
-    """Set the title on an already-created copy using resume-position logic."""
-    from ..browser import HH_BASE_URL, goto_hh
-    from ..config import bare_resume
+    """Set and confirm the title on an already-created copy.
+
+    Fresh hh.ru clones are unfinished drafts.  Their profile URL redirects to
+    the ``professional_role`` wizard and therefore has no profile edit trigger;
+    the dedicated position editor remains the identity-bound surface that can
+    accept the requested title.
+    """
+    from ..browser import HH_BASE_URL, goto_hh, has_login_form
+    from ..responses import NotAuthenticated
     from ..resume_position import (
         FORM,
         SAVE,
         PositionValues,
         apply_position,
-        open_position_form,
         read_display_position,
     )
 
-    copied_resume = bare_resume(new_resume_id)
-    open_position_form(page, copied_resume)
+    edit_path = f"/resume/edit/{new_resume_id}/position"
+    goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+    if has_login_form(page):
+        raise NotAuthenticated("страница содержит форму входа — сессия отвергнута")
+    form = page.locator(FORM)
+    form.first.wait_for(state="visible", timeout=30_000)
+    if form.count() != 1 or urlsplit(page.url).path.rstrip("/") != edit_path:
+        raise RuntimeError("форма редактирования title открыта не для созданной копии")
     apply_position(page, PositionValues(title=title))
     save = page.locator(SAVE)
     if save.count() != 1:

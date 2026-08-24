@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -244,6 +246,14 @@ def _patch_env(monkeypatch, page):
     monkeypatch.setattr(cr, "goto_hh", _goto)
     monkeypatch.setattr(
         cr, "_card_hashes", lambda p: page._card_hashes.pop(0) if page._card_hashes else set()
+    )
+    monkeypatch.setattr(
+        cr,
+        "_resume_lineage",
+        lambda p: {
+            OLD_ID: cr.ResumeLineage("100", ""),
+            NEW_ID: cr.ResumeLineage("101", "100"),
+        },
     )
     monkeypatch.setattr(cr, "_monotonic", lambda: page.now)
 
@@ -642,19 +652,18 @@ def test_duplicate_portal_is_authorized_by_identity_bound_menu(monkeypatch):
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE), ("", DUP_SEL)]
 
 
-def test_url_shows_old_id_without_candidate_fails_closed(monkeypatch):
-    # Навигация привела на URL исходного резюме — url_candidate пуст. Без
-    # identity-bound привязки список мог показать чужое/конкурентное резюме как
-    # «копию»; поэтому diff без кандидата не даёт успех — fail-closed.
+def test_url_shows_old_id_uses_matching_parent_lineage(monkeypatch):
+    # Live SPA оставляет URL на исходном/общем wizard route. Серверный
+    # parentResumeId identity-bound связывает единственную новую карточку с
+    # исходным резюме, поэтому URL больше не обязателен.
     page = StubPage(
         url_after_click=f"https://hh.ru/resume/{OLD_ID}",
         card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
     )
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
-    assert not result.success
-    assert result.uncertain is True
-    assert "не подтвердил новый resume_id" in result.reason
+    assert result.success
+    assert result.new_resume_id == NEW_ID
     # Список перезагружали для diff.
     assert page.gotos == [cr.RESUMES_LIST_URL, cr.RESUMES_LIST_URL]
 
@@ -668,10 +677,60 @@ def test_concurrent_no_navigation_diff_never_succeeds(monkeypatch):
         card_hashes=[{OLD_ID}, {OLD_ID, "d" * 38}],
     )
     _patch_env(monkeypatch, page)
+    monkeypatch.setattr(
+        cr,
+        "_resume_lineage",
+        lambda p: {
+            OLD_ID: cr.ResumeLineage("100", ""),
+            "d" * 38: cr.ResumeLineage("102", "999"),
+        },
+    )
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
     assert result.uncertain is True
-    assert "однозначно нельзя" in result.reason
+    assert result.new_resume_id == "d" * 38
+    assert "parentResumeId=999" in result.reason
+
+
+def test_no_navigation_with_matching_parent_lineage_succeeds(monkeypatch):
+    page = StubPage(
+        url_after_click="https://hh.ru/profile/resume/professional_role",
+        card_hashes=[{OLD_ID}, {OLD_ID, NEW_ID}],
+    )
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert result.success
+    assert result.new_resume_id == NEW_ID
+
+
+def test_resume_lineage_reads_server_clone_relation(monkeypatch):
+    monkeypatch.setattr(
+        cr,
+        "parse_initial_state",
+        lambda html: {
+            "applicantResumes": [
+                {
+                    "_attributes": {
+                        "hash": NEW_ID,
+                        "id": 101,
+                        "parentResumeId": 100,
+                    }
+                }
+            ]
+        },
+    )
+
+    lineage = cr._resume_lineage(SimpleNamespace(content=lambda: "<html>"))
+
+    assert lineage == {NEW_ID: cr.ResumeLineage("101", "100")}
+
+
+def test_resume_lineage_malformed_state_is_unavailable(monkeypatch):
+    monkeypatch.setattr(cr, "parse_initial_state", lambda html: ["interstitial"])
+
+    assert cr._resume_lineage(SimpleNamespace(content=lambda: "<html>")) == {}
 
 
 def test_new_url_without_list_reconciliation_fails_closed(monkeypatch):

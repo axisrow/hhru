@@ -772,7 +772,7 @@ def _patch_set_title_deps(monkeypatch, *, displayed_title):
     import hhru_bot.browser as browser_module
     import hhru_bot.resume_position as resume_position
 
-    monkeypatch.setattr(resume_position, "open_position_form", lambda page, resume: None)
+    monkeypatch.setattr(browser_module, "has_login_form", lambda page: False)
     monkeypatch.setattr(resume_position, "apply_position", lambda page, plan: None)
     monkeypatch.setattr(
         resume_position,
@@ -784,17 +784,24 @@ def _patch_set_title_deps(monkeypatch, *, displayed_title):
     return goto_calls
 
 
-def test_set_copy_title_confirms_via_profile_page_after_save(monkeypatch):
+def test_set_copy_title_uses_direct_editor_then_confirms_profile(monkeypatch):
     goto_calls = _patch_set_title_deps(monkeypatch, displayed_title="Python-разработчик")
     page = SimpleNamespace(
+        url=f"https://hh.ru/resume/edit/{NEW_ID}/position",
         locator=lambda selector: SimpleNamespace(
-            count=lambda: 1, click=lambda: None, wait_for=lambda **kw: None
+            first=SimpleNamespace(wait_for=lambda **kw: None),
+            count=lambda: 1,
+            click=lambda: None,
+            wait_for=lambda **kw: None,
         )
     )
 
     cmd._set_copy_title(page, NEW_ID, "Python-разработчик")
 
-    assert goto_calls == [f"https://hh.ru/resume/{NEW_ID}"]
+    assert goto_calls == [
+        f"https://hh.ru/resume/edit/{NEW_ID}/position",
+        f"https://hh.ru/resume/{NEW_ID}",
+    ]
 
 
 def test_set_copy_title_raises_when_displayed_title_does_not_match(monkeypatch):
@@ -802,8 +809,12 @@ def test_set_copy_title_raises_when_displayed_title_does_not_match(monkeypatch):
     значения с запрошенным, иначе тихий untitled draft остаётся success."""
     _patch_set_title_deps(monkeypatch, displayed_title="")
     page = SimpleNamespace(
+        url=f"https://hh.ru/resume/edit/{NEW_ID}/position",
         locator=lambda selector: SimpleNamespace(
-            count=lambda: 1, click=lambda: None, wait_for=lambda **kw: None
+            first=SimpleNamespace(wait_for=lambda **kw: None),
+            count=lambda: 1,
+            click=lambda: None,
+            wait_for=lambda **kw: None,
         )
     )
 
