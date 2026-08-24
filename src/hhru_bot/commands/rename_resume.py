@@ -15,7 +15,8 @@ def register(subparsers) -> None:
         description=(
             "Изменяет название одного резюме в списке hh.ru. WRITE-hh-ru: "
             "боевой режим требует --force или интерактивного подтверждения; "
-            "--dry-run ничего не сохраняет."
+            "--dry-run ничего не сохраняет. До подтверждения селектора поля "
+            "названия в живом DOM боевой режим недоступен (fail-closed)."
         ),
     )
     parser.add_argument("--resume", required=True, help="Slug из конфига или resume_id HH.ru")
