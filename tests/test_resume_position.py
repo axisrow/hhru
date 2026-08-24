@@ -153,8 +153,12 @@ def test_set_control_reopens_dropdown_for_each_value():
         panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
     )
 
-    resume_position._set_control(page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS)
-    resume_position._set_control(page, resume_position.WORK_FORMAT, "hybrid", resume_position.WORK_LABELS)
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "hybrid", resume_position.WORK_LABELS
+    )
 
     assert panel.selected == ["Удалённо", "Гибрид"]
     assert control.clicks == 4
