@@ -244,6 +244,7 @@ def parse_competitor_resume_text(
     headings: list[str],
 ) -> CompetitorResume:
     """Parse the applicant-visible main section, excluding header identity fields."""
+
     def normalize(value: str) -> str:
         return value.replace("\u00a0", " ").replace("\u2009", " ").replace("\u202f", " ").strip()
 
@@ -349,10 +350,7 @@ def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> 
     """Build a deterministic, PII-free report from latest stored snapshots."""
     roles = Counter(str(row["desired_role"]) for row in rows if row.get("desired_role"))
     skills = Counter(
-        skill["name"]
-        for row in rows
-        for skill in row.get("skills", [])
-        if skill.get("name")
+        skill["name"] for row in rows for skill in row.get("skills", []) if skill.get("name")
     )
     specializations = Counter(
         value for row in rows for value in row.get("specializations", []) if value

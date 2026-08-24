@@ -34,7 +34,9 @@ def test_history_creates_competitor_tables(tmp_path):
     db = tmp_path / "history.db"
     History(db)
     with sqlite3.connect(db) as conn:
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     assert {
         "competitor_resumes",
         "competitor_resume_skills",
