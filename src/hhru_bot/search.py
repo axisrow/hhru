@@ -797,6 +797,24 @@ def _extract_vacancy_id(href: str) -> str | None:
     return parts[-1] if parts and parts[-1].isdigit() else None
 
 
+def current_employer_hit(company: str, current_employers: list[str]) -> str | None:
+    """Общий guard текущего работодателя (#524) для filter_candidates и apply --approved.
+
+    Возвращает ``""`` (пустую строку), если секция задана, но имя работодателя
+    не прочиталось — fail-closed: отклик без подтверждения «не наш работодатель»
+    не отправляется. Возвращает совпавшее имя при casefold-подстроке, и ``None``,
+    когда секция не задана или совпадения нет. Пустая строка не ``None``, чтобы
+    вызывающий мог отличить «не прочиталось» от «совпадения нет» (важно для
+    политики кэширования в filter_candidates).
+    """
+    if not current_employers:
+        return None
+    company_lower = company.casefold()
+    if not company_lower:
+        return ""
+    return next((e for e in current_employers if e.casefold() in company_lower), None)
+
+
 def filter_candidates(
     cards: list[VacancyCard],
     filters: SearchFilters,
@@ -846,22 +864,18 @@ def filter_candidates(
         # каждую отдельно (раньше их сливала отдельная функция в одну строку).
         # Порядок employer→keyword сохранён. Совпадение берём конкретное — для
         # человекочитаемого вывода причины.
+        hit = current_employer_hit(card.company, filters.current_employers)
+        if hit is not None:
+            skipped.append((card, "текущий работодатель"))
+            if hit:
+                # Положительное совпадение (реальные данные) — в постоянный кэш
+                # skipped. Пустая company (""): скип на прогон БЕЗ записи — решение
+                # принято по временным данным (дрейф селектора/частичный рендер), и
+                # при восстановлении company вакансия должна пересматриваться заново,
+                # а не оставаться потерянной навсегда (is_skipped не различает причины).
+                history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.CURRENT_EMPLOYER)
+            continue
         company_lower = card.company.casefold()
-        if filters.current_employers and not company_lower:
-            # fail-closed: работодатель не прочитался (пустая company на карточке —
-            # дрейф селектора/частичный рендер). Скип на этот прогон, но БЕЗ записи
-            # в постоянный кэш skipped: решение принято по временным данным, и при
-            # восстановлении company вакансия должна пересматриваться заново, а не
-            # оставаться потерянной навсегда (is_skipped не различает причины).
-            skipped.append((card, "текущий работодатель"))
-            continue
-        current_employer_hit = next(
-            (e for e in filters.current_employers if e.casefold() in company_lower), None
-        )
-        if filters.current_employers and current_employer_hit is not None:
-            skipped.append((card, "текущий работодатель"))
-            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.CURRENT_EMPLOYER)
-            continue
         employer_hit = next(
             (e for e in filters.exclude_employers if e.casefold() in company_lower), None
         )
