@@ -50,6 +50,9 @@ class Locator:
 
     def click(self):
         if self.selector == RESUME_LIST_ACTION_MORE:
+            if self.page.menu_click_error and not self.page._menu_click_failed:
+                self.page._menu_click_failed = True
+                raise self.page.menu_click_error
             self.page.menu_opened = True
         elif self.selector in (RESUME_DELETE_BUTTON, RESUME_DELETE_MENU_ACTION):
             self.page.dialog_opened = True
@@ -93,6 +96,7 @@ class Page:
         direct_count=1,
         more_count=1,
         menu_count=0,
+        menu_click_error=None,
     ):
         self.url = delete.RESUMES_FULL_LIST_URL
         self.dialog_opened = False
@@ -113,6 +117,8 @@ class Page:
         self.more_count = more_count
         self.menu_count = menu_count
         self.menu_opened = False
+        self.menu_click_error = menu_click_error
+        self._menu_click_failed = False
 
     def reload(self, *, wait_until):
         self.reloaded = wait_until
@@ -211,6 +217,20 @@ def test_menu_delete_action_preserves_post_click_verification(monkeypatch):
     assert result.uncertain is False
     assert page.menu_opened is True
     assert page.clicked is True
+
+
+def test_menu_action_retries_after_hydration_recovery(monkeypatch):
+    _patch_goto(monkeypatch)
+    page = Page(
+        direct_count=0,
+        menu_count=1,
+        menu_click_error=PlaywrightError("menu handler not hydrated yet"),
+    )
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=True)
+    assert result.success is True
+    assert page.menu_opened is True
+    assert page.reloaded == "domcontentloaded"
+    assert page.clicked is False
 
 
 def test_missing_menu_delete_action_fails_closed(monkeypatch):

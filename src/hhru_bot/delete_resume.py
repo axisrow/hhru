@@ -76,8 +76,23 @@ def _resolve_delete_action(page: Page, card) -> tuple[Locator | None, str]:
     try:
         more.first.click()
         menu_action.first.wait_for(state="visible", timeout=15000)
-    except PlaywrightError as exc:
-        return None, f"не удалось открыть действие удаления в меню: {exc}"
+    except PlaywrightError:
+        # The SSR actions button can accept a Playwright click before its React
+        # handler is hydrated. Reload once and resolve the same card again so
+        # the second click is a real menu-open attempt, not a stale locator.
+        try:
+            page.reload(wait_until="domcontentloaded")
+            card.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
+            if card.count() != 1:
+                return None, "карточка для recovery меню не подтверждена однозначно"
+            more = card.locator(RESUME_LIST_ACTION_MORE)
+            if more.count() != 1:
+                return None, "меню действий карточки не подтверждено после recovery"
+            more.first.click()
+            menu_action = page.locator(RESUME_DELETE_MENU_ACTION)
+            menu_action.first.wait_for(state="visible", timeout=15000)
+        except PlaywrightError as recovery_exc:
+            return None, f"не удалось открыть действие удаления в меню: {recovery_exc}"
     menu_count = menu_action.count()
     if menu_count != 1:
         return None, "действие удаления в меню не подтверждено однозначно"
