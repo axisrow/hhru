@@ -41,6 +41,7 @@ WRITE_COMMANDS = frozenset(
         "bump",
         "run",
         "copy-resume",
+        "rename-resume",
         "publish-resume",
         "edit-experience",
         "about",
