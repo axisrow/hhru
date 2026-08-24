@@ -12,7 +12,7 @@ HH.ru: открывает /applicant/my_resumes под сохранённой с
 ``config.yaml`` без похода на hh.ru (hh.ru НЕ дёргается).
 
 Один стабильный формат live-вывода: ``resume_id | alias | название | статус``;
-``--status`` добавляет колонки «можно bump»/«последний bump» из ЛОКАЛЬНОЙ истории
+``--status`` добавляет колонки «видимость», «можно bump»/«последний bump» из ЛОКАЛЬНОЙ истории
 (``throttle.can_bump_now``, ``history.last_action_at`` — keyed by resume_id,
 поэтому работают для любых live-карточек, не только конфигурированных).
 ``--local`` печатает таблицу ``id | resume_id`` (+bump-колонки с ``--status``).
@@ -116,6 +116,15 @@ def _format_status(status: str | None) -> str:
     return "—"
 
 
+def _format_visibility(is_searchable: bool | None) -> str:
+    """Показать только подтверждённую поисковую видимость резюме."""
+    if is_searchable is True:
+        return "видно в поиске"
+    if is_searchable is False:
+        return "не видно в поиске"
+    return "не подтверждена"
+
+
 def _live_rows(cards, alias_by_hash: dict[str, str], with_status: bool, throttle, history):
     """Строки live-таблицы: resume_id | alias | название | статус (| bump-колонки).
 
@@ -133,6 +142,8 @@ def _live_rows(cards, alias_by_hash: dict[str, str], with_status: bool, throttle
             _format_status(card.status),
         ]
         if with_status:
+            if hasattr(card, "is_searchable"):
+                row.append(_format_visibility(card.is_searchable))
             can_bump, wait_left = throttle.can_bump_now(card.resume_id)
             last_at = history.last_action_at(card.resume_id, "bump")
             row.append(_format_bump_cell(can_bump, wait_left))
@@ -246,9 +257,24 @@ def run(args: argparse.Namespace) -> None:
     alias_by_hash = {r.resume_id: r.id for r in config.resumes}
     header = ["resume_id", "alias", "название", "статус"]
     if args.status:
+        if any(hasattr(card, "is_searchable") for card in cards):
+            header.append("видимость")
         header += ["можно bump", "последний bump"]
     print()
     print(_ascii_table(header, _live_rows(cards, alias_by_hash, args.status, throttle, history)))
+
+    hidden_published = [
+        card
+        for card in cards
+        if getattr(card, "is_searchable", None) is False
+        and _format_status(card.status) == "опубликовано"
+    ]
+    if hidden_published:
+        print()
+        print(
+            "[WARN] Опубликованные резюме не видны в поиске работодателей: "
+            + ", ".join(card.resume_id for card in hidden_published)
+        )
 
     # Сироты overlay: настройка есть, резюме на hh.ru нет (удалено?) — не молча.
     live_ids = {c.resume_id for c in cards}

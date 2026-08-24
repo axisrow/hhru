@@ -25,12 +25,13 @@ from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_place
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
 from ..exit_codes import CommandExitCode
-from ..history import CommandRunBusy, History
+from ..history import SKIP_REASONS, CommandRunBusy, History
 from ..search import (
     _LLM_SHORTLIST_DEFAULT,
     VacancyCard,
     VacancySearchIndeterminate,
     _has_next_page,
+    current_employer_hit,
     filter_candidates,
     rank_candidates,
     search_vacancies,
@@ -1072,6 +1073,21 @@ def _run_apply_for_resume(
         # history-based deduplication barrier on this explicit route too.
         if history.has_applied(resume.resume_id, approved_item["vacancy_id"]):
             history.finish_review(args.approved, "skipped")
+            approved_duplicate = True
+        elif (
+            current_employer_hit(approved_item["company"], resume.search.current_employers)
+            is not None
+        ):
+            # #524 safety-гейт действует и на явном пути --approved: запись очереди
+            # могла быть одобрена до настройки account.current_employer или до смены
+            # работодателя, а отклик текущему работодателю необратим. Тот же guard,
+            # что в filter_candidates (current_employer_hit), поэтому поведение
+            # едино; вакансия резолвится как skipped, отклик не отправляется.
+            history.finish_review(args.approved, "skipped")
+            history.record_skip(
+                resume.resume_id, approved_item["vacancy_id"], SKIP_REASONS.CURRENT_EMPLOYER
+            )
+            print("[skip] вакансия текущего работодателя — отклик не отправлен")
             approved_duplicate = True
     elif cards_override is None:
         try:

@@ -490,6 +490,7 @@ class _SkipReasons:
 
     STOPWORD_TITLE = "stopword_title"  # exclude_keywords совпал в названии
     STOPWORD_EMPLOYER = "stopword_employer"  # exclude_employers — стоп-компания
+    CURRENT_EMPLOYER = "current_employer"  # account.current_employer
     ALREADY_APPLIED = "already_applied"  # history.has_applied — уже откликались
     LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
     LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
@@ -517,6 +518,7 @@ SKIP_REASONS = _SkipReasons()
 SKIP_REASON_VALUES = (
     _SkipReasons.STOPWORD_TITLE,
     _SkipReasons.STOPWORD_EMPLOYER,
+    _SkipReasons.CURRENT_EMPLOYER,
     _SkipReasons.ALREADY_APPLIED,
     _SkipReasons.LOW_EMPLOYER_SIGNAL,
     _SkipReasons.LOW_LLM_SCORE,

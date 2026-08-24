@@ -20,6 +20,24 @@ from .browser import HH_BASE_URL, goto_hh, has_login_form, open_hydrated_resume_
 from .config import ResumeConfig
 from .responses import NotAuthenticated
 from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_ADD as SPECIALIZATION_ADD,
+)
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_DELETE as SPECIALIZATION_DELETE,
+)
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_MODAL as SPECIALIZATION_MODAL,
+)
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_OPTION as SPECIALIZATION_OPTION,
+)
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_SEARCH as SPECIALIZATION_SEARCH,
+)
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_SUBMIT as SPECIALIZATION_SUBMIT,
+)
 
 FORM = "[data-qa='resume-edit-position-form']"
 EDIT = "[data-qa='edit-position-button']"
@@ -287,6 +305,45 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
     panel.wait_for(state="hidden")
 
 
+def _set_specializations(page: Page, values: list[str]) -> None:
+    """Replace specializations through the confirmed nested tree selector."""
+    if page.locator(SPECIALIZATION_ADD).count() != 1:
+        raise RuntimeError("селектор добавления специализации не подтверждён")
+
+    # The editor's delete buttons only change the pending form.  Removing all
+    # existing cards first makes --specialization a replacement, not an append.
+    cards = page.locator(SPECIALIZATION_DELETE)
+    while cards.count():
+        cards.first.click()
+
+    page.locator(SPECIALIZATION_ADD).click()
+    modal = page.locator(SPECIALIZATION_MODAL)
+    if modal.count() != 1:
+        raise RuntimeError("панель выбора специализаций не открылась")
+    search = page.locator(SPECIALIZATION_SEARCH)
+    submit = page.locator(SPECIALIZATION_SUBMIT)
+    if search.count() != 1 or submit.count() != 1:
+        raise RuntimeError("селектор панели специализаций не подтверждён")
+
+    for value in values:
+        search.fill(value)
+        option = page.locator(SPECIALIZATION_OPTION).filter(
+            has_text=re.compile(rf"^{re.escape(value)}$")
+        )
+        option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
+        # The same leaf is rendered once under every matching parent category;
+        # its data-qa id is the stable identity.  Different ids with the same
+        # label are genuinely ambiguous because the CLI accepts labels only.
+        if not option_ids or len(option_ids) != 1:
+            raise RuntimeError(f"вариант специализации не найден однозначно: {value}")
+        option.first.click()
+
+    submit.click()
+    # Waiting for the option itself is insufficient: hh.ru keeps the panel
+    # mounted while applying the selection.
+    modal.wait_for(state="hidden", timeout=10_000)
+
+
 def apply_position(page: Page, plan: PositionValues) -> None:
     """Fill fields only. Caller owns confirmation and must click SAVE explicitly."""
     if plan.title == "":
@@ -295,7 +352,7 @@ def apply_position(page: Page, plan: PositionValues) -> None:
             '--title "Python-разработчик". Если title не нужно менять, не передавайте --title.'
         )
     if plan.specializations:
-        raise RuntimeError("селектор specializations не подтверждён на форме hh.ru")
+        _set_specializations(page, plan.specializations)
     if plan.title is not None:
         page.locator(TITLE).fill(plan.title)
     if plan.salary is not None:
