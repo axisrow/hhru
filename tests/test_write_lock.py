@@ -41,6 +41,7 @@ def test_lock_covers_all_hhru_write_commands():
         "bump",
         "run",
         "copy-resume",
+        "rename-resume",
         "publish-resume",
         "edit-experience",
         "about",
