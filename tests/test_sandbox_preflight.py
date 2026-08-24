@@ -147,9 +147,7 @@ def test_sandboxed_write_is_rejected_before_any_local_side_effect(
         ("whoami", ["whoami"]),
     ],
 )
-def test_local_modes_still_execute_inside_sandbox(
-    module_name, argv, monkeypatch, capsys
-) -> None:
+def test_local_modes_still_execute_inside_sandbox(module_name, argv, monkeypatch, capsys) -> None:
     import importlib
 
     command = importlib.import_module(f"hhru_bot.commands.{module_name}")
