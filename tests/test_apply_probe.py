@@ -209,6 +209,8 @@ class FakeProbePage:
             return _ClickTrackingLocator(present=self._submit, submit_clicks=self.submit_clicks)
         if selector == apply_form.APPLY_RESUME_SELECT:
             return _FakeLocator(present=self._resume_select, wait_sink=self.resume_select_waits)
+        if selector == apply_form.APPLY_RESUME_TOGGLE:
+            return _FakeLocator(present=self._resume_select)
         if selector.startswith(f"[data-qa='{apply_form.APPLY_RESUME_OPTION_PREFIX}"):
             resume_id = selector.split(apply_form.APPLY_RESUME_OPTION_PREFIX, 1)[1].rstrip("']")
             return _FakeLocator(present=resume_id in self._resume_options)
