@@ -520,7 +520,9 @@ def test_run_title_is_applied_after_clone(env, capsys, tmp_path, monkeypatch):
     assert "[OK] Резюме backend скопировано" in capsys.readouterr().out
 
 
-def test_run_title_failure_is_uncertain_and_mentions_created_copy(env, capsys, tmp_path, monkeypatch):
+def test_run_title_failure_is_uncertain_and_mentions_created_copy(
+    env, capsys, tmp_path, monkeypatch
+):
     def fail_title(*_args):
         raise RuntimeError("save failed")
 
