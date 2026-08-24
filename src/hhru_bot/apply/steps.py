@@ -504,26 +504,27 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
         )
         return False
 
-    # Панель выбора резюме НЕ закрывается сама после клика по опции — источник
-    # подтверждения боевой лог 2026-08-20 (`data/logs/hhru_bot.log`): Playwright
-    # в сообщении об интерсепте печатает ровно один `data-qa="drop-base"`
-    # (в probe-HTML-дампах этого атрибута нет вовсе — см. apply_form.py).
-    # Пока панель открыта, её абсолютно
-    # спозиционированный контейнер перекрывает submit в футере модалки: боевой
-    # прогон получал `subtree intercepts pointer events`, 30с ретраев и
-    # SubmitClickUncertain — ложную «неопределённость» при НЕотправленном
-    # отклике (жгла дневной лимит и навсегда блокировала вакансию).
-    #
-    # Поэтому закрываем панель явно кликом по контейнеру toggle. В live DOM
-    # повторный клик по внутреннему resume-title не закрывает drop-base:
-    # обработчик toggle привязан к div[role="button"]-предку. Escape не
-    # используем: в модалке он может закрыть всю форму отклика, а не только
-    # панель.
-    #
-    # Ждём скрытия САМОЙ ПАНЕЛИ, а не опции: опции внутри панели — постоянно
-    # видимые карточки (выбранная несёт aria-selected="true"), они остаются
-    # visible, пока панель открыта, поэтому ожидание скрытия опции никогда бы
-    # не выполнилось.
+    # Live DOM 2026-08-25: штатный option-click сам закрывает drop-base. Поэтому
+    # безусловный клик по toggle после выбора снова ОТКРЫВАЕТ список и блокирует
+    # submit. Сначала принимаем штатное автозакрытие; toggle нужен только как
+    # fallback для наблюдавшегося ранее варианта, где React оставлял панель
+    # открытой. Escape не используем: в модалке он может закрыть всю форму.
+    dropdown = page.locator(apply_form.APPLY_RESUME_DROPDOWN)
+    try:
+        dropdown.wait_for(state="hidden", timeout=RESUME_DROPDOWN_CLOSE_TIMEOUT_MS)
+        return True
+    except PlaywrightTimeoutError:
+        # Панель не закрылась штатно — пробуем подтверждённый live DOM toggle.
+        pass
+    except PlaywrightError as exc:
+        logger.warning(
+            "Не удалось проверить закрытие списка выбора резюме после выбора '%s' (%s) — "
+            "отправка отменена",
+            resume_id,
+            exc,
+        )
+        return False
+
     try:
         page.locator(apply_form.APPLY_RESUME_TOGGLE).click()
     except PlaywrightError as exc:
@@ -534,9 +535,7 @@ def _select_resume_in_form(page: Page, resume_id: str) -> bool:
         )
         return False
     try:
-        page.locator(apply_form.APPLY_RESUME_DROPDOWN).wait_for(
-            state="hidden", timeout=RESUME_DROPDOWN_CLOSE_TIMEOUT_MS
-        )
+        dropdown.wait_for(state="hidden", timeout=RESUME_DROPDOWN_CLOSE_TIMEOUT_MS)
     except PlaywrightError as exc:
         # fail-closed: submit при открытой панели гарантированно упрётся в
         # оверлей. Честный отказ ДО клика лучше ложного uncertain после него.
