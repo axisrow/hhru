@@ -33,7 +33,13 @@ class _FakeLocator:
         # В реальном Playwright .first снимает strict mode: wait_for на коллекции
         # через .first проходит (ждёт первый совпавший), а на всей коллекции без .first
         # кидает strict-mode Error. Возвращаем локатор с _strict=False.
-        loc = _FakeLocator(self.selector, self._state, strict=False)
+        loc = _FakeLocator(
+            self.selector,
+            self._state,
+            strict=False,
+            resume_title_inner=self._resume_title_inner,
+            resume_toggle=self._resume_toggle,
+        )
         # Делегирование or_ переживает .first — реальный Playwright тоже
         # сохраняет, на какой элемент действует локатор.
         loc._delegate_to = self._delegate_to
@@ -46,6 +52,8 @@ class _FakeLocator:
         *,
         strict: bool = True,
         option_resume_id: str | None = None,
+        resume_title_inner: bool = False,
+        resume_toggle: bool = False,
     ) -> None:
         self.selector = selector
         self._state = state
@@ -54,6 +62,8 @@ class _FakeLocator:
         # адресует конкретную опцию по resume_id напрямую (живой DOM —
         # опция несёт identity в самом data-qa, а не в href, которого на форме нет).
         self._option_resume_id = option_resume_id
+        self._resume_title_inner = resume_title_inner
+        self._resume_toggle = resume_toggle
         # or_-локатор: состояние, на которое реально действуют click()/fill()
         # (видимый операнд). None — обычный локатор, действует на своё состояние.
         self._delegate_to: _SelectorState | None = None
@@ -127,10 +137,19 @@ class _FakeLocator:
                 )
             self._state.selected_resume_id = matches[0]
         else:
-            # Клик по триггеру — TOGGLE панели: первый раскрывает (опции
-            # становятся живыми), повторный закрывает. Так ведёт себя живой
-            # magritte-select (probe-дампы 2026-08-20).
-            self._state.dropdown_opened = not self._state.dropdown_opened
+            if self._resume_toggle:
+                # Live DOM: resume-title is nested inside div[role="button"];
+                # the ancestor owns the close behavior.
+                self._state.dropdown_opened = False
+                self._state.resume_toggle_clicks += 1
+            elif self._resume_title_inner:
+                # A repeated click on the inner div does not close drop-base.
+                self._state.dropdown_opened = True
+                self._state.resume_title_clicks += 1
+            else:
+                # The first click opens the panel. This generic behavior keeps
+                # the fake useful for unrelated trigger selectors.
+                self._state.dropdown_opened = not self._state.dropdown_opened
         if self._delegate_to is not None:
             # or_-локатор: клик засчитывается видимому операнду (реальный
             # Playwright кликает по фактически совпавшему элементу).
@@ -210,6 +229,8 @@ class _SelectorState:
         # живой DOM: какой resume_id реально был кликнут (заменяет current_href).
         self.selected_resume_id: str | None = None
         self.dropdown_opened = False
+        self.resume_title_clicks = 0
+        self.resume_toggle_clicks = 0
         # Боевой случай 2026-08-20: после клика по опции React не закрыл dropdown,
         # раскрытый listbox перекрыл submit-кнопку → Locator.click ретраил 30с
         # (`subtree intercepts pointer events`) и падал в SubmitClickUncertain.
@@ -278,6 +299,18 @@ class FakeStepsPage:
             # ровно тогда, когда dropdown_opened (живой DOM: 0 элементов до
             # клика по триггеру, 1 после).
             return _FakeLocator(selector, self._state(apply_form.APPLY_RESUME_SELECT))
+        if selector == apply_form.APPLY_RESUME_TOGGLE:
+            return _FakeLocator(
+                selector,
+                self._state(apply_form.APPLY_RESUME_SELECT),
+                resume_toggle=True,
+            )
+        if selector == apply_form.APPLY_RESUME_SELECT:
+            return _FakeLocator(
+                selector,
+                self._state(selector),
+                resume_title_inner=True,
+            )
         m = re.match(rf"^\[data-qa='{apply_form.APPLY_RESUME_OPTION_PREFIX}(.*)'\]$", selector)
         if m:
             resume_id = m.group(1)
@@ -783,9 +816,9 @@ def test_fill_form_closes_resume_panel_before_submit():
     по триггеру, 1 после клика по опции). Пока она открыта, её абсолютно
     спозиционированный оверлей перекрывает submit в футере модалки.
 
-    Поэтому шаг обязан закрыть панель явно (повторный клик по триггеру:
-    стандартный toggle селекта; Escape не используем — в модалке он может
-    закрыть всю форму)."""
+    Поэтому шаг обязан закрыть панель явно кликом по контейнеру
+    `div[role="button"]`; Escape не используем — в модалке он может закрыть
+    всю форму."""
     page = FakeStepsPage()
     st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
     st.option_resume_ids = ["RID"]
@@ -795,9 +828,12 @@ def test_fill_form_closes_resume_panel_before_submit():
     result = steps.fill_response_form(page, "RID", "письмо")
 
     assert result is None
-    # 3 клика на общем состоянии триггера/опций: открыть панель, выбрать опцию,
-    # закрыть панель. Решающее — что панель в итоге закрыта.
+    # 3 клика: открыть внутренним resume-title, выбрать опцию, закрыть
+    # контейнером role=button. Повторный клик по внутреннему div сам по себе
+    # не закрыл бы live drop-base.
     assert st.clicks == 3
+    assert st.resume_title_clicks == 1
+    assert st.resume_toggle_clicks == 1
     assert st.dropdown_opened is False
     assert st.selected_resume_id == "RID"
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
@@ -823,6 +859,18 @@ def test_fill_form_resume_select_multiple_matches_selects_correct_resume():
     # перекрывает submit (боевой случай 2026-08-20).
     assert st.dropdown_opened is False
     assert page._state(apply_form.APPLY_SUBMIT_BUTTON).clicks == 1
+
+
+def test_resume_toggle_uses_role_button_ancestor_for_close():
+    page = FakeStepsPage()
+    st = page.set_visible(apply_form.APPLY_RESUME_SELECT, True)
+
+    page.locator(apply_form.APPLY_RESUME_SELECT).first.click()
+    page.locator(apply_form.APPLY_RESUME_SELECT).first.click()
+    assert st.dropdown_opened is True
+
+    page.locator(apply_form.APPLY_RESUME_TOGGLE).click()
+    assert st.dropdown_opened is False
 
 
 # --- fill_response_form: выбор резюме fail-closed (#33) ---

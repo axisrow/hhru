@@ -44,6 +44,9 @@ from __future__ import annotations
 # Обе ветки поддержаны в steps.fill_response_form через Locator.or_. Full-page
 # селекторы НЕ удалять: оба shape наблюдались в дампах одного дня (08-16).
 APPLY_RESUME_SELECT = "[data-qa='resume-title']"
+# The text node is nested inside the actual Magritte toggle container.  Keep
+# APPLY_RESUME_SELECT for discovery/opening, but use this ancestor for closing.
+APPLY_RESUME_TOGGLE = "[data-qa='resume-title'] >> xpath=ancestor::*[@role='button'][1]"
 APPLY_RESUME_OPTION_PREFIX = "magritte-select-option-"
 APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
 # Тоггл письма МОДАЛКИ. Подтверждён дампами 2026-08-20 (apply_136190065/136190066):
