@@ -141,3 +141,27 @@ def test_open_about_editor_waits_for_hidden_but_present_field(monkeypatch):
     assert trigger.click.call_count == 1
     assert field.wait_for.call_count == 1
     assert result == "Реальный текст, который уже был в поле."
+
+
+def test_open_about_editor_accepts_draft_edit_route(monkeypatch):
+    """Draft resumes navigate to the dedicated about editor route (#527)."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    field = MagicMock()
+    field.count.return_value = 0
+    field.input_value.return_value = ""
+    field.wait_for.return_value = None
+
+    def click_side_effect():
+        page.url = "https://hh.ru/resume/edit/resume-id/about"
+
+    trigger.click.side_effect = click_side_effect
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    assert open_about_editor(page, bare_resume("resume-id")) == ""

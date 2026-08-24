@@ -8,6 +8,7 @@ HTTP endpoint.  hh.ru opens this editor inline on ``/resume/{id}``; the old
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -128,6 +129,9 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
             trigger_selector=resume_page.RESUME_EDIT_ABOUT_BUTTON,
             editor_selector=resume_page.RESUME_ABOUT_EDITOR,
             profile_path=f"/resume/{resume.resume_id}",
+            edit_path=re.compile(
+                rf"/resume(?:/{re.escape(resume.resume_id)}|/edit/{re.escape(resume.resume_id)}/about)"
+            ),
             # Pre-#339 behavior clicked unconditionally: the editor marker can
             # be present in the DOM before React hydrates it, so count() == 1
             # does not mean it is visible/functional yet. Without this, a
