@@ -62,15 +62,20 @@ def run(args: argparse.Namespace):
         return True
 
     def _body(progress: ApplyProgress) -> bool:
-        attempt = None if args.dry_run else DurableMutationAttempt(
-            history, progress, resume.resume_id, action
+        attempt = (
+            None
+            if args.dry_run
+            else DurableMutationAttempt(history, progress, resume.resume_id, action)
         )
         try:
             with launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
                 result = set_resume_visibility_on_hh(
-                    context.new_page(), resume, args.mode, args.dry_run,
+                    context.new_page(),
+                    resume,
+                    args.mode,
+                    args.dry_run,
                     before_click=attempt.before_click if attempt is not None else None,
                 )
         except BaseException as exc:

@@ -28,8 +28,13 @@ def _config(tmp_path):
 
 def _args(tmp_path, **overrides):
     values = dict(
-        config="unused.yaml", history=str(tmp_path / "h.db"), headless=True,
-        resume="python", mode="link-only", dry_run=False, force=False,
+        config="unused.yaml",
+        history=str(tmp_path / "h.db"),
+        headless=True,
+        resume="python",
+        mode="link-only",
+        dry_run=False,
+        force=False,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
