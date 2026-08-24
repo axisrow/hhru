@@ -38,6 +38,11 @@ RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
 
+# The Magritte select panel used by the position editor.  The panel remains
+# mounted after selecting an option, so callers must close it explicitly and
+# wait for this panel (rather than an option) to become hidden.
+RESUME_POSITION_DROPDOWN = "[data-qa='drop-base']"
+
 # Specializations in the position editor are a nested, multi-select tree.  The
 # full tree (including the search and confirmation controls) was confirmed in
 # the authenticated live DOM of the position editor on 2026-08-24 (issue

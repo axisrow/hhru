@@ -90,6 +90,24 @@ def test_apply_position_none_title_leaves_unchanged():
     title.fill.assert_not_called()
 
 
+def test_apply_position_rejects_multiple_employment_values():
+    page = MagicMock()
+
+    with pytest.raises(RuntimeError, match="несколько значений --employment не подтверждены"):
+        resume_position.apply_position(page, PositionValues(employment=["full_time", "part_time"]))
+
+    page.locator.assert_not_called()
+
+
+def test_apply_position_rejects_multiple_work_format_values():
+    page = MagicMock()
+
+    with pytest.raises(RuntimeError, match="несколько значений --work-format не подтверждены"):
+        resume_position.apply_position(page, PositionValues(work_format=["remote", "hybrid"]))
+
+    page.locator.assert_not_called()
+
+
 def test_apply_position_clicks_visible_currency_button_not_hidden_input():
     page = MagicMock()
     currency_input = MagicMock()
@@ -104,6 +122,115 @@ def test_apply_position_clicks_visible_currency_button_not_hidden_input():
     currency_input.click.assert_not_called()
     page.get_by_role.assert_called_once_with("button", name="Рубли", exact=True)
     currency_button.click.assert_called_once_with()
+
+
+def test_set_control_reopens_dropdown_for_each_value():
+    class FakeOption:
+        def __init__(self, panel, label):
+            self.panel = panel
+            self.label = label
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.selected.append(self.label)
+
+    class FakePanel:
+        def __init__(self):
+            self.open = False
+            self.selected = []
+
+        def wait_for(self, *, state, timeout=None):
+            assert self.open is (state == "visible")
+
+        def get_by_role(self, role, *, name, exact):
+            assert (role, exact) == ("option", True)
+            return FakeOption(self, name)
+
+    class FakeControl:
+        def __init__(self, panel):
+            self.panel = panel
+            self.clicks = 0
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def evaluate(self, _script):
+            return "BUTTON"
+
+        def click(self):
+            self.clicks += 1
+            self.panel.open = not self.panel.open
+
+    panel = FakePanel()
+    control = FakeControl(panel)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "hybrid", resume_position.WORK_LABELS
+    )
+
+    assert panel.selected == ["Удалённо", "Гибрид"]
+    assert control.clicks == 4
+
+
+def test_set_control_passes_explicit_timeout_to_panel_waits():
+    """#561 review: an unlabeled 30s default hang read as CLI silence."""
+    panel = MagicMock()
+    panel.wait_for.return_value = None
+    option = MagicMock()
+    option.count.return_value = 1
+    panel.get_by_role.return_value = option
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(
+        page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+    )
+
+    for call in panel.wait_for.call_args_list:
+        assert call.kwargs["timeout"] == resume_position._CONTROL_WAIT_TIMEOUT_MS
+
+
+def test_set_control_dumps_dom_on_timeout(monkeypatch):
+    """#561 review: a live single-value run failed with no captured evidence."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    panel = MagicMock()
+    panel.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+    control = MagicMock()
+    control.count.return_value = 1
+    control.first = control
+    control.evaluate.return_value = "BUTTON"
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+    dump = MagicMock()
+    monkeypatch.setattr(resume_position, "_dump_control_failure", dump)
+
+    with pytest.raises(PlaywrightError):
+        resume_position._set_control(
+            page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
+        )
+
+    dump.assert_called_once()
+    assert dump.call_args.args[0] is page
+    assert dump.call_args.args[1] == resume_position.WORK_FORMAT
 
 
 def test_apply_position_sets_confirmed_specializations(monkeypatch):
