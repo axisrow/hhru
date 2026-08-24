@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,6 +52,7 @@ class SearchFilters:
     # is false; remote-only profiles must never silently accept relocation.
     allow_relocation: bool = False
     exclude_employers: list[str] = field(default_factory=list)
+    current_employers: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     # Опциональные поля ранжирования (#15): буст за совпадение в title.
     must_have: list[str] = field(default_factory=list)
@@ -235,6 +236,19 @@ def load_config(path: str | Path) -> AppConfig:
             resume_url=resume_url,
             **kwargs,  # type: ignore[arg-type]
         )
+        current_employers = account.current_employers
+        if current_employers:
+            configured = resume.search.exclude_employers
+            search = replace(
+                resume.search,
+                exclude_employers=[
+                    *configured,
+                    *(name for name in current_employers
+                      if name.casefold() not in {item.casefold() for item in configured}),
+                ],
+                current_employers=list(current_employers),
+            )
+            resume = replace(resume, search=search)
         _warn_if_scoring_keywords_inert(resume, context)
         resumes.append(resume)
 

@@ -7,7 +7,7 @@ user_agent: если поле не задано в конфиге, browser/auth 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import ConfigError
@@ -20,6 +20,7 @@ class AccountConfig:
     # None = пусть Playwright ставит родной UA (по умолчанию). Задайте строку,
     # только если hh.ru требует конкретный User-Agent.
     user_agent: str | None = None
+    current_employers: list[str] = field(default_factory=list)
 
 
 def parse_account(raw, base_dir: Path) -> AccountConfig:
@@ -43,10 +44,16 @@ def parse_account(raw, base_dir: Path) -> AccountConfig:
     user_agent = raw.get("user_agent")
     if user_agent is not None and not isinstance(user_agent, str):
         raise ConfigError("Поле 'user_agent' (account) должно быть строкой")
+    current_employers = raw.get("current_employer", [])
+    if not isinstance(current_employers, list) or any(
+        not isinstance(name, str) or not name.strip() for name in current_employers
+    ):
+        raise ConfigError("Поле 'current_employer' (account) должно быть списком непустых строк")
     return AccountConfig(
         storage_state_file=(base_dir / storage_state_file).resolve(),
         # `or None` намеренно: пустая строка трактуется как «не задано» → родной UA.
         user_agent=user_agent or None,
+        current_employers=[name.strip() for name in current_employers],
     )
 
 

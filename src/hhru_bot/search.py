@@ -846,9 +846,16 @@ def filter_candidates(
         # каждую отдельно (раньше их сливала отдельная функция в одну строку).
         # Порядок employer→keyword сохранён. Совпадение берём конкретное — для
         # человекочитаемого вывода причины.
-        company_lower = card.company.lower()
+        company_lower = card.company.casefold()
+        current_employer_hit = next(
+            (e for e in filters.current_employers if e.casefold() in company_lower), None
+        )
+        if filters.current_employers and (not company_lower or current_employer_hit is not None):
+            skipped.append((card, "текущий работодатель"))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.CURRENT_EMPLOYER)
+            continue
         employer_hit = next(
-            (e for e in filters.exclude_employers if e.lower() in company_lower), None
+            (e for e in filters.exclude_employers if e.casefold() in company_lower), None
         )
         if employer_hit is not None:
             skipped.append((card, f"компания в стоп-списке: {employer_hit}"))

@@ -387,6 +387,28 @@ def test_filter_candidates_excludes_employers():
     assert "стоп-списке" in skipped[0][1]
 
 
+def test_filter_candidates_excludes_current_employer_and_unknown_company():
+    from hhru_bot.history import SKIP_REASONS
+
+    filters = SearchFilters(text="x", current_employers=["Пример"])
+    history = FakeHistory()
+    candidates, skipped = filter_candidates(
+        [
+            card("1", company="ООО ПРИМЕР-Строй"),
+            card("2", company=""),
+            card("3", company="OtherCorp"),
+        ],
+        filters,
+        "r1",
+        history,
+    )
+    assert [item.vacancy_id for item in candidates] == ["3"]
+    assert [item.vacancy_id for item, _ in skipped] == ["1", "2"]
+    assert all(reason == "текущий работодатель" for _, reason in skipped)
+    assert ("r1", "1", SKIP_REASONS.CURRENT_EMPLOYER) in history.recorded_skips
+    assert ("r1", "2", SKIP_REASONS.CURRENT_EMPLOYER) in history.recorded_skips
+
+
 def test_filter_candidates_excludes_keywords():
     filters = SearchFilters(text="x", exclude_keywords=["1С"])
     cards = [
