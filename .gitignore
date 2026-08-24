@@ -27,3 +27,7 @@ data/
 **/storage_state/*.json.tmp
 
 .env
+
+# Ad-hoc SQL-запросы для рыночного анализа (scripts/queries/) — разовые
+# аналитические артефакты, не код; версионировать не нужно.
+scripts/queries/
