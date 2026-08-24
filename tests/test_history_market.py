@@ -93,6 +93,63 @@ def test_upsert_stores_extra_card_fields(tmp_path):
     assert row["snippet_responsibility"] == "Развитие сервисов платформы."
 
 
+def test_upsert_stores_priority_three_fields_and_metro_snapshot(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        title="Backend",
+        company="Yandex",
+        search_query="python backend",
+        activity=True,
+        has_hh_rating=True,
+        is_hrbrand_winner=False,
+        metro_stations=("Белорусская", "Динамо"),
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["activity"] == 1
+    assert row["has_hh_rating"] == 1
+    assert row["is_hrbrand_winner"] == 0
+    assert row["metro_stations"] == ("Белорусская", "Динамо")
+
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python backend",
+        activity=False,
+        has_hh_rating=False,
+        is_hrbrand_winner=True,
+        metro_stations=("Савёловская",),
+    )
+    row = h.list_vacancies_seen()[0]
+    assert row["activity"] == 0
+    assert row["has_hh_rating"] == 0
+    assert row["is_hrbrand_winner"] == 1
+    assert row["metro_stations"] == ("Савёловская",)
+
+    h.upsert_vacancy_seen(
+        vacancy_id="empty",
+        search_query="python",
+        metro_stations=(),
+    )
+    assert h.list_vacancies_seen()[0]["metro_stations"] == ()
+
+
+def test_unobserved_metro_block_is_distinct_from_empty_snapshot(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(vacancy_id="unknown", search_query="python")
+    assert h.list_vacancies_seen()[0]["metro_stations"] is None
+
+
+def test_upsert_keeps_metro_snapshot_when_block_is_not_observed(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123",
+        search_query="python",
+        metro_stations=("Динамо",),
+    )
+    h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations=None)
+    assert h.list_vacancies_seen()[0]["metro_stations"] == ("Динамо",)
+
+
 def test_upsert_extra_card_fields_default_to_null(tmp_path):
     """Опциональные блоки карточки — не роняем upsert, если их не передали."""
     h = History(tmp_path / "h.db")

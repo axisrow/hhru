@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 import hhru_bot.search as search
-from hhru_bot.search import VacancyCard, _optional_text, _parse_experience
+from hhru_bot.search import VacancyCard, _optional_text, _parse_experience, _parse_metro_stations
 
 pytestmark = pytest.mark.unit
 
@@ -151,6 +151,65 @@ def test_snippets_missing_block_returns_none():
     assert _optional_text(card, search.sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) is None
 
 
+def test_priority_three_presence_markers_are_boolean():
+    card = _FixtureCard(
+        {
+            search.sel.VACANCY_CARD_ACTIVITY: ("", None),
+            search.sel.VACANCY_CARD_HH_RATING: ("", None),
+            search.sel.VACANCY_CARD_HRBRAND_WINNER: ("", None),
+        }
+    )
+    assert card.locator(search.sel.VACANCY_CARD_ACTIVITY).count() > 0
+    assert card.locator(search.sel.VACANCY_CARD_HH_RATING).count() > 0
+    assert card.locator(search.sel.VACANCY_CARD_HRBRAND_WINNER).count() > 0
+
+
+def test_priority_three_presence_markers_are_absent_by_default():
+    card = _FixtureCard({})
+    assert card.locator(search.sel.VACANCY_CARD_ACTIVITY).count() == 0
+    assert card.locator(search.sel.VACANCY_CARD_HH_RATING).count() == 0
+    assert card.locator(search.sel.VACANCY_CARD_HRBRAND_WINNER).count() == 0
+
+
+def test_parse_metro_stations_filters_empty_values_and_deduplicates():
+    class _StationsLocator:
+        def __init__(self, values):
+            self.values = values
+
+        def count(self):
+            return len(self.values)
+
+        def nth(self, index):
+            return _TextLocator(self.values[index])
+
+    class _StationsCard:
+        def locator(self, selector):
+            if selector == search.sel.VACANCY_CARD_METRO_STATION:
+                return _StationsLocator(["Белорусская", "", "Белорусская", "Динамо"])
+            return _TextLocator("", count=0)
+
+    assert _parse_metro_stations(_StationsCard()) == ("Белорусская", "Динамо")
+
+
+def test_parse_metro_stations_distinguishes_missing_block_from_empty_block():
+    class _EmptyStationsCard:
+        def locator(self, selector):
+            if selector == search.sel.VACANCY_CARD_METRO_STATION:
+                class _EmptyStationsLocator:
+                    def count(self):
+                        return 1
+
+                    def nth(self, index):
+                        assert index == 0
+                        return _TextLocator("")
+
+                return _EmptyStationsLocator()
+            return _TextLocator("", count=0)
+
+    assert _parse_metro_stations(_FixtureCard({})) is None
+    assert _parse_metro_stations(_EmptyStationsCard()) == ()
+
+
 # --- VacancyCard: дефолты новых полей ------------------------------------------
 
 
@@ -161,6 +220,10 @@ def test_vacancy_card_new_fields_default_to_empty():
     assert c.experience == ""
     assert c.snippet_requirement == ""
     assert c.snippet_responsibility == ""
+    assert c.activity is False
+    assert c.has_hh_rating is False
+    assert c.is_hrbrand_winner is False
+    assert c.metro_stations is None
 
 
 def test_vacancy_card_accepts_new_fields():
@@ -174,9 +237,17 @@ def test_vacancy_card_accepts_new_fields():
         experience="between1And3",
         snippet_requirement="req",
         snippet_responsibility="resp",
+        activity=True,
+        has_hh_rating=True,
+        is_hrbrand_winner=True,
+        metro_stations=("Москва", "Динамо"),
     )
     assert c.address == "Москва"
     assert c.is_remote is True
     assert c.experience == "between1And3"
     assert c.snippet_requirement == "req"
     assert c.snippet_responsibility == "resp"
+    assert c.activity is True
+    assert c.has_hh_rating is True
+    assert c.is_hrbrand_winner is True
+    assert c.metro_stations == ("Москва", "Динамо")

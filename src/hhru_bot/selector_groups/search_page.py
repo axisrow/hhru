@@ -64,3 +64,13 @@ VACANCY_CARD_REMOTE_LABEL = "[data-qa='vacancy-label-work-schedule-remote']"
 VACANCY_CARD_EXPERIENCE = "[data-qa^='vacancy-serp__vacancy-work-experience-']"
 VACANCY_CARD_SNIPPET_REQUIREMENT = "[data-qa='vacancy-serp__vacancy_snippet_requirement']"
 VACANCY_CARD_SNIPPET_RESPONSIBILITY = "[data-qa='vacancy-serp__vacancy_snippet_responsibility']"
+
+# Приоритет-3 признаки карточки вакансии (#551), подтверждены на живой
+# авторизованной выдаче hh.ru (2026-08-24). Это presence-маркеры: сами
+# элементы текста не содержат значения, поэтому сохраняем факт наличия.
+VACANCY_CARD_ACTIVITY = "[data-qa='vacancy-serp-item-activity']"
+VACANCY_CARD_HH_RATING = "[data-qa='vacancy-serp__vacancy_employer-hh-rating']"
+VACANCY_CARD_HRBRAND_WINNER = (
+    "[data-qa='vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners']"
+)
+VACANCY_CARD_METRO_STATION = "[data-qa='address-metro-station-name']"

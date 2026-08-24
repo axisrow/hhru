@@ -229,7 +229,19 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     experience TEXT,
     snippet_requirement TEXT,
     snippet_responsibility TEXT,
+    activity INTEGER,
+    has_hh_rating INTEGER,
+    is_hrbrand_winner INTEGER,
+    metro_stations_observed INTEGER,
     UNIQUE (vacancy_id, search_query)
+);
+
+CREATE TABLE IF NOT EXISTS vacancy_metro_stations (
+    vacancy_id TEXT NOT NULL,
+    search_query TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    station_name TEXT NOT NULL,
+    PRIMARY KEY (vacancy_id, search_query, position)
 );
 
 -- skipped — журнал отсева вакансий (#87, append-only).
@@ -674,6 +686,10 @@ class History:
             _ensure_column(conn, "vacancies_seen", "experience", "TEXT")
             _ensure_column(conn, "vacancies_seen", "snippet_requirement", "TEXT")
             _ensure_column(conn, "vacancies_seen", "snippet_responsibility", "TEXT")
+            _ensure_column(conn, "vacancies_seen", "activity", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "has_hh_rating", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "is_hrbrand_winner", "INTEGER")
+            _ensure_column(conn, "vacancies_seen", "metro_stations_observed", "INTEGER")
             # #177: CREATE UNIQUE INDEX IF NOT EXISTS не пересоздаст индекс с новым
             # WHERE-условием на уже существующей БД (тот же caveat #51, что и для
             # колонок) — старые базы содержат idx_resume_vacancy_apply без
@@ -1859,6 +1875,10 @@ class History:
         experience: str | None = None,
         snippet_requirement: str | None = None,
         snippet_responsibility: str | None = None,
+        activity: bool | None = None,
+        has_hh_rating: bool | None = None,
+        is_hrbrand_winner: bool | None = None,
+        metro_stations: tuple[str, ...] | None = None,
     ) -> None:
         """Записывает/освежает карточку вакансии по (vacancy_id, search_query).
 
@@ -1923,8 +1943,9 @@ class History:
                      salary_currency, search_query, first_seen_at,
                      last_seen_at, employer_tier, vacancy_text, published_at,
                      address, is_remote, experience, snippet_requirement,
-                     snippet_responsibility)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     snippet_responsibility, activity, has_hh_rating,
+                     is_hrbrand_winner, metro_stations_observed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id, search_query) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -1942,6 +1963,12 @@ class History:
                     ),
                     snippet_responsibility = COALESCE(
                         excluded.snippet_responsibility, snippet_responsibility
+                    ),
+                    activity = excluded.activity,
+                    has_hh_rating = excluded.has_hh_rating,
+                    is_hrbrand_winner = excluded.is_hrbrand_winner,
+                    metro_stations_observed = COALESCE(
+                        excluded.metro_stations_observed, metro_stations_observed
                     ),
                     last_seen_at = excluded.last_seen_at
                 """,
@@ -1963,8 +1990,26 @@ class History:
                     experience,
                     snippet_requirement,
                     snippet_responsibility,
+                    None if activity is None else int(activity),
+                    None if has_hh_rating is None else int(has_hh_rating),
+                    None if is_hrbrand_winner is None else int(is_hrbrand_winner),
+                    None if metro_stations is None else 1,
                 ),
             )
+            if metro_stations is not None:
+                conn.execute(
+                    "DELETE FROM vacancy_metro_stations "
+                    "WHERE vacancy_id = ? AND search_query = ?",
+                    (vacancy_id, search_query),
+                )
+                conn.executemany(
+                    "INSERT INTO vacancy_metro_stations "
+                    "(vacancy_id, search_query, position, station_name) VALUES (?, ?, ?, ?)",
+                    [
+                        (vacancy_id, search_query, position, station)
+                        for position, station in enumerate(metro_stations)
+                    ],
+                )
 
     def list_vacancies_seen(self) -> list[dict]:
         """Все собранные вакансии, свежие первыми (по last_seen_at).
@@ -1977,10 +2022,29 @@ class History:
                 "SELECT vacancy_id, title, company, salary_from, salary_to, salary_currency, "
                 "search_query, first_seen_at, last_seen_at, employer_tier, vacancy_text, "
                 "published_at, address, is_remote, experience, snippet_requirement, "
-                "snippet_responsibility "
+                "snippet_responsibility, activity, has_hh_rating, is_hrbrand_winner, "
+                "metro_stations_observed "
                 "FROM vacancies_seen ORDER BY last_seen_at DESC, id DESC"
             ).fetchall()
-        return [dict(row) for row in rows]
+            stations = conn.execute(
+                "SELECT vacancy_id, search_query, position, station_name "
+                "FROM vacancy_metro_stations ORDER BY vacancy_id, search_query, position"
+            ).fetchall()
+        station_map: dict[tuple[str, str], list[str]] = {}
+        for station in stations:
+            station_map.setdefault((station["vacancy_id"], station["search_query"]), []).append(
+                station["station_name"]
+            )
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metro_stations"] = (
+                tuple(station_map.get((item["vacancy_id"], item["search_query"]), ()))
+                if item["metro_stations_observed"] == 1
+                else None
+            )
+            result.append(item)
+        return result
 
     def list_vacancy_texts(self) -> list[str]:
         """Возвращает непустые тексты собранных вакансий для read-only отчётов."""

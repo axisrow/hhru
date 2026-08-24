@@ -317,6 +317,15 @@ class VacancyCard:
     experience: str = ""
     snippet_requirement: str = ""
     snippet_responsibility: str = ""
+    # Приоритет-3 presence-маркеры карточки (#551). Значение activity и
+    # HH-rating в текущем DOM не текстовое, поэтому храним только наличие.
+    activity: bool = False
+    has_hh_rating: bool = False
+    is_hrbrand_winner: bool = False
+    # None = блок метро не наблюдался; пустой tuple = блок наблюдался, но
+    # станций не было. Это позволяет не затирать известные станции
+    # транзиентным отсутствием блока при повторном scrape.
+    metro_stations: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.portfolio_evidence_requirement is None and self.vacancy_text:
@@ -522,6 +531,10 @@ def search_vacancies(
             snippet_responsibility = (
                 _optional_text(card, sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) or ""
             )
+            activity = bool(card.locator(sel.VACANCY_CARD_ACTIVITY).count())
+            has_hh_rating = bool(card.locator(sel.VACANCY_CARD_HH_RATING).count())
+            is_hrbrand_winner = bool(card.locator(sel.VACANCY_CARD_HRBRAND_WINNER).count())
+            metro_stations = _parse_metro_stations(card)
 
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
@@ -548,6 +561,10 @@ def search_vacancies(
                     experience=experience,
                     snippet_requirement=snippet_requirement,
                     snippet_responsibility=snippet_responsibility,
+                    activity=activity,
+                    has_hh_rating=has_hh_rating,
+                    is_hrbrand_winner=is_hrbrand_winner,
+                    metro_stations=metro_stations,
                 )
             )
 
@@ -676,6 +693,25 @@ def _optional_text(card, selector: str) -> str | None:
         return None
     text = locator.inner_text().strip()
     return text or None
+
+
+def _parse_metro_stations(card) -> tuple[str, ...] | None:
+    """Собирает все станции метро из карточки (#551).
+
+    hh.ru рендерит несколько ``address-metro-station-name`` и добавляет
+    пустые элементы для иконок/скрытых продолжений («и ещё N»). Отсутствие
+    самого селектора отличаем от подтверждённого пустого блока.
+    """
+    locator = card.locator(sel.VACANCY_CARD_METRO_STATION)
+    count = locator.count()
+    if count == 0:
+        return None
+    stations: list[str] = []
+    for i in range(count):
+        station = locator.nth(i).inner_text().strip()
+        if station and station not in stations:
+            stations.append(station)
+    return tuple(stations)
 
 
 # --- парсинг инфо о работодателе из карточки (issue #74, Этап 1) -------------

@@ -84,6 +84,10 @@ class _VacancyCard:
         if selector in (
             search.sel.VACANCY_CARD_REMOTE_LABEL,
             search.sel.VACANCY_CARD_EXPERIENCE,
+            search.sel.VACANCY_CARD_ACTIVITY,
+            search.sel.VACANCY_CARD_HH_RATING,
+            search.sel.VACANCY_CARD_HRBRAND_WINNER,
+            search.sel.VACANCY_CARD_METRO_STATION,
         ):
             return _TextLocator(count=0)
         raise AssertionError(f"unexpected card selector: {selector}")
