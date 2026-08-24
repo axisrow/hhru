@@ -30,6 +30,7 @@ def test_browser_command_registry_is_complete() -> None:
         "login",
         "login-code",
         "probe",
+        "professional-roles",
         "publish-resume",
         "refresh-token",
         "rename-resume",
@@ -42,7 +43,7 @@ def test_browser_command_registry_is_complete() -> None:
         "run",
         "search",
     }
-    for command in cli.BROWSER_COMMANDS - {"clear-negotiations"}:
+    for command in cli.BROWSER_COMMANDS - {"clear-negotiations", "professional-roles"}:
         assert cli._requires_browser(Namespace(command=command))
 
 
@@ -64,6 +65,8 @@ def test_registry_covers_command_modules_that_call_launch_context() -> None:
         (Namespace(command="list-resumes", local=True), False),
         (Namespace(command="whoami", online=True), True),
         (Namespace(command="whoami", online=False), False),
+        (Namespace(command="professional-roles", refresh=False), False),
+        (Namespace(command="professional-roles", refresh=True), True),
         (
             Namespace(command="clear-negotiations", account_wide=False, topic="77", dry_run=True),
             False,
@@ -145,6 +148,7 @@ def test_sandboxed_write_is_rejected_before_any_local_side_effect(
     ("module_name", "argv"),
     [
         ("list_resumes", ["list-resumes", "--local"]),
+        ("professional_roles", ["professional-roles", "--query", "разработчик"]),
         ("whoami", ["whoami"]),
     ],
 )

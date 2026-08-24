@@ -140,6 +140,51 @@ def test_edit_languages_manual_write_failure_records_partial_not_failed(
     assert row["success"] == row["uncertain"] == row["skipped"] == 0
 
 
+def test_resume_position_without_ai_profile_explains_manual_catalog_workflow(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import hhru_bot.commands.resume_position as command
+
+    resume = SimpleNamespace(
+        id="ai-engineer",
+        resume_id="r1",
+        ai_profile=None,
+        search=SimpleNamespace(text="AI engineer LLM агент"),
+    )
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr(
+        "hhru_bot.browser.launch_context",
+        lambda *_a, **_kw: pytest.fail("ошибка должна возникнуть до браузера"),
+    )
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="ai-engineer",
+        title=None,
+        specialization=None,
+        salary=None,
+        currency=None,
+        employment=None,
+        work_format=None,
+        commute=None,
+        business_trips=None,
+        mode=None,
+        dry_run=True,
+        force=False,
+        history=str(tmp_path / "history.db"),
+    )
+
+    assert command.run(args) is True
+
+    out = capsys.readouterr().out
+    assert "не настроен ai_profile" in out
+    assert "resume.search.text='AI engineer LLM агент'" in out
+    assert "professional-roles --query" in out
+    assert "resume-position --resume ai-engineer" in out
+
+
 def test_edit_education_uncertain_outcome_is_not_counted_as_failed(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

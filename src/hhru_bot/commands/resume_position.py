@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ._professional_role_guidance import print_professional_role_guidance
 from .copy_resume import confirm_write
 
 
@@ -141,11 +142,17 @@ def _run(args: argparse.Namespace, progress) -> bool:
         return True
     mode = args.mode or "fill"
 
-    # needs='ai_profile': точечная ошибка вместо «резюме не найдено в конфиге» (#319).
     try:
-        resume = resolve_resume(config, args.resume, needs=() if manual else ("ai_profile",))
+        resume = resolve_resume(config, args.resume)
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
+        return True
+    if not manual and resume.ai_profile is None:
+        print(
+            f"[FAIL] Для резюме '{resume.id}' не настроен ai_profile, поэтому CLI "
+            "не может автоматически определить должность и профессию."
+        )
+        print_professional_role_guidance(resume)
         return True
     if not manual and config.ai is None:
         print("[FAIL] Для resume-position нужна секция ai в config.yaml")
@@ -226,6 +233,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
 
                 effective_title = plan.title or current.title
                 if not effective_title:
+                    print_professional_role_guidance(resume)
                     raise RuntimeError("для professional_role требуется непустой --title")
                 if explicit_specialization:
                     if len(explicit_specialization) != 1:
@@ -235,6 +243,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     role = resolve_explicit_role(page, explicit_specialization[0])
                 else:
                     if config.ai is None:
+                        print_professional_role_guidance(resume)
                         raise RuntimeError(
                             "для подбора профессии нужна секция ai; либо передайте "
                             "точный --specialization из live-каталога"
