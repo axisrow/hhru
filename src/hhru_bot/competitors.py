@@ -155,8 +155,20 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
     links = page.locator(sel.PAGINATION_LINK)
     pagination = page.locator(sel.PAGINATION_BLOCK)
     if pagination.count() == 0:
-        # Current applicant layout may render numbered links without data-qa.
-        return _has_next_search_link(links, page_num)
+        if links.count() == 0:
+            # Cards can render before either pagination representation. Wait
+            # once for the block or fallback links before declaring page end.
+            try:
+                page.locator(f"{sel.PAGINATION_BLOCK}, {sel.PAGINATION_LINK}").first.wait_for(
+                    state="attached", timeout=RENDER_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                return False
+            pagination = page.locator(sel.PAGINATION_BLOCK)
+            links = page.locator(sel.PAGINATION_LINK)
+        if pagination.count() == 0:
+            # Current applicant layout may render numbered links without data-qa.
+            return _has_next_search_link(links, page_num)
 
     if pages.count() == 0 and links.count() == 0:
         try:
@@ -214,6 +226,11 @@ _PROFICIENCY = {
 _SALARY_HEADING_RE = re.compile(
     r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|на руки)", re.IGNORECASE
 )
+_CONTACT_RE = re.compile(
+    r"(?:[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|https?://\S+|www\.\S+|@[A-Za-z0-9_.-]+|"
+    r"(?:\+?\d[\d\s().-]{8,}\d))",
+    re.IGNORECASE,
+)
 
 
 def redact_free_text(_value: str) -> None:
@@ -224,6 +241,14 @@ def redact_free_text(_value: str) -> None:
     parsed separately; free-form sections are dropped rather than persisted.
     """
     return None
+
+
+def sanitize_skill_name(value: str) -> str | None:
+    """Keep professional skill labels, but never persist contact tokens."""
+    text = value.strip()
+    if not text or _CONTACT_RE.search(text):
+        return None
+    return text
 
 
 def _months(text: str) -> int | None:
@@ -313,7 +338,9 @@ def parse_competitor_resume_text(
         if normalized_level in _PROFICIENCY:
             proficiency = normalized_level
             continue
-        skills.append(CompetitorSkill(line, proficiency))
+        skill_name = sanitize_skill_name(line)
+        if skill_name is not None:
+            skills.append(CompetitorSkill(skill_name, proficiency))
 
     education = _section(lines, "Образование")
     languages = _section(lines, "Знание языков")

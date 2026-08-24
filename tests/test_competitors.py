@@ -11,6 +11,7 @@ from hhru_bot.competitors import (
     parse_search_links,
     redact_free_text,
     report_competitors,
+    sanitize_skill_name,
 )
 from hhru_bot.selector_groups import competitor_resume as selectors
 
@@ -115,6 +116,18 @@ def test_detail_without_confirmed_role_fails_closed():
         )
 
 
+def test_skill_contact_tokens_are_not_persisted():
+    snapshot = parse_competitor_resume_text(
+        "AI Engineer\nНавыки\nPython\ntest@example.com\n+7 999 123-45-67\nhttps://example.com",
+        resume_id="skill-contact",
+        resume_url="https://hh.ru/resume/skill-contact",
+        headings=["AI Engineer", "Навыки"],
+    )
+    assert [skill.name for skill in snapshot.skills] == ["Python"]
+    assert sanitize_skill_name("test@example.com") is None
+    assert sanitize_skill_name("+7 999 123-45-67") is None
+
+
 def test_numeric_role_title_is_not_misparsed_as_salary():
     snapshot = parse_competitor_resume_text(
         "3D Generalist - AI Generalist\nОпыт работы 4 года\nНавыки\nCinema 4D",
@@ -208,13 +221,16 @@ class _Text:
 
 
 class _PaginationPage:
-    def __init__(self, pages, delayed_pages=None):
+    def __init__(self, pages, delayed_pages=None, delayed_block=None):
         self.next = _Locator([])
-        self.block = _Locator(["block"])
+        self.block = _Locator(["block"] if delayed_block is None else [], delayed_block)
         self.pages = _Locator(pages, delayed_pages)
         self.links = _Locator([])
+        self.marker = self.block
 
     def locator(self, selector):
+        if selector == f"{selectors.PAGINATION_BLOCK}, {selectors.PAGINATION_LINK}":
+            return self.marker
         return {
             selectors.PAGINATION_NEXT: self.next,
             selectors.PAGINATION_BLOCK: self.block,
@@ -233,6 +249,12 @@ def test_pagination_timeout_is_indeterminate_not_last_page():
     page = _PaginationPage([])
     with pytest.raises(CompetitorSearchIndeterminate, match="не подтверждена"):
         has_next_search_page(page, 0)
+
+
+def test_pagination_waits_for_delayed_container_before_declaring_last_page():
+    page = _PaginationPage([], delayed_pages=["1", "2"], delayed_block=["block"])
+    assert has_next_search_page(page, 0) is True
+    assert page.block.wait_calls == [("attached", 30_000)]
 
 
 def test_report_is_deterministic_and_warns_about_limited_coverage():
