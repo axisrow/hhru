@@ -572,6 +572,10 @@ def search_professional_roles(page: Page, queries: list[str]) -> list[Profession
         # React replaces the filtered rows after the input value changes; an
         # immediate locator read can still observe leaves from the prior query.
         page.wait_for_timeout(250)
+        # The tree is virtualized and can retain the previous query's scroll
+        # position. Start every query from the first viewport so later queries
+        # cannot silently miss roles near the top of their result set.
+        _tree_scroll(dialog, "reset")
         tree_items = dialog.locator(TREE_INPUT_ANY)
         try:
             tree_items.first.wait_for(state="visible", timeout=_WAIT_MS)
