@@ -537,6 +537,73 @@ def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
     assert row["failed"] == row["success"] == row["skipped"] == 0
 
 
+@pytest.mark.parametrize(
+    ("click_started", "expected_status"), [(False, "failed"), (True, "uncertain")]
+)
+def test_draft_position_classifies_failure_at_first_click_boundary(
+    tmp_path: Path, monkeypatch, capsys, click_started: bool, expected_status: str
+) -> None:
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionValues
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume: PositionValues(title="AI Team Lead"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("104", label, "ИТ"),
+    )
+
+    def fail_save(*_args, before_first_click, **_kwargs):
+        if click_started:
+            before_first_click()
+        raise RuntimeError("browser drift")
+
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_save)
+
+    history_path = tmp_path / "history.db"
+    args = argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        title="AI Team Lead",
+        specialization=["Руководитель группы разработки"],
+        salary=None,
+        currency=None,
+        employment=None,
+        work_format=None,
+        commute=None,
+        business_trips=None,
+        mode=None,
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+    assert command.run(args) is True
+    out = capsys.readouterr().out
+    assert ("(uncertain)" in out) is click_started
+
+    row = History(history_path).command_runs()[-1]
+    assert row["attempted"] == row[expected_status] == 1
+    other = "failed" if expected_status == "uncertain" else "uncertain"
+    assert row[other] == row["success"] == row["skipped"] == 0
+
+
 def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

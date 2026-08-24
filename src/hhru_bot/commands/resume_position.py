@@ -36,7 +36,10 @@ def register(subparsers) -> None:
     p.add_argument(
         "--specialization",
         action="append",
-        help="Специализация (можно несколько); заменяет выбранные специализации",
+        help=(
+            "Точная профессия из live-каталога hh.ru; для черновика одна, "
+            "для опубликованного резюме можно несколько"
+        ),
     )
     p.add_argument("--salary", type=int, help="Зарплата (целое число, без LLM)")
     p.add_argument("--currency", choices=("RUR", "EUR", "USD"), help="Валюта зарплаты")
@@ -78,6 +81,18 @@ def _print_plan(plan) -> None:
         print(f"  {key}: {value}")
 
 
+def _print_classification(role, *, reason: str = "", queries: list[str] | None = None) -> None:
+    print("[CLASSIFICATION] Согласование профессии live-каталога hh.ru:")
+    print(f"  role_id: {role.role_id}")
+    print(f"  profession: {role.label}")
+    if role.category:
+        print(f"  category: {role.category}")
+    if queries:
+        print(f"  catalog_queries: {queries}")
+    if reason:
+        print(f"  reason: {reason}")
+
+
 def _run(args: argparse.Namespace, progress) -> bool:
     from ..ai.llm_client import LLMClient
     from ..browser import BrowserLaunchError, launch_context
@@ -89,8 +104,12 @@ def _run(args: argparse.Namespace, progress) -> bool:
         apply_position,
         build_position_prompt,
         fill_only_missing,
+        is_position_wizard,
         open_position_form,
         parse_position_response,
+        save_position_wizard,
+        validate_wizard_plan,
+        verify_wizard_save,
     )
 
     config = load_config_or_exit(args.config)
@@ -139,6 +158,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         ) as context:
             page = context.new_page()
             current = open_position_form(page, resume)
+            wizard = is_position_wizard(page, resume.resume_id)
             if manual:
                 plan = PositionValues(
                     title=getattr(args, "title", None),
@@ -196,17 +216,103 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
                 ):
                     raise RuntimeError("режим from-scratch требует пустого раздела")
+
+            role = None
+            classification_reason = ""
+            classification_queries: list[str] = []
+            explicit_specialization = getattr(args, "specialization", None)
+            if wizard:
+                from ..professional_roles import resolve_explicit_role, suggest_role
+
+                effective_title = plan.title or current.title
+                if not effective_title:
+                    raise RuntimeError("для professional_role требуется непустой --title")
+                if explicit_specialization:
+                    if len(explicit_specialization) != 1:
+                        raise RuntimeError(
+                            "для professional_role требуется ровно один --specialization"
+                        )
+                    role = resolve_explicit_role(page, explicit_specialization[0])
+                else:
+                    if config.ai is None:
+                        raise RuntimeError(
+                            "для подбора профессии нужна секция ai; либо передайте "
+                            "точный --specialization из live-каталога"
+                        )
+                    if llm is None:
+                        llm = LLMClient(config.ai)
+                    role, classification_reason, classification_queries = suggest_role(
+                        page, llm, effective_title
+                    )
+                plan.title = effective_title
+                plan.specializations = [role.label]
+                validate_wizard_plan(plan)
             _print_plan(plan)
+            if role is not None:
+                _print_classification(
+                    role,
+                    reason=classification_reason,
+                    queries=classification_queries,
+                )
             if args.dry_run:
-                page.locator(CANCEL).click()
+                if not wizard:
+                    page.locator(CANCEL).click()
                 print("[INFO] Ничего не записано на hh.ru.")
                 return False
+            if (
+                wizard
+                and not explicit_specialization
+                and not confirm_write(
+                    False,
+                    prompt=(
+                        f"Согласовать классификацию '{plan.title}' -> "
+                        f"'{role.label}' (role_id={role.role_id})?"
+                    ),
+                )
+            ):
+                print(
+                    "[FAIL] Классификация не согласована. Повторите dry-run и передайте "
+                    "подтверждённый --specialization. Ничего не записано."
+                )
+                return True
             if not confirm_write(
                 args.force, prompt=f"Записать раздел желаемой работы резюме '{resume.id}' на hh.ru?"
             ):
-                page.locator(CANCEL).click()
+                if not wizard:
+                    page.locator(CANCEL).click()
                 print("[FAIL] Нужен --force или интерактивное подтверждение. Ничего не записано.")
                 return True
+            if wizard:
+                # Catalog resolution navigates to the read-only vacancy filter;
+                # reopen and re-bind the exact draft immediately before WRITE.
+                open_position_form(page, resume)
+                if not is_position_wizard(page, resume.resume_id):
+                    raise RuntimeError("professional_role identity потерян перед WRITE")
+                progress.begin_attempt()
+                first_click_started = False
+
+                def mark_first_click_started() -> None:
+                    nonlocal first_click_started
+                    first_click_started = True
+
+                try:
+                    save_position_wizard(
+                        page,
+                        resume,
+                        plan,
+                        role_id=role.role_id,
+                        before_first_click=mark_first_click_started,
+                    )
+                    verify_wizard_save(page, resume, expected_title=plan.title or "")
+                except Exception as exc:
+                    if not first_click_started:
+                        raise
+                    raise _SaveConfirmationUncertain(
+                        f"сохранение professional_role не подтверждено (uncertain): {exc}"
+                    ) from exc
+                progress.finish(MutationOutcome(success=True))
+                print(f"[OK] professional_role резюме '{resume.id}' сохранён и проверен.")
+                return False
             progress.begin_attempt()
             apply_position(page, plan)
             if page.locator(SAVE).count() != 1:

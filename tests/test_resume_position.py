@@ -10,6 +10,7 @@ from hhru_bot.resume_position import (
     build_position_prompt,
     fill_only_missing,
     parse_position_response,
+    validate_wizard_plan,
 )
 
 pytestmark = pytest.mark.unit
@@ -69,6 +70,46 @@ def test_fill_mode_preserves_existing_values():
     assert merged.employment is None
     assert merged.business_trips is None
     assert merged.salary == 100000
+
+
+def test_wizard_plan_requires_exactly_one_catalog_role():
+    with pytest.raises(RuntimeError, match="ровно одна профессия"):
+        validate_wizard_plan(PositionValues(title="Повар"))
+    with pytest.raises(RuntimeError, match="ровно одна профессия"):
+        validate_wizard_plan(PositionValues(title="Повар", specializations=["Повар", "Шеф-повар"]))
+
+
+def test_wizard_plan_rejects_fields_from_later_steps():
+    with pytest.raises(RuntimeError, match="salary"):
+        validate_wizard_plan(
+            PositionValues(title="Повар", specializations=["Повар"], salary=100000)
+        )
+
+
+def test_position_wizard_is_bound_to_resume_query():
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+
+    assert resume_position.is_position_wizard(page, "resume-id") is True
+    assert resume_position.is_position_wizard(page, "other-id") is False
+
+
+def test_open_position_form_reads_draft_wizard_title(monkeypatch):
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+    position = MagicMock()
+    position.count.return_value = 1
+    position.first = position
+    position.evaluate.return_value = True
+    position.input_value.return_value = "AI Team Lead"
+    page.locator.side_effect = lambda selector: position
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "has_login_form", lambda _page: False)
+
+    current = resume_position.open_position_form(page, resume)
+
+    assert current.title == "AI Team Lead"
 
 
 def test_apply_position_rejects_empty_title_without_touching_dom():

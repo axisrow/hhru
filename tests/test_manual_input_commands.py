@@ -12,6 +12,7 @@ import argparse
 import textwrap
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -254,6 +255,46 @@ def test_resume_position_manual_allows_explicit_fill_mode(tmp_path, capsys, monk
     result = resume_position_cmd.run(_args(tmp_path, title="新职位", mode="fill"))
     assert result is False
     assert "新职位" in capsys.readouterr().out
+
+
+def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, capsys, monkeypatch):
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionValues
+
+    class _WizardPage(_FakePage):
+        url = "https://hh.ru/profile/resume/professional_role?resume=" + REMOTE_ONLY_HASH
+
+    @contextmanager
+    def _wizard_context(*_args, **_kwargs):
+        yield _WizardPage()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _wizard_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda page, resume: PositionValues(title="AI Team Lead"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda page, label: ProfessionalRole("104", label, "Информационные технологии"),
+    )
+    save = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
+
+    result = resume_position_cmd.run(
+        _args(
+            tmp_path,
+            title="AI Team Lead",
+            specialization=["Руководитель группы разработки"],
+            mode=None,
+        )
+    )
+
+    out = capsys.readouterr().out
+    assert result is False
+    assert "[CLASSIFICATION]" in out
+    assert "role_id: 104" in out
+    assert "Ничего не записано" in out
+    save.assert_not_called()
 
 
 def test_resume_position_write_success_does_not_double_count_on_exit_error(
