@@ -88,6 +88,9 @@ class ResumeCard:
     title: str
     url: str
     status: str | None = None
+    # ``None`` means that the list payload did not expose a trustworthy
+    # searchable flag.  Do not infer visibility from publication status.
+    is_searchable: bool | None = None
     ssr_unavailable: bool = False  # True если SSR данные недоступны или некорректны
 
 
@@ -343,6 +346,7 @@ def list_resume_cards(
             ) from None
 
     status_by_hash: dict[str, str] = {}
+    searchable_by_hash: dict[str, bool] = {}
     ssr_unavailable = False  # Флаг: SSR данные недоступны или некорректны
     try:
         state = parse_initial_state(page.content())
@@ -379,6 +383,9 @@ def list_resume_cards(
                     ssr_unavailable = True
                     continue
                 status_by_hash[resume_hash] = status
+                is_searchable = attrs.get("isSearchable")
+                if isinstance(is_searchable, bool):
+                    searchable_by_hash[resume_hash] = is_searchable
 
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
@@ -415,6 +422,7 @@ def list_resume_cards(
                 title=title,
                 url=url,
                 status=status_by_hash.get(resume_id),
+                is_searchable=searchable_by_hash.get(resume_id),
                 ssr_unavailable=ssr_unavailable,
             )
         )

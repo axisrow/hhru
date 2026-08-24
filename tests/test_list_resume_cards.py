@@ -281,6 +281,27 @@ def test_lists_cards_with_status_from_ssr(monkeypatch):
     assert not any(card.ssr_unavailable for card in cards)
 
 
+def test_lists_cards_with_searchability_from_ssr(monkeypatch):
+    """The list payload's searchable flag is retained as a tri-state value."""
+    state = {
+        "applicantResumes": [
+            {"_attributes": {"hash": ID_A, "status": "modified", "isSearchable": False}},
+            {"_attributes": {"hash": ID_B, "status": "approved", "isSearchable": True}},
+        ]
+    }
+    html = (
+        f"<html><body><template id='HH-Lux-InitialState'>"
+        f"{escape(json.dumps(state, ensure_ascii=False))}</template></body></html>"
+    )
+    page = StubPage([StubCard(ID_A), StubCard(ID_B)])
+    _patch_goto(monkeypatch, page)
+    monkeypatch.setattr(page, "content", lambda: html)
+
+    cards = cr.list_resume_cards(page)
+
+    assert [card.is_searchable for card in cards] == [False, True]
+
+
 def test_missing_ssr_does_not_fail(monkeypatch):
     """Без SSR статус резюме остаётся None — падения быть не должно."""
     page = StubPage([StubCard(ID_A, title_text="Backend developer")])
