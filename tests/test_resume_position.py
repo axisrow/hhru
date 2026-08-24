@@ -90,6 +90,24 @@ def test_apply_position_none_title_leaves_unchanged():
     title.fill.assert_not_called()
 
 
+def test_apply_position_rejects_multiple_employment_values():
+    page = MagicMock()
+
+    with pytest.raises(RuntimeError, match="несколько значений --employment не подтверждены"):
+        resume_position.apply_position(page, PositionValues(employment=["full_time", "part_time"]))
+
+    page.locator.assert_not_called()
+
+
+def test_apply_position_rejects_multiple_work_format_values():
+    page = MagicMock()
+
+    with pytest.raises(RuntimeError, match="несколько значений --work-format не подтверждены"):
+        resume_position.apply_position(page, PositionValues(work_format=["remote", "hybrid"]))
+
+    page.locator.assert_not_called()
+
+
 def test_apply_position_clicks_visible_currency_button_not_hidden_input():
     page = MagicMock()
     currency_input = MagicMock()

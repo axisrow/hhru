@@ -351,6 +351,18 @@ def apply_position(page: Page, plan: PositionValues) -> None:
             "Пустой title отклоняется hh.ru. Укажите значение, например: "
             '--title "Python-разработчик". Если title не нужно менять, не передавайте --title.'
         )
+    if plan.employment and len(plan.employment) > 1:
+        raise RuntimeError(
+            "несколько значений --employment не подтверждены на форме hh.ru: "
+            "live-прогон показал, что control сохраняет только последнее "
+            "переданное значение (issue #526 review). Передайте одно значение."
+        )
+    if plan.work_format and len(plan.work_format) > 1:
+        raise RuntimeError(
+            "несколько значений --work-format не подтверждены на форме hh.ru: "
+            "live-прогон показал, что control сохраняет только последнее "
+            "переданное значение (issue #526 review). Передайте одно значение."
+        )
     if plan.specializations:
         _set_specializations(page, plan.specializations)
     if plan.title is not None:

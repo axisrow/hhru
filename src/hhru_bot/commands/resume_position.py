@@ -44,13 +44,13 @@ def register(subparsers) -> None:
         "--employment",
         action="append",
         choices=("full_time", "part_time", "project", "internship", "volunteer"),
-        help="Тип занятости (можно несколько)",
+        help="Тип занятости (пока только одно значение — #526)",
     )
     p.add_argument(
         "--work-format",
         action="append",
         choices=("office", "hybrid", "remote"),
-        help="Формат работы (можно несколько)",
+        help="Формат работы (пока только одно значение — #526)",
     )
     p.add_argument(
         "--commute",
