@@ -96,6 +96,7 @@ def test_record_seen_writes_all_cards(tmp_path):
             company="Acme",
             url="https://hh.ru/vacancy/2",
             salary=None,
+            metro_stations=[],
         ),
     ]
     _record_seen(cards, "python backend", history)
@@ -114,6 +115,7 @@ def test_record_seen_writes_all_cards(tmp_path):
     assert by_id["1"]["metro_stations"] == '["Таганская", "Марксистская"]'
     # вакансия без зарплаты тоже записана
     assert by_id["2"]["salary_from"] is None
+    assert by_id["2"]["metro_stations"] == "[]"
 
 
 def test_record_seen_preserves_history_when_company_selector_misses(tmp_path):

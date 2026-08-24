@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
@@ -324,7 +324,9 @@ class VacancyCard:
     activity: str = ""
     hh_rating: str = ""
     hrbrand_winner: bool | None = None
-    metro_stations: list[str] = field(default_factory=list)
+    # None = station block was not observed; an empty list means the block was
+    # observed but contained no usable station names.
+    metro_stations: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.portfolio_evidence_requirement is None and self.vacancy_text:
@@ -551,12 +553,7 @@ def search_vacancies(
             hh_rating = _optional_text(card, sel.VACANCY_CARD_HH_RATING) or ""
             hrbrand = card.locator(sel.VACANCY_CARD_HRBRAND_WINNER).first
             hrbrand_winner = True if hrbrand.count() > 0 else None
-            metro_locator = card.locator(sel.VACANCY_CARD_METRO_STATION)
-            metro_stations = [
-                metro_locator.nth(index).inner_text().strip()
-                for index in range(metro_locator.count())
-                if metro_locator.nth(index).inner_text().strip()
-            ]
+            metro_stations = _parse_metro_stations(card)
 
             if not vacancy_id:
                 logger.warning("Не удалось извлечь vacancy_id из href='%s', пропуск", href)
@@ -717,6 +714,22 @@ def _optional_text(card, selector: str) -> str | None:
         return None
     text = locator.inner_text().strip()
     return text or None
+
+
+def _parse_metro_stations(card) -> list[str] | None:
+    """Parse the observed metro block, preserving its tri-state meaning.
+
+    No matching elements means the block was not observed (usually a transient
+    or incomplete card). Matching elements with no usable text is an observed
+    empty block and must be able to clear a previous snapshot.
+    """
+    locator = card.locator(sel.VACANCY_CARD_METRO_STATION)
+    stations: list[str] = []
+    for index in range(locator.count()):
+        station = locator.nth(index).inner_text().strip()
+        if station and station not in stations:
+            stations.append(station)
+    return stations if locator.count() else None
 
 
 # --- парсинг инфо о работодателе из карточки (issue #74, Этап 1) -------------

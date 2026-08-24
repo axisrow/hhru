@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 import hhru_bot.search as search
-from hhru_bot.search import VacancyCard, _optional_text, _parse_experience
+from hhru_bot.search import VacancyCard, _optional_text, _parse_experience, _parse_metro_stations
 
 pytestmark = pytest.mark.unit
 
@@ -151,6 +151,42 @@ def test_snippets_missing_block_returns_none():
     assert _optional_text(card, search.sel.VACANCY_CARD_SNIPPET_RESPONSIBILITY) is None
 
 
+def test_parse_metro_stations_deduplicates_and_filters_empty_names():
+    class _StationsLocator:
+        def __init__(self, values):
+            self.values = values
+
+        def count(self):
+            return len(self.values)
+
+        def nth(self, index):
+            return _TextLocator(self.values[index])
+
+    class _Card:
+        def locator(self, selector):
+            if selector == search.sel.VACANCY_CARD_METRO_STATION:
+                return _StationsLocator(["Белорусская", "", "Белорусская", "Динамо"])
+            return _TextLocator("", count=0)
+
+    assert _parse_metro_stations(_Card()) == ["Белорусская", "Динамо"]
+
+
+def test_parse_metro_stations_distinguishes_missing_and_empty_blocks():
+    class _EmptyCard:
+        def locator(self, selector):
+            if selector == search.sel.VACANCY_CARD_METRO_STATION:
+                class _EmptyLocator(_TextLocator):
+                    def nth(self, index):
+                        assert index == 0
+                        return self
+
+                return _EmptyLocator("", count=1)
+            return _TextLocator("", count=0)
+
+    assert _parse_metro_stations(_FixtureCard({})) is None
+    assert _parse_metro_stations(_EmptyCard()) == []
+
+
 # --- side_job / no_resume ----------------------------------------------------
 
 
@@ -183,6 +219,7 @@ def test_vacancy_card_new_fields_default_to_empty():
     assert c.snippet_responsibility == ""
     assert c.side_job is None
     assert c.no_resume is None
+    assert c.metro_stations is None
 
 
 def test_vacancy_card_accepts_new_fields():

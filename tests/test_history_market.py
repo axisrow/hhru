@@ -123,6 +123,18 @@ def test_upsert_extra_card_fields_default_to_null(tmp_path):
     assert row["metro_stations"] is None
 
 
+def test_empty_metro_snapshot_is_persisted_and_missing_snapshot_is_preserved(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.upsert_vacancy_seen(
+        vacancy_id="123", search_query="python", metro_stations='["Динамо"]'
+    )
+    h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations="[]")
+    assert h.list_vacancies_seen()[0]["metro_stations"] == "[]"
+
+    h.upsert_vacancy_seen(vacancy_id="123", search_query="python", metro_stations=None)
+    assert h.list_vacancies_seen()[0]["metro_stations"] == "[]"
+
+
 def test_upsert_refreshes_extra_card_fields_with_new_nonempty_value(tmp_path):
     """При повторном scrape новое НЕпустое значение address перезаписывает
     старое (карточка могла реально поменять город/формат работы)."""
