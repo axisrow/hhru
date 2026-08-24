@@ -793,7 +793,7 @@ def test_set_copy_title_uses_direct_editor_then_confirms_profile(monkeypatch):
             count=lambda: 1,
             click=lambda: None,
             wait_for=lambda **kw: None,
-        )
+        ),
     )
 
     cmd._set_copy_title(page, NEW_ID, "Python-разработчик")
@@ -815,7 +815,7 @@ def test_set_copy_title_raises_when_displayed_title_does_not_match(monkeypatch):
             count=lambda: 1,
             click=lambda: None,
             wait_for=lambda **kw: None,
-        )
+        ),
     )
 
     with pytest.raises(RuntimeError, match="title после сохранения не подтверждён"):
