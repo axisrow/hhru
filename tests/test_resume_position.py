@@ -106,6 +106,60 @@ def test_apply_position_clicks_visible_currency_button_not_hidden_input():
     currency_button.click.assert_called_once_with()
 
 
+def test_set_control_reopens_dropdown_for_each_value():
+    class FakeOption:
+        def __init__(self, panel, label):
+            self.panel = panel
+            self.label = label
+
+        def count(self):
+            return 1
+
+        def click(self):
+            self.panel.selected.append(self.label)
+
+    class FakePanel:
+        def __init__(self):
+            self.open = False
+            self.selected = []
+
+        def wait_for(self, *, state):
+            assert self.open is (state == "visible")
+
+        def get_by_role(self, role, *, name, exact):
+            assert (role, exact) == ("option", True)
+            return FakeOption(self, name)
+
+    class FakeControl:
+        def __init__(self, panel):
+            self.panel = panel
+            self.clicks = 0
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def evaluate(self, _script):
+            return "BUTTON"
+
+        def click(self):
+            self.clicks += 1
+            self.panel.open = not self.panel.open
+
+    panel = FakePanel()
+    control = FakeControl(panel)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
+    )
+
+    resume_position._set_control(page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS)
+    resume_position._set_control(page, resume_position.WORK_FORMAT, "hybrid", resume_position.WORK_LABELS)
+
+    assert panel.selected == ["Удалённо", "Гибрид"]
+    assert control.clicks == 4
+
+
 def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")

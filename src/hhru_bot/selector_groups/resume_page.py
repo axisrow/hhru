@@ -38,6 +38,11 @@ RESUME_SKILLS_CHIP = "[data-qa^='chips-trigger-chip-']"
 RESUME_PARTIAL_EDIT_CANCEL = "[data-qa='resume-partial-edit-cancel']"
 RESUME_PARTIAL_EDIT_SAVE = "[data-qa='resume-partial-edit-save']"
 
+# The Magritte select panel used by the position editor.  The panel remains
+# mounted after selecting an option, so callers must close it explicitly and
+# wait for this panel (rather than an option) to become hidden.
+RESUME_POSITION_DROPDOWN = "[data-qa='drop-base']"
+
 # Language block and modal selectors confirmed on the authenticated read-only
 # DOM of /applicant/profile/me on 2026-08-20 (issue #265).  Languages are a
 # profile-level entity, not a resume-level one: /resume/{id} never renders a

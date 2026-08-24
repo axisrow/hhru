@@ -19,6 +19,7 @@ from playwright.sync_api import Page
 from .browser import HH_BASE_URL, goto_hh, has_login_form, open_hydrated_resume_editor
 from .config import ResumeConfig
 from .responses import NotAuthenticated
+from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
 
 FORM = "[data-qa='resume-edit-position-form']"
 EDIT = "[data-qa='edit-position-button']"
@@ -269,11 +270,21 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
     if tag in ("INPUT", "TEXTAREA"):
         el.fill(value)
         return
+    panel = page.locator(RESUME_POSITION_DROPDOWN)
+    # Magritte leaves the previous panel mounted after a selection.  Waiting
+    # for the panel itself avoids both an intercepted trigger click and a
+    # stale option lookup on the next value.
+    panel.wait_for(state="hidden")
     el.click()
-    option = page.get_by_role("option", name=labels[value], exact=True)
+    panel.wait_for(state="visible")
+    option = panel.get_by_role("option", name=labels[value], exact=True)
     if option.count() != 1:
         raise RuntimeError(f"вариант формы не найден: {labels[value]}")
     option.click()
+    # Selecting an option does not close this dropdown.  Escape is deliberately
+    # avoided because it can close the whole editor form.
+    el.click()
+    panel.wait_for(state="hidden")
 
 
 def apply_position(page: Page, plan: PositionValues) -> None:
