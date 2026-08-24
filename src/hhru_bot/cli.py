@@ -68,6 +68,7 @@ BROWSER_COMMANDS = frozenset(
         "responses",
         "resume-position",
         "resume-sections",
+        "resume-visibility",
         "resume-views",
         "run",
         "search",
