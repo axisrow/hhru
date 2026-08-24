@@ -31,6 +31,7 @@ from ..apply.letter import (
     CoverLetterProvider,
     LetterOutcome,
     _format_template,
+    _log_letter_match,
     _resolve_alternatives,
 )
 from ..search import VacancyCard
@@ -94,13 +95,17 @@ class AICoverLetterProvider(CoverLetterProvider):
             )
             return self._fallback(vacancy)
 
-        return LetterOutcome(text=letter, variant=VARIANT_AI)
+        outcome = LetterOutcome(text=letter, variant=VARIANT_AI)
+        _log_letter_match(vacancy, outcome.text)
+        return outcome
 
     def _fallback(self, vacancy: VacancyCard) -> LetterOutcome:
-        return LetterOutcome(
+        outcome = LetterOutcome(
             text=_format_template(self._fallback_template, vacancy),
             variant=VARIANT_AI_FALLBACK,
         )
+        _log_letter_match(vacancy, outcome.text)
+        return outcome
 
 
 def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[str, str]]:
