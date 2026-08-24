@@ -31,7 +31,9 @@ def rename_resume_on_hh(
     """Rename exactly one resume, or refuse while the UI contract is unknown."""
     del page, before_click
     if dry_run:
-        return RenameResumeResult(resume.resume_id, True, f"dry-run; имя будет изменено на «{name}»")
+        return RenameResumeResult(
+            resume.resume_id, True, f"dry-run; имя будет изменено на «{name}»"
+        )
     if not RESUME_NAME_INPUT or not RESUME_NAME_SAVE:
         return RenameResumeResult(
             resume.resume_id,

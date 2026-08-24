@@ -48,7 +48,10 @@ def run(args: argparse.Namespace):
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Переименовать резюме '{resume.id}' на hh.ru?"
     ):
-        print("[FAIL] Боевой режим требует --force или интерактивного подтверждения. Ничего не изменено.")
+        print(
+            "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
+            "Ничего не изменено."
+        )
         return True
     if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, "rename_resume"):
         print(
