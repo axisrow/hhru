@@ -239,6 +239,8 @@ def _detect_currency(text: str) -> str | None:
     """Возвращает ISO-код валюты или None для неизвестного обозначения."""
     lower = text.lower()
     for needle, code in _CURRENCY_PATTERNS:
+        if needle == "br" and not re.search(r"\bbr\b", lower):
+            continue
         if needle in lower:
             return code
     # Не угадываем валюту по хвосту заголовка: «на руки» и «до вычета

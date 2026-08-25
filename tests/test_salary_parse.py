@@ -133,6 +133,12 @@ def test_parse_salary_unknown_currency_is_none():
     assert result.currency is None
 
 
+def test_parse_salary_does_not_treat_brand_as_currency():
+    result = parse_salary("3 000 Brand Designer на руки")
+    assert result is not None
+    assert result.currency is None
+
+
 @pytest.mark.parametrize(
     ("text", "expected", "salary_from", "salary_to"),
     [
