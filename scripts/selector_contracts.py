@@ -1075,10 +1075,7 @@ def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool
     """Do not let audit bookkeeping become activation evidence on refresh."""
     if not row.get("evidence"):
         return False
-    return not (
-        logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES)
-        and row.get("verification") in {"unverified", "unavailable"}
-    )
+    return not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES)
 
 
 def build_map(reference_root: Path, live_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
