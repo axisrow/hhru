@@ -13,6 +13,7 @@ format_healthcheck_table прогоняются на FakePage поверх HTML-
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -278,6 +279,41 @@ def test_format_table_has_header_and_statuses():
     assert "CARD" in out
 
 
+def test_format_healthcheck_json_is_derived_from_live_observations():
+    pages = [
+        probe_cmd.PageCheck(
+            name="search",
+            url="https://hh.ru/search/vacancy",
+            results=[
+                probe_cmd.SelectorCheck(
+                    "VACANCY_CARD", "[data-qa='vacancy-serp__vacancy']", 20
+                ),
+                probe_cmd.SelectorCheck(
+                    "PAGINATION_NEXT", "[data-qa='pager-next']", 0, required=False
+                ),
+            ],
+        )
+    ]
+    payload = json.loads(probe_cmd.format_healthcheck_json(pages))
+    assert payload["source"] == "live_healthcheck"
+    assert payload["pages"][0]["selectors"] == [
+        {
+            "name": "VACANCY_CARD",
+            "selector": "[data-qa='vacancy-serp__vacancy']",
+            "required": True,
+            "count": 20,
+            "status": "OK",
+        },
+        {
+            "name": "PAGINATION_NEXT",
+            "selector": "[data-qa='pager-next']",
+            "required": False,
+            "count": 0,
+            "status": "OPTIONAL_ABSENT",
+        },
+    ]
+
+
 def test_format_table_empty_pages_still_renders_header():
     # Нет страниц — таблица всё равно рисует шапку (как report._ascii_table).
     out = probe_cmd.format_healthcheck_table([])
@@ -393,8 +429,9 @@ def test_healthcheck_spec_marks_obsolete_and_conditional_optional():
     # основные карточные селекторы — required
     assert sel_required["VACANCY_CARD"] is True
     assert sel_required["VACANCY_CARD_TITLE_LINK"] is True
-    # устаревший/условно-отсутствующий — optional
-    assert sel_required["VACANCY_CARD_COMPENSATION"] is False
+    # Устаревший compensation больше не передаётся Playwright даже как
+    # optional: карта пометила его unavailable, зарплата читается из текста.
+    assert "VACANCY_CARD_COMPENSATION" not in sel_required
     assert sel_required["PAGINATION_NEXT"] is False
 
 

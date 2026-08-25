@@ -1,0 +1,44 @@
+{
+  "issue": 599,
+  "snapshot": "current-selector-sync",
+  "scope": {
+    "literal_mismatches": 10,
+    "broken_bindings": 3,
+    "overlap": 1,
+    "affected_unique": 12,
+    "literal_mismatch_ids": [
+      "apply.success.APPLY_SUCCESS_MARKER",
+      "apply_form.APPLY_COVER_LETTER_TEXTAREA",
+      "apply_form.APPLY_RESUME_OPTION",
+      "apply_form.APPLY_RESUME_SELECT",
+      "negotiations.CHAT_MESSAGE_INPUT",
+      "negotiations.CHAT_MESSAGE_SEND",
+      "negotiations.NEGOTIATION_STATUS",
+      "negotiations.NEGOTIATION_VACANCY_LINK",
+      "selectors.LOGIN_CODE_INPUT",
+      "selectors.LOGIN_EMAIL_INPUT"
+    ],
+    "broken_binding_ids": [
+      "apply.success.APPLY_SUCCESS_MARKER",
+      "search_page.VACANCY_CARD",
+      "search_page.VACANCY_CARD_TITLE_LINK"
+    ],
+    "overlap_ids": [
+      "apply.success.APPLY_SUCCESS_MARKER"
+    ],
+    "affected_unique_ids": [
+      "apply.success.APPLY_SUCCESS_MARKER",
+      "apply_form.APPLY_COVER_LETTER_TEXTAREA",
+      "apply_form.APPLY_RESUME_OPTION",
+      "apply_form.APPLY_RESUME_SELECT",
+      "negotiations.CHAT_MESSAGE_INPUT",
+      "negotiations.CHAT_MESSAGE_SEND",
+      "negotiations.NEGOTIATION_STATUS",
+      "negotiations.NEGOTIATION_VACANCY_LINK",
+      "selectors.LOGIN_CODE_INPUT",
+      "selectors.LOGIN_EMAIL_INPUT",
+      "search_page.VACANCY_CARD",
+      "search_page.VACANCY_CARD_TITLE_LINK"
+    ]
+  }
+}

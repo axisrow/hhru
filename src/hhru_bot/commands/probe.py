@@ -84,6 +84,11 @@ def register(subparsers) -> None:
         help="Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)",
     )
     p.add_argument(
+        "--json",
+        action="store_true",
+        help="Добавить machine-readable JSON-результат healthcheck",
+    )
+    p.add_argument(
         "--negotiations",
         action="store_true",
         help="Read-only дамп списка переговоров или чата без отправки (#107)",
@@ -272,6 +277,36 @@ def format_healthcheck_table(pages: list[PageCheck]) -> str:
     return _ascii_table(["page", "selector", "status", "count"], rows)
 
 
+def format_healthcheck_json(pages: list[PageCheck]) -> str:
+    """Serialize the authoritative live selector observations.
+
+    This is deliberately derived from the same ``PageCheck`` objects as the
+    human table; no catalog/reference data can manufacture an OK result.
+    """
+    payload = {
+        "source": "live_healthcheck",
+        "pages": [
+            {
+                "name": page.name,
+                "url": page.url,
+                "state": page.page_state,
+                "selectors": [
+                    {
+                        "name": result.name,
+                        "selector": result.selector,
+                        "required": result.required,
+                        "count": result.found,
+                        "status": result.status,
+                    }
+                    for result in page.results
+                ],
+            }
+            for page in pages
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
 def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]]]]:
     """Список страниц и ключевых селекторов для проверки.
 
@@ -299,7 +334,6 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
                 ("VACANCY_CARD", search_page.VACANCY_CARD, True),
                 ("VACANCY_CARD_TITLE_LINK", search_page.VACANCY_CARD_TITLE_LINK, True),
                 ("VACANCY_CARD_COMPANY", search_page.VACANCY_CARD_COMPANY, True),
-                ("VACANCY_CARD_COMPENSATION", search_page.VACANCY_CARD_COMPENSATION, False),
                 # Пагинация: hh.ru отдаёт две вёрстки (#123) — с pager-next и без
                 # него (только номера). Обе optional: их легитимно нет, когда
                 # выдача умещается на одну страницу.
@@ -385,6 +419,9 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
         pages = check_selectors(page, spec)
 
     print(format_healthcheck_table(pages))
+    if getattr(args, "json", False):
+        print("MACHINE_READABLE_JSON:")
+        print(format_healthcheck_json(pages))
     # Итог — только по required-селекторам (Codex F1): optional-ABSENT легитимен
     # (пагинация/compensation) и НЕ делает здоровый аккаунт «сломанным».
     required_ok = sum(1 for pg in pages for r in pg.results if r.required and r.found > 0)
@@ -972,7 +1009,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             ("ITEM", negotiations.NEGOTIATION_ITEM),
             ("VACANCY", negotiations.NEGOTIATION_VACANCY_LINK),
             ("EMPLOYER", negotiations.NEGOTIATION_EMPLOYER),
-            ("STATUS", "[data-qa^='negotiations-tag']"),
+            ("STATUS", negotiations.NEGOTIATION_STATUS),
             ("DATE", negotiations.NEGOTIATION_DATE),
             ("OPEN_CHAT", negotiations.NEGOTIATION_CHAT_LINK),
         ):
@@ -995,10 +1032,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                 return True
             goto_hh(page, chat_url(ref.chat_id))
             print(f"[INFO] chat route: {page.url}")
-            message_selector = (
-                '[data-qa^="chatik-chat-message-"][data-qa$="-text"]'
-                ':not([data-qa="chatik-chat-message-applicant-action-text"])'
-            )
+            message_selector = negotiations.CHAT_MESSAGE_TEXT
             messages = page.locator(message_selector)
             message_rows = []
             for i in range(messages.count()):
@@ -1021,7 +1055,7 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                 )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
             print("RAW HTML fragment (messages):")
-            message_roots = page.locator("[data-qa^='chatik-chat-message-']")
+            message_roots = page.locator(negotiations.CHAT_MESSAGE_ROOT)
             if message_roots.count():
                 print(message_roots.first.evaluate("el => el.outerHTML")[:4000])
     return False
