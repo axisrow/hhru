@@ -898,6 +898,11 @@ def _upstream_consensus(
                 "verification",
                 "reason_code",
                 "reason",
+                "target",
+                "evidence",
+                "last_verified_at",
+                "verified_flow",
+                "verified_by",
             ):
                 if field in old:
                     row[field] = copy.deepcopy(old[field])
@@ -1124,6 +1129,32 @@ def render_matrix(catalog: dict[str, Any]) -> str:
         selector_value = _markdown(f"`{row['value']}`")
         references = _markdown(", ".join(row["references"]))
         lines.append(f"| {selector_value} | {references} |")
+    decisions = [
+        row
+        for row in catalog.get("upstream_consensus", [])
+        if _is_apply_response_candidate(row.get("value", "")) and row.get("decision")
+    ]
+    if decisions:
+        lines.extend(
+            [
+                "",
+                "## Apply/response candidate decisions",
+                "",
+                "Every apply/response candidate is explicitly resolved; rejected "
+                "WRITE candidates are not added as fallback selectors.",
+                "",
+                "| selector | decision | target | reason |",
+                "|---|---|---|---|",
+            ]
+        )
+        for row in decisions:
+            cells = (
+                f"`{row['value']}`",
+                row.get("decision", "—"),
+                row.get("target", "—"),
+                row.get("reason", "—"),
+            )
+            lines.append("| " + " | ".join(_markdown(value or "—") for value in cells) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -1184,8 +1215,41 @@ def unmanaged_selector_literals(catalog: dict[str, Any] | None = None) -> list[s
     return findings
 
 
-def verify_catalog(catalog: dict[str, Any]) -> list[str]:
+def _candidate_decision_errors(catalog: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    for row in catalog.get("upstream_consensus", []):
+        if not _is_apply_response_candidate(row.get("value", "")):
+            continue
+        decision = row.get("decision")
+        if decision not in {"port_exact", "reject", "unavailable"}:
+            errors.append(
+                f"upstream candidate {row.get('value', '')}: "
+                "must have port_exact, reject, or unavailable decision"
+            )
+            continue
+        required_fields = (
+            "origin",
+            "verification",
+            "evidence",
+            "last_verified_at",
+            "verified_flow",
+            "verified_by",
+        )
+        for field in required_fields:
+            if not row.get(field):
+                errors.append(f"upstream candidate {row.get('value', '')}: missing {field}")
+        evidence = row.get("evidence", {})
+        if not evidence.get("source") or not evidence.get("note"):
+            errors.append(f"upstream candidate {row.get('value', '')}: evidence is incomplete")
+        if decision in {"reject", "unavailable"} and not row.get("reason"):
+            errors.append(f"upstream candidate {row.get('value', '')}: missing reject reason")
+        if decision == "port_exact" and not row.get("target"):
+            errors.append(f"upstream candidate {row.get('value', '')}: missing target contract")
+    return errors
+
+
+def verify_catalog(catalog: dict[str, Any]) -> list[str]:
+    errors: list[str] = _candidate_decision_errors(catalog)
     threshold = int(catalog.get("policy", {}).get("consensus_threshold", 2))
     if threshold != 2:
         errors.append(f"consensus_threshold must be 2, got {threshold}")
@@ -1267,6 +1331,7 @@ def _tracked_consensus(
 
 def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, Any]:
     catalog = load_catalog()
+    previous_consensus = copy.deepcopy(catalog.get("upstream_consensus", []))
     metadata, indexes = _reference_indexes(reference_root)
     old_metadata = catalog.get("references", {})
     unchanged = {
@@ -1284,9 +1349,8 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     if mode is not None:
         catalog["policy"]["mode"] = mode
     catalog["binding_definitions"] = _binding_definitions()
-    catalog["upstream_consensus"] = _upstream_consensus(
-        indexes, catalog.get("upstream_consensus", [])
-    )
+    catalog["upstream_consensus"] = _upstream_consensus(indexes, previous_consensus)
+    _invalidate_changed_candidate_verification(catalog, previous_consensus, unchanged)
     _refresh_bindings(catalog, indexes)
     for row in catalog["selectors"].values():
         audit_unverified = (
@@ -1363,6 +1427,45 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
 def _short(value: str, limit: int = 140) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _is_apply_response_candidate(value: str) -> bool:
+    return "vacancy-response-" in value or "vacancy-serp__vacancy-employer" in value
+
+
+def _invalidate_changed_candidate_verification(
+    catalog: dict[str, Any],
+    previous_rows: list[dict[str, Any]],
+    unchanged_references: dict[str, bool],
+) -> None:
+    previous_by_value = {
+        normalize_selector(row.get("value", "")): row for row in previous_rows if row.get("value")
+    }
+    for row in catalog.get("upstream_consensus", []):
+        if not _is_apply_response_candidate(row.get("value", "")) or not row.get("decision"):
+            continue
+        previous = previous_by_value.get(normalize_selector(row["value"]))
+        if not previous:
+            continue
+        provenance_changed = (
+            previous.get("references") != row.get("references")
+            or previous.get("sources") != row.get("sources")
+            or any(not unchanged_references.get(name, False) for name in row["references"])
+        )
+        if not provenance_changed:
+            continue
+        row["verification"] = "unverified"
+        row["evidence"] = {
+            "source": "selectors/reference-map.yaml:upstream_consensus",
+            "note": (
+                "Upstream provenance changed; the prior candidate decision is retained, "
+                "but manual re-review is required."
+            ),
+            "reference_commits": {
+                name: catalog["references"][name]["commit"] for name in row["references"]
+            },
+        }
+        row["verified_by"] = "ci"
 
 
 def render_refresh_report(before: dict[str, Any], after: dict[str, Any]) -> str:
@@ -1503,6 +1606,15 @@ def main() -> int:
     args = parse_args()
     if args.command == "bootstrap":
         catalog, evidence = build_map(args.reference_root, args.live_root)
+        candidate_errors = _candidate_decision_errors(catalog)
+        if candidate_errors:
+            print(
+                "bootstrap refused: resolve apply/response candidates before writing the catalog",
+                file=sys.stderr,
+            )
+            for error in candidate_errors:
+                print(f"  {error}", file=sys.stderr)
+            return 1
         write_catalog(catalog, evidence)
         unavailable = sum(row["decision"] == "unavailable" for row in catalog["selectors"].values())
         print(f"wrote {len(catalog['selectors'])} selector contracts; unavailable={unavailable}")
