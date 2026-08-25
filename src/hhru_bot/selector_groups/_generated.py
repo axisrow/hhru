@@ -189,7 +189,6 @@ VALUES: dict[str, str] = {
     "transient_overlays.COOKIE_BANNER_DISMISS": "[data-qa='cookies-policy-informer-accept']",
     "transient_overlays.NOTIFICATION": "[data-qa^='notification']",
     "transient_overlays.NOTIFICATION_DISMISS": "[data-qa='notification-close'] button[aria-label='Удалить']",
-    "transient_overlays.RESUME_DELIVERED": "",
     "vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN": "[data-qa='vacancy-response-link-top-again']",
     "vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT": "[data-qa='vacancy-response-link-view-topic']",
     "vacancy_page.VACANCY_APPLY_BUTTON": "[data-qa='vacancy-response-link-top']",

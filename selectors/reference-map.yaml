@@ -4245,7 +4245,7 @@ selectors:
     active: true
   transient_overlays.RESUME_DELIVERED:
     value: ''
-    active: true
+    active: false
     criticality: read
     decision: needs_live_evidence
     origin: browser_dom
