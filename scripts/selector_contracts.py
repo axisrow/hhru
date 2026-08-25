@@ -1566,6 +1566,9 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
             for name, items in indexes.items()
             if (matches := _matching_sources(value, items))
         }
+        # Reconcile provenance against the freshly recalculated sources before
+        # old evidence can influence the activation decision below.
+        _reconcile_audit_metadata(catalog)
         reference_count = len(row["sources"])
         if audit_unverified:
             # Audit metadata must not become activation evidence.  In
