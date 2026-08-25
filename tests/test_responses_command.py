@@ -88,6 +88,39 @@ def test_responses_run_history_only_skips_browser(capsys, tmp_path):
     assert "обход hh.ru пропущен" in out
 
 
+def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):
+    """Zero is a valid sync window, not a request for history-only mode."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+    seen = []
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(vacancy_id="v1", status=ResponseStatus.READ, topic="t1", resume_id="r1")
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.commands.responses.fetch_responses",
+        lambda *args, **kwargs: seen.append(kwargs) or [card],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses",
+        lambda *args, **kwargs: seen.append(kwargs) or [card],
+    )
+    responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=0.0, sync_applied=True))
+    assert seen == [{"max_pages": 5, "strict_empty": True}]
+    assert "добавлено 1" in capsys.readouterr().out
+
+
 def test_responses_run_empty_history_does_not_crash(capsys, tmp_path):
     config = _write_config(tmp_path, _minimal_config())
     responses_cmd.run(_args(config, tmp_path / "h.db"))

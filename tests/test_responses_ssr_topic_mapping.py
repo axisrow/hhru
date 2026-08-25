@@ -321,3 +321,34 @@ def test_ssr_topic_recovery_flags_all_cards_when_candidate_pool_is_smaller_than_
     assert results[1].chat_url is None
     assert results[1].topic_ambiguous is True
     assert any("неоднозначно" in message for message in caplog.messages)
+
+
+def test_strict_sync_rejects_unmatched_ssr_topic(monkeypatch):
+    """Applied sync must not silently omit an SSR negotiation absent from DOM."""
+    item = responses.ResponseItem(
+        vacancy_id="700", status=responses.ResponseStatus.READ, topic="222", resume_id="r1"
+    )
+    page = _SSRPage(
+        pages_cards=[[item]],
+        pages_html=[_ssr_html([("222", "333", "700"), ("444", "555", "701")])],
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="полного однозначного"):
+        responses.fetch_responses(page, max_pages=1, strict_empty=True)
+
+
+def test_strict_sync_rejects_unattributed_dom_card(monkeypatch):
+    """A rendered card without SSR resume/topic identity is not importable."""
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    page = _SSRPage(pages_cards=[[item]], pages_html=[_ssr_html([("222", "333", "700")])])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="полного однозначного"):
+        responses.fetch_responses(page, max_pages=1, strict_empty=True)
