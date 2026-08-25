@@ -49,8 +49,16 @@ _SCRIPT = r"""
       'body > *, [role="dialog"], [role="alert"], [data-qa]'
     ).forEach(safe);
   };
-  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(scan)))
-    .observe(document.documentElement, {subtree: true, childList: true});
+  new MutationObserver(ms => ms.forEach(m => {
+    // HH.ru often mounts the shell first and fills text/controls later.
+    // Rescan the changed element's parent so incremental mutations are not
+    // lost (text nodes themselves are not elements).
+    const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+    if (target) scan(target);
+    m.addedNodes.forEach(scan);
+  })).observe(document.documentElement, {
+    subtree: true, childList: true, characterData: true,
+  });
 })();
 """
 
