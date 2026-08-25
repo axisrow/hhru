@@ -334,6 +334,9 @@ def fetch_responses(
     """
     results: list[ResponseItem] = []
 
+    if strict_empty and max_pages <= 0:
+        raise ResponsesIndeterminate("sync requires a positive negotiations page limit")
+
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         logger.info("Загрузка страницы откликов: %s", url)
@@ -397,6 +400,10 @@ def fetch_responses(
                 )
                 continue
             results.append(item)
+        if strict_empty and len(results) - page_start != count:
+            raise ResponsesIndeterminate(
+                f"страница {page_num}: не удалось распознать все карточки negotiations"
+            )
 
         # The live open_chat control is a button without href.  Recover the
         # stable topic from the same page's SSR state, preserving distinct
@@ -467,11 +474,20 @@ def fetch_responses(
                         len(candidates),
                     )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
+            if strict_empty:
+                raise ResponsesIndeterminate(
+                    f"страница {page_num}: SSR topic/resume mapping не подтверждён"
+                ) from None
             logger.warning("SSR topic mapping unavailable; keeping parsed chat URLs")
 
-        if not _has_next_page(page, page_num):
+        has_next = _has_next_page(page, page_num)
+        if not has_next:
             logger.info("Достигнута последняя страница откликов (%d)", page_num)
             break
+        if strict_empty and page_num == max_pages - 1:
+            raise ResponsesIndeterminate(
+                "sync достиг ограничения страниц, но negotiations продолжается"
+            )
 
     logger.info("Собрано ответов работодателей всего: %d", len(results))
     return results

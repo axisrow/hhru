@@ -117,6 +117,12 @@ def run(args: argparse.Namespace) -> None:
     # всё из истории (быстрый read-only дашборд без обхода).
     remindable_only = getattr(args, "remindable", False)
     sync_applied = getattr(args, "sync_applied", False)
+    if sync_applied and (remindable_only or getattr(args, "detect_external_tests", False)):
+        print(
+            "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     fresh_only = args.since_hours <= 0 and not remindable_only and not sync_applied
     since_fetch = datetime.now() - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
