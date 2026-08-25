@@ -146,6 +146,17 @@ class _Throttle:
 
 
 def _patch_withdraw_page(monkeypatch):
+    monkeypatch.setattr(command, "NEGOTIATION_WITHDRAW", "[data-qa='confirmed-withdraw']")
+    monkeypatch.setattr(
+        command,
+        "NEGOTIATION_WITHDRAW_CONFIRM",
+        "[data-qa='confirmed-withdraw-confirm']",
+    )
+    monkeypatch.setattr(
+        command,
+        "NEGOTIATION_WITHDRAW_SUCCESS",
+        "[data-qa='confirmed-withdraw-success']",
+    )
     monkeypatch.setattr(command, "goto_hh", lambda page, url: None)
     monkeypatch.setattr(command, "topic_refs", lambda html: [type("Ref", (), {"topic_id": "77"})()])
 

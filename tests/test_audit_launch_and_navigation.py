@@ -168,6 +168,18 @@ def test_withdraw_failure_after_destructive_click_is_uncertain_and_not_retried(
     from hhru_bot.commands import clear_negotiations as module
     from hhru_bot.history import History
 
+    monkeypatch.setattr(module, "NEGOTIATION_WITHDRAW", "[data-qa='confirmed-withdraw']")
+    monkeypatch.setattr(
+        module,
+        "NEGOTIATION_WITHDRAW_CONFIRM",
+        "[data-qa='confirmed-withdraw-confirm']",
+    )
+    monkeypatch.setattr(
+        module,
+        "NEGOTIATION_WITHDRAW_SUCCESS",
+        "[data-qa='confirmed-withdraw-success']",
+    )
+
     history = History(str(tmp_path / "history.db"))
     topic = "5503922709"
     withdraw_clicked: list[str] = []

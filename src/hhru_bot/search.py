@@ -497,20 +497,10 @@ def search_vacancies(
 
             # Зарплата (issue #14). Блок опционален: hh.ru не рендерит
             # compensation, если з/п не указана.
-            # ЗП: сначала пробуем data-qa селектор, потом regex-fallback
-            # по HTML карточки (hh.ru перешёл на magritte, #73).
-            salary_text = _optional_text(card, sel.VACANCY_CARD_COMPENSATION)
-            if salary_text is None:
-                try:
-                    # #93: textContent (inner_text) вместо innerHTML. Аудит показал,
-                    # что hh.ru для части вакансий отдаёт ЗП только в textContent
-                    # (JS-рендер в текстовый узел), а в innerHTML блока нет — регексп
-                    # по innerHTML пропускал такие ЗП (5/15 → 19/20 ловится по тексту).
-                    # extract_salary_text корректно работает и с HTML, и с голым текстом
-                    # (удаление тегов на тексте = no-op), поэтому кормим её textContent.
-                    salary_text = extract_salary_text(card_text)
-                except Exception:
-                    logger.warning("Не удалось получить inner_text для ЗП-fallback", exc_info=True)
+            # Устаревший data-qa намеренно отключён контрактом селекторов.
+            # Зарплата извлекается из уже прочитанного текста карточки: это
+            # read-only parser, а не второй угаданный DOM-селектор.
+            salary_text = extract_salary_text(card_text)
             salary = parse_salary(salary_text)
             published_at = parse_publication_time(
                 _optional_text(card, sel.VACANCY_CARD_PUBLICATION_TIME)

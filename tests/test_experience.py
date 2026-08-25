@@ -2,8 +2,11 @@ import pytest
 
 from hhru_bot.experience import (
     ExperienceEntry,
+    ExperiencePlan,
+    ExperienceResult,
     _merge_fill_plan,
     build_prompt,
+    edit_experience_on_hh,
     parse_plan,
     plan_experience,
 )
@@ -67,3 +70,28 @@ def test_fill_plan_rejects_identity_or_count_changes():
     old = ExperienceEntry(company="Acme")
     assert _merge_fill_plan([old], [ExperienceEntry(company="Other")]) is None
     assert _merge_fill_plan([old], []) is None
+
+
+class _Locator:
+    def count(self):
+        return 0
+
+
+class _Page:
+    def locator(self, selector):
+        assert selector is not None
+        return _Locator()
+
+
+def test_edit_experience_fails_closed_when_add_selector_is_unavailable(monkeypatch):
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.EXPERIENCE_ADD_BUTTON", None)
+
+    results = edit_experience_on_hh(
+        _Page(),
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme")]),
+        dry_run=True,
+    )
+
+    assert results == [ExperienceResult("строка опыта 0: add-триггер не подтверждён однозначно")]

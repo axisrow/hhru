@@ -255,6 +255,10 @@ def edit_experience_on_hh(
             # The add selector was not confirmed by the research dump.  It is
             # accepted only as a single exact data-qa match, never by button
             # text or a broad CSS selector.
+            if EXPERIENCE_ADD_BUTTON is None:
+                return results + [
+                    ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
+                ]
             add = page.locator(EXPERIENCE_ADD_BUTTON)
             if add.count() != 1:
                 return results + [

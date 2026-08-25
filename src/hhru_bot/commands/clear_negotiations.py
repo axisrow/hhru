@@ -91,6 +91,12 @@ def _withdraw_topic(page, topic: str) -> tuple[bool, str, bool]:
     to that same card.  Disappearance of a card is not evidence of success.
     """
     acted = False
+    if not all((NEGOTIATION_WITHDRAW, NEGOTIATION_WITHDRAW_CONFIRM, NEGOTIATION_WITHDRAW_SUCCESS)):
+        return (
+            False,
+            "селекторы отзыва не подтверждены картой; destructive click отключён",
+            acted,
+        )
     try:
         url = f"{HH_BASE_URL}/applicant/negotiations?topic={quote(str(topic), safe='')}"
         goto_hh(page, url)

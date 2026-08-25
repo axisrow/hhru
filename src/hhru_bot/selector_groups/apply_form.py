@@ -9,6 +9,8 @@ toggle/textarea, submit), которые #3 и #7 не трогают. Селе�
 
 from __future__ import annotations
 
+from ._generated import selector as _selector
+
 # сверено живым DOM (F12, /applicant/vacancy_response,
 # multi-resume аккаунт, 2026-08-20). APPLY_RESUME_SELECT был непроверенной
 # заглушкой и не существует на реальной форме (`resume-topic-title` не
@@ -43,12 +45,13 @@ from __future__ import annotations
 #
 # Обе ветки поддержаны в steps.fill_response_form через Locator.or_. Full-page
 # селекторы НЕ удалять: оба shape наблюдались в дампах одного дня (08-16).
-APPLY_RESUME_SELECT = "[data-qa='resume-title']"
+APPLY_RESUME_SELECT = _selector("apply_form.APPLY_RESUME_SELECT")
 # The text node is nested inside the actual Magritte toggle container.  Keep
 # APPLY_RESUME_SELECT for discovery/opening, but use this ancestor for closing.
-APPLY_RESUME_TOGGLE = "[data-qa='resume-title'] >> xpath=ancestor::*[@role='button'][1]"
-APPLY_RESUME_OPTION_PREFIX = "magritte-select-option-"
-APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
+APPLY_RESUME_TOGGLE = _selector("apply_form.APPLY_RESUME_TOGGLE")
+APPLY_RESUME_OPTION = _selector("apply_form.APPLY_RESUME_OPTION")
+APPLY_RESUME_OPTION_PREFIX = "magritte-select-option-"  # compatibility for fakes/tests
+APPLY_COVER_LETTER_TOGGLE = _selector("apply_form.APPLY_COVER_LETTER_TOGGLE")
 # Тоггл письма МОДАЛКИ. Подтверждён дампами 2026-08-20 (apply_136190065/136190066):
 #   <button type="button" data-qa="add-cover-letter"> внутри data-qa="actions-container"
 # Живёт ВНЕ <form>, а раскрываемая им textarea (APPLY_COVER_LETTER_TEXTAREA,
@@ -68,7 +71,7 @@ APPLY_COVER_LETTER_TOGGLE = "[data-qa='vacancy-response-letter-toggle']"
 # (hh.ru ЗАМЕНЯЕТ тоггл на textarea — probe_136190065: initial тоггл=1/ta=0,
 # form тоггл=0/ta=1). Поэтому безусловный клик по видимому тогглу не может свернуть
 # уже развёрнутое поле.
-APPLY_COVER_LETTER_TOGGLE_POPUP = "[data-qa='add-cover-letter']"
+APPLY_COVER_LETTER_TOGGLE_POPUP = _selector("apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP")
 # Всплывающая панель со списком резюме (Magritte drop-base). Источник подтверждения —
 # боевой лог 2026-08-20 (`data/logs/hhru_bot.log`): в сообщении Playwright об
 # интерсепте напечатан РОВНО ОДИН элемент
@@ -86,21 +89,21 @@ APPLY_COVER_LETTER_TOGGLE_POPUP = "[data-qa='add-cover-letter']"
 # (`magritte-select-option-{resume_id}`, выбранная несёт aria-selected="true"),
 # поэтому ждать СКРЫТИЯ ОПЦИИ нельзя: она остаётся visible, пока панель открыта.
 # Закрывать нужно саму панель, а её исчезновение — по этому селектору.
-APPLY_RESUME_DROPDOWN = "[data-qa='drop-base']"
-APPLY_COVER_LETTER_TEXTAREA = "textarea[data-qa='vacancy-response-popup-form-letter-input']"
-APPLY_SUBMIT_BUTTON = "[data-qa='vacancy-response-submit-popup']"
+APPLY_RESUME_DROPDOWN = _selector("apply_form.APPLY_RESUME_DROPDOWN")
+APPLY_COVER_LETTER_TEXTAREA = _selector("apply_form.APPLY_COVER_LETTER_TEXTAREA")
+APPLY_SUBMIT_BUTTON = _selector("apply_form.APPLY_SUBMIT_BUTTON")
 
 # --- #95: детекция тест-вопросов/анкет в форме отклика (detect-only, NO auto-answer) ---
 # Подтверждено konard reference (hh-selectors.mjs / qa.mjs, production hh.ru automation).
 # task-body — контейнер вопроса; task-question — текст вопроса внутри него. На нашем
 # аккаунте НЕ сверялись живым дампом, но konard использует их в боевом коде.
-APPLY_QUESTION_BODY = "[data-qa='task-body']"  # подтверждено (konard)
-APPLY_QUESTION_TEXT = "[data-qa='task-question']"  # подтверждено (konard), внутри task-body
-APPLY_QUESTION_FORM_BODY = "form[name='vacancy_response'] [data-qa='task-body']"
+APPLY_QUESTION_BODY = _selector("apply_form.APPLY_QUESTION_BODY")
+APPLY_QUESTION_TEXT = _selector("apply_form.APPLY_QUESTION_TEXT")
+APPLY_QUESTION_FORM_BODY = _selector("apply_form.APPLY_QUESTION_FORM_BODY")
 
 # Второй (full-page) вариант textarea сопроводительного письма — нужен heuristic-фильтру,
 # чтобы не принять cover-letter textarea за ответ на вопрос. konard: coverLetterTextareaForm.
-APPLY_COVER_LETTER_TEXTAREA_FORM = "textarea[data-qa='vacancy-response-form-letter-input']"
+APPLY_COVER_LETTER_TEXTAREA_FORM = _selector("apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM")
 
 # Heuristic-селекторы (НЕ data-qa, поэтому живут в apply/questions.py, а не в selector_groups):
 # input[type='radio'], input[type='checkbox'], голый textarea — они используются

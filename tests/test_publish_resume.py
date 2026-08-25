@@ -12,6 +12,16 @@ pytestmark = pytest.mark.integration
 RESUME_ID = "a" * 38
 
 
+@pytest.fixture(autouse=True)
+def _confirmed_publish_selector(monkeypatch):
+    """Exercise publish behavior only after the selector contract approved it."""
+    monkeypatch.setattr(
+        publish,
+        "RESUME_PUBLISH_BUTTON_DATA_QA",
+        "[data-qa='confirmed-resume-publish']",
+    )
+
+
 def _resume():
     return ResumeConfig(
         id="python",
@@ -98,6 +108,14 @@ def _run(page, monkeypatch, *, preserve_url=False):
 
     monkeypatch.setattr(publish, "open_confirmed_resume", open_confirmed)
     return publish.publish_resume_on_hh(page, _resume(), dry_run=False)
+
+
+def test_publish_is_disabled_without_catalog_selector(monkeypatch):
+    monkeypatch.setattr(publish, "RESUME_PUBLISH_BUTTON_DATA_QA", None)
+    result = _run(_Page(_markup()), monkeypatch)
+    assert not result.success
+    assert result.uncertain is False
+    assert "клик отключён" in result.reason
 
 
 def test_parse_resume_state_keeps_independent_fields():
