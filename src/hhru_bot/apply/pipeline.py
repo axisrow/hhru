@@ -23,6 +23,7 @@ from ..ai.questions import AIQuestionAnswerer, AnswerProposal, extract_questions
 from ..browser import goto_hh, has_login_form
 from ..history import SKIP_REASONS, History
 from ..search import VacancyCard
+from ..vacancy_refresh import VacancyBodyCache, refresh_card
 from . import steps as apply_steps
 from .antibot import AntiBotChallengeDetected, detect_antibot_on_page
 from .blockers import PostClickBlocker, PostSubmitLimitExceeded
@@ -118,6 +119,7 @@ class ApplyContext:
     run_id: str | None = None
     force: bool = False
     allow_relocation: bool = False
+    vacancy_body_cache: VacancyBodyCache = field(default_factory=VacancyBodyCache)
 
     def fail(self, reason: str) -> ApplyResult:
         return ApplyResult(
@@ -436,6 +438,8 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     logger.info("Открываю вакансию: %s (%s)", ctx.vacancy.title, ctx.vacancy.url)
     goto_hh(ctx.page, ctx.vacancy.url)
     _halt_if_antibot(ctx)
+    # Reuse the already-open vacancy page; no second navigation is needed.
+    ctx.vacancy = refresh_card(ctx.page, ctx.vacancy, cache=ctx.vacancy_body_cache)
     if has_login_form(ctx.page):
         return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)

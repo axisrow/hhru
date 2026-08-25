@@ -31,6 +31,7 @@ from playwright.sync_api import Page
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..logging_setup import LOG_DIR
 from ..search import VacancyCard
+from ..vacancy_refresh import VacancyBodyCache, refresh_card
 from . import steps as apply_steps
 from .dedup import check_already_responded
 from .letter import CoverLetterProvider, render_cover_letter
@@ -178,6 +179,7 @@ def probe_vacancy(
 
     logger.info("[PROBE] Открываю вакансию: %s (%s)", vacancy.title, vacancy.url)
     goto_hh(page, vacancy.url)
+    vacancy = refresh_card(page, vacancy, cache=VacancyBodyCache())
     if has_login_form(page):
         return ProbeResult(
             vacancy,

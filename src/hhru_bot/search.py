@@ -305,6 +305,8 @@ class VacancyCard:
     # Read-only signal from vacancy/card text.  Full descriptions can be passed
     # by callers through ``vacancy_text`` when available.
     vacancy_text: str = ""
+    # Full body fetched from the canonical vacancy URL; never use card text as a substitute.
+    vacancy_description: str = ""
     portfolio_evidence_requirement: PortfolioEvidenceRequirement | None = None
     # Доп. признаки карточки для статистики/ML (issue #517, приоритет-1 из
     # #516). Все блоки опциональны в разметке hh.ru — пустая строка/None,
