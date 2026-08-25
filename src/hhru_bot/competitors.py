@@ -14,6 +14,7 @@ from playwright.sync_api import Page
 
 from .apply.antibot import raise_for_antibot
 from .browser import HH_BASE_URL, goto_hh, require_authenticated_page, resume_identity_matches
+from .competitor_privacy import sanitize_skill_name
 from .search import parse_salary
 from .selector_groups import competitor_resume as sel
 
@@ -321,12 +322,6 @@ _PROFICIENCY = {
 _SALARY_HEADING_RE = re.compile(
     r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|на руки)", re.IGNORECASE
 )
-_CONTACT_RE = re.compile(
-    r"(?:[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|https?://\S+|www\.\S+|@[A-Za-z0-9_.-]+|"
-    r"(?:\+?\d[\d\s().-]{8,}\d)|"
-    r"(?:[a-z0-9-]+\.)+(?:com|ru|net|org|io|me|co|рф)(?:/\S*)?)",
-    re.IGNORECASE,
-)
 
 
 def redact_free_text(_value: str) -> None:
@@ -337,19 +332,6 @@ def redact_free_text(_value: str) -> None:
     parsed separately; free-form sections are dropped rather than persisted.
     """
     return None
-
-
-def sanitize_skill_name(value: str) -> str | None:
-    """Keep professional skill labels, but never persist contact tokens."""
-    text = value.strip()
-    if not text:
-        return None
-    # Dotted technology names are skills, not contact endpoints.
-    if text.casefold() in {"asp.net", "vb.net", "socket.io"}:
-        return text
-    if _CONTACT_RE.search(text):
-        return None
-    return text
 
 
 def _months(text: str) -> int | None:
