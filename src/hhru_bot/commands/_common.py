@@ -21,6 +21,7 @@ from ..apply import apply_to_vacancy
 from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
 from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
+from ..blacklist import match as blacklist_match
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
@@ -1073,6 +1074,13 @@ def _run_apply_for_resume(
         # history-based deduplication barrier on this explicit route too.
         if history.has_applied(resume.resume_id, approved_item["vacancy_id"]):
             history.finish_review(args.approved, "skipped")
+            approved_duplicate = True
+        elif (blacklist_reason := blacklist_match(cards[0], history.blacklist_sets())) is not None:
+            history.finish_review(args.approved, "skipped")
+            history.record_skip(
+                resume.resume_id, approved_item["vacancy_id"], SKIP_REASONS.BLACKLIST
+            )
+            print(f"[skip] {blacklist_reason} — отклик не отправлен")
             approved_duplicate = True
         elif (
             current_employer_hit(approved_item["company"], resume.search.current_employers)
