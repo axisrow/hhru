@@ -29,6 +29,11 @@ def register(subparsers) -> None:
     parser.add_argument(
         "--template", type=str, help="Текст ответа (по умолчанию cover_letter_default)"
     )
+    parser.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Сгенерировать и сохранить draft по входящему сообщению (без отправки)",
+    )
     parser.add_argument("--force", action="store_true", help="Подтвердить боевой запуск")
     parser.set_defaults(func=run)
 
@@ -133,6 +138,41 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — уже отвечали на это сообщение")
                 progress.skipped_count += 1
                 continue
+            if getattr(args, "suggest", False):
+                from ..ai.llm_client import LLMClient
+                from ..reply_suggestions import ReplyContext, suggest
+
+                inbound = chat.conversation[-1] if chat.conversation else chat
+                try:
+                    letter = suggest(
+                        [
+                            ReplyContext(
+                                topic=topic,
+                                inbound_marker=chat.inbound_marker or "",
+                                inbound_text=inbound.text,
+                                vacancy_id=str(candidate["vacancy_id"]),
+                                vacancy_title=str(candidate["title"]),
+                                employer=str(candidate.get("employer") or ""),
+                                resume_id=resume_by_topic.get(topic),
+                            )
+                        ],
+                        LLMClient(config.ai),
+                    )
+                    history.save_reply_draft(
+                        topic=topic,
+                        inbound_marker=chat.inbound_marker or "",
+                        vacancy_id=str(candidate["vacancy_id"]),
+                        resume_id=resume_by_topic.get(topic),
+                        message=letter,
+                    )
+                    print(f"[DRAFT] {label}\n    Ответ:\n    {letter}")
+                    progress.skipped_count += 1
+                    continue
+                except Exception as exc:
+                    print(f"[FAIL] {label} — suggestion не создан: {exc}")
+                    progress.failed_count += 1
+                    failed = True
+                    continue
             letter = _letter(template, candidate)
             progress.begin_attempt()
             inbound_marker = chat.inbound_marker or ""
