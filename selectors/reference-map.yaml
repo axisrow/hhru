@@ -239,16 +239,28 @@ selectors:
     live_matches: []
     active: false
     bindings:
-      tgeruzov:
-      - file: script.js
-        line: 1236
-        key: script.js::isResponseConfirmed#0::1
-        value: '[data-qa="vacancy-response-success"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 426
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
         value: '[data-qa*="response-success"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 2810
+        key: hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1
+        value: '[data-qa="vacancy-response-success"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Local success marker is explicitly unconfirmed; upstream success markers disagree, so no success write
+      is authorized.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/apply/success.py:46
+      note: Local success marker is explicitly unconfirmed; upstream success markers disagree, so no success write is authorized.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2810
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:426
+    verification: unavailable
+    origin: manual
   apply_form.APPLY_COVER_LETTER_TEXTAREA:
     value: textarea[data-qa='vacancy-response-popup-form-letter-input']
     criticality: write
@@ -256,32 +268,46 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: script.js
-        line: 73
-        key: script.js::module.SELECTORS.letterTextarea#0::1
+      - file: hh-apply-assistant.user.js
+        line: 106
+        key: hh-apply-assistant.user.js::module.SELECTORS.letterTextarea#0::1
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
-      - file: script.js
-        line: 1603
-        key: script.js::fillLetterAndSubmit#0::0
+      - file: hh-apply-assistant.user.js
+        line: 3370
+        key: hh-apply-assistant.user.js::fillLetterAndSubmit#0::0
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
     live_matches:
     - vacancy-response-popup-form-letter-input
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 1603
-        key: script.js::fillLetterAndSubmit#0::0
+      - file: hh-apply-assistant.user.js
+        line: 3370
+        key: hh-apply-assistant.user.js::fillLetterAndSubmit#0::0
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
-      - file: script.js
-        line: 73
-        key: script.js::module.SELECTORS.letterTextarea#0::1
+      - file: hh-apply-assistant.user.js
+        line: 106
+        key: hh-apply-assistant.user.js::module.SELECTORS.letterTextarea#0::1
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 790
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form#0::0
         value: '[data-qa="vacancy-response-popup-form-letter-input"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference fillLetterAndSubmit locates the textarea before fillTextarea; the local sanitized DOM evidence
+      also contains the data-qa match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:90
+      note: Reference fillLetterAndSubmit locates the textarea before fillTextarea; the local sanitized DOM evidence also
+        contains the data-qa match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:106
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:3370
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:790
+    verification: browser_observed
+    origin: browser_dom
   apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM:
     value: textarea[data-qa='vacancy-response-form-letter-input']
     criticality: write
@@ -301,9 +327,9 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: script.js
-        line: 71
-        key: script.js::module.SELECTORS.attachCoverInModal#0::4
+      - file: hh-apply-assistant.user.js
+        line: 104
+        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::4
         value: '[data-qa="vacancy-response-letter-toggle"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -315,15 +341,28 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 71
-        key: script.js::module.SELECTORS.attachCoverInModal#0::4
+      - file: hh-apply-assistant.user.js
+        line: 104
+        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::4
         value: '[data-qa="vacancy-response-letter-toggle"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 769
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
         value: '[data-qa="vacancy-response-letter-toggle"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference _fill_response_form clicks the toggle before locating and filling the cover-letter textarea;
+      local sanitized DOM evidence contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:51
+      note: Reference _fill_response_form clicks the toggle before locating and filling the cover-letter textarea; local sanitized
+        DOM evidence contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:769
+    verification: browser_observed
+    origin: reference_consensus
   apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP:
     value: '[data-qa=''add-cover-letter'']'
     criticality: write
@@ -331,19 +370,31 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: script.js
-        line: 71
-        key: script.js::module.SELECTORS.attachCoverInModal#0::2
+      - file: hh-apply-assistant.user.js
+        line: 104
+        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::2
         value: '[data-qa="add-cover-letter"]'
     live_matches:
     - add-cover-letter
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 71
-        key: script.js::module.SELECTORS.attachCoverInModal#0::2
+      - file: hh-apply-assistant.user.js
+        line: 104
+        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::2
         value: '[data-qa="add-cover-letter"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference attachCoverInModal includes add-cover-letter in the pre-fill toggle path; local sanitized DOM
+      evidence contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:71
+      note: Reference attachCoverInModal includes add-cover-letter in the pre-fill toggle path; local sanitized DOM evidence
+        contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
+    verification: browser_observed
+    origin: browser_dom
   apply_form.APPLY_QUESTION_BODY:
     value: '[data-qa=''task-body'']'
     criticality: write
@@ -442,13 +493,17 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: script.js
-        line: 75
-        key: script.js::module.SELECTORS.letterSubmit#0::4
+      - file: hh-apply-assistant.user.js
+        line: 108
+        key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
         value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: script.js
-        line: 1614
-        key: script.js::fillLetterAndSubmit#2::0
+      - file: hh-apply-assistant.user.js
+        line: 3382
+        key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 15
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.submit#0::4
         value: '[data-qa="vacancy-response-submit-popup"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -460,19 +515,38 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 1614
-        key: script.js::fillLetterAndSubmit#2::0
+      - file: hh-apply-assistant.user.js
+        line: 3382
+        key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
         value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: script.js
-        line: 75
-        key: script.js::module.SELECTORS.letterSubmit#0::4
+      - file: hh-apply-assistant.user.js
+        line: 108
+        key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 15
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.submit#0::4
         value: '[data-qa="vacancy-response-submit-popup"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 366
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
         value: '[data-qa="vacancy-response-submit-popup"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference fillLetterAndSubmit locates the submit control after filling the letter; this review did not
+      click or submit it.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:91
+      note: Reference fillLetterAndSubmit locates the submit control after filling the letter; this review did not click or
+        submit it.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:108
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:3382
+      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:15
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:366
+    verification: browser_observed
+    origin: reference_consensus
   browser.LOGIN_FORM:
     value: '[data-qa=''account-login-form'']'
     criticality: read
@@ -1233,11 +1307,11 @@ selectors:
     bindings: {}
     status: needs-live-evidence
     origin: manual
-    verification: unverified
+    verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:22
-      note: 'Candidate selector is explicitly fail-closed: the add trigger was not present in the read-only research dump
-        and needs authenticated live-DOM confirmation before use.'
+      note: No saved DOM snapshot or approved reference control flow confirms this write control; it remains unavailable.
+      references: []
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -2210,11 +2284,11 @@ selectors:
     bindings: {}
     status: needs-live-evidence
     origin: manual
-    verification: unverified
+    verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:18
-      note: 'Candidate selector is explicitly unavailable: the publish control was not observed on the blocked draft and needs
-        a live check on a ready-to-publish resume.'
+      note: No saved DOM snapshot or approved reference control flow confirms this write control; it remains unavailable.
+      references: []
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2832,10 +2906,23 @@ selectors:
         key: app/parsers/hh.py::module.HHParser.search_vacancies.cards#0::0
         value: '[data-qa="vacancy-serp__vacancy"]'
       tgeruzov:
-      - file: script.js
-        line: 82
-        key: script.js::module.SELECTORS.vacancyCard#0::1
+      - file: hh-apply-assistant.user.js
+        line: 115
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1
         value: div[data-qa="vacancy-serp__vacancy"]
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference HHParser.search_vacancies selects cards before iterating _parse_card; local sanitized DOM evidence
+      contains the card match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:5
+      note: Reference HHParser.search_vacancies selects cards before iterating _parse_card; local sanitized DOM evidence contains
+        the card match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:115
+      - yamakayama@bfb46696aec6:app/parsers/hh.py:61
+    verification: browser_observed
+    origin: browser_dom
   search_page.VACANCY_CARD_ACTIVITY:
     value: '[data-qa=''vacancy-serp-item-activity'']'
     criticality: read
@@ -2915,6 +3002,18 @@ selectors:
         line: 96
         key: app/parsers/hh.py::module.HHParser._parse_card.salary_el#0::0
         value: '[data-qa="vacancy-serp__vacancy-compensation"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: A single reference parser uses this selector, but local documentation records that it failed on current
+      hh.ru markup; compensation stays unavailable.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:17
+      note: A single reference parser uses this selector, but local documentation records that it failed on current hh.ru
+        markup; compensation stays unavailable.
+      references:
+      - yamakayama@bfb46696aec6:app/parsers/hh.py:96
+    verification: failed
+    origin: reference_single
   search_page.VACANCY_CARD_EXPERIENCE:
     value: '[data-qa^=''vacancy-serp__vacancy-work-experience-'']'
     criticality: read
@@ -2995,19 +3094,31 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: script.js
-        line: 63
-        key: script.js::module.SELECTORS.applyBtn#0::1
+      - file: hh-apply-assistant.user.js
+        line: 97
+        key: hh-apply-assistant.user.js::module.SELECTORS.applyBtn#0::1
         value: '[data-qa="vacancy-serp__vacancy_response"]'
     live_matches:
     - vacancy-serp__vacancy_response
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 63
-        key: script.js::module.SELECTORS.applyBtn#0::1
+      - file: hh-apply-assistant.user.js
+        line: 97
+        key: hh-apply-assistant.user.js::module.SELECTORS.applyBtn#0::1
         value: '[data-qa="vacancy-serp__vacancy_response"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference SELECTORS.applyBtn is the card response control used by the search/apply path; local sanitized
+      DOM evidence contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:30
+      note: Reference SELECTORS.applyBtn is the card response control used by the search/apply path; local sanitized DOM evidence
+        contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:97
+    verification: browser_observed
+    origin: browser_dom
   search_page.VACANCY_CARD_RESPONSE_STATUS:
     value: '[data-qa=''vacancy-serp__vacancy_response_status'']'
     criticality: read
@@ -3071,10 +3182,23 @@ selectors:
         key: app/parsers/hh.py::module.HHParser._parse_card.title_el#0::0
         value: '[data-qa="serp-item__title"]'
       tgeruzov:
-      - file: script.js
-        line: 81
-        key: script.js::module.SELECTORS.vacancyLink#0::1
+      - file: hh-apply-assistant.user.js
+        line: 114
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1
         value: a[data-qa="serp-item__title"]
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference _parse_card selects the title link before extracting vacancy identity; local sanitized DOM evidence
+      contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:10
+      note: Reference _parse_card selects the title link before extracting vacancy identity; local sanitized DOM evidence
+        contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:114
+      - yamakayama@bfb46696aec6:app/parsers/hh.py:77
+    verification: browser_observed
+    origin: browser_dom
   search_page.VACANCY_SEARCH_EMPTY:
     value: '[data-qa=''empty-vacancy-search-block'']'
     criticality: read
@@ -3170,9 +3294,13 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: script.js
-        line: 77
-        key: script.js::module.SELECTORS.responseChat#0::0
+      - file: hh-apply-assistant.user.js
+        line: 110
+        key: hh-apply-assistant.user.js::module.SELECTORS.responseChat#0::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 17
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.chat#0::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3188,9 +3316,13 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 77
-        key: script.js::module.SELECTORS.responseChat#0::0
+      - file: hh-apply-assistant.user.js
+        line: 110
+        key: hh-apply-assistant.user.js::module.SELECTORS.responseChat#0::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 17
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.chat#0::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3201,6 +3333,21 @@ selectors:
         line: 423
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference apply flows query the response-chat control to classify an existing response; local sanitized
+      DOM evidence contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:9
+      note: Reference apply flows query the response-chat control to classify an existing response; local sanitized DOM evidence
+        contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:110
+      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:17
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:290
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:423
+    verification: browser_observed
+    origin: reference_consensus
   vacancy_page.VACANCY_APPLY_BUTTON:
     value: '[data-qa=''vacancy-response-link-top'']'
     criticality: write
@@ -3213,13 +3360,9 @@ selectors:
         key: lib/hh-response-selectors.mjs::tryClick#0::0
         value: '[data-qa="vacancy-response-link-top"]'
       tgeruzov:
-      - file: script.js
-        line: 65
-        key: script.js::module.SELECTORS.vacancyApply#0::1
-        value: '[data-qa="vacancy-response-link-top"]'
-      - file: script.js
-        line: 66
-        key: script.js::module.SELECTORS.topApply#0::1
+      - file: hh-apply-assistant.user.js
+        line: 99
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::1
         value: '[data-qa="vacancy-response-link-top"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3236,19 +3379,29 @@ selectors:
         key: lib/hh-response-selectors.mjs::tryClick#0::0
         value: '[data-qa="vacancy-response-link-top"]'
       tgeruzov:
-      - file: script.js
-        line: 66
-        key: script.js::module.SELECTORS.topApply#0::1
-        value: '[data-qa="vacancy-response-link-top"]'
-      - file: script.js
-        line: 65
-        key: script.js::module.SELECTORS.vacancyApply#0::1
+      - file: hh-apply-assistant.user.js
+        line: 99
+        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::1
         value: '[data-qa="vacancy-response-link-top"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 262
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
         value: '[data-qa="vacancy-response-link-top"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference apply flows locate the top vacancy response link as the entry control; local sanitized DOM evidence
+      contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:5
+      note: Reference apply flows locate the top vacancy response link as the entry control; local sanitized DOM evidence
+        contains the match.
+      references:
+      - steev@7a56af1e004e:lib/hh-response-selectors.mjs:40
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:99
+      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:262
+    verification: browser_observed
+    origin: reference_exact
   vacancy_page.VACANCY_COMPANY_NAME:
     value: '[data-qa=''vacancy-company-name'']'
     criticality: write
@@ -3265,9 +3418,9 @@ selectors:
         key: scripts/scan-telegram.mjs::t#1::0
         value: '[data-qa="vacancy-company-name"]'
       tgeruzov:
-      - file: script.js
-        line: 1359
-        key: script.js::pick#2::0
+      - file: hh-apply-assistant.user.js
+        line: 2943
+        key: hh-apply-assistant.user.js::pick#2::0
         value: '[data-qa="vacancy-company-name"]'
     live_matches:
     - vacancy-company-name
@@ -3283,10 +3436,24 @@ selectors:
         key: scripts/scan-telegram.mjs::t#1::0
         value: '[data-qa="vacancy-company-name"]'
       tgeruzov:
-      - file: script.js
-        line: 1359
-        key: script.js::pick#2::0
+      - file: hh-apply-assistant.user.js
+        line: 2943
+        key: hh-apply-assistant.user.js::pick#2::0
         value: '[data-qa="vacancy-company-name"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference vacancy-title parsing reads the employer after the vacancy title for identity; local sanitized
+      DOM evidence contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:21
+      note: Reference vacancy-title parsing reads the employer after the vacancy title for identity; local sanitized DOM evidence
+        contains the match.
+      references:
+      - steev@7a56af1e004e:lib/vacancy-parse.mjs:12
+      - steev@7a56af1e004e:scripts/scan-telegram.mjs:83
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2943
+    verification: browser_observed
+    origin: reference_consensus
   vacancy_page.VACANCY_DESCRIPTION:
     value: '[data-qa="vacancy-description"]'
     active: true
@@ -3410,21 +3577,39 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: script.js
-        line: 79
-        key: script.js::module.SELECTORS.relocationBtn#0::0
+      - file: hh-apply-assistant.user.js
+        line: 112
+        key: hh-apply-assistant.user.js::module.SELECTORS.relocationBtn#0::0
+        value: '[data-qa="relocation-warning-confirm"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 14
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.relocation#0::0
         value: '[data-qa="relocation-warning-confirm"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:13
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Reference relocation handling locates this confirmation control in the guarded response flow; no click was performed
+        in this review.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:112
+      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:14
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 79
-        key: script.js::module.SELECTORS.relocationBtn#0::0
+      - file: hh-apply-assistant.user.js
+        line: 112
+        key: hh-apply-assistant.user.js::module.SELECTORS.relocationBtn#0::0
         value: '[data-qa="relocation-warning-confirm"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 14
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.relocation#0::0
+        value: '[data-qa="relocation-warning-confirm"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference relocation handling locates this confirmation control in the guarded response flow; no click
+      was performed in this review.
+    verified_by: codex
+    verification: contract_tested
+    origin: reference_single
   vacancy_page.VACANCY_RESPONSE_ERROR:
     value: '[data-qa="vacancy-response-error-notification"]'
     criticality: write
@@ -3432,21 +3617,30 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: script.js
-        line: 1253
-        key: script.js::detectAlreadyApplied#0::1
+      - file: hh-apply-assistant.user.js
+        line: 2834
+        key: hh-apply-assistant.user.js::detectAlreadyApplied#0::1
         value: '[data-qa="vacancy-response-error-notification"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:19
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Reference detectAlreadyApplied reads this error marker before classifying an existing response; no mutation was
+        performed in this review.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2834
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 1253
-        key: script.js::detectAlreadyApplied#0::1
+      - file: hh-apply-assistant.user.js
+        line: 2834
+        key: hh-apply-assistant.user.js::detectAlreadyApplied#0::1
         value: '[data-qa="vacancy-response-error-notification"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference detectAlreadyApplied reads this error marker before classifying an existing response; no mutation
+      was performed in this review.
+    verified_by: codex
+    verification: contract_tested
+    origin: reference_single
   vacancy_page.VACANCY_RESPONSE_REJECT_WARNING:
     value: '[data-qa="response-reject-warning"]'
     criticality: write
@@ -3454,21 +3648,39 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: script.js
-        line: 80
-        key: script.js::module.SELECTORS.rejectWarning#0::0
+      - file: hh-apply-assistant.user.js
+        line: 113
+        key: hh-apply-assistant.user.js::module.SELECTORS.rejectWarning#0::0
+        value: '[data-qa="response-reject-warning"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 18
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.reject#0::0
         value: '[data-qa="response-reject-warning"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:18
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Reference response handling declares this warning marker for the guarded submit flow; no click was performed in
+        this review.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:113
+      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:18
     active: true
     bindings:
       tgeruzov:
-      - file: script.js
-        line: 80
-        key: script.js::module.SELECTORS.rejectWarning#0::0
+      - file: hh-apply-assistant.user.js
+        line: 113
+        key: hh-apply-assistant.user.js::module.SELECTORS.rejectWarning#0::0
         value: '[data-qa="response-reject-warning"]'
+      - file: tests/phase2-performance.test.mjs
+        line: 18
+        key: tests/phase2-performance.test.mjs::module.SELECTORS.reject#0::0
+        value: '[data-qa="response-reject-warning"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference response handling declares this warning marker for the guarded submit flow; no click was performed
+      in this review.
+    verified_by: codex
+    verification: contract_tested
+    origin: reference_single
   vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE:
     value: '[data-qa="vacancy-response-similar-vacancies-close"]'
     criticality: write
@@ -3493,9 +3705,9 @@ selectors:
         key: lib/vacancy-parse.mjs::t#0::0
         value: '[data-qa="vacancy-title"]'
       tgeruzov:
-      - file: script.js
-        line: 1355
-        key: script.js::pick#0::0
+      - file: hh-apply-assistant.user.js
+        line: 2939
+        key: hh-apply-assistant.user.js::pick#0::0
         value: '[data-qa="vacancy-title"]'
       yamakayama:
       - file: app/parsers/hh.py
@@ -3512,15 +3724,29 @@ selectors:
         key: lib/vacancy-parse.mjs::t#0::0
         value: '[data-qa="vacancy-title"]'
       tgeruzov:
-      - file: script.js
-        line: 1355
-        key: script.js::pick#0::0
+      - file: hh-apply-assistant.user.js
+        line: 2939
+        key: hh-apply-assistant.user.js::pick#0::0
         value: '[data-qa="vacancy-title"]'
       yamakayama:
       - file: app/parsers/hh.py
         line: 151
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
         value: '[data-qa="vacancy-title"]'
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference vacancy parsers read the title before identity/scoping decisions; local sanitized DOM evidence
+      contains the match.
+    verified_by: codex
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:20
+      note: Reference vacancy parsers read the title before identity/scoping decisions; local sanitized DOM evidence contains
+        the match.
+      references:
+      - steev@7a56af1e004e:lib/vacancy-parse.mjs:11
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2939
+      - yamakayama@bfb46696aec6:app/parsers/hh.py:151
+    verification: browser_observed
+    origin: reference_exact
   vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE:
     value: '[data-qa="vacancy-view-employment-mode"]'
     active: true
@@ -4011,7 +4237,7 @@ upstream_consensus:
 binding_definitions:
   apply.success.APPLY_SUCCESS_MARKER:
     tgeruzov:
-    - script.js::isResponseConfirmed#0::1
+    - hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1
     yamakayama:
     - app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
   apply_form.APPLY_COVER_LETTER_TEXTAREA:
@@ -4037,10 +4263,10 @@ binding_definitions:
     - app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.title_el#0::0
   search_page.VACANCY_CARD:
     tgeruzov:
-    - script.js::module.SELECTORS.vacancyCard#0::1
+    - hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1
   search_page.VACANCY_CARD_TITLE_LINK:
     tgeruzov:
-    - script.js::module.SELECTORS.vacancyLink#0::1
+    - hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1
   selectors.LOGIN_CODE_INPUT:
     yamakayama:
     - app/parsers/hh_login.py::module.SEL_PIN#0::0
