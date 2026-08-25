@@ -35,7 +35,7 @@ def _fake_suite(monkeypatch: pytest.MonkeyPatch, returncode: int) -> None:
 
 def test_main_accepts_run_within_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_suite(monkeypatch, returncode=0)
-    clock = iter((10.0, 69.9))
+    clock = iter((10.0, 10.0 + check_pytest_budget.SUITE_BUDGET_SECONDS - 0.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 0
@@ -43,7 +43,7 @@ def test_main_accepts_run_within_budget(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_main_fails_when_suite_exceeds_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_suite(monkeypatch, returncode=0)
-    clock = iter((10.0, 70.1))
+    clock = iter((10.0, 10.0 + check_pytest_budget.SUITE_BUDGET_SECONDS + 0.1))
     monkeypatch.setattr(check_pytest_budget.time, "monotonic", lambda: next(clock))
 
     assert check_pytest_budget.main() == 1
