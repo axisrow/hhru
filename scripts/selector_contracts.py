@@ -20,6 +20,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,38 @@ REFERENCE_CONFIG = {
         "directory": "hh-autoresponder",
         "license": "MIT",
     },
+}
+
+AUDITED_SELECTOR_GROUP_PREFIXES = ("search_page.", "vacancy_page.")
+AUDIT_REQUIRED_FIELDS = (
+    "coverage_status",
+    "origin",
+    "verification",
+    "evidence",
+    "last_verified_at",
+    "verified_flow",
+    "verified_by",
+)
+AUDIT_STATUSES = {
+    "reference_binding",
+    "intentionally_local",
+    "not_implemented_upstream",
+    "needs_live_evidence",
+}
+AUDIT_ORIGINS = {
+    "reference_exact",
+    "reference_consensus",
+    "reference_single",
+    "browser_dom",
+    "manual",
+}
+AUDIT_VERIFICATIONS = {
+    "live_passed",
+    "browser_observed",
+    "contract_tested",
+    "unverified",
+    "failed",
+    "unavailable",
 }
 
 # Narrow, reviewed exceptions where exact 2-of-3 or a captured DOM state is
@@ -934,6 +967,132 @@ def _ensure_extra_contracts(catalog: dict[str, Any], evidence: dict[str, Any]) -
         catalog["selectors"][logical_id] = row
 
 
+def _audit_metadata(
+    logical_id: str,
+    *,
+    sources: dict[str, list[dict[str, Any]]],
+    live_matches: list[str],
+    declared_at: str,
+    today: str | None = None,
+) -> dict[str, Any]:
+    """Return deterministic bootstrap provenance for the audited page groups."""
+    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+        return {}
+    verified_at = today or date.today().isoformat()
+    reference_count = len(sources)
+    if reference_count >= 2:
+        origin = "reference_consensus"
+        status = "reference_binding"
+        verification = "contract_tested"
+        flow = "reference_selector_scan_and_contract_check"
+        note = "Exact selector value is bound to at least two approved reference sources."
+    elif reference_count == 1:
+        origin = "reference_single"
+        status = "reference_binding"
+        verification = "contract_tested"
+        flow = "reference_selector_scan_and_contract_check"
+        note = "Exact selector value is bound to one approved reference source."
+    elif live_matches:
+        origin = "browser_dom"
+        status = "intentionally_local"
+        verification = "browser_observed"
+        flow = "read_only_selector_dom_observation"
+        note = (
+            "Selector was observed in the captured browser DOM and has no approved reference "
+            "binding."
+        )
+    else:
+        origin = "manual"
+        status = "needs_live_evidence"
+        verification = "unverified"
+        flow = "selector_contract_audit_only"
+        note = (
+            "Bootstrap found no approved reference binding or captured DOM match; live evidence "
+            "is required."
+        )
+    return {
+        "coverage_status": status,
+        "origin": origin,
+        "verification": verification,
+        "evidence": {
+            "source": declared_at,
+            "note": note,
+            "runtime_authoritative": status != "needs_live_evidence",
+        },
+        "last_verified_at": verified_at,
+        "verified_flow": flow,
+        "verified_by": "ci",
+    }
+
+
+def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
+    """Invalidate reference provenance when a refresh changes its bindings."""
+    today = date.today().isoformat()
+    for logical_id, row in catalog.get("selectors", {}).items():
+        if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+            continue
+        sources = row.get("sources", {})
+        previous_origin = row.get("origin")
+        if sources:
+            reference_count = len(sources)
+            lost_consensus = (
+                reference_count < 2
+                and previous_origin in {"reference_exact", "reference_consensus"}
+            )
+            row["coverage_status"] = "reference_binding"
+            row["origin"] = (
+                "reference_exact"
+                if reference_count >= 3
+                else "reference_consensus"
+                if reference_count >= 2
+                else "reference_single"
+            )
+            row["verification"] = "contract_tested"
+            row["verified_flow"] = "reference_selector_scan_and_contract_check"
+            row["verified_by"] = "ci"
+            if previous_origin != row["origin"]:
+                row["last_verified_at"] = today
+                row["evidence"] = {
+                    "source": row["declared_at"],
+                    "note": (
+                        "Reference binding was reconciled during selector refresh; selector "
+                        "value was not changed."
+                    ),
+                    "runtime_authoritative": not lost_consensus,
+                }
+            continue
+        if previous_origin in {"reference_exact", "reference_consensus", "reference_single"}:
+            fallback = _audit_metadata(
+                logical_id,
+                sources={},
+                live_matches=row.get("live_matches", []),
+                declared_at=row["declared_at"],
+                today=today,
+            )
+            row.update(fallback)
+        elif not all(row.get(field) for field in AUDIT_REQUIRED_FIELDS):
+            row.update(
+                _audit_metadata(
+                    logical_id,
+                    sources={},
+                    live_matches=row.get("live_matches", []),
+                    declared_at=row["declared_at"],
+                    today=today,
+                )
+            )
+
+
+def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool:
+    """Do not let audit bookkeeping become activation evidence on refresh."""
+    if not row.get("evidence"):
+        return False
+    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+        return True
+    if row["evidence"].get("runtime_authoritative") is False:
+        return False
+    return not (not row.get("active", True) and row.get("decision") == "unavailable")
+
+
 def build_map(reference_root: Path, live_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     metadata, indexes = _reference_indexes(reference_root)
     evidence = build_live_evidence(live_root)
@@ -966,6 +1125,12 @@ def build_map(reference_root: Path, live_root: Path) -> tuple[dict[str, Any], di
             "decision": decision,
             "sources": sources,
             "live_matches": live_matches,
+            **_audit_metadata(
+                logical_id,
+                sources=sources,
+                live_matches=live_matches,
+                declared_at=discovered["declared_at"],
+            ),
         }
         if decision == "documented_live":
             selectors[logical_id]["evidence"] = documentation or {
@@ -1258,6 +1423,32 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
     if catalog.get("binding_definitions") != _binding_definitions():
         errors.append("semantic reference bindings are stale; run selector refresh")
     for logical_id, row in catalog.get("selectors", {}).items():
+        if logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+            for field in AUDIT_REQUIRED_FIELDS:
+                if not row.get(field):
+                    errors.append(f"{logical_id}: missing audit field {field}")
+            if row.get("coverage_status") not in AUDIT_STATUSES:
+                errors.append(f"{logical_id}: invalid coverage_status")
+            if row.get("origin") not in AUDIT_ORIGINS:
+                errors.append(f"{logical_id}: invalid origin")
+            if row.get("coverage_status") == "reference_binding":
+                reference_count = len(row.get("sources", {}))
+                expected_origin = (
+                    "reference_exact"
+                    if reference_count >= 3
+                    else "reference_consensus"
+                    if reference_count >= 2
+                    else "reference_single"
+                )
+                if row.get("origin") != expected_origin:
+                    errors.append(
+                        f"{logical_id}: origin {row.get('origin')} disagrees with "
+                        f"{reference_count} exact reference sources"
+                    )
+            if row.get("verification") not in AUDIT_VERIFICATIONS:
+                errors.append(f"{logical_id}: invalid verification")
+            if row.get("active", True) and row.get("origin") == "llm_hypothesis":
+                errors.append(f"{logical_id}: llm_hypothesis cannot be active")
         sources = row.get("sources", {})
         reference_count = len(sources)
         decision = row.get("decision")
@@ -1352,9 +1543,11 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     catalog["upstream_consensus"] = _upstream_consensus(indexes, previous_consensus)
     _invalidate_changed_candidate_verification(catalog, previous_consensus, unchanged)
     _refresh_bindings(catalog, indexes)
-    for row in catalog["selectors"].values():
+    for logical_id, row in catalog["selectors"].items():
         audit_unverified = (
-            row.get("status") == "needs-live-evidence" or row.get("verification") == "unverified"
+            row.get("status") == "needs-live-evidence"
+            or row.get("coverage_status") == "needs_live_evidence"
+            or row.get("verification") == "unverified"
         )
         previous_decision = row.get("decision", "unavailable")
         previous_active = row.get("active", False)
@@ -1393,6 +1586,9 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
             for name, items in indexes.items()
             if (matches := _matching_sources(value, items))
         }
+        # Reconcile provenance against the freshly recalculated sources before
+        # old evidence can influence the activation decision below.
+        _reconcile_audit_metadata(catalog)
         reference_count = len(row["sources"])
         if audit_unverified:
             # Audit metadata must not become activation evidence.  In
@@ -1411,7 +1607,7 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
         elif row.get("live_matches"):
             row["decision"] = "live_dom"
             row["active"] = True
-        elif row.get("evidence") and row.get("verification") not in {
+        elif _has_reviewed_runtime_evidence(logical_id, row) and row.get("verification") not in {
             "unavailable",
             "failed",
         }:
@@ -1438,6 +1634,7 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
         if row.get("binding_gaps"):
             row["decision"] = "drift_conflict"
             row["active"] = False
+    _reconcile_audit_metadata(catalog)
     return catalog
 
 

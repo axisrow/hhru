@@ -302,6 +302,122 @@ def test_apply_reachable_search_selectors_are_write_critical():
     assert {contracts.classify_criticality(logical_id) for logical_id in logical_ids} == {"write"}
 
 
+def test_search_and_vacancy_groups_have_audited_provenance():
+    catalog = contracts.load_catalog()
+    required = {
+        "coverage_status",
+        "origin",
+        "verification",
+        "evidence",
+        "last_verified_at",
+        "verified_flow",
+        "verified_by",
+    }
+    allowed_statuses = {
+        "reference_binding",
+        "intentionally_local",
+        "not_implemented_upstream",
+        "needs_live_evidence",
+    }
+    for logical_id, row in catalog["selectors"].items():
+        if not logical_id.startswith(("search_page.", "vacancy_page.")):
+            continue
+        assert required <= row.keys(), logical_id
+        assert row["coverage_status"] in allowed_statuses
+        assert row["origin"] != "llm_hypothesis" or not row.get("active", True)
+
+
+def test_audit_bootstrap_metadata_is_fail_closed_without_evidence():
+    metadata = contracts._audit_metadata(
+        "vacancy_page.fixture",
+        sources={},
+        live_matches=[],
+        declared_at="src/hhru_bot/selector_groups/vacancy_page.py:1",
+        today="2026-08-25",
+    )
+
+    assert metadata["coverage_status"] == "needs_live_evidence"
+    assert metadata["verification"] == "unverified"
+    assert metadata["last_verified_at"] == "2026-08-25"
+
+
+def test_refresh_invalidates_stale_reference_audit_metadata():
+    catalog = {
+        "selectors": {
+            "search_page.fixture": {
+                "declared_at": "src/hhru_bot/selector_groups/search_page.py:1",
+                "sources": {},
+                "live_matches": [],
+                "coverage_status": "reference_binding",
+                "origin": "reference_consensus",
+                "verification": "contract_tested",
+                "evidence": {"source": "old", "note": "old"},
+                "last_verified_at": "2026-08-20",
+                "verified_flow": "old",
+                "verified_by": "ci",
+            }
+        }
+    }
+
+    contracts._reconcile_audit_metadata(catalog)
+    row = catalog["selectors"]["search_page.fixture"]
+
+    assert row["coverage_status"] == "needs_live_evidence"
+    assert row["origin"] == "manual"
+    assert row["verification"] == "unverified"
+
+
+def test_refresh_does_not_authorize_a_consensus_downgrade():
+    catalog = {
+        "selectors": {
+            "search_page.fixture": {
+                "declared_at": "src/hhru_bot/selector_groups/search_page.py:1",
+                "sources": {"steev": [{"value": "[data-qa='x']"}]},
+                "live_matches": [],
+                "coverage_status": "reference_binding",
+                "origin": "reference_consensus",
+                "verification": "contract_tested",
+                "evidence": {
+                    "source": "old",
+                    "note": "old",
+                    "runtime_authoritative": True,
+                },
+                "last_verified_at": "2026-08-20",
+                "verified_flow": "old",
+                "verified_by": "ci",
+            }
+        }
+    }
+
+    contracts._reconcile_audit_metadata(catalog)
+    row = catalog["selectors"]["search_page.fixture"]
+
+    assert row["origin"] == "reference_single"
+    assert row["evidence"]["runtime_authoritative"] is False
+
+
+def test_unverified_audit_note_cannot_authorize_runtime_activation():
+    row = {
+        "active": True,
+        "decision": "documented_live",
+        "evidence": {
+            "source": "audit",
+            "note": "not live verified",
+            "runtime_authoritative": False,
+        },
+        "verification": "unverified",
+    }
+
+    assert not contracts._has_reviewed_runtime_evidence("vacancy_page.fixture", row)
+    row["verification"] = "contract_tested"
+    assert not contracts._has_reviewed_runtime_evidence("search_page.fixture", row)
+    row["evidence"]["runtime_authoritative"] = True
+    assert contracts._has_reviewed_runtime_evidence("search_page.fixture", row)
+    assert contracts._has_reviewed_runtime_evidence(
+        "account_profile.fixture", {"evidence": row["evidence"]}
+    )
+
+
 def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
     monkeypatch.setattr(contracts, "MAP_PATH", contracts.ROOT / "selectors" / "reference-map.yaml")
     monkeypatch.setattr(contracts, "EVIDENCE_PATH", tmp_path / "live-evidence.json")

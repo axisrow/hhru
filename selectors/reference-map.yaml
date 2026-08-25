@@ -28,8 +28,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:30
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
     active: true
     bindings: {}
     status: intentionally local
@@ -47,8 +46,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:32
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
     active: true
     bindings: {}
     status: intentionally local
@@ -66,8 +64,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:28
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
     active: true
     bindings: {}
     status: intentionally local
@@ -85,8 +82,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:29
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
     active: true
     bindings: {}
     status: intentionally local
@@ -104,8 +100,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:31
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
     active: true
     bindings: {}
     status: intentionally local
@@ -129,8 +124,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:23
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
@@ -149,8 +144,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:37
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
@@ -169,8 +164,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:36
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
@@ -189,8 +184,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:41
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
@@ -239,28 +234,29 @@ selectors:
     live_matches: []
     active: false
     bindings:
+      tgeruzov:
+      - file: script.js
+        line: 1236
+        key: script.js::isResponseConfirmed#0::1
+        value: '[data-qa="vacancy-response-success"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 426
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
         value: '[data-qa*="response-success"]'
-      tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2810
-        key: hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1
-        value: '[data-qa="vacancy-response-success"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Local success marker is explicitly unconfirmed; upstream success markers disagree, so no success write
-      is authorized.
-    verified_by: codex
+    origin: manual
+    verification: unavailable
     evidence:
       source: src/hhru_bot/apply/success.py:46
-      note: Local success marker is explicitly unconfirmed; upstream success markers disagree, so no success write is authorized.
+      note: Local success marker is explicitly unconfirmed; upstream success markers
+        disagree, so no success write is authorized.
       references:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2810
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:426
-    verification: unavailable
-    origin: manual
+    last_verified_at: '2026-08-25'
+    verified_flow: Local success marker is explicitly unconfirmed; upstream success
+      markers disagree, so no success write is authorized.
+    verified_by: codex
   apply_form.APPLY_COVER_LETTER_TEXTAREA:
     value: textarea[data-qa='vacancy-response-popup-form-letter-input']
     criticality: write
@@ -268,47 +264,47 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 106
-        key: hh-apply-assistant.user.js::module.SELECTORS.letterTextarea#0::1
+      - file: script.js
+        line: 73
+        key: script.js::module.SELECTORS.letterTextarea#0::1
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
-      - file: hh-apply-assistant.user.js
-        line: 3370
-        key: hh-apply-assistant.user.js::fillLetterAndSubmit#0::0
+      - file: script.js
+        line: 1603
+        key: script.js::fillLetterAndSubmit#0::0
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
     live_matches:
     - vacancy-response-popup-form-letter-input
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 3370
-        key: hh-apply-assistant.user.js::fillLetterAndSubmit#0::0
+      - file: script.js
+        line: 1603
+        key: script.js::fillLetterAndSubmit#0::0
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
-      - file: hh-apply-assistant.user.js
-        line: 106
-        key: hh-apply-assistant.user.js::module.SELECTORS.letterTextarea#0::1
+      - file: script.js
+        line: 73
+        key: script.js::module.SELECTORS.letterTextarea#0::1
         value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 790
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form#0::0
         value: '[data-qa="vacancy-response-popup-form-letter-input"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference fillLetterAndSubmit locates the textarea before fillTextarea; the local sanitized DOM evidence
-      also contains the data-qa match.
-    verified_by: codex
+    coverage_status: reference binding
+    origin: browser_dom
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:90
-      note: Reference fillLetterAndSubmit locates the textarea before fillTextarea; the local sanitized DOM evidence also
-        contains the data-qa match.
+      note: Reference fillLetterAndSubmit locates the textarea before fillTextarea;
+        the local sanitized DOM evidence also contains the data-qa match.
       references:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:106
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:3370
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:790
-    verification: browser_observed
-    coverage_status: reference binding
-    origin: browser_dom
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference fillLetterAndSubmit locates the textarea before fillTextarea;
+      the local sanitized DOM evidence also contains the data-qa match.
+    verified_by: codex
   apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM:
     value: textarea[data-qa='vacancy-response-form-letter-input']
     criticality: write
@@ -316,14 +312,15 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:103
+      note: значением (сверено на вакансии с опциональным письмом на ПОЛНОЙ форме
+        —
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/apply_form.py:104
-      note: Full-page cover-letter shape is a local heuristic; approved references have no equivalent selector.
     last_verified_at: 2026-08-20
     verified_flow: apply full-page form cover-letter detection
     verified_by: browser
@@ -334,9 +331,9 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 104
-        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::4
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::4
         value: '[data-qa="vacancy-response-letter-toggle"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -348,29 +345,30 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 104
-        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::4
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::4
         value: '[data-qa="vacancy-response-letter-toggle"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 769
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
         value: '[data-qa="vacancy-response-letter-toggle"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference _fill_response_form clicks the toggle before locating and filling the cover-letter textarea;
-      local sanitized DOM evidence contains the match.
-    verified_by: codex
+    coverage_status: reference binding
+    origin: reference_consensus
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:51
-      note: Reference _fill_response_form clicks the toggle before locating and filling the cover-letter textarea; local sanitized
-        DOM evidence contains the match.
+      note: Reference _fill_response_form clicks the toggle before locating and filling
+        the cover-letter textarea; local sanitized DOM evidence contains the match.
       references:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:769
-    verification: browser_observed
-    coverage_status: reference binding
-    origin: reference_consensus
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference _fill_response_form clicks the toggle before locating
+      and filling the cover-letter textarea; local sanitized DOM evidence contains
+      the match.
+    verified_by: codex
   apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP:
     value: '[data-qa=''add-cover-letter'']'
     criticality: write
@@ -378,32 +376,32 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 104
-        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::2
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::2
         value: '[data-qa="add-cover-letter"]'
     live_matches:
     - add-cover-letter
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 104
-        key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::2
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::2
         value: '[data-qa="add-cover-letter"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference attachCoverInModal includes add-cover-letter in the pre-fill toggle path; local sanitized DOM
-      evidence contains the match.
-    verified_by: codex
-    evidence:
-      source: src/hhru_bot/selector_groups/apply_form.py:71
-      note: Reference attachCoverInModal includes add-cover-letter in the pre-fill toggle path; local sanitized DOM evidence
-        contains the match.
-      references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
-    verification: browser_observed
     coverage_status: reference binding
     origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:71
+      note: Reference attachCoverInModal includes add-cover-letter in the pre-fill
+        toggle path; local sanitized DOM evidence contains the match.
+      references:
+      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference attachCoverInModal includes add-cover-letter in the pre-fill
+      toggle path; local sanitized DOM evidence contains the match.
+    verified_by: codex
   apply_form.APPLY_QUESTION_BODY:
     value: '[data-qa=''task-body'']'
     criticality: write
@@ -430,6 +428,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:97
       note: Approved reference binding for the active local selector.
+      references:
+      - yamakayama
     last_verified_at: 2026-08-25
     verified_flow: selector contract refresh and apply_form flow
     verified_by: browser
@@ -448,8 +448,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:99
-      note: The form prefix is a local scope around the separately bound task-body selector; approved references do not declare
-        this combined selector.
+      note: The form prefix is a local scope around the separately bound task-body
+        selector; approved references do not declare this combined selector.
     last_verified_at: 2026-08-25
     verified_flow: selector contract refresh against pinned references
     verified_by: ci
@@ -468,7 +468,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:98
-      note: task-question was observed in the local apply DOM; no equivalent declaration exists in the three approved references.
+      note: task-question was observed in the local apply DOM; no equivalent declaration
+        exists in the three approved references.
     last_verified_at: 2026-08-25
     verified_flow: apply questionnaire detection (read-only DOM observation)
     verified_by: browser
@@ -487,8 +488,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:75
-      note: drop-base is the local Magritte listbox used to prove the resume dropdown closed; approved references do not expose
-        this panel selector.
+      note: drop-base is the local Magritte listbox used to prove the resume dropdown
+        closed; approved references do not expose this panel selector.
     last_verified_at: 2026-08-20
     verified_flow: apply resume selection and dropdown-close guard
     verified_by: browser
@@ -514,6 +515,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:1
       note: Approved reference binding for the active local selector.
+      references:
+      - yamakayama
     last_verified_at: 2026-08-25
     verified_flow: selector contract refresh and apply_form flow
     verified_by: browser
@@ -538,6 +541,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:46
       note: Approved reference binding for the active local selector.
+      references:
+      - yamakayama
     last_verified_at: 2026-08-25
     verified_flow: selector contract refresh and apply_form flow
     verified_by: browser
@@ -556,8 +561,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:49
-      note: The ancestor locator is a local close-action shape around the separately bound resume trigger; approved references
-        do not declare this combined selector.
+      note: The ancestor locator is a local close-action shape around the separately
+        bound resume trigger; approved references do not declare this combined selector.
     last_verified_at: 2026-08-25
     verified_flow: selector contract refresh against pinned references
     verified_by: ci
@@ -568,17 +573,13 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 108
-        key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
+      - file: script.js
+        line: 75
+        key: script.js::module.SELECTORS.letterSubmit#0::4
         value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: hh-apply-assistant.user.js
-        line: 3382
-        key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
-        value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 15
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.submit#0::4
+      - file: script.js
+        line: 1614
+        key: script.js::fillLetterAndSubmit#2::0
         value: '[data-qa="vacancy-response-submit-popup"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -590,39 +591,35 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 3382
-        key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
+      - file: script.js
+        line: 1614
+        key: script.js::fillLetterAndSubmit#2::0
         value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: hh-apply-assistant.user.js
-        line: 108
-        key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
-        value: '[data-qa="vacancy-response-submit-popup"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 15
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.submit#0::4
+      - file: script.js
+        line: 75
+        key: script.js::module.SELECTORS.letterSubmit#0::4
         value: '[data-qa="vacancy-response-submit-popup"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 366
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
         value: '[data-qa="vacancy-response-submit-popup"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference fillLetterAndSubmit locates the submit control after filling the letter; this review did not
-      click or submit it.
-    verified_by: codex
+    coverage_status: reference binding
+    origin: reference_consensus
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:91
-      note: Reference fillLetterAndSubmit locates the submit control after filling the letter; this review did not click or
-        submit it.
+      note: Reference fillLetterAndSubmit locates the submit control after filling
+        the letter; this review did not click or submit it.
       references:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:108
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:3382
       - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:15
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:366
-    verification: browser_observed
-    coverage_status: reference binding
-    origin: reference_consensus
+    last_verified_at: '2026-08-25'
+    verified_flow: Reference fillLetterAndSubmit locates the submit control after
+      filling the letter; this review did not click or submit it.
+    verified_by: codex
   browser.LOGIN_FORM:
     value: '[data-qa=''account-login-form'']'
     criticality: read
@@ -642,9 +639,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:8
-      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
-        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
-        counterpart.
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
     active: true
     bindings: {}
     status: not implemented upstream
@@ -662,9 +657,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:7
-      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
-        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
-        counterpart.
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
     active: true
     bindings: {}
     status: not implemented upstream
@@ -682,9 +675,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:9
-      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
-        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
-        counterpart.
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
     active: true
     bindings: {}
     status: not implemented upstream
@@ -702,9 +693,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:6
-      note: Read-only empty-state union; callers still require confirmed page state. Applicant-visible public resume search/pagination
-        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
-        counterpart.
+      note: read-only empty-state union; callers still require confirmed page state
     active: true
     bindings: {}
     status: not implemented upstream
@@ -733,14 +722,13 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/negotiations_chat.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
     coverage_status: needs-live-evidence
     origin: manual
     verification: unverified
-    evidence:
-      source: src/hhru_bot/negotiations_chat.py:1
-      note: No authenticated chat DOM artifact proves that the broad author hint identifies the message author without unrelated
-        matches.
     last_verified_at: null
     verified_flow: negotiations chat author attribution (not run)
     verified_by: human
@@ -754,6 +742,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:80
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -775,13 +765,13 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
     coverage_status: needs-live-evidence
     origin: manual
     verification: unverified
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:75
-      note: No authenticated chat DOM artifact was retained for this message-root selector.
     last_verified_at: null
     verified_flow: negotiations chat message parsing (not run)
     verified_by: human
@@ -795,6 +785,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:81
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -935,7 +927,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:74
-      note: The saved live-match list contains unrelated *-text nodes; a scoped authenticated chat artifact is still required.
+      note: The saved live-match list contains unrelated *-text nodes; a scoped authenticated
+        chat artifact is still required.
     last_verified_at: null
     verified_flow: negotiations chat message parsing (not run)
     verified_by: human
@@ -946,15 +939,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:62
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: contract_tested
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:65
-      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
-        bindings.
     last_verified_at: 2026-08-16
     verified_flow: legacy negotiations fixture parsing
     verified_by: ci
@@ -965,15 +957,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:61
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: contract_tested
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:64
-      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
-        bindings.
     last_verified_at: 2026-08-16
     verified_flow: legacy negotiations fixture parsing
     verified_by: ci
@@ -984,15 +975,14 @@ selectors:
     decision: structural_read_fallback
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:59
+      note: read-only compatibility with saved legacy markup
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: contract_tested
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:62
-      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
-        bindings.
     last_verified_at: 2026-08-16
     verified_flow: legacy negotiations fixture parsing
     verified_by: ci
@@ -1003,15 +993,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:60
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: contract_tested
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:63
-      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
-        bindings.
     last_verified_at: 2026-08-16
     verified_flow: legacy negotiations fixture parsing
     verified_by: ci
@@ -1022,15 +1011,14 @@ selectors:
     decision: structural_read_fallback
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:58
+      note: read-only compatibility with saved legacy markup
     active: true
     bindings: {}
     coverage_status: intentionally local
     origin: manual
     verification: contract_tested
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:61
-      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
-        bindings.
     last_verified_at: 2026-08-16
     verified_flow: legacy negotiations fixture parsing
     verified_by: ci
@@ -1041,15 +1029,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:47
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: not implemented upstream
     origin: browser_dom
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
-        approved references.
     last_verified_at: 2026-08-16
     verified_flow: negotiations list read and pagination
     verified_by: browser
@@ -1060,15 +1047,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:43
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: not implemented upstream
     origin: browser_dom
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
-        approved references.
     last_verified_at: 2026-08-16
     verified_flow: negotiations list read and pagination
     verified_by: browser
@@ -1079,15 +1065,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:45
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: not implemented upstream
     origin: browser_dom
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
-        approved references.
     last_verified_at: 2026-08-16
     verified_flow: negotiations list read and pagination
     verified_by: browser
@@ -1098,15 +1083,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:40
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: not implemented upstream
     origin: browser_dom
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
-        approved references.
     last_verified_at: 2026-08-16
     verified_flow: negotiations list read and pagination
     verified_by: browser
@@ -1117,15 +1101,14 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:37
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
     coverage_status: not implemented upstream
     origin: browser_dom
     verification: browser_observed
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
-        approved references.
     last_verified_at: 2026-08-16
     verified_flow: negotiations list read and pagination
     verified_by: browser
@@ -1144,6 +1127,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:24
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -1176,6 +1161,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:17
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -1203,6 +1190,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:33
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -1226,6 +1215,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:21
       note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -1246,8 +1237,6 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
-      withdrawal selector control flow; selector remains unproven and cannot authorize a destructive click.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
@@ -1255,10 +1244,14 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run;
+        selector remains inactive and fail-closed.
     last_verified_at: null
     verified_flow: negotiations withdrawal (not run; write path disabled)
     verified_by: human
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and
+      no approved reference source with a browser/UI withdrawal selector control flow;
+      selector remains unproven and cannot authorize a destructive click.
   negotiations.NEGOTIATION_WITHDRAW_CONFIRM:
     value: '[data-qa=''negotiations-withdraw-confirm'']'
     criticality: write
@@ -1266,8 +1259,6 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
-      withdrawal confirmation selector control flow; selector remains unproven and cannot authorize a destructive click.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
@@ -1275,10 +1266,14 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run;
+        selector remains inactive and fail-closed.
     last_verified_at: null
     verified_flow: negotiations withdrawal (not run; write path disabled)
     verified_by: human
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and
+      no approved reference source with a browser/UI withdrawal confirmation selector
+      control flow; selector remains unproven and cannot authorize a destructive click.
   negotiations.NEGOTIATION_WITHDRAW_SUCCESS:
     value: '[data-qa=''negotiations-item-withdrawn'']'
     criticality: write
@@ -1286,9 +1281,6 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
-      withdrawal success selector control flow; selector remains unproven and cannot be used to report a destructive action
-      as successful.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
@@ -1296,10 +1288,15 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run;
+        selector remains inactive and fail-closed.
     last_verified_at: null
     verified_flow: negotiations withdrawal (not run; write path disabled)
     verified_by: human
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and
+      no approved reference source with a browser/UI withdrawal success selector control
+      flow; selector remains unproven and cannot be used to report a destructive action
+      as successful.
   professional_roles.FILTER_TRIGGER:
     value: '[data-qa=''search-filter-professional-role-trigger'']'
     criticality: read
@@ -1531,11 +1528,12 @@ selectors:
     bindings: {}
     status: needs-live-evidence
     origin: manual
-    verification: unavailable
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:22
-      note: No saved DOM snapshot or approved reference control flow confirms this write control; it remains unavailable.
-      references: []
+      note: 'Candidate selector is explicitly fail-closed: the add trigger was not
+        present in the read-only research dump and needs authenticated live-DOM confirmation
+        before use.'
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1554,8 +1552,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:16
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1576,8 +1574,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:10
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1596,8 +1594,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:12
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1616,8 +1614,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:15
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1642,8 +1640,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:9
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1662,8 +1660,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:14
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1684,8 +1682,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:11
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1704,8 +1702,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:17
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1724,8 +1722,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:13
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
@@ -1744,8 +1742,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:47
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1758,8 +1756,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:44
-      note: '- RESUME_DUPLICATE_MENU_ITEM, RESUME_DUPLICATE_INLINE — ПОДТВЕРЖДЕНО Resume/account editor or profile control
-        is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.'
+      note: '- RESUME_DUPLICATE_MENU_ITEM, RESUME_DUPLICATE_INLINE — ПОДТВЕРЖДЕНО'
     active: true
     bindings: {}
     status: intentionally local
@@ -1783,8 +1780,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:35
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1821,8 +1818,10 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:28
-      note: Semantic reference binding is present; the selector is retained as the canonical local value after the approved
-        upstream comparison.
+      note: Semantic reference binding is present; the selector is retained as the
+        canonical local value after the approved upstream comparison.
+      references:
+      - yamakayama
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1841,8 +1840,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:1
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1861,8 +1860,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:32
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1881,8 +1880,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:50
-      note: The declaration explicitly says this value was not confirmed on /applicant/resumes; live-DOM evidence is required
-        before relying on it.
+      note: The declaration explicitly says this value was not confirmed on /applicant/resumes;
+        live-DOM evidence is required before relying on it.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_list_read_only
     verified_by: codex
@@ -1901,8 +1900,9 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:28
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
+      note: The declaration cites earlier live research but explicitly marks that
+        claim unaudited against the later editor-route finding; live reverification
+        is required.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -1927,8 +1927,9 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:29
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
+      note: The declaration cites earlier live research but explicitly marks that
+        claim unaudited against the later editor-route finding; live reverification
+        is required.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -1947,8 +1948,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:12
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -1961,8 +1962,7 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:13
-      note: confirmed by the bump workflow live check; optional read-only hint Resume/account editor or profile control is
-        intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: confirmed by the bump workflow live check; optional read-only hint
     active: true
     bindings: {}
     status: intentionally local
@@ -1986,8 +1986,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:102
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2000,8 +2000,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:110
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2019,8 +2019,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:108
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2038,8 +2038,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:109
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2063,8 +2063,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:107
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2083,8 +2083,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:105
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2103,8 +2103,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:106
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2123,8 +2123,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:104
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2143,8 +2143,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:91
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2157,8 +2157,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:96
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2176,8 +2176,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:94
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2195,8 +2195,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:93
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2214,8 +2214,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:95
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2233,8 +2233,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:92
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2258,8 +2258,9 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:27
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
+      note: The declaration cites earlier live research but explicitly marks that
+        claim unaudited against the later editor-route finding; live reverification
+        is required.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2272,8 +2273,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:75
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2291,8 +2292,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:76
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2310,8 +2311,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:72
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2329,8 +2330,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:83
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2354,8 +2355,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:80
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2374,8 +2375,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:77
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2388,8 +2389,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:73
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2413,8 +2414,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:74
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2427,8 +2428,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:84
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2452,8 +2453,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:38
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2472,8 +2473,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:39
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2492,8 +2493,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:44
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2508,11 +2509,12 @@ selectors:
     bindings: {}
     status: needs-live-evidence
     origin: manual
-    verification: unavailable
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:18
-      note: No saved DOM snapshot or approved reference control flow confirms this write control; it remains unavailable.
-      references: []
+      note: 'Candidate selector is explicitly unavailable: the publish control was
+        not observed on the blocked draft and needs a live check on a ready-to-publish
+        resume.'
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2559,8 +2561,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:37
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2579,8 +2581,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:35
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2599,8 +2601,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:33
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2619,8 +2621,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:34
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2678,8 +2680,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:36
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2698,8 +2700,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:51
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2718,8 +2720,8 @@ selectors:
     verification: verified
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:57
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
+      note: Resume/account editor or profile control is intentionally local to HH.ru;
+        the approved reference projects do not provide a semantic counterpart.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
@@ -2732,8 +2734,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:52
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2751,8 +2753,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:54
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2770,8 +2772,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:53
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -2789,8 +2791,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:58
-      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
-        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
+      note: Inline editor selectors confirmed by the authenticated read-only research
+        in
     active: true
     bindings: {}
     status: intentionally local
@@ -3045,7 +3047,7 @@ selectors:
     bindings: {}
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
-    criticality: write
+    criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:26
     decision: live_dom
     sources: {}
@@ -3053,9 +3055,19 @@ selectors:
     - company-review-rating-reviews-count
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:26
+      note: Employer rating/reviews DOM dump from the read-only search flow (#74).
+      runtime_authoritative: true
+    last_verified_at: '2026-07-28'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.COMPANY_RATING_VALUE:
     value: '[data-qa=''company-review-rating-value'']'
-    criticality: write
+    criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:25
     decision: live_dom
     sources: {}
@@ -3063,6 +3075,16 @@ selectors:
     - company-review-rating-value
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:25
+      note: Employer rating/reviews DOM dump from the read-only search flow (#74).
+      runtime_authoritative: true
+    last_verified_at: '2026-07-28'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.PAGINATION_BLOCK:
     value: '[data-qa=''pager-block'']'
     criticality: read
@@ -3072,9 +3094,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:45
-      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+      note: Authenticated read-only search pagination DOM dump (#123); this project
+        handles the pager variants locally.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-01'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.PAGINATION_NEXT:
     value: '[data-qa=''pager-next'']'
     criticality: read
@@ -3084,9 +3114,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:41
-      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+      note: Authenticated read-only search pagination DOM dump (#123); this project
+        handles the pager variants locally.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-01'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.PAGINATION_PAGE:
     value: '[data-qa=''pager-page'']'
     criticality: read
@@ -3096,9 +3134,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:42
-      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+      note: Authenticated read-only search pagination DOM dump (#123); this project
+        handles the pager variants locally.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-01'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.TRUSTED_EMPLOYER_LINK:
     value: '[data-qa=''trusted-employer-link'']'
     criticality: read
@@ -3109,9 +3155,19 @@ selectors:
     - trusted-employer-link
     active: true
     bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:27
+      note: Employer rating/trusted DOM dump from the read-only search flow (#74).
+      runtime_authoritative: true
+    last_verified_at: '2026-07-28'
+    verified_flow: read_only_search_page_dom_observation
+    verified_by: browser
   search_page.VACANCY_CARD:
     value: '[data-qa=''vacancy-serp__vacancy'']'
-    criticality: write
+    criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:5
     decision: live_dom
     sources:
@@ -3130,23 +3186,23 @@ selectors:
         key: app/parsers/hh.py::module.HHParser.search_vacancies.cards#0::0
         value: '[data-qa="vacancy-serp__vacancy"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 115
-        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1
+      - file: script.js
+        line: 82
+        key: script.js::module.SELECTORS.vacancyCard#0::1
         value: div[data-qa="vacancy-serp__vacancy"]
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference HHParser.search_vacancies selects cards before iterating _parse_card; local sanitized DOM evidence
-      contains the card match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_single
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:5
-      note: Reference HHParser.search_vacancies selects cards before iterating _parse_card; local sanitized DOM evidence contains
-        the card match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:115
-      - yamakayama@bfb46696aec6:app/parsers/hh.py:61
-    verification: browser_observed
-    origin: browser_dom
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_CARD_ACTIVITY:
     value: '[data-qa=''vacancy-serp-item-activity'']'
     criticality: read
@@ -3157,6 +3213,17 @@ selectors:
     - vacancy-serp-item-activity
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:74
+      note: 'Issue #551 read-only DevTools/JS observation; no approved reference project
+        contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_ADDRESS:
     value: '[data-qa=''vacancy-serp__vacancy-address'']'
     criticality: read
@@ -3177,9 +3244,22 @@ selectors:
         line: 100
         key: app/parsers/hh.py::module.HHParser._parse_card.loc_el#0::0
         value: '[data-qa="vacancy-serp__vacancy-address"]'
+    coverage_status: reference_binding
+    origin: reference_single
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:60
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_CARD_COMPANY:
     value: '[data-qa=''vacancy-serp__vacancy-employer'']'
-    criticality: write
+    criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:11
     decision: consensus
     sources:
@@ -3207,6 +3287,20 @@ selectors:
         line: 87
         key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
         value: '[data-qa="vacancy-serp__vacancy-employer"]'
+    coverage_status: reference_binding
+    origin: reference_consensus
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:11
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_CARD_COMPENSATION:
     value: '[data-qa=''vacancy-serp__vacancy-compensation'']'
     criticality: read
@@ -3226,18 +3320,19 @@ selectors:
         line: 96
         key: app/parsers/hh.py::module.HHParser._parse_card.salary_el#0::0
         value: '[data-qa="vacancy-serp__vacancy-compensation"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: A single reference parser uses this selector, but local documentation records that it failed on current
-      hh.ru markup; compensation stays unavailable.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_single
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:17
-      note: A single reference parser uses this selector, but local documentation records that it failed on current hh.ru
-        markup; compensation stays unavailable.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - yamakayama@bfb46696aec6:app/parsers/hh.py:96
-    verification: failed
-    origin: reference_single
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_CARD_EXPERIENCE:
     value: '[data-qa^=''vacancy-serp__vacancy-work-experience-'']'
     criticality: read
@@ -3251,6 +3346,17 @@ selectors:
     - vacancy-serp__vacancy-work-experience-noExperience
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:64
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_HH_RATING:
     value: '[data-qa=''vacancy-serp__vacancy_employer-hh-rating'']'
     criticality: read
@@ -3261,6 +3367,17 @@ selectors:
     - vacancy-serp__vacancy_employer-hh-rating
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:75
+      note: 'Issue #551 read-only DevTools/JS observation; no approved reference project
+        contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_HRBRAND_WINNER:
     value: '[data-qa=''vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners'']'
     criticality: read
@@ -3271,6 +3388,17 @@ selectors:
     - vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:78
+      note: 'Issue #551 read-only DevTools/JS observation; no approved reference project
+        contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_METRO_STATION:
     value: '[data-qa=''address-metro-station-name'']'
     criticality: read
@@ -3281,6 +3409,17 @@ selectors:
     - address-metro-station-name
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:81
+      note: 'Issue #551 read-only DevTools/JS observation; no approved reference project
+        contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_NO_RESUME:
     value: '[data-qa=''vacancy-label-no-resume'']'
     criticality: read
@@ -3291,6 +3430,17 @@ selectors:
     - vacancy-label-no-resume
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:71
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_PUBLICATION_TIME:
     value: '[data-qa=''vacancy-serp__vacancy-date'']'
     criticality: read
@@ -3301,6 +3451,17 @@ selectors:
     - vacancy-serp__vacancy-date
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:21
+      note: Fixture and anonymous SSR comparison from the publication-time flow; no
+        approved reference project contains this vacancy-serp selector.
+      runtime_authoritative: true
+    last_verified_at: '2026-08-20'
+    verified_flow: publication_time_fixture_and_ssr_contract
+    verified_by: human
   search_page.VACANCY_CARD_REMOTE_LABEL:
     value: '[data-qa=''vacancy-label-work-schedule-remote'']'
     criticality: read
@@ -3311,6 +3472,17 @@ selectors:
     - vacancy-label-work-schedule-remote
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:61
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_RESPONSE_BUTTON:
     value: '[data-qa=''vacancy-serp__vacancy_response'']'
     criticality: read
@@ -3318,31 +3490,32 @@ selectors:
     decision: live_dom
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 97
-        key: hh-apply-assistant.user.js::module.SELECTORS.applyBtn#0::1
+      - file: script.js
+        line: 63
+        key: script.js::module.SELECTORS.applyBtn#0::1
         value: '[data-qa="vacancy-serp__vacancy_response"]'
     live_matches:
     - vacancy-serp__vacancy_response
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 97
-        key: hh-apply-assistant.user.js::module.SELECTORS.applyBtn#0::1
+      - file: script.js
+        line: 63
+        key: script.js::module.SELECTORS.applyBtn#0::1
         value: '[data-qa="vacancy-serp__vacancy_response"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference SELECTORS.applyBtn is the card response control used by the search/apply path; local sanitized
-      DOM evidence contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_single
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:30
-      note: Reference SELECTORS.applyBtn is the card response control used by the search/apply path; local sanitized DOM evidence
-        contains the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:97
-    verification: browser_observed
-    origin: browser_dom
+      - tgeruzov
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_CARD_RESPONSE_STATUS:
     value: '[data-qa=''vacancy-serp__vacancy_response_status'']'
     criticality: read
@@ -3352,9 +3525,19 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:51
-      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+      note: The anonymous dump did not expose this authenticated-only marker; the
+        local history path does not depend on it. A live authenticated recheck is
+        still required. Existing active runtime is preserved; this does not upgrade
+        verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-07-27'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   search_page.VACANCY_CARD_SIDE_JOB:
     value: '[data-qa=''vacancy-label-side-job'']'
     criticality: read
@@ -3365,6 +3548,17 @@ selectors:
     - vacancy-label-side-job
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:70
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_SNIPPET_REQUIREMENT:
     value: '[data-qa=''vacancy-serp__vacancy_snippet_requirement'']'
     criticality: read
@@ -3375,6 +3569,17 @@ selectors:
     - vacancy-serp__vacancy_snippet_requirement
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:65
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY:
     value: '[data-qa=''vacancy-serp__vacancy_snippet_responsibility'']'
     criticality: read
@@ -3385,9 +3590,20 @@ selectors:
     - vacancy-serp__vacancy_snippet_responsibility
     active: true
     bindings: {}
+    coverage_status: not_implemented_upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:66
+      note: 'Issue #517/#516 read-only DevTools/JS observation; no approved reference
+        project contains this vacancy-serp selector.'
+      runtime_authoritative: true
+    last_verified_at: '2026-08-23'
+    verified_flow: read_only_search_vacancy_card_devtools
+    verified_by: browser
   search_page.VACANCY_CARD_TITLE_LINK:
     value: '[data-qa=''serp-item__title'']'
-    criticality: write
+    criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:10
     decision: live_dom
     sources:
@@ -3406,23 +3622,23 @@ selectors:
         key: app/parsers/hh.py::module.HHParser._parse_card.title_el#0::0
         value: '[data-qa="serp-item__title"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 114
-        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1
+      - file: script.js
+        line: 81
+        key: script.js::module.SELECTORS.vacancyLink#0::1
         value: a[data-qa="serp-item__title"]
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference _parse_card selects the title link before extracting vacancy identity; local sanitized DOM evidence
-      contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_single
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:10
-      note: Reference _parse_card selects the title link before extracting vacancy identity; local sanitized DOM evidence
-        contains the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:114
-      - yamakayama@bfb46696aec6:app/parsers/hh.py:77
-    verification: browser_observed
-    origin: browser_dom
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   search_page.VACANCY_SEARCH_EMPTY:
     value: '[data-qa=''empty-vacancy-search-block'']'
     criticality: read
@@ -3432,9 +3648,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:9
-      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+      note: Observed in an anonymous curl dump for an empty search; this audit did
+        not repeat a live browser check. Existing active runtime is preserved; this
+        does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-08-11'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   selectors.LOGIN_CODE_INPUT:
     value: '[data-qa=''magritte-pincode-input-field'']'
     criticality: write
@@ -3444,7 +3669,10 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selectors.py:65
-      note: Подтверждено live DOM после запроса кода (2026-08-19); ввод запускает авто-submit.
+      note: Подтверждено live DOM после запроса кода (2026-08-19); ввод запускает
+        авто-submit.
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -3473,8 +3701,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/login.py:7
-      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
-        approved references.
+      note: Selector was observed by the local read-only login DOM healthcheck; no
+        equivalent declaration exists in the three approved references.
     last_verified_at: 2026-08-25
     verified_flow: login DOM healthcheck (read-only)
     verified_by: browser
@@ -3488,6 +3716,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selectors.py:62
       note: Подтверждено headless-рендером https://hh.ru/account/login от 2026-08-13
+      references:
+      - yamakayama
     active: true
     bindings:
       yamakayama:
@@ -3516,8 +3746,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/login.py:8
-      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
-        approved references.
+      note: Selector was observed by the local read-only login DOM healthcheck; no
+        equivalent declaration exists in the three approved references.
     last_verified_at: 2026-08-25
     verified_flow: login DOM healthcheck (read-only)
     verified_by: browser
@@ -3536,8 +3766,8 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/login.py:10
-      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
-        approved references.
+      note: Selector was observed by the local read-only login DOM healthcheck; no
+        equivalent declaration exists in the three approved references.
     last_verified_at: 2026-08-25
     verified_flow: login DOM healthcheck (read-only)
     verified_by: browser
@@ -3550,9 +3780,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:8
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Legacy vacancy-page curl evidence; no approved reference match and no
+        current live apply-flow verification. Existing active runtime is preserved;
+        this does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-07-27'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT:
     value: '[data-qa=''vacancy-response-link-view-topic'']'
     criticality: write
@@ -3560,13 +3799,9 @@ selectors:
     decision: consensus
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 110
-        key: hh-apply-assistant.user.js::module.SELECTORS.responseChat#0::0
-        value: '[data-qa="vacancy-response-link-view-topic"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 17
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.chat#0::0
+      - file: script.js
+        line: 77
+        key: script.js::module.SELECTORS.responseChat#0::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3582,13 +3817,9 @@ selectors:
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 110
-        key: hh-apply-assistant.user.js::module.SELECTORS.responseChat#0::0
-        value: '[data-qa="vacancy-response-link-view-topic"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 17
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.chat#0::0
+      - file: script.js
+        line: 77
+        key: script.js::module.SELECTORS.responseChat#0::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3599,21 +3830,20 @@ selectors:
         line: 423
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
         value: '[data-qa="vacancy-response-link-view-topic"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference apply flows query the response-chat control to classify an existing response; local sanitized
-      DOM evidence contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_consensus
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:9
-      note: Reference apply flows query the response-chat control to classify an existing response; local sanitized DOM evidence
-        contains the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:110
-      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:17
-      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:290
-      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:423
-    verification: browser_observed
-    origin: reference_consensus
+      - tgeruzov
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_APPLY_BUTTON:
     value: '[data-qa=''vacancy-response-link-top'']'
     criticality: write
@@ -3626,9 +3856,13 @@ selectors:
         key: lib/hh-response-selectors.mjs::tryClick#0::0
         value: '[data-qa="vacancy-response-link-top"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 99
-        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::1
+      - file: script.js
+        line: 65
+        key: script.js::module.SELECTORS.vacancyApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      - file: script.js
+        line: 66
+        key: script.js::module.SELECTORS.topApply#0::1
         value: '[data-qa="vacancy-response-link-top"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
@@ -3645,29 +3879,34 @@ selectors:
         key: lib/hh-response-selectors.mjs::tryClick#0::0
         value: '[data-qa="vacancy-response-link-top"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 99
-        key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::1
+      - file: script.js
+        line: 66
+        key: script.js::module.SELECTORS.topApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      - file: script.js
+        line: 65
+        key: script.js::module.SELECTORS.vacancyApply#0::1
         value: '[data-qa="vacancy-response-link-top"]'
       yamakayama:
       - file: app/parsers/hh_playwright.py
         line: 262
         key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
         value: '[data-qa="vacancy-response-link-top"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference apply flows locate the top vacancy response link as the entry control; local sanitized DOM evidence
-      contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_exact
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:5
-      note: Reference apply flows locate the top vacancy response link as the entry control; local sanitized DOM evidence
-        contains the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - steev@7a56af1e004e:lib/hh-response-selectors.mjs:40
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:99
-      - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:262
-    verification: browser_observed
-    origin: reference_exact
+      - steev
+      - tgeruzov
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_COMPANY_NAME:
     value: '[data-qa=''vacancy-company-name'']'
     criticality: write
@@ -3684,9 +3923,9 @@ selectors:
         key: scripts/scan-telegram.mjs::t#1::0
         value: '[data-qa="vacancy-company-name"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2943
-        key: hh-apply-assistant.user.js::pick#2::0
+      - file: script.js
+        line: 1359
+        key: script.js::pick#2::0
         value: '[data-qa="vacancy-company-name"]'
     live_matches:
     - vacancy-company-name
@@ -3702,24 +3941,24 @@ selectors:
         key: scripts/scan-telegram.mjs::t#1::0
         value: '[data-qa="vacancy-company-name"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2943
-        key: hh-apply-assistant.user.js::pick#2::0
+      - file: script.js
+        line: 1359
+        key: script.js::pick#2::0
         value: '[data-qa="vacancy-company-name"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference vacancy-title parsing reads the employer after the vacancy title for identity; local sanitized
-      DOM evidence contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_consensus
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:21
-      note: Reference vacancy-title parsing reads the employer after the vacancy title for identity; local sanitized DOM evidence
-        contains the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - steev@7a56af1e004e:lib/vacancy-parse.mjs:12
-      - steev@7a56af1e004e:scripts/scan-telegram.mjs:83
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2943
-    verification: browser_observed
-    origin: reference_consensus
+      - steev
+      - tgeruzov
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_DESCRIPTION:
     value: '[data-qa="vacancy-description"]'
     active: true
@@ -3759,6 +3998,18 @@ selectors:
         line: 154
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.desc_el#0::0
         value: '[data-qa="vacancy-description"]'
+    coverage_status: reference_binding
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:24
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT:
     value: '[data-qa="magritte-alert"]'
     criticality: write
@@ -3768,9 +4019,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:16
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Legacy vacancy blocker evidence from the direct-application flow; no approved
+        reference match and no current live verification. Existing active runtime
+        is preserved; this does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-08-20'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL:
     value: '[data-qa="vacancy-response-link-advertising-cancel"]'
     criticality: write
@@ -3780,9 +4040,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:15
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Legacy vacancy blocker evidence from the direct-application flow; no approved
+        reference match and no current live verification. Existing active runtime
+        is preserved; this does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-08-20'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_EXPERIENCE:
     value: '[data-qa="vacancy-experience"]'
     active: true
@@ -3814,6 +4083,18 @@ selectors:
         line: 161
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.exp_el#0::0
         value: '[data-qa="vacancy-experience"]'
+    coverage_status: reference_binding
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:25
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_HIDDEN_RESUME_WARNING:
     value: '[data-qa=''hidden-resume-warning'']'
     criticality: write
@@ -3824,6 +4105,18 @@ selectors:
     - hidden-resume-warning
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:12
+      note: Prior read-only apply-modal observation and contract fixture; no current
+        live end-to-end verification. Existing active runtime is preserved; this does
+        not upgrade verification.
+      runtime_authoritative: true
+    last_verified_at: '2026-08-19'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_LIMIT_ERROR:
     value: '[data-qa-popup-error-code="negotiations-limit-exceeded"]'
     criticality: write
@@ -3833,9 +4126,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:17
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Legacy vacancy blocker evidence from the response-limit flow; no approved
+        reference match and no current live verification. Existing active runtime
+        is preserved; this does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-08-20'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_RELOCATION_CONFIRM:
     value: '[data-qa="relocation-warning-confirm"]'
     criticality: write
@@ -3843,39 +4145,31 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 112
-        key: hh-apply-assistant.user.js::module.SELECTORS.relocationBtn#0::0
-        value: '[data-qa="relocation-warning-confirm"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 14
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.relocation#0::0
+      - file: script.js
+        line: 79
+        key: script.js::module.SELECTORS.relocationBtn#0::0
         value: '[data-qa="relocation-warning-confirm"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:13
-      note: Reference relocation handling locates this confirmation control in the guarded response flow; no click was performed
-        in this review.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:112
-      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:14
+      - tgeruzov
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 112
-        key: hh-apply-assistant.user.js::module.SELECTORS.relocationBtn#0::0
+      - file: script.js
+        line: 79
+        key: script.js::module.SELECTORS.relocationBtn#0::0
         value: '[data-qa="relocation-warning-confirm"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 14
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.relocation#0::0
-        value: '[data-qa="relocation-warning-confirm"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference relocation handling locates this confirmation control in the guarded response flow; no click
-      was performed in this review.
-    verified_by: codex
-    verification: contract_tested
+    coverage_status: reference_binding
     origin: reference_single
+    verification: contract_tested
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_RESPONSE_ERROR:
     value: '[data-qa="vacancy-response-error-notification"]'
     criticality: write
@@ -3883,30 +4177,31 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2834
-        key: hh-apply-assistant.user.js::detectAlreadyApplied#0::1
+      - file: script.js
+        line: 1253
+        key: script.js::detectAlreadyApplied#0::1
         value: '[data-qa="vacancy-response-error-notification"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:19
-      note: Reference detectAlreadyApplied reads this error marker before classifying an existing response; no mutation was
-        performed in this review.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2834
+      - tgeruzov
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2834
-        key: hh-apply-assistant.user.js::detectAlreadyApplied#0::1
+      - file: script.js
+        line: 1253
+        key: script.js::detectAlreadyApplied#0::1
         value: '[data-qa="vacancy-response-error-notification"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference detectAlreadyApplied reads this error marker before classifying an existing response; no mutation
-      was performed in this review.
-    verified_by: codex
-    verification: contract_tested
+    coverage_status: reference_binding
     origin: reference_single
+    verification: contract_tested
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_RESPONSE_REJECT_WARNING:
     value: '[data-qa="response-reject-warning"]'
     criticality: write
@@ -3914,39 +4209,31 @@ selectors:
     decision: documented_live
     sources:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 113
-        key: hh-apply-assistant.user.js::module.SELECTORS.rejectWarning#0::0
-        value: '[data-qa="response-reject-warning"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 18
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.reject#0::0
+      - file: script.js
+        line: 80
+        key: script.js::module.SELECTORS.rejectWarning#0::0
         value: '[data-qa="response-reject-warning"]'
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:18
-      note: Reference response handling declares this warning marker for the guarded submit flow; no click was performed in
-        this review.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:113
-      - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:18
+      - tgeruzov
     active: true
     bindings:
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 113
-        key: hh-apply-assistant.user.js::module.SELECTORS.rejectWarning#0::0
+      - file: script.js
+        line: 80
+        key: script.js::module.SELECTORS.rejectWarning#0::0
         value: '[data-qa="response-reject-warning"]'
-      - file: tests/phase2-performance.test.mjs
-        line: 18
-        key: tests/phase2-performance.test.mjs::module.SELECTORS.reject#0::0
-        value: '[data-qa="response-reject-warning"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference response handling declares this warning marker for the guarded submit flow; no click was performed
-      in this review.
-    verified_by: codex
-    verification: contract_tested
+    coverage_status: reference_binding
     origin: reference_single
+    verification: contract_tested
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE:
     value: '[data-qa="vacancy-response-similar-vacancies-close"]'
     criticality: write
@@ -3956,9 +4243,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:14
-      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+      note: Legacy vacancy blocker evidence from the similar-vacancies flow; no approved
+        reference match and no current live verification. Existing active runtime
+        is preserved; this does not upgrade verification.
+      runtime_authoritative: true
     active: true
     bindings: {}
+    coverage_status: needs_live_evidence
+    origin: manual
+    verification: unverified
+    last_verified_at: '2026-08-20'
+    verified_flow: selector_contract_audit_only
+    verified_by: human
   vacancy_page.VACANCY_TITLE:
     value: '[data-qa=''vacancy-title'']'
     criticality: write
@@ -3971,9 +4267,9 @@ selectors:
         key: lib/vacancy-parse.mjs::t#0::0
         value: '[data-qa="vacancy-title"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2939
-        key: hh-apply-assistant.user.js::pick#0::0
+      - file: script.js
+        line: 1355
+        key: script.js::pick#0::0
         value: '[data-qa="vacancy-title"]'
       yamakayama:
       - file: app/parsers/hh.py
@@ -3990,29 +4286,30 @@ selectors:
         key: lib/vacancy-parse.mjs::t#0::0
         value: '[data-qa="vacancy-title"]'
       tgeruzov:
-      - file: hh-apply-assistant.user.js
-        line: 2939
-        key: hh-apply-assistant.user.js::pick#0::0
+      - file: script.js
+        line: 1355
+        key: script.js::pick#0::0
         value: '[data-qa="vacancy-title"]'
       yamakayama:
       - file: app/parsers/hh.py
         line: 151
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
         value: '[data-qa="vacancy-title"]'
-    last_verified_at: '2026-08-25'
-    verified_flow: Reference vacancy parsers read the title before identity/scoping decisions; local sanitized DOM evidence
-      contains the match.
-    verified_by: codex
+    coverage_status: reference_binding
+    origin: reference_exact
+    verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:20
-      note: Reference vacancy parsers read the title before identity/scoping decisions; local sanitized DOM evidence contains
-        the match.
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
       references:
-      - steev@7a56af1e004e:lib/vacancy-parse.mjs:11
-      - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:2939
-      - yamakayama@bfb46696aec6:app/parsers/hh.py:151
-    verification: browser_observed
-    origin: reference_exact
+      - steev
+      - tgeruzov
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE:
     value: '[data-qa="vacancy-view-employment-mode"]'
     active: true
@@ -4044,6 +4341,18 @@ selectors:
         line: 164
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.emp_el#0::0
         value: '[data-qa="vacancy-view-employment-mode"]'
+    coverage_status: reference_binding
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:26
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - yamakayama
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_VIEW_LOCATION:
     value: '[data-qa="vacancy-view-location"]'
     active: true
@@ -4075,6 +4384,18 @@ selectors:
         line: 2946
         key: hh-apply-assistant.user.js::pick#4::0
         value: '[data-qa="vacancy-view-location"]'
+    coverage_status: reference_binding
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:27
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - tgeruzov
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
   vacancy_page.VACANCY_VIEW_RAW_ADDRESS:
     value: '[data-qa="vacancy-view-raw-address"]'
     active: true
@@ -4106,6 +4427,18 @@ selectors:
         line: 2948
         key: hh-apply-assistant.user.js::pick#5::0
         value: '[data-qa="vacancy-view-raw-address"]'
+    coverage_status: reference_binding
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:28
+      note: Exact selector value is bound to the approved reference source(s) recorded
+        above; no local selector value was changed.
+      runtime_authoritative: true
+      references:
+      - steev
+      - tgeruzov
+    last_verified_at: '2026-08-25'
+    verified_flow: reference_selector_scan_and_contract_check
+    verified_by: codex
 upstream_consensus:
 - value: '[data-qa="vacancy-company-name"]'
   references:
@@ -4189,15 +4522,16 @@ upstream_consensus:
       value: '[data-qa="vacancy-response-letter-submit"]'
   decision: reject
   reason_code: write_risk
-  reason: duplicate of APPLY_SUBMIT_BUTTON; the local apply flow submits only the popup control. The upstream string is a
-    WRITE fallback and has no local DOM snapshot evidence for a second form shape.
+  reason: duplicate of APPLY_SUBMIT_BUTTON; the local apply flow submits only the
+    popup control. The upstream string is a WRITE fallback and has no local DOM snapshot
+    evidence for a second form shape.
   target: apply_form.APPLY_SUBMIT_BUTTON
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4220,15 +4554,15 @@ upstream_consensus:
       key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
       value: '[data-qa="vacancy-response-letter-toggle"]'
   decision: reject
-  reason: duplicate of APPLY_COVER_LETTER_TOGGLE; the shared local cover-letter role is already mapped, so no additional WRITE
-    fallback is introduced.
+  reason: duplicate of APPLY_COVER_LETTER_TOGGLE; the shared local cover-letter role
+    is already mapped, so no additional WRITE fallback is introduced.
   target: apply_form.APPLY_COVER_LETTER_TOGGLE
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4252,15 +4586,15 @@ upstream_consensus:
       value: '[data-qa="vacancy-response-link-bottom"]'
   decision: reject
   reason_code: write_risk
-  reason: duplicate apply role covered by VACANCY_APPLY_BUTTON; adding a bottom-link fallback would expand the WRITE path
-    without a local DOM snapshot.
+  reason: duplicate apply role covered by VACANCY_APPLY_BUTTON; adding a bottom-link
+    fallback would expand the WRITE path without a local DOM snapshot.
   target: vacancy_page.VACANCY_APPLY_BUTTON
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4289,14 +4623,15 @@ upstream_consensus:
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
       value: '[data-qa="vacancy-response-link-top"]'
   decision: reject
-  reason: duplicate of the existing VACANCY_APPLY_BUTTON contract; no second local apply contract is needed.
+  reason: duplicate of the existing VACANCY_APPLY_BUTTON contract; no second local
+    apply contract is needed.
   target: vacancy_page.VACANCY_APPLY_BUTTON
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       steev: 7a56af1e004e3908c15bea5d3c1d805ca2503c32
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
@@ -4324,15 +4659,15 @@ upstream_consensus:
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
       value: '[data-qa="vacancy-response-link-view-topic"]'
   decision: reject
-  reason: duplicate of VACANCY_ALREADY_RESPONDED_CHAT; the already-responded control is already represented in the local response
-    flow.
+  reason: duplicate of VACANCY_ALREADY_RESPONDED_CHAT; the already-responded control
+    is already represented in the local response flow.
   target: vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4359,14 +4694,15 @@ upstream_consensus:
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
       value: '[data-qa="vacancy-response-submit-popup"]'
   decision: reject
-  reason: duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the local WRITE submit contract.
+  reason: duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the
+    local WRITE submit contract.
   target: apply_form.APPLY_SUBMIT_BUTTON
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4389,14 +4725,15 @@ upstream_consensus:
       key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
       value: '[data-qa="vacancy-serp__vacancy-employer"]'
   decision: reject
-  reason: duplicate of VACANCY_CARD_COMPANY; the read-only SERP employer role is already represented locally.
+  reason: duplicate of VACANCY_CARD_COMPANY; the read-only SERP employer role is already
+    represented locally.
   target: search_page.VACANCY_CARD_COMPANY
   origin: reference_consensus
   verification: contract_tested
   evidence:
     source: selectors/reference-map.yaml:upstream_consensus
-    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
-      generated.'
+    note: 'Explicit manual reject: the candidate is already covered by the target
+      contract; no new selector or fallback is generated.'
     reference_commits:
       steev: 7a56af1e004e3908c15bea5d3c1d805ca2503c32
       yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
@@ -4498,8 +4835,8 @@ upstream_consensus:
       value: h1[data-qa="vacancy-title"]
   decision: reject
   reason_code: duplicate_local_role
-  reason: 'Дубликат локального vacancy_page.VACANCY_TITLE: canonical [data-qa="vacancy-title"] уже покрывает ту же роль; fallback
-    не добавляется.'
+  reason: 'Дубликат локального vacancy_page.VACANCY_TITLE: canonical [data-qa="vacancy-title"]
+    уже покрывает ту же роль; fallback не добавляется.'
 binding_definitions:
   apply.success.APPLY_SUCCESS_MARKER:
     tgeruzov:
