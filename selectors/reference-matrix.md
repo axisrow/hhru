@@ -166,7 +166,7 @@
 | search_page.PAGINATION_NEXT | `[data-qa='pager-next']` | — | — | — | documented_live |
 | search_page.PAGINATION_PAGE | `[data-qa='pager-page']` | — | — | — | documented_live |
 | search_page.TRUSTED_EMPLOYER_LINK | `[data-qa='trusted-employer-link']` | — | — | — | live_dom |
-| search_page.VACANCY_CARD | `[data-qa='vacancy-serp__vacancy']` | — | div[data-qa="vacancy-serp__vacancy"] | [data-qa="vacancy-serp__vacancy"] | live_dom |
+| search_page.VACANCY_CARD | `[data-qa='vacancy-serp__vacancy']` | — | div[data-qa="vacancy-serp__vacancy"] | [data-qa="vacancy-serp__vacancy"] | consensus |
 | search_page.VACANCY_CARD_ACTIVITY | `[data-qa='vacancy-serp-item-activity']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_ADDRESS | `[data-qa='vacancy-serp__vacancy-address']` | — | — | [data-qa="vacancy-serp__vacancy-address"] | live_dom |
 | search_page.VACANCY_CARD_COMPANY | `[data-qa='vacancy-serp__vacancy-employer']` | [data-qa="vacancy-serp__vacancy-employer"] | — | [data-qa="vacancy-serp__vacancy-employer"] | consensus |
@@ -183,7 +183,7 @@
 | search_page.VACANCY_CARD_SIDE_JOB | `[data-qa='vacancy-label-side-job']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_SNIPPET_REQUIREMENT | `[data-qa='vacancy-serp__vacancy_snippet_requirement']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY | `[data-qa='vacancy-serp__vacancy_snippet_responsibility']` | — | — | — | live_dom |
-| search_page.VACANCY_CARD_TITLE_LINK | `[data-qa='serp-item__title']` | — | a[data-qa="serp-item__title"] | [data-qa="serp-item__title"] | live_dom |
+| search_page.VACANCY_CARD_TITLE_LINK | `[data-qa='serp-item__title']` | — | a[data-qa="serp-item__title"] | [data-qa="serp-item__title"] | consensus |
 | search_page.VACANCY_SEARCH_EMPTY | `[data-qa='empty-vacancy-search-block']` | — | — | — | documented_live |
 | selectors.LOGIN_CODE_INPUT | `[data-qa='magritte-pincode-input-field']` | — | — | input[data-qa="magritte-pincode-input-field"] | documented_live |
 | selectors.LOGIN_CODE_REQUEST_BUTTON | `[data-qa='submit-button']` | — | — | — | live_dom |
