@@ -101,23 +101,24 @@ def _dump_navigation_diagnostics(
         screenshot_path,
         html_path,
     )
-    try:
-        html_path.with_suffix(".json").write_text(
-            json.dumps(
-                {
-                    "producer": "hhru_bot.apply.steps",
-                    "run_id": run_id,
-                    "artifact": html_path.name,
-                    "stage": stage,
-                    "vacancy_id": vacancy_id,
-                },
-                sort_keys=True,
+    if html_path.exists():
+        try:
+            html_path.with_suffix(".json").write_text(
+                json.dumps(
+                    {
+                        "producer": "hhru_bot.apply.steps",
+                        "run_id": run_id,
+                        "artifact": html_path.name,
+                        "stage": stage,
+                        "vacancy_id": vacancy_id,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
             )
-            + "\n",
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        logger.warning("Метаданные диагностического дампа недоступны: %s", exc)
+        except OSError as exc:
+            logger.warning("Метаданные диагностического дампа недоступны: %s", exc)
 
 
 def wait_apply_button(page: Page, *, timeout_ms: int = APPLY_TIMEOUT_MS) -> bool:

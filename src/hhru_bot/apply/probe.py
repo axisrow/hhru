@@ -105,7 +105,7 @@ def dump_probe_snapshot(
             raise
         logger.warning("probe[%s]: HTML недоступен: %s", ctx.stage, exc)
 
-    if paths:
+    if "html" in paths:
         metadata = {
             "producer": "hhru_bot.apply.probe",
             "run_id": ctx.run_id,

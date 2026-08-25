@@ -138,8 +138,8 @@ def build_bundle(
         # beginning mid-second lose their first evidence line.
         if start:
             start = start.replace(microsecond=0)
-        if finish and finish.microsecond:
-            finish = finish.replace(microsecond=0) + dt.timedelta(seconds=1)
+        if finish:
+            finish = finish.replace(microsecond=0)
         candidates = []
         for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
             safe = _safe_log_line(raw)
