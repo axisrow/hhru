@@ -1296,7 +1296,15 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
             if (matches := _matching_sources(value, items))
         }
         reference_count = len(row["sources"])
-        if reference_count >= catalog["policy"]["consensus_threshold"]:
+        if row.get("status") == "needs-live-evidence" or row.get("verification") == "unverified":
+            # Audit metadata must not become activation evidence.  In
+            # particular, an unverified write selector can still have a stale
+            # live match from an older dump or happen to match a reference;
+            # keep it unavailable until explicitly reclassified.
+            row["decision"] = "unavailable"
+            row["active"] = False
+            row.pop("suggestion", None)
+        elif reference_count >= catalog["policy"]["consensus_threshold"]:
             row["decision"] = "consensus"
             row["active"] = True
             row.pop("suggestion", None)
