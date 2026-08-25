@@ -308,7 +308,9 @@ def parse_response_card(item) -> ResponseItem | None:
     )
 
 
-def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
+def fetch_responses(
+    page: Page, max_pages: int = 5, *, strict_empty: bool = False
+) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
     Возвращает список ResponseItem (без дедупликации — upsert в истории её сделает
@@ -373,6 +375,11 @@ def fetch_responses(page: Page, max_pages: int = 5) -> list[ResponseItem]:
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()
         if count == 0:
+            if page_num == 0 and strict_empty and not cards_rendered:
+                raise ResponsesIndeterminate(
+                    f"первая страница negotiations не подтверждена: карточки "
+                    f"не появились за {RENDER_TIMEOUT_MS} мс"
+                )
             if page_num > 0 and not cards_rendered:
                 raise ResponsesIndeterminate(
                     f"страницы {page_num} не подтверждена: карточки переписки "
