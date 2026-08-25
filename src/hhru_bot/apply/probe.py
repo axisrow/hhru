@@ -88,9 +88,11 @@ def dump_probe_snapshot(
 
     png_path = ctx.logs_dir / f"probe_{slug}.png"
     html_path = ctx.logs_dir / f"probe_{slug}.html"
+    metadata_path = html_path.with_suffix(".json")
 
     paths: dict[str, Path] = {}
     try:
+        metadata_path.unlink(missing_ok=True)
         png_path.write_bytes(page.screenshot(full_page=True))
         paths["screenshot"] = png_path
     except PlaywrightError as exc:
@@ -114,9 +116,7 @@ def dump_probe_snapshot(
             "stage": ctx.stage,
         }
         try:
-            (html_path.with_suffix(".json")).write_text(
-                json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            metadata_path.write_text(json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8")
         except OSError as exc:
             logger.warning("probe[%s]: метаданные дампа недоступны: %s", ctx.stage, exc)
         logger.info(

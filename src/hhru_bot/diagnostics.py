@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -155,7 +156,11 @@ def build_bundle(
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            if metadata.get("run_id") == run.get("run_id") and metadata.get("artifact") == p.name:
+            if (
+                isinstance(metadata, Mapping)
+                and metadata.get("run_id") == run.get("run_id")
+                and metadata.get("artifact") == p.name
+            ):
                 snapshots.append(_safe_dom(p))
         snapshots = snapshots[:5]
     return {

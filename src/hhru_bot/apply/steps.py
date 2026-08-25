@@ -90,6 +90,8 @@ def _dump_navigation_diagnostics(
         prefix = LOG_DIR / name
         screenshot_path = prefix.with_suffix(".png")
         html_path = prefix.with_suffix(".html")
+        html_metadata_path = html_path.with_suffix(".json")
+        html_metadata_path.unlink(missing_ok=True)
         screenshot_path.write_bytes(page.screenshot(full_page=True))
         html_path.write_text(page.content(), encoding="utf-8")
     except (OSError, PlaywrightError) as exc:
@@ -103,7 +105,7 @@ def _dump_navigation_diagnostics(
     )
     if html_path.exists():
         try:
-            html_path.with_suffix(".json").write_text(
+            html_metadata_path.write_text(
                 json.dumps(
                     {
                         "producer": "hhru_bot.apply.steps",
