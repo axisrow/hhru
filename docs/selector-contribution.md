@@ -15,8 +15,9 @@ This guide follows the synchronization and evidence policy in epic #589.
    group first so an existing contract is extended instead of duplicated.
 2. **Search all three references.** Search the pinned commits in the map for
    the same semantic element. Record the reference path, commit, and exact
-   selector in the evidence. Two of three identical values are upstream
-   consensus; three of three are an exact reference match.
+   selector in both the structured `sources` map and the evidence. Two of
+   three identical values are upstream consensus; three of three are an exact
+   reference match.
 3. **Make the decision.** Apply the synchronization policy:
    - 2/3 or 3/3 semantic consensus: use the consensus value;
    - one reference: treat it as a candidate and review it;
@@ -52,6 +53,12 @@ checked. They are independent and neither replaces the other.
 | `verified_flow` | The concrete flow and state checked, for example `apply: open response form, fill letter, submit, verify confirmation`. |
 | `verified_by` | `ci`, `browser`, `human`, or the identifier of the tool/agent that performed the check. |
 
+For a `consensus` decision, the existing contract checker also requires a
+structured `sources` entry for each counted reference. Each source record must
+include its reference file, line, stable key, and selector value; the value
+must equal the canonical selector. `origin` and free-form `evidence` do not
+replace `sources`.
+
 ### Evidence template
 
 Copy this shape into a new map entry and replace every placeholder. Keep
@@ -62,6 +69,17 @@ my_domain.MY_SELECTOR:
   value: "[data-qa='replace-me']"
   criticality: read # read or write; use write when mutation reachability is involved
   decision: consensus # the reviewed map decision, not a substitute for verification
+  sources:
+    tgeruzov:
+      - file: "script.js"
+        line: 123
+        key: "script.js::module.SELECTORS.example#0::0"
+        value: "[data-qa='replace-me']"
+    yamakayama:
+      - file: "app/parsers/hh_playwright.py"
+        line: 456
+        key: "app/parsers/hh_playwright.py::module.Example#0::0"
+        value: "[data-qa='replace-me']"
   origin: reference_consensus
   verification: browser_observed
   evidence:
@@ -100,6 +118,12 @@ The current policy is `manual`. Do not enable `read_auto` as part of a normal
 selector contribution. Keep selectors unavailable/fail-closed when there is
 no safe confirmation rather than broadening the selector or guessing.
 
+The six fields above are the policy contract from #589. This documentation
+change does not add their schema validation or runtime gating to the existing
+checker/generator. Until that enforcement lands, a passing `check` does not
+prove the new evidence statuses or WRITE gating: reviewers must verify them
+manually and keep an unconfirmed WRITE selector inactive.
+
 ## `llm_hypothesis` rule
 
 `origin: llm_hypothesis` is never eligible for generated active runtime. It
@@ -121,6 +145,8 @@ the hypothesis active merely by setting `active: true`.
       `live_passed` evidence from a real end-to-end flow.
 - [ ] `llm_hypothesis` is not active runtime.
 - [ ] `python scripts/selector_contracts.py check` passes.
+- [ ] The check is not treated as a substitute for manual review of the six
+      required evidence fields and the fail-closed WRITE rule.
 - [ ] `python scripts/selector_contracts.py render` was run and its generated
       runtime and matrix changes are included when applicable.
 - [ ] `ruff check src/ tests/` and the full `pytest` run pass. Follow
