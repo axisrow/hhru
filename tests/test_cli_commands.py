@@ -172,6 +172,7 @@ def test_register_commands_returns_names():
         "import_cookies",
         "clear_negotiations",
         "delete_resume",
+        "diagnostics",
         "create_resume",
         "reply_employers",
         "robot_queue",
