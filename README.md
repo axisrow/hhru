@@ -258,12 +258,22 @@ codex plugin marketplace add axisrow/hhru --ref main
 ```bash
 /hhru whoami
 /hhru search --resume <id> --dry-run --max-pages 3
+/hhru competitors collect --text "AI" --max-pages 5
+/hhru competitors report --text "AI" --top 20
 /hhru apply --resume <id> --dry-run --limit 5
 /hhru responses
 ```
 
 Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-run` сначала и
 подтверждения перед боевым запуском. Вывод — только текст/ASCII, без эмодзи.
+
+`competitors collect` читает выдачу резюме под соискательской сессией и
+сохраняет в локальную SQLite-базу ID/ссылку и обезличенные профессиональные
+поля. Имена, контакты, фото, демография, местоположение, активность, HTML и
+полный текст страницы не сохраняются. Команда открывает все карточки на
+страницах, выбранных через `--max-pages`, с паузами из секции `throttle`.
+`competitors report` строит локальный детерминированный отчёт и не меняет
+AIProfile/config.yaml.
 
 ### Скиллы
 
@@ -373,6 +383,12 @@ Write-команды к hh.ru (`apply`/`bump`/`run`/...) требуют `--dry-r
 
 - `--reason` — Очистить только эту причину (по умолчанию — все причины)
 - `--dry-run` — Показать, сколько записей будет удалено, без реального удаления
+
+### `competitors`
+
+READ hh.ru: competitors collect --text QUERY --max-pages N; локальный отчёт: competitors report [--text QUERY] [--top N].
+
+- (без аргументов)
 
 ### `config`
 

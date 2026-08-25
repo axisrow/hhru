@@ -10,10 +10,11 @@
 - `live_write` — обратимая мутация своего аккаунта, незаметная посторонним
   (например, создать и удалить черновик резюме).
 - `live_write_danger` — необратимая мутация или действие, видимое посторонним
-  (публикация резюме на модерацию, отклик, bump, ответ в чате, отзыв отклика).
+  (удаление/публикация резюме, отклик, bump, ответ в чате, отзыв отклика).
 
-Граница для команд: `copy-resume` — `live_write`; `edit-education`, `publish-resume`, `apply`,
-`bump`, `run`, `reply-employers`, `edit-education` и `clear-negotiations` — `live_write_danger`.
+Граница для команд: `copy-resume` — `live_write`; `delete-resume`, `edit-education`,
+`publish-resume`, `apply`, `bump`, `run`, `reply-employers` и `clear-negotiations` —
+`live_write_danger`.
 
 Обычный `pytest` безопасен по умолчанию: live-тесты исключены из сбора. Тесты
 без `live_*` дополнительно получают защиту от случайного запуска браузера:

@@ -86,6 +86,14 @@ def test_professional_roles_is_write_locked_only_for_refresh():
     assert _is_write_command(refresh)
 
 
+def test_competitors_is_write_locked_only_for_collect():
+    parser = cli.build_parser()
+    collect = parser.parse_args(["competitors", "collect", "--text", "AI"])
+    report = parser.parse_args(["competitors", "report", "--text", "AI"])
+    assert _is_write_command(collect)
+    assert not _is_write_command(report)
+
+
 def test_professional_roles_refresh_uses_cache_specific_lock(monkeypatch, tmp_path):
     from hhru_bot import professional_roles
 

@@ -50,6 +50,7 @@ BROWSER_COMMANDS = frozenset(
         "bump",
         "call-api",
         "clear-negotiations",
+        "competitors",
         "copy-resume",
         "create-resume",
         "delete-resume",
@@ -110,6 +111,7 @@ WRITE_COMMANDS = frozenset(
 WRITE_SUBCOMMANDS = frozenset(
     {
         ("account", "create"),
+        ("competitors", "collect"),
         # #482: questionnaire set/unset/learn правят локальные шаблоны и очередь;
         # pending/templates только читают и должны оставаться доступными во время
         # идущего apply.
@@ -125,6 +127,7 @@ WRITE_SUBCOMMANDS = frozenset(
 # WRITE_SUBCOMMANDS для неё просто никогда не совпадала бы (#482).
 SUBCOMMAND_DESTS = {
     "account": "account_command",
+    "competitors": "competitors_command",
     "questionnaire": "questionnaire_command",
 }
 
@@ -212,6 +215,8 @@ def _requires_browser(args: argparse.Namespace) -> bool:
         )
     if args.command == "professional-roles":
         return bool(getattr(args, "refresh", False))
+    if args.command == "competitors":
+        return getattr(args, "competitors_command", None) == "collect"
     return args.command in BROWSER_COMMANDS
 
 

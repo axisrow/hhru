@@ -242,6 +242,66 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     UNIQUE (vacancy_id, search_query)
 );
 
+-- competitor_resumes — текущие обезличенные снимки чужих резюме (#578).
+-- resume_url сохраняется по явному решению пользователя; имя, контакты,
+-- возраст, пол, местоположение, активность и raw HTML не входят в схему.
+CREATE TABLE IF NOT EXISTS competitor_resumes (
+    resume_id TEXT PRIMARY KEY,
+    resume_url TEXT NOT NULL,
+    desired_role TEXT NOT NULL,
+    salary_from INTEGER,
+    salary_to INTEGER,
+    salary_currency TEXT,
+    experience_months INTEGER,
+    specializations TEXT NOT NULL DEFAULT '[]',
+    employment_types TEXT NOT NULL DEFAULT '[]',
+    work_formats TEXT NOT NULL DEFAULT '[]',
+    languages TEXT NOT NULL DEFAULT '[]',
+    education TEXT NOT NULL DEFAULT '[]',
+    experience_summary TEXT,
+    achievements TEXT,
+    content_hash TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS competitor_resume_skills (
+    resume_id TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    proficiency TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (resume_id, skill)
+);
+
+CREATE TABLE IF NOT EXISTS competitor_resume_queries (
+    resume_id TEXT NOT NULL,
+    search_query TEXT NOT NULL,
+    search_rank INTEGER NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (resume_id, search_query)
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
+    ON competitor_resume_queries(search_query, search_rank);
+
+CREATE TABLE IF NOT EXISTS competitor_collection_runs (
+    run_id TEXT PRIMARY KEY,
+    search_query TEXT NOT NULL,
+    max_pages INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    pages_fetched INTEGER NOT NULL DEFAULT 0,
+    cards_seen INTEGER NOT NULL DEFAULT 0,
+    details_saved INTEGER NOT NULL DEFAULT 0,
+    details_failed INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_runs_query
+    ON competitor_collection_runs(search_query, started_at);
+
 -- skipped — журнал отсева вакансий (#87, append-only).
 -- filter_candidates логирует ``[skip] причина``, но НЕ писал её в БД → повторный
 -- search пересматривал те же вакансии заново (трата LLM/времени, когда работают
@@ -1853,6 +1913,236 @@ class History:
             "dead": dead,
             "dead_rate": self._pct(dead, total_sent),
         }
+
+    # --- Конкуренты: обезличенные снимки резюме (#578) -------------------------
+
+    def start_competitor_collection(self, search_query: str, max_pages: int) -> str:
+        """Create a durable run row before opening the first search page."""
+        run_id = str(uuid.uuid4())
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO competitor_collection_runs
+                   (run_id, search_query, max_pages, status, started_at)
+                   VALUES (?, ?, ?, 'running', ?)""",
+                (run_id, search_query, max_pages, now),
+            )
+        return run_id
+
+    def finish_competitor_collection(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        pages_fetched: int,
+        cards_seen: int,
+        details_saved: int,
+        details_failed: int,
+        detail: str | None = None,
+    ) -> None:
+        allowed = {"complete", "limited", "partial", "failed"}
+        if status not in allowed:
+            raise ValueError(f"недопустимый статус competitor collection: {status}")
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE competitor_collection_runs
+                   SET status = ?, pages_fetched = ?, cards_seen = ?, details_saved = ?,
+                       details_failed = ?, finished_at = ?, detail = ?
+                   WHERE run_id = ? AND status = 'running'""",
+                (
+                    status,
+                    pages_fetched,
+                    cards_seen,
+                    details_saved,
+                    details_failed,
+                    now,
+                    detail,
+                    run_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError(f"running competitor collection не найден: {run_id}")
+
+    def upsert_competitor_resume(
+        self,
+        snapshot: dict,
+        *,
+        search_query: str,
+        search_rank: int,
+    ) -> str:
+        """Atomically replace one confirmed current snapshot and its skills."""
+        now = datetime.now().isoformat(timespec="seconds")
+        resume_id = str(snapshot["resume_id"])
+        content_hash = str(snapshot["content_hash"])
+        json_fields = (
+            "specializations",
+            "employment_types",
+            "work_formats",
+            "languages",
+            "education",
+        )
+        encoded = {
+            field: json.dumps(snapshot.get(field) or [], ensure_ascii=False, sort_keys=True)
+            for field in json_fields
+        }
+
+        with self._connect() as conn:
+            previous = conn.execute(
+                "SELECT content_hash FROM competitor_resumes WHERE resume_id = ?", (resume_id,)
+            ).fetchone()
+            outcome = (
+                "new"
+                if previous is None
+                else "unchanged"
+                if previous["content_hash"] == content_hash
+                else "updated"
+            )
+            conn.execute(
+                """INSERT INTO competitor_resumes
+                   (resume_id, resume_url, desired_role, salary_from, salary_to,
+                    salary_currency, experience_months, specializations, employment_types,
+                    work_formats, languages, education, experience_summary, achievements,
+                    content_hash, first_seen_at, last_seen_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(resume_id) DO UPDATE SET
+                     resume_url = excluded.resume_url,
+                     desired_role = excluded.desired_role,
+                     salary_from = excluded.salary_from,
+                     salary_to = excluded.salary_to,
+                     salary_currency = excluded.salary_currency,
+                     experience_months = excluded.experience_months,
+                     specializations = excluded.specializations,
+                     employment_types = excluded.employment_types,
+                     work_formats = excluded.work_formats,
+                     languages = excluded.languages,
+                     education = excluded.education,
+                     experience_summary = excluded.experience_summary,
+                     achievements = excluded.achievements,
+                     content_hash = excluded.content_hash,
+                     last_seen_at = excluded.last_seen_at,
+                     updated_at = CASE
+                       WHEN competitor_resumes.content_hash <> excluded.content_hash
+                       THEN excluded.updated_at ELSE competitor_resumes.updated_at END""",
+                (
+                    resume_id,
+                    snapshot["resume_url"],
+                    snapshot["desired_role"],
+                    snapshot.get("salary_from"),
+                    snapshot.get("salary_to"),
+                    snapshot.get("salary_currency"),
+                    snapshot.get("experience_months"),
+                    encoded["specializations"],
+                    encoded["employment_types"],
+                    encoded["work_formats"],
+                    encoded["languages"],
+                    encoded["education"],
+                    snapshot.get("experience_summary"),
+                    snapshot.get("achievements"),
+                    content_hash,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+
+            old_skills = {
+                row["skill"]: row["first_seen_at"]
+                for row in conn.execute(
+                    "SELECT skill, first_seen_at FROM competitor_resume_skills WHERE resume_id = ?",
+                    (resume_id,),
+                )
+            }
+            conn.execute("DELETE FROM competitor_resume_skills WHERE resume_id = ?", (resume_id,))
+            for skill in snapshot.get("skills") or []:
+                name = str(skill["name"]).strip()
+                if not name:
+                    continue
+                conn.execute(
+                    """INSERT INTO competitor_resume_skills
+                       (resume_id, skill, proficiency, first_seen_at, last_seen_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (resume_id, name, skill.get("proficiency"), old_skills.get(name, now), now),
+                )
+
+            conn.execute(
+                """INSERT INTO competitor_resume_queries
+                   (resume_id, search_query, search_rank, first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(resume_id, search_query) DO UPDATE SET
+                     search_rank = excluded.search_rank,
+                     last_seen_at = excluded.last_seen_at""",
+                (resume_id, search_query, search_rank, now, now),
+            )
+        return outcome
+
+    def list_competitor_resumes(self, search_query: str | None = None) -> list[dict]:
+        """Return current snapshots with PII-free skills, optionally scoped by query."""
+        with self._connect() as conn:
+            if search_query is None:
+                rows = conn.execute(
+                    "SELECT r.* FROM competitor_resumes r ORDER BY r.last_seen_at DESC, r.resume_id"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT r.* FROM competitor_resumes r
+                       JOIN competitor_resume_queries q ON q.resume_id = r.resume_id
+                       WHERE q.search_query = ?
+                       ORDER BY q.search_rank, r.resume_id""",
+                    (search_query,),
+                ).fetchall()
+            result: list[dict] = []
+            for row in rows:
+                item = dict(row)
+                for field in (
+                    "specializations",
+                    "employment_types",
+                    "work_formats",
+                    "languages",
+                    "education",
+                ):
+                    item[field] = json.loads(item[field])
+                item["skills"] = [
+                    {"name": skill["skill"], "proficiency": skill["proficiency"]}
+                    for skill in conn.execute(
+                        """SELECT skill, proficiency FROM competitor_resume_skills
+                           WHERE resume_id = ? ORDER BY skill COLLATE NOCASE""",
+                        (item["resume_id"],),
+                    )
+                ]
+                result.append(item)
+            return result
+
+    def count_limited_competitor_runs(self, search_query: str | None = None) -> int:
+        """Count queries whose latest finished collection has limited coverage."""
+        with self._connect() as conn:
+            if search_query is None:
+                row = conn.execute(
+                    """SELECT COUNT(*) AS total
+                       FROM competitor_collection_runs r
+                       WHERE r.finished_at IS NOT NULL
+                         AND r.rowid = (
+                           SELECT latest.rowid
+                           FROM competitor_collection_runs latest
+                           WHERE latest.search_query = r.search_query
+                             AND latest.finished_at IS NOT NULL
+                           ORDER BY latest.started_at DESC, latest.rowid DESC
+                           LIMIT 1
+                         )
+                         AND (r.status = 'limited'
+                              OR r.detail LIKE '%limited_by_max_pages=1%')"""
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT CASE
+                         WHEN status = 'limited' OR detail LIKE '%limited_by_max_pages=1%'
+                         THEN 1 ELSE 0 END AS total
+                       FROM competitor_collection_runs
+                       WHERE search_query = ? AND finished_at IS NOT NULL
+                       ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+                    (search_query,),
+                ).fetchone()
+            return int(row["total"] if row else 0)
 
     # --- Рынок вакансий: собранные карточки (#66, Этап 1) ----------------------
     # Новые методы в конец файла (паттерн with self._connect(), существующие
