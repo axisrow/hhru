@@ -183,6 +183,7 @@ def _build_letter_provider(
     config: AppConfig,
     resume: ResumeConfig,
     cover_letter_template: str,
+    history: History | None = None,
 ) -> CoverLetterProvider | None:
     """Строит AI-провайдер писем, если AI включён (#17).
 
@@ -220,6 +221,7 @@ def _build_letter_provider(
         llm_client=llm_client,
         resume_profile=profile,
         fallback_template=cover_letter_template,
+        feedback=history.list_feedback(resume_id=resume.id) if history else None,
     )
 
 
@@ -287,6 +289,7 @@ def _build_question_answerer(
 def _build_scoring_provider(
     config: AppConfig,
     resume: ResumeConfig,
+    history: History | None = None,
 ) -> LLMScoringProvider | None:
     """Строит ML scoring-провайдер для ранжирования, если AI включён (#81).
 
@@ -342,6 +345,7 @@ def _build_scoring_provider(
         llm_client=llm_client,
         fallback=heuristic,
         resume_profile=profile,
+        feedback=history.list_feedback(resume_id=resume.id) if history else None,
     )
 
 
@@ -726,8 +730,8 @@ def _build_apply_providers(
     learn: bool = False,
 ) -> ApplyProviders:
     return ApplyProviders(
-        scoring_provider=_build_scoring_provider(config, resume),
-        letter_provider=_build_letter_provider(config, resume, cover_letter_template),
+        scoring_provider=_build_scoring_provider(config, resume, history),
+        letter_provider=_build_letter_provider(config, resume, cover_letter_template, history),
         question_answerer=_build_question_answerer(
             config,
             resume,
@@ -1107,7 +1111,7 @@ def _run_apply_for_resume(
         else (
             providers.scoring_provider
             if providers is not None
-            else _build_scoring_provider(config, resume)
+            else _build_scoring_provider(config, resume, history)
         )
     )
     plan = (
@@ -1143,7 +1147,7 @@ def _run_apply_for_resume(
         letter_provider = providers.letter_provider
         question_answerer = providers.question_answerer
     else:
-        letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+        letter_provider = _build_letter_provider(config, resume, cover_letter_template, history)
         question_answerer = _build_question_answerer(
             config,
             resume,

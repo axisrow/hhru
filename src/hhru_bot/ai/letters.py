@@ -35,6 +35,7 @@ from ..apply.letter import (
     _resolve_alternatives,
 )
 from ..search import VacancyCard
+from .feedback import feedback_blocks
 
 if TYPE_CHECKING:
     from ..config_sections.ai_profile import AIProfile
@@ -60,11 +61,13 @@ class AICoverLetterProvider(CoverLetterProvider):
         fallback_template: str = "",
         *,
         temperature: float = 0.7,
+        feedback: list[dict] | None = None,
     ):
         self._llm = llm_client
         self._profile = resume_profile
         self._fallback_template = fallback_template
         self._temperature = temperature
+        self._feedback = feedback or []
 
     def render(
         self,
@@ -72,7 +75,7 @@ class AICoverLetterProvider(CoverLetterProvider):
         resume_profile: AIProfile | None = None,
     ) -> LetterOutcome:
         profile = resume_profile or self._profile
-        messages = _build_prompt(vacancy, profile)
+        messages = _build_prompt(vacancy, profile, self._feedback)
         try:
             response = self._llm.chat(messages, temperature=self._temperature)
         except Exception as e:  # noqa: BLE001 — намеренно широкий: любой сбой AI → fallback
@@ -108,7 +111,11 @@ class AICoverLetterProvider(CoverLetterProvider):
         return outcome
 
 
-def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[str, str]]:
+def _build_prompt(
+    vacancy: VacancyCard,
+    profile: AIProfile | None,
+    feedback: list[dict] | None = None,
+) -> list[dict[str, str]]:
     """Собирает chat-completion сообщения: системная инструкция + контекст.
 
     Контекст вакансии берём из VacancyCard (title/company) — подтверждённые
@@ -133,6 +140,10 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    reject, style = feedback_blocks(feedback or [])
+    for block in (reject, style):
+        if block:
+            messages.append({"role": "user", "content": block})
 
     # #96: few-shot стиль — образцы прошлых писём идут первым user-сообщением,
     # до контекста вакансии и запроса. Рандомизация {a|b|c} (#86) применяется к
