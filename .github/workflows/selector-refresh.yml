@@ -1,0 +1,92 @@
+name: selector-reference-refresh
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview all selector differences without a branch or PR
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: selector-reference-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install extractor dependency
+        run: pip install PyYAML
+
+      - name: Check out approved references as source only
+        env:
+          REFERENCE_ROOT: ${{ runner.temp }}/selector-references
+        run: |
+          mkdir -p "$REFERENCE_ROOT"
+          git clone --depth=1 https://github.com/Steev193/hh-ru-apply.git "$REFERENCE_ROOT/hh-ru-apply"
+          git clone --depth=1 https://github.com/tgeruzov/hh-auto-responder.git "$REFERENCE_ROOT/hh-auto-responder"
+          git clone --depth=1 https://github.com/YAMAKAYAMACO/hh-autoresponder.git "$REFERENCE_ROOT/hh-autoresponder"
+
+      - name: Preview selector baseline and drift
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        env:
+          REFERENCE_ROOT: ${{ runner.temp }}/selector-references
+        run: python scripts/selector_contracts.py refresh --dry-run --mode manual --reference-root "$REFERENCE_ROOT"
+
+      - name: Refresh selector map
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          REFERENCE_ROOT: ${{ runner.temp }}/selector-references
+        run: python scripts/selector_contracts.py refresh --mode manual --reference-root "$REFERENCE_ROOT"
+
+      - name: Verify generated contract
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        continue-on-error: true
+        run: python scripts/selector_contracts.py check
+
+      - name: Open or update manual-review PR
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REFRESH_BRANCH: codex/selector-refresh
+        run: |
+          if git diff --quiet; then
+            echo "Reference selector sets are unchanged"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$REFRESH_BRANCH" || true
+          git switch -C "$REFRESH_BRANCH"
+          git add selectors/reference-map.yaml selectors/reference-matrix.md src/hhru_bot/selector_groups/_generated.py
+          git commit -m "chore: refresh selector reference map"
+          git push --force-with-lease origin HEAD:"$REFRESH_BRANCH"
+
+          pr_number="$(gh pr list --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$pr_number" ]; then
+            gh pr create \
+              --base main \
+              --head "$REFRESH_BRANCH" \
+              --title "chore: refresh selector reference map" \
+              --body "Automated source-only refresh of the approved three-project selector map. Manual review is required. WRITE selectors are never auto-accepted."
+          else
+            gh pr edit "$pr_number" --title "chore: refresh selector reference map"
+          fi
