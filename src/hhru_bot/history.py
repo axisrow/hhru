@@ -1400,6 +1400,12 @@ class History:
                 """SELECT a.*, r.command, r.started_at AS run_started_at
                    FROM actions a LEFT JOIN command_runs r ON r.run_id=a.run_id
                    WHERE a.status='uncertain'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM actions later
+                       WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
+                         AND later.action=a.action AND later.id>a.id
+                         AND later.status='success'
+                     )
                    ORDER BY a.id DESC LIMIT ?""",
                 (limit,),
             ).fetchall()
@@ -1407,8 +1413,20 @@ class History:
 
     def get_uncertain(self, action_id: int) -> dict | None:
         """Return one unresolved uncertain action, or ``None``."""
-        rows = self.list_unresolved_uncertain(limit=100000)
-        return next((row for row in rows if row["id"] == action_id), None)
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT a.*, r.command, r.started_at AS run_started_at
+                   FROM actions a LEFT JOIN command_runs r ON r.run_id=a.run_id
+                   WHERE a.id=? AND a.status='uncertain'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM actions later
+                       WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
+                         AND later.action=a.action AND later.id>a.id
+                         AND later.status='success'
+                     )""",
+                (action_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def reconcile_uncertain(self, action_id: int, status: str, evidence: str) -> None:
         """Close a queue row only after a verifier supplied authoritative evidence."""
