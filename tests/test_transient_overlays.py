@@ -22,7 +22,7 @@ def test_observer_contract_is_narrow_and_hydration_aware() -> None:
     assert "резюме доставлено|уведомлен|notification|toast" not in _SCRIPT
 
 
-@pytest.mark.live_read
+@pytest.mark.browser_unit
 def test_observer_retries_ssr_hydration_and_rejects_unsafe_notification() -> None:
     """Exercise incremental mount/hydration in Chromium without navigating hh.ru."""
     with sync_playwright() as playwright:
