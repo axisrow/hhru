@@ -82,7 +82,7 @@ _SCRIPT = r"""
     // incremental shell/text/control hydration covered without page scans.
     const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
     scan(target, false);
-    m.addedNodes.forEach(scan);
+    m.addedNodes.forEach(node => scan(node));
   })).observe(document, {
     subtree: true, childList: true, characterData: true, attributes: true,
     attributeFilter: ['data-qa', 'aria-label', 'role'],
