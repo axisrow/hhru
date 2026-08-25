@@ -1274,6 +1274,11 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     )
     _refresh_bindings(catalog, indexes)
     for row in catalog["selectors"].values():
+        audit_unverified = (
+            row.get("status") == "needs-live-evidence" or row.get("verification") == "unverified"
+        )
+        previous_decision = row.get("decision", "unavailable")
+        previous_active = row.get("active", False)
         current_value = row["value"]
         tracked = _tracked_consensus(row, indexes)
         if tracked and normalize_selector(tracked[0]) != normalize_selector(current_value):
@@ -1296,7 +1301,15 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
             if (matches := _matching_sources(value, items))
         }
         reference_count = len(row["sources"])
-        if reference_count >= catalog["policy"]["consensus_threshold"]:
+        if audit_unverified:
+            # Audit metadata must not become activation evidence.  In
+            # particular, do not let a stale match activate a selector that was
+            # unavailable.  Preserve an already-active contract so a refresh
+            # cannot remove a mandatory import from the generated runtime.
+            row["decision"] = previous_decision
+            row["active"] = previous_active
+            row.pop("suggestion", None)
+        elif reference_count >= catalog["policy"]["consensus_threshold"]:
             row["decision"] = "consensus"
             row["active"] = True
             row.pop("suggestion", None)

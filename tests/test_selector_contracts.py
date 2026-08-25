@@ -20,6 +20,30 @@ SPEC.loader.exec_module(contracts)
 
 pytestmark = pytest.mark.unit
 
+AUDIT_GROUPS = {
+    "resume_page",
+    "resume_list",
+    "resume_experience",
+    "resume_visibility",
+    "resume_rename",
+    "account_profile",
+    "competitor_resume",
+}
+AUDIT_STATUSES = {
+    "reference binding",
+    "intentionally local",
+    "not implemented upstream",
+    "needs-live-evidence",
+}
+AUDIT_FIELDS = (
+    "origin",
+    "verification",
+    "evidence",
+    "last_verified_at",
+    "verified_flow",
+    "verified_by",
+)
+
 
 VACANCY_CONSENSUS_PORTS = {
     "vacancy_page.VACANCY_DESCRIPTION": {
@@ -85,6 +109,23 @@ def test_current_repository_selector_contract_is_self_consistent():
     assert contracts.verify_catalog(catalog) == []
     assert len(catalog["references"]) == 3
     assert catalog["policy"]["consensus_threshold"] == 2
+
+
+def test_resume_account_competitor_unbound_selectors_have_provenance():
+    catalog = contracts.load_catalog()
+    rows = {
+        logical_id: row
+        for logical_id, row in catalog["selectors"].items()
+        if logical_id.split(".", 1)[0] in AUDIT_GROUPS
+    }
+
+    assert rows
+    for logical_id, row in rows.items():
+        assert row.get("status") in AUDIT_STATUSES, logical_id
+        assert all(row.get(field) not in (None, "", {}) for field in AUDIT_FIELDS), logical_id
+        assert "llm_hypothesis" not in row, logical_id
+        if not (row.get("bindings") or row.get("sources")):
+            assert row["status"] != "reference binding", logical_id
 
 
 @pytest.mark.parametrize("logical_id, expected", VACANCY_CONSENSUS_PORTS.items())
@@ -371,6 +412,21 @@ def test_refresh_tracks_source_keys_and_never_auto_updates_write(tmp_path, monke
                 "sources": sources,
                 "live_matches": [],
             },
+            "resume_page.fixture_UNVERIFIED_WRITE": {
+                "value": old,
+                "active": True,
+                "criticality": "write",
+                "declared_at": "tests/test_selector_contracts.py:1",
+                "decision": "live_dom",
+                "sources": {},
+                "live_matches": ["old-selector"],
+                "evidence": {
+                    "source": "tests/test_selector_contracts.py:1",
+                    "note": "candidate requires a fresh live check",
+                },
+                "status": "needs-live-evidence",
+                "verification": "unverified",
+            },
         },
     }
     map_path = tmp_path / "reference-map.yaml"
@@ -395,3 +451,5 @@ def test_refresh_tracks_source_keys_and_never_auto_updates_write(tmp_path, monke
     assert automatic["selectors"]["search_page.fixture_READ"]["decision"] == "consensus"
     assert automatic["selectors"]["resume_page.fixture_WRITE"]["value"] == old
     assert automatic["selectors"]["resume_page.fixture_WRITE"]["decision"] == "drift_pending"
+    assert automatic["selectors"]["resume_page.fixture_UNVERIFIED_WRITE"]["decision"] == "live_dom"
+    assert automatic["selectors"]["resume_page.fixture_UNVERIFIED_WRITE"]["active"] is True

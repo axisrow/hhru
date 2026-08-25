@@ -28,9 +28,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:30
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.ACCOUNT_PROFILE_EMAIL:
     value: '[data-qa=''profile-contact-item-email'']'
     criticality: read
@@ -40,9 +47,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:32
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.ACCOUNT_PROFILE_FIRST_NAME:
     value: '[data-qa=''profile-common-card-firstname'']'
     criticality: read
@@ -52,9 +66,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:28
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.ACCOUNT_PROFILE_LAST_NAME:
     value: '[data-qa=''profile-common-card-lastname'']'
     criticality: read
@@ -64,9 +85,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:29
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.ACCOUNT_PROFILE_PHONE:
     value: '[data-qa=''profile-contact-item-phone'']'
     criticality: read
@@ -76,9 +104,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:31
-      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18. Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.ACCOUNT_PROFILE_READY:
     value: h1[data-qa='title']
     criticality: read
@@ -89,6 +124,16 @@ selectors:
     - title
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:23
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.RESUME_CONTACT_EMAIL:
     value: '[data-qa=''resume-contact-email-value'']'
     criticality: read
@@ -99,6 +144,16 @@ selectors:
     - resume-contact-email-value
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:37
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.RESUME_CONTACT_PHONE:
     value: '[data-qa=''resume-contact-phone-value-preferred'']'
     criticality: read
@@ -109,6 +164,16 @@ selectors:
     - resume-contact-phone-value-preferred
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:36
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   account_profile.RESUME_LIST_PROFILE_NAME:
     value: '[data-qa=''profile-activator-fullname'']'
     criticality: read
@@ -119,6 +184,16 @@ selectors:
     - profile-activator-fullname
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:41
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_account_profile_read_only
+    verified_by: codex
   apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1:
     value: '[data-qa=''captcha'']'
     criticality: write
@@ -417,9 +492,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:8
-      note: read-only public-resume pagination fallback; cannot trigger a mutation
+      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
+        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
+        counterpart.
     active: true
     bindings: {}
+    status: not implemented upstream
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
   competitor_resume.PAGINATION_NEXT:
     value: '[data-qa*=''pager-next''], [data-qa*=''pagination-next''], a[rel=''next'']'
     criticality: read
@@ -429,9 +512,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:7
-      note: read-only public-resume pagination fallback; cannot trigger a mutation
+      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
+        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
+        counterpart.
     active: true
     bindings: {}
+    status: not implemented upstream
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
   competitor_resume.PAGINATION_PAGE:
     value: '[data-qa*=''pager-page''], [data-qa*=''pagination-page'']'
     criticality: read
@@ -441,9 +532,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:9
-      note: read-only public-resume pagination fallback; cannot trigger a mutation
+      note: Read-only public-resume pagination fallback; cannot trigger a mutation. Applicant-visible public resume search/pagination
+        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
+        counterpart.
     active: true
     bindings: {}
+    status: not implemented upstream
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
   competitor_resume.SEARCH_EMPTY:
     value: '[data-qa=''resume-search-empty''], [data-qa=''bloko-header-2'']'
     criticality: read
@@ -453,9 +552,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/competitor_resume.py:6
-      note: read-only empty-state union; callers still require confirmed page state
+      note: Read-only empty-state union; callers still require confirmed page state. Applicant-visible public resume search/pagination
+        is not implemented in the approved apply/response reference projects; this local selector has no upstream semantic
+        counterpart.
     active: true
     bindings: {}
+    status: not implemented upstream
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
   create_resume.TREE_ITEM_TEXT:
     value: '[data-qa*=''tree-selector-item-text-'']'
     active: true
@@ -1124,6 +1231,16 @@ selectors:
     live_matches: []
     active: false
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:22
+      note: 'Candidate selector is explicitly fail-closed: the add trigger was not present in the read-only research dump
+        and needs authenticated live-DOM confirmation before use.'
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_CANCEL:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
@@ -1134,6 +1251,16 @@ selectors:
     - profile-layout-cancel-button
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:16
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_COMPANY:
     value: '[data-qa=''resume-profile-experience-specific-company-input-{index}'']'
     criticality: write
@@ -1146,6 +1273,16 @@ selectors:
     - resume-profile-experience-specific-company-input-3
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:10
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_COMPANY_URL:
     value: '[data-qa=''resume-editor-experience-company-url-input'']'
     criticality: write
@@ -1156,6 +1293,16 @@ selectors:
     - resume-editor-experience-company-url-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:12
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_DESCRIPTION:
     value: '[data-qa=''resume-editor-experience-description-input'']'
     criticality: write
@@ -1166,6 +1313,16 @@ selectors:
     - resume-editor-experience-description-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:15
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_EDIT_BUTTON:
     value: '[data-qa=''edit-experience-button-{index}'']'
     criticality: write
@@ -1182,6 +1339,16 @@ selectors:
     - edit-experience-button-3-svg
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:9
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_END_YEAR:
     value: '[data-qa=''resume-editor-experience-end-year-input'']'
     criticality: write
@@ -1192,6 +1359,16 @@ selectors:
     - resume-editor-experience-end-year-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:14
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_POSITION:
     value: '[data-qa=''resume-profile-experience-specific-position-input-{index}'']'
     criticality: write
@@ -1204,6 +1381,16 @@ selectors:
     - resume-profile-experience-specific-position-input-3
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:11
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_SAVE:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -1214,6 +1401,16 @@ selectors:
     - profile-layout-save-button
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:17
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_START_YEAR:
     value: '[data-qa=''resume-editor-experience-start-year-input'']'
     criticality: write
@@ -1224,6 +1421,16 @@ selectors:
     - resume-editor-experience-start-year-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:13
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: codex
   resume_list.RESUME_DUPLICATE_INLINE:
     value: '[data-qa=''resume-dublicate'']'
     criticality: write
@@ -1234,6 +1441,16 @@ selectors:
     - resume-dublicate
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:47
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_DUPLICATE_MENU_ITEM:
     value: '[data-qa=''operations-list-duplicate-resume'']'
     criticality: write
@@ -1243,9 +1460,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:44
-      note: '- RESUME_DUPLICATE_MENU_ITEM, RESUME_DUPLICATE_INLINE — ПОДТВЕРЖДЕНО'
+      note: '- RESUME_DUPLICATE_MENU_ITEM, RESUME_DUPLICATE_INLINE — ПОДТВЕРЖДЕНО Resume/account editor or profile control
+        is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.'
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_LIST_ACTION_MORE:
     value: '[data-qa=''resume-list-action-more'']'
     criticality: write
@@ -1256,6 +1480,16 @@ selectors:
     - resume-list-action-more
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:35
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_LIST_CARD:
     value: '[data-qa=''resume'']'
     criticality: write
@@ -1284,6 +1518,16 @@ selectors:
         line: 1155
         key: app/parsers/hh_playwright.py::module.HHPlaywright.is_logged_in#2::0
         value: '[data-qa="resume"]'
+    status: reference binding
+    origin: reference
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:28
+      note: Semantic reference binding is present; the selector is retained as the canonical local value after the approved
+        upstream comparison.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_LIST_CARD_LINK_PREFIX:
     value: '[data-qa^=''resume-card-link-'']'
     active: true
@@ -1294,6 +1538,16 @@ selectors:
     live_matches:
     - resume-card-link-{id}
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:1
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_LIST_CARD_LINK_TPL:
     value: '[data-qa=''resume-card-link-{resume_id}'']'
     criticality: write
@@ -1304,6 +1558,16 @@ selectors:
     - resume-card-link-{id}
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:32
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_list.RESUME_LIST_CARD_TITLE:
     value: '[data-qa=''resume-title'']'
     criticality: write
@@ -1314,6 +1578,16 @@ selectors:
     - resume-title
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:50
+      note: The declaration explicitly says this value was not confirmed on /applicant/resumes; live-DOM evidence is required
+        before relying on it.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_list_read_only
+    verified_by: codex
   resume_page.RESUME_ABOUT_EDITOR:
     value: '[data-qa=''resume-editor-about'']'
     criticality: write
@@ -1324,6 +1598,16 @@ selectors:
     - resume-editor-about
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:28
+      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
+        finding; live reverification is required.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON:
     value: '[data-qa^=''resume-editor-about-no-experience-reason-'']'
     criticality: write
@@ -1340,6 +1624,16 @@ selectors:
     - resume-editor-about-no-experience-reason-unemployed
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:29
+      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
+        finding; live reverification is required.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_BUMP_BUTTON:
     value: '[data-qa=''resume-update-button'']'
     criticality: write
@@ -1350,6 +1644,16 @@ selectors:
     - resume-update-button
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:12
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_BUMP_DISABLED_HINT:
     value: '[data-qa=''resume-update-button-disabled'']'
     criticality: write
@@ -1359,9 +1663,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:13
-      note: confirmed by the bump workflow live check; optional read-only hint
+      note: confirmed by the bump workflow live check; optional read-only hint Resume/account editor or profile control is
+        intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATE_BUTTON:
     value: '[data-qa=''mainmenu_createResume'']'
     criticality: write
@@ -1372,6 +1683,16 @@ selectors:
     - mainmenu_createResume
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:102
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_CATEGORY_INPUT:
     value: '[data-qa~=''tree-selector-input-{}'']'
     criticality: write
@@ -1381,9 +1702,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:110
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_CATEGORY_SEARCH:
     value: '[data-qa=''tree-selector-search-input'']'
     criticality: write
@@ -1393,9 +1721,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:108
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_CATEGORY_SUBMIT:
     value: '[data-qa=''category-modal-submit'']'
     criticality: write
@@ -1405,9 +1740,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:109
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_NEXT:
     value: '[data-qa=''resume-profile-next-screen'']'
     criticality: write
@@ -1418,6 +1760,16 @@ selectors:
     - resume-profile-next-screen
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:107
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_POSITION:
     value: '[data-qa=''resume-profile-position-input'']'
     criticality: write
@@ -1428,6 +1780,16 @@ selectors:
     - resume-profile-position-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:105
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_POSITION_CLEAR:
     value: '[data-qa=''input-clearable-button'']'
     criticality: write
@@ -1438,6 +1800,16 @@ selectors:
     - input-clearable-button
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:106
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_CREATION_SELECT_JOB:
     value: '[data-qa=''resume-profile-card-select-job'']'
     criticality: write
@@ -1448,6 +1820,16 @@ selectors:
     - resume-profile-card-select-job
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:104
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_BUTTON:
     value: '[data-qa=''resume-delete'']'
     criticality: write
@@ -1458,6 +1840,16 @@ selectors:
     - resume-delete
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:91
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_CLOSE:
     value: '[data-qa=''resume-delete-close'']'
     criticality: write
@@ -1467,9 +1859,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:96
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_CONFIRM:
     value: '[data-qa=''resume-delete-confirm'']'
     criticality: write
@@ -1479,9 +1878,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:94
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_CONTENT:
     value: '[data-qa=''resume-delete-content'']'
     criticality: write
@@ -1491,9 +1897,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:93
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_HIDE_CONFIRM:
     value: '[data-qa=''resume-hide-confirm'']'
     criticality: write
@@ -1503,9 +1916,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:95
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_DELETE_TITLE:
     value: '[data-qa=''resume-delete-title'']'
     criticality: write
@@ -1515,9 +1935,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:92
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_EDIT_ABOUT_BUTTON:
     value: '[data-qa=''resume-edit-button-about'']'
     criticality: write
@@ -1528,6 +1955,16 @@ selectors:
     - resume-edit-button-about
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:27
+      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
+        finding; live reverification is required.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_ADD_BUTTON:
     value: '[data-qa=''profile-language-add'']'
     criticality: write
@@ -1537,9 +1974,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:75
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_ADD_FORM:
     value: '[data-qa=''profile-language-add-form'']'
     criticality: write
@@ -1549,9 +1993,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:76
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_CARD:
     value: '[data-qa=''profile-language-card'']'
     criticality: write
@@ -1561,9 +2012,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:72
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_DEGREE_OPTION:
     value: '[data-qa=''magritte-select-option-{}'']'
     criticality: write
@@ -1573,9 +2031,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:83
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_FORM_DEGREE_SELECT:
     value: '[data-qa=''profile-language-add-form-degree''] [data-qa=''magritte-select-activator'']'
     criticality: write
@@ -1586,6 +2051,16 @@ selectors:
     - magritte-select-activator
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:80
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_FORM_LANGUAGE_SELECT:
     value: '[data-qa=''profile-language-add-form-language''] [data-qa=''magritte-select-activator'']'
     criticality: write
@@ -1596,6 +2071,16 @@ selectors:
     - magritte-select-activator
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:77
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_ROW:
     value: '[data-qa^=''profile-language-card-row-'']'
     criticality: write
@@ -1605,9 +2090,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:73
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_ROW_CELL_TEXT:
     value: '[data-qa=''cell-text'']'
     criticality: write
@@ -1618,6 +2110,16 @@ selectors:
     - cell-text
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:74
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_LANGUAGE_SAVE:
     value: '[data-qa=''profile-modal-button-save'']'
     criticality: write
@@ -1627,9 +2129,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:84
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_PARTIAL_EDIT_CANCEL:
     value: '[data-qa=''resume-partial-edit-cancel'']'
     criticality: write
@@ -1640,6 +2149,16 @@ selectors:
     - resume-partial-edit-cancel
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:38
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_PARTIAL_EDIT_SAVE:
     value: '[data-qa=''resume-partial-edit-save'']'
     criticality: write
@@ -1650,6 +2169,16 @@ selectors:
     - resume-partial-edit-save
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:39
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_POSITION_DROPDOWN:
     value: '[data-qa=''drop-base'']'
     criticality: write
@@ -1660,6 +2189,16 @@ selectors:
     - drop-base
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:44
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_PUBLISH_BUTTON_DATA_QA:
     value: '[data-qa=''resume-publish'']'
     criticality: write
@@ -1669,6 +2208,16 @@ selectors:
     live_matches: []
     active: false
     bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:18
+      note: 'Candidate selector is explicitly unavailable: the publish control was not observed on the blocked draft and needs
+        a live check on a ready-to-publish resume.'
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SKILLS_CHIP:
     value: '[data-qa^=''chips-trigger-chip-'']'
     criticality: write
@@ -1707,6 +2256,16 @@ selectors:
     - chips-trigger-chip-Яндекс.Метрика
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:37
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SKILLS_CHIP_INPUT:
     value: '[data-qa=''chips-trigger-input'']'
     criticality: write
@@ -1717,6 +2276,16 @@ selectors:
     - chips-trigger-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:35
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SKILLS_EDIT_BUTTON:
     value: '[data-qa=''skills-add'']'
     criticality: write
@@ -1727,6 +2296,16 @@ selectors:
     - skills-add
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:33
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SKILLS_INPUT:
     value: '[data-qa=''resume-editor-skills-input'']'
     criticality: write
@@ -1737,6 +2316,16 @@ selectors:
     - resume-editor-skills-input
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:34
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SKILLS_RECOMMENDED:
     value: '[data-qa^=''resume-editor-skills-recommended-'']'
     criticality: write
@@ -1786,6 +2375,16 @@ selectors:
     - resume-editor-skills-recommended-Управленческая отчетность
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:36
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_ADD:
     value: '[data-qa=''resume-position-professional-role-add-button'']'
     criticality: write
@@ -1796,6 +2395,16 @@ selectors:
     - resume-position-professional-role-add-button
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:51
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_DELETE:
     value: '[data-qa=''resume-position-professional-role-card-delete'']'
     criticality: write
@@ -1806,6 +2415,16 @@ selectors:
     - resume-position-professional-role-card-delete
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:57
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_MODAL:
     value: '[data-qa=''professional-roles-modal'']'
     criticality: write
@@ -1815,9 +2434,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:52
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_OPTION:
     value: '[data-qa^=''tree-selector-item tree-selector-item-''][data-qa*=''tree-selector-child-'']'
     criticality: write
@@ -1827,9 +2453,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:54
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_SEARCH:
     value: '[data-qa=''tree-selector-search-input'']'
     criticality: write
@@ -1839,9 +2472,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:53
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_page.RESUME_SPECIALIZATION_SUBMIT:
     value: '[data-qa=''professional-roles-submit'']'
     criticality: write
@@ -1851,9 +2491,16 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:58
-      note: Inline editor selectors confirmed by the authenticated read-only research in
+      note: Inline editor selectors confirmed by the authenticated read-only research in Resume/account editor or profile
+        control is intentionally local to HH.ru; the approved reference projects do not provide a semantic counterpart.
     active: true
     bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: verified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: codex
   resume_position.BUSINESS_TRIPS:
     value: '[data-qa=''resume-edit-business-trip-readiness'']'
     criticality: write
