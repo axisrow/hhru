@@ -151,6 +151,9 @@ def _build_prompt(vacancy: VacancyCard, profile: AIProfile | None) -> list[dict[
         )
 
     lines = [f"Вакансия: {vacancy.title}.", f"Компания: {vacancy.company or 'не указана'}."]
+    description = getattr(vacancy, "vacancy_description", "") or ""
+    if description:
+        lines.append("Полное описание вакансии (источник — страница вакансии):\n" + description)
     if profile is not None:
         # Рандомизация {a|b|c} в каждом поле профиля — до подстановки в промпт.
         summary = _resolve_alternatives(profile.summary)
