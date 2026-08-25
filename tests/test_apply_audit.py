@@ -15,6 +15,7 @@ import pytest
 from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.commands import _common
 from hhru_bot.config import AppConfig, ResumeConfig, SearchFilters, ThrottleConfig
+from hhru_bot.config_sections.scoring import ScoringConfig
 from hhru_bot.history import History
 from hhru_bot.search import VacancyCard
 from hhru_bot.throttle import Throttle
@@ -388,3 +389,120 @@ def test_approved_apply_blocks_current_employer(tmp_path, monkeypatch):
         ).fetchone()
     assert review_status["status"] == "skipped"
     assert skip_row["reason"] == "current_employer"
+
+
+def test_approved_apply_bypasses_letter_threshold(tmp_path, monkeypatch):
+    """#648: an explicitly approved card bypasses automated letter filtering.
+
+    Review cards are reconstructed without ``vacancy_text``; applying the
+    configured threshold to that path would reject a human-approved letter
+    based on incomplete data.
+    """
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python"),
+        scoring=ScoringConfig(letter_match_threshold=95.0),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="Acme",
+        url="https://hh.ru/vacancy/123",
+    )
+    item_id = history.enqueue_review("AAA111", card, 80.0, {}, "approved letter")
+    permit = history.approve_review(item_id)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+        approved=item_id,
+        permit=permit,
+    )
+
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    captured: dict = {}
+
+    def apply(*args, **kwargs):  # noqa: ANN001, ARG001
+        captured.update(kwargs)
+        kwargs["before_submit"]()
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="approved",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    assert "letter_match_threshold" not in captured
+
+
+def test_apply_preserves_numeric_letter_threshold(tmp_path, monkeypatch):
+    """#648: threshold assignment must preserve its configured numeric value."""
+    resume = ResumeConfig(
+        id="python",
+        resume_url="https://hh.ru/resume/AAA111",
+        search=SearchFilters(text="python"),
+        scoring=ScoringConfig(letter_match_threshold=42.5),
+    )
+    config = AppConfig(
+        storage_state_file=tmp_path / "state.json",
+        throttle=ThrottleConfig(min_delay_seconds=0, max_delay_seconds=0),
+        cover_letter_default="hello",
+        resumes=[resume],
+    )
+    history = History(tmp_path / "history.db")
+    throttle = Throttle(config.throttle, history)
+    args = argparse.Namespace(
+        config=None,
+        resume=None,
+        dry_run=False,
+        headless=True,
+        max_pages=1,
+        limit=1,
+    )
+    card = VacancyCard(
+        vacancy_id="123",
+        title="Python developer",
+        company="Acme",
+        url="https://hh.ru/vacancy/123",
+    )
+    monkeypatch.setattr(_common, "resolve_numeric_resume_ids", lambda _page: None)
+    monkeypatch.setattr(_common, "search_vacancies", lambda *a, **k: [card])
+    captured: dict = {}
+
+    def apply(*args, **kwargs):  # noqa: ANN001, ARG001
+        captured.update(kwargs)
+        kwargs["before_submit"]()
+        return SimpleNamespace(
+            success=True,
+            reason="success",
+            letter_variant="template",
+            skipped=False,
+            acted=True,
+            uncertain=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(_common, "apply_to_vacancy", apply)
+
+    _common.run_apply_for_resume(object(), config, resume, history, throttle, args)
+
+    assert captured["letter_match_threshold"] == 42.5

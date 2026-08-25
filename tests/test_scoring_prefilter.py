@@ -338,6 +338,24 @@ def test_filter_candidates_prefilter_disabled_keeps_all():
     assert skipped == []
 
 
+def test_filter_candidates_resume_threshold_fails_closed_without_profile():
+    """#648: an enabled resume threshold must not be bypassed without ai_profile."""
+    history = FakeHistory()
+
+    candidates, skipped = filter_candidates(
+        [card("1")],
+        SearchFilters(text="python"),
+        "r1",
+        history,
+        resume_match_threshold=50.0,
+        profile=None,
+    )
+
+    assert candidates == []
+    assert skipped == [(card("1"), "resume_match недоступен: ai_profile не сконфигурирован")]
+    assert history.recorded_skips == [("r1", "1", SKIP_REASONS.LOW_RESUME_MATCH)]
+
+
 def test_filter_candidates_prefilter_after_dedup_and_stoplist():
     """Pre-фильтр идёт ПОСЛЕ дедупа/стоп-листов (более определённые причины)."""
     filters = SearchFilters(text="x", exclude_employers=["BadCorp"])
