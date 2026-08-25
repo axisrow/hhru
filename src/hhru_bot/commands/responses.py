@@ -47,6 +47,11 @@ def register(subparsers) -> None:
         action="store_true",
         help="Показать переписки, для которых hh.ru явно разрешает напоминание",
     )
+    p.add_argument(
+        "--sync-applied",
+        action="store_true",
+        help="Импортировать однозначные ручные/внешние отклики в dedup ledger",
+    )
     p.set_defaults(func=run)
 
 
@@ -161,6 +166,15 @@ def run(args: argparse.Namespace) -> None:
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
+                return
+            if getattr(args, "sync_applied", False):
+                synced = history.sync_external_applied(cards)
+                print(
+                    "Синхронизация внешних откликов: "
+                    f"добавлено {synced['imported']}, "
+                    f"ambiguous {synced['ambiguous']}, "
+                    f"пропущено {synced['skipped']}"
+                )
                 return
 
             if args.detect_external_tests:
