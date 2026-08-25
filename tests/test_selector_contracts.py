@@ -224,6 +224,15 @@ def test_negotiation_withdraw_contracts_are_explicitly_unavailable():
         assert logical_id not in contracts.render_generated(catalog)
 
 
+def test_apply_reachable_search_selectors_are_write_critical():
+    logical_ids = {
+        "search_page.VACANCY_CARD",
+        "search_page.VACANCY_CARD_TITLE_LINK",
+        "search_page.VACANCY_CARD_COMPANY",
+    }
+    assert {contracts.classify_criticality(logical_id) for logical_id in logical_ids} == {"write"}
+
+
 def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
     monkeypatch.setattr(contracts, "MAP_PATH", contracts.ROOT / "selectors" / "reference-map.yaml")
     monkeypatch.setattr(contracts, "EVIDENCE_PATH", tmp_path / "live-evidence.json")
