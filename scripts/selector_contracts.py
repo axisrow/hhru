@@ -1035,6 +1035,10 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
         previous_origin = row.get("origin")
         if sources:
             reference_count = len(sources)
+            lost_consensus = (
+                reference_count < 2
+                and previous_origin in {"reference_exact", "reference_consensus"}
+            )
             row["coverage_status"] = "reference_binding"
             row["origin"] = (
                 "reference_consensus"
@@ -1052,7 +1056,7 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
                         "Reference binding was reconciled during selector refresh; selector "
                         "value was not changed."
                     ),
-                    "runtime_authoritative": True,
+                    "runtime_authoritative": not lost_consensus,
                 }
             continue
         if previous_origin in {"reference_exact", "reference_consensus", "reference_single"}:
