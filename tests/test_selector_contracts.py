@@ -161,6 +161,27 @@ def test_refresh_preserves_upstream_candidate_decisions():
     assert refreshed[0]["verification"] == "contract_tested"
 
 
+def test_negotiation_withdraw_contracts_are_explicitly_unavailable():
+    catalog = contracts.load_catalog()
+    expected = {
+        "negotiations.NEGOTIATION_WITHDRAW",
+        "negotiations.NEGOTIATION_WITHDRAW_CONFIRM",
+        "negotiations.NEGOTIATION_WITHDRAW_SUCCESS",
+    }
+    fail_closed = {
+        logical_id
+        for logical_id, row in catalog["selectors"].items()
+        if logical_id.startswith("negotiations.") and row.get("decision") == "unavailable"
+    }
+
+    assert fail_closed == expected
+    for logical_id in sorted(expected):
+        row = catalog["selectors"][logical_id]
+        assert row["active"] is False
+        assert row["unavailable_reason"]
+        assert logical_id not in contracts.render_generated(catalog)
+
+
 def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
     monkeypatch.setattr(contracts, "MAP_PATH", contracts.ROOT / "selectors" / "reference-map.yaml")
     monkeypatch.setattr(contracts, "EVIDENCE_PATH", tmp_path / "live-evidence.json")
