@@ -2977,6 +2977,15 @@ selectors:
     - resume-edit-business-trip-readiness
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.CANCEL:
     value: '[data-qa=''resume-partial-edit-cancel'']'
     criticality: write
@@ -2987,6 +2996,15 @@ selectors:
     - resume-partial-edit-cancel
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.CURRENCY_TEMPLATE:
     value: '[data-qa=''resume-currency-input-{code}'']'
     active: true
@@ -2999,6 +3017,15 @@ selectors:
     - resume-currency-input-RUR
     - resume-currency-input-USD
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_BUSINESS_TRIPS:
     value: '[data-qa=''resume-position-field-businessTripReadiness'']'
     active: true
@@ -3009,6 +3036,15 @@ selectors:
     live_matches:
     - resume-position-field-businessTripReadiness
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_EMPLOYMENT:
     value: '[data-qa=''resume-position-field-employmentForms'']'
     active: true
@@ -3019,6 +3055,15 @@ selectors:
     live_matches:
     - resume-position-field-employmentForms
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_SALARY:
     value: '[data-qa=''resume-block-salary'']'
     active: true
@@ -3029,6 +3074,15 @@ selectors:
     live_matches:
     - resume-block-salary
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_TITLE:
     value: '[data-qa=''resume-block-title-position'']'
     active: true
@@ -3039,6 +3093,15 @@ selectors:
     live_matches:
     - resume-block-title-position
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_TRAVEL:
     value: '[data-qa=''resume-position-field-travelTime'']'
     active: true
@@ -3049,6 +3112,15 @@ selectors:
     live_matches:
     - resume-position-field-travelTime
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.DISPLAY_WORK_FORMAT:
     value: '[data-qa=''resume-position-field-workFormats'']'
     active: true
@@ -3059,6 +3131,15 @@ selectors:
     live_matches:
     - resume-position-field-workFormats
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.EDIT:
     value: '[data-qa=''edit-position-button'']'
     criticality: write
@@ -3069,6 +3150,15 @@ selectors:
     - edit-position-button
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.EMPLOYMENT:
     value: '[data-qa=''resume-edit-employment-forms'']'
     criticality: write
@@ -3079,6 +3169,15 @@ selectors:
     - resume-edit-employment-forms
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.FORM:
     value: '[data-qa=''resume-edit-position-form'']'
     criticality: write
@@ -3089,6 +3188,15 @@ selectors:
     - resume-edit-position-form
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.SALARY:
     value: '[data-qa=''resume-salary-amount'']'
     criticality: write
@@ -3099,6 +3207,15 @@ selectors:
     - resume-salary-amount
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.SAVE:
     value: '[data-qa=''resume-partial-edit-save'']'
     criticality: write
@@ -3109,6 +3226,15 @@ selectors:
     - resume-partial-edit-save
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.TITLE:
     value: '[data-qa=''resume-edit-title-suggest'']'
     criticality: write
@@ -3119,6 +3245,15 @@ selectors:
     - resume-edit-title-suggest
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.TRAVEL:
     value: '[data-qa=''resume-edit-travel-time'']'
     criticality: write
@@ -3129,6 +3264,15 @@ selectors:
     - resume-edit-travel-time
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_position.WORK_FORMAT:
     value: '[data-qa=''resume-edit-work-formats'']'
     criticality: write
@@ -3139,6 +3283,15 @@ selectors:
     - resume-edit-work-formats
     active: true
     bindings: {}
+    status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/resume_position.py
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_resume_position_editor_read_only
+    verified_by: codex
   resume_sections.ATTESTATION_SELECTOR.0:
     value: '[data-qa=''profile-education-attestation-name'']'
     active: true

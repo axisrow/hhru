@@ -30,6 +30,7 @@ AUDIT_GROUPS = {
     "account_profile",
     "competitor_resume",
     "resume_education",
+    "resume_position",
 }
 AUDIT_STATUSES = {
     "reference binding",
