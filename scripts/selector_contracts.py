@@ -805,8 +805,7 @@ def _refresh_bindings(catalog: dict[str, Any], indexes: dict[str, list[SourceSel
             resolved = [current_by_key[key] for key in sorted(keys) if key in current_by_key]
             if resolved:
                 bindings[reference] = [_source_dict(item) for item in resolved[:12]]
-            elif keys:
-                gaps.extend(f"{reference}:{key}" for key in sorted(keys))
+            gaps.extend(f"{reference}:{key}" for key in sorted(keys) if key not in current_by_key)
         row["bindings"] = bindings
         if gaps:
             row["binding_gaps"] = gaps
@@ -1098,9 +1097,21 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
     return result
 
 
-def unmanaged_selector_literals() -> list[str]:
+def unmanaged_selector_literals(catalog: dict[str, Any] | None = None) -> list[str]:
+    """Find selector literals that are not represented by the catalog.
+
+    Existing consumers may still keep a compatibility literal while migrating
+    to generated groups.  A literal already represented by a catalog row is
+    therefore managed; genuinely new literals remain a hard failure.
+    """
+    managed = {
+        normalize_selector(row["value"])
+        for row in (catalog or {}).get("selectors", {}).values()
+        if row.get("value")
+    }
     findings: list[str] = []
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+    selector_group_root = SOURCE_ROOT / "selector_groups"
+    for path in sorted(selector_group_root.rglob("*.py")):
         if path == GENERATED_PATH:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -1113,6 +1124,11 @@ def unmanaged_selector_literals() -> list[str]:
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
             if id(node) in docstrings or not _contains_selector(node.value):
+                continue
+            if any(
+                normalize_selector(candidate) in managed
+                for candidate in _selector_candidates(node.value)
+            ):
                 continue
             parent = parents.get(id(node))
             if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
@@ -1166,7 +1182,9 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
                 for item in items
             ):
                 errors.append(f"{logical_id}: {name} source does not equal canonical selector")
-    errors.extend(f"unmanaged selector: {finding}" for finding in unmanaged_selector_literals())
+    errors.extend(
+        f"unmanaged selector: {finding}" for finding in unmanaged_selector_literals(catalog)
+    )
     expected_generated = render_generated(catalog)
     if (
         not GENERATED_PATH.exists()
@@ -1366,8 +1384,7 @@ def render_refresh_report(before: dict[str, Any], after: dict[str, Any]) -> str:
         f"  overlap={affected['overlap']}",
         f"  affected_unique={affected['affected_unique']}",
         "  ids: " + ", ".join(affected["affected_unique_ids"]),
-        "  frozen_baseline_delta: "
-        + ("same" if affected == baseline_scope else "CHANGED"),
+        "  frozen_baseline_delta: " + ("same" if affected == baseline_scope else "CHANGED"),
     ]
     if divergent:
         lines.extend(["", "Semantic mismatches:"])
