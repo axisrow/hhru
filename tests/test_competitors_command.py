@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sqlite3
+import subprocess
+import sys
+import time
 from argparse import Namespace
 from contextlib import contextmanager
 from pathlib import Path
@@ -286,6 +290,207 @@ def test_variable_page_sizes_update_volume_and_privacy_rejection_does_not_abort(
     assert row["details_saved"] == 119
     assert row["details_failed"] == 1
     assert row["observed_page_size"] == 100
+
+
+_STDOUT_STREAMING_CHILD_SCRIPT = """
+import os
+import sys
+
+sys.path.insert(0, {src_root!r})
+
+from argparse import Namespace
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+from hhru_bot.commands.competitors import run_collect
+from hhru_bot.competitors import CompetitorResume, CompetitorSearchCard, CompetitorSearchCoverage
+from hhru_bot.history import History
+import hhru_bot.browser
+import hhru_bot.competitors
+import hhru_bot.config
+import hhru_bot.throttle
+
+handshake_read_fd = {handshake_read_fd}
+
+
+class _Context:
+    def new_page(self):
+        return object()
+
+
+@contextmanager
+def _launch(*_a, **_k):
+    yield _Context()
+
+
+class _Throttle:
+    def __init__(self, *_a, **_k):
+        pass
+
+    def wait(self, _reason):
+        pass
+
+
+hhru_bot.config.load_config_or_exit = lambda _path: SimpleNamespace(
+    storage_state_file={config_path!r},
+    user_agent=None,
+    throttle=SimpleNamespace(min_delay_seconds=8, max_delay_seconds=25),
+)
+hhru_bot.browser.launch_context = _launch
+hhru_bot.browser.goto_hh = lambda *_a, **_k: None
+hhru_bot.throttle.Throttle = _Throttle
+
+
+def parse_page(_page, *, rank_offset, expected_page_size):
+    return [
+        CompetitorSearchCard(
+            resume_id=f"r{{rank_offset + index}}",
+            resume_url=f"https://hh.ru/resume/r{{rank_offset + index}}",
+            desired_role="AI Engineer",
+            rank=rank_offset + index + 1,
+        )
+        for index in range(2)
+    ]
+
+
+hhru_bot.competitors.parse_search_page = parse_page
+_next_pages = iter((True, False))
+hhru_bot.competitors.has_next_search_page = lambda *_a, **_k: next(_next_pages)
+hhru_bot.competitors.inspect_search_coverage = (
+    lambda *_a, **_k: CompetitorSearchCoverage(4, 2, False, 2)
+)
+History.upsert_competitor_resume = lambda _self, *_a, **_k: "new"
+
+_fetch_calls = 0
+
+
+def fetch(_page, card):
+    global _fetch_calls
+    _fetch_calls += 1
+    # Page 1 has exactly 2 cards -> fetch calls 1-2 are page 1's details,
+    # and page 1's [PROGRESS] line is printed right after call 2 returns,
+    # before page 2 starts. Block on call 3 (page 2's first detail) until
+    # the parent has read that line off the stdout pipe.
+    if _fetch_calls == 3:
+        os.read(handshake_read_fd, 1)
+    return CompetitorResume(
+        resume_id=card.resume_id,
+        resume_url=card.resume_url,
+        desired_role=card.desired_role,
+    )
+
+
+hhru_bot.competitors.fetch_competitor_resume = fetch
+
+args = Namespace(
+    text="AI",
+    max_pages=2,
+    resume=False,
+    execution_mode="foreground",
+    progress_verbosity=1,
+    items_per_page=100,
+    config={config_path!r},
+    history={history_path!r},
+    headless=True,
+    quiet=False,
+)
+
+result = run_collect(args)
+# run_collect returns True when details_failed > 0 (see its
+# `return details_failed > 0`); this run induces no failures, so a clean
+# run means `result is False`.
+sys.exit(0 if result is False else 1)
+"""
+
+
+def test_stdout_streams_progress_line_by_line_before_process_completes(tmp_path):
+    """Long-running collect must not buffer stdout until exit (issue #632).
+
+    Runs `run_collect` in a real `subprocess.Popen` child (a genuine OS
+    process, the same shape the plugin actually launches -- not a thread:
+    `run_collect` calls `signal.signal()`, which only works in a process's
+    main thread) and reads its stdout through the process's own real pipe
+    (not `capsys`, which buffers in-process, and not `os.fork()`, which
+    Python's docs warn can deadlock inside a multi-threaded parent such as
+    a pytest-xdist worker). The child's stdout is fully block-buffered
+    (`bufsize` default when not `text=True`... see below), matching what a
+    real process gets once stdout is redirected to a pipe instead of a
+    tty. A handshake pipe (inherited by the child via its fd number) blocks
+    the child right before it starts page 2's fetch until the parent has
+    actually read page 1's `[PROGRESS]` line off the stdout pipe AND
+    confirmed the child PID is still alive at that moment -- proving the
+    write reached the reader while the child was still running, not only
+    after it had exited.
+    """
+    src_root = str(Path(__file__).resolve().parent.parent / "src")
+    config_path = str(tmp_path / "config.yaml")
+    history_path = str(tmp_path / "history.db")
+
+    handshake_read_fd, handshake_write_fd = os.pipe()
+    os.set_inheritable(handshake_read_fd, True)
+
+    script = _STDOUT_STREAMING_CHILD_SCRIPT.format(
+        src_root=src_root,
+        config_path=config_path,
+        history_path=history_path,
+        handshake_read_fd=handshake_read_fd,
+    )
+    script_path = tmp_path / "stdout_streaming_child.py"
+    script_path.write_text(script)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(script_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=65536,  # block-buffered, not line-buffered -- see docstring
+        pass_fds=(handshake_read_fd,),
+    )
+    os.close(handshake_read_fd)
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    lines: list[str] = []
+    deadline = time.monotonic() + 10
+    page1_progress_seen_while_child_alive = False
+    try:
+        while True:
+            line = proc.stdout.readline()
+            if line == "":
+                break
+            lines.append(line)
+            if "страница=1, карточек=2, деталей=2" in line:
+                # The child is still running -- it hasn't reached page 2's
+                # detail fetch yet, which is where it blocks on the
+                # handshake pipe we control. Confirm the process is
+                # genuinely alive right now, at the moment this line
+                # reached us.
+                page1_progress_seen_while_child_alive = proc.poll() is None
+                os.write(handshake_write_fd, b"x")  # let page 2 proceed
+                break
+            if time.monotonic() > deadline:
+                proc.kill()
+                pytest.fail("timed out waiting for page 1 [PROGRESS] line")
+
+        # Drain remaining output until the child exits.
+        remaining = proc.stdout.read()
+        lines.extend(remaining.splitlines(keepends=True))
+        returncode = proc.wait(timeout=10)
+        stderr = proc.stderr.read()
+    finally:
+        os.close(handshake_write_fd)
+        proc.stdout.close()
+        proc.stderr.close()
+        if proc.poll() is None:
+            proc.kill()
+
+    assert page1_progress_seen_while_child_alive, (
+        "child had already exited before page 1's [PROGRESS] line reached "
+        "the parent -- output was buffered until completion, not streamed"
+    )
+    full_output = "".join(lines)
+    assert returncode == 0, f"stdout={full_output!r} stderr={stderr!r}"
+    assert "страница=2, карточек=4, деталей=4" in full_output
 
 
 def test_estimate_reports_requested_and_observed_page_size():
