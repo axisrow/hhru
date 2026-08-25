@@ -22,6 +22,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff pytest pytest-xdist
+          python -m playwright install --with-deps chromium
 
       - name: Ruff check
         run: ruff check src tests
@@ -64,4 +65,3 @@ jobs:
 
       - name: Smoke — History works from installed wheel
         run: /tmp/venv/bin/python tests/packaging_smoke.py
-

@@ -18,7 +18,7 @@ from hhru_bot.apply import probe
 from hhru_bot.apply import steps as apply_steps
 from hhru_bot.commands import log_cmd
 
-_LIVE_MARKERS = ("live_read", "live_write", "live_write_danger")
+_LIVE_MARKERS = ("live_read", "live_write", "live_write_danger", "browser_unit")
 
 _BLOCKED_MESSAGE = (
     "Playwright заблокирован: тест должен использовать моки; "

@@ -19,57 +19,82 @@ _SCRIPT = r"""
 (() => {
   const key = '__hhruTransientOverlayEvidence';
   window[key] = window[key] || [];
-  const safe = (el) => {
-    const text = (el.innerText || '').trim();
-    const cookie = /cookie|куки|файлов cookie/i.test(text);
-    const notice = /резюме доставлено|уведомлен|notification|toast/i.test(text)
-      || el.matches('[data-qa^="notification"]');
-    if (!cookie && !notice) return;
-    if (/captcha|подтверд|анкета|отклик|сохранить|status/i.test(text)
-      && !cookie && !el.matches('[data-qa^="notification"]')) return;
-    // Do not infer a dismiss action from button text.  These are the exact
-    // controls observed in the authenticated live DOM; broad matches could
-    // click an unrelated consent/delete/confirmation action in the subtree.
-    const button = cookie
-      ? el.querySelector('[data-qa="cookies-policy-informer-accept"]')
-      : el.querySelector(
-          '[data-qa="notification-close"] button[aria-label="Удалить"]'
-        );
-    if (!button) return;
-    const qa = button.getAttribute('data-qa');
-    const label = button.getAttribute('aria-label');
-    window[key].push({text: text.slice(0, 500), html: el.outerHTML.slice(0, 12000),
-      selector: qa ? `[data-qa="${qa}"]` : (label ? `[aria-label="${label}"]` : null)});
-    button.click();
-    // SSR may expose the control before React wires its handler. Retry the
-    // same exact safe control briefly, but never broaden the selector.
-    [100, 500, 1500].forEach(delay => setTimeout(() => {
-      if (button.isConnected) button.click();
-    }, delay));
+  const cookieSelector = '[data-qa="cookies-policy-informer"]';
+  const notificationSelector =
+    '[data-qa^="notification"]:not([data-qa="notification-close"])';
+  const candidateSelector = `${cookieSelector}, ${notificationSelector}`;
+  const pending = new WeakMap();
+  const unsafe = /captcha|подтверд|анкета|отклик|сохранить|status/i;
+  const enclosing = (el) => el.closest(candidateSelector);
+  const schedule = (overlay) => {
+    if (!overlay || pending.has(overlay)) return;
+    const state = {attempts: 0, deadline: Date.now() + 5000, timer: null, evidence: null};
+    pending.set(overlay, state);
+    const finish = () => {
+      if (state.evidence) window[key].push(state.evidence);
+      pending.delete(overlay);
+    };
+    const retry = () => {
+      if (!overlay.isConnected) {
+        finish();
+        return;
+      }
+      if (Date.now() > state.deadline || state.attempts >= 12) {
+        pending.delete(overlay);
+        return;
+      }
+      const cookie = overlay.matches(cookieSelector);
+      const text = (overlay.innerText || '').trim();
+      if (unsafe.test(text)) {
+        pending.delete(overlay);
+        return;
+      }
+      const button = cookie
+        ? overlay.querySelector('[data-qa="cookies-policy-informer-accept"]')
+        : overlay.querySelector(
+            '[data-qa="notification-close"] button[aria-label="Удалить"]'
+          );
+      if (!button) {
+        if (state.evidence) {
+          finish();
+          return;
+        }
+        state.timer = setTimeout(retry, 100 + state.attempts * 100);
+        return;
+      }
+      state.attempts += 1;
+      const qa = button.getAttribute('data-qa');
+      const label = button.getAttribute('aria-label');
+      const evidence = {text: text.slice(0, 500), html: overlay.outerHTML.slice(0, 12000),
+        selector: qa ? `[data-qa="${qa}"]` : (label ? `[aria-label="${label}"]` : null)};
+      state.evidence = evidence;
+      button.click();
+      // SSR can expose a control before its React handler is hydrated. Only
+      // report success after the exact overlay/control positively disappears.
+      if (!overlay.isConnected || !overlay.querySelector(button.matches(
+        '[data-qa="cookies-policy-informer-accept"]'
+      ) ? '[data-qa="cookies-policy-informer-accept"]' :
+        '[data-qa="notification-close"] button[aria-label="Удалить"]')) {
+        finish();
+        return;
+      }
+      state.timer = setTimeout(retry, 100 + state.attempts * 150);
+    };
+    retry();
   };
-  const scan = (root) => {
-    if (root.nodeType !== 1) return;
-    safe(root);
-    root.querySelectorAll(
-      'body > *, [role="dialog"], [role="alert"], [data-qa]'
-    ).forEach(safe);
+  const scan = (root, discoverDescendants = true) => {
+    if (!root || root.nodeType !== 1) return;
+    const candidate = enclosing(root) ||
+      (root.matches(candidateSelector) ? root : null);
+    if (candidate) schedule(candidate);
+    if (discoverDescendants) root.querySelectorAll(candidateSelector).forEach(schedule);
   };
   new MutationObserver(ms => ms.forEach(m => {
-    // HH.ru often mounts the shell first and fills text/controls later.
-    // Rescan the changed element's parent so incremental mutations are not
-    // lost (text nodes themselves are not elements).
+    // Rescan only the changed node's enclosing candidate overlay. This keeps
+    // incremental shell/text/control hydration covered without page scans.
     const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
-    const candidate = target && (target.closest(
-      '[role="dialog"], [role="alert"], '
-      '[data-qa="cookies-policy-informer"], '
-      '[data-qa^="notification"]:not([data-qa="notification-close"])'
-    ) || (target.matches(
-      '[role="dialog"], [role="alert"], '
-      '[data-qa="cookies-policy-informer"], '
-      '[data-qa^="notification"]:not([data-qa="notification-close"])'
-    ) ? target : null));
-    if (candidate) scan(candidate);
-    m.addedNodes.forEach(scan);
+    scan(target, false);
+    m.addedNodes.forEach(node => scan(node));
   })).observe(document, {
     subtree: true, childList: true, characterData: true, attributes: true,
     attributeFilter: ['data-qa', 'aria-label', 'role'],

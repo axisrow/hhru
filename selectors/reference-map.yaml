@@ -4193,7 +4193,7 @@ selectors:
     verified_flow: authenticated_read_only_navigation
     verified_by: codex
     evidence:
-      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      source: live Playwright DOM on /applicant/negotiations and /resume/<redacted>
       note: Visible cookie banner; dedicated dismiss control is [data-qa='cookies-policy-informer-accept'] and must be used
         for session suppression.
     active: true
@@ -4209,7 +4209,7 @@ selectors:
     verified_flow: authenticated_read_only_navigation
     verified_by: codex
     evidence:
-      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      source: live Playwright DOM on /applicant/negotiations and /resume/<redacted>
       note: Button text is Понятно; no profile or form data is changed by dismissing the cookie banner.
     active: true
   transient_overlays.NOTIFICATION:
@@ -4245,7 +4245,7 @@ selectors:
     active: true
   transient_overlays.RESUME_DELIVERED:
     value: ''
-    active: true
+    active: false
     criticality: read
     decision: needs_live_evidence
     origin: browser_dom
