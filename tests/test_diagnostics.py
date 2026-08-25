@@ -83,6 +83,17 @@ def test_dom_requires_producer_metadata_for_selected_run(tmp_path):
     assert build_bundle(db, run_id="wanted", dom_dir=tmp_path)["snapshots"] == []
 
 
+def test_malformed_metadata_values_are_ignored(tmp_path):
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as c:
+        c.execute("create table command_runs (run_id text)")
+        c.execute("insert into command_runs values ('wanted')")
+    for stem, value in (("null", "null"), ("array", "[]")):
+        (tmp_path / f"{stem}.html").write_text("<div data-qa='ignored'>")
+        (tmp_path / f"{stem}.json").write_text(value)
+    assert build_bundle(db, run_id="wanted", dom_dir=tmp_path)["snapshots"] == []
+
+
 def test_export_path_aliases_are_detected_and_history_is_read_only(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as c:
