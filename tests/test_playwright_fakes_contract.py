@@ -99,12 +99,16 @@ REAL_KWONLY = _real_keyword_only_params()
 def _iter_fake_methods():
     """Находит все def <method>(self, ...) в классах внутри tests/*.py, где
     <method> входит в RELEVANT_METHODS — кандидаты в фейки Playwright-объектов."""
-    for path in sorted(TESTS_DIR.glob("*.py")):
+    # Another contract test creates a short-lived fixture in this directory
+    # while running a nested pytest process. Snapshot paths and tolerate the
+    # fixture disappearing between glob and read.
+    paths = tuple(sorted(TESTS_DIR.glob("*.py")))
+    for path in paths:
         if path.name == "test_playwright_fakes_contract.py":
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:
+        except (FileNotFoundError, SyntaxError):
             continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
