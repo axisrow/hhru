@@ -32,6 +32,9 @@ jobs:
       - name: Pytest suite budget
         run: python scripts/check_pytest_budget.py
 
+      - name: Selector contract check
+        run: python scripts/selector_contracts.py check
+
       - name: CLI docs in sync with argparse
         # Справочник команд в README автогенерируется из argparse. Если кто-то
         # добавил флаг/команду, но забыл перегенерить доку — шаг падает.
