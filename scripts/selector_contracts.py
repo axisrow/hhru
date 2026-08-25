@@ -588,6 +588,14 @@ def classify_criticality(logical_id: str) -> str:
         return "read"
     if logical_id.startswith("professional_roles."):
         return "write" if logical_id == "professional_roles.TREE_LABEL" else "read"
+    if logical_id in {
+        "vacancy_page.VACANCY_DESCRIPTION",
+        "vacancy_page.VACANCY_EXPERIENCE",
+        "vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE",
+        "vacancy_page.VACANCY_VIEW_LOCATION",
+        "vacancy_page.VACANCY_VIEW_RAW_ADDRESS",
+    }:
+        return "read"
     write_prefixes = (
         "apply.",
         "apply_form.",
@@ -951,9 +959,7 @@ def load_catalog() -> dict[str, Any]:
         raise SystemExit(f"selector map missing: {MAP_PATH}")
     catalog = yaml.safe_load(MAP_PATH.read_text(encoding="utf-8"))
     evidence = (
-        json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
-        if EVIDENCE_PATH.exists()
-        else {}
+        json.loads(EVIDENCE_PATH.read_text(encoding="utf-8")) if EVIDENCE_PATH.exists() else {}
     )
     _ensure_extra_contracts(catalog, evidence)
     catalog["selectors"] = dict(sorted(catalog["selectors"].items()))

@@ -194,8 +194,10 @@
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |
 | vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | [data-qa="vacancy-company-name"] | — | consensus |
+| vacancy_page.VACANCY_DESCRIPTION | `[data-qa="vacancy-description"]` | [data-qa="vacancy-description"] | — | [data-qa="vacancy-description"] | consensus |
 | vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT | `[data-qa="magritte-alert"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL | `[data-qa="vacancy-response-link-advertising-cancel"]` | — | — | — | documented_live |
+| vacancy_page.VACANCY_EXPERIENCE | `[data-qa="vacancy-experience"]` | [data-qa="vacancy-experience"] | — | [data-qa="vacancy-experience"] | consensus |
 | vacancy_page.VACANCY_HIDDEN_RESUME_WARNING | `[data-qa='hidden-resume-warning']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_LIMIT_ERROR | `[data-qa-popup-error-code="negotiations-limit-exceeded"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_RELOCATION_CONFIRM | `[data-qa="relocation-warning-confirm"]` | — | [data-qa="relocation-warning-confirm"] | — | documented_live |
@@ -203,6 +205,9 @@
 | vacancy_page.VACANCY_RESPONSE_REJECT_WARNING | `[data-qa="response-reject-warning"]` | — | [data-qa="response-reject-warning"] | — | documented_live |
 | vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE | `[data-qa="vacancy-response-similar-vacancies-close"]` | — | — | — | documented_live |
 | vacancy_page.VACANCY_TITLE | `[data-qa='vacancy-title']` | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | [data-qa="vacancy-title"] | consensus |
+| vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE | `[data-qa="vacancy-view-employment-mode"]` | [data-qa="vacancy-view-employment-mode"] | — | [data-qa="vacancy-view-employment-mode"] | consensus |
+| vacancy_page.VACANCY_VIEW_LOCATION | `[data-qa="vacancy-view-location"]` | [data-qa="vacancy-view-location"] | [data-qa="vacancy-view-location"] | — | consensus |
+| vacancy_page.VACANCY_VIEW_RAW_ADDRESS | `[data-qa="vacancy-view-raw-address"]` | [data-qa="vacancy-view-raw-address"] | [data-qa="vacancy-view-raw-address"] | — | consensus |
 
 ## Raw 2-of-3 reference consensus
 

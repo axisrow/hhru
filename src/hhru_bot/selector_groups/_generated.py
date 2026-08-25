@@ -189,15 +189,20 @@ VALUES: dict[str, str] = {
     "vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT": "[data-qa='vacancy-response-link-view-topic']",
     "vacancy_page.VACANCY_APPLY_BUTTON": "[data-qa='vacancy-response-link-top']",
     "vacancy_page.VACANCY_COMPANY_NAME": "[data-qa='vacancy-company-name']",
+    "vacancy_page.VACANCY_DESCRIPTION": "[data-qa=\"vacancy-description\"]",
     "vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT": "[data-qa=\"magritte-alert\"]",
     "vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL": "[data-qa=\"vacancy-response-link-advertising-cancel\"]",
+    "vacancy_page.VACANCY_EXPERIENCE": "[data-qa=\"vacancy-experience\"]",
     "vacancy_page.VACANCY_HIDDEN_RESUME_WARNING": "[data-qa='hidden-resume-warning']",
     "vacancy_page.VACANCY_LIMIT_ERROR": "[data-qa-popup-error-code=\"negotiations-limit-exceeded\"]",
     "vacancy_page.VACANCY_RELOCATION_CONFIRM": "[data-qa=\"relocation-warning-confirm\"]",
     "vacancy_page.VACANCY_RESPONSE_ERROR": "[data-qa=\"vacancy-response-error-notification\"]",
     "vacancy_page.VACANCY_RESPONSE_REJECT_WARNING": "[data-qa=\"response-reject-warning\"]",
     "vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE": "[data-qa=\"vacancy-response-similar-vacancies-close\"]",
-    "vacancy_page.VACANCY_TITLE": "[data-qa='vacancy-title']"
+    "vacancy_page.VACANCY_TITLE": "[data-qa='vacancy-title']",
+    "vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE": "[data-qa=\"vacancy-view-employment-mode\"]",
+    "vacancy_page.VACANCY_VIEW_LOCATION": "[data-qa=\"vacancy-view-location\"]",
+    "vacancy_page.VACANCY_VIEW_RAW_ADDRESS": "[data-qa=\"vacancy-view-raw-address\"]"
 }
 # fmt: on
 
