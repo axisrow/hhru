@@ -132,12 +132,15 @@ def route_vacancies(
             )
             if has_positive_constraints and resume.resume_id not in item.source_resume_ids:
                 continue
+            scoring = getattr(resume, "scoring", None)
             candidates, _skipped = filter_candidates(
                 [item.card],
                 resume.search,
                 resume.resume_id,
                 history,
-                getattr(getattr(resume, "scoring", None), "prefilter", None),
+                getattr(scoring, "prefilter", None),
+                getattr(scoring, "resume_match_threshold", None),
+                getattr(resume, "ai_profile", None),
             )
             if not candidates:
                 continue
