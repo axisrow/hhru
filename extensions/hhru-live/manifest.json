@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "HH.ru Live Overlay Diagnostics",
+  "version": "0.1.0",
+  "description": "Detects dynamic HH.ru overlays and reports diagnostics without taking actions.",
+  "permissions": [],
+  "host_permissions": ["https://hh.ru/*", "https://*.hh.ru/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_title": "HH.ru live diagnostics", "default_popup": "popup.html"},
+  "content_scripts": [{
+    "matches": ["https://hh.ru/*", "https://*.hh.ru/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}
