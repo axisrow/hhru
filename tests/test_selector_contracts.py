@@ -116,6 +116,30 @@ def test_refresh_bindings_reports_partial_key_loss():
     assert catalog["selectors"]["fixture"]["binding_gaps"] == ["steev:removed"]
 
 
+def test_refresh_bindings_preserves_a_missing_key_on_later_refresh():
+    catalog = {
+        "selectors": {
+            "fixture": {
+                "value": "[data-qa='canonical']",
+                "bindings": {"steev": [{"key": "kept"}]},
+                "binding_gaps": ["steev:removed"],
+                "sources": {},
+            }
+        }
+    }
+    indexes = {
+        "steev": [
+            contracts.SourceSelector(
+                "[data-qa='canonical']", "[data-qa='canonical']", "fixture.py", 1, "kept"
+            )
+        ],
+        "tgeruzov": [],
+        "yamakayama": [],
+    }
+    contracts._refresh_bindings(catalog, indexes)
+    assert catalog["selectors"]["fixture"]["binding_gaps"] == ["steev:removed"]
+
+
 def test_python_source_key_does_not_depend_on_line_number(tmp_path):
     path = tmp_path / "reference.py"
     path.write_text(

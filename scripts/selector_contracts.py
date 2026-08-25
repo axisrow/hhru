@@ -791,6 +791,10 @@ def _refresh_bindings(catalog: dict[str, Any], indexes: dict[str, list[SourceSel
         for field in ("bindings", "sources"):
             for reference, entries in row.get(field, {}).items():
                 requested[reference].update(entry.get("key", "") for entry in entries)
+        for gap in row.get("binding_gaps", []):
+            reference, separator, key = gap.partition(":")
+            if separator and key:
+                requested[reference].add(key)
         for reference, keys in REFERENCE_BINDING_KEYS.get(logical_id, {}).items():
             requested[reference].update(keys)
         for reference, items in indexes.items():
