@@ -359,7 +359,8 @@ _PROFICIENCY = {
     "Уровень не указан",
 }
 _SALARY_HEADING_RE = re.compile(
-    r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|на руки)", re.IGNORECASE
+    r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|Br|so['’ʼʻ]m|сом|на руки)",
+    re.IGNORECASE,
 )
 
 

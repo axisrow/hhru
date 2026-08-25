@@ -124,12 +124,38 @@ def test_parse_salary_nbsp_separator():
     assert result.salary_from == 150000
 
 
-def test_parse_salary_unknown_currency_fallback():
-    # Незнакомая валюта — сохраняем исходную строку валюты, но парсер не падает
-    result = parse_salary("5 000–7 000 ₸")
+def test_parse_salary_unknown_currency_is_none():
+    # Неизвестная валюта не должна подменяться последним словом заголовка.
+    result = parse_salary("5 000–7 000 XYZ на руки")
     assert result is not None
     assert result.salary_from == 5000
     assert result.salary_to == 7000
+    assert result.currency is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "salary_from", "salary_to"),
+    [
+        ("2 000 Br на руки", "BYN", 2000, 2000),
+        ("4 444 Br на руки", "BYN", 4444, 4444),
+        ("6 000 000 so'm на руки", "UZS", 6000000, 6000000),
+        ("6 000 000 so’m на руки", "UZS", 6000000, 6000000),
+        ("6 000 000 soʼm на руки", "UZS", 6000000, 6000000),
+        ("6 000 000 soʻm на руки", "UZS", 6000000, 6000000),
+        ("100 000 сом на руки", "KGS", 100000, 100000),
+        ("2 000–4 000 Br на руки", "BYN", 2000, 4000),
+        ("6 000 000–7 000 000 so'm на руки", "UZS", 6000000, 7000000),
+        ("100 000–120 000 сом до вычета налогов", "KGS", 100000, 120000),
+    ],
+)
+def test_parse_salary_new_currencies(text, expected, salary_from, salary_to):
+    result = parse_salary(text)
+    assert result is not None
+    assert (result.salary_from, result.salary_to, result.currency) == (
+        salary_from,
+        salary_to,
+        expected,
+    )
 
 
 def test_parse_salary_returns_raw_original():

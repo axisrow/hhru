@@ -125,14 +125,14 @@ class SalaryInfo:
 
     salary_from/salary_to могут быть None: диапазон «от N» → from=N, to=None;
     «до N» → from=None, to=N; «от A до B» → оба. Фиксированное значение N
-    сохраняется как from=to=N (без диапазона). currency — ISO-код валюты
-    (RUB/USD/EUR/KZT/BYN) либо исходная строка, если валюта не распознана.
+    сохраняется как from=to=N (без диапазона). currency — ISO-код распознанной
+    валюты либо None, если обозначение неизвестно.
     raw — оригинальный текст блока (для логов/диагностики).
     """
 
     salary_from: int | None
     salary_to: int | None
-    currency: str
+    currency: str | None
     raw: str
 
 
@@ -205,6 +205,7 @@ _NUMBER = rf"\d+(?:{_DIGIT_GROUP_SEP}?\d{{3}})*"
 _CURRENCY_PATTERNS: list[tuple[str, str]] = [
     ("бел. руб", "BYN"),
     ("бел.руб", "BYN"),
+    ("br", "BYN"),
     ("руб.", "RUB"),
     ("руб", "RUB"),
     ("₽", "RUB"),
@@ -217,6 +218,11 @@ _CURRENCY_PATTERNS: list[tuple[str, str]] = [
     ("₸", "KZT"),
     ("грн", "UAH"),
     ("₴", "UAH"),
+    ("so'm", "UZS"),
+    ("so’m", "UZS"),
+    ("soʼm", "UZS"),
+    ("soʻm", "UZS"),
+    ("сом", "KGS"),
 ]
 
 # Заглушки hh.ru, означающие «зарплаты нет».
@@ -229,18 +235,15 @@ def _strip_digits(token: str) -> int:
     return int(cleaned)
 
 
-def _detect_currency(text: str) -> str:
-    """Возвращает ISO-код валюты или исходный короткий токен, если не распознан."""
+def _detect_currency(text: str) -> str | None:
+    """Возвращает ISO-код валюты или None для неизвестного обозначения."""
     lower = text.lower()
     for needle, code in _CURRENCY_PATTERNS:
         if needle in lower:
             return code
-    # Незнакомая валюта: вернём последний «словесный» токен (не число),
-    # чтобы не терять информацию и не падать. Пусто → RUB по умолчанию.
-    words = [w for w in re.split(r"[\s.,]+", text) if w and not w.isdigit()]
-    if words:
-        return words[-1]
-    return "RUB"
+    # Не угадываем валюту по хвосту заголовка: «на руки» и «до вычета
+    # налогов» — служебный текст, а не данные о валюте.
+    return None
 
 
 def parse_salary(text: str | None) -> SalaryInfo | None:
