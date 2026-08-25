@@ -31,3 +31,6 @@ data/
 # Ad-hoc SQL-запросы для рыночного анализа (scripts/queries/) — разовые
 # аналитические артефакты, не код; версионировать не нужно.
 scripts/queries/
+
+# Автогенерируемое evidence-описание селекторов; воспроизводится healthcheck-ом.
+selectors/live-evidence.json
