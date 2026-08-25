@@ -24,7 +24,6 @@ from .browser import (
 from .config import ResumeConfig
 from .resume_state import ResumeState, is_published, parse_resume_state
 from .selector_groups.resume_page import (
-    RESUME_PUBLISH_BUTTON,
     RESUME_PUBLISH_BUTTON_DATA_QA,
     RESUME_VISIBILITY_BUTTON,
 )
@@ -126,7 +125,15 @@ def publish_resume_on_hh(
             state.is_searchable,
         )
 
-    publish = page.locator(RESUME_PUBLISH_BUTTON).or_(page.locator(RESUME_PUBLISH_BUTTON_DATA_QA))
+    if RESUME_PUBLISH_BUTTON_DATA_QA is None:
+        return PublishResumeResult(
+            resume.id,
+            False,
+            "селектор публикации не подтверждён картой; клик отключён",
+            state.status,
+            state.is_searchable,
+        )
+    publish = page.locator(RESUME_PUBLISH_BUTTON_DATA_QA)
     count = publish.count()
     if count == 0:
         try:
