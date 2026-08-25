@@ -11,11 +11,11 @@ def register(subparsers) -> None:
     a.add_argument("value")
     a.add_argument("--reason", required=True)
     a.add_argument("--by", default="cli")
-    l = s.add_parser("list")
+    list_parser = s.add_parser("list")
     r = s.add_parser("remove")
     r.add_argument("type", choices=("company", "keyword", "vacancy"))
     r.add_argument("value")
-    for x in (a, l, r):
+    for x in (a, list_parser, r):
         x.set_defaults(func=run)
 
 

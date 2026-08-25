@@ -2998,7 +2998,8 @@ class History:
         validate_value(entry_type, value)
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO blacklist(entry_type,value,reason,created_by,created_at) VALUES (?,?,?,?,?)",
+                "INSERT INTO blacklist(entry_type,value,reason,created_by,created_at) "
+                "VALUES (?,?,?,?,?)",
                 (entry_type, value, reason.strip(), created_by.strip(), datetime.now().isoformat()),
             )
 
