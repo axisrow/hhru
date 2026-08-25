@@ -105,6 +105,7 @@ def test_all_commands_registered():
         "import-cookies",
         "clear-negotiations",
         "delete-resume",
+        "diagnostics",
         "create-resume",
         "reply-employers",
         "robot-queue",
