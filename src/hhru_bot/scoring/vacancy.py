@@ -21,6 +21,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from ..ai.feedback import build_reject_context
 from .employer import TIER_BOOST, classify_employer
 from .types import ScoreOutcome
 
@@ -149,6 +150,7 @@ class LLMScoringProvider:
         max_tokens: int = _LLM_MAX_TOKENS,
         timeout: float = _LLM_TIMEOUT,
         circuit_failure_threshold: int = _LLM_CIRCUIT_FAILURE_THRESHOLD,
+        feedback: list[dict] | None = None,
     ):
         self._llm = llm_client
         self._fallback = fallback
@@ -162,6 +164,7 @@ class LLMScoringProvider:
         self._circuit_failure_threshold = circuit_failure_threshold
         # Счётчик подряд идущих fallback'ов (circuit breaker). Обнуляется на успехе.
         self._consecutive_failures = 0
+        self._feedback = feedback or []
 
     def score(self, card: VacancyCard, resume_profile=None) -> ScoreOutcome:
         profile = resume_profile or self._profile
@@ -175,7 +178,7 @@ class LLMScoringProvider:
             )
             return self._fallback.score(card, profile)
 
-        messages = _build_scoring_prompt(card, profile)
+        messages = _build_scoring_prompt(card, profile, self._feedback)
         try:
             response = self._llm.chat(
                 messages,
@@ -262,7 +265,11 @@ def _parse_llm_score(content: str | None, card: VacancyCard) -> ScoreOutcome | N
     return ScoreOutcome(score_0_100=score, mode="llm", rationale=rationale, breakdown=breakdown)
 
 
-def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[dict[str, str]]:
+def _build_scoring_prompt(
+    card: VacancyCard,
+    profile: AIProfile | None,
+    feedback: list[dict] | None = None,
+) -> list[dict[str, str]]:
     """Собирает chat-completion сообщения для скоринга вакансии под кандидата.
 
     Контекст — карточка поиска (title/company/salary + employer_info: рейтинг/
@@ -284,6 +291,9 @@ def _build_scoring_prompt(card: VacancyCard, profile: AIProfile | None) -> list[
     )
 
     lines = [f"Вакансия: {card.title}.", f"Компания: {card.company or 'не указана'}."]
+    reject = build_reject_context(feedback or [])
+    if reject:
+        lines.append(reject)
     salary = card.salary
     if salary is not None:
         lines.append(f"Зарплата: {salary.raw}.")

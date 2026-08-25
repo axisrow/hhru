@@ -37,6 +37,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..config import is_resume_url_placeholder
 from ..exit_codes import CommandExitCode
+from ..history import History
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -520,7 +521,9 @@ def run(args: argparse.Namespace) -> bool | CommandExitCode | None:
     # #17 (follow-up #54): AI-письмо в probe-дампе. Провайдер строится по тому же
     # правилу, что и в apply (ai + ai_profile); None → статичный шаблон. Атомарность
     # probe не страдает: провайдер только генерирует текст письма, submit не кликается.
-    letter_provider = _build_letter_provider(config, resume, cover_letter_template)
+    history_path = getattr(args, "history", None)
+    history = History(history_path) if history_path else None
+    letter_provider = _build_letter_provider(config, resume, cover_letter_template, history)
 
     print(f"=== probe для резюме: {resume.id} ===")
     print(f"Целевая вакансия: {vacancy.url}")
