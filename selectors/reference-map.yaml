@@ -4245,6 +4245,7 @@ selectors:
     active: true
   transient_overlays.RESUME_DELIVERED:
     value: ''
+    active: true
     criticality: read
     decision: needs_live_evidence
     origin: browser_dom
@@ -4256,7 +4257,6 @@ selectors:
       source: issue
       note: Transient overlay appears only after submit (WRITE); selector intentionally not invented. Obtain live evidence
         after separate WRITE authorization.
-    active: true
   vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN:
     value: '[data-qa=''vacancy-response-link-top-again'']'
     criticality: write

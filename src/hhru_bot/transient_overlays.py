@@ -41,6 +41,11 @@ _SCRIPT = r"""
     window[key].push({text: text.slice(0, 500), html: el.outerHTML.slice(0, 12000),
       selector: qa ? `[data-qa="${qa}"]` : (label ? `[aria-label="${label}"]` : null)});
     button.click();
+    // SSR may expose the control before React wires its handler. Retry the
+    // same exact safe control briefly, but never broaden the selector.
+    [100, 500, 1500].forEach(delay => setTimeout(() => {
+      if (button.isConnected) button.click();
+    }, delay));
   };
   const scan = (root) => {
     if (root.nodeType !== 1) return;
