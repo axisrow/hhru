@@ -74,6 +74,8 @@ def test_hhru_skill_keeps_long_commands_observable_until_exit():
     assert "run_in_background" in text
     assert "--execution-mode foreground" in text
     assert "--progress-verbosity 1" in text
+    assert "--auth-mode anonymous" in text
+    assert "--detail-workers 10" in text
     assert "не реже одного раза в 60 секунд" in text
     assert "пока команда не вернёт exit code" in text
     assert "не говори, что процесс" in text

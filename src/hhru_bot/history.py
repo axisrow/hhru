@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .competitor_privacy import is_contact_skill
 from .external_forms.detect import normalize
 
 if TYPE_CHECKING:
@@ -266,9 +265,7 @@ CREATE TABLE IF NOT EXISTS vacancies_seen (
     UNIQUE (vacancy_id, search_query)
 );
 
--- competitor_resumes — текущие обезличенные снимки чужих резюме (#578).
--- resume_url сохраняется по явному решению пользователя; имя, контакты,
--- возраст, пол, местоположение, активность и raw HTML не входят в схему.
+-- competitor_resumes — текущие профессиональные снимки чужих резюме (#578).
 CREATE TABLE IF NOT EXISTS competitor_resumes (
     resume_id TEXT PRIMARY KEY,
     resume_url TEXT NOT NULL,
@@ -292,28 +289,12 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
 
 CREATE TABLE IF NOT EXISTS competitor_resume_skills (
     resume_id TEXT NOT NULL,
-    skill TEXT NOT NULL CHECK (instr(skill, '@') = 0 AND lower(skill) NOT LIKE 'http%'),
+    skill TEXT NOT NULL,
     proficiency TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     PRIMARY KEY (resume_id, skill)
 );
-
-CREATE TRIGGER IF NOT EXISTS competitor_resume_skills_no_contacts
-BEFORE INSERT ON competitor_resume_skills
-WHEN lower(NEW.skill) LIKE 'www.%'
-  OR lower(NEW.skill) LIKE 't.me/%'
-  OR lower(NEW.skill) LIKE 'linkedin.com/%'
-  OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
-  OR NEW.skill GLOB '*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*'
-BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
-CREATE TRIGGER IF NOT EXISTS competitor_resume_skills_no_contacts_update
-BEFORE UPDATE OF skill ON competitor_resume_skills
-WHEN lower(NEW.skill) LIKE 'www.%'
-  OR lower(NEW.skill) LIKE 't.me/%'
-  OR lower(NEW.skill) LIKE 'linkedin.com/%'
-  OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
-BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
 
 CREATE TABLE IF NOT EXISTS competitor_resume_queries (
     resume_id TEXT NOT NULL,
@@ -329,6 +310,7 @@ CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
 CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     run_id TEXT PRIMARY KEY,
     search_query TEXT NOT NULL,
+    auth_mode TEXT,
     max_pages INTEGER NOT NULL,
     requested_page_size INTEGER NOT NULL DEFAULT 100,
     status TEXT NOT NULL,
@@ -752,9 +734,6 @@ class History:
     @contextmanager
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
-        conn.create_function(
-            "is_safe_competitor_skill", 1, lambda value: int(not is_contact_skill(value or ""))
-        )
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -789,6 +768,10 @@ class History:
             # Existing rows stay NULL and are handled with the same legacy grace
             # window as command_runs before they can be reclaimed.
             _ensure_column(conn, "competitor_collection_runs", "owner_pid", "INTEGER")
+            # NULL marks legacy runs whose authentication scope is unknown.
+            # They must never be selected as resume checkpoints for a new,
+            # explicitly scoped collection.
+            _ensure_column(conn, "competitor_collection_runs", "auth_mode", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "heartbeat_at", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "last_started_page", "INTEGER")
             _ensure_column(conn, "competitor_collection_runs", "last_completed_page", "INTEGER")
@@ -2106,7 +2089,7 @@ class History:
             "dead_rate": self._pct(dead, total_sent),
         }
 
-    # --- Конкуренты: обезличенные снимки резюме (#578) -------------------------
+    # --- Конкуренты: профессиональные снимки резюме (#578) ---------------------
 
     def begin_competitor_collection(
         self,
@@ -2114,6 +2097,7 @@ class History:
         max_pages: int,
         *,
         requested_page_size: int = 100,
+        auth_mode: str = "anonymous",
         resume: bool = False,
     ) -> dict:
         """Recover dead collectors and atomically create a durable owned run (#654)."""
@@ -2157,9 +2141,10 @@ class History:
             if resume:
                 latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
-                       WHERE search_query=? AND requested_page_size=? AND status != 'running'
+                       WHERE search_query=? AND requested_page_size=? AND auth_mode=?
+                         AND status != 'running'
                        ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-                    (search_query, requested_page_size),
+                    (search_query, requested_page_size, auth_mode),
                 ).fetchone()
                 if (
                     latest is not None
@@ -2201,14 +2186,15 @@ class History:
                 ).fetchone()
             conn.execute(
                 """INSERT INTO competitor_collection_runs
-                   (run_id, search_query, max_pages, requested_page_size, status,
+                   (run_id, search_query, auth_mode, max_pages, requested_page_size, status,
                     started_at, heartbeat_at,
                     owner_pid, last_started_page, last_completed_page, resume_page,
                     resumed_from_run_id, observed_page_size)
-                   VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
                 (
                     run_id,
                     search_query,
+                    auth_mode,
                     max_pages,
                     requested_page_size,
                     now,
@@ -2229,11 +2215,19 @@ class History:
         }
 
     def start_competitor_collection(
-        self, search_query: str, max_pages: int, *, requested_page_size: int = 100
+        self,
+        search_query: str,
+        max_pages: int,
+        *,
+        requested_page_size: int = 100,
+        auth_mode: str = "anonymous",
     ) -> str:
         """Compatibility wrapper for a fresh durable competitor run."""
         return self.begin_competitor_collection(
-            search_query, max_pages, requested_page_size=requested_page_size
+            search_query,
+            max_pages,
+            requested_page_size=requested_page_size,
+            auth_mode=auth_mode,
         )["run_id"]
 
     def checkpoint_competitor_collection(
@@ -2433,7 +2427,7 @@ class History:
             conn.execute("DELETE FROM competitor_resume_skills WHERE resume_id = ?", (resume_id,))
             for skill in snapshot.get("skills") or []:
                 name = str(skill["name"]).strip()
-                if not name or is_contact_skill(name):
+                if not name:
                     continue
                 conn.execute(
                     """INSERT INTO competitor_resume_skills
@@ -2454,7 +2448,7 @@ class History:
         return outcome
 
     def list_competitor_resumes(self, search_query: str | None = None) -> list[dict]:
-        """Return current snapshots with PII-free skills, optionally scoped by query."""
+        """Return current snapshots with source-faithful skills, optionally scoped by query."""
         with self._connect() as conn:
             if search_query is None:
                 rows = conn.execute(
@@ -4748,48 +4742,29 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
-    """Rebuild the skills table so old databases gain the privacy invariant."""
+    """Remove legacy skill filters that could roll back a complete resume."""
     table = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
         ("competitor_resume_skills",),
     ).fetchone()
-    trigger = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
-        ("competitor_resume_skills_no_contacts",),
-    ).fetchone()
-    if not table or trigger:
+    conn.execute("DROP TRIGGER IF EXISTS competitor_resume_skills_no_contacts")
+    conn.execute("DROP TRIGGER IF EXISTS competitor_resume_skills_no_contacts_update")
+    if not table or "CHECK" not in (table[0] or "").upper():
         return
     conn.execute("ALTER TABLE competitor_resume_skills RENAME TO competitor_resume_skills_legacy")
     conn.execute("""CREATE TABLE competitor_resume_skills (
         resume_id TEXT NOT NULL,
-        skill TEXT NOT NULL CHECK (instr(skill, '@') = 0 AND lower(skill) NOT LIKE 'http%'),
+        skill TEXT NOT NULL,
         proficiency TEXT,
         first_seen_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
         PRIMARY KEY (resume_id, skill)
     )""")
-    conn.executescript("""
-        CREATE TRIGGER competitor_resume_skills_no_contacts
-        BEFORE INSERT ON competitor_resume_skills
-        WHEN lower(NEW.skill) LIKE 'www.%' OR lower(NEW.skill) LIKE 't.me/%'
-          OR lower(NEW.skill) LIKE 'linkedin.com/%'
-          OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
-        BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
-        CREATE TRIGGER competitor_resume_skills_no_contacts_update
-        BEFORE UPDATE OF skill ON competitor_resume_skills
-        WHEN lower(NEW.skill) LIKE 'www.%' OR lower(NEW.skill) LIKE 't.me/%'
-          OR lower(NEW.skill) LIKE 'linkedin.com/%'
-          OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
-        BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
-    """)
     rows = conn.execute(
         """SELECT resume_id, skill, proficiency, first_seen_at, last_seen_at
            FROM competitor_resume_skills_legacy"""
     ).fetchall()
     for row in rows:
-        skill = row[1].strip()
-        if is_contact_skill(skill):
-            continue
         conn.execute(
             "INSERT OR IGNORE INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)", tuple(row)
         )

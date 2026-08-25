@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import signal
-import sqlite3
 import subprocess
 import sys
 import time
 from argparse import Namespace
 from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -51,6 +51,60 @@ class _Throttle:
         pass
 
 
+class _WorkerPool:
+    def __init__(self, workers, config):
+        self.workers = workers
+        self.config = config
+        self.results = []
+
+    @property
+    def size(self):
+        return self.workers
+
+    def start(self):
+        pass
+
+    def grow(self, target_workers):
+        self.workers = max(self.workers, target_workers)
+
+    def submit(self, task_id, card):
+        from hhru_bot.competitors import fetch_competitor_resume
+
+        try:
+            snapshot = fetch_competitor_resume(
+                object(),
+                card,
+                require_authentication=self.config.require_authentication,
+            )
+        except Exception as exc:
+            self.results.append(
+                {
+                    "kind": "error",
+                    "worker_id": 0,
+                    "task_id": task_id,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+        else:
+            payload = asdict(snapshot)
+            payload["content_hash"] = snapshot.content_hash()
+            self.results.append(
+                {
+                    "kind": "success",
+                    "worker_id": 0,
+                    "task_id": task_id,
+                    "payload": payload,
+                }
+            )
+
+    def result(self, **_kwargs):
+        return self.results.pop(0)
+
+    def close(self, **_kwargs):
+        pass
+
+
 def _args(tmp_path: Path, *, resume: bool = False) -> Namespace:
     return Namespace(
         text="AI",
@@ -59,6 +113,8 @@ def _args(tmp_path: Path, *, resume: bool = False) -> Namespace:
         execution_mode="foreground",
         progress_verbosity=1,
         items_per_page=100,
+        auth_mode="anonymous",
+        detail_workers=10,
         config=str(tmp_path / "config.yaml"),
         history=str(tmp_path / "history.db"),
         headless=True,
@@ -76,7 +132,7 @@ def _patch_runtime(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr("hhru_bot.browser.launch_context", _launch)
-    monkeypatch.setattr("hhru_bot.throttle.Throttle", _Throttle)
+    monkeypatch.setattr("hhru_bot.competitor_workers.DetailWorkerPool", _WorkerPool)
 
 
 @pytest.mark.parametrize(
@@ -126,6 +182,82 @@ def test_browser_crash_finalizes_run_before_propagating(tmp_path, monkeypatch):
     assert "browser closed" in row["detail"]
 
 
+def test_authenticated_parallel_workers_are_rejected_before_run(tmp_path, monkeypatch):
+    _patch_runtime(monkeypatch)
+    args = _args(tmp_path)
+    args.auth_mode = "authenticated"
+    args.detail_workers = 10
+
+    with pytest.raises(ValueError, match="authenticated требует --detail-workers 1"):
+        run_collect(args)
+
+    assert not (tmp_path / "history.db").exists()
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "expected_storage_state", "expected_authentication"),
+    [
+        ("anonymous", None, False),
+        ("authenticated", Path("session.json"), True),
+    ],
+)
+def test_auth_mode_controls_context_and_page_guards(
+    tmp_path,
+    monkeypatch,
+    auth_mode,
+    expected_storage_state,
+    expected_authentication,
+):
+    _patch_runtime(monkeypatch)
+    observed: dict = {}
+
+    @contextmanager
+    def launch(storage_state_file, **_kwargs):
+        observed["storage_state_file"] = storage_state_file
+        yield _Context()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", launch)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *_a, **_k: None)
+
+    def parse_page(_page, **kwargs):
+        observed["search_authentication"] = kwargs["require_authentication"]
+        return [
+            CompetitorSearchCard(
+                resume_id="r1",
+                resume_url="https://hh.ru/resume/r1",
+                desired_role="AI Engineer",
+                rank=1,
+            )
+        ]
+
+    monkeypatch.setattr("hhru_bot.competitors.parse_search_page", parse_page)
+    monkeypatch.setattr("hhru_bot.competitors.has_next_search_page", lambda *_a: False)
+    monkeypatch.setattr(
+        "hhru_bot.competitors.inspect_search_coverage",
+        lambda *_a, **_k: CompetitorSearchCoverage(1, 1, False, 1),
+    )
+
+    def fetch(_page, card, **kwargs):
+        observed["detail_authentication"] = kwargs["require_authentication"]
+        return CompetitorResume(
+            resume_id=card.resume_id,
+            resume_url=card.resume_url,
+            desired_role=card.desired_role,
+        )
+
+    monkeypatch.setattr("hhru_bot.competitors.fetch_competitor_resume", fetch)
+    args = _args(tmp_path)
+    args.auth_mode = auth_mode
+    args.detail_workers = 1 if auth_mode == "authenticated" else 10
+
+    assert run_collect(args) is False
+    assert observed == {
+        "storage_state_file": expected_storage_state,
+        "search_authentication": expected_authentication,
+        "detail_authentication": expected_authentication,
+    }
+
+
 def test_resume_starts_after_last_completed_page(tmp_path, monkeypatch):
     history = History(tmp_path / "history.db")
     previous = history.start_competitor_collection("AI", 2)
@@ -150,8 +282,9 @@ def test_resume_starts_after_last_completed_page(tmp_path, monkeypatch):
 
     monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
 
-    def parse_page(_page, *, rank_offset, expected_page_size):
+    def parse_page(_page, *, rank_offset, expected_page_size, require_authentication):
         assert expected_page_size == 100
+        assert require_authentication is False
         rank_offsets.append(rank_offset)
         return []
 
@@ -229,15 +362,14 @@ def test_global_quiet_overrides_progress_verbosity(tmp_path, monkeypatch, capsys
     assert "время=" in output
 
 
-def test_variable_page_sizes_update_volume_and_privacy_rejection_does_not_abort(
-    tmp_path, monkeypatch, capsys
-):
+def test_variable_page_sizes_update_volume(tmp_path, monkeypatch, capsys):
     _patch_runtime(monkeypatch)
     monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda *_a, **_k: None)
     page_sizes = iter((20, 100))
 
-    def parse_page(_page, *, rank_offset, expected_page_size):
+    def parse_page(_page, *, rank_offset, expected_page_size, require_authentication):
         assert expected_page_size == 100
+        assert require_authentication is False
         return [
             CompetitorSearchCard(
                 resume_id=f"r{rank_offset + index}",
@@ -259,36 +391,26 @@ def test_variable_page_sizes_update_volume_and_privacy_rejection_does_not_abort(
     )
     monkeypatch.setattr(
         "hhru_bot.competitors.fetch_competitor_resume",
-        lambda _page, card: CompetitorResume(
+        lambda _page, card, **_kwargs: CompetitorResume(
             resume_id=card.resume_id,
             resume_url=card.resume_url,
             desired_role=card.desired_role,
         ),
     )
-    calls = 0
-
-    def upsert(_self, *_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 21:
-            raise sqlite3.IntegrityError("contact-like competitor skill")
-        return "new"
-
-    monkeypatch.setattr(History, "upsert_competitor_resume", upsert)
+    monkeypatch.setattr(History, "upsert_competitor_resume", lambda *_a, **_k: "new")
     args = _args(tmp_path)
     args.max_pages = 2
 
-    assert run_collect(args) is True
+    assert run_collect(args) is False
 
     output = capsys.readouterr().out
     assert "объём~120 деталей" in output
     assert "страница=2, карточек=120, деталей=120" in output
-    assert "IntegrityError: contact-like competitor skill" in output
     row = History(tmp_path / "history.db").competitor_collection_runs()[0]
-    assert row["status"] == "partial"
+    assert row["status"] == "complete"
     assert row["cards_seen"] == 120
-    assert row["details_saved"] == 119
-    assert row["details_failed"] == 1
+    assert row["details_saved"] == 120
+    assert row["details_failed"] == 0
     assert row["observed_page_size"] == 100
 
 
@@ -300,12 +422,14 @@ sys.path.insert(0, {src_root!r})
 
 from argparse import Namespace
 from contextlib import contextmanager
+from dataclasses import asdict
 from types import SimpleNamespace
 
 from hhru_bot.commands.competitors import run_collect
 from hhru_bot.competitors import CompetitorResume, CompetitorSearchCard, CompetitorSearchCoverage
 from hhru_bot.history import History
 import hhru_bot.browser
+import hhru_bot.competitor_workers
 import hhru_bot.competitors
 import hhru_bot.config
 import hhru_bot.throttle
@@ -331,6 +455,42 @@ class _Throttle:
         pass
 
 
+class _WorkerPool:
+    def __init__(self, _workers, config):
+        self.config = config
+        self.results = []
+        self._size = _workers
+
+    @property
+    def size(self):
+        return self._size
+
+    def start(self):
+        pass
+
+    def grow(self, target_workers):
+        self._size = max(self._size, target_workers)
+
+    def submit(self, task_id, card):
+        snapshot = hhru_bot.competitors.fetch_competitor_resume(
+            object(), card, require_authentication=self.config.require_authentication
+        )
+        payload = asdict(snapshot)
+        payload["content_hash"] = snapshot.content_hash()
+        self.results.append({{
+            "kind": "success",
+            "worker_id": 0,
+            "task_id": task_id,
+            "payload": payload,
+        }})
+
+    def result(self, **_kwargs):
+        return self.results.pop(0)
+
+    def close(self, **_kwargs):
+        pass
+
+
 hhru_bot.config.load_config_or_exit = lambda _path: SimpleNamespace(
     storage_state_file={config_path!r},
     user_agent=None,
@@ -339,9 +499,11 @@ hhru_bot.config.load_config_or_exit = lambda _path: SimpleNamespace(
 hhru_bot.browser.launch_context = _launch
 hhru_bot.browser.goto_hh = lambda *_a, **_k: None
 hhru_bot.throttle.Throttle = _Throttle
+hhru_bot.competitor_workers.DetailWorkerPool = _WorkerPool
 
 
-def parse_page(_page, *, rank_offset, expected_page_size):
+def parse_page(_page, *, rank_offset, expected_page_size, require_authentication):
+    assert require_authentication is False
     return [
         CompetitorSearchCard(
             resume_id=f"r{{rank_offset + index}}",
@@ -364,8 +526,9 @@ History.upsert_competitor_resume = lambda _self, *_a, **_k: "new"
 _fetch_calls = 0
 
 
-def fetch(_page, card):
+def fetch(_page, card, *, require_authentication):
     global _fetch_calls
+    assert require_authentication is False
     _fetch_calls += 1
     # Page 1 has exactly 2 cards -> fetch calls 1-2 are page 1's details,
     # and page 1's [PROGRESS] line is printed right after call 2 returns,
@@ -389,6 +552,8 @@ args = Namespace(
     execution_mode="foreground",
     progress_verbosity=1,
     items_per_page=100,
+    auth_mode="anonymous",
+    detail_workers=10,
     config={config_path!r},
     history={history_path!r},
     headless=True,
@@ -504,9 +669,12 @@ def test_estimate_reports_requested_and_observed_page_size():
 
     assert "запрошено=100/стр., фактически=20/стр." in estimate
     assert "объём~100 деталей" in estimate
-    assert "13 мин-41 мин" in estimate
+    assert "13 мин-42 мин" in estimate
     assert "ETA уточнится" in estimate
 
+    # A worker now waits before its FIRST request too (#663 Codex review:
+    # skipping the delay before "attempts == 0" let every worker burst its
+    # first request in lockstep), so even a single detail carries one wait.
     one_detail = _throttle_estimate(
         details=1,
         requested_page_size=1,
@@ -514,7 +682,21 @@ def test_estimate_reports_requested_and_observed_page_size():
         min_delay=8,
         max_delay=25,
     )
-    assert "троттлинга 0 с-0 с" in one_detail
+    assert "троттлинга 8 с-25 с" in one_detail
+
+
+def test_estimate_accounts_for_parallel_workers():
+    estimate = _throttle_estimate(
+        details=100,
+        requested_page_size=100,
+        observed_page_size=100,
+        min_delay=8,
+        max_delay=25,
+        workers=10,
+    )
+
+    assert "workers=10" in estimate
+    assert "троттлинга 1 мин-4 мин" in estimate
 
 
 def test_observed_eta_uses_completed_detail_rate():

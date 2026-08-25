@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import signal
-import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict, replace
-
-from playwright.sync_api import Error as PlaywrightError
+from dataclasses import replace
 
 from ..exit_codes import CommandExitCode
 
@@ -29,6 +27,13 @@ def _page_size(value: str) -> int:
     parsed = _positive(value)
     if parsed > 100:
         raise argparse.ArgumentTypeError("значение должно быть <= 100")
+    return parsed
+
+
+def _detail_workers(value: str) -> int:
+    parsed = _positive(value)
+    if parsed > 1000:
+        raise argparse.ArgumentTypeError("значение должно быть <= 1000")
     return parsed
 
 
@@ -86,11 +91,16 @@ def _throttle_estimate(
     observed_page_size: int,
     min_delay: float,
     max_delay: float,
+    workers: int = 1,
 ) -> str:
-    waits = max(0, details - 1)
+    active_workers = max(1, min(workers, details))
+    # Every request — the first included — now waits the configured delay
+    # (competitor_workers._worker_main, #663 Codex review), so a worker's
+    # wait count equals its request count, not request count minus one.
+    waits = math.ceil(details / active_workers)
     return (
         f"запрошено={requested_page_size}/стр., фактически={observed_page_size}/стр., "
-        f"объём~{details} деталей; только паузы троттлинга "
+        f"объём~{details} деталей, workers={active_workers}; только паузы троттлинга "
         f"{_format_duration(waits * min_delay)}-{_format_duration(waits * max_delay)}; "
         "ETA уточнится по фактической скорости"
     )
@@ -182,7 +192,7 @@ class _Heartbeat:
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "competitors",
-        help="Собрать и проанализировать обезличенные резюме конкурентов",
+        help="Собрать и проанализировать профессиональные снимки резюме конкурентов",
         description=(
             "READ hh.ru: competitors collect --text QUERY [--max-pages N]; "
             "локальный отчёт: competitors report [--text QUERY] [--top N]."
@@ -222,6 +232,23 @@ def register(subparsers) -> None:
         default=100,
         help="Запрошенный размер страницы hh.ru (по умолчанию 100; для smoke можно 20)",
     )
+    collect.add_argument(
+        "--auth-mode",
+        choices=("anonymous", "authenticated"),
+        default="anonymous",
+        help=(
+            "Сессия браузера: anonymous — чистый контекст без cookie (по умолчанию); "
+            "authenticated — загрузить сохранённую сессию из конфига"
+        ),
+    )
+    collect.add_argument(
+        "--detail-workers",
+        type=_detail_workers,
+        default=10,
+        help=(
+            "Параллельные процессы деталей: 1–1000 (по умолчанию 10; для authenticated требуется 1)"
+        ),
+    )
     collect.set_defaults(func=run_collect)
 
     report = commands.add_parser("report", help="Построить локальный отчёт по сохранённой базе")
@@ -233,31 +260,34 @@ def register(subparsers) -> None:
 
 
 def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
+    from ..apply.antibot import AntiBotChallengeDetected, AntiBotDetection
     from ..browser import goto_hh, launch_context
+    from ..competitor_workers import DetailWorkerConfig, DetailWorkerPool
     from ..competitors import (
-        CompetitorResumeIndeterminate,
+        CompetitorSearchCard,
         build_competitor_search_url,
         coverage_warning,
-        fetch_competitor_resume,
         has_next_search_page,
         inspect_search_coverage,
         parse_search_page,
     )
     from ..config import load_config_or_exit
     from ..history import History
-    from ..throttle import Throttle
 
     query = args.text.strip()
     if not query:
         raise ValueError("--text не может быть пустым")
+    if args.auth_mode == "authenticated" and args.detail_workers != 1:
+        raise ValueError("--auth-mode authenticated требует --detail-workers 1")
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    throttle = Throttle(config.throttle, history)
+    require_authentication = args.auth_mode == "authenticated"
     started = history.begin_competitor_collection(
         query,
         args.max_pages or 0,
         requested_page_size=args.items_per_page,
+        auth_mode=args.auth_mode,
         resume=bool(getattr(args, "resume", False)),
     )
     run_id = started["run_id"]
@@ -346,6 +376,8 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     _progress(
         f"[START] run_id={run_id} competitors collect: "
         f"execution_mode={args.execution_mode}, progress_verbosity={progress_verbosity}, "
+        f"auth_mode={args.auth_mode}, "
+        f"detail_workers={args.detail_workers}, "
         f"headless={'да' if args.headless else 'нет'}, "
         f"запрошено карточек/страницу={requested_page_size}, "
         f"объём={'до ' + str(args.max_pages) + ' стр.' if args.max_pages else 'до конца выдачи'}, "
@@ -376,148 +408,213 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                 started_at=started_at,
             ) as heartbeat,
             launch_context(
-                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+                config.storage_state_file if require_authentication else None,
+                headless=args.headless,
+                user_agent=config.user_agent,
             ) as context,
         ):
             search_page = context.new_page()
-            detail_page = context.new_page()
-            while True:
-                with state_lock:
-                    state["last_started_page"] = page_num
-                    state["resume_page"] = page_num
-                checkpoint()
-                goto_hh(
-                    search_page,
-                    build_competitor_search_url(
-                        query, page_num, items_per_page=requested_page_size
-                    ),
-                )
-                cards_before = snapshot()["cards"]
-                cards = parse_search_page(
-                    search_page,
-                    rank_offset=rank_offset_base + cards_before,
-                    expected_page_size=requested_page_size,
-                )
-                pages_this_run += 1
-                with state_lock:
-                    state["pages"] += 1
-                    state["cards"] += len(cards)
-                    state["observed_page_size"] = max(state["observed_page_size"] or 0, len(cards))
-                has_next = has_next_search_page(search_page, page_num)
-                if coverage is None:
-                    observed_page_size = snapshot()["observed_page_size"]
-                    coverage = inspect_search_coverage(
-                        search_page,
-                        page_num,
-                        observed_page_size=observed_page_size,
-                        requested_page_size=requested_page_size,
-                    )
-                    available_from_here = (
-                        max(1, coverage.available_pages - page_num)
-                        if coverage.available_pages is not None
-                        else None
-                    )
-                    target_pages = args.max_pages
-                    if target_pages is None:
-                        target_pages = available_from_here
-                    elif available_from_here is not None:
-                        target_pages = min(target_pages, available_from_here)
-                    if target_pages is not None and observed_page_size:
-                        expected_details = (
-                            len(cards) + max(0, target_pages - 1) * requested_page_size
-                        )
-                        _progress(
-                            f"[ESTIMATE] run_id={run_id} "
-                            + _throttle_estimate(
-                                details=expected_details,
-                                requested_page_size=requested_page_size,
-                                observed_page_size=observed_page_size,
-                                min_delay=config.throttle.min_delay_seconds,
-                                max_delay=config.throttle.max_delay_seconds,
-                            ),
-                            quiet=quiet,
-                        )
-                if target_pages is not None:
+            worker_pool: DetailWorkerPool | None = None
+            try:
+                while True:
                     with state_lock:
-                        state["expected_details"] = (
-                            state["cards"]
-                            + max(0, target_pages - pages_this_run) * requested_page_size
+                        state["last_started_page"] = page_num
+                        state["resume_page"] = page_num
+                    checkpoint()
+                    goto_hh(
+                        search_page,
+                        build_competitor_search_url(
+                            query, page_num, items_per_page=requested_page_size
+                        ),
+                    )
+                    cards_before = snapshot()["cards"]
+                    cards = parse_search_page(
+                        search_page,
+                        rank_offset=rank_offset_base + cards_before,
+                        expected_page_size=requested_page_size,
+                        require_authentication=require_authentication,
+                    )
+                    pages_this_run += 1
+                    with state_lock:
+                        state["pages"] += 1
+                        state["cards"] += len(cards)
+                        state["observed_page_size"] = max(
+                            state["observed_page_size"] or 0, len(cards)
+                        )
+                    has_next = has_next_search_page(search_page, page_num)
+                    if coverage is None:
+                        observed_page_size = snapshot()["observed_page_size"]
+                        coverage = inspect_search_coverage(
+                            search_page,
+                            page_num,
+                            observed_page_size=observed_page_size,
+                            requested_page_size=requested_page_size,
+                        )
+                        available_from_here = (
+                            max(1, coverage.available_pages - page_num)
+                            if coverage.available_pages is not None
+                            else None
+                        )
+                        target_pages = args.max_pages
+                        if target_pages is None:
+                            target_pages = available_from_here
+                        elif available_from_here is not None:
+                            target_pages = min(target_pages, available_from_here)
+                        if target_pages is not None and observed_page_size:
+                            expected_details = (
+                                len(cards) + max(0, target_pages - 1) * requested_page_size
+                            )
+                            _progress(
+                                f"[ESTIMATE] run_id={run_id} "
+                                + _throttle_estimate(
+                                    details=expected_details,
+                                    requested_page_size=requested_page_size,
+                                    observed_page_size=observed_page_size,
+                                    min_delay=config.throttle.min_delay_seconds,
+                                    max_delay=config.throttle.max_delay_seconds,
+                                    workers=args.detail_workers,
+                                ),
+                                quiet=quiet,
+                            )
+                    if target_pages is not None:
+                        with state_lock:
+                            state["expected_details"] = (
+                                state["cards"]
+                                + max(0, target_pages - pages_this_run) * requested_page_size
+                            )
+
+                    page_cards = []
+                    for card in cards:
+                        heartbeat.raise_if_failed()
+                        if card.resume_id in seen_resume_ids:
+                            continue
+                        seen_resume_ids.add(card.resume_id)
+                        page_cards.append(card)
+
+                    if page_cards:
+                        # Sizing from just this page (instead of capping at
+                        # args.detail_workers outright) undersizes the pool
+                        # for the rest of the run when an early page is
+                        # mostly duplicates (e.g. --resume) — #663 review.
+                        # grow() is additive/idempotent, so re-evaluating the
+                        # target on every page lets the pool catch up once a
+                        # later page proves there is more work than workers.
+                        target_workers = min(args.detail_workers, state["cards"])
+                        if worker_pool is None:
+                            worker_pool = DetailWorkerPool(
+                                target_workers,
+                                DetailWorkerConfig(
+                                    storage_state_file=(
+                                        str(config.storage_state_file)
+                                        if require_authentication
+                                        else None
+                                    ),
+                                    headless=args.headless,
+                                    user_agent=config.user_agent,
+                                    min_delay_seconds=config.throttle.min_delay_seconds,
+                                    max_delay_seconds=config.throttle.max_delay_seconds,
+                                    require_authentication=require_authentication,
+                                ),
+                            )
+                            worker_pool.start()
+                        elif target_workers > worker_pool.size:
+                            worker_pool.grow(target_workers)
+                        _progress(
+                            f"[WORKERS] run_id={run_id} запущено={worker_pool.size}",
+                            quiet=quiet,
                         )
 
-                for card in cards:
-                    heartbeat.raise_if_failed()
-                    if card.resume_id in seen_resume_ids:
-                        continue
-                    seen_resume_ids.add(card.resume_id)
-                    if detail_attempts:
-                        _progress(
-                            f"[WARN] run_id={run_id} пауза троттлинга перед следующей карточкой",
-                            quiet=quiet,
-                            level=logging.WARNING,
-                        )
-                        throttle.wait("между карточками резюме конкурентов")
-                    detail_attempts += 1
-                    try:
-                        snapshot_row = fetch_competitor_resume(detail_page, card)
-                        payload = asdict(snapshot_row)
-                        payload["content_hash"] = snapshot_row.content_hash()
+                    pending: dict[int, CompetitorSearchCard] = {}
+                    if worker_pool is not None:
+                        for card in page_cards:
+                            task_id = detail_attempts
+                            detail_attempts += 1
+                            pending[task_id] = card
+                            worker_pool.submit(task_id, card)
+
+                    while pending:
+                        heartbeat.raise_if_failed()
+                        assert worker_pool is not None
+                        result = worker_pool.result(timeout=1)
+                        if result is None:
+                            continue
+                        kind = result["kind"]
+                        if kind == "fatal":
+                            raise RuntimeError(
+                                f"detail worker {result['worker_id'] + 1}: "
+                                f"{result['error_type']}: {result['error']}"
+                            )
+                        task_id = result["task_id"]
+                        if task_id not in pending:
+                            continue
+                        card = pending.pop(task_id)
+                        if kind == "antibot":
+                            raise AntiBotChallengeDetected(
+                                AntiBotDetection(
+                                    signal=result["antibot_signal"],
+                                    detail=result["antibot_detail"],
+                                )
+                            )
+                        if kind == "error":
+                            details_failed += 1
+                            with state_lock:
+                                state["failed"] = details_failed
+                            _progress(
+                                f"[WARN] run_id={run_id} резюме rank={card.rank} "
+                                f"не сохранено: {result['error_type']}: {result['error']}",
+                                quiet=quiet,
+                                level=logging.WARNING,
+                            )
+                            continue
                         outcome = history.upsert_competitor_resume(
-                            payload,
+                            result["payload"],
                             search_query=query,
                             search_rank=card.rank,
                         )
-                    except (
-                        CompetitorResumeIndeterminate,
-                        PlaywrightError,
-                        sqlite3.IntegrityError,
-                        ValueError,
-                    ) as exc:
-                        if isinstance(exc, sqlite3.IntegrityError) and (
-                            "contact-like competitor skill" not in str(exc)
-                        ):
-                            raise
-                        details_failed += 1
                         with state_lock:
-                            state["failed"] = details_failed
-                        _progress(
-                            f"[WARN] run_id={run_id} резюме rank={card.rank} не сохранено: "
-                            f"{type(exc).__name__}: {exc}",
-                            quiet=quiet,
-                            level=logging.WARNING,
-                        )
-                        continue
-                    with state_lock:
-                        state["saved"] += 1
-                    if outcome == "new":
-                        new += 1
-                    elif outcome == "updated":
-                        updated += 1
-                    else:
-                        unchanged += 1
+                            state["saved"] += 1
+                        if outcome == "new":
+                            new += 1
+                        elif outcome == "updated":
+                            updated += 1
+                        else:
+                            unchanged += 1
 
-                with state_lock:
-                    state["last_completed_page"] = page_num
-                    state["cards_completed"] = state["cards"]
-                    state["resume_page"] = page_num + 1 if has_next else None
-                    if not has_next or _page_cap_reached(args.max_pages, pages_this_run, has_next):
-                        state["expected_details"] = state["saved"] + state["failed"]
-                checkpoint()
-                current = snapshot()
-                eta = _observed_eta(current, elapsed=time.monotonic() - started_at)
-                eta_suffix = f", {eta}" if eta else ""
-                _progress(
-                    f"[PROGRESS] run_id={run_id} страница={page_num + 1}, "
-                    f"карточек={current['cards']}, деталей={current['saved'] + current['failed']}, "
-                    f"новых/обновлено={new + updated}, ошибок={current['failed']}"
-                    f"{eta_suffix}",
-                    quiet=quiet,
-                )
-                if not has_next:
-                    break
-                if _page_cap_reached(args.max_pages, pages_this_run, has_next):
-                    limited = True
-                    break
-                page_num += 1
+                    with state_lock:
+                        state["last_completed_page"] = page_num
+                        state["cards_completed"] = state["cards"]
+                        state["resume_page"] = page_num + 1 if has_next else None
+                        if not has_next or _page_cap_reached(
+                            args.max_pages, pages_this_run, has_next
+                        ):
+                            state["expected_details"] = state["saved"] + state["failed"]
+                    checkpoint()
+                    current = snapshot()
+                    eta = _observed_eta(current, elapsed=time.monotonic() - started_at)
+                    eta_suffix = f", {eta}" if eta else ""
+                    _progress(
+                        f"[PROGRESS] run_id={run_id} страница={page_num + 1}, "
+                        f"карточек={current['cards']}, "
+                        f"деталей={current['saved'] + current['failed']}, "
+                        f"новых/обновлено={new + updated}, ошибок={current['failed']}"
+                        f"{eta_suffix}",
+                        quiet=quiet,
+                    )
+                    if not has_next:
+                        break
+                    if _page_cap_reached(args.max_pages, pages_this_run, has_next):
+                        limited = True
+                        break
+                    page_num += 1
+            except BaseException as exc:
+                if worker_pool is not None:
+                    worker_pool.close(
+                        terminate=not isinstance(exc, (KeyboardInterrupt, _SignalTermination))
+                    )
+                raise
+            else:
+                if worker_pool is not None:
+                    worker_pool.close()
     except BaseException as exc:
         caught = exc
     finally:
@@ -581,7 +678,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         raise caught
 
     status = _collection_status(details_failed=details_failed, limited=limited)
-    detail = f"limited_by_max_pages={args.max_pages}" if limited else None
+    finish_detail = f"limited_by_max_pages={args.max_pages}" if limited else None
     exit_code = 1 if details_failed else 0
     history.finish_competitor_collection(
         run_id,
@@ -590,7 +687,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         cards_seen=current["cards"],
         details_saved=current["saved"],
         details_failed=current["failed"],
-        detail=detail,
+        detail=finish_detail,
         exit_code=exit_code,
         resume_page=current["resume_page"] if limited else None,
         last_started_page=current["last_started_page"],

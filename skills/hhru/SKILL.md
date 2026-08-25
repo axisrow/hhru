@@ -109,8 +109,17 @@ preflight не смог распознать ограничение. Не пер
 
 ```bash
 hhru --headless competitors collect --text "AI" --max-pages 5 \
+  --auth-mode anonymous --detail-workers 10 \
   --execution-mode foreground --progress-verbosity 1
 ```
+По умолчанию `competitors collect` использует `--auth-mode anonymous`: создаёт
+чистый browser context без `storage_state` и cookie аккаунта. Авторизованный
+режим включается только явно через `--auth-mode authenticated`.
+`--detail-workers` принимает 1–1000 и по умолчанию равен 10. Не запускай
+несколько отдельных команд: параллелизм принадлежит одному foreground run,
+который сохраняет общий checkpoint. Для authenticated используй 1 worker.
+Skills и собранный свободный текст сохраняются без privacy-фильтра; не называй
+отброшенную анкету штатным privacy-исходом.
 Эту и другие команды, работающие дольше одного tool-вызова,
 нельзя запускать через `&`, `nohup`, `run_in_background` или иной detached-режим.
 Запусти команду в foreground terminal session. Если terminal tool вернул session

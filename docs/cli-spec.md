@@ -134,7 +134,7 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 | `mark`      | ручная пометка оффера (#13)                  | WRITE-local    | `[OK]`                         |
 | `profile`   | управление профилем аккаунта (#287)          | READ/WRITE-local | ASCII-таблица / `[OK]`        |
 | `schedule`  | генератор конфига launchd/cron (#18)         | READ           | текст (plist/crontab)          |
-| `competitors` | сбор обезличенных резюме конкурентов | READ hh.ru / WRITE-local | текст + `[WARN]` |
+| `competitors` | сбор профессиональных снимков резюме конкурентов | READ hh.ru / WRITE-local | текст + `[WARN]` |
 
 Для разового поиска без изменения `config.yaml` команда `search` принимает
 опциональный `--text <TEXT>`. Сигнатура:
@@ -156,7 +156,9 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 Изменение видимости остаётся отдельным действием и `resume-position` его не
 выполняет.
 
-`competitors collect --text QUERY [--execution-mode foreground]
+`competitors collect --text QUERY [--auth-mode {anonymous,authenticated}]
+[--detail-workers N]
+[--execution-mode foreground]
 [--progress-verbosity {0,1}] [--items-per-page N]` по умолчанию запрашивает
 `items_on_page=100` и без
 `--max-pages` обходит всю видимую пагинацию. Явный `--max-pages N` —
@@ -169,6 +171,19 @@ safety-cap: при наличии следующей страницы запус
 промежуточный DOM за полный размер страницы.
 `--items-per-page` принимает 1–100 и предназначен в том числе для коротких живых
 smoke-прогонов на 20 карточках; production-дефолт 100 не меняется.
+`--auth-mode anonymous` является значением по умолчанию: browser context создаётся
+без `storage_state` и cookie аккаунта. Старый режим с сохранённой сессией включается
+только явно через `--auth-mode authenticated`. `[START]` всегда показывает
+фактический `auth_mode`.
+`--detail-workers` принимает 1–1000, по умолчанию `10`. Каждый worker владеет
+отдельным Playwright-процессом и чистым browser context; родитель остаётся
+единственным владельцем SQLite, checkpoint и прогресса. Фактическое число
+workers ограничивается числом карточек на странице. Для
+`--auth-mode authenticated` допускается только `--detail-workers 1`.
+При подтверждённом CAPTCHA/antibot worker прекращает выдачу новых задач, весь
+pool останавливается, а durable run сохраняется как прерванный с причиной.
+Skills и свободный текст разделов «Обо мне»/«Достижения» сохраняются без
+privacy-фильтра; одна строка не должна откатывать snapshot целиком.
 Финальная сводка и `[STOP]` содержат измеренное `время`; плагины экстраполируют
 его с короткого smoke на запрошенный пользователем объём и сообщают оценку с
 диапазоном ±25% до запуска длинной команды.
@@ -180,7 +195,8 @@ smoke-прогонов на 20 карточках; production-дефолт 100 �
 terminal session и транслировать новые строки до exit code.
 `foreground` и progress verbosity `1` являются значениями по умолчанию; background
 не поддерживается. Для запуска через Claude Code/Codex плагины обязаны явно
-передавать `--execution-mode foreground --progress-verbosity 1`; `[START]`
+передавать `--auth-mode anonymous --detail-workers 10 --execution-mode foreground
+--progress-verbosity 1`; `[START]`
 подтверждает выбранные значения в stdout. Глобальный `--quiet` совместим с прежними
 вызовами и эквивалентен progress verbosity `0`: промежуточный поток скрывается, но
 финальная сводка, `[STOP]`, ошибки и файловый лог сохраняются.

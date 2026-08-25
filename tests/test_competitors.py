@@ -16,7 +16,6 @@ from hhru_bot.competitors import (
     parse_search_result_count,
     redact_free_text,
     report_competitors,
-    sanitize_skill_name,
 )
 from hhru_bot.selector_groups import competitor_resume as selectors
 
@@ -166,23 +165,18 @@ def test_detail_without_confirmed_role_fails_closed():
         )
 
 
-def test_skill_contact_tokens_are_not_persisted():
+def test_skill_values_are_persisted_without_privacy_filter():
     snapshot = parse_competitor_resume_text(
         "AI Engineer\nНавыки\nPython\ntest@example.com\n+7 999 123-45-67\nhttps://example.com",
         resume_id="skill-contact",
         resume_url="https://hh.ru/resume/skill-contact",
         headings=["AI Engineer", "Навыки"],
     )
-    assert [skill.name for skill in snapshot.skills] == ["Python"]
-    assert sanitize_skill_name("test@example.com") is None
-    assert sanitize_skill_name("+7 999 123-45-67") is None
-    for contact in ("www.example.com", "t.me/alice", "linkedin.com/in/alice"):
-        assert sanitize_skill_name(contact) is None
-    assert [sanitize_skill_name(v) for v in ("Python", "C++", "Node.js", "Разработка ПО")] == [
+    assert [skill.name for skill in snapshot.skills] == [
         "Python",
-        "C++",
-        "Node.js",
-        "Разработка ПО",
+        "test@example.com",
+        "+7 999 123-45-67",
+        "https://example.com",
     ]
 
 
@@ -220,11 +214,11 @@ def test_thin_space_salary_and_dashless_specialization_are_normalized():
         "Построил RAG-поиск и сократил latency",
     ],
 )
-def test_redact_free_text_drops_unstructured_third_party_text(raw):
-    assert redact_free_text(raw) is None
+def test_free_text_is_preserved(raw):
+    assert redact_free_text(raw) == raw
 
 
-def test_parse_detail_drops_free_text_even_without_obvious_name_or_contact():
+def test_parse_detail_preserves_free_text_sections():
     snapshot = parse_competitor_resume_text(
         "AI Engineer\nОбо мне\nЖиву в Москве, мне 35 лет\n"
         "Ключевые достижения\nСократил расходы на 20%",
@@ -232,8 +226,8 @@ def test_parse_detail_drops_free_text_even_without_obvious_name_or_contact():
         resume_url="https://hh.ru/resume/free-text",
         headings=["AI Engineer"],
     )
-    assert snapshot.experience_summary is None
-    assert snapshot.achievements is None
+    assert snapshot.experience_summary == "Живу в Москве, мне 35 лет"
+    assert snapshot.achievements == "Сократил расходы на 20%"
 
 
 class _Locator:

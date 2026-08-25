@@ -66,6 +66,71 @@ def test_upsert_current_snapshot_and_query_relations_are_atomic(tmp_path):
     assert len(history.list_competitor_resumes("LLM")) == 1
 
 
+def test_upsert_preserves_all_skill_values_without_privacy_triggers(tmp_path):
+    history = History(tmp_path / "history.db")
+    skills = [
+        {"name": "node.js"},
+        {"name": "test@example.com"},
+        {"name": "+7 999 123-45-67"},
+        {"name": "https://example.com"},
+    ]
+
+    assert (
+        history.upsert_competitor_resume(_snapshot(skills=skills), search_query="AI", search_rank=1)
+        == "new"
+    )
+
+    assert [skill["name"] for skill in history.list_competitor_resumes("AI")[0]["skills"]] == [
+        "+7 999 123-45-67",
+        "https://example.com",
+        "node.js",
+        "test@example.com",
+    ]
+    with sqlite3.connect(tmp_path / "history.db") as conn:
+        triggers = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' "
+            "AND name LIKE 'competitor_resume_skills_no_contacts%'"
+        ).fetchall()
+    assert triggers == []
+
+
+def test_existing_skill_privacy_schema_is_migrated_away(tmp_path):
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE competitor_resume_skills (
+                resume_id TEXT NOT NULL,
+                skill TEXT NOT NULL CHECK (instr(skill, '@') = 0),
+                proficiency TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (resume_id, skill)
+            );
+            CREATE TRIGGER competitor_resume_skills_no_contacts
+            BEFORE INSERT ON competitor_resume_skills
+            WHEN instr(NEW.skill, '.') > 0
+            BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
+            INSERT INTO competitor_resume_skills
+            VALUES ('old', 'Python', NULL, '2026-01-01', '2026-01-01');
+        """)
+
+    History(db)
+
+    with sqlite3.connect(db) as conn:
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='competitor_resume_skills'"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)",
+            ("new", "test@example.com", None, "2026-01-02", "2026-01-02"),
+        )
+        rows = conn.execute(
+            "SELECT resume_id,skill FROM competitor_resume_skills ORDER BY resume_id"
+        ).fetchall()
+    assert "CHECK" not in table_sql.upper()
+    assert rows == [("new", "test@example.com"), ("old", "Python")]
+
+
 def test_failed_write_rolls_back_previous_snapshot(tmp_path):
     history = History(tmp_path / "history.db")
     history.upsert_competitor_resume(_snapshot(), search_query="AI", search_rank=1)
@@ -300,6 +365,30 @@ def test_resume_does_not_cross_requested_page_sizes(tmp_path):
     assert production["resume_page"] == 0
     assert production["resumed_from_run_id"] is None
     assert production["resume_rank_offset"] == 0
+
+
+def test_resume_does_not_cross_authentication_modes(tmp_path):
+    history = History(tmp_path / "history.db")
+    authenticated = history.start_competitor_collection("AI", 1, auth_mode="authenticated")
+    history.finish_competitor_collection(
+        authenticated,
+        status="limited",
+        pages_fetched=1,
+        cards_seen=20,
+        details_saved=20,
+        details_failed=0,
+        resume_page=1,
+        last_started_page=0,
+        last_completed_page=0,
+        observed_page_size=20,
+    )
+
+    anonymous = history.begin_competitor_collection("AI", 1, auth_mode="anonymous", resume=True)
+
+    assert anonymous["resume_page"] == 0
+    assert anonymous["resumed_from_run_id"] is None
+    assert anonymous["resume_rank_offset"] == 0
+    assert history.competitor_collection_runs()[-1]["auth_mode"] == "anonymous"
 
 
 def test_repeated_interruption_preserves_page_size_and_global_rank_offset(tmp_path):
