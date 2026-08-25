@@ -77,12 +77,16 @@ def refresh_vacancy_body(
         cached = cache.get(vacancy_id, url)
         if cached:
             return cached
-    if page.url != url:
+    current_before = getattr(page, "url", url)
+    if current_before != url:
         (navigate or (lambda p, target: p.goto(target, wait_until="domcontentloaded")))(page, url)
-    current = str(page.url)
+    current = str(getattr(page, "url", url))
     if current != url or str(vacancy_id) not in current:
         return None
-    description = page.locator(vacancy_page.VACANCY_DESCRIPTION).inner_text().strip()
+    try:
+        description = page.locator(vacancy_page.VACANCY_DESCRIPTION).inner_text().strip()
+    except Exception:  # noqa: BLE001 - body refresh is an explicit fallback boundary
+        return None
     body = VacancyBody(str(vacancy_id), url, description, datetime.now(UTC))
     return cache.put(body)
 
