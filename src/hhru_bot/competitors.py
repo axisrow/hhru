@@ -20,6 +20,7 @@ from .selector_groups import competitor_resume as sel
 
 SEARCH_URL = f"{HH_BASE_URL}/search/resume"
 RENDER_TIMEOUT_MS = 30_000
+FULL_PAGE_RENDER_TIMEOUT_MS = 5_000
 ITEMS_PER_PAGE = 100
 _TOTAL_RESULTS_RE = re.compile(
     r"(?:показали|найдено)\s+([\d\s\u00a0\u202f]+)\s+резюм",
@@ -42,6 +43,7 @@ class CompetitorSearchCoverage:
     available_pages: int | None
     employer_registration_required: bool
     observed_page_size: int | None = None
+    requested_page_size: int = ITEMS_PER_PAGE
 
 
 @dataclass(frozen=True)
@@ -87,11 +89,15 @@ class CompetitorResume:
         return hashlib.sha256(encoded).hexdigest()
 
 
-def build_competitor_search_url(text: str, page_num: int) -> str:
+def build_competitor_search_url(
+    text: str, page_num: int, *, items_per_page: int = ITEMS_PER_PAGE
+) -> str:
     if not text.strip():
         raise ValueError("--text не может быть пустым")
     if page_num < 0:
         raise ValueError("page_num должен быть >= 0")
+    if not 1 <= items_per_page <= ITEMS_PER_PAGE:
+        raise ValueError(f"items_per_page должен быть от 1 до {ITEMS_PER_PAGE}")
     params = {
         "text": text,
         "pos": "full_text",
@@ -100,7 +106,7 @@ def build_competitor_search_url(text: str, page_num: int) -> str:
         "ored_clusters": "true",
         "order_by": "relevance",
         "search_period": "0",
-        "items_on_page": str(ITEMS_PER_PAGE),
+        "items_on_page": str(items_per_page),
         "page": str(page_num),
     }
     return f"{SEARCH_URL}?{urlencode(params)}"
@@ -149,7 +155,11 @@ def available_search_page_count(page: Page, current_page: int) -> int | None:
 
 
 def inspect_search_coverage(
-    page: Page, current_page: int = 0, *, observed_page_size: int | None = None
+    page: Page,
+    current_page: int = 0,
+    *,
+    observed_page_size: int | None = None,
+    requested_page_size: int = ITEMS_PER_PAGE,
 ) -> CompetitorSearchCoverage:
     """Read best-effort coverage metadata from the search page."""
     try:
@@ -165,16 +175,17 @@ def inspect_search_coverage(
         available_pages=available_pages,
         employer_registration_required=_EMPLOYER_REGISTRATION_MARKER in text.casefold(),
         observed_page_size=observed_page_size,
+        requested_page_size=requested_page_size,
     )
 
 
 def coverage_warning(coverage: CompetitorSearchCoverage) -> str | None:
     """Explain when hh.ru exposes fewer cards than its headline result count."""
     warnings: list[str] = []
-    page_size = coverage.observed_page_size or ITEMS_PER_PAGE
-    if coverage.observed_page_size and coverage.observed_page_size < ITEMS_PER_PAGE:
+    page_size = coverage.observed_page_size or coverage.requested_page_size
+    if coverage.observed_page_size and coverage.observed_page_size < coverage.requested_page_size:
         warnings.append(
-            f"запрошено items_on_page={ITEMS_PER_PAGE}, фактически hh.ru вернул "
+            f"запрошено items_on_page={coverage.requested_page_size}, фактически hh.ru вернул "
             f"{coverage.observed_page_size} карточек на первой странице"
         )
     if coverage.total_results is None or coverage.available_pages is None:
@@ -227,7 +238,12 @@ def parse_search_links(
     return result
 
 
-def parse_search_page(page: Page, *, rank_offset: int = 0) -> list[CompetitorSearchCard]:
+def parse_search_page(
+    page: Page,
+    *,
+    rank_offset: int = 0,
+    expected_page_size: int = ITEMS_PER_PAGE,
+) -> list[CompetitorSearchCard]:
     raise_for_antibot(page)
     require_authenticated_page(page)
     links = page.locator(sel.SEARCH_RESULT_LINK)
@@ -242,6 +258,17 @@ def parse_search_page(page: Page, *, rank_offset: int = 0) -> list[CompetitorSea
         raise CompetitorSearchIndeterminate(
             "карточки резюме или подтверждённый empty-state не появились"
         ) from None
+
+    # hh.ru can attach the first 20 links before finishing the requested
+    # 100-card page. Reading count() immediately races that incremental render.
+    # A short wait for the requested last item keeps full pages complete while
+    # still allowing a genuinely short final page after the timeout.
+    try:
+        links.nth(expected_page_size - 1).wait_for(
+            state="attached", timeout=FULL_PAGE_RENDER_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        pass
 
     observed: list[tuple[str, str]] = []
     for index in range(links.count()):

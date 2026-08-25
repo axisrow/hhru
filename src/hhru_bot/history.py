@@ -330,6 +330,7 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     run_id TEXT PRIMARY KEY,
     search_query TEXT NOT NULL,
     max_pages INTEGER NOT NULL,
+    requested_page_size INTEGER NOT NULL DEFAULT 100,
     status TEXT NOT NULL,
     pages_fetched INTEGER NOT NULL DEFAULT 0,
     cards_seen INTEGER NOT NULL DEFAULT 0,
@@ -345,7 +346,8 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     resume_page INTEGER,
     resumed_from_run_id TEXT,
     observed_page_size INTEGER,
-    exit_code INTEGER
+    exit_code INTEGER,
+    cards_seen_completed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_runs_query
     ON competitor_collection_runs(search_query, started_at);
@@ -793,7 +795,23 @@ class History:
             _ensure_column(conn, "competitor_collection_runs", "resume_page", "INTEGER")
             _ensure_column(conn, "competitor_collection_runs", "resumed_from_run_id", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "observed_page_size", "INTEGER")
+            _ensure_column(
+                conn,
+                "competitor_collection_runs",
+                "requested_page_size",
+                "INTEGER NOT NULL DEFAULT 100",
+            )
             _ensure_column(conn, "competitor_collection_runs", "exit_code", "INTEGER")
+            # #660 (Codex review): cards_seen already includes the in-progress
+            # page's cards as soon as it's parsed, before that page's details
+            # are all fetched -- but resume_page still points at that same
+            # unfinished page. resume_rank_offset must exclude that page's
+            # cards (it will be re-parsed from scratch on resume), so it is
+            # computed from cards_seen_completed (cumulative cards as of the
+            # last *completed* page), not from cards_seen. Legacy rows stay
+            # NULL; begin_competitor_collection() falls back to cards_seen for
+            # those (old behavior, unaffected by this fix).
+            _ensure_column(conn, "competitor_collection_runs", "cards_seen_completed", "INTEGER")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.
@@ -2091,7 +2109,12 @@ class History:
     # --- Конкуренты: обезличенные снимки резюме (#578) -------------------------
 
     def begin_competitor_collection(
-        self, search_query: str, max_pages: int, *, resume: bool = False
+        self,
+        search_query: str,
+        max_pages: int,
+        *,
+        requested_page_size: int = 100,
+        resume: bool = False,
     ) -> dict:
         """Recover dead collectors and atomically create a durable owned run (#654)."""
         now_dt = datetime.now()
@@ -2134,9 +2157,9 @@ class History:
             if resume:
                 latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
-                       WHERE search_query=? AND status != 'running'
+                       WHERE search_query=? AND requested_page_size=? AND status != 'running'
                        ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-                    (search_query,),
+                    (search_query, requested_page_size),
                 ).fetchone()
                 if (
                     latest is not None
@@ -2151,21 +2174,43 @@ class History:
                 if checkpoint is not None and checkpoint["observed_page_size"]
                 else None
             )
-            resume_rank_offset = (
-                resume_page * resume_observed_page_size
-                if resume_observed_page_size is not None
-                else 0
-            )
+            resume_rank_offset = 0
+            rank_checkpoint = checkpoint
+            seen_run_ids: set[str] = set()
+            while rank_checkpoint is not None and rank_checkpoint["run_id"] not in seen_run_ids:
+                seen_run_ids.add(rank_checkpoint["run_id"])
+                # #660 (Codex review): cards_seen includes the in-progress
+                # page's cards as soon as they're parsed, before all of that
+                # page's details are fetched -- but resume_page still points
+                # at that same unfinished page, which gets re-parsed from
+                # scratch on resume. Using cards_seen verbatim here would
+                # double-count that page's cards into the rank offset.
+                # cards_seen_completed tracks cards from *completed* pages
+                # only and is the correct offset source; legacy rows (NULL,
+                # predating this column) fall back to cards_seen unchanged.
+                completed = rank_checkpoint["cards_seen_completed"]
+                resume_rank_offset += int(
+                    completed if completed is not None else (rank_checkpoint["cards_seen"] or 0)
+                )
+                previous_run_id = rank_checkpoint["resumed_from_run_id"]
+                if not previous_run_id:
+                    break
+                rank_checkpoint = conn.execute(
+                    "SELECT * FROM competitor_collection_runs WHERE run_id=?",
+                    (previous_run_id,),
+                ).fetchone()
             conn.execute(
                 """INSERT INTO competitor_collection_runs
-                   (run_id, search_query, max_pages, status, started_at, heartbeat_at,
+                   (run_id, search_query, max_pages, requested_page_size, status,
+                    started_at, heartbeat_at,
                     owner_pid, last_started_page, last_completed_page, resume_page,
                     resumed_from_run_id, observed_page_size)
-                   VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
                 (
                     run_id,
                     search_query,
                     max_pages,
+                    requested_page_size,
                     now,
                     now,
                     os.getpid(),
@@ -2183,9 +2228,13 @@ class History:
             "recovered": recovered,
         }
 
-    def start_competitor_collection(self, search_query: str, max_pages: int) -> str:
+    def start_competitor_collection(
+        self, search_query: str, max_pages: int, *, requested_page_size: int = 100
+    ) -> str:
         """Compatibility wrapper for a fresh durable competitor run."""
-        return self.begin_competitor_collection(search_query, max_pages)["run_id"]
+        return self.begin_competitor_collection(
+            search_query, max_pages, requested_page_size=requested_page_size
+        )["run_id"]
 
     def checkpoint_competitor_collection(
         self,
@@ -2199,6 +2248,7 @@ class History:
         last_completed_page: int | None,
         resume_page: int | None,
         observed_page_size: int | None,
+        cards_seen_completed: int | None = None,
     ) -> None:
         """Persist one heartbeat/checkpoint while the collector still owns the run."""
         with self._connect() as conn:
@@ -2206,7 +2256,7 @@ class History:
                 """UPDATE competitor_collection_runs
                    SET pages_fetched=?, cards_seen=?, details_saved=?, details_failed=?,
                        last_started_page=?, last_completed_page=?, resume_page=?,
-                       observed_page_size=?, heartbeat_at=?
+                       observed_page_size=?, cards_seen_completed=?, heartbeat_at=?
                    WHERE run_id=? AND status='running' AND owner_pid=?""",
                 (
                     pages_fetched,
@@ -2217,6 +2267,7 @@ class History:
                     last_completed_page,
                     resume_page,
                     observed_page_size,
+                    cards_seen_completed,
                     datetime.now().isoformat(timespec="seconds"),
                     run_id,
                     os.getpid(),
@@ -2240,6 +2291,7 @@ class History:
         last_started_page: int | None = None,
         last_completed_page: int | None = None,
         observed_page_size: int | None = None,
+        cards_seen_completed: int | None = None,
     ) -> None:
         allowed = {"complete", "limited", "partial", "failed"}
         if status not in allowed:
@@ -2251,7 +2303,7 @@ class History:
                    SET status = ?, pages_fetched = ?, cards_seen = ?, details_saved = ?,
                        details_failed = ?, finished_at = ?, detail = ?, exit_code = ?,
                        resume_page = ?, last_started_page = ?, last_completed_page = ?,
-                       observed_page_size = ?, heartbeat_at = ?
+                       observed_page_size = ?, cards_seen_completed = ?, heartbeat_at = ?
                    WHERE run_id = ? AND status = 'running' AND owner_pid = ?""",
                 (
                     status,
@@ -2266,6 +2318,7 @@ class History:
                     last_started_page,
                     last_completed_page,
                     observed_page_size,
+                    cards_seen_completed,
                     now,
                     run_id,
                     os.getpid(),

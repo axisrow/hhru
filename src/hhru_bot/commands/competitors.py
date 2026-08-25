@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import sqlite3
 import threading
+import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -23,6 +25,13 @@ def _positive(value: str) -> int:
     return parsed
 
 
+def _page_size(value: str) -> int:
+    parsed = _positive(value)
+    if parsed > 100:
+        raise argparse.ArgumentTypeError("значение должно быть <= 100")
+    return parsed
+
+
 def _page_cap_reached(max_pages: int | None, pages_fetched: int, has_next: bool) -> bool:
     return has_next and max_pages is not None and pages_fetched >= max_pages
 
@@ -33,8 +42,68 @@ def _collection_status(*, details_failed: int, limited: bool) -> str:
     return "partial" if details_failed else "complete"
 
 
-def _progress(message: str, *, quiet: bool, level: int = logging.INFO) -> None:
-    if not quiet:
+def _format_duration(seconds: float) -> str:
+    if seconds < 30:
+        return f"{max(0, round(seconds))} с"
+    total_minutes = max(1, round(seconds / 60))
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours} ч {minutes} мин"
+    if hours:
+        return f"{hours} ч"
+    return f"{minutes} мин"
+
+
+def _format_elapsed(seconds: float) -> str:
+    total_seconds = max(0, round(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours} ч")
+    if minutes:
+        parts.append(f"{minutes} мин")
+    parts.append(f"{seconds} с")
+    return " ".join(parts)
+
+
+def _observed_eta(state: dict, *, elapsed: float) -> str | None:
+    processed = state["saved"] + state["failed"]
+    expected = state.get("expected_details")
+    if not expected or processed < 3 or processed >= expected or elapsed <= 0:
+        return None
+    seconds = elapsed / processed * (expected - processed)
+    return (
+        f"осталось~{_format_duration(seconds)} "
+        f"(диапазон {_format_duration(seconds * 0.75)}-{_format_duration(seconds * 1.25)})"
+    )
+
+
+def _throttle_estimate(
+    *,
+    details: int,
+    requested_page_size: int,
+    observed_page_size: int,
+    min_delay: float,
+    max_delay: float,
+) -> str:
+    waits = max(0, details - 1)
+    return (
+        f"запрошено={requested_page_size}/стр., фактически={observed_page_size}/стр., "
+        f"объём~{details} деталей; только паузы троттлинга "
+        f"{_format_duration(waits * min_delay)}-{_format_duration(waits * max_delay)}; "
+        "ETA уточнится по фактической скорости"
+    )
+
+
+def _progress(
+    message: str,
+    *,
+    quiet: bool,
+    level: int = logging.INFO,
+    always: bool = False,
+) -> None:
+    if always or not quiet:
         try:
             print(message, flush=True)
         except BrokenPipeError:
@@ -60,11 +129,13 @@ class _Heartbeat:
         *,
         run_id: str,
         quiet: bool,
+        started_at: float,
     ):
         self.snapshot = snapshot
         self.checkpoint = checkpoint
         self.run_id = run_id
         self.quiet = quiet
+        self.started_at = started_at
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.failure: Exception | None = None
@@ -80,15 +151,18 @@ class _Heartbeat:
                     f"{type(exc).__name__}: {exc}",
                     quiet=self.quiet,
                     level=logging.ERROR,
+                    always=True,
                 )
                 return
             state = self.snapshot()
             page = state["last_started_page"]
             page_label = page + 1 if page is not None else "не начата"
+            eta = _observed_eta(state, elapsed=time.monotonic() - self.started_at)
+            eta_suffix = f", {eta}" if eta else ""
             _progress(
                 f"[HEARTBEAT] run_id={self.run_id} competitors collect жив: "
                 f"страница={page_label}, карточек={state['cards']}, "
-                f"сохранено={state['saved']}, ошибок={state['failed']}",
+                f"сохранено={state['saved']}, ошибок={state['failed']}{eta_suffix}",
                 quiet=self.quiet,
             )
 
@@ -129,6 +203,25 @@ def register(subparsers) -> None:
         action="store_true",
         help="Продолжить последний прерванный запуск того же запроса с checkpoint",
     )
+    collect.add_argument(
+        "--execution-mode",
+        choices=("foreground",),
+        default="foreground",
+        help="Режим выполнения (по умолчанию foreground; background не поддерживается)",
+    )
+    collect.add_argument(
+        "--progress-verbosity",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        help="Поток прогресса: 1 — показывать, 0 — только финал/ошибки (по умолчанию 1)",
+    )
+    collect.add_argument(
+        "--items-per-page",
+        type=_page_size,
+        default=100,
+        help="Запрошенный размер страницы hh.ru (по умолчанию 100; для smoke можно 20)",
+    )
     collect.set_defaults(func=run_collect)
 
     report = commands.add_parser("report", help="Построить локальный отчёт по сохранённой базе")
@@ -162,12 +255,17 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     history = History(args.history)
     throttle = Throttle(config.throttle, history)
     started = history.begin_competitor_collection(
-        query, args.max_pages or 0, resume=bool(getattr(args, "resume", False))
+        query,
+        args.max_pages or 0,
+        requested_page_size=args.items_per_page,
+        resume=bool(getattr(args, "resume", False)),
     )
     run_id = started["run_id"]
     page_num = started["resume_page"]
     rank_offset_base = started["resume_rank_offset"]
-    quiet = getattr(args, "quiet", False)
+    progress_verbosity = 0 if getattr(args, "quiet", False) else args.progress_verbosity
+    quiet = progress_verbosity == 0
+    requested_page_size = args.items_per_page
 
     for recovered in started["recovered"]:
         _progress(
@@ -195,12 +293,20 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     state = {
         "pages": 0,
         "cards": 0,
+        # Cumulative cards from *completed* pages only, kept in sync with
+        # last_completed_page. cards_seen (state["cards"]) already includes
+        # the in-progress page's cards as soon as they're parsed -- if a
+        # checkpoint fires before that page's details finish, resume_page
+        # still points at that same unfinished page, and a resume must not
+        # double-count its cards into the rank offset (#660, Codex review).
+        "cards_completed": 0,
         "saved": 0,
         "failed": 0,
         "last_started_page": None,
         "last_completed_page": None,
         "resume_page": page_num,
         "observed_page_size": started["resume_observed_page_size"],
+        "expected_details": None,
     }
     state_lock = threading.Lock()
     checkpoint_lock = threading.Lock()
@@ -225,6 +331,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                 last_completed_page=current["last_completed_page"],
                 resume_page=current["resume_page"],
                 observed_page_size=current["observed_page_size"],
+                cards_seen_completed=current["cards_completed"],
             )
 
     details_failed = 0
@@ -232,11 +339,16 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     limited = False
     detail_attempts = 0
     coverage = None
+    target_pages: int | None = None
     seen_resume_ids: set[str] = set()
     pages_this_run = 0
+    started_at = time.monotonic()
     _progress(
         f"[START] run_id={run_id} competitors collect: "
+        f"execution_mode={args.execution_mode}, progress_verbosity={progress_verbosity}, "
         f"headless={'да' if args.headless else 'нет'}, "
+        f"запрошено карточек/страницу={requested_page_size}, "
+        f"объём={'до ' + str(args.max_pages) + ' стр.' if args.max_pages else 'до конца выдачи'}, "
         f"лимит страниц={args.max_pages if args.max_pages is not None else 'без лимита'}",
         quiet=quiet,
     )
@@ -256,7 +368,13 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     heartbeat: _Heartbeat | None = None
     try:
         with (
-            _Heartbeat(snapshot, checkpoint, run_id=run_id, quiet=quiet) as heartbeat,
+            _Heartbeat(
+                snapshot,
+                checkpoint,
+                run_id=run_id,
+                quiet=quiet,
+                started_at=started_at,
+            ) as heartbeat,
             launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context,
@@ -268,21 +386,63 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                     state["last_started_page"] = page_num
                     state["resume_page"] = page_num
                 checkpoint()
-                goto_hh(search_page, build_competitor_search_url(query, page_num))
+                goto_hh(
+                    search_page,
+                    build_competitor_search_url(
+                        query, page_num, items_per_page=requested_page_size
+                    ),
+                )
                 cards_before = snapshot()["cards"]
-                cards = parse_search_page(search_page, rank_offset=rank_offset_base + cards_before)
+                cards = parse_search_page(
+                    search_page,
+                    rank_offset=rank_offset_base + cards_before,
+                    expected_page_size=requested_page_size,
+                )
                 pages_this_run += 1
                 with state_lock:
                     state["pages"] += 1
                     state["cards"] += len(cards)
-                    if state["observed_page_size"] is None:
-                        state["observed_page_size"] = len(cards)
+                    state["observed_page_size"] = max(state["observed_page_size"] or 0, len(cards))
                 has_next = has_next_search_page(search_page, page_num)
                 if coverage is None:
                     observed_page_size = snapshot()["observed_page_size"]
                     coverage = inspect_search_coverage(
-                        search_page, page_num, observed_page_size=observed_page_size
+                        search_page,
+                        page_num,
+                        observed_page_size=observed_page_size,
+                        requested_page_size=requested_page_size,
                     )
+                    available_from_here = (
+                        max(1, coverage.available_pages - page_num)
+                        if coverage.available_pages is not None
+                        else None
+                    )
+                    target_pages = args.max_pages
+                    if target_pages is None:
+                        target_pages = available_from_here
+                    elif available_from_here is not None:
+                        target_pages = min(target_pages, available_from_here)
+                    if target_pages is not None and observed_page_size:
+                        expected_details = (
+                            len(cards) + max(0, target_pages - 1) * requested_page_size
+                        )
+                        _progress(
+                            f"[ESTIMATE] run_id={run_id} "
+                            + _throttle_estimate(
+                                details=expected_details,
+                                requested_page_size=requested_page_size,
+                                observed_page_size=observed_page_size,
+                                min_delay=config.throttle.min_delay_seconds,
+                                max_delay=config.throttle.max_delay_seconds,
+                            ),
+                            quiet=quiet,
+                        )
+                if target_pages is not None:
+                    with state_lock:
+                        state["expected_details"] = (
+                            state["cards"]
+                            + max(0, target_pages - pages_this_run) * requested_page_size
+                        )
 
                 for card in cards:
                     heartbeat.raise_if_failed()
@@ -306,12 +466,22 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                             search_query=query,
                             search_rank=card.rank,
                         )
-                    except (CompetitorResumeIndeterminate, PlaywrightError, ValueError) as exc:
+                    except (
+                        CompetitorResumeIndeterminate,
+                        PlaywrightError,
+                        sqlite3.IntegrityError,
+                        ValueError,
+                    ) as exc:
+                        if isinstance(exc, sqlite3.IntegrityError) and (
+                            "contact-like competitor skill" not in str(exc)
+                        ):
+                            raise
                         details_failed += 1
                         with state_lock:
                             state["failed"] = details_failed
                         _progress(
-                            f"[WARN] run_id={run_id} резюме rank={card.rank} не сохранено: {exc}",
+                            f"[WARN] run_id={run_id} резюме rank={card.rank} не сохранено: "
+                            f"{type(exc).__name__}: {exc}",
                             quiet=quiet,
                             level=logging.WARNING,
                         )
@@ -327,13 +497,19 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
 
                 with state_lock:
                     state["last_completed_page"] = page_num
+                    state["cards_completed"] = state["cards"]
                     state["resume_page"] = page_num + 1 if has_next else None
+                    if not has_next or _page_cap_reached(args.max_pages, pages_this_run, has_next):
+                        state["expected_details"] = state["saved"] + state["failed"]
                 checkpoint()
                 current = snapshot()
+                eta = _observed_eta(current, elapsed=time.monotonic() - started_at)
+                eta_suffix = f", {eta}" if eta else ""
                 _progress(
                     f"[PROGRESS] run_id={run_id} страница={page_num + 1}, "
                     f"карточек={current['cards']}, деталей={current['saved'] + current['failed']}, "
-                    f"новых/обновлено={new + updated}, ошибок={current['failed']}",
+                    f"новых/обновлено={new + updated}, ошибок={current['failed']}"
+                    f"{eta_suffix}",
                     quiet=quiet,
                 )
                 if not has_next:
@@ -349,6 +525,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             signal.signal(signum, previous)
 
     current = snapshot()
+    elapsed_label = _format_elapsed(time.monotonic() - started_at)
     if caught is not None:
         status = (
             "partial"
@@ -379,6 +556,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             last_started_page=current["last_started_page"],
             last_completed_page=current["last_completed_page"],
             observed_page_size=current["observed_page_size"],
+            cards_seen_completed=current["cards_completed"],
         )
         last_page = (
             current["last_completed_page"] + 1
@@ -389,9 +567,10 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             f"[STOP] run_id={run_id} код завершения={code}; checkpoint: "
             f"завершённая страница={last_page}, страниц={current['pages']}, "
             f"карточек={current['cards']}, сохранено={current['saved']}, "
-            f"ошибок={current['failed']}; причина={detail}",
+            f"ошибок={current['failed']}, время={elapsed_label}; причина={detail}",
             quiet=quiet,
             level=logging.ERROR if code == 1 else logging.WARNING,
+            always=True,
         )
         if isinstance(caught, KeyboardInterrupt):
             return CommandExitCode.SIGINT
@@ -402,7 +581,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         raise caught
 
     status = _collection_status(details_failed=details_failed, limited=limited)
-    detail = "limited_by_max_pages=1" if limited else None
+    detail = f"limited_by_max_pages={args.max_pages}" if limited else None
     exit_code = 1 if details_failed else 0
     history.finish_competitor_collection(
         run_id,
@@ -417,9 +596,12 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         last_started_page=current["last_started_page"],
         last_completed_page=current["last_completed_page"],
         observed_page_size=current["observed_page_size"],
+        cards_seen_completed=current["cards_completed"],
     )
     total_results = coverage.total_results if coverage else None
     available_pages = coverage.available_pages if coverage else None
+    if coverage is not None:
+        coverage = replace(coverage, observed_page_size=current["observed_page_size"])
     total_label = total_results if total_results is not None else "не подтверждено"
     pages_label = available_pages if available_pages is not None else "не подтверждено"
     page_size_label = current["observed_page_size"] or "не подтверждено"
@@ -428,8 +610,10 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         f"доступно страниц {pages_label}, фактически карточек/страницу {page_size_label}, "
         f"просмотрено страниц {current['pages']}, увидено карточек {current['cards']}, "
         f"сохранено уникальных {current['saved']}, новых {new}, обновлено {updated}, "
-        f"без изменений {unchanged}, ошибок {current['failed']}, код завершения={exit_code}",
+        f"без изменений {unchanged}, ошибок {current['failed']}, "
+        f"код завершения={exit_code}, время={elapsed_label}",
         quiet=quiet,
+        always=True,
     )
     warning = coverage_warning(coverage) if coverage else None
     if warning:

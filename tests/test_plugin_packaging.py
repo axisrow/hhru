@@ -65,3 +65,16 @@ def test_all_codex_skills_request_browser_permission_before_first_launch():
         assert "sandbox_permissions=require_escalated" in text, path
         assert "перв" in text.casefold(), path
         assert "elevated-разрешение" in text.casefold(), path
+
+
+def test_hhru_skill_keeps_long_commands_observable_until_exit():
+    root = _repo_root()
+    text = (root / "skills" / "hhru" / "SKILL.md").read_text()
+
+    assert "run_in_background" in text
+    assert "--execution-mode foreground" in text
+    assert "--progress-verbosity 1" in text
+    assert "не реже одного раза в 60 секунд" in text
+    assert "пока команда не вернёт exit code" in text
+    assert "не говори, что процесс" in text
+    assert "дождись `[STOP]`" in text

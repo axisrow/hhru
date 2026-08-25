@@ -62,6 +62,9 @@ def test_search_url_is_keyword_only_and_page_numbered():
     assert "items_on_page=100" in url
     assert "resume=" not in url
 
+    smoke_url = build_competitor_search_url("AI Engineer", 0, items_per_page=20)
+    assert "items_on_page=20" in smoke_url
+
 
 def test_search_result_count_parses_thin_space_and_coverage_warning():
     text = "Показали 12 368 резюме — остальные можно увидеть после регистрации работодателя"

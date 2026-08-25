@@ -234,6 +234,29 @@ def test_competitors_collect_and_report_arguments():
     assert collect.text == "AI"
     assert collect.max_pages is None
     assert collect.resume is False
+    assert collect.execution_mode == "foreground"
+    assert collect.progress_verbosity == 1
+    assert collect.items_per_page == 100
+
+    explicit = parser.parse_args(
+        [
+            "competitors",
+            "collect",
+            "--text",
+            "AI",
+            "--max-pages",
+            "5",
+            "--execution-mode",
+            "foreground",
+            "--progress-verbosity",
+            "0",
+            "--items-per-page",
+            "20",
+        ]
+    )
+    assert explicit.execution_mode == "foreground"
+    assert explicit.progress_verbosity == 0
+    assert explicit.items_per_page == 20
 
     resumed = parser.parse_args(["competitors", "collect", "--text", "AI", "--resume"])
     assert resumed.resume is True
@@ -250,6 +273,7 @@ def test_competitors_collect_and_report_arguments():
         ["competitors", "collect"],
         ["competitors", "collect", "--text", "AI", "--max-pages", "0"],
         ["competitors", "report", "--top", "0"],
+        ["competitors", "collect", "--text", "AI", "--items-per-page", "101"],
     ],
 )
 def test_competitors_rejects_missing_or_nonpositive_args(argv):
