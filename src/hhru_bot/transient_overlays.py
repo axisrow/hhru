@@ -28,10 +28,18 @@ _SCRIPT = r"""
   const enclosing = (el) => el.closest(candidateSelector);
   const schedule = (overlay) => {
     if (!overlay || pending.has(overlay)) return;
-    const state = {attempts: 0, deadline: Date.now() + 5000, timer: null};
+    const state = {attempts: 0, deadline: Date.now() + 5000, timer: null, evidence: null};
     pending.set(overlay, state);
+    const finish = () => {
+      if (state.evidence) window[key].push(state.evidence);
+      pending.delete(overlay);
+    };
     const retry = () => {
-      if (!overlay.isConnected || Date.now() > state.deadline || state.attempts >= 12) {
+      if (!overlay.isConnected) {
+        finish();
+        return;
+      }
+      if (Date.now() > state.deadline || state.attempts >= 12) {
         pending.delete(overlay);
         return;
       }
@@ -47,6 +55,10 @@ _SCRIPT = r"""
             '[data-qa="notification-close"] button[aria-label="Удалить"]'
           );
       if (!button) {
+        if (state.evidence) {
+          finish();
+          return;
+        }
         state.timer = setTimeout(retry, 100 + state.attempts * 100);
         return;
       }
@@ -55,6 +67,7 @@ _SCRIPT = r"""
       const label = button.getAttribute('aria-label');
       const evidence = {text: text.slice(0, 500), html: overlay.outerHTML.slice(0, 12000),
         selector: qa ? `[data-qa="${qa}"]` : (label ? `[aria-label="${label}"]` : null)};
+      state.evidence = evidence;
       button.click();
       // SSR can expose a control before its React handler is hydrated. Only
       // report success after the exact overlay/control positively disappears.
@@ -62,8 +75,7 @@ _SCRIPT = r"""
         '[data-qa="cookies-policy-informer-accept"]'
       ) ? '[data-qa="cookies-policy-informer-accept"]' :
         '[data-qa="notification-close"] button[aria-label="Удалить"]')) {
-        window[key].push(evidence);
-        pending.delete(overlay);
+        finish();
         return;
       }
       state.timer = setTimeout(retry, 100 + state.attempts * 150);

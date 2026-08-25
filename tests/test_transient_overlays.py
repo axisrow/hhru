@@ -39,7 +39,7 @@ def test_observer_retries_ssr_hydration_and_rejects_unsafe_notification() -> Non
                 shell.setAttribute('data-qa', 'notification notification_info');
                 const close = document.createElement('div');
                 const button = document.createElement('button');
-                button.onclick = () => shell.remove();
+                button.onclick = () => setTimeout(() => shell.remove(), 50);
                 close.append(button);
                 shell.append(close);
                 setTimeout(() => {
