@@ -385,6 +385,75 @@ def test_upstream_refresh_preserves_explicit_candidate_decision():
     assert refreshed[0]["target"] == "apply_form.APPLY_SUBMIT_BUTTON"
 
 
+def test_changed_upstream_candidate_provenance_invalidates_verification():
+    selector = '[data-qa="vacancy-response-submit-popup"]'
+    previous = {
+        "value": selector,
+        "references": ["steev", "tgeruzov"],
+        "sources": {"steev": [{"file": "old.js", "line": 1}]},
+        "decision": "reject",
+        "verification": "contract_tested",
+        "evidence": {"source": "old", "note": "reviewed"},
+        "last_verified_at": "2026-08-25",
+        "verified_by": "human",
+    }
+    catalog = {
+        "references": {
+            "steev": {"commit": "new-steev"},
+            "tgeruzov": {"commit": "new-tgeruzov"},
+        },
+        "upstream_consensus": [
+            {
+                "value": selector,
+                "references": ["steev", "tgeruzov"],
+                "sources": {"steev": [{"file": "new.js", "line": 2}]},
+                "decision": "reject",
+                "verification": "contract_tested",
+                "evidence": {"source": "old", "note": "reviewed"},
+                "last_verified_at": "2026-08-25",
+                "verified_by": "human",
+            }
+        ],
+    }
+
+    contracts._invalidate_changed_candidate_verification(
+        catalog, [previous], {"steev": False, "tgeruzov": True}
+    )
+
+    row = catalog["upstream_consensus"][0]
+    assert row["decision"] == "reject"
+    assert row["verification"] == "unverified"
+    assert row["verified_by"] == "ci"
+    assert row["evidence"]["reference_commits"] == {
+        "steev": "new-steev",
+        "tgeruzov": "new-tgeruzov",
+    }
+
+
+def test_bootstrap_refuses_unresolved_apply_response_candidates(monkeypatch, capsys, tmp_path):
+    unresolved = {
+        "value": '[data-qa="vacancy-response-submit-popup"]',
+        "references": ["steev", "tgeruzov"],
+        "sources": {},
+    }
+    monkeypatch.setattr(
+        contracts,
+        "parse_args",
+        lambda: SimpleNamespace(command="bootstrap", reference_root=tmp_path, live_root=tmp_path),
+    )
+    monkeypatch.setattr(
+        contracts,
+        "build_map",
+        lambda *_args, **_kwargs: (
+            {"upstream_consensus": [unresolved], "selectors": {}},
+            {},
+        ),
+    )
+
+    assert contracts.main() == 1
+    assert "bootstrap refused" in capsys.readouterr().err
+
+
 def test_python_source_key_does_not_depend_on_line_number(tmp_path):
     path = tmp_path / "reference.py"
     path.write_text(
