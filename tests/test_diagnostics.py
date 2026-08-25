@@ -13,6 +13,8 @@ def test_redaction_adversarial():
     out = redact(s)
     assert "abc" not in out and "token123" not in out and "+7" not in out
     assert "a@b.example" not in out and "private words" not in out
+    assert "sid=abc" not in redact("Cookie: sid=abc; csrftoken=def")
+    assert "credential" not in redact("Authorization: Bearer credential")
 
 
 def test_export_is_deterministic_and_dom_allowlist(tmp_path):
@@ -25,4 +27,5 @@ def test_export_is_deterministic_and_dom_allowlist(tmp_path):
     b = build_bundle(db, run_id="r1", log_path=tmp_path / "missing", dom_dir=tmp_path)
     assert a == b
     assert "class" not in json.dumps(a) and "a@b.io" not in json.dumps(a)
+    assert "aria-label" not in json.dumps(a) and "href" not in json.dumps(a)
     assert a["snapshots"][0]["nodes"][0]["data-qa"] == "ok"

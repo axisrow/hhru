@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-_SECRET = re.compile(r"(?i)(cookie|authorization|token|password|secret)\s*[:=]\s*[^\s,;]+")
+_SECRET = re.compile(r"(?i)(cookie|authorization|token|password|secret)\s*[:=]\s*[^\r\n]*")
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _PHONE = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{8,}\d)(?!\w)")
 _MESSAGE = re.compile(
@@ -30,7 +30,7 @@ def _safe_dom(path: Path) -> dict[str, Any]:
         return {"path": path.name, "available": False}
     text = path.read_text(encoding="utf-8", errors="replace")
     tags = re.findall(r"<([a-z][\w-]*)([^>]*)>", text, re.I)
-    allowed = {"data-qa", "aria-label", "role", "href"}
+    allowed = {"data-qa", "role"}
     nodes = []
     for tag, attrs in tags[:100]:
         item = {"tag": tag.lower()}
@@ -58,7 +58,10 @@ def build_bundle(
         row = db.execute(q, (run_id,) if run_id else ()).fetchone()
         if row is None:
             raise ValueError(f"command run not found: {run_id or 'latest'}")
-        run = dict(row)
+        run = {
+            key: redact(str(value)) if value is not None else None
+            for key, value in dict(row).items()
+        }
     lines = []
     if log_path and log_path.is_file():
         lines = [
