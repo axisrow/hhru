@@ -62,6 +62,7 @@ def test_lock_covers_all_hhru_write_commands():
         "config",
         "backup",
         "restore",
+        "blacklist",
     }
 
 

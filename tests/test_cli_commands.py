@@ -128,6 +128,7 @@ def test_all_commands_registered():
         "restore",
         "resume-views",
         "review",
+        "blacklist",
     }
 
 
@@ -193,6 +194,7 @@ def test_register_commands_returns_names():
         "backup",
         "resume_views",
         "review",
+        "blacklist",
     }
 
 
