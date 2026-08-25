@@ -143,6 +143,12 @@ def test_success_via_fallback_marker():
     assert success.wait_success_confirmation(page) is True
 
 
+def test_success_via_current_magritte_marker():
+    """The current response popup exposes the Magritte success attachment."""
+    page = _FakePage(markers={"[data-qa='responded-success-attach-cover-letter']"})
+    assert success.wait_success_confirmation(page) is True
+
+
 def test_success_via_text():
     page = _FakePage(success_texts={"Отклик отправлен"})
     assert success.wait_success_confirmation(page) is True
