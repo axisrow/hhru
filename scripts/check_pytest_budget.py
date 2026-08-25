@@ -17,9 +17,8 @@ from pathlib import Path
 # 143s run with zero failing tests while local wall time stayed ~10s. That is
 # why the threshold was escalated 20 -> 30 -> 90 -> 240 fix-by-fix.
 #
-# 60s is the middle ground: a real regression (an accidental O(n^2), a hung
-# fixture) blows past it by multiples and is caught far earlier than 240s would
-# catch it, while ordinary runner variance stays under it. The gate still
+# 240s accommodates ordinary shared-runner variance while still catching a
+# real regression (an accidental O(n^2), a hung fixture). The gate still
 # measures runner noise rather than a property of the code — that design flaw
 # is tracked in #438, not worked around here.
 SUITE_BUDGET_SECONDS = 240.0

@@ -29,6 +29,11 @@ def register(subparsers) -> None:
     parser.add_argument(
         "--template", type=str, help="Текст ответа (по умолчанию cover_letter_default)"
     )
+    parser.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Сгенерировать и сохранить draft по входящему сообщению (без отправки)",
+    )
     parser.add_argument("--force", action="store_true", help="Подтвердить боевой запуск")
     parser.set_defaults(func=run)
 
@@ -87,6 +92,9 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
+        refs_by_topic = {}
+        for ref in topic_list:
+            refs_by_topic.setdefault(ref.topic_id, []).append(ref)
         # #200: SSR отдаёт resumeId для каждой переписки (проверено на живой
         # сессии 2026-08-16, 7/7). Отдельный словарь, а не расширение refs:
         # read_chat принимает Mapping[str, str] topic→chat_id, и менять его
@@ -95,6 +103,18 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         for candidate in candidates:
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
+            live_resume_id = resume_by_topic.get(topic)
+            if getattr(args, "suggest", False):
+                live_refs = [
+                    ref
+                    for ref in refs_by_topic.get(topic, [])
+                    if ref.vacancy_id == str(candidate["vacancy_id"]) and ref.resume_id is not None
+                ]
+                if len(live_refs) != 1:
+                    print(f"[skip] {label} — ambiguous live vacancy/resume mapping")
+                    progress.skipped_count += 1
+                    continue
+                live_resume_id = live_refs[0].resume_id
             chat = read_chat(page, topic, refs)
             if chat is not None and is_robot_questionnaire(chat.conversation or (chat,)):
                 history.mark_robot_questionnaire(
@@ -133,6 +153,41 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — уже отвечали на это сообщение")
                 progress.skipped_count += 1
                 continue
+            if getattr(args, "suggest", False):
+                from ..ai.llm_client import LLMClient
+                from ..reply_suggestions import ReplyContext, suggest
+
+                inbound = chat.conversation[-1] if chat.conversation else chat
+                try:
+                    letter = suggest(
+                        [
+                            ReplyContext(
+                                topic=topic,
+                                inbound_marker=chat.inbound_marker or "",
+                                inbound_text=inbound.text,
+                                vacancy_id=str(candidate["vacancy_id"]),
+                                vacancy_title=str(candidate["title"]),
+                                employer=str(candidate.get("employer") or ""),
+                                resume_id=resume_by_topic.get(topic),
+                            )
+                        ],
+                        LLMClient(config.ai),
+                    )
+                    history.save_reply_draft(
+                        topic=topic,
+                        inbound_marker=chat.inbound_marker or "",
+                        vacancy_id=str(candidate["vacancy_id"]),
+                        resume_id=live_resume_id,
+                        message=letter,
+                    )
+                    print(f"[DRAFT] {label}\n    Ответ:\n    {letter}")
+                    progress.skipped_count += 1
+                    continue
+                except Exception as exc:
+                    print(f"[FAIL] {label} — suggestion не создан: {exc}")
+                    progress.failed_count += 1
+                    failed = True
+                    continue
             letter = _letter(template, candidate)
             progress.begin_attempt()
             inbound_marker = chat.inbound_marker or ""
@@ -163,7 +218,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                         topic,
                         inbound_marker,
                         vacancy_id=str(candidate["vacancy_id"]),
-                        resume_id=resume_by_topic.get(topic),
+                        resume_id=live_resume_id,
                         status="failed",
                         reason=reason,
                         run_id=progress.run_id,
@@ -312,8 +367,10 @@ def run(args: argparse.Namespace):
     if max_pages < 1:
         print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
         sys.exit(1)
-    if not args.dry_run and not confirm_write(
-        args.force, prompt="Ответить работодателям в выбранных чатах?"
+    if (
+        not args.dry_run
+        and not getattr(args, "suggest", False)
+        and not confirm_write(args.force, prompt="Ответить работодателям в выбранных чатах?")
     ):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "

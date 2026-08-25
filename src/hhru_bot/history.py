@@ -30,6 +30,15 @@ logger = logging.getLogger("hhru_bot.history")
 # применяет SCHEMA идемпотентно при каждом открытии — IF NOT EXISTS гарантирует,
 # что повторный запуск на существующей базе не падает и не трогает данные.
 SCHEMA = """\
+CREATE TABLE IF NOT EXISTS reply_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL, inbound_marker TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL, resume_id TEXT,
+    message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reply_drafts_topic_marker
+    ON reply_drafts(topic, inbound_marker);
 -- actions — журнал откликов/поднятий резюме (append-only).
 CREATE TABLE IF NOT EXISTS actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3228,6 +3237,29 @@ class History:
                 (topic, inbound_marker),
             ).fetchone()
             return row is not None
+
+    def save_reply_draft(
+        self,
+        *,
+        topic: str,
+        inbound_marker: str,
+        vacancy_id: str,
+        resume_id: str | None,
+        message: str,
+    ) -> int:
+        """Persist a human-reviewable suggestion; this never sends anything."""
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO reply_drafts
+                (topic,inbound_marker,vacancy_id,resume_id,message,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?) ON CONFLICT(topic,inbound_marker) DO UPDATE SET
+                message=excluded.message, vacancy_id=excluded.vacancy_id,
+                resume_id=excluded.resume_id, updated_at=excluded.updated_at,
+                status='draft'""",
+                (topic, inbound_marker, vacancy_id, resume_id, message, now, now),
+            )
+            return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
     def reply_candidates(self, limit: int | None = None) -> list[dict]:
         """Return account-wide chat candidates using only local history.
