@@ -40,6 +40,7 @@ class CompetitorSearchCoverage:
     total_results: int | None
     available_pages: int | None
     employer_registration_required: bool
+    observed_page_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -146,7 +147,9 @@ def available_search_page_count(page: Page, current_page: int) -> int | None:
     return None
 
 
-def inspect_search_coverage(page: Page, current_page: int = 0) -> CompetitorSearchCoverage:
+def inspect_search_coverage(
+    page: Page, current_page: int = 0, *, observed_page_size: int | None = None
+) -> CompetitorSearchCoverage:
     """Read best-effort coverage metadata from the search page."""
     try:
         text = page.locator(sel.SEARCH_MAIN).inner_text()
@@ -160,26 +163,35 @@ def inspect_search_coverage(page: Page, current_page: int = 0) -> CompetitorSear
         total_results=parse_search_result_count(text),
         available_pages=available_pages,
         employer_registration_required=_EMPLOYER_REGISTRATION_MARKER in text.casefold(),
+        observed_page_size=observed_page_size,
     )
 
 
 def coverage_warning(coverage: CompetitorSearchCoverage) -> str | None:
     """Explain when hh.ru exposes fewer cards than its headline result count."""
+    warnings: list[str] = []
+    page_size = coverage.observed_page_size or ITEMS_PER_PAGE
+    if coverage.observed_page_size and coverage.observed_page_size < ITEMS_PER_PAGE:
+        warnings.append(
+            f"запрошено items_on_page={ITEMS_PER_PAGE}, фактически hh.ru вернул "
+            f"{coverage.observed_page_size} карточек на первой странице"
+        )
     if coverage.total_results is None or coverage.available_pages is None:
-        return None
-    visible_capacity = coverage.available_pages * ITEMS_PER_PAGE
+        return "; ".join(warnings) or None
+    visible_capacity = coverage.available_pages * page_size
     if coverage.total_results <= visible_capacity:
-        return None
+        return "; ".join(warnings) or None
     suffix = (
         "; остальные hh.ru показывает после регистрации работодателя"
         if coverage.employer_registration_required
         else ""
     )
-    return (
+    warnings.append(
         f"hh.ru сообщает {coverage.total_results} резюме, но текущей сессии "
         f"доступно не более {visible_capacity} "
-        f"({coverage.available_pages} стр. x {ITEMS_PER_PAGE}){suffix}"
+        f"({coverage.available_pages} стр. x {page_size}){suffix}"
     )
+    return "; ".join(warnings)
 
 
 def _resume_identity(href: str) -> tuple[str, str] | None:

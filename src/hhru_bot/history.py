@@ -320,7 +320,15 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     details_failed INTEGER NOT NULL DEFAULT 0,
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    detail TEXT
+    detail TEXT,
+    owner_pid INTEGER,
+    heartbeat_at TEXT,
+    last_started_page INTEGER,
+    last_completed_page INTEGER,
+    resume_page INTEGER,
+    resumed_from_run_id TEXT,
+    observed_page_size INTEGER,
+    exit_code INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_runs_query
     ON competitor_collection_runs(search_query, started_at);
@@ -754,6 +762,17 @@ class History:
             _ensure_column(conn, "actions", "run_id", "TEXT")
             _ensure_column(conn, "actions", "reason_code", "TEXT")
             _ensure_column(conn, "command_runs", "owner_pid", "INTEGER")
+            # #654: competitor collection predates durable ownership/checkpoints.
+            # Existing rows stay NULL and are handled with the same legacy grace
+            # window as command_runs before they can be reclaimed.
+            _ensure_column(conn, "competitor_collection_runs", "owner_pid", "INTEGER")
+            _ensure_column(conn, "competitor_collection_runs", "heartbeat_at", "TEXT")
+            _ensure_column(conn, "competitor_collection_runs", "last_started_page", "INTEGER")
+            _ensure_column(conn, "competitor_collection_runs", "last_completed_page", "INTEGER")
+            _ensure_column(conn, "competitor_collection_runs", "resume_page", "INTEGER")
+            _ensure_column(conn, "competitor_collection_runs", "resumed_from_run_id", "TEXT")
+            _ensure_column(conn, "competitor_collection_runs", "observed_page_size", "INTEGER")
+            _ensure_column(conn, "competitor_collection_runs", "exit_code", "INTEGER")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.
@@ -2050,18 +2069,122 @@ class History:
 
     # --- Конкуренты: обезличенные снимки резюме (#578) -------------------------
 
-    def start_competitor_collection(self, search_query: str, max_pages: int) -> str:
-        """Create a durable run row before opening the first search page."""
+    def begin_competitor_collection(
+        self, search_query: str, max_pages: int, *, resume: bool = False
+    ) -> dict:
+        """Recover dead collectors and atomically create a durable owned run (#654)."""
+        now_dt = datetime.now()
+        now = now_dt.isoformat(timespec="seconds")
         run_id = str(uuid.uuid4())
-        now = datetime.now().isoformat(timespec="seconds")
+        recovered: list[dict] = []
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            running = conn.execute(
+                """SELECT run_id, search_query, owner_pid, started_at, heartbeat_at,
+                          pages_fetched, cards_seen, details_saved, details_failed,
+                          last_started_page, last_completed_page, resume_page
+                   FROM competitor_collection_runs WHERE status='running'"""
+            ).fetchall()
+            for row in running:
+                if _row_is_live(row, now=now_dt):
+                    raise CommandRunBusy(row["run_id"], "competitors collect", row["owner_pid"])
+                had_progress = bool(
+                    row["pages_fetched"]
+                    or row["cards_seen"]
+                    or row["details_saved"]
+                    or row["details_failed"]
+                    or row["last_started_page"] is not None
+                )
+                status = "partial" if had_progress else "failed"
+                heartbeat = row["heartbeat_at"] or "отсутствует"
+                detail = (
+                    "owner process exited without finalization; "
+                    f"owner_pid={row['owner_pid']}; last_heartbeat={heartbeat}"
+                )
+                conn.execute(
+                    """UPDATE competitor_collection_runs
+                       SET status=?, finished_at=?, exit_code=NULL, detail=?
+                       WHERE run_id=? AND status='running'""",
+                    (status, now, detail[:1000], row["run_id"]),
+                )
+                recovered.append({**dict(row), "status": status, "detail": detail})
+
+            checkpoint = None
+            if resume:
+                checkpoint = conn.execute(
+                    """SELECT * FROM competitor_collection_runs
+                       WHERE search_query=? AND status IN ('partial', 'failed', 'limited')
+                         AND resume_page IS NOT NULL
+                       ORDER BY started_at DESC LIMIT 1""",
+                    (search_query,),
+                ).fetchone()
+            resume_page = int(checkpoint["resume_page"]) if checkpoint is not None else 0
+            resumed_from = checkpoint["run_id"] if checkpoint is not None else None
             conn.execute(
                 """INSERT INTO competitor_collection_runs
-                   (run_id, search_query, max_pages, status, started_at)
-                   VALUES (?, ?, ?, 'running', ?)""",
-                (run_id, search_query, max_pages, now),
+                   (run_id, search_query, max_pages, status, started_at, heartbeat_at,
+                    owner_pid, last_started_page, last_completed_page, resume_page,
+                    resumed_from_run_id)
+                   VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?)""",
+                (
+                    run_id,
+                    search_query,
+                    max_pages,
+                    now,
+                    now,
+                    os.getpid(),
+                    resume_page,
+                    resumed_from,
+                ),
             )
-        return run_id
+        return {
+            "run_id": run_id,
+            "resume_page": resume_page,
+            "resumed_from_run_id": resumed_from,
+            "recovered": recovered,
+        }
+
+    def start_competitor_collection(self, search_query: str, max_pages: int) -> str:
+        """Compatibility wrapper for a fresh durable competitor run."""
+        return self.begin_competitor_collection(search_query, max_pages)["run_id"]
+
+    def checkpoint_competitor_collection(
+        self,
+        run_id: str,
+        *,
+        pages_fetched: int,
+        cards_seen: int,
+        details_saved: int,
+        details_failed: int,
+        last_started_page: int | None,
+        last_completed_page: int | None,
+        resume_page: int | None,
+        observed_page_size: int | None,
+    ) -> None:
+        """Persist one heartbeat/checkpoint while the collector still owns the run."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE competitor_collection_runs
+                   SET pages_fetched=?, cards_seen=?, details_saved=?, details_failed=?,
+                       last_started_page=?, last_completed_page=?, resume_page=?,
+                       observed_page_size=?, heartbeat_at=?
+                   WHERE run_id=? AND status='running' AND owner_pid=?""",
+                (
+                    pages_fetched,
+                    cards_seen,
+                    details_saved,
+                    details_failed,
+                    last_started_page,
+                    last_completed_page,
+                    resume_page,
+                    observed_page_size,
+                    datetime.now().isoformat(timespec="seconds"),
+                    run_id,
+                    os.getpid(),
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError(f"running competitor collection не найден: {run_id}")
 
     def finish_competitor_collection(
         self,
@@ -2073,6 +2196,11 @@ class History:
         details_saved: int,
         details_failed: int,
         detail: str | None = None,
+        exit_code: int | None = None,
+        resume_page: int | None = None,
+        last_started_page: int | None = None,
+        last_completed_page: int | None = None,
+        observed_page_size: int | None = None,
     ) -> None:
         allowed = {"complete", "limited", "partial", "failed"}
         if status not in allowed:
@@ -2082,8 +2210,10 @@ class History:
             cur = conn.execute(
                 """UPDATE competitor_collection_runs
                    SET status = ?, pages_fetched = ?, cards_seen = ?, details_saved = ?,
-                       details_failed = ?, finished_at = ?, detail = ?
-                   WHERE run_id = ? AND status = 'running'""",
+                       details_failed = ?, finished_at = ?, detail = ?, exit_code = ?,
+                       resume_page = ?, last_started_page = ?, last_completed_page = ?,
+                       observed_page_size = ?, heartbeat_at = ?
+                   WHERE run_id = ? AND status = 'running' AND owner_pid = ?""",
                 (
                     status,
                     pages_fetched,
@@ -2092,11 +2222,32 @@ class History:
                     details_failed,
                     now,
                     detail,
+                    exit_code,
+                    resume_page,
+                    last_started_page,
+                    last_completed_page,
+                    observed_page_size,
+                    now,
                     run_id,
+                    os.getpid(),
                 ),
             )
             if cur.rowcount != 1:
                 raise ValueError(f"running competitor collection не найден: {run_id}")
+
+    def competitor_collection_runs(self, search_query: str | None = None) -> list[dict]:
+        with self._connect() as conn:
+            if search_query is None:
+                rows = conn.execute(
+                    "SELECT * FROM competitor_collection_runs ORDER BY started_at"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM competitor_collection_runs
+                       WHERE search_query=? ORDER BY started_at""",
+                    (search_query,),
+                ).fetchall()
+        return [dict(row) for row in rows]
 
     def upsert_competitor_resume(
         self,

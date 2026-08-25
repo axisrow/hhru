@@ -88,6 +88,22 @@ def test_coverage_warning_is_absent_when_all_reported_results_fit():
     assert coverage_warning(coverage) is None
 
 
+def test_coverage_uses_observed_twenty_cards_not_requested_hundred():
+    warning = coverage_warning(
+        CompetitorSearchCoverage(
+            total_results=12_368,
+            available_pages=50,
+            employer_registration_required=False,
+            observed_page_size=20,
+        )
+    )
+    assert warning is not None
+    assert "запрошено items_on_page=100" in warning
+    assert "фактически hh.ru вернул 20" in warning
+    assert "1000" in warning
+    assert "50 стр. x 20" in warning
+
+
 def test_parse_search_links_normalizes_url_deduplicates_and_keeps_rank():
     rows = [
         ("/resume/abc?query=AI", " AI Engineer "),
