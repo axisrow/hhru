@@ -22,11 +22,13 @@ _SCRIPT = r"""
   const safe = (el) => {
     const text = (el.innerText || '').trim();
     const cookie = /cookie|куки|файлов cookie/i.test(text);
-    const notice = /резюме доставлено|уведомлен|notification|toast/i.test(text);
+    const notice = /резюме доставлено|уведомлен|notification|toast/i.test(text)
+      || el.matches('[data-qa^="notification"]');
     if (!cookie && !notice) return;
-    if (/captcha|подтверд|анкета|отклик|сохранить|status/i.test(text) && !cookie) return;
+    if (/captcha|подтверд|анкета|отклик|сохранить|status/i.test(text)
+      && !cookie && !el.matches('[data-qa^="notification"]')) return;
     const button = [...el.querySelectorAll('button,[role="button"],[aria-label]')]
-      .find(b => /close|dismiss|закрыть|скрыть|не сейчас|принять|соглас/i.test(
+      .find(b => /close|dismiss|закрыть|скрыть|не сейчас|принять|соглас|удалить/i.test(
         `${b.getAttribute('aria-label') || ''} ${b.innerText || ''}`));
     if (!button) return;
     const qa = button.getAttribute('data-qa');

@@ -5260,3 +5260,63 @@ binding_definitions:
   selectors.LOGIN_EMAIL_INPUT:
     yamakayama:
     - app/parsers/hh_login.py::module.SEL_LOGIN#0::0
+  transient_overlays.COOKIE_BANNER:
+    value: "[data-qa='cookies-policy-informer']"
+    criticality: dismiss
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_navigation
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      note: Visible cookie banner; dedicated dismiss control is [data-qa='cookies-policy-informer-accept'] and must be used for session suppression.
+  transient_overlays.COOKIE_BANNER_DISMISS:
+    value: "[data-qa='cookies-policy-informer-accept']"
+    criticality: dismiss
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_navigation
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      note: Button text is Понятно; no profile or form data is changed by dismissing the cookie banner.
+  transient_overlays.RESUME_DELIVERED:
+    value: null
+    criticality: dismiss
+    decision: needs_live_evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_submit_required
+    verified_by: codex
+    evidence:
+      source: issue #586
+      note: Transient overlay appears only after submit (WRITE); selector intentionally not invented. Obtain live evidence after separate WRITE authorization.
+  transient_overlays.NOTIFICATION:
+    value: "[data-qa^='notification']"
+    criticality: dismiss
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_notification_menu
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM after clicking [data-qa='userNotifications-button'] on /applicant/negotiations
+      note: Notification data-qa='notification notification_info', text Работодатели не знают ваш статус поиска; no status link is clicked.
+  transient_overlays.NOTIFICATION_DISMISS:
+    value: "[data-qa='notification-close'] button[aria-label='Удалить']"
+    criticality: dismiss
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_notification_menu
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM after clicking [data-qa='userNotifications-button'] on /applicant/negotiations
+      note: Dedicated notification close control observed; status link remains untouched.
