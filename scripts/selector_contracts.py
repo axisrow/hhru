@@ -1014,7 +1014,11 @@ def _audit_metadata(
         "coverage_status": status,
         "origin": origin,
         "verification": verification,
-        "evidence": {"source": declared_at, "note": note},
+        "evidence": {
+            "source": declared_at,
+            "note": note,
+            "runtime_authoritative": status != "needs_live_evidence",
+        },
         "last_verified_at": verified_at,
         "verified_flow": flow,
         "verified_by": "ci",
@@ -1048,6 +1052,7 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
                         "Reference binding was reconciled during selector refresh; selector "
                         "value was not changed."
                     ),
+                    "runtime_authoritative": True,
                 }
             continue
         if previous_origin in {"reference_exact", "reference_consensus", "reference_single"}:
@@ -1075,7 +1080,11 @@ def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool
     """Do not let audit bookkeeping become activation evidence on refresh."""
     if not row.get("evidence"):
         return False
-    return not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES)
+    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+        return True
+    if row["evidence"].get("runtime_authoritative") is False:
+        return False
+    return not (not row.get("active", True) and row.get("decision") == "unavailable")
 
 
 def build_map(reference_root: Path, live_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
