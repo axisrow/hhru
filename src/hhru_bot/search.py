@@ -895,7 +895,13 @@ def filter_candidates(
             history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_EMPLOYER_SIGNAL)
             continue
 
-        if resume_match_threshold and profile is not None:
+        if resume_match_threshold and profile is None:
+            reason = "resume_match недоступен: ai_profile не сконфигурирован"
+            skipped.append((card, reason))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_RESUME_MATCH)
+            continue
+
+        if resume_match_threshold:
             outcome = resume_match_score(card, profile)
             if outcome.score_0_100 < resume_match_threshold:
                 reason = (
