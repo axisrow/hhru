@@ -166,6 +166,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     )
     run_id = started["run_id"]
     page_num = started["resume_page"]
+    rank_offset_base = started["resume_rank_offset"]
     quiet = getattr(args, "quiet", False)
 
     for recovered in started["recovered"]:
@@ -202,24 +203,29 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         "observed_page_size": None,
     }
     state_lock = threading.Lock()
+    checkpoint_lock = threading.Lock()
 
     def snapshot() -> dict:
         with state_lock:
             return dict(state)
 
     def checkpoint() -> None:
-        current = snapshot()
-        history.checkpoint_competitor_collection(
-            run_id,
-            pages_fetched=current["pages"],
-            cards_seen=current["cards"],
-            details_saved=current["saved"],
-            details_failed=current["failed"],
-            last_started_page=current["last_started_page"],
-            last_completed_page=current["last_completed_page"],
-            resume_page=current["resume_page"],
-            observed_page_size=current["observed_page_size"],
-        )
+        # Snapshot and SQLite write are one ordered operation. Without this
+        # lock a delayed heartbeat could overwrite a newer completed-page
+        # checkpoint written by the main thread (#654 Codex review).
+        with checkpoint_lock:
+            current = snapshot()
+            history.checkpoint_competitor_collection(
+                run_id,
+                pages_fetched=current["pages"],
+                cards_seen=current["cards"],
+                details_saved=current["saved"],
+                details_failed=current["failed"],
+                last_started_page=current["last_started_page"],
+                last_completed_page=current["last_completed_page"],
+                resume_page=current["resume_page"],
+                observed_page_size=current["observed_page_size"],
+            )
 
     details_failed = 0
     new = updated = unchanged = 0
@@ -264,7 +270,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                 checkpoint()
                 goto_hh(search_page, build_competitor_search_url(query, page_num))
                 cards_before = snapshot()["cards"]
-                cards = parse_search_page(search_page, rank_offset=cards_before)
+                cards = parse_search_page(search_page, rank_offset=rank_offset_base + cards_before)
                 pages_this_run += 1
                 with state_lock:
                     state["pages"] += 1

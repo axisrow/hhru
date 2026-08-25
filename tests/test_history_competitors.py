@@ -169,6 +169,7 @@ os._exit(9)
     assert dead["cards_seen"] == 60
     assert "owner process exited" in dead["detail"]
     assert started["resume_page"] == 3
+    assert started["resume_rank_offset"] == 60
     assert started["resumed_from_run_id"] == dead["run_id"]
 
 
@@ -200,4 +201,5 @@ def test_resume_uses_only_explicit_checkpoint_for_same_query(tmp_path):
     )
     resumed = history.begin_competitor_collection("AI", 1, resume=True)
     assert resumed["resume_page"] == 2
+    assert resumed["resume_rank_offset"] == 40
     assert resumed["resumed_from_run_id"] == first

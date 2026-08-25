@@ -2120,6 +2120,11 @@ class History:
                 ).fetchone()
             resume_page = int(checkpoint["resume_page"]) if checkpoint is not None else 0
             resumed_from = checkpoint["run_id"] if checkpoint is not None else None
+            resume_rank_offset = (
+                resume_page * int(checkpoint["observed_page_size"])
+                if checkpoint is not None and checkpoint["observed_page_size"]
+                else 0
+            )
             conn.execute(
                 """INSERT INTO competitor_collection_runs
                    (run_id, search_query, max_pages, status, started_at, heartbeat_at,
@@ -2140,6 +2145,7 @@ class History:
         return {
             "run_id": run_id,
             "resume_page": resume_page,
+            "resume_rank_offset": resume_rank_offset,
             "resumed_from_run_id": resumed_from,
             "recovered": recovered,
         }

@@ -124,12 +124,18 @@ def test_resume_starts_after_last_completed_page(tmp_path, monkeypatch):
     )
     _patch_runtime(monkeypatch)
     visited: list[int] = []
+    rank_offsets: list[int] = []
 
     def goto(_page, url):
         visited.append(int(parse_qs(urlsplit(url).query)["page"][0]))
 
     monkeypatch.setattr("hhru_bot.browser.goto_hh", goto)
-    monkeypatch.setattr("hhru_bot.competitors.parse_search_page", lambda *_a, **_k: [])
+
+    def parse_page(_page, *, rank_offset):
+        rank_offsets.append(rank_offset)
+        return []
+
+    monkeypatch.setattr("hhru_bot.competitors.parse_search_page", parse_page)
     monkeypatch.setattr("hhru_bot.competitors.has_next_search_page", lambda *_a, **_k: False)
     monkeypatch.setattr(
         "hhru_bot.competitors.inspect_search_coverage",
@@ -138,6 +144,7 @@ def test_resume_starts_after_last_completed_page(tmp_path, monkeypatch):
 
     assert run_collect(_args(tmp_path, resume=True)) is False
     assert visited == [2]
+    assert rank_offsets == [40]
     latest = history.competitor_collection_runs()[-1]
     assert latest["resumed_from_run_id"] == previous
     assert latest["last_completed_page"] == 2
