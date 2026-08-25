@@ -115,6 +115,20 @@ CREATE TABLE IF NOT EXISTS responses (
     UNIQUE (vacancy_id, topic)
 );
 
+-- Confirmed applications made outside this tool (manual/external).  This is
+-- deliberately not actions: it must affect deduplication without inflating
+-- our apply counters or pretending that we own the run.
+CREATE TABLE IF NOT EXISTS external_applied (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL,
+    vacancy_id TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    UNIQUE (resume_id, vacancy_id, topic)
+);
+
 -- resume_views — реальные просмотры резюме работодателями (#415).
 -- Один snapshot на (резюме, событие просмотра, момент просмотра): повторный
 -- scrape не раздувает счётчики, но сохраняет наблюдения для дневного тренда.
@@ -787,7 +801,52 @@ class History:
                 """,
                 (resume_id, vacancy_id),
             ).fetchone()
-            return row is not None
+            if row is not None:
+                return True
+            return (
+                conn.execute(
+                    "SELECT 1 FROM external_applied WHERE resume_id=? AND vacancy_id=? LIMIT 1",
+                    (resume_id, vacancy_id),
+                ).fetchone()
+                is not None
+            )
+
+    def sync_external_applied(self, cards) -> dict[str, int]:
+        """Import only unambiguous negotiation mappings; never delete markers."""
+        now = datetime.now().isoformat()
+        imported = ambiguous = skipped = 0
+        invalid = []
+        for card in cards:
+            if getattr(card, "topic_ambiguous", False) or not card.topic or not card.resume_id:
+                invalid.append(card.vacancy_id)
+        if invalid:
+            raise ValueError(
+                "external application sync is indeterminate: "
+                f"{len(invalid)} negotiation card(s) lack unambiguous SSR attribution"
+            )
+        with self._connect() as conn:
+            for card in cards:
+                if getattr(card, "topic_ambiguous", False):
+                    ambiguous += 1
+                    continue
+                if not card.topic or not card.resume_id:
+                    skipped += 1
+                    continue
+                exists = conn.execute(
+                    "SELECT 1 FROM external_applied WHERE resume_id=? AND vacancy_id=? AND topic=?",
+                    (card.resume_id, card.vacancy_id, card.topic),
+                ).fetchone()
+                conn.execute(
+                    """INSERT INTO external_applied
+                       (resume_id,vacancy_id,topic,origin,first_seen_at,last_seen_at)
+                       VALUES (?,?,?,?,?,?)
+                       ON CONFLICT(resume_id,vacancy_id,topic)
+                       DO UPDATE SET last_seen_at=excluded.last_seen_at""",
+                    (card.resume_id, card.vacancy_id, card.topic, "manual_external", now, now),
+                )
+                if exists is None:
+                    imported += 1
+        return {"imported": imported, "ambiguous": ambiguous, "skipped": skipped}
 
     def record_resume_views(self, rows: list[dict]) -> int:
         """Persist real employer-view snapshots and return newly inserted count."""

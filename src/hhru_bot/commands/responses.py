@@ -47,6 +47,11 @@ def register(subparsers) -> None:
         action="store_true",
         help="Показать переписки, для которых hh.ru явно разрешает напоминание",
     )
+    p.add_argument(
+        "--sync-applied",
+        action="store_true",
+        help="Импортировать однозначные ручные/внешние отклики в dedup ledger",
+    )
     p.set_defaults(func=run)
 
 
@@ -111,7 +116,14 @@ def run(args: argparse.Namespace) -> None:
     # since-hours<=0 → пользователь явно просит НЕ ходить на hh.ru, а показать
     # всё из истории (быстрый read-only дашборд без обхода).
     remindable_only = getattr(args, "remindable", False)
-    fresh_only = args.since_hours <= 0 and not remindable_only
+    sync_applied = getattr(args, "sync_applied", False)
+    if sync_applied and (remindable_only or getattr(args, "detect_external_tests", False)):
+        print(
+            "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    fresh_only = args.since_hours <= 0 and not remindable_only and not sync_applied
     since_fetch = datetime.now() - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
     # окно since-fetch. datetime.min — «любая status_changed_at подходит».
@@ -155,12 +167,26 @@ def run(args: argparse.Namespace) -> None:
                             f"вакансия={ref.vacancy} vacancy_id={ref.vacancy_id}"
                         )
                     return
-                cards = fetch_responses(page, max_pages=args.max_pages)
+                cards = fetch_responses(page, max_pages=args.max_pages, strict_empty=sync_applied)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
                 print(f"Ошибка: {e}", file=sys.stderr)
                 sys.exit(1)
+                return
+            if sync_applied:
+                try:
+                    synced = history.sync_external_applied(cards)
+                except ValueError as e:
+                    print(f"Ошибка: {e}", file=sys.stderr)
+                    sys.exit(1)
+                    return
+                print(
+                    "Синхронизация внешних откликов: "
+                    f"добавлено {synced['imported']}, "
+                    f"ambiguous {synced['ambiguous']}, "
+                    f"пропущено {synced['skipped']}"
+                )
                 return
 
             if args.detect_external_tests:
