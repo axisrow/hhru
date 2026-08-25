@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from hhru_bot.commands.competitors import _collection_status, _page_cap_reached
 from hhru_bot.competitors import (
     CompetitorResumeIndeterminate,
+    CompetitorSearchCoverage,
     CompetitorSearchIndeterminate,
+    available_search_page_count,
     build_competitor_search_url,
+    coverage_warning,
     has_next_search_page,
     parse_competitor_resume_text,
     parse_search_links,
+    parse_search_result_count,
     redact_free_text,
     report_competitors,
     sanitize_skill_name,
@@ -54,7 +59,33 @@ def test_search_url_is_keyword_only_and_page_numbered():
     url = build_competitor_search_url("AI Engineer", 2)
     assert "text=AI+Engineer" in url
     assert "page=2" in url
+    assert "items_on_page=100" in url
     assert "resume=" not in url
+
+
+def test_search_result_count_parses_thin_space_and_coverage_warning():
+    text = "Показали 12 368 резюме — остальные можно увидеть после регистрации работодателя"
+    assert parse_search_result_count(text) == 12_368
+    warning = coverage_warning(
+        CompetitorSearchCoverage(
+            total_results=12_368,
+            available_pages=50,
+            employer_registration_required=True,
+        )
+    )
+    assert warning is not None
+    assert "5000" in warning
+    assert "50 стр. x 100" in warning
+    assert "после регистрации работодателя" in warning
+
+
+def test_coverage_warning_is_absent_when_all_reported_results_fit():
+    coverage = CompetitorSearchCoverage(
+        total_results=4_999,
+        available_pages=50,
+        employer_registration_required=False,
+    )
+    assert coverage_warning(coverage) is None
 
 
 def test_parse_search_links_normalizes_url_deduplicates_and_keeps_rank():
@@ -221,8 +252,8 @@ class _Text:
 
 
 class _PaginationPage:
-    def __init__(self, pages, delayed_pages=None, delayed_block=None):
-        self.next = _Locator([])
+    def __init__(self, pages, delayed_pages=None, delayed_block=None, next_links=None):
+        self.next = _Locator(next_links or [], links=True)
         self.block = _Locator(["block"] if delayed_block is None else [], delayed_block)
         self.pages = _Locator(pages, delayed_pages)
         self.links = _Locator([])
@@ -255,6 +286,24 @@ def test_pagination_waits_for_delayed_container_before_declaring_last_page():
     page = _PaginationPage([], delayed_pages=["1", "2"], delayed_block=["block"])
     assert has_next_search_page(page, 0) is True
     assert page.block.wait_calls == [("attached", 30_000)]
+
+
+def test_available_page_count_uses_last_visible_page():
+    page = _PaginationPage(["1", "2", "50"])
+    assert available_search_page_count(page, 0) == 50
+
+
+def test_pagination_uses_next_link_target_instead_of_control_presence():
+    assert has_next_search_page(_PaginationPage(["1"], next_links=["?page=1"]), 0) is True
+    assert has_next_search_page(_PaginationPage(["1"], next_links=[""]), 0) is False
+    assert has_next_search_page(_PaginationPage(["49", "50"], next_links=["?page=49"]), 49) is False
+
+
+def test_page_cap_is_optional_and_only_limits_when_more_pages_exist():
+    assert _page_cap_reached(None, 50, True) is False
+    assert _page_cap_reached(5, 5, True) is True
+    assert _page_cap_reached(5, 5, False) is False
+    assert _collection_status(details_failed=1, limited=True) == "limited"
 
 
 def test_report_is_deterministic_and_warns_about_limited_coverage():

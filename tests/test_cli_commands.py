@@ -226,7 +226,7 @@ def test_competitors_collect_and_report_arguments():
     collect = parser.parse_args(["competitors", "collect", "--text", "AI"])
     assert collect.competitors_command == "collect"
     assert collect.text == "AI"
-    assert collect.max_pages == 5
+    assert collect.max_pages is None
 
     report = parser.parse_args(["competitors", "report", "--text", "AI", "--top", "7"])
     assert report.competitors_command == "report"
