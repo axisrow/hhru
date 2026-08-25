@@ -179,3 +179,8 @@ def test_fetch_responses_timeout_on_confirmed_later_page_is_indeterminate(monkey
 
     with pytest.raises(responses.ResponsesIndeterminate, match="страницы 1"):
         responses.fetch_responses(page, max_pages=2)
+
+
+def test_fetch_responses_rejects_nonpositive_page_limit():
+    with pytest.raises(ValueError, match="positive"):
+        responses.fetch_responses(object(), max_pages=0)

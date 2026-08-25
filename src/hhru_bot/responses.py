@@ -334,8 +334,8 @@ def fetch_responses(
     """
     results: list[ResponseItem] = []
 
-    if strict_empty and max_pages <= 0:
-        raise ResponsesIndeterminate("sync requires a positive negotiations page limit")
+    if max_pages <= 0:
+        raise ValueError("max_pages must be positive")
 
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
@@ -414,11 +414,25 @@ def fetch_responses(
         # page's already-resolved results and risk assigning them this
         # page's SSR topics.
         try:
-            from .negotiations_probe import chat_url, topic_refs
+            from .negotiations_probe import chat_url, parse_initial_state, topic_refs
 
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
             refs = topic_refs(page.content())
+            if strict_empty:
+                raw_topics = (
+                    parse_initial_state(page.content())
+                    .get("applicantNegotiations", {})
+                    .get("topicList")
+                )
+                if not isinstance(raw_topics, list) or any(
+                    not isinstance(ref, dict)
+                    or any(ref.get(key) in (None, "") for key in ("id", "chatId", "vacancyId"))
+                    for ref in raw_topics
+                ):
+                    raise ResponsesIndeterminate(
+                        f"страница {page_num}: SSR topicList содержит неполную запись negotiation"
+                    )
             refs_by_vacancy: dict[str, list] = {}
             for ref in refs:
                 refs_by_vacancy.setdefault(ref.vacancy_id or "", []).append(ref)
@@ -472,6 +486,29 @@ def fetch_responses(
                         vacancy_id,
                         len(cards),
                         len(candidates),
+                    )
+            if strict_empty:
+                # Applied sync is an identity import, not a best-effort card
+                # scrape. Every rendered card must have a unique SSR topic and
+                # resume attribution, and the two representations must cover
+                # exactly the same negotiations. Otherwise an unmatched SSR
+                # topic or an unattributed DOM card would make the ledger look
+                # complete while silently dropping an application.
+                unresolved = [
+                    result
+                    for result in results[page_start:]
+                    if result.topic_ambiguous or not result.topic or not result.resume_id
+                ]
+                actual = [
+                    (result.vacancy_id, result.topic)
+                    for result in results[page_start:]
+                    if result.topic
+                ]
+                expected = [(ref.vacancy_id, ref.topic_id) for ref in refs]
+                if unresolved or len(actual) != len(expected) or set(actual) != set(expected):
+                    raise ResponsesIndeterminate(
+                        f"страница {page_num}: SSR topicList и DOM карточки "
+                        "не имеют полного однозначного соответствия"
                     )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
             if strict_empty:

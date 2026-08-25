@@ -18,6 +18,13 @@ import argparse
 import sys
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("должно быть положительным целым числом")
+    return parsed
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "responses",
@@ -26,7 +33,7 @@ def register(subparsers) -> None:
     p.add_argument("--resume", help="ID резюме из конфига (по умолчанию — все)")
     p.add_argument(
         "--max-pages",
-        type=int,
+        type=_positive_int,
         default=5,
         help="Максимум страниц списка откликов (по умолчанию 5)",
     )
@@ -35,7 +42,7 @@ def register(subparsers) -> None:
         type=float,
         default=24.0,
         help="Показать ответы, сменившие статус за последние N часов (по умолчанию 24). "
-        "0 — показать все известные ответы из истории без нового обхода hh.ru.",
+        "0 — выполнить живой обход hh.ru и показать синхронизацию/историю.",
     )
     p.add_argument(
         "--detect-external-tests",
@@ -113,8 +120,7 @@ def run(args: argparse.Namespace) -> None:
     history = History(args.history)
 
     # «Что нового» меряется по status_changed_at. since = now - since-hours.
-    # since-hours<=0 → пользователь явно просит НЕ ходить на hh.ru, а показать
-    # всё из истории (быстрый read-only дашборд без обхода).
+    # --sync-applied всегда выполняет живой read, включая --since-hours 0.
     remindable_only = getattr(args, "remindable", False)
     sync_applied = getattr(args, "sync_applied", False)
     if sync_applied and (remindable_only or getattr(args, "detect_external_tests", False)):
@@ -122,6 +128,9 @@ def run(args: argparse.Namespace) -> None:
             "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
             file=sys.stderr,
         )
+        sys.exit(2)
+    if args.max_pages < 1:
+        print("Ошибка: --max-pages должен быть положительным", file=sys.stderr)
         sys.exit(2)
     fresh_only = args.since_hours <= 0 and not remindable_only and not sync_applied
     since_fetch = datetime.now() - timedelta(hours=args.since_hours)
