@@ -170,6 +170,7 @@ os._exit(9)
     assert "owner process exited" in dead["detail"]
     assert started["resume_page"] == 3
     assert started["resume_rank_offset"] == 60
+    assert started["resume_observed_page_size"] == 20
     assert started["resumed_from_run_id"] == dead["run_id"]
 
 
@@ -203,3 +204,69 @@ def test_resume_uses_only_explicit_checkpoint_for_same_query(tmp_path):
     assert resumed["resume_page"] == 2
     assert resumed["resume_rank_offset"] == 40
     assert resumed["resumed_from_run_id"] == first
+
+
+def test_repeated_interruption_preserves_page_size_and_global_rank_offset(tmp_path):
+    history = History(tmp_path / "history.db")
+    first = history.start_competitor_collection("AI", 1)
+    history.finish_competitor_collection(
+        first,
+        status="limited",
+        pages_fetched=1,
+        cards_seen=20,
+        details_saved=20,
+        details_failed=0,
+        resume_page=1,
+        last_started_page=0,
+        last_completed_page=0,
+        observed_page_size=20,
+    )
+    interrupted = history.begin_competitor_collection("AI", 1, resume=True)
+    history.finish_competitor_collection(
+        interrupted["run_id"],
+        status="partial",
+        pages_fetched=0,
+        cards_seen=0,
+        details_saved=0,
+        details_failed=0,
+        resume_page=1,
+        last_started_page=1,
+        last_completed_page=None,
+        observed_page_size=interrupted["resume_observed_page_size"],
+    )
+
+    resumed_again = history.begin_competitor_collection("AI", 1, resume=True)
+    assert resumed_again["resume_page"] == 1
+    assert resumed_again["resume_observed_page_size"] == 20
+    assert resumed_again["resume_rank_offset"] == 20
+
+
+def test_completed_latest_run_prevents_resurrecting_older_checkpoint(tmp_path):
+    history = History(tmp_path / "history.db")
+    limited = history.start_competitor_collection("AI", 1)
+    history.finish_competitor_collection(
+        limited,
+        status="limited",
+        pages_fetched=1,
+        cards_seen=20,
+        details_saved=20,
+        details_failed=0,
+        resume_page=1,
+        observed_page_size=20,
+    )
+    complete = history.start_competitor_collection("AI", 0)
+    history.finish_competitor_collection(
+        complete,
+        status="complete",
+        pages_fetched=50,
+        cards_seen=1000,
+        details_saved=1000,
+        details_failed=0,
+        resume_page=None,
+        observed_page_size=20,
+    )
+
+    fresh = history.begin_competitor_collection("AI", 1, resume=True)
+    assert fresh["resume_page"] == 0
+    assert fresh["resumed_from_run_id"] is None
+    assert fresh["resume_rank_offset"] == 0

@@ -2111,26 +2111,36 @@ class History:
 
             checkpoint = None
             if resume:
-                checkpoint = conn.execute(
+                latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
-                       WHERE search_query=? AND status IN ('partial', 'failed', 'limited')
-                         AND resume_page IS NOT NULL
-                       ORDER BY started_at DESC LIMIT 1""",
+                       WHERE search_query=? AND status != 'running'
+                       ORDER BY started_at DESC, rowid DESC LIMIT 1""",
                     (search_query,),
                 ).fetchone()
+                if (
+                    latest is not None
+                    and latest["status"] in {"partial", "failed", "limited"}
+                    and latest["resume_page"] is not None
+                ):
+                    checkpoint = latest
             resume_page = int(checkpoint["resume_page"]) if checkpoint is not None else 0
             resumed_from = checkpoint["run_id"] if checkpoint is not None else None
-            resume_rank_offset = (
-                resume_page * int(checkpoint["observed_page_size"])
+            resume_observed_page_size = (
+                int(checkpoint["observed_page_size"])
                 if checkpoint is not None and checkpoint["observed_page_size"]
+                else None
+            )
+            resume_rank_offset = (
+                resume_page * resume_observed_page_size
+                if resume_observed_page_size is not None
                 else 0
             )
             conn.execute(
                 """INSERT INTO competitor_collection_runs
                    (run_id, search_query, max_pages, status, started_at, heartbeat_at,
                     owner_pid, last_started_page, last_completed_page, resume_page,
-                    resumed_from_run_id)
-                   VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?)""",
+                    resumed_from_run_id, observed_page_size)
+                   VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
                 (
                     run_id,
                     search_query,
@@ -2140,12 +2150,14 @@ class History:
                     os.getpid(),
                     resume_page,
                     resumed_from,
+                    resume_observed_page_size,
                 ),
             )
         return {
             "run_id": run_id,
             "resume_page": resume_page,
             "resume_rank_offset": resume_rank_offset,
+            "resume_observed_page_size": resume_observed_page_size,
             "resumed_from_run_id": resumed_from,
             "recovered": recovered,
         }

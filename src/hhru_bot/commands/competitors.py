@@ -200,7 +200,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         "last_started_page": None,
         "last_completed_page": None,
         "resume_page": page_num,
-        "observed_page_size": None,
+        "observed_page_size": started["resume_observed_page_size"],
     }
     state_lock = threading.Lock()
     checkpoint_lock = threading.Lock()
@@ -279,8 +279,9 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                         state["observed_page_size"] = len(cards)
                 has_next = has_next_search_page(search_page, page_num)
                 if coverage is None:
+                    observed_page_size = snapshot()["observed_page_size"]
                     coverage = inspect_search_coverage(
-                        search_page, page_num, observed_page_size=len(cards)
+                        search_page, page_num, observed_page_size=observed_page_size
                     )
 
                 for card in cards:
