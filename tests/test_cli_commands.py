@@ -129,6 +129,8 @@ def test_all_commands_registered():
         "resume-views",
         "review",
         "uncertain",
+        "diagnostics",
+        "blacklist",
     }
 
 
@@ -195,6 +197,8 @@ def test_register_commands_returns_names():
         "resume_views",
         "review",
         "uncertain",
+        "diagnostics",
+        "blacklist",
     }
 
 
