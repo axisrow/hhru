@@ -1289,12 +1289,8 @@ def _run_apply_for_resume(
         if progress is not None:
             progress.begin_attempt()
         try:
-            if (
-                threshold := getattr(
-                    getattr(resume, "scoring", None), "letter_match_threshold", None
-                )
-                and approved_item is None
-            ):
+            threshold = getattr(getattr(resume, "scoring", None), "letter_match_threshold", None)
+            if threshold is not None and approved_item is None:
                 apply_kwargs["letter_match_threshold"] = threshold
             result = apply_to_vacancy(
                 page,
