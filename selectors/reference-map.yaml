@@ -3132,13 +3132,13 @@ selectors:
     value: '[data-qa=''vacancy-serp__vacancy'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:5
-    decision: consensus
+    decision: live_dom
     sources:
       tgeruzov:
       - file: script.js
         line: 82
         key: script.js::module.SELECTORS.vacancyCard#0::1
-        value: '[data-qa="vacancy-serp__vacancy"]'
+        value: div[data-qa="vacancy-serp__vacancy"]
       yamakayama:
       - file: app/parsers/hh.py
         line: 61
@@ -3159,7 +3159,7 @@ selectors:
         key: script.js::module.SELECTORS.vacancyCard#0::1
         value: div[data-qa="vacancy-serp__vacancy"]
     coverage_status: reference_binding
-    origin: reference_consensus
+    origin: reference_single
     verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:5
@@ -3561,13 +3561,13 @@ selectors:
     value: '[data-qa=''serp-item__title'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:10
-    decision: consensus
+    decision: live_dom
     sources:
       tgeruzov:
       - file: script.js
         line: 81
         key: script.js::module.SELECTORS.vacancyLink#0::1
-        value: '[data-qa="serp-item__title"]'
+        value: a[data-qa="serp-item__title"]
       yamakayama:
       - file: app/parsers/hh.py
         line: 77
@@ -3588,7 +3588,7 @@ selectors:
         key: script.js::module.SELECTORS.vacancyLink#0::1
         value: a[data-qa="serp-item__title"]
     coverage_status: reference_binding
-    origin: reference_consensus
+    origin: reference_single
     verification: contract_tested
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:10
