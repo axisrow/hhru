@@ -41,6 +41,17 @@ def test_record_reject_bounds_letter_diff_input(tmp_path):
     assert len(row["edited_snippet"]) <= History.FEEDBACK_SNIPPET_MAX
 
 
+def test_list_feedback_never_crosses_explicit_resume_scope(tmp_path):
+    history = History(tmp_path / "history.db")
+    history.record_reject("resume-a", "v1", "reason-a", generated_letter="old", edited_letter="a")
+    history.record_reject("resume-b", "v2", "reason-b", generated_letter="old", edited_letter="b")
+
+    rows = history.list_feedback(resume_id="resume-a", limit=25)
+
+    assert [row["resume_id"] for row in rows] == ["resume-a"]
+    assert [row["reason"] for row in rows] == ["reason-a"]
+
+
 def test_reject_command_records_feedback(tmp_path, capsys):
     result = reject_cmd.run(
         argparse.Namespace(

@@ -35,7 +35,7 @@ from ..apply.letter import (
     _resolve_alternatives,
 )
 from ..search import VacancyCard
-from .feedback import feedback_blocks
+from .feedback import build_style_context
 
 if TYPE_CHECKING:
     from ..config_sections.ai_profile import AIProfile
@@ -140,11 +140,6 @@ def _build_prompt(
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-    reject, style = feedback_blocks(feedback or [])
-    for block in (reject, style):
-        if block:
-            messages.append({"role": "user", "content": block})
-
     # #96: few-shot стиль — образцы прошлых писём идут первым user-сообщением,
     # до контекста вакансии и запроса. Рандомизация {a|b|c} (#86) применяется к
     # каждому примеру до подстановки — примеры тоже варьируются между запусками.
@@ -160,6 +155,10 @@ def _build_prompt(
                 ),
             }
         )
+
+    style = build_style_context(feedback or [])
+    if style:
+        messages.append({"role": "user", "content": style})
 
     lines = [f"Вакансия: {vacancy.title}.", f"Компания: {vacancy.company or 'не указана'}."]
     if profile is not None:

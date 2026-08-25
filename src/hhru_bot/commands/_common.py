@@ -221,7 +221,7 @@ def _build_letter_provider(
         llm_client=llm_client,
         resume_profile=profile,
         fallback_template=cover_letter_template,
-        feedback=history.list_feedback(resume_id=resume.id) if history else None,
+        feedback=history.list_feedback(resume_id=resume.id, limit=25) if history else None,
     )
 
 
@@ -345,7 +345,7 @@ def _build_scoring_provider(
         llm_client=llm_client,
         fallback=heuristic,
         resume_profile=profile,
-        feedback=history.list_feedback(resume_id=resume.id) if history else None,
+        feedback=history.list_feedback(resume_id=resume.id, limit=25) if history else None,
     )
 
 

@@ -21,7 +21,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..ai.feedback import feedback_blocks
+from ..ai.feedback import build_reject_context
 from .employer import TIER_BOOST, classify_employer
 from .types import ScoreOutcome
 
@@ -291,11 +291,9 @@ def _build_scoring_prompt(
     )
 
     lines = [f"Вакансия: {card.title}.", f"Компания: {card.company or 'не указана'}."]
-    reject, style = feedback_blocks(feedback or [])
+    reject = build_reject_context(feedback or [])
     if reject:
         lines.append(reject)
-    if style:
-        lines.append(style)
     salary = card.salary
     if salary is not None:
         lines.append(f"Зарплата: {salary.raw}.")
