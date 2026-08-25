@@ -54,10 +54,18 @@ _SCRIPT = r"""
     // Rescan the changed element's parent so incremental mutations are not
     // lost (text nodes themselves are not elements).
     const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
-    if (target) scan(target);
+    const candidate = target && (target.closest(
+      '[role="dialog"], [role="alert"], '
+      '[data-qa="cookies-policy-informer"], [data-qa^="notification"]'
+    ) || (target.matches(
+      '[role="dialog"], [role="alert"], '
+      '[data-qa="cookies-policy-informer"], [data-qa^="notification"]'
+    ) ? target : null));
+    if (candidate) scan(candidate);
     m.addedNodes.forEach(scan);
   })).observe(document.documentElement, {
-    subtree: true, childList: true, characterData: true,
+    subtree: true, childList: true, characterData: true, attributes: true,
+    attributeFilter: ['data-qa', 'aria-label'],
   });
 })();
 """
