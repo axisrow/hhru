@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .competitor_privacy import is_contact_skill
 from .external_forms.detect import normalize
 
 if TYPE_CHECKING:
@@ -291,12 +292,28 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
 
 CREATE TABLE IF NOT EXISTS competitor_resume_skills (
     resume_id TEXT NOT NULL,
-    skill TEXT NOT NULL,
+    skill TEXT NOT NULL CHECK (instr(skill, '@') = 0 AND lower(skill) NOT LIKE 'http%'),
     proficiency TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     PRIMARY KEY (resume_id, skill)
 );
+
+CREATE TRIGGER IF NOT EXISTS competitor_resume_skills_no_contacts
+BEFORE INSERT ON competitor_resume_skills
+WHEN lower(NEW.skill) LIKE 'www.%'
+  OR lower(NEW.skill) LIKE 't.me/%'
+  OR lower(NEW.skill) LIKE 'linkedin.com/%'
+  OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
+  OR NEW.skill GLOB '*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*[0-9]*'
+BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
+CREATE TRIGGER IF NOT EXISTS competitor_resume_skills_no_contacts_update
+BEFORE UPDATE OF skill ON competitor_resume_skills
+WHEN lower(NEW.skill) LIKE 'www.%'
+  OR lower(NEW.skill) LIKE 't.me/%'
+  OR lower(NEW.skill) LIKE 'linkedin.com/%'
+  OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
+BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
 
 CREATE TABLE IF NOT EXISTS competitor_resume_queries (
     resume_id TEXT NOT NULL,
@@ -725,6 +742,9 @@ class History:
     @contextmanager
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
+        conn.create_function(
+            "is_safe_competitor_skill", 1, lambda value: int(not is_contact_skill(value or ""))
+        )
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -749,6 +769,7 @@ class History:
             # упадёт на "table command_runs already exists".
             _rename_apply_runs_to_command_runs(conn)
             conn.executescript(SCHEMA)
+            _migrate_competitor_skills_schema(conn)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
             _ensure_column(conn, "actions", "search_query", "TEXT")
             _ensure_column(conn, "actions", "run_id", "TEXT")
@@ -2190,7 +2211,7 @@ class History:
             conn.execute("DELETE FROM competitor_resume_skills WHERE resume_id = ?", (resume_id,))
             for skill in snapshot.get("skills") or []:
                 name = str(skill["name"]).strip()
-                if not name:
+                if not name or is_contact_skill(name):
                     continue
                 conn.execute(
                     """INSERT INTO competitor_resume_skills
@@ -4502,3 +4523,52 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
         return
     conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
     conn.execute(_APPLY_INDEX_SQL)
+
+
+def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
+    """Rebuild the skills table so old databases gain the privacy invariant."""
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("competitor_resume_skills",),
+    ).fetchone()
+    trigger = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+        ("competitor_resume_skills_no_contacts",),
+    ).fetchone()
+    if not table or trigger:
+        return
+    conn.execute("ALTER TABLE competitor_resume_skills RENAME TO competitor_resume_skills_legacy")
+    conn.execute("""CREATE TABLE competitor_resume_skills (
+        resume_id TEXT NOT NULL,
+        skill TEXT NOT NULL CHECK (instr(skill, '@') = 0 AND lower(skill) NOT LIKE 'http%'),
+        proficiency TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (resume_id, skill)
+    )""")
+    conn.executescript("""
+        CREATE TRIGGER competitor_resume_skills_no_contacts
+        BEFORE INSERT ON competitor_resume_skills
+        WHEN lower(NEW.skill) LIKE 'www.%' OR lower(NEW.skill) LIKE 't.me/%'
+          OR lower(NEW.skill) LIKE 'linkedin.com/%'
+          OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
+        BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
+        CREATE TRIGGER competitor_resume_skills_no_contacts_update
+        BEFORE UPDATE OF skill ON competitor_resume_skills
+        WHEN lower(NEW.skill) LIKE 'www.%' OR lower(NEW.skill) LIKE 't.me/%'
+          OR lower(NEW.skill) LIKE 'linkedin.com/%'
+          OR (instr(NEW.skill, '.') > 0 AND lower(NEW.skill) = NEW.skill)
+        BEGIN SELECT RAISE(ABORT, 'contact-like competitor skill'); END;
+    """)
+    rows = conn.execute(
+        """SELECT resume_id, skill, proficiency, first_seen_at, last_seen_at
+           FROM competitor_resume_skills_legacy"""
+    ).fetchall()
+    for row in rows:
+        skill = row[1].strip()
+        if is_contact_skill(skill):
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)", tuple(row)
+        )
+    conn.execute("DROP TABLE competitor_resume_skills_legacy")
