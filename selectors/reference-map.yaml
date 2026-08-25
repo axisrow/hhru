@@ -307,6 +307,7 @@ selectors:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:3370
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:790
     verification: browser_observed
+    coverage_status: reference binding
     origin: browser_dom
   apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM:
     value: textarea[data-qa='vacancy-response-form-letter-input']
@@ -315,11 +316,17 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/apply_form.py:103
-      note: значением (сверено на вакансии с опциональным письмом на ПОЛНОЙ форме —
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:104
+      note: Full-page cover-letter shape is a local heuristic; approved references have no equivalent selector.
+    last_verified_at: 2026-08-20
+    verified_flow: apply full-page form cover-letter detection
+    verified_by: browser
   apply_form.APPLY_COVER_LETTER_TOGGLE:
     value: '[data-qa=''vacancy-response-letter-toggle'']'
     criticality: write
@@ -362,6 +369,7 @@ selectors:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:769
     verification: browser_observed
+    coverage_status: reference binding
     origin: reference_consensus
   apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP:
     value: '[data-qa=''add-cover-letter'']'
@@ -394,6 +402,7 @@ selectors:
       references:
       - tgeruzov@981f2809f3ae:hh-apply-assistant.user.js:104
     verification: browser_observed
+    coverage_status: reference binding
     origin: browser_dom
   apply_form.APPLY_QUESTION_BODY:
     value: '[data-qa=''task-body'']'
@@ -415,6 +424,15 @@ selectors:
         line: 510
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.blocks#0::0
         value: '[data-qa="task-body"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:97
+      note: Approved reference binding for the active local selector.
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and apply_form flow
+    verified_by: browser
   apply_form.APPLY_QUESTION_FORM_BODY:
     value: form[name='vacancy_response'] [data-qa='task-body']
     criticality: write
@@ -425,6 +443,16 @@ selectors:
     - task-body
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:99
+      note: The form prefix is a local scope around the separately bound task-body selector; approved references do not declare
+        this combined selector.
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh against pinned references
+    verified_by: ci
   apply_form.APPLY_QUESTION_TEXT:
     value: '[data-qa=''task-question'']'
     criticality: write
@@ -435,6 +463,15 @@ selectors:
     - task-question
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:98
+      note: task-question was observed in the local apply DOM; no equivalent declaration exists in the three approved references.
+    last_verified_at: 2026-08-25
+    verified_flow: apply questionnaire detection (read-only DOM observation)
+    verified_by: browser
   apply_form.APPLY_RESUME_DROPDOWN:
     value: '[data-qa=''drop-base'']'
     criticality: write
@@ -445,6 +482,16 @@ selectors:
     - drop-base
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:75
+      note: drop-base is the local Magritte listbox used to prove the resume dropdown closed; approved references do not expose
+        this panel selector.
+    last_verified_at: 2026-08-20
+    verified_flow: apply resume selection and dropdown-close guard
+    verified_by: browser
   apply_form.APPLY_RESUME_OPTION:
     value: '[data-qa=''magritte-select-option-{resume_id}'']'
     active: true
@@ -461,6 +508,15 @@ selectors:
         line: 878
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.first_resume#0::0
         value: '[data-qa="vacancy-response-popup-form-resume-option"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:1
+      note: Approved reference binding for the active local selector.
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and apply_form flow
+    verified_by: browser
   apply_form.APPLY_RESUME_SELECT:
     value: '[data-qa=''resume-title'']'
     criticality: write
@@ -476,6 +532,15 @@ selectors:
         line: 873
         key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.resume_select#0::0
         value: '[data-qa="vacancy-response-popup-form-resume-dropdown"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:46
+      note: Approved reference binding for the active local selector.
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and apply_form flow
+    verified_by: browser
   apply_form.APPLY_RESUME_TOGGLE:
     value: '[data-qa=''resume-title''] >> xpath=ancestor::*[@role=''button''][1]'
     criticality: write
@@ -486,6 +551,16 @@ selectors:
     - resume-title
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:49
+      note: The ancestor locator is a local close-action shape around the separately bound resume trigger; approved references
+        do not declare this combined selector.
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh against pinned references
+    verified_by: ci
   apply_form.APPLY_SUBMIT_BUTTON:
     value: '[data-qa=''vacancy-response-submit-popup'']'
     criticality: write
@@ -546,6 +621,7 @@ selectors:
       - tgeruzov@981f2809f3ae:tests/phase2-performance.test.mjs:15
       - yamakayama@bfb46696aec6:app/parsers/hh_playwright.py:366
     verification: browser_observed
+    coverage_status: reference binding
     origin: reference_consensus
   browser.LOGIN_FORM:
     value: '[data-qa=''account-login-form'']'
@@ -657,10 +733,17 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
+    bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unverified
     evidence:
       source: src/hhru_bot/negotiations_chat.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
-    bindings: {}
+      note: No authenticated chat DOM artifact proves that the broad author hint identifies the message author without unrelated
+        matches.
+    last_verified_at: null
+    verified_flow: negotiations chat author attribution (not run)
+    verified_by: human
   negotiations.CHAT_MESSAGE_INPUT:
     value: textarea[data-qa='chatik-chat-message-input']
     criticality: write
@@ -678,6 +761,12 @@ selectors:
         line: 1374
         key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.input_selectors#0::0
         value: '[data-qa="chatik-new-message-text"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.CHAT_MESSAGE_ROOT:
     value: '[data-qa^=''chatik-chat-message-'']'
     active: true
@@ -686,10 +775,16 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:75
+      note: No authenticated chat DOM artifact was retained for this message-root selector.
+    last_verified_at: null
+    verified_flow: negotiations chat message parsing (not run)
+    verified_by: human
   negotiations.CHAT_MESSAGE_SEND:
     value: button[data-qa='chatik-chat-message-send']
     criticality: write
@@ -707,6 +802,12 @@ selectors:
         line: 1409
         key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.send_selectors#0::0
         value: '[data-qa="chatik-do-send-message"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.CHAT_MESSAGE_TEXT:
     value: '[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])'
     criticality: write
@@ -829,6 +930,15 @@ selectors:
     - working-hours-text
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:74
+      note: The saved live-match list contains unrelated *-text nodes; a scoped authenticated chat artifact is still required.
+    last_verified_at: null
+    verified_flow: negotiations chat message parsing (not run)
+    verified_by: human
   negotiations.LEGACY_NEGOTIATION_CHAT_LINK:
     value: '[data-qa=''negotiations-item__messages-link'']'
     criticality: write
@@ -836,11 +946,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:62
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:65
+      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
+        bindings.
+    last_verified_at: 2026-08-16
+    verified_flow: legacy negotiations fixture parsing
+    verified_by: ci
   negotiations.LEGACY_NEGOTIATION_DATE:
     value: '[data-qa=''negotiations-item__date'']'
     criticality: write
@@ -848,11 +965,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:61
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:64
+      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
+        bindings.
+    last_verified_at: 2026-08-16
+    verified_flow: legacy negotiations fixture parsing
+    verified_by: ci
   negotiations.LEGACY_NEGOTIATION_EMPLOYER:
     value: '[data-qa=''negotiations-item__employer'']'
     criticality: read
@@ -860,11 +984,18 @@ selectors:
     decision: structural_read_fallback
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:59
-      note: read-only compatibility with saved legacy markup
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:62
+      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
+        bindings.
+    last_verified_at: 2026-08-16
+    verified_flow: legacy negotiations fixture parsing
+    verified_by: ci
   negotiations.LEGACY_NEGOTIATION_STATUS:
     value: '[data-qa=''negotiations-item__state'']'
     criticality: write
@@ -872,11 +1003,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:60
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:63
+      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
+        bindings.
+    last_verified_at: 2026-08-16
+    verified_flow: legacy negotiations fixture parsing
+    verified_by: ci
   negotiations.LEGACY_NEGOTIATION_VACANCY_LINK:
     value: '[data-qa=''negotiations-item__vacancy-link'']'
     criticality: read
@@ -884,11 +1022,18 @@ selectors:
     decision: structural_read_fallback
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:58
-      note: read-only compatibility with saved legacy markup
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    origin: manual
+    verification: contract_tested
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:61
+      note: Read-only compatibility selector for legacy saved negotiations markup; it is intentionally retained outside reference
+        bindings.
+    last_verified_at: 2026-08-16
+    verified_flow: legacy negotiations fixture parsing
+    verified_by: ci
   negotiations.NEGOTIATIONS_PAGINATION_BLOCK:
     value: '[data-qa=''pager-block'']'
     criticality: write
@@ -896,11 +1041,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:47
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
+        approved references.
+    last_verified_at: 2026-08-16
+    verified_flow: negotiations list read and pagination
+    verified_by: browser
   negotiations.NEGOTIATIONS_PAGINATION_NEXT:
     value: '[data-qa=''pager-next'']'
     criticality: write
@@ -908,11 +1060,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:43
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
+        approved references.
+    last_verified_at: 2026-08-16
+    verified_flow: negotiations list read and pagination
+    verified_by: browser
   negotiations.NEGOTIATIONS_PAGINATION_PAGE:
     value: '[data-qa=''pager-page'']'
     criticality: write
@@ -920,11 +1079,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:45
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
+        approved references.
+    last_verified_at: 2026-08-16
+    verified_flow: negotiations list read and pagination
+    verified_by: browser
   negotiations.NEGOTIATION_CHAT_LINK:
     value: '[data-qa=''open_chat'']'
     criticality: write
@@ -932,11 +1098,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:40
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
+        approved references.
+    last_verified_at: 2026-08-16
+    verified_flow: negotiations list read and pagination
+    verified_by: browser
   negotiations.NEGOTIATION_DATE:
     value: '[data-qa=''negotiations-item-date'']'
     criticality: write
@@ -944,11 +1117,18 @@ selectors:
     decision: documented_live
     sources: {}
     live_matches: []
-    evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:37
-      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: Authenticated negotiations-page DOM evidence is documented locally; no equivalent selector exists in the three
+        approved references.
+    last_verified_at: 2026-08-16
+    verified_flow: negotiations list read and pagination
+    verified_by: browser
   negotiations.NEGOTIATION_EMPLOYER:
     value: '[data-qa=''negotiations-item-company'']'
     criticality: write
@@ -971,6 +1151,12 @@ selectors:
         line: 977
         key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.company_el#0::0
         value: '[data-qa="negotiations-item-company"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.NEGOTIATION_ITEM:
     value: '[data-qa=''negotiations-item'']'
     criticality: write
@@ -1001,6 +1187,12 @@ selectors:
         line: 1030
         key: app/parsers/hh_playwright.py::module.HHPlaywright.check_negotiations_status#0::1
         value: '[data-qa="negotiations-item"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.NEGOTIATION_STATUS:
     value: '[data-qa^=''negotiations-tag'']'
     criticality: write
@@ -1018,6 +1210,12 @@ selectors:
         line: 980
         key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.status_el#0::0
         value: '[data-qa="negotiations-item-status"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.NEGOTIATION_VACANCY_LINK:
     value: '[data-qa=''negotiations-item-vacancy'']'
     criticality: write
@@ -1035,6 +1233,12 @@ selectors:
         line: 970
         key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.title_el#0::0
         value: '[data-qa="negotiations-item-title"]'
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and negotiations flow
+    verified_by: browser
   negotiations.NEGOTIATION_WITHDRAW:
     value: '[data-qa=''negotiations-item-withdraw'']'
     criticality: write
@@ -1048,6 +1252,15 @@ selectors:
       selector remains unproven and cannot authorize a destructive click.
     active: false
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unavailable
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:52
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+    last_verified_at: null
+    verified_flow: negotiations withdrawal (not run; write path disabled)
+    verified_by: human
   negotiations.NEGOTIATION_WITHDRAW_CONFIRM:
     value: '[data-qa=''negotiations-withdraw-confirm'']'
     criticality: write
@@ -1062,6 +1275,15 @@ selectors:
       destructive click.
     active: false
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unavailable
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:52
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+    last_verified_at: null
+    verified_flow: negotiations withdrawal (not run; write path disabled)
+    verified_by: human
   negotiations.NEGOTIATION_WITHDRAW_SUCCESS:
     value: '[data-qa=''negotiations-item-withdrawn'']'
     criticality: write
@@ -1076,6 +1298,15 @@ selectors:
       destructive action as successful.
     active: false
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: manual
+    verification: unavailable
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:52
+      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
+    last_verified_at: null
+    verified_flow: negotiations withdrawal (not run; write path disabled)
+    verified_by: human
   professional_roles.FILTER_TRIGGER:
     value: '[data-qa=''search-filter-professional-role-trigger'']'
     criticality: read
@@ -3228,6 +3459,12 @@ selectors:
         line: 43
         key: app/parsers/hh_login.py::module.SEL_PIN#0::0
         value: input[data-qa="magritte-pincode-input-field"]
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and selectors flow
+    verified_by: browser
   selectors.LOGIN_CODE_REQUEST_BUTTON:
     value: '[data-qa=''submit-button'']'
     criticality: write
@@ -3238,6 +3475,16 @@ selectors:
     - submit-button
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/login.py:7
+      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
+        approved references.
+    last_verified_at: 2026-08-25
+    verified_flow: login DOM healthcheck (read-only)
+    verified_by: browser
   selectors.LOGIN_EMAIL_INPUT:
     value: '[data-qa=''applicant-login-input-email'']'
     criticality: write
@@ -3255,6 +3502,12 @@ selectors:
         line: 41
         key: app/parsers/hh_login.py::module.SEL_LOGIN#0::0
         value: input[data-qa="login-input-username"]
+    coverage_status: reference binding
+    origin: reference_single
+    verification: browser_observed
+    last_verified_at: 2026-08-25
+    verified_flow: selector contract refresh and selectors flow
+    verified_by: browser
   selectors.LOGIN_EMAIL_TYPE:
     value: input[data-qa='credential-type-email']
     criticality: write
@@ -3265,6 +3518,16 @@ selectors:
     - credential-type-email
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/login.py:8
+      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
+        approved references.
+    last_verified_at: 2026-08-25
+    verified_flow: login DOM healthcheck (read-only)
+    verified_by: browser
   selectors.LOGIN_PHONE_INPUT:
     value: '[data-qa=''magritte-phone-input-national-number-input'']'
     criticality: write
@@ -3275,6 +3538,16 @@ selectors:
     - magritte-phone-input-national-number-input
     active: true
     bindings: {}
+    coverage_status: not implemented upstream
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/login.py:10
+      note: Selector was observed by the local read-only login DOM healthcheck; no equivalent declaration exists in the three
+        approved references.
+    last_verified_at: 2026-08-25
+    verified_flow: login DOM healthcheck (read-only)
+    verified_by: browser
   vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN:
     value: '[data-qa=''vacancy-response-link-top-again'']'
     criticality: write
