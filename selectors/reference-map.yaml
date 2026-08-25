@@ -3134,6 +3134,11 @@ selectors:
     declared_at: src/hhru_bot/selector_groups/search_page.py:5
     decision: consensus
     sources:
+      tgeruzov:
+      - file: script.js
+        line: 82
+        key: script.js::module.SELECTORS.vacancyCard#0::1
+        value: '[data-qa="vacancy-serp__vacancy"]'
       yamakayama:
       - file: app/parsers/hh.py
         line: 61
@@ -3558,6 +3563,11 @@ selectors:
     declared_at: src/hhru_bot/selector_groups/search_page.py:10
     decision: consensus
     sources:
+      tgeruzov:
+      - file: script.js
+        line: 81
+        key: script.js::module.SELECTORS.vacancyLink#0::1
+        value: '[data-qa="serp-item__title"]'
       yamakayama:
       - file: app/parsers/hh.py
         line: 77
