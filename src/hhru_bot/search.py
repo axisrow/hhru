@@ -813,6 +813,8 @@ def filter_candidates(
     resume_id: str,
     history,
     prefilter_thresholds=None,
+    resume_match_threshold: float | None = None,
+    profile=None,
 ) -> tuple[list[VacancyCard], list[tuple[VacancyCard, str]]]:
     """
     Разделяет карточки на (подходящие, исключённые с причиной).
@@ -835,7 +837,7 @@ def filter_candidates(
     ветки отсева (уже откликались / стоп-листы / pre-LLM фильтр #85) пишут свою
     причину — кэш консистентен по всем путям отсева.
     """
-    from .scoring import employer_passes_prefilter  # локальный импорт: цикл search<->scoring
+    from .scoring import employer_passes_prefilter, resume_match_score  # локальный импорт
 
     candidates: list[VacancyCard] = []
     skipped: list[tuple[VacancyCard, str]] = []
@@ -894,6 +896,28 @@ def filter_candidates(
             skipped.append((card, prefilter_reason))
             history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_EMPLOYER_SIGNAL)
             continue
+
+        if resume_match_threshold and profile is None:
+            reason = "resume_match недоступен: ai_profile не сконфигурирован"
+            skipped.append((card, reason))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_RESUME_MATCH)
+            continue
+
+        if resume_match_threshold:
+            outcome = resume_match_score(card, profile)
+            if outcome.score_0_100 < resume_match_threshold:
+                reason = (
+                    f"низкое соответствие резюме: {outcome.score_0_100:.1f} "
+                    f"< {resume_match_threshold:.1f}"
+                )
+                skipped.append(
+                    (
+                        card,
+                        reason,
+                    )
+                )
+                history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.LOW_RESUME_MATCH)
+                continue
 
         candidates.append(card)
 
@@ -1088,7 +1112,11 @@ def _log_resume_match(candidates: list[VacancyCard], profile) -> None:
     окажется мало, логирование переносится до ``filter_candidates`` — но там
     профиль сейчас недоступен без правки сигнатур, и ради Этапа 1 это лишнее.
     """
-    if profile is None or not candidates:
+    if profile is None:
+        if candidates:
+            logger.warning("resume_match пропущен: ai_profile не сконфигурирован")
+        return
+    if not candidates:
         return
 
     from .scoring import resume_match_score  # локальный импорт: разрыв цикла

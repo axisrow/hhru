@@ -828,8 +828,17 @@ def build_apply_plan(
     ``target_limit`` для execution-цикла, но ranked намеренно не срезается:
     runtime skip/duplicate не должен занимать место успешного отклика.
     """
-    prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
-    filtered, skipped = filter_candidates(candidates, filters, resume.resume_id, history, prefilter)
+    scoring = getattr(resume, "scoring", None)
+    prefilter = getattr(scoring, "prefilter", None)
+    filtered, skipped = filter_candidates(
+        candidates,
+        filters,
+        resume.resume_id,
+        history,
+        prefilter,
+        getattr(scoring, "resume_match_threshold", None),
+        getattr(resume, "ai_profile", None),
+    )
 
     ranked = rank_candidates(
         filtered,
@@ -1280,6 +1289,9 @@ def _run_apply_for_resume(
         if progress is not None:
             progress.begin_attempt()
         try:
+            threshold = getattr(getattr(resume, "scoring", None), "letter_match_threshold", None)
+            if threshold is not None and approved_item is None:
+                apply_kwargs["letter_match_threshold"] = threshold
             result = apply_to_vacancy(
                 page,
                 card,

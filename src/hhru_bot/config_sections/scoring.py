@@ -61,6 +61,8 @@ class PrefilterConfig:
 class ScoringConfig:
     weights: ScoringWeights = ScoringWeights()
     prefilter: PrefilterConfig | None = None
+    resume_match_threshold: float | None = None
+    letter_match_threshold: float | None = None
 
 
 def _parse_weights(raw, context: str) -> ScoringWeights:
@@ -130,4 +132,18 @@ def parse_scoring(raw, context: str) -> ScoringConfig | None:
     return ScoringConfig(
         weights=_parse_weights(raw.get("weights"), f"{context}.weights"),
         prefilter=_parse_prefilter(raw.get("prefilter"), f"{context}.prefilter"),
+        resume_match_threshold=_parse_threshold(raw.get("resume_match_threshold"), context),
+        letter_match_threshold=_parse_threshold(raw.get("letter_match_threshold"), context),
     )
+
+
+def _parse_threshold(value, context: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"Порог match-score в '{context}' должен быть числом") from e
+    if not 0.0 <= threshold <= 100.0:
+        raise ConfigError(f"Порог match-score в '{context}' должен быть от 0 до 100")
+    return threshold or None

@@ -1,0 +1,358 @@
+2026-08-25 22:48:52 [INFO] hhru_bot.browser: Загружена сохранённая сессия: /Users/axisrow/Projects/hhru/data/storage_state/hh_session.json
+2026-08-25 22:48:53 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=%D0%9C%D0%B0%D1%80%D0%BA%D0%B5%D1%82%D0%BE%D0%BB%D0%BE%D0%B3&page=0&area=113&schedule=remote
+2026-08-25 22:49:01 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=%D0%9C%D0%B0%D1%80%D0%BA%D0%B5%D1%82%D0%BE%D0%BB%D0%BE%D0%B3&page=1&area=113&schedule=remote
+2026-08-25 22:49:06 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=%D0%9C%D0%B0%D1%80%D0%BA%D0%B5%D1%82%D0%BE%D0%BB%D0%BE%D0%B3&page=2&area=113&schedule=remote
+2026-08-25 22:49:12 [INFO] hhru_bot.search: Найдено вакансий всего: 60
+2026-08-25 22:49:16 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=python+backend&page=0&area=113&schedule=remote
+2026-08-25 22:49:20 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=python+backend&page=1&area=113&schedule=remote
+2026-08-25 22:49:24 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=python+backend&page=2&area=113&schedule=remote
+2026-08-25 22:49:29 [INFO] hhru_bot.search: Найдено вакансий всего: 60
+
+=== Поиск вакансий для резюме: marketing ===
+Найдено всего: 60, подходящих: 40, исключено: 20
+  [candidate] score=+1.00 Интернет-маркетолог — ООО Carrot quest (https://hh.ru/vacancy/136577210) | text_match=+1.00
+  [candidate] score=+1.00 Digital-маркетолог — Фиджитех (https://hh.ru/vacancy/136228063) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог-аналитик (AI-интеграция) — Эксперт Новострой (https://hh.ru/vacancy/136091678) | 120000-150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Продуктовый маркетолог — ООО Технологии маркетинга (https://hh.ru/vacancy/136218980) | text_match=+1.00
+  [candidate] score=+1.00 CRM-маркетолог / Retention-маркетолог — ООО Международная академия фейспластики и остеопатии (https://hh.ru/vacancy/136393383) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — Eqvanta (https://hh.ru/vacancy/135631445) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — Испанское Бюро (https://hh.ru/vacancy/135696700) | от 150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог B2B в IT (Edtech) — ООО Мой Класс (https://hh.ru/vacancy/136170827) | 100000-150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — Школа рекламы (https://hh.ru/vacancy/136030063) | от 100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 CPA-маркетолог/руководитель — ESTADEL (https://hh.ru/vacancy/136566840) | 150000-600000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог (БФЛ) — Центр Защиты Должников (https://hh.ru/vacancy/136537655) | text_match=+1.00
+  [candidate] score=+1.00 Ведущий маркетолог — ООО Мир Красоты (https://hh.ru/vacancy/136548056) | text_match=+1.00
+  [candidate] score=+1.00 Ведущий продуктовый маркетолог — Профи.ру (https://hh.ru/vacancy/135710711) | text_match=+1.00
+  [candidate] score=+1.00 Контент-маркетолог | Head of Content (автобизнес) — АИ Авто (https://hh.ru/vacancy/136326062) | от 150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог по работе с базой — Create Community (https://hh.ru/vacancy/136570178) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог по автоворонкам — ООО Матита (https://hh.ru/vacancy/135620881) | от 100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог‑контентолог‑креатор — Rozhkov Recruitment (https://hh.ru/vacancy/136397951) | до 120000 RUB | text_match=+1.00
+  [candidate] score=+1.00 MIddle+ / Маркетолог в сегменте B2B — ООО BGS Group (https://hh.ru/vacancy/136053587) | 70000-90000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Продуктовый маркетолог в Маркет — Контур (https://hh.ru/vacancy/134576148) | text_match=+1.00
+  [candidate] score=+1.00 Контент-маркетолог — ООО Сиберина (https://hh.ru/vacancy/136609875) | от 100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — Яркий кадр, Студия (https://hh.ru/vacancy/136609189) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог по автоворонкам — Create Community (https://hh.ru/vacancy/136145550) | от 100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог B2B в IT (Edtech) — ООО Мой Класс (https://hh.ru/vacancy/135624936) | 100000-130000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Интернет-маркетолог — ООО ПКФ Новая Цефея (https://hh.ru/vacancy/136259459) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог по работе с базой — Create Community (https://hh.ru/vacancy/136570180) | text_match=+1.00
+  [candidate] score=+1.00 LTV-маркетолог/ маркетолог по монетизации и удержанию (profinansy.ru, подписочная модель) — ООО Группа Компаний Профинансы Капитал (https://hh.ru/vacancy/135760772) | до 170000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Digital-маркетолог (в Новосибирске!) — Точка включения (https://hh.ru/vacancy/134799990) | от 70000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог в агентство SENCE PROD — SENCE.PROD (https://hh.ru/vacancy/136267366) | 100000-150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Интернет-маркетолог — ООО ЯМКЕТ (https://hh.ru/vacancy/135876748) | 150000-200000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — Доломит, производство фасадного сайдинга (https://hh.ru/vacancy/134567145) | 90000-150000 RUB | text_match=+1.00
+  [candidate] score=+1.00 CRM-маркетолог — Циан (https://hh.ru/vacancy/135658736) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог Middle — Meetology (https://hh.ru/vacancy/136092085) | от 50000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Продуктовый маркетолог — Lofty. (https://hh.ru/vacancy/135620366) | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог по автоворонкам — ИП Анарбаева Наталия Дмитриевна (https://hh.ru/vacancy/136036361) | от 80000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Маркетолог — ИП Голубцова Анна Сергеевна (https://hh.ru/vacancy/135742227) | от 120000 RUB | text_match=+1.00
+  [candidate] score=+0.00 Амбассадор Цитрус/сайты и веб-сервисы — ООО Компания Цитрус (https://hh.ru/vacancy/136159260) | 150000-450000 RUB
+  [candidate] score=+0.00 Founding AI Marketing Manager — ArtVolkov.ru (https://hh.ru/vacancy/135983202) | 400000-450000 RUB
+  [candidate] score=+0.00 Менеджер по работе с маркетологами фармацевтических компаний — Доктор на работе (https://hh.ru/vacancy/135903773) | 165000-460000 RUB
+  [candidate] score=+0.00 Руководитель отдела маркетинга — Школа практического инвестирования (https://hh.ru/vacancy/136083231) | 70000-200000 RUB
+  [candidate] score=+0.00 Специалист по контекстной рекламе/Директолог — ООО СМАЙЛ (https://hh.ru/vacancy/136104476) | от 150000 RUB
+  [skip] Growth-маркетолог (B2B AI) — ООО Викилект (https://hh.ru/vacancy/136608322) — ранее отсеяна
+  [skip] Маркетолог-аналитик / маркетолог по развитию — ООО Медзен Клиник (https://hh.ru/vacancy/136581556) | от 80000 RUB — ранее отсеяна
+  [skip] Performance-маркетолог (VPS / IT subscriptions / SaaS) — Game Propaganda (https://hh.ru/vacancy/136377429) | 40000-500000 RUB — ранее отсеяна
+  [skip] Продуктовый маркетолог — Осознанная меркантильность (https://hh.ru/vacancy/136583485) | 100000-130000 RUB — ранее отсеяна
+  [skip] CRM-маркетолог — patch and go (ИП Ковальчук Анастасия Александровна) (https://hh.ru/vacancy/136581867) — ранее отсеяна
+  [skip] Маркетолог в федеральную сеть медицинских клиник — Артрия (https://hh.ru/vacancy/136589803) — ранее отсеяна
+  [skip] Digital-маркетолог (товарный бизнес) — CupTrade (https://hh.ru/vacancy/135767175) | от 120000 RUB — ранее отсеяна2026-08-25 22:49:30 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=AI+engineer+LLM+%D0%B0%D0%B3%D0%B5%D0%BD%D1%82&page=0&area=113&schedule=remote
+2026-08-25 22:49:36 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=AI+engineer+LLM+%D0%B0%D0%B3%D0%B5%D0%BD%D1%82&page=1&area=113&schedule=remote
+2026-08-25 22:49:42 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=AI+engineer+LLM+%D0%B0%D0%B3%D0%B5%D0%BD%D1%82&page=2&area=113&schedule=remote
+2026-08-25 22:49:48 [INFO] hhru_bot.search: Найдено вакансий всего: 90
+
+  [skip] Маркетолог (игры, подписки, сервисы) — Game Propaganda (https://hh.ru/vacancy/136331353) | 40000-400000 RUB — ранее отсеяна
+  [skip] UGC стратег / контент маркетолог / ugc продюсер — ООО Еййя (https://hh.ru/vacancy/136211906) — ранее отсеяна
+  [skip] Интернет-маркетолог — ООО Мамин Часик (https://hh.ru/vacancy/135997851) | 30000-40000 RUB — ранее отсеяна
+  [skip] SEO-специалист — GoodHR (https://hh.ru/vacancy/136378116) | от 100000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] СММ маркетолог — Активный Север (https://hh.ru/vacancy/136468532) | 35000-100000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Маркетолог IT — Тарба Виталий Георгиевич (https://hh.ru/vacancy/135823427) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Маркетолог — ИП Дубов Андрей Валентинович (https://hh.ru/vacancy/136242244) | от 60000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Интернет-маркетолог — Севериновъ Мари Андреевна (https://hh.ru/vacancy/136173211) | 110000-160000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Маркетолог — ИП Захарова Татьяна Михайловна (https://hh.ru/vacancy/136161312) | 500000-1000000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] ABM маркетолог — Ателье LUNA (https://hh.ru/vacancy/136189515) | 100000-250000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Junior Email-маркетолог — Щемелев Артём Алексеевич (https://hh.ru/vacancy/136019343) | 50000-70000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Маркетолог (B2B IT, полный цикл) — ООО Программы 93 (https://hh.ru/vacancy/135603900) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Контент-маркетолог — ИП Компания РАЗУМКОВА (https://hh.ru/vacancy/136194674) | до 20000 RUB — low employer signal (no tier/rating/reviews/interaction)
+
+=== Поиск вакансий для резюме: python ===
+Найдено всего: 60, подходящих: 44, исключено: 16
+  [candidate] score=+5.00 Backend-разработчик (Python / FastAPI) — ООО Инжпроект-М (https://hh.ru/vacancy/136597178) | must_have=+2.00, nice_to_have=+2.00, text_match=+1.00
+  [candidate] score=+4.00 Python Backend Engineer — ООО ТПО ПРАЙД (https://hh.ru/vacancy/136608786) | must_have=+2.00, nice_to_have=+1.00, text_match=+1.00
+  [candidate] score=+4.00 Senior Backend Developer Python — RTM Group (https://hh.ru/vacancy/136364927) | must_have=+2.00, nice_to_have=+1.00, text_match=+1.00
+  [candidate] score=+4.00 Middle Backend Developer — Python — ООО Новые Ветеринарные Технологии (https://hh.ru/vacancy/136549732) | must_have=+2.00, nice_to_have=+1.00, text_match=+1.00
+  [candidate] score=+4.00 Backend Developer Python (Middle / Senior) — ООО Инконсалт (https://hh.ru/vacancy/136375904) | до 300000 RUB | must_have=+2.00, nice_to_have=+1.00, text_match=+1.00
+  [candidate] score=+4.00 Senior Backend разработчик (Rust/Python) — Фалькон Тех (https://hh.ru/vacancy/135621972) | от 300000 RUB | must_have=+2.00, nice_to_have=+1.00, text_match=+1.00
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551275) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551280) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551276) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551278) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551277) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551289) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AQA-инженер (Python) — Enjoypro (https://hh.ru/vacancy/136535010) | 180000-230000 RUB | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551293) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551297) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551281) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551304) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551291) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551296) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551282) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551279) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 AI-разработчик (Python) Junior / Middle — ООО СП Солюшен (https://hh.ru/vacancy/136551300) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Разработчик для автоматизации ВЭД (Python / Альта-Софт) — ООО Разумный выбор (https://hh.ru/vacancy/136211006) | 30000 RUB | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Технический специалист по чат-ботам и автоматизации (EdTech / маркетинг, SaleBot, Python) — ФИЗИКОН (https://hh.ru/vacancy/135896353) | до 110000 RUB | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Middle Python Developer — Datanomica (https://hh.ru/vacancy/136607953) | до 230000 RUB | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Python developer — ООО КОМТЕК (https://hh.ru/vacancy/136547268) | 80000-160000 RUB | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Python-разработчик — Okko (https://hh.ru/vacancy/136598407) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.50 Senior LLM Inference Backend Engineer — YADRO (https://hh.ru/vacancy/129967402) | nice_to_have=+2.00, text_match=+0.50
+  [candidate] score=+1.50 Middle QA Engineer (Backend) — START (https://hh.ru/vacancy/136609487) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 Senior С++ backend engineer (Highload) — Positive Technologies (https://hh.ru/vacancy/136609763) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.00 Data Science (LLM/NLP) — Т1 ИИ (https://hh.ru/vacancy/136067001) | nice_to_have=+1.00
+  [candidate] score=+0.00 QA Automation Engineer / AQA — Datanomica (https://hh.ru/vacancy/136609418) | до 200000 RUB
+  [candidate] score=+0.00 ML-инженер / ML Engineer (с пониманием бэкенда) — ВкусВилл. Офис (https://hh.ru/vacancy/136602056)
+  [candidate] score=+0.00 QA Engineer — Xello (https://hh.ru/vacancy/136514373)
+  [candidate] score=+0.00 Инженер-программист 2 категории — АО ДКС (https://hh.ru/vacancy/136597657)
+  [candidate] score=+0.00 MlOps-инженер (Middle/Senior) — Decart IT-production (https://hh.ru/vacancy/136401450)
+  [candidate] score=+0.00 ML-инженер — Росгосстрах (https://hh.ru/vacancy/136549214)
+  [candidate] score=+0.00 Руководитель ML группы — Ozon Tech (https://hh.ru/vacancy/136608029)
+  [candidate] score=+0.00 TechLead — ЗЕНИТ, банк (https://hh.ru/vacancy/136553562)
+  [candidate] score=+0.00 Senior ML Engineer / ML Ops — ООО СберОбразование (https://hh.ru/vacancy/136394530)
+  [candidate] score=+0.00 QA auto — Лига Цифровой Экономики (https://hh.ru/vacancy/136375966)
+  [candidate] score=+0.00 Penetration Testing Specialist/Специалист по тестированию на проникновение [CICADA8] — "МТС", Работа в IT (https://hh.ru/vacancy/135246646)
+  [candidate] score=-3.00 Full Stack Team Lead (AI PDLC) — СберЗдоровье (https://hh.ru/vacancy/136009114) | exclude_keyword=-3.00
+  [candidate] score=-6.00 Технический директор (iGaming, Go, Next.js) — Президент Сервис Консалт (https://hh.ru/vacancy/136241993) | 5000-10000 USD | exclude_keyword=-6.00
+  [skip] Инженер-программист Python — Навигатор инновационных решений (https://hh.ru/vacancy/136544480) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Ведущий backend-разработчик (Django) — X5, Медиа (https://hh.ru/vacancy/136566343) — стоп-слово в названии: django
+  [skip] Junior Full Stack Developer — ООО Профиторг (https://hh.ru/vacancy/136309811) | 88000-145000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior Fullstack Web-разработчик (PHP / Node.js / Go / Python) — SUPERPET (https://hh.ru/vacancy/135789786) — стоп-слово в названии: fullstack
+  [skip] Fullstack / Python-разработчик в ИТ-компанию Crown (AI & Data) — ИП Корзухин Виталий Валерьевич (https://hh.ru/vacancy/136236166) | 160000-200000 RUB — стоп-слово в названии: fullstack
+  [skip] Senior Python Backend / AI Engineer — LionAdverts (https://hh.ru/vacancy/136402868) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior Backend Software Engineer (Python и Go) — АИМОР (https://hh.ru/vacancy/136371723) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Инженер по автоматизированному тестированию (Fullstack QA Java) — ООО Раппорто (https://hh.ru/vacancy/128174473) — стоп-слово в названии: fullstack
+  [skip] Mobile Fullstack Developer (iOS + Android + Web) — chad (https://hh.ru/vacancy/136360606) — стоп-слово в названии: fullstack
+  [skip] Разработчик (Фронтенд / Vue.js) Middle+ — ООО МСТРОЙ (https://hh.ru/vacancy/133453768) | от 150000 RUB — стоп-слово в названии: vue
+  [skip] Team lead / Senior Web fullstack engineer — Ubego (https://hh.ru/vacancy/136451736) — стоп-слово в названии: fullstack
+  [skip] Senior Java Developer — ООО ВИГО (https://hh.ru/vacancy/136402523) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Старший Go-разработчик, ML платформа — Ozon Tech (https://hh.ru/vacancy/133026624) — стоп-слово в названии: go-разработчик
+  [skip] Computer Vision Engineer — АО Инновационные технологии (https://hh.ru/vacancy/135051018) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior ML Engineer — UZUM TECHNOLOGIES. IT (https://hh.ru/vacancy/135673461) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Инженер по автоматизации и интеграциям (n8n) / Integration Engineer — ИП Петренко Виктор Павлович (https://hh.ru/vacancy/135671385) | 120000-150000 RUB — low employer signal (no tier/rating/reviews/interaction)
+
+=== Поиск вакансий для резюме: ai-engineer ===
+Найдено всего: 90, подходящих: 72, исключено: 18
+  [candidate] score=+2.75 Senior+ Data / AI Engineer | LLM / Multi-Agent / RAG — ООО Цифровые технологии и платформы (https://hh.ru/vacancy/136179259) | nice_to_have=+2.00, text_match=+0.75
+  [candidate] score=+2.50 AI Tooling Engineer / Senior python developer — Positive Technologies (https://hh.ru/vacancy/135661875) | must_have=+2.00, text_match=+0.50
+  [candidate] score=+2.25 Ведущий инженер по моделям машинного обучения (RAG+LLM) — Пятёрочка. Диджитал (https://hh.ru/vacancy/135900801) | nice_to_have=+2.00, text_match=+0.25
+  [candidate] score=+2.00 Senior Python разработчик (Visiology Cortex) — Polymedia (https://hh.ru/vacancy/136545599) | must_have=+2.00
+  [candidate] score=+2.00 Senior Python-разработчик / инженер платформы (внутренний фреймворк) — Сёрф (https://hh.ru/vacancy/136512495) | must_have=+2.00
+  [candidate] score=+2.00 Senior Python-разработчик / инженер платформы (внутренний фреймворк) — Сёрф (https://hh.ru/vacancy/136512524) | must_have=+2.00
+  [candidate] score=+1.75 Senior AI Engineer (LLM / AI-продукты) — РУСАЛ (https://hh.ru/vacancy/136188903) | nice_to_have=+1.00, text_match=+0.75
+  [candidate] score=+1.50 Специалист по машинному обучению / ML-инженер (ML/LLM, AI-агенты для medtech) — Лучи (https://hh.ru/vacancy/135703039) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 Senior LLM Inference Backend Engineer — YADRO (https://hh.ru/vacancy/129967402) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 Разметчик данных для AI / LLM (тувинский язык) — Data Light (https://hh.ru/vacancy/135831271) | 20000-45000 RUB | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 Senior LLM Backend Engineer — YADRO (https://hh.ru/vacancy/136220395) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 AI Tech Lead (LLM) — YADRO (https://hh.ru/vacancy/132157189) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 Бизнес-аналитик (AI / LLM) — Selecty (https://hh.ru/vacancy/136216151) | 200000-230000 RUB | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.50 .NET разработчик (Senior), AI/LLM — SkillStaff (https://hh.ru/vacancy/135835110) | nice_to_have=+1.00, text_match=+0.50
+  [candidate] score=+1.25 Архитектор мультиагентных систем на базе LLM (больших языковых моделей) — БИОКАД, биотехнологическая компания (https://hh.ru/vacancy/135773900) | nice_to_have=+1.00, text_match=+0.25
+  [candidate] score=+1.25 Менеджер проектов (ML/LLM/CV Projects) — EvoAI (https://hh.ru/vacancy/135705117) | до 200000 RUB | nice_to_have=+1.00, text_match=+0.25
+  [candidate] score=+1.25 LLM инженер (Middle+) — SkillStaff (https://hh.ru/vacancy/136504351) | nice_to_have=+1.00, text_match=+0.25
+  [candidate] score=+1.25 Старший инженер по оценке качества LLM (Evals) — АО Медийные Технологии (https://hh.ru/vacancy/134841833) | nice_to_have=+1.00, text_match=+0.252026-08-25 22:49:50 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=AI+team+lead+%D0%B0%D0%B3%D0%B5%D0%BD%D1%82+harness&page=0&area=113&schedule=remote
+2026-08-25 22:49:54 [INFO] hhru_bot.search: Достигнута последняя страница поиска (0)
+2026-08-25 22:49:54 [INFO] hhru_bot.search: Найдено вакансий всего: 24
+
+  [candidate] score=+0.50 Junior Software Development Engineer in Test (Quality & AI focus) — Gear Games (https://hh.ru/vacancy/136605051) | text_match=+0.50
+  [candidate] score=+0.50 Senior AI Engineer [МТС Веб Сервисы] — "МТС", Работа в IT (https://hh.ru/vacancy/136074855) | text_match=+0.50
+  [candidate] score=+0.50 ML engineer/ Computer Vision and Generative AI — Группа компаний «Триумф» (https://hh.ru/vacancy/136278775) | text_match=+0.50
+  [candidate] score=+0.50 Senior AI Engineer — "МТС", Работа в IT (https://hh.ru/vacancy/135822816) | text_match=+0.50
+  [candidate] score=+0.50 Senior Product Security Engineer / DevSecOps (AI & Telecom Platform) — Sifox (https://hh.ru/vacancy/136436469) | text_match=+0.50
+  [candidate] score=+0.50 Senior/Staff Backend Engineer — AI Systems — Playneta (https://hh.ru/vacancy/136099894) | text_match=+0.50
+  [candidate] score=+0.50 Frontend React Developer / AI Engineer — ООО ЯМКЕТ (https://hh.ru/vacancy/136011365) | 170000-230000 RUB | text_match=+0.50
+  [candidate] score=+0.25 AI Developer — МТС Банк. IT (https://hh.ru/vacancy/135680516) | text_match=+0.25
+  [candidate] score=+0.25 ML Engineer (Voice/TTS) — Voximplant (https://hh.ru/vacancy/136536243) | text_match=+0.25
+  [candidate] score=+0.25 AI-инженер — Бэнкс Софт Системс (https://hh.ru/vacancy/136592757) | text_match=+0.25
+  [candidate] score=+0.25 AI-инженер — ООО ЛУИС+ (https://hh.ru/vacancy/134211010) | text_match=+0.25
+  [candidate] score=+0.25 Middle Prompt Engineer — Voximplant (https://hh.ru/vacancy/136175166) | text_match=+0.25
+  [candidate] score=+0.25 NLP engineer (GigaChat) — SberTech (https://hh.ru/vacancy/136202969) | text_match=+0.25
+  [candidate] score=+0.25 AI-разработчик автоматизаций — Sunscrypt.ru (https://hh.ru/vacancy/136319824) | от 50000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Ведущий AI-инженер — АО Агросила (https://hh.ru/vacancy/133612709) | 261000-280000 RUB | text_match=+0.25
+  [candidate] score=+0.25 ML engineer — IT-Implant (https://hh.ru/vacancy/136327915) | 200000-280000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Бизнес-аналитик (AI / Data Science проекты) — EvoAI (https://hh.ru/vacancy/136556227) | до 160000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Middle ML developer [AI-агенты HR MWS] — "МТС", Работа в IT (https://hh.ru/vacancy/136164440) | text_match=+0.25
+  [candidate] score=+0.25 AI Tech Lead — YADRO (https://hh.ru/vacancy/134266602) | text_match=+0.25
+  [candidate] score=+0.25 ML Engineer (NLP) — СберЗдоровье (https://hh.ru/vacancy/134951880) | text_match=+0.25
+  [candidate] score=+0.25 Автор/эксперт курса «AI-инженер» — ООО ПромКонтракт (https://hh.ru/vacancy/135643119) | от 80000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Senior QA Automation Engineer (SDET) — ЮниРЭК (https://hh.ru/vacancy/136591857) | 175000-190000 RUB | text_match=+0.25
+  [candidate] score=+0.25 ML-инженер / ML Engineer (с пониманием бэкенда) — ВкусВилл. Офис (https://hh.ru/vacancy/136602056) | text_match=+0.25
+  [candidate] score=+0.25 Амбассадор по подключению AI решений для бизнеса, услуги маркетинга — Law Business Group (https://hh.ru/vacancy/135894878) | 150000-450000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Middle QA Engineer — EvoAI (https://hh.ru/vacancy/135708369) | до 250000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Амбассадор платформы по AI-автоматизации найма и обучения — Law Business Group (https://hh.ru/vacancy/136221398) | 150000-450000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Амбассадор / партнер по рекомендациям (AI-продукт для бизнеса) — ООО АИ МОП (https://hh.ru/vacancy/136338529) | от 300000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Аналитик/Разработчик AI — Лига Цифровой Экономики (https://hh.ru/vacancy/135526891) | text_match=+0.25
+  [candidate] score=+0.25 Product Owner AI — "МТС", Работа в IT (https://hh.ru/vacancy/136398846) | text_match=+0.25
+  [candidate] score=+0.25 AI-автоматизатор/инженер n8n + вайбкодинг (куратор в онлайн курс) — GORA (https://hh.ru/vacancy/136196007) | 60000-100000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Deep Learning Engineer — Самарский национальный исследовательский университет имени академика С.П.Королева (https://hh.ru/vacancy/136087997) | от 150000 RUB | text_match=+0.25
+  [candidate] score=+0.25 Full Stack Team Lead (AI PDLC) — СберЗдоровье (https://hh.ru/vacancy/136009114) | text_match=+0.25
+  [candidate] score=+0.25 Старший инженер по информационной безопасности (AI), Группа безопасности платформы — Ozon Tech (https://hh.ru/vacancy/135948833) | text_match=+0.25
+  [candidate] score=+0.00 CV-инженер — ООО Салют для Бизнеса (https://hh.ru/vacancy/136036481)
+  [candidate] score=+0.00 Аналитик данных/Data Analyst — Your CodeReview (https://hh.ru/vacancy/136609708) | от 100000 RUB
+  [candidate] score=+0.00 Инженер-исследователь в сфере робототехники — Империус Групп (https://hh.ru/vacancy/136523325)
+  [candidate] score=+0.00 ML-инженер — АО ГК Орбита (https://hh.ru/vacancy/136394806) | до 290000 RUB
+  [candidate] score=+0.00 ML-инженер — МАГНИТ, Розничная сеть. IT (https://hh.ru/vacancy/136298305)
+  [candidate] score=+0.00 ML-инженер — Росгосстрах (https://hh.ru/vacancy/136549214)
+  [candidate] score=+0.00 Инженер по машинному обучению — Правительство Москвы (https://hh.ru/vacancy/135721860)
+  [candidate] score=+0.00 ML-инженер senior — АО ГНИВЦ (https://hh.ru/vacancy/133055688)
+  [candidate] score=+0.00 DevOps/MLOps инженер/Архитектор внедрения ML-решений — Бэнкс Софт Системс (https://hh.ru/vacancy/136544636)
+  [candidate] score=+0.00 ML-архитектор/Руководитель направления ИИ-сервисов — АО «ОХК «Уралхим» (https://hh.ru/vacancy/135716074)
+  [candidate] score=+0.00 Fullstack-разработчик — Infonova Solutions (https://hh.ru/vacancy/135624888) | от 6000 USD
+  [candidate] score=+0.00 Senior ML инженер — Метр квадратный (https://hh.ru/vacancy/136503010)
+  [candidate] score=+0.00 Эксперт ИБ ИИ (ML/AISecOps) — ООО ИК СИБИНТЕК (https://hh.ru/vacancy/136463085)
+  [candidate] score=+0.00 DevOps+MLOps инженер — Т1 ИИ (https://hh.ru/vacancy/136449894)
+  [candidate] score=+0.00 Ведущий DevSecOps-инженер — АО Агросила (https://hh.ru/vacancy/134451190) | 229000-245000 RUB
+  [candidate] score=+0.00 ML-инженер — Т-Банк. ИТ. Разработка (https://hh.ru/vacancy/135531640)
+  [candidate] score=+0.00 ML-разработчик/Data Scientist (портал Рамблер) — Rambler&Co Портал "Рамблер" (https://hh.ru/vacancy/136097258)
+  [candidate] score=+0.00 AppSec SME (detection logic, тюнинг, разбор false positives, корпуса данных) — ООО Эйч-Эль-Эль (https://hh.ru/vacancy/136049764)
+  [candidate] score=+0.00 Системный архитектор / Solution architect направления на проект Alfa Insight — Альфа-Банк. ИТ-специалисты (https://hh.ru/vacancy/136031457)
+  [candidate] score=+0.00 Разметчик данных — ООО Автономные Технологии (https://hh.ru/vacancy/134986540) | от 40000 RUB2026-08-25 22:49:54 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=devops&page=0&area=113&schedule=remote
+2026-08-25 22:50:00 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=devops&page=1&area=113&schedule=remote
+2026-08-25 22:50:08 [INFO] hhru_bot.search: Загрузка страницы поиска: https://hh.ru/search/vacancy?text=devops&page=2&area=113&schedule=remote
+2026-08-25 22:50:19 [INFO] hhru_bot.search: Найдено вакансий всего: 89
+
+  [candidate] score=+0.00 Старший инженер по информационной безопасности (ML), Группа аналитики — Ozon Tech (https://hh.ru/vacancy/135947030)
+  [skip] AI исследователь — Oh My Mars! (https://hh.ru/vacancy/136547743) | от 200000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior Voice Engineer / Ведущий войс-инженер — Bitmanager (https://hh.ru/vacancy/136557481) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Implementation Engineer / Solutions Engineer — ИП Копылов Евгений Анатольевич (https://hh.ru/vacancy/136187036) | от 1800 USD — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI/LLM Security Researcher / Senior MLSecOps (AISec StartUp) — SpaceAI (https://hh.ru/vacancy/136100040) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior AI/ML Engineer (LLM / GenAI / NLP) — ООО SpbDev (https://hh.ru/vacancy/135994313) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Agent Reliability Engineer / Harness Engineer Agentic AI — ИП Копылов Евгений Анатольевич (https://hh.ru/vacancy/136186816) | от 1200 USD — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Security Researcher & Engineer, MLSecOps (AI Security Startup) — SpaceAI (https://hh.ru/vacancy/135723823) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Sales Delivery Lead — AIcelerate (https://hh.ru/vacancy/136585329) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] ML/AI Developer — ИП Литвиненко Александр Юрьевич (https://hh.ru/vacancy/136189562) | 300000-400000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Преподаватель / автор курсов по ИИ — Анастасия Бобылева (https://hh.ru/vacancy/136503066) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Marketing Engineer / инженер AI-маркетинга: лидогенерация, email-outbound, CRM (B2B) — ЛОМИДЗЕ МАРИАМ МАМУКОВНА (https://hh.ru/vacancy/136046765) | 200000-240000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI-специалист начинающий / ассистент по ИИ-проектам — ООО Люди Для Вас (https://hh.ru/vacancy/136329849) | от 10000 RUB — стоп-слово в названии: ассистент
+  [skip] Deputy CTO (США) — AIcelerate (https://hh.ru/vacancy/136267320) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Product Engineer / Business analyst / System analyst — Kar Services (https://hh.ru/vacancy/136068188) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Founding Tech Lead / будущий CTO в eCommerce-проект — Mediata (https://hh.ru/vacancy/136407121) | 300000-500000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Ассистент / Стажёр в сфере ИИ — ООО Valanatoys (https://hh.ru/vacancy/136065331) | от 15000 RUB — стоп-слово в названии: ассистент
+  [skip] ML-инженер — RAG, LLM / VLM — АО Моделирование и цифровые двойники (https://hh.ru/vacancy/135930773) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Tech Lead / CTO — AI-стартап (динамическое ценообразование, международный рынок) — ИП Степанов Алексей Андреевич (https://hh.ru/vacancy/135935227) | 4000-7000 USD — low employer signal (no tier/rating/reviews/interaction)
+
+=== Поиск вакансий для резюме: ai-teamlead ===
+Найдено всего: 24, подходящих: 20, исключено: 4
+  [candidate] score=+1.40 Lead AI/LLM Engineer (Руководитель направления AI) — ООО Софт Бизнес Системы (https://hh.ru/vacancy/136244658) | nice_to_have=+1.00, text_match=+0.40
+  [candidate] score=+1.40 Агент по подключению AI решений для бизнеса, услуги маркетинга — Law Business Group (https://hh.ru/vacancy/135660703) | 150000-450000 RUB | nice_to_have=+1.00, text_match=+0.40
+  [candidate] score=+0.60 Team Lead Python AI content creation automation developer — Ubego (https://hh.ru/vacancy/136512302) | text_match=+0.60
+  [candidate] score=+0.60 Team Lead/Руководитель группы разработки (IT/AI) — ООО Специализированный Застройщик Риверхаус (https://hh.ru/vacancy/136317966) | до 350000 RUB | text_match=+0.60
+  [candidate] score=+0.40 AI Tech Lead — "МТС", Работа в IT (https://hh.ru/vacancy/135921269) | text_match=+0.40
+  [candidate] score=+0.40 Team Lead User Acquisition — Кадровая компания Вераль (https://hh.ru/vacancy/135660474) | text_match=+0.40
+  [candidate] score=+0.40 Team Lead / Senior Python developer | Side-job — Ubego (https://hh.ru/vacancy/136451060) | text_match=+0.40
+  [candidate] score=+0.40 Team lead / Senior Web fullstack engineer — Ubego (https://hh.ru/vacancy/136451736) | text_match=+0.40
+  [candidate] score=+0.40 Team Lead / Senior Software engineer C++ / Qt — Ubego (https://hh.ru/vacancy/136450180) | text_match=+0.40
+  [candidate] score=+0.40 Creative Team Lead (Brand) — Devhunt (https://hh.ru/vacancy/136361756) | text_match=+0.40
+  [candidate] score=+0.20 Амбассадор по внедрению AI решений для бизнеса, услуги маркетинга — Law Business Group (https://hh.ru/vacancy/135660986) | 150000-450000 RUB | text_match=+0.20
+  [candidate] score=+0.20 Амбассадор платформы по AI-автоматизации найма и обучения — Law Business Group (https://hh.ru/vacancy/136221398) | 150000-450000 RUB | text_match=+0.20
+  [candidate] score=+0.20 Амбассадор AI платформы по автоматизации найма и обучения — Law Business Group (https://hh.ru/vacancy/136185820) | 150000-450000 RUB | text_match=+0.20
+  [candidate] score=+0.20 Амбассадор по подключению AI решений для бизнеса, услуги маркетинга — Law Business Group (https://hh.ru/vacancy/135894878) | 150000-450000 RUB | text_match=+0.20
+  [candidate] score=+0.20 Амбассадор / партнер по рекомендациям (AI-продукт для бизнеса) — ООО АИ МОП (https://hh.ru/vacancy/136338529) | от 300000 RUB | text_match=+0.20
+  [candidate] score=+0.20 Senior Full Stack Analytics / Product Analyst (AI-first) — X5 Tech (https://hh.ru/vacancy/136401513) | text_match=+0.20
+  [candidate] score=+0.20 Middle ML developer [AI-агенты HR MWS] — "МТС", Работа в IT (https://hh.ru/vacancy/136164440) | text_match=+0.20
+  [candidate] score=+0.20 AI-исследователь (ИИ агенты) — SkillStaff (https://hh.ru/vacancy/136504143) | text_match=+0.20
+  [candidate] score=+0.20 Ментор корпоративных AI-программ — WaiWai (https://hh.ru/vacancy/136279338) | text_match=+0.20
+  [candidate] score=+0.00 HRD / Head of Talent Acquisition (со знанием английского) — HR-tema (https://hh.ru/vacancy/136146921) | от 350000 RUB
+  [skip] Senior Voice Engineer / Ведущий войс-инженер — Bitmanager (https://hh.ru/vacancy/136557481) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Agent Reliability Engineer / Harness Engineer Agentic AI — ИП Копылов Евгений Анатольевич (https://hh.ru/vacancy/136186816) | от 1200 USD — low employer signal (no tier/rating/reviews/interaction)
+  [skip] AI Sales Delivery Lead — AIcelerate (https://hh.ru/vacancy/136585329) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Бизнес-ассистент / Операционный менеджер AI-платформ — ECOS (https://hh.ru/vacancy/136113851) — стоп-слово в названии: ассистент
+
+=== Поиск вакансий для резюме: test-delete ===
+Найдено всего: 89, подходящих: 79, исключено: 10
+  [candidate] score=+1.00 DevOps инженер (Hadoop) — ООО HeadHunter::Infrastructure engineers (https://hh.ru/vacancy/131098771) | text_match=+1.00
+  [candidate] score=+1.00 DevOps Engineer — Домклик (https://hh.ru/vacancy/136603329) | text_match=+1.00
+  [candidate] score=+1.00 DevOps инженер (ГигаЧат Бизнес) — ООО Салют для Бизнеса (https://hh.ru/vacancy/136090394) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Datanomica (https://hh.ru/vacancy/136544413) | до 250000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps Linux / Kubernetes инженер — ООО РА Дельта (https://hh.ru/vacancy/130817312) | 200000-250000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ООО Лин Айти (https://hh.ru/vacancy/136221584) | text_match=+1.00
+  [candidate] score=+1.00 DevOps/MLOps инженер/Архитектор внедрения ML-решений — Бэнкс Софт Системс (https://hh.ru/vacancy/136544636) | text_match=+1.00
+  [candidate] score=+1.00 Senior DevOps engineer — Клируэй Текнолоджис (https://hh.ru/vacancy/136495346) | 300000-420000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Инженер DevOps — iCore (Integration Core) (https://hh.ru/vacancy/133081496) | от 210000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Senior DevOps — ООО Лектон (https://hh.ru/vacancy/135602923) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Правительство Москвы (https://hh.ru/vacancy/135051896) | text_match=+1.00
+  [candidate] score=+1.00 MLOps\DevOps — KTS (https://hh.ru/vacancy/136360237) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — БУРГЕР КИНГ РОССИЯ (https://hh.ru/vacancy/134093206) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Московский Кредитный Банк. ИТ-специалисты (https://hh.ru/vacancy/133473623) | text_match=+1.00
+  [candidate] score=+1.00 Руководитель группы DevOps — ЭКСМО для профессионалов (https://hh.ru/vacancy/135573584) | text_match=+1.00
+  [candidate] score=+1.00 Ведущий инженер DevOps — МТС Банк. IT (https://hh.ru/vacancy/136135646) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (Middle+) — Иностудио (https://hh.ru/vacancy/136186137) | text_match=+1.00
+  [candidate] score=+1.00 Сетевой инженер / Linux-инженер (DevOps стек) — ООО Абарус (https://hh.ru/vacancy/135164920) | 80000-100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps в инфраструктуру центра ИИ, senior — Контур (https://hh.ru/vacancy/135632260) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (банки, ритейл) — Decart IT-production (https://hh.ru/vacancy/136137246) | text_match=+1.00
+  [candidate] score=+1.00 DevOps инженер (стажер) — Aston (https://hh.ru/vacancy/136271489) | от 70000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (Data Lake, MinIO) — Альфа-Банк. ИТ-специалисты (https://hh.ru/vacancy/136117402) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (Senior) — Правительство Москвы (https://hh.ru/vacancy/136230318) | text_match=+1.00
+  [candidate] score=+1.00 DevOps инженер (ученик) — Aston (https://hh.ru/vacancy/136251449) | от 70000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Техлид DevOps — СК Ренессанс Жизнь (https://hh.ru/vacancy/136095284) | text_match=+1.00
+  [candidate] score=+1.00 DevOps / MLOps Engineer — СберЗдоровье (https://hh.ru/vacancy/134948269) | text_match=+1.00
+  [candidate] score=+1.00 DevOps инженер — АО «ОХК «Уралхим» (https://hh.ru/vacancy/134740527) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-Engineer — SWiP (https://hh.ru/vacancy/135615214) | до 200000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — X5 Tech (https://hh.ru/vacancy/135759993) | text_match=+1.00
+  [candidate] score=+1.00 DevOps engineer — МТС Банк. IT (https://hh.ru/vacancy/135905046) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ОТП Банк. IT (https://hh.ru/vacancy/136603842) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (Проектная команда) — DatsTeam (https://hh.ru/vacancy/134431284) | text_match=+1.00
+  [candidate] score=+1.00 Ведущий инженер DevOps (Эксплуатация СУБД) — МАГНИТ, Розничная сеть. IT (https://hh.ru/vacancy/135275985) | text_match=+1.00
+  [candidate] score=+1.00 DevOps / MLOps инженер — ЗЕНИТ, банк (https://hh.ru/vacancy/136553846) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Bell Integrator (https://hh.ru/vacancy/136567709) | text_match=+1.00
+  [candidate] score=+1.00 Senior DevOps-инженер (Кибербез) — CyberOK (https://hh.ru/vacancy/135998017) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер [МТС Веб Сервисы] — "МТС", Работа в IT (https://hh.ru/vacancy/135930523) | text_match=+1.00
+  [candidate] score=+1.00 Middle Devops инженер — Travelata.ru (ООО Травелата) (https://hh.ru/vacancy/133558984) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ФОДЖИН (https://hh.ru/vacancy/136370652) | от 100000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps Senior — ЛИАН (https://hh.ru/vacancy/136384095) | 260000-320000 RUB | text_match=+1.00
+  [candidate] score=+1.00 TeamLead DevOps — ООО Киберпротект (https://hh.ru/vacancy/136503081) | text_match=+1.00
+  [candidate] score=+1.00 Ведущий инженер (DevOps) — ГКУ Инфогород (https://hh.ru/vacancy/135667496) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Osla (https://hh.ru/vacancy/136411548) | от 200000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ООО Снэп АйТи (https://hh.ru/vacancy/136010535) | 190000-210000 RUB | text_match=+1.00
+  [candidate] score=+1.00 Senior DevOps-инженер — ООО Live Typing (https://hh.ru/vacancy/136434283) | 250000-300000 RUB | text_match=+1.00
+  [candidate] score=+1.00 SRE / DevOps / Senior Infrastructure Engineer (Linux) — БК Марафон (https://hh.ru/vacancy/136265269) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — РУСАЛ (https://hh.ru/vacancy/135426763) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ООО Дип Диджитал (https://hh.ru/vacancy/136321830) | text_match=+1.00
+  [candidate] score=+1.00 Системный администратор (DevOps инженер) — ООО СБЕРАВТО (https://hh.ru/vacancy/136393821) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — WILIX (https://hh.ru/vacancy/136357845) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — СИСТЭМ ЭЛЕКТРИК (https://hh.ru/vacancy/135473050) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — Платформа Национальной Технологической Инициативы (https://hh.ru/vacancy/136324224) | text_match=+1.00
+  [candidate] score=+1.00 DevOps \ MLOps — РТК-ЦОД (https://hh.ru/vacancy/134581617) | text_match=+1.00
+  [candidate] score=+1.00 DevOps инженер — РУСАЛ (https://hh.ru/vacancy/133601201) | text_match=+1.00
+  [candidate] score=+1.00 SRE/Devops (L2) — ООО Технократия (https://hh.ru/vacancy/136143701) | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (Выплаты и интеграции, К360) — АО ГК Орбита (https://hh.ru/vacancy/136185355) | до 250000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер — ПАО Корпорация ВСМПО-АВИСМА (https://hh.ru/vacancy/136211025) | text_match=+1.00
+  [candidate] score=+1.00 DevOps/SRE инженер — ООО Маджестик Девелопмент (https://hh.ru/vacancy/135713300) | text_match=+1.00
+  [candidate] score=+1.00 Senior DevOps-инженер / SRE — ООО Онлайн-школа Фоксфорд (https://hh.ru/vacancy/136229115) | 450000 RUB | text_match=+1.00
+  [candidate] score=+1.00 DevOps-инженер (RuBackup) — Группа компаний Астра (https://hh.ru/vacancy/135932667) | text_match=+1.00
+  [candidate] score=+0.00 Backend разработчик (Python DRF) — ИдаПроджект (https://hh.ru/vacancy/136577315)
+  [candidate] score=+0.00 Site Reliability Engineer (SRE) — Т-Банк. ИТ. Инфраструктура (https://hh.ru/vacancy/136604174)
+  [candidate] score=+0.00 AQA-инженер (Python) — Enjoypro (https://hh.ru/vacancy/136535010) | 180000-230000 RUB
+  [candidate] score=+0.00 Lead Infrastructure & SRE Engineer (Linux / MikroTik / PHP / Security) — Millennium (https://hh.ru/vacancy/136580458) | от 300000 RUB
+  [candidate] score=+0.00 Пентестер — ООО НОВАЯ СТУДИЯ (https://hh.ru/vacancy/135973070)
+  [candidate] score=+0.00 MLOps-инженер — ООО Синьор Софт (https://hh.ru/vacancy/136175197) | 180000-280000 RUB
+  [candidate] score=+0.00 DevSecOps — Департамент персонала (https://hh.ru/vacancy/136083541)
+  [candidate] score=+0.00 MLOps-инженер по развитию инфраструктуры и ML-пайплайнов — USETECH (https://hh.ru/vacancy/136521831)
+  [candidate] score=+0.00 Reliability & Performance QA Engineer — Сloud.ru: Разработка (https://hh.ru/vacancy/136478970)
+  [candidate] score=+0.00 Senior Product Security Engineer / DevSecOps (AI & Telecom Platform) — Sifox (https://hh.ru/vacancy/136436469)
+  [candidate] score=+0.00 DevSeсOps-инженер — ООО Бифорком Тек (https://hh.ru/vacancy/132635366)
+  [candidate] score=+0.00 QA Engineer (Middle) — ООО Коллектив Интеллидженс Системс (https://hh.ru/vacancy/136179339)
+  [candidate] score=+0.00 SRE-инженер по мониторингу и Observability — ООО АФЛТ-Системс (https://hh.ru/vacancy/136034490)
+  [candidate] score=+0.00 SRE-инженер в Deckhouse Observability — АО Флант (https://hh.ru/vacancy/135858897)
+  [candidate] score=+0.00 Релиз-инженер (Middle) — Bcraft (https://hh.ru/vacancy/135935653)
+  [candidate] score=+0.00 Ведущий MLOps инженер — МАГНИТ, Розничная сеть. OMNI (https://hh.ru/vacancy/135849932)
+  [candidate] score=+0.00 SecOps Engineer — DatsTeam (https://hh.ru/vacancy/134382941)
+  [candidate] score=+0.00 IT Operations Engineer (Linux, Databases, CI/CD) — Quadcode (https://hh.ru/vacancy/133857886)
+  [candidate] score=+0.00 Security Engineer (Architecture & Engineering) — eXpress (https://hh.ru/vacancy/136392311)
+  [skip] Senior MLOps & BlockchainOps Engineer (DevOps Engineer in AI & Blockchain products) — Simplenight (https://hh.ru/vacancy/136202959) | 300000-400000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps-инженер (в команду DevOps) — VS Robotics (ООО АБТ) (https://hh.ru/vacancy/135872279) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps инженер — ИП Андрианов Кирилл Владимирович (https://hh.ru/vacancy/136278662) | 400000-500000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps Engineer / Системный администратор — ИП Вердиев Салех Илхам Оглы (https://hh.ru/vacancy/136145367) | 130000-180000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps-инженер — ООО Юнай (https://hh.ru/vacancy/135841632) | 120000-150000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Senior DevOps / DevSecOps Engineer — VELARIS MARKETING SERVICES VIA SOCIAL MEDIA L.L.C (https://hh.ru/vacancy/136459475) | от 3000 USD — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps Engineer — ООО Амос (https://hh.ru/vacancy/136511575) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Ведущий инженер инфраструктуры (Team Lead / Lead DevOps) — ООО СКАЙФОРТ РУС (https://hh.ru/vacancy/136480565) | 250000-300000 RUB — low employer signal (no tier/rating/reviews/interaction)
+  [skip] Инженер инфраструктуры / DevOps-инженер (Presale и внедрение) — ООО ЭИРКЛАУД (https://hh.ru/vacancy/136450725) — low employer signal (no tier/rating/reviews/interaction)
+  [skip] DevOps-инженер — Priqol Labs (https://hh.ru/vacancy/136323426) | 2000-2500 USD — low employer signal (no tier/rating/reviews/interaction)

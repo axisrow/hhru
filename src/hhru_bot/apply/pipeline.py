@@ -99,6 +99,7 @@ class ApplyContext:
     # #17: провайдер письма (шаблон/AI). None → статичный .format (обратная
     # совместимость). Провайдер сам отвечает за fallback, исключений не кидает.
     letter_provider: CoverLetterProvider | None = None
+    letter_match_threshold: float | None = None
     # Заполняется в _run после рендера письма — итоговый variant для ApplyResult.
     letter_variant: str = VARIANT_TEMPLATE
     # #163: submit выполнен. Выставляется в _run после успешного fill_response_form
@@ -178,6 +179,7 @@ def apply_to_vacancy(
     dry_run: bool,
     probe: ProbeHook | None = None,
     letter_provider: CoverLetterProvider | None = None,
+    letter_match_threshold: float | None = None,
     verifier: ResponseVerifier | None = None,
     before_submit: Callable[[], None] | None = None,
     question_answerer: AIQuestionAnswerer | None = None,
@@ -194,6 +196,7 @@ def apply_to_vacancy(
         dry_run=dry_run,
         probe=probe or NOOP_PROBE,
         letter_provider=letter_provider,
+        letter_match_threshold=letter_match_threshold,
         verifier=verifier,
         before_submit=before_submit,
         question_answerer=question_answerer,
@@ -468,6 +471,17 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     else:
         letter = render_cover_letter(ctx.cover_letter_template, ctx.vacancy)
         ctx.letter_variant = VARIANT_TEMPLATE
+
+    if ctx.letter_match_threshold:
+        from ..scoring import letter_match_score
+
+        outcome = letter_match_score(ctx.vacancy, letter)
+        if outcome.score_0_100 < ctx.letter_match_threshold:
+            return ctx.skip(
+                f"низкое соответствие письма: {outcome.score_0_100:.1f} "
+                f"< {ctx.letter_match_threshold:.1f}",
+                skip_reason=SKIP_REASONS.LOW_LETTER_MATCH,
+            )
 
     if ctx.dry_run:
         logger.info("[DRY-RUN] Откликнулся бы на '%s' с письмом:\n%s", ctx.vacancy.title, letter)

@@ -554,6 +554,8 @@ class _SkipReasons:
     ALREADY_APPLIED = "already_applied"  # history.has_applied — уже откликались
     LOW_EMPLOYER_SIGNAL = "low_employer_signal"  # #85 pre-LLM фильтр (зарезервирован)
     LOW_LLM_SCORE = "low_llm_score"  # будущий отсев по LLM-скорингу #74
+    LOW_RESUME_MATCH = "low_resume_match"
+    LOW_LETTER_MATCH = "low_letter_match"
     HAS_QUESTIONS = "has_questions"  # #84 идея №7 (зарезервирован)
     QUESTION_LOW_CONFIDENCE = "question_skipped_low_confidence"
     # #482: вопрос анкеты ушёл в очередь на ручное решение. Отдельно от
@@ -581,6 +583,8 @@ SKIP_REASON_VALUES = (
     _SkipReasons.CURRENT_EMPLOYER,
     _SkipReasons.ALREADY_APPLIED,
     _SkipReasons.LOW_EMPLOYER_SIGNAL,
+    _SkipReasons.LOW_RESUME_MATCH,
+    _SkipReasons.LOW_LETTER_MATCH,
     _SkipReasons.LOW_LLM_SCORE,
     _SkipReasons.HAS_QUESTIONS,
     _SkipReasons.QUESTION_LOW_CONFIDENCE,

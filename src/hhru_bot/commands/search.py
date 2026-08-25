@@ -209,9 +209,16 @@ def run(args: argparse.Namespace) -> bool:
             # между search_vacancies и filter_candidates, не трогая отбор/скоринг.
             _record_seen(cards, resume.search.text, history)
             # pre-LLM фильтр работодателя (#85): пороги из опц. scoring.prefilter.
-            prefilter = getattr(getattr(resume, "scoring", None), "prefilter", None)
+            scoring = getattr(resume, "scoring", None)
+            prefilter = getattr(scoring, "prefilter", None)
             candidates, skipped = filter_candidates(
-                cards, resume.search, resume.resume_id, history, prefilter
+                cards,
+                resume.search,
+                resume.resume_id,
+                history,
+                prefilter,
+                getattr(scoring, "resume_match_threshold", None),
+                getattr(resume, "ai_profile", None),
             )
             ranked = rank_candidates(candidates, resume.search, resume)
 
