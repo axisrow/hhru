@@ -162,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless", action="store_true", help="Запустить браузер в headless-режиме"
     )
     parser.add_argument("--verbose", action="store_true", help="Подробное логирование")
+    parser.add_argument("--quiet", action="store_true", help="Не печатать поток прогресса")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     register_commands(subparsers)

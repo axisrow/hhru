@@ -319,6 +319,7 @@ AIProfile/config.yaml.
 - `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db)
 - `--headless` — Запустить браузер в headless-режиме
 - `--verbose` — Подробное логирование
+- `--quiet` — Не печатать поток прогресса
 
 **Команды**:
 
