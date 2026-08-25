@@ -203,6 +203,44 @@ def test_refresh_preserves_upstream_candidate_decisions():
     assert refreshed[0]["verification"] == "contract_tested"
 
 
+def test_issue_610_apply_login_negotiations_coverage_is_classified():
+    catalog = contracts.load_catalog()
+    prefixes = ("apply_form.", "negotiations.", "selectors.LOGIN")
+    allowed_statuses = {
+        "reference binding",
+        "intentionally local",
+        "not implemented upstream",
+        "needs-live-evidence",
+    }
+    required_fields = {
+        "coverage_status",
+        "origin",
+        "verification",
+        "evidence",
+        "last_verified_at",
+        "verified_flow",
+        "verified_by",
+    }
+
+    audited = {
+        logical_id: row
+        for logical_id, row in catalog["selectors"].items()
+        if logical_id.startswith(prefixes)
+    }
+
+    assert audited
+    for logical_id, row in audited.items():
+        assert required_fields <= row.keys(), logical_id
+        assert row["coverage_status"] in allowed_statuses, logical_id
+        assert row["origin"] != "llm_hypothesis", logical_id
+        if row.get("active", True):
+            assert row["origin"] and row["verification"], logical_id
+        if row["coverage_status"] == "reference binding":
+            assert row.get("bindings") or row.get("sources"), logical_id
+        if row["coverage_status"] == "needs-live-evidence":
+            assert row["verification"] in {"unverified", "unavailable"}, logical_id
+
+
 def test_apply_response_upstream_candidates_have_explicit_safe_decisions():
     catalog = contracts.load_catalog()
     candidates = {
