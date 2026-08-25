@@ -51,6 +51,11 @@ APPLY_SUCCESS_MARKERS = (
     APPLY_SUCCESS_MARKER,
     "[data-qa='vacancy-response-success']",
     ".bloko-modal-response-success",
+    # Current Magritte response popup (captured in the post-submit form
+    # dumps).  The old selectors above belong to the legacy popup and remain
+    # as compatibility fallbacks.
+    "[data-qa='responded-success-attach-cover-letter']",
+    "[data-qa='vacancy-response-link-top']",
 )
 
 # Текстовые признаки отправленного отклика. Регистронезависимый regex (#7):
