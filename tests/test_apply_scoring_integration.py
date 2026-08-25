@@ -140,6 +140,26 @@ def test_run_apply_passes_llm_provider_when_ai_on(tmp_path, monkeypatch):
     assert captured["llm_shortlist"] == 10
 
 
+def test_ai_providers_query_feedback_by_canonical_resume_id(tmp_path, monkeypatch):
+    class _FakeHistory:
+        def __init__(self):
+            self.calls = []
+
+        def list_feedback(self, *, resume_id, limit):  # noqa: ANN001
+            self.calls.append((resume_id, limit))
+            return []
+
+    monkeypatch.setattr("hhru_bot.ai.llm_client.LLMClient", lambda cfg: object())
+    resume = _resume_with_profile()
+    config = _config_with_ai(tmp_path, resume)
+    history = _FakeHistory()
+
+    _common._build_scoring_provider(config, resume, history)
+    _common._build_letter_provider(config, resume, "template", history)
+
+    assert history.calls == [("AAA111", 25), ("AAA111", 25)]
+
+
 def test_run_apply_passes_none_when_ai_off(tmp_path, monkeypatch):
     """AI выключен → rank_candidates получает None (эвристика #15, совместимость)."""
     captured: dict = {}

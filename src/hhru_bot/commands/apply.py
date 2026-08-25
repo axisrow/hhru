@@ -125,7 +125,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 raise_for_antibot(page)
             routing_resumes = [r for r in routing_resumes if r.id not in unconfirmed_resume_ids]
             merged = merge_vacancies(feeds)
-            providers = {r.id: _build_scoring_provider(config, r) for r in routing_resumes}
+            providers = {r.id: _build_scoring_provider(config, r, history) for r in routing_resumes}
             routed = route_vacancies(
                 merged,
                 routing_resumes,
