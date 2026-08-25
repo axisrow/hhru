@@ -14,7 +14,6 @@ from playwright.sync_api import Page
 
 from .apply.antibot import raise_for_antibot
 from .browser import HH_BASE_URL, goto_hh, require_authenticated_page, resume_identity_matches
-from .competitor_privacy import sanitize_skill_name
 from .search import parse_salary
 from .selector_groups import competitor_resume as sel
 
@@ -243,9 +242,11 @@ def parse_search_page(
     *,
     rank_offset: int = 0,
     expected_page_size: int = ITEMS_PER_PAGE,
+    require_authentication: bool = True,
 ) -> list[CompetitorSearchCard]:
     raise_for_antibot(page)
-    require_authenticated_page(page)
+    if require_authentication:
+        require_authenticated_page(page)
     links = page.locator(sel.SEARCH_RESULT_LINK)
     try:
         links.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
@@ -363,14 +364,10 @@ _SALARY_HEADING_RE = re.compile(
 )
 
 
-def redact_free_text(_value: str) -> None:
-    """Never retain unstructured third-party resume text.
-
-    Regex redaction cannot reliably identify all names, demographics, and
-    locations in free-form applicant text. Structured professional fields are
-    parsed separately; free-form sections are dropped rather than persisted.
-    """
-    return None
+def redact_free_text(value: str) -> str | None:
+    """Compatibility helper: preserve collected free text without filtering."""
+    text = value.strip()
+    return text or None
 
 
 def _months(text: str) -> int | None:
@@ -460,8 +457,8 @@ def parse_competitor_resume_text(
         if normalized_level in _PROFICIENCY:
             proficiency = normalized_level
             continue
-        skill_name = sanitize_skill_name(line)
-        if skill_name is not None:
+        skill_name = line.strip()
+        if skill_name:
             skills.append(CompetitorSkill(skill_name, proficiency))
 
     education = _section(lines, "Образование")
@@ -499,10 +496,16 @@ def _median(values: list[int]) -> int:
     return round((ordered[middle - 1] + ordered[middle]) / 2)
 
 
-def fetch_competitor_resume(page: Page, card: CompetitorSearchCard) -> CompetitorResume:
+def fetch_competitor_resume(
+    page: Page,
+    card: CompetitorSearchCard,
+    *,
+    require_authentication: bool = True,
+) -> CompetitorResume:
     goto_hh(page, card.resume_url)
     raise_for_antibot(page)
-    require_authenticated_page(page)
+    if require_authentication:
+        require_authenticated_page(page)
     if not resume_identity_matches(page, card.resume_id):
         raise CompetitorResumeIndeterminate("identity открытого резюме не подтверждён")
     main = page.locator(sel.DETAIL_MAIN)
@@ -520,7 +523,7 @@ def fetch_competitor_resume(page: Page, card: CompetitorSearchCard) -> Competito
 
 
 def report_competitors(rows: list[dict], *, top: int, limited_runs: int = 0) -> str:
-    """Build a deterministic, PII-free report from latest stored snapshots."""
+    """Build a deterministic report from latest stored snapshots."""
     roles = Counter(str(row["desired_role"]) for row in rows if row.get("desired_role"))
     skills = Counter(
         skill["name"] for row in rows for skill in row.get("skills", []) if skill.get("name")

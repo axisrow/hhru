@@ -245,7 +245,7 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
 
 @contextmanager
 def launch_context(
-    storage_state_file: Path,
+    storage_state_file: Path | None,
     headless: bool = False,
     user_agent: str | None = None,
 ):
@@ -266,7 +266,9 @@ def launch_context(
         }
         if user_agent:
             context_kwargs["user_agent"] = user_agent
-        if storage_state_file.exists():
+        if storage_state_file is None:
+            logger.info("Запущен чистый браузерный контекст без сохранённой сессии")
+        elif storage_state_file.exists():
             context_kwargs["storage_state"] = str(storage_state_file)
             logger.info("Загружена сохранённая сессия: %s", storage_state_file)
         else:
@@ -297,11 +299,12 @@ def launch_context(
             for resource in (context, browser):
                 try:
                     resource.close()
-                except PlaywrightError as exc:
+                except Exception as exc:
                     message = str(exc)
                     target_closed = (
                         "TargetClosedError" in message
                         or "Target page, context or browser has been closed" in message
+                        or "Connection closed while reading from the driver" in message
                     )
                     if not target_closed and cleanup_error is None:
                         cleanup_error = exc

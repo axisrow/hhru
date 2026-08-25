@@ -114,6 +114,31 @@ def test_launch_context_sets_timeout_even_without_session(monkeypatch, tmp_path)
     calls["set_default_navigation_timeout"].assert_called_once_with(GOTO_TIMEOUT_MS)
 
 
+def test_launch_context_none_never_loads_storage_state(monkeypatch):
+    captured: dict = {}
+
+    @contextmanager
+    def _sync_playwright():
+        context = MagicMock(name="BrowserContext")
+        fake_browser = MagicMock(name="Browser")
+
+        def new_context(**kwargs):
+            captured.update(kwargs)
+            return context
+
+        fake_browser.new_context.side_effect = new_context
+        playwright = MagicMock(name="Playwright")
+        playwright.chromium.launch.return_value = fake_browser
+        yield playwright
+
+    monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
+
+    with browser.launch_context(None, headless=True):
+        pass
+
+    assert "storage_state" not in captured
+
+
 def test_launch_context_suppresses_only_target_closed_cleanup(monkeypatch, tmp_path):
     calls: dict = {}
 
@@ -137,6 +162,24 @@ def test_launch_context_suppresses_only_target_closed_cleanup(monkeypatch, tmp_p
     calls["browser"].close.assert_called_once()
 
 
+def test_launch_context_suppresses_driver_closed_cleanup(monkeypatch, tmp_path):
+    @contextmanager
+    def _sync_playwright():
+        fake_context = MagicMock(name="BrowserContext")
+        fake_context.close.side_effect = Exception(
+            "Browser.close: Connection closed while reading from the driver"
+        )
+        fake_browser = MagicMock(name="Browser")
+        fake_browser.new_context.return_value = fake_context
+        playwright = MagicMock(name="Playwright")
+        playwright.chromium.launch.return_value = fake_browser
+        yield playwright
+
+    monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
+    with browser.launch_context(tmp_path / "session.json", headless=True):
+        pass
+
+
 def test_launch_context_propagates_unrelated_cleanup_error(monkeypatch, tmp_path):
     @contextmanager
     def _sync_playwright():
@@ -150,6 +193,23 @@ def test_launch_context_propagates_unrelated_cleanup_error(monkeypatch, tmp_path
 
     monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
     with pytest.raises(PlaywrightError, match="transport corruption"):
+        with browser.launch_context(tmp_path / "session.json", headless=True):
+            pass
+
+
+def test_launch_context_propagates_unrelated_generic_cleanup_error(monkeypatch, tmp_path):
+    @contextmanager
+    def _sync_playwright():
+        fake_context = MagicMock(name="BrowserContext")
+        fake_context.close.side_effect = Exception("generic cleanup corruption")
+        fake_browser = MagicMock(name="Browser")
+        fake_browser.new_context.return_value = fake_context
+        playwright = MagicMock(name="Playwright")
+        playwright.chromium.launch.return_value = fake_browser
+        yield playwright
+
+    monkeypatch.setattr(browser, "sync_playwright", _sync_playwright)
+    with pytest.raises(Exception, match="generic cleanup corruption"):
         with browser.launch_context(tmp_path / "session.json", headless=True):
             pass
 

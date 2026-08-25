@@ -237,6 +237,8 @@ def test_competitors_collect_and_report_arguments():
     assert collect.execution_mode == "foreground"
     assert collect.progress_verbosity == 1
     assert collect.items_per_page == 100
+    assert collect.auth_mode == "anonymous"
+    assert collect.detail_workers == 10
 
     explicit = parser.parse_args(
         [
@@ -252,11 +254,17 @@ def test_competitors_collect_and_report_arguments():
             "0",
             "--items-per-page",
             "20",
+            "--auth-mode",
+            "authenticated",
+            "--detail-workers",
+            "1",
         ]
     )
     assert explicit.execution_mode == "foreground"
     assert explicit.progress_verbosity == 0
     assert explicit.items_per_page == 20
+    assert explicit.auth_mode == "authenticated"
+    assert explicit.detail_workers == 1
 
     resumed = parser.parse_args(["competitors", "collect", "--text", "AI", "--resume"])
     assert resumed.resume is True
@@ -274,11 +282,20 @@ def test_competitors_collect_and_report_arguments():
         ["competitors", "collect", "--text", "AI", "--max-pages", "0"],
         ["competitors", "report", "--top", "0"],
         ["competitors", "collect", "--text", "AI", "--items-per-page", "101"],
+        ["competitors", "collect", "--text", "AI", "--detail-workers", "0"],
+        ["competitors", "collect", "--text", "AI", "--detail-workers", "1001"],
     ],
 )
 def test_competitors_rejects_missing_or_nonpositive_args(argv):
     with pytest.raises(SystemExit):
         _build().parse_args(argv)
+
+
+def test_competitors_accepts_one_thousand_detail_workers():
+    args = _build().parse_args(
+        ["competitors", "collect", "--text", "AI", "--detail-workers", "1000"]
+    )
+    assert args.detail_workers == 1000
 
 
 def test_apply_has_limit():
