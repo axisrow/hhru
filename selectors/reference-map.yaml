@@ -2747,7 +2747,7 @@ selectors:
     bindings: {}
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:26
     decision: live_dom
     sources: {}
@@ -2757,7 +2757,7 @@ selectors:
     bindings: {}
   search_page.COMPANY_RATING_VALUE:
     value: '[data-qa=''company-review-rating-value'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:25
     decision: live_dom
     sources: {}
@@ -2813,7 +2813,7 @@ selectors:
     bindings: {}
   search_page.VACANCY_CARD:
     value: '[data-qa=''vacancy-serp__vacancy'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:5
     decision: live_dom
     sources:
@@ -2868,7 +2868,7 @@ selectors:
         value: '[data-qa="vacancy-serp__vacancy-address"]'
   search_page.VACANCY_CARD_COMPANY:
     value: '[data-qa=''vacancy-serp__vacancy-employer'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:11
     decision: consensus
     sources:
@@ -3052,7 +3052,7 @@ selectors:
     bindings: {}
   search_page.VACANCY_CARD_TITLE_LINK:
     value: '[data-qa=''serp-item__title'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:10
     decision: live_dom
     sources:

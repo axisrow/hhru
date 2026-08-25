@@ -19,13 +19,17 @@ CI rejects:
 - unresolved upstream drift.
 
 The daily GitHub Action reads, but never executes, the three reference
-checkouts. It follows the stored source keys across upstream commits. In the
-current `manual` phase, a changed selector produces a review PR and cannot
-merge while drift is unresolved. `--mode read_auto` is reserved for a later
-phase: it may update only READ selectors with new 2-of-3 consensus. WRITE
-selectors always remain manual. Criticality is based on reachability: a title,
-status, or container is WRITE-critical when a mutation uses it for identity,
-scoping, or post-save verification, even if that element itself is only read.
+checkouts. It follows the stored source keys across upstream commits. The
+scheduled run first checks the current catalog; only a green check opens the
+`read_auto` phase. In `read_auto`, a changed selector is accepted only when the
+same tracked source keys provide a new 2-of-3 consensus for a READ selector.
+WRITE, conflicting, and single-source selectors remain `manual` and produce a
+review PR instead. Criticality is based on reachability: a title, status, or
+container is WRITE-critical when a mutation uses it for identity, scoping, or
+post-save verification, even if that element itself is only read.
+
+`workflow_dispatch` is unchanged: its dry-run uses `manual` without writing,
+and its non-dry-run path uses `manual` for a review PR.
 
 Local commands:
 

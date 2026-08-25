@@ -50,19 +50,31 @@ jobs:
           REFERENCE_ROOT: ${{ runner.temp }}/selector-references
         run: python scripts/selector_contracts.py refresh --dry-run --mode manual --reference-root "$REFERENCE_ROOT"
 
-      - name: Refresh selector map
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+      - name: Check selector baseline soak gate
+        if: ${{ github.event_name == 'schedule' }}
+        id: selector_soak_gate
+        continue-on-error: true
+        run: python scripts/selector_contracts.py check
+
+      - name: Refresh selector map (scheduled READ auto-update)
+        if: ${{ github.event_name == 'schedule' && steps.selector_soak_gate.outcome == 'success' }}
+        env:
+          REFERENCE_ROOT: ${{ runner.temp }}/selector-references
+        run: python scripts/selector_contracts.py refresh --mode read_auto --reference-root "$REFERENCE_ROOT"
+
+      - name: Refresh selector map (manual review)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != true }}
         env:
           REFERENCE_ROOT: ${{ runner.temp }}/selector-references
         run: python scripts/selector_contracts.py refresh --mode manual --reference-root "$REFERENCE_ROOT"
 
       - name: Verify generated contract
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        if: ${{ (github.event_name == 'schedule' && steps.selector_soak_gate.outcome == 'success') || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         continue-on-error: true
         run: python scripts/selector_contracts.py check
 
       - name: Open or update manual-review PR
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        if: ${{ (github.event_name == 'schedule' && steps.selector_soak_gate.outcome == 'success') || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         env:
           GH_TOKEN: ${{ github.token }}
           REFRESH_BRANCH: codex/selector-refresh

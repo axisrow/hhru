@@ -267,6 +267,19 @@ REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
+# Search results feed the irreversible apply path.  These selectors are read
+# from the DOM, but their reachability determines the vacancy identity and
+# safety scope, so they must not be eligible for read-only auto-updates.
+WRITE_REACHABILITY_IDS = frozenset(
+    {
+        "search_page.VACANCY_CARD",
+        "search_page.VACANCY_CARD_TITLE_LINK",
+        "search_page.VACANCY_CARD_COMPANY",
+        "search_page.COMPANY_RATING_VALUE",
+        "search_page.COMPANY_RATING_REVIEWS_COUNT",
+    }
+)
+
 SOURCE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx"}
 SELECTOR_MARKERS = ("[data-qa", "[data-qa-popup-error-code")
 _QUOTED = re.compile(r"(?P<quote>['\"`])(?P<body>(?:\\.|(?!\1).)*)(?P=quote)", re.DOTALL)
@@ -586,6 +599,8 @@ def classify_criticality(logical_id: str) -> str:
     """
     if SPECIAL_POLICIES.get(logical_id, (None,))[0] == "structural_read_fallback":
         return "read"
+    if logical_id in WRITE_REACHABILITY_IDS:
+        return "write"
     if logical_id.startswith("professional_roles."):
         return "write" if logical_id == "professional_roles.TREE_LABEL" else "read"
     if logical_id in {
