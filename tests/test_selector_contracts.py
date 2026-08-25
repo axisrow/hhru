@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "selector_contracts.py"
+WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "selector-refresh.yml"
 SPEC = importlib.util.spec_from_file_location("selector_contracts", SCRIPT_PATH)
 assert SPEC and SPEC.loader
 contracts = importlib.util.module_from_spec(SPEC)
@@ -453,3 +454,20 @@ def test_refresh_tracks_source_keys_and_never_auto_updates_write(tmp_path, monke
     assert automatic["selectors"]["resume_page.fixture_WRITE"]["decision"] == "drift_pending"
     assert automatic["selectors"]["resume_page.fixture_UNVERIFIED_WRITE"]["decision"] == "live_dom"
     assert automatic["selectors"]["resume_page.fixture_UNVERIFIED_WRITE"]["active"] is True
+
+
+def test_scheduled_read_auto_is_fail_closed_behind_green_check():
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["refresh"]["steps"]
+    soak_gate = next(step for step in steps if step.get("id") == "selector_soak_gate")
+    read_auto = next(
+        step for step in steps if "--mode read_auto" in step.get("run", "")
+    )
+
+    assert soak_gate["if"] == "${{ github.event_name == 'schedule' }}"
+    assert soak_gate["run"] == "python scripts/selector_contracts.py check"
+    assert soak_gate["continue-on-error"] is True
+    assert (
+        read_auto["if"]
+        == "${{ github.event_name == 'schedule' && steps.selector_soak_gate.outcome == 'success' }}"
+    )
