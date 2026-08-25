@@ -6,9 +6,7 @@ HTTP-контракт намеренно не используется: един
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +22,7 @@ from .browser import (
     resume_identity_matches,
 )
 from .config import ResumeConfig
+from .resume_state import ResumeState, is_published, parse_resume_state
 from .selector_groups.resume_page import (
     RESUME_PUBLISH_BUTTON,
     RESUME_PUBLISH_BUTTON_DATA_QA,
@@ -34,12 +33,10 @@ logger = logging.getLogger("hhru_bot.publish_resume")
 PUBLISH_TIMEOUT_MS = 30_000
 
 
-@dataclass
-class ResumePublishState:
-    status: str | None = None
-    is_searchable: bool | None = None
-    can_publish_or_update: bool | None = None
-    next_incomplete_screen_id: str | None = None
+# Compatibility alias: callers and tests historically imported this name from
+# publish_resume.  State parsing itself now lives in the shared module used by
+# both publishing and resume-position routing.
+ResumePublishState = ResumeState
 
 
 @dataclass
@@ -61,60 +58,7 @@ def _is_published(state: ResumePublishState) -> bool:
     publication signal is therefore ``isSearchable=True``; ``finished`` is
     retained for compatibility with the original state contract.
     """
-    return state.is_searchable is True or state.status == "finished"
-
-
-def _walk_json(value):
-    yield value
-    if isinstance(value, dict):
-        for child in value.values():
-            yield from _walk_json(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_json(child)
-
-
-def parse_resume_state(markup: str, resume_id: str) -> ResumePublishState:
-    """Extract state from the structured record for ``resume_id``.
-
-    The page can contain state for more than one resume in embedded bootstrap
-    data. Never combine fields from separate records.
-    """
-    if not resume_id:
-        raise ValueError("resume_id is required to parse resume state safely")
-
-    decoder = json.JSONDecoder()
-    for match in re.finditer(r"\{", markup):
-        try:
-            candidate, _ = decoder.raw_decode(markup[match.start() :])
-        except json.JSONDecodeError:
-            continue
-        for record in _walk_json(candidate):
-            if not isinstance(record, dict):
-                continue
-            identifiers = {str(record.get(key, "")) for key in ("id", "hash", "resumeId")}
-            if resume_id not in identifiers:
-                continue
-            # hh.ru keeps the wizard's ``scheme`` next to the resume
-            # record, rather than inside it.  It is still page-scoped and
-            # therefore safe to attach only after the target identity was
-            # found in this JSON document.
-            scheme = candidate.get("scheme") if isinstance(candidate, dict) else None
-            return _state_from_mapping(record, scheme)
-    return ResumePublishState()
-
-
-def _state_from_mapping(record: dict, scheme: dict | None = None) -> ResumePublishState:
-    """Read only fields belonging to one structured record."""
-    next_incomplete = record.get("nextIncompleteScreenId")
-    if next_incomplete is None and isinstance(scheme, dict):
-        next_incomplete = scheme.get("nextIncompleteScreenId")
-    return ResumePublishState(
-        status=record.get("status"),
-        is_searchable=record.get("isSearchable"),
-        can_publish_or_update=record.get("canPublishOrUpdate"),
-        next_incomplete_screen_id=next_incomplete,
-    )
+    return is_published(state)
 
 
 def _visibility_text(page: Page) -> str:

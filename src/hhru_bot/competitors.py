@@ -19,6 +19,12 @@ from .selector_groups import competitor_resume as sel
 
 SEARCH_URL = f"{HH_BASE_URL}/search/resume"
 RENDER_TIMEOUT_MS = 30_000
+ITEMS_PER_PAGE = 100
+_TOTAL_RESULTS_RE = re.compile(
+    r"(?:показали|найдено)\s+([\d\s\u00a0\u202f]+)\s+резюм",
+    re.IGNORECASE,
+)
+_EMPLOYER_REGISTRATION_MARKER = "после регистрации работодателя"
 
 
 class CompetitorSearchIndeterminate(RuntimeError):
@@ -27,6 +33,13 @@ class CompetitorSearchIndeterminate(RuntimeError):
 
 class CompetitorResumeIndeterminate(RuntimeError):
     """The current page does not prove a valid competitor resume."""
+
+
+@dataclass(frozen=True)
+class CompetitorSearchCoverage:
+    total_results: int | None
+    available_pages: int | None
+    employer_registration_required: bool
 
 
 @dataclass(frozen=True)
@@ -85,9 +98,88 @@ def build_competitor_search_url(text: str, page_num: int) -> str:
         "ored_clusters": "true",
         "order_by": "relevance",
         "search_period": "0",
+        "items_on_page": str(ITEMS_PER_PAGE),
         "page": str(page_num),
     }
     return f"{SEARCH_URL}?{urlencode(params)}"
+
+
+def parse_search_result_count(text: str) -> int | None:
+    """Parse the result count rendered by hh.ru without guessing from cards."""
+    match = _TOTAL_RESULTS_RE.search(text)
+    if match is None:
+        return None
+    digits = re.sub(r"\D", "", match.group(1))
+    return int(digits) if digits else None
+
+
+def available_search_page_count(page: Page, current_page: int) -> int | None:
+    """Return the largest page count explicitly exposed by pagination."""
+    page_indices: set[int] = set()
+    pages = page.locator(sel.PAGINATION_PAGE)
+    for index in range(pages.count()):
+        label = pages.nth(index).inner_text().strip()
+        try:
+            displayed_page = int(label)
+        except ValueError:
+            continue
+        if displayed_page >= 1:
+            page_indices.add(displayed_page - 1)
+
+    links = page.locator(sel.PAGINATION_LINK)
+    for index in range(links.count()):
+        href = links.nth(index).get_attribute("href") or ""
+        raw_page = parse_qs(urlsplit(href).query).get("page", [])
+        try:
+            if raw_page:
+                page_indices.add(int(raw_page[0]))
+        except ValueError:
+            continue
+
+    if page_indices:
+        return max(page_indices | {current_page}) + 1
+    if (
+        page.locator(sel.PAGINATION_BLOCK).count() == 0
+        and page.locator(sel.PAGINATION_NEXT).count() == 0
+    ):
+        return 1
+    return None
+
+
+def inspect_search_coverage(page: Page, current_page: int = 0) -> CompetitorSearchCoverage:
+    """Read best-effort coverage metadata from the search page."""
+    try:
+        text = page.locator(sel.SEARCH_MAIN).inner_text()
+    except PlaywrightError:
+        text = ""
+    try:
+        available_pages = available_search_page_count(page, current_page)
+    except PlaywrightError:
+        available_pages = None
+    return CompetitorSearchCoverage(
+        total_results=parse_search_result_count(text),
+        available_pages=available_pages,
+        employer_registration_required=_EMPLOYER_REGISTRATION_MARKER in text.casefold(),
+    )
+
+
+def coverage_warning(coverage: CompetitorSearchCoverage) -> str | None:
+    """Explain when hh.ru exposes fewer cards than its headline result count."""
+    if coverage.total_results is None or coverage.available_pages is None:
+        return None
+    visible_capacity = coverage.available_pages * ITEMS_PER_PAGE
+    if coverage.total_results <= visible_capacity:
+        return None
+    suffix = (
+        "; остальные hh.ru показывает после регистрации работодателя"
+        if coverage.employer_registration_required
+        else ""
+    )
+    return (
+        f"hh.ru сообщает {coverage.total_results} резюме, но текущей сессии "
+        f"доступно не более {visible_capacity} "
+        f"({coverage.available_pages} стр. x {ITEMS_PER_PAGE}){suffix}"
+    )
 
 
 def _resume_identity(href: str) -> tuple[str, str] | None:
@@ -149,13 +241,12 @@ def parse_search_page(page: Page, *, rank_offset: int = 0) -> list[CompetitorSea
 
 
 def has_next_search_page(page: Page, page_num: int) -> bool:
-    if page.locator(sel.PAGINATION_NEXT).count() > 0:
-        return True
+    next_links = page.locator(sel.PAGINATION_NEXT)
     pages = page.locator(sel.PAGINATION_PAGE)
     links = page.locator(sel.PAGINATION_LINK)
     pagination = page.locator(sel.PAGINATION_BLOCK)
     if pagination.count() == 0:
-        if links.count() == 0:
+        if links.count() == 0 and next_links.count() == 0:
             # Cards can render before either pagination representation. Wait
             # once for the block or fallback links before declaring page end.
             try:
@@ -168,7 +259,9 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
             links = page.locator(sel.PAGINATION_LINK)
         if pagination.count() == 0:
             # Current applicant layout may render numbered links without data-qa.
-            return _has_next_search_link(links, page_num)
+            return _has_next_search_link(next_links, page_num) or _has_next_search_link(
+                links, page_num
+            )
 
     if pages.count() == 0 and links.count() == 0:
         try:
@@ -191,7 +284,7 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
                 return True
         except ValueError:
             continue
-    return _has_next_search_link(links, page_num)
+    return _has_next_search_link(next_links, page_num) or _has_next_search_link(links, page_num)
 
 
 def _has_next_search_link(links, page_num: int) -> bool:

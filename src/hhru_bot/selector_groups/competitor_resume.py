@@ -2,6 +2,7 @@
 
 # Keep the search link scoped to main: the header also contains resume links.
 SEARCH_RESULT_LINK = "main a[href^='/resume/']"
+SEARCH_MAIN = "main"
 SEARCH_EMPTY = "[data-qa='resume-search-empty'], [data-qa='bloko-header-2']"
 PAGINATION_NEXT = "[data-qa*='pager-next'], [data-qa*='pagination-next'], a[rel='next']"
 PAGINATION_BLOCK = "[data-qa*='pager-block'], [data-qa*='pagination']"
