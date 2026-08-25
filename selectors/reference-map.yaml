@@ -1378,13 +1378,13 @@ selectors:
     - resume-list-card-additionalEducation
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1406,13 +1406,13 @@ selectors:
     - resume-edit-button-additionalEducation-3-svg
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1427,13 +1427,13 @@ selectors:
     - profile-layout-cancel-button
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1449,13 +1449,13 @@ selectors:
     - resume-list-card-education
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1471,13 +1471,13 @@ selectors:
     - resume-edit-button-education-0-svg
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1492,13 +1492,13 @@ selectors:
     - profile-layout-save-button
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1513,13 +1513,13 @@ selectors:
     - profile-education-additional-name
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1534,13 +1534,13 @@ selectors:
     - profile-education-additional-organization
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1555,13 +1555,13 @@ selectors:
     - profile-education-additional-specialty
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1576,13 +1576,13 @@ selectors:
     - profile-education-year-input
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1597,13 +1597,13 @@ selectors:
     - profile-education-faculty-input
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1618,13 +1618,13 @@ selectors:
     - profile-education-university-input
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1639,13 +1639,13 @@ selectors:
     - profile-education-specialty-input
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -1660,13 +1660,13 @@ selectors:
     - profile-education-year-input
     active: true
     bindings: {}
-    coverage_status: intentionally local
-    status: intentionally local
-    origin: browser_dom
-    verification: verified
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Resume education editor controls are intentionally local to HH.ru; approved reference projects provide no semantic counterpart.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex

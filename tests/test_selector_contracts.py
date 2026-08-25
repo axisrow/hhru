@@ -139,7 +139,7 @@ def test_issue_627_resume_education_has_complete_coverage_metadata():
     }
     assert len(rows) == 14
     for logical_id, row in rows.items():
-        assert row.get("coverage_status") in AUDIT_STATUSES, logical_id
+        assert row.get("coverage_status") == "needs-live-evidence", logical_id
         assert all(row.get(field) not in (None, "", {}) for field in AUDIT_FIELDS), logical_id
         assert row.get("origin") != "llm_hypothesis", logical_id
 
