@@ -542,6 +542,7 @@ READ hh.ru: competitors collect --text QUERY [--max-pages N]; локальный
 - `--vacancy-url` — URL целевой вакансии (альтернатива --vacancy-id)
 - `--start-page START_PAGE` — Начальная страница поиска (нумерация с 0)
 - `--healthcheck` — Read-only проверка ключевых селекторов hh.ru (OK/NOT_FOUND) без отклика (#88)
+- `--json` — Добавить machine-readable JSON-результат healthcheck
 - `--negotiations` — Read-only дамп списка переговоров или чата без отправки (#107)
 - `--topic` — ID topic из SSR-дампа negotiations для открытия чата (только чтение)
 - `--questionnaires-only` — Read-only на hh.ru bulk-проверка анкет; подтверждённые вопросы пишутся в локальную SQLite, без заполнения, AI и submit

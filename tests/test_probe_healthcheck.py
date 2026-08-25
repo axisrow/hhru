@@ -285,9 +285,7 @@ def test_format_healthcheck_json_is_derived_from_live_observations():
             name="search",
             url="https://hh.ru/search/vacancy",
             results=[
-                probe_cmd.SelectorCheck(
-                    "VACANCY_CARD", "[data-qa='vacancy-serp__vacancy']", 20
-                ),
+                probe_cmd.SelectorCheck("VACANCY_CARD", "[data-qa='vacancy-serp__vacancy']", 20),
                 probe_cmd.SelectorCheck(
                     "PAGINATION_NEXT", "[data-qa='pager-next']", 0, required=False
                 ),
