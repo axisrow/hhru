@@ -1429,6 +1429,20 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
                 errors.append(f"{logical_id}: invalid coverage_status")
             if row.get("origin") not in AUDIT_ORIGINS:
                 errors.append(f"{logical_id}: invalid origin")
+            if row.get("coverage_status") == "reference_binding":
+                reference_count = len(row.get("sources", {}))
+                expected_origin = (
+                    "reference_exact"
+                    if reference_count >= 3
+                    else "reference_consensus"
+                    if reference_count >= 2
+                    else "reference_single"
+                )
+                if row.get("origin") != expected_origin:
+                    errors.append(
+                        f"{logical_id}: origin {row.get('origin')} disagrees with "
+                        f"{reference_count} exact reference sources"
+                    )
             if row.get("verification") not in AUDIT_VERIFICATIONS:
                 errors.append(f"{logical_id}: invalid verification")
             if row.get("active", True) and row.get("origin") == "llm_hypothesis":
