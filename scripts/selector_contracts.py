@@ -1041,7 +1041,9 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
             )
             row["coverage_status"] = "reference_binding"
             row["origin"] = (
-                "reference_consensus"
+                "reference_exact"
+                if reference_count >= 3
+                else "reference_consensus"
                 if reference_count >= 2
                 else "reference_single"
             )
