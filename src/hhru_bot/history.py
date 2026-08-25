@@ -1404,7 +1404,7 @@ class History:
                        SELECT 1 FROM actions later
                        WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
                          AND later.action=a.action AND later.id>a.id
-                         AND later.status='success'
+                         AND later.status='success' AND a.action != 'reply'
                      )
                    ORDER BY a.id DESC LIMIT ?""",
                 (limit,),
@@ -1422,7 +1422,7 @@ class History:
                        SELECT 1 FROM actions later
                        WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
                          AND later.action=a.action AND later.id>a.id
-                         AND later.status='success'
+                         AND later.status='success' AND a.action != 'reply'
                      )""",
                 (action_id,),
             ).fetchone()
