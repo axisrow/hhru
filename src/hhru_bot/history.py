@@ -1400,12 +1400,6 @@ class History:
                 """SELECT a.*, r.command, r.started_at AS run_started_at
                    FROM actions a LEFT JOIN command_runs r ON r.run_id=a.run_id
                    WHERE a.status='uncertain'
-                     AND NOT EXISTS (
-                       SELECT 1 FROM actions later
-                       WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
-                         AND later.action=a.action AND later.id>a.id
-                         AND later.status IN ('success','failed')
-                     )
                    ORDER BY a.id DESC LIMIT ?""",
                 (limit,),
             ).fetchall()

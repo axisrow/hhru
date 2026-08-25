@@ -43,7 +43,7 @@ def inspect_run(args: argparse.Namespace) -> None:
     row = _history(args).get_uncertain(args.id)
     if row is None:
         print(f"[FAIL] unresolved uncertain #{args.id} не найдена")
-        return
+        return True
     print(f"id: {row['id']}")
     print(f"command: {row.get('command') or row['action']}")
     print(f"resume: {row['resume_id']}")
@@ -56,5 +56,6 @@ def reconcile_run(args: argparse.Namespace) -> None:
     row = _history(args).get_uncertain(args.id)
     if row is None:
         print(f"[FAIL] unresolved uncertain #{args.id} не найдена")
-        return
+        return True
     print("[FAIL] verifier для этой команды ещё не поддержан; retry barrier сохранён")
+    return True
