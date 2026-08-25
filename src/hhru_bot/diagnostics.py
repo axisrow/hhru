@@ -13,6 +13,8 @@ _SECRET = re.compile(
     r"(?i)(['\"]?(?:cookie|authorization|token|password|secret)['\"]?)\s*[:=]\s*[^\r\n,}]*"
 )
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_URL = re.compile(r"https?://[^\s\]}>]+")
+_PATH = re.compile(r"/(?:Users|home|private/var)/[^\s\]}>]+")
 _PHONE = re.compile(r"(?<!\w)(?:\+\d[\d ()-]{8,}\d|\d{10,})(?!\w)")
 _MESSAGE = re.compile(
     r"(?is)(cover letter|message|letter|письм\w*|сообщен\w*)\s*[:=].*?(?=\s+[\w-]+\s*[:=]|$)"
@@ -22,6 +24,8 @@ _MESSAGE = re.compile(
 def redact(value: str) -> str:
     value = _SECRET.sub(lambda m: m.group(1) + "=[REDACTED]", value)
     value = _EMAIL.sub("[REDACTED_EMAIL]", value)
+    value = _URL.sub("[REDACTED_URL]", value)
+    value = _PATH.sub("[REDACTED_PATH]", value)
     value = _PHONE.sub("[REDACTED_PHONE]", value)
     return _MESSAGE.sub(lambda m: m.group(1) + "=[REDACTED]", value)
 
@@ -73,9 +77,10 @@ def build_bundle(
         ]
     snapshots = []
     if dom_dir and dom_dir.is_dir():
-        command = str(run.get("command", "")).replace("_", "-")
         snapshots = [
-            _safe_dom(p) for p in sorted(dom_dir.glob("*.html")) if command and command in p.name
+            _safe_dom(p)
+            for p in sorted(dom_dir.glob("*.html"))
+            if run.get("run_id") and str(run["run_id"]) in p.name
         ][:5]
     return {
         "schema_version": "1.0.0",

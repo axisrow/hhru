@@ -24,7 +24,7 @@ def test_export_is_deterministic_and_dom_allowlist(tmp_path):
     with sqlite3.connect(db) as c:
         c.execute("create table command_runs (run_id text, command text, status text)")
         c.execute("insert into command_runs values ('r1','probe','failed')")
-    (tmp_path / "probe_x.html").write_text('<div data-qa="ok" class="secret">email a@b.io</div>')
+    (tmp_path / "r1_probe.html").write_text('<div data-qa="ok" class="secret">email a@b.io</div>')
     a = build_bundle(db, run_id="r1", log_path=tmp_path / "missing", dom_dir=tmp_path)
     b = build_bundle(db, run_id="r1", log_path=tmp_path / "missing", dom_dir=tmp_path)
     assert a == b
