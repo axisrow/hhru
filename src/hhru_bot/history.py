@@ -811,6 +811,15 @@ class History:
         """Import only unambiguous negotiation mappings; never delete markers."""
         now = datetime.now().isoformat()
         imported = ambiguous = skipped = 0
+        invalid = []
+        for card in cards:
+            if getattr(card, "topic_ambiguous", False) or not card.topic or not card.resume_id:
+                invalid.append(card.vacancy_id)
+        if invalid:
+            raise ValueError(
+                "external application sync is indeterminate: "
+                f"{len(invalid)} negotiation card(s) lack unambiguous SSR attribution"
+            )
         with self._connect() as conn:
             for card in cards:
                 if getattr(card, "topic_ambiguous", False):

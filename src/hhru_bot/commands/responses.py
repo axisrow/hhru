@@ -169,7 +169,12 @@ def run(args: argparse.Namespace) -> None:
                 sys.exit(1)
                 return
             if sync_applied:
-                synced = history.sync_external_applied(cards)
+                try:
+                    synced = history.sync_external_applied(cards)
+                except ValueError as e:
+                    print(f"Ошибка: {e}", file=sys.stderr)
+                    sys.exit(1)
+                    return
                 print(
                     "Синхронизация внешних откликов: "
                     f"добавлено {synced['imported']}, "
