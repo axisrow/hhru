@@ -133,6 +133,13 @@ def build_bundle(
     if log_path and log_path.is_file():
         start = _parse_timestamp(run.get("started_at"))
         finish = _parse_timestamp(run.get("finished_at"))
+        # Log formatter keeps whole seconds while SQLite stores microseconds.
+        # Widen only to the representable log precision, otherwise short runs
+        # beginning mid-second lose their first evidence line.
+        if start:
+            start = start.replace(microsecond=0)
+        if finish and finish.microsecond:
+            finish = finish.replace(microsecond=0) + dt.timedelta(seconds=1)
         candidates = []
         for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
             safe = _safe_log_line(raw)

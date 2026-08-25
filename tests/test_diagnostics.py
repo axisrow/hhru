@@ -58,6 +58,18 @@ def test_export_is_deterministic_and_dom_allowlist(tmp_path):
     assert "vacancy" not in json.dumps(a)
 
 
+def test_log_window_normalizes_sqlite_microseconds(tmp_path):
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as c:
+        c.execute("create table command_runs (run_id text, started_at text, finished_at text)")
+        c.execute(
+            "insert into command_runs values ('r1','2026-01-01T00:00:00.500000','2026-01-01T00:00:00.600000')"
+        )
+    log = tmp_path / "hhru.log"
+    log.write_text("2026-01-01 00:00:00 [INFO] hhru_bot.run: safe event\n")
+    assert len(build_bundle(db, run_id="r1", log_path=log)["log_tail"]) == 1
+
+
 def test_dom_requires_producer_metadata_for_selected_run(tmp_path):
     db = tmp_path / "history.db"
     with sqlite3.connect(db) as c:

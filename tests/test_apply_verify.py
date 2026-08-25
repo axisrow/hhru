@@ -825,7 +825,7 @@ def test_run_apply_for_resume_wires_verifier(tmp_path, monkeypatch):
     )
     seen: list[tuple] = []
 
-    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None, run_id=None):  # noqa: ANN001
         seen.append((vacancy_id, resume_id, sorted(account_resume_ids or ())))
         return NegotiationsVerifyResult("found", "topic=1")
 
@@ -980,7 +980,7 @@ def test_run_apply_for_resume_verifier_falls_back_to_hash(tmp_path, monkeypatch)
     )
     seen: list[tuple] = []
 
-    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None, run_id=None):  # noqa: ANN001
         seen.append((vacancy_id, resume_id, account_resume_ids))
         return NegotiationsVerifyResult("found", "topic=1")
 
@@ -1032,7 +1032,7 @@ def test_run_apply_for_resume_fail_closed_when_config_resume_not_in_mapping(tmp_
     )
     seen: list[tuple] = []
 
-    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None):  # noqa: ANN001
+    def _fake_verify(page, vacancy_id, resume_id=None, account_resume_ids=None, run_id=None):  # noqa: ANN001
         seen.append((vacancy_id, resume_id, account_resume_ids))
         return NegotiationsVerifyResult("found", "topic=1")
 
