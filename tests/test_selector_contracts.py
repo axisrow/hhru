@@ -234,12 +234,111 @@ def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_
 
 def test_issue_599_baseline_has_twelve_unique_ids():
     baseline = contracts.load_baseline()["scope"]
-    assert baseline["literal_mismatches"] == 10
-    assert baseline["broken_bindings"] == 3
-    assert baseline["overlap"] == 1
+    assert baseline["literal_mismatches"] == 12
+    assert baseline["broken_bindings"] == 0
+    assert baseline["overlap"] == 0
     assert baseline["affected_unique"] == 12
     assert len(baseline["affected_unique_ids"]) == 12
     assert len(set(baseline["affected_unique_ids"])) == 12
+
+
+def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
+    catalog = contracts.load_catalog()
+    logical_ids = [
+        logical_id
+        for logical_id in catalog["selectors"]
+        if logical_id.startswith(("apply.", "apply_form.", "resume_", "search_page.", "vacancy_page."))
+    ]
+    # These are exactly the non-negotiations rows reported by the 2026-08-25
+    # reference refresh.  The other domain's three OFF rows belong to #608.
+    target_ids = {
+        "apply.success.APPLY_SUCCESS_MARKER",
+        "apply_form.APPLY_COVER_LETTER_TEXTAREA",
+        "apply_form.APPLY_COVER_LETTER_TOGGLE",
+        "apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP",
+        "apply_form.APPLY_SUBMIT_BUTTON",
+        "resume_experience.EXPERIENCE_ADD_BUTTON",
+        "resume_page.RESUME_PUBLISH_BUTTON_DATA_QA",
+        "search_page.VACANCY_CARD",
+        "search_page.VACANCY_CARD_COMPENSATION",
+        "search_page.VACANCY_CARD_RESPONSE_BUTTON",
+        "search_page.VACANCY_CARD_TITLE_LINK",
+        "vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT",
+        "vacancy_page.VACANCY_APPLY_BUTTON",
+        "vacancy_page.VACANCY_COMPANY_NAME",
+        "vacancy_page.VACANCY_RELOCATION_CONFIRM",
+        "vacancy_page.VACANCY_RESPONSE_ERROR",
+        "vacancy_page.VACANCY_RESPONSE_REJECT_WARNING",
+        "vacancy_page.VACANCY_TITLE",
+    }
+    assert set(logical_ids) >= target_ids
+    for logical_id in target_ids:
+        row = catalog["selectors"][logical_id]
+        assert row["origin"] in {
+            "reference_exact",
+            "reference_consensus",
+            "reference_single",
+            "browser_dom",
+            "manual",
+        }
+        assert row["verification"] in {
+            "browser_observed",
+            "contract_tested",
+            "failed",
+            "unavailable",
+        }
+        assert row["evidence"]["source"]
+        if row["bindings"]:
+            assert row["evidence"].get("references")
+        assert row["last_verified_at"] == "2026-08-25"
+        assert row["verified_flow"]
+        assert row["verified_by"] == "codex"
+
+    for logical_id in {
+        "apply.success.APPLY_SUCCESS_MARKER",
+        "resume_experience.EXPERIENCE_ADD_BUTTON",
+        "resume_page.RESUME_PUBLISH_BUTTON_DATA_QA",
+        "search_page.VACANCY_CARD_COMPENSATION",
+    }:
+        row = catalog["selectors"][logical_id]
+        assert row["decision"] == "unavailable"
+        assert row["active"] is False
+
+
+def test_refresh_keeps_audited_unavailable_rows_fail_closed(tmp_path, monkeypatch):
+    old = "[data-qa='reference-only']"
+    reference_root = tmp_path / "references"
+    for config in contracts.REFERENCE_CONFIG.values():
+        _commit_repository(reference_root / config["directory"], old)
+    catalog = {
+        "version": 1,
+        "policy": {"mode": "manual", "consensus_threshold": 2},
+        "references": {},
+        "upstream_consensus": [],
+        "selectors": {
+            "search_page.unavailable_READ": {
+                "value": "[data-qa='not-in-references']",
+                "active": False,
+                "criticality": "read",
+                "declared_at": "tests/test_selector_contracts.py:1",
+                "decision": "unavailable",
+                "sources": {},
+                "bindings": {},
+                "live_matches": [],
+                "origin": "manual",
+                "verification": "unavailable",
+                "evidence": {"source": "tests/test_selector_contracts.py:1", "note": "no evidence"},
+            }
+        },
+    }
+    map_path = tmp_path / "reference-map.yaml"
+    map_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(contracts, "MAP_PATH", map_path)
+    monkeypatch.setattr(contracts, "EXTRA_CONTRACTS", {})
+    refreshed = contracts.refresh_catalog(reference_root, "manual")
+    row = refreshed["selectors"]["search_page.unavailable_READ"]
+    assert row["decision"] == "unavailable"
+    assert row["active"] is False
 
 
 def test_affected_logical_ids_deduplicates_rows_variants_and_overlap():

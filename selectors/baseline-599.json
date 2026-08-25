@@ -2,9 +2,9 @@
   "issue": 599,
   "snapshot": "current-selector-sync",
   "scope": {
-    "literal_mismatches": 10,
-    "broken_bindings": 3,
-    "overlap": 1,
+    "literal_mismatches": 12,
+    "broken_bindings": 0,
+    "overlap": 0,
     "affected_unique": 12,
     "literal_mismatch_ids": [
       "apply.success.APPLY_SUCCESS_MARKER",
@@ -15,17 +15,13 @@
       "negotiations.CHAT_MESSAGE_SEND",
       "negotiations.NEGOTIATION_STATUS",
       "negotiations.NEGOTIATION_VACANCY_LINK",
+      "search_page.VACANCY_CARD",
+      "search_page.VACANCY_CARD_TITLE_LINK",
       "selectors.LOGIN_CODE_INPUT",
       "selectors.LOGIN_EMAIL_INPUT"
     ],
-    "broken_binding_ids": [
-      "apply.success.APPLY_SUCCESS_MARKER",
-      "search_page.VACANCY_CARD",
-      "search_page.VACANCY_CARD_TITLE_LINK"
-    ],
-    "overlap_ids": [
-      "apply.success.APPLY_SUCCESS_MARKER"
-    ],
+    "broken_binding_ids": [],
+    "overlap_ids": [],
     "affected_unique_ids": [
       "apply.success.APPLY_SUCCESS_MARKER",
       "apply_form.APPLY_COVER_LETTER_TEXTAREA",
@@ -35,10 +31,10 @@
       "negotiations.CHAT_MESSAGE_SEND",
       "negotiations.NEGOTIATION_STATUS",
       "negotiations.NEGOTIATION_VACANCY_LINK",
-      "selectors.LOGIN_CODE_INPUT",
-      "selectors.LOGIN_EMAIL_INPUT",
       "search_page.VACANCY_CARD",
-      "search_page.VACANCY_CARD_TITLE_LINK"
+      "search_page.VACANCY_CARD_TITLE_LINK",
+      "selectors.LOGIN_CODE_INPUT",
+      "selectors.LOGIN_EMAIL_INPUT"
     ]
   }
 }

@@ -215,7 +215,9 @@ EXTRA_CONTRACTS: dict[str, dict[str, str]] = {
 # keeps an older HH.ru variant).  Exact matches are bound automatically.
 REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     "apply.success.APPLY_SUCCESS_MARKER": {
-        "tgeruzov": ("script.js::isResponseConfirmed#0::1",),
+        "tgeruzov": (
+            "hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1",
+        ),
         "yamakayama": ("app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1",),
     },
     "apply_form.APPLY_COVER_LETTER_TEXTAREA": {
@@ -254,10 +256,14 @@ REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
     },
     "search_page.VACANCY_CARD": {
-        "tgeruzov": ("script.js::module.SELECTORS.vacancyCard#0::1",),
+        "tgeruzov": (
+            "hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1",
+        ),
     },
     "search_page.VACANCY_CARD_TITLE_LINK": {
-        "tgeruzov": ("script.js::module.SELECTORS.vacancyLink#0::1",),
+        "tgeruzov": (
+            "hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1",
+        ),
     },
     "selectors.LOGIN_CODE_INPUT": {
         "yamakayama": ("app/parsers/hh_login.py::module.SEL_PIN#0::0",),
@@ -1318,7 +1324,10 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
         elif row.get("live_matches"):
             row["decision"] = "live_dom"
             row["active"] = True
-        elif row.get("evidence"):
+        elif row.get("evidence") and row.get("verification") not in {
+            "unavailable",
+            "failed",
+        }:
             # Preserve reviewed non-consensus evidence classes across refresh.
             previous = row.get("decision")
             row["decision"] = (
