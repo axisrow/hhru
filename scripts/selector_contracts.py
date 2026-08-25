@@ -1071,6 +1071,16 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
             )
 
 
+def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool:
+    """Do not let audit bookkeeping become activation evidence on refresh."""
+    if not row.get("evidence"):
+        return False
+    return not (
+        logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES)
+        and row.get("verification") in {"unverified", "unavailable"}
+    )
+
+
 def build_map(reference_root: Path, live_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     metadata, indexes = _reference_indexes(reference_root)
     evidence = build_live_evidence(live_root)
@@ -1507,9 +1517,11 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     catalog["upstream_consensus"] = _upstream_consensus(indexes, previous_consensus)
     _invalidate_changed_candidate_verification(catalog, previous_consensus, unchanged)
     _refresh_bindings(catalog, indexes)
-    for row in catalog["selectors"].values():
+    for logical_id, row in catalog["selectors"].items():
         audit_unverified = (
-            row.get("status") == "needs-live-evidence" or row.get("verification") == "unverified"
+            row.get("status") == "needs-live-evidence"
+            or row.get("coverage_status") == "needs_live_evidence"
+            or row.get("verification") == "unverified"
         )
         previous_decision = row.get("decision", "unavailable")
         previous_active = row.get("active", False)
@@ -1566,7 +1578,7 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
         elif row.get("live_matches"):
             row["decision"] = "live_dom"
             row["active"] = True
-        elif row.get("evidence") and row.get("verification") not in {
+        elif _has_reviewed_runtime_evidence(logical_id, row) and row.get("verification") not in {
             "unavailable",
             "failed",
         }:
