@@ -19,6 +19,13 @@ from .selector_groups.apply_form import (
     APPLY_RESUME_SELECT,
     APPLY_SUBMIT_BUTTON,
 )
+from .selector_groups.login import (
+    LOGIN_CODE_INPUT,
+    LOGIN_CODE_REQUEST_BUTTON,
+    LOGIN_EMAIL_INPUT,
+    LOGIN_EMAIL_TYPE,
+    LOGIN_PHONE_INPUT,
+)
 from .selector_groups.resume_page import RESUME_BUMP_BUTTON, RESUME_BUMP_DISABLED_HINT
 from .selector_groups.search_page import (
     COMPANY_RATING_REVIEWS_COUNT,
@@ -54,15 +61,6 @@ from .selector_groups.vacancy_page import (
     VACANCY_COMPANY_NAME,
     VACANCY_TITLE,
 )
-
-# Подтверждено headless-рендером https://hh.ru/account/login от 2026-08-13
-# (после первого перехода на форму учётных данных, chromium, ru-RU).
-LOGIN_CODE_REQUEST_BUTTON = "[data-qa='submit-button']"
-LOGIN_EMAIL_TYPE = "input[data-qa='credential-type-email']"
-LOGIN_EMAIL_INPUT = "[data-qa='applicant-login-input-email']"
-LOGIN_PHONE_INPUT = "[data-qa='magritte-phone-input-national-number-input']"
-# Подтверждено live DOM после запроса кода (2026-08-19); ввод запускает авто-submit.
-LOGIN_CODE_INPUT = "[data-qa='magritte-pincode-input-field']"
 
 __all__ = [
     "LOGIN_CODE_REQUEST_BUTTON",
