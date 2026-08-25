@@ -1246,10 +1246,8 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: >-
-      Read-only audit 2026-08-25 found no saved DOM snapshot and no approved
-      reference source with a browser/UI withdrawal selector control flow;
-      selector remains unproven and cannot authorize a destructive click.
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
+      withdrawal selector control flow; selector remains unproven and cannot authorize a destructive click.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
@@ -1268,11 +1266,8 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: >-
-      Read-only audit 2026-08-25 found no saved DOM snapshot and no approved
-      reference source with a browser/UI withdrawal confirmation selector
-      control flow; selector remains unproven and cannot authorize a
-      destructive click.
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
+      withdrawal confirmation selector control flow; selector remains unproven and cannot authorize a destructive click.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
@@ -1291,11 +1286,9 @@ selectors:
     decision: unavailable
     sources: {}
     live_matches: []
-    unavailable_reason: >-
-      Read-only audit 2026-08-25 found no saved DOM snapshot and no approved
-      reference source with a browser/UI withdrawal success selector control
-      flow; selector remains unproven and cannot be used to report a
-      destructive action as successful.
+    unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
+      withdrawal success selector control flow; selector remains unproven and cannot be used to report a destructive action
+      as successful.
     active: false
     bindings: {}
     coverage_status: needs-live-evidence
