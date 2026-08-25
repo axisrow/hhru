@@ -65,7 +65,7 @@ _SCRIPT = r"""
     ) ? target : null));
     if (candidate) scan(candidate);
     m.addedNodes.forEach(scan);
-  })).observe(document.documentElement, {
+  })).observe(document, {
     subtree: true, childList: true, characterData: true, attributes: true,
     attributeFilter: ['data-qa', 'aria-label', 'role'],
   });
