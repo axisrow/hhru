@@ -1,1 +1,1 @@
-{"bundle_version":"1","environment":{"platform":"fixture","python":"3.0"},"log_tail":[],"run":{"run_id":"fixture","status":"failed"},"schema_version":"1.0.0","selectors":{"evidence":[],"hits":[],"misses":[]},"snapshots":[]}
+{"bundle_version":"1","environment":{"platform":"fixture","python":"3.0"},"log_tail":[{"event":"run","level":"INFO","logger":"hhru_bot.commands","timestamp":"2026-08-25T10:00:00"}],"run":{"run_id":"fixture","status":"failed"},"schema_version":"1.0.0","selectors":{"evidence":[],"hits":[],"misses":[]},"snapshots":[]}

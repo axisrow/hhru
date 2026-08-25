@@ -20,6 +20,7 @@ dedup не трогаются — probe живёт отдельным оркес
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,7 @@ class ProbeContext:
     vacancy_id: str
     vacancy_url: str
     stage: str
+    run_id: str | None = None
     logs_dir: Path = field(default_factory=lambda: PROBE_LOG_DIR)
 
 
@@ -104,6 +106,19 @@ def dump_probe_snapshot(
         logger.warning("probe[%s]: HTML недоступен: %s", ctx.stage, exc)
 
     if paths:
+        metadata = {
+            "producer": "hhru_bot.apply.probe",
+            "run_id": ctx.run_id,
+            "artifact": html_path.name,
+            "vacancy_id": ctx.vacancy_id,
+            "stage": ctx.stage,
+        }
+        try:
+            (html_path.with_suffix(".json")).write_text(
+                json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning("probe[%s]: метаданные дампа недоступны: %s", ctx.stage, exc)
         logger.info(
             "probe[%s]: дамп сохранён — %s",
             ctx.stage,
@@ -158,6 +173,7 @@ def probe_vacancy(
     cover_letter_template: str,
     logs_dir: Path | None = None,
     letter_provider: CoverLetterProvider | None = None,
+    run_id: str | None = None,
 ) -> ProbeResult:
     """Probe одной вакансии: дойти до формы, заполнить письмо, сдампить, НЕ отправлять.
 
@@ -174,6 +190,7 @@ def probe_vacancy(
         vacancy_id=vacancy.vacancy_id,
         vacancy_url=vacancy.url,
         stage="form",
+        run_id=run_id,
         logs_dir=logs_dir or PROBE_LOG_DIR,
     )
 
@@ -193,7 +210,9 @@ def probe_vacancy(
             return ProbeResult(vacancy, False, reason, skipped=True)
         return ProbeResult(vacancy, False, "кнопка отклика не найдена на странице")
 
-    navigation_result = apply_steps.navigate_to_response_form(page, vacancy.vacancy_id)
+    navigation_result = apply_steps.navigate_to_response_form(
+        page, vacancy.vacancy_id, run_id=run_id
+    )
     if isinstance(navigation_result, str):
         # #350: развёрнутое предупреждение о видимости резюме — недвусмысленный
         # пропуск, без дампа (hh.ru дал определённый ответ прямо на странице).
@@ -204,6 +223,7 @@ def probe_vacancy(
             vacancy_id=vacancy.vacancy_id,
             vacancy_url=vacancy.url,
             stage="form_indeterminate",
+            run_id=run_id,
             logs_dir=ctx_dir.logs_dir,
         )
         dump_probe_snapshot(page, partial_ctx, best_effort=True)
@@ -220,6 +240,7 @@ def probe_vacancy(
         vacancy_id=vacancy.vacancy_id,
         vacancy_url=vacancy.url,
         stage="form_initial",
+        run_id=run_id,
         logs_dir=ctx_dir.logs_dir,
     )
     initial_dump_paths = dump_probe_snapshot(page, initial_ctx)
@@ -245,6 +266,7 @@ def probe_vacancy(
                 vacancy_id=vacancy.vacancy_id,
                 vacancy_url=vacancy.url,
                 stage="form_indeterminate",
+                run_id=run_id,
                 logs_dir=ctx_dir.logs_dir,
             )
             dump_probe_snapshot(page, partial_ctx, best_effort=True)

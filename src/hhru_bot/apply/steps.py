@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 
@@ -67,7 +68,9 @@ class SubmitClickUncertain(Exception):
         self.playwright_error = cause
 
 
-def _dump_navigation_diagnostics(page: Page, stage: str, vacancy_id: str | None = None) -> None:
+def _dump_navigation_diagnostics(
+    page: Page, stage: str, vacancy_id: str | None = None, run_id: str | None = None
+) -> None:
     """Best-effort screenshot and HTML dump after an indeterminate form wait.
 
     This is deliberately diagnostic-only: a failure to capture either artifact
@@ -98,6 +101,23 @@ def _dump_navigation_diagnostics(page: Page, stage: str, vacancy_id: str | None 
         screenshot_path,
         html_path,
     )
+    try:
+        html_path.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "producer": "hhru_bot.apply.steps",
+                    "run_id": run_id,
+                    "artifact": html_path.name,
+                    "stage": stage,
+                    "vacancy_id": vacancy_id,
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning("Метаданные диагностического дампа недоступны: %s", exc)
 
 
 def wait_apply_button(page: Page, *, timeout_ms: int = APPLY_TIMEOUT_MS) -> bool:
@@ -145,6 +165,7 @@ def navigate_to_response_form(
     form_timeout_ms: int | None = None,
     dump_diagnostics: bool = True,
     allow_relocation: bool = False,
+    run_id: str | None = None,
 ) -> str | bool | PostClickBlocker:
     """Кликает кнопку отклика и дожидается навигации на форму отклика.
 
@@ -253,7 +274,7 @@ def navigate_to_response_form(
         )
     except PlaywrightError as exc:
         if dump_diagnostics:
-            _dump_navigation_diagnostics(page, "form_timeout", vacancy_id)
+            _dump_navigation_diagnostics(page, "form_timeout", vacancy_id, run_id)
         # Форма не загрузилась — сообщаем pipeline отдельно от детекции вопросов,
         # чтобы таймаут рендера не выглядел как неверная граница <form>.
         logger.warning("Форма отклика не отрисовалась (%s)", exc)

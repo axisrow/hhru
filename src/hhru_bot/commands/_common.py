@@ -1199,7 +1199,10 @@ def _run_apply_for_resume(
         # id для сравнения с SSR; запись в history и троттл остаются в домене
         # хэша, миграций нет.
         return verify_response_in_negotiations(
-            page, vacancy_id, verify_resume_id, account_resume_ids=account_resume_ids
+            page,
+            vacancy_id,
+            verify_resume_id,
+            account_resume_ids=account_resume_ids,
         )
 
     applied_count = progress.applied_count if progress is not None else 0
