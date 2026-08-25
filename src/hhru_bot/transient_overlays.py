@@ -70,18 +70,18 @@ _SCRIPT = r"""
     };
     retry();
   };
-  const scan = (root) => {
+  const scan = (root, discoverDescendants = true) => {
     if (!root || root.nodeType !== 1) return;
     const candidate = enclosing(root) ||
       (root.matches(candidateSelector) ? root : null);
     if (candidate) schedule(candidate);
-    root.querySelectorAll(candidateSelector).forEach(schedule);
+    if (discoverDescendants) root.querySelectorAll(candidateSelector).forEach(schedule);
   };
   new MutationObserver(ms => ms.forEach(m => {
     // Rescan only the changed node's enclosing candidate overlay. This keeps
     // incremental shell/text/control hydration covered without page scans.
     const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
-    scan(target);
+    scan(target, false);
     m.addedNodes.forEach(scan);
   })).observe(document, {
     subtree: true, childList: true, characterData: true, attributes: true,

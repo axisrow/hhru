@@ -3,8 +3,8 @@ TITLE: 36 ・ Отклики и приглашения
 BEFORE_MENU: {'[data-qa="cookies-policy-informer"]': 0, '[data-qa^="notification"]': 0, '[data-qa="notification-close"]': 0, '[role="dialog"]': 0}
 AFTER_MENU: {'[data-qa="cookies-policy-informer"]': 0, '[data-qa^="notification"]': 2, '[data-qa="notification-close"]': 0, '[role="dialog"]': 1}
 EVIDENCE_COUNT: 0
-URL: https://hh.ru/resume/6b85a5a1ff05bc40630039ed1f6e346e537370
-TITLE: 36 ・ Ведущий performance-маркетолог
+URL: https://hh.ru/resume/<redacted>
+TITLE: <redacted>
 BEFORE_MENU: {'[data-qa="cookies-policy-informer"]': 0, '[data-qa^="notification"]': 0, '[data-qa="notification-close"]': 0, '[role="dialog"]': 0}
 AFTER_MENU: {'[data-qa="cookies-policy-informer"]': 0, '[data-qa^="notification"]': 2, '[data-qa="notification-close"]': 0, '[role="dialog"]': 1}
 EVIDENCE_COUNT: 0
