@@ -460,9 +460,7 @@ def test_scheduled_read_auto_is_fail_closed_behind_green_check():
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["refresh"]["steps"]
     soak_gate = next(step for step in steps if step.get("id") == "selector_soak_gate")
-    read_auto = next(
-        step for step in steps if "--mode read_auto" in step.get("run", "")
-    )
+    read_auto = next(step for step in steps if "--mode read_auto" in step.get("run", ""))
 
     assert soak_gate["if"] == "${{ github.event_name == 'schedule' }}"
     assert soak_gate["run"] == "python scripts/selector_contracts.py check"
