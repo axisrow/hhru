@@ -285,6 +285,11 @@ def launch_context(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
             "window.chrome = {runtime: {}};"
         )
+        # Must be present before the first navigation/click: transient UI is
+        # often unmounted before a post-action DOM snapshot can inspect it.
+        from .transient_overlays import _SCRIPT
+
+        context.add_init_script(_SCRIPT)
         try:
             yield context
         finally:
