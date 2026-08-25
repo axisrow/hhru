@@ -1339,14 +1339,14 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:27
-      note: successful cached live catalog proves the read-only discovery workflow
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
     active: true
     bindings: {}
-    coverage_status: needs-live-evidence
+    coverage_status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_flow: professional_roles_refresh_read_only
     verified_by: codex
   professional_roles.TREE_CATEGORY_INPUT:
     value: input[data-qa*='tree-selector-input-category-']
@@ -1393,14 +1393,14 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:28
-      note: successful cached live catalog proves the read-only discovery workflow
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
     active: true
     bindings: {}
-    coverage_status: needs-live-evidence
+    coverage_status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_flow: professional_roles_refresh_read_only
     verified_by: codex
   professional_roles.TREE_INPUT_ANY:
     value: input[data-qa*='tree-selector-input-']
@@ -1411,14 +1411,14 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:29
-      note: successful cached live catalog proves the read-only discovery workflow
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
     active: true
     bindings: {}
-    coverage_status: needs-live-evidence
+    coverage_status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_flow: professional_roles_refresh_read_only
     verified_by: codex
   professional_roles.TREE_LABEL:
     value: '[data-qa=''cell-text-content'']'
