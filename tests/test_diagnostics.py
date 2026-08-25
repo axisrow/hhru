@@ -1,11 +1,11 @@
-import pytest
-
-pytestmark = pytest.mark.unit
-
 import json
 import sqlite3
 
+import pytest
+
 from hhru_bot.diagnostics import build_bundle, redact
+
+pytestmark = pytest.mark.unit
 
 
 def test_redaction_adversarial():
