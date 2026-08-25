@@ -21,6 +21,11 @@ VACANCY_RESPONSE_REJECT_WARNING = _selector("vacancy_page.VACANCY_RESPONSE_REJEC
 VACANCY_RESPONSE_ERROR = _selector("vacancy_page.VACANCY_RESPONSE_ERROR")
 VACANCY_TITLE = _selector("vacancy_page.VACANCY_TITLE")
 VACANCY_COMPANY_NAME = _selector("vacancy_page.VACANCY_COMPANY_NAME")
+VACANCY_DESCRIPTION = _selector("vacancy_page.VACANCY_DESCRIPTION")
+VACANCY_EXPERIENCE = _selector("vacancy_page.VACANCY_EXPERIENCE")
+VACANCY_VIEW_EMPLOYMENT_MODE = _selector("vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE")
+VACANCY_VIEW_LOCATION = _selector("vacancy_page.VACANCY_VIEW_LOCATION")
+VACANCY_VIEW_RAW_ADDRESS = _selector("vacancy_page.VACANCY_VIEW_RAW_ADDRESS")
 
 # VACANCY_APPLY_BUTTON — это ссылка
 # (href="/applicant/vacancy_response?vacancyId=..&employerId=..&hhtmFrom=vacancy"),

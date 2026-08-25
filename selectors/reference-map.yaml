@@ -11,8 +11,8 @@ references:
   tgeruzov:
     repository: tgeruzov/hh-auto-responder
     license: MIT
-    commit: 3e30d85493fc4d050ec905e0ad04d9fe1767f833
-    selector_fingerprint: e6cc9eebd3da787771414a518f47c2c4e656a985730376b842b48e0bcba8579d
+    commit: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+    selector_fingerprint: 57edac16fdd7dea9247232aa9fd8b8a5a5347601dd86d85a96bdf8ce72387eca
   yamakayama:
     repository: YAMAKAYAMACO/hh-autoresponder
     license: MIT
@@ -2626,6 +2626,45 @@ selectors:
         line: 1359
         key: script.js::pick#2::0
         value: '[data-qa="vacancy-company-name"]'
+  vacancy_page.VACANCY_DESCRIPTION:
+    value: '[data-qa="vacancy-description"]'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:24
+    decision: consensus
+    origin: reference_consensus
+    verification: contract_tested
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 19
+        key: lib/vacancy-parse.mjs::t#9::0
+        value: '[data-qa="vacancy-description"]'
+      - file: scripts/scan-telegram.mjs
+        line: 88
+        key: scripts/scan-telegram.mjs::t#5::0
+        value: '[data-qa="vacancy-description"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 154
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.desc_el#0::0
+        value: '[data-qa="vacancy-description"]'
+    live_matches: []
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 19
+        key: lib/vacancy-parse.mjs::t#9::0
+        value: '[data-qa="vacancy-description"]'
+      - file: scripts/scan-telegram.mjs
+        line: 88
+        key: scripts/scan-telegram.mjs::t#5::0
+        value: '[data-qa="vacancy-description"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 154
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.desc_el#0::0
+        value: '[data-qa="vacancy-description"]'
   vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT:
     value: '[data-qa="magritte-alert"]'
     criticality: write
@@ -2650,6 +2689,37 @@ selectors:
       note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
     active: true
     bindings: {}
+  vacancy_page.VACANCY_EXPERIENCE:
+    value: '[data-qa="vacancy-experience"]'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:25
+    decision: consensus
+    origin: reference_consensus
+    verification: contract_tested
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 14
+        key: lib/vacancy-parse.mjs::t#4::0
+        value: '[data-qa="vacancy-experience"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 161
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.exp_el#0::0
+        value: '[data-qa="vacancy-experience"]'
+    live_matches: []
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 14
+        key: lib/vacancy-parse.mjs::t#4::0
+        value: '[data-qa="vacancy-experience"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 161
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.exp_el#0::0
+        value: '[data-qa="vacancy-experience"]'
   vacancy_page.VACANCY_HIDDEN_RESUME_WARNING:
     value: '[data-qa=''hidden-resume-warning'']'
     criticality: write
@@ -2790,6 +2860,99 @@ selectors:
         line: 151
         key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
         value: '[data-qa="vacancy-title"]'
+  vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE:
+    value: '[data-qa="vacancy-view-employment-mode"]'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:26
+    decision: consensus
+    origin: reference_consensus
+    verification: contract_tested
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 15
+        key: lib/vacancy-parse.mjs::t#6::0
+        value: '[data-qa="vacancy-view-employment-mode"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 164
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.emp_el#0::0
+        value: '[data-qa="vacancy-view-employment-mode"]'
+    live_matches: []
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 15
+        key: lib/vacancy-parse.mjs::t#6::0
+        value: '[data-qa="vacancy-view-employment-mode"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 164
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.emp_el#0::0
+        value: '[data-qa="vacancy-view-employment-mode"]'
+  vacancy_page.VACANCY_VIEW_LOCATION:
+    value: '[data-qa="vacancy-view-location"]'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:27
+    decision: consensus
+    origin: reference_consensus
+    verification: contract_tested
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 16
+        key: lib/vacancy-parse.mjs::t#7::0
+        value: '[data-qa="vacancy-view-location"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 2946
+        key: hh-apply-assistant.user.js::pick#4::0
+        value: '[data-qa="vacancy-view-location"]'
+    live_matches: []
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 16
+        key: lib/vacancy-parse.mjs::t#7::0
+        value: '[data-qa="vacancy-view-location"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 2946
+        key: hh-apply-assistant.user.js::pick#4::0
+        value: '[data-qa="vacancy-view-location"]'
+  vacancy_page.VACANCY_VIEW_RAW_ADDRESS:
+    value: '[data-qa="vacancy-view-raw-address"]'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:28
+    decision: consensus
+    origin: reference_consensus
+    verification: contract_tested
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 16
+        key: lib/vacancy-parse.mjs::t#8::0
+        value: '[data-qa="vacancy-view-raw-address"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 2948
+        key: hh-apply-assistant.user.js::pick#5::0
+        value: '[data-qa="vacancy-view-raw-address"]'
+    live_matches: []
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 16
+        key: lib/vacancy-parse.mjs::t#8::0
+        value: '[data-qa="vacancy-view-raw-address"]'
+      tgeruzov:
+      - file: hh-apply-assistant.user.js
+        line: 2948
+        key: hh-apply-assistant.user.js::pick#5::0
+        value: '[data-qa="vacancy-view-raw-address"]'
 upstream_consensus:
 - value: '[data-qa="vacancy-company-name"]'
   references:
@@ -2829,6 +2992,10 @@ upstream_consensus:
       line: 154
       key: app/parsers/hh.py::module.HHParser.get_vacancy_details.desc_el#0::0
       value: '[data-qa="vacancy-description"]'
+  decision: port_exact
+  logical_id: vacancy_page.VACANCY_DESCRIPTION
+  origin: reference_consensus
+  verification: contract_tested
 - value: '[data-qa="vacancy-experience"]'
   references:
   - steev
@@ -2844,6 +3011,10 @@ upstream_consensus:
       line: 161
       key: app/parsers/hh.py::module.HHParser.get_vacancy_details.exp_el#0::0
       value: '[data-qa="vacancy-experience"]'
+  decision: port_exact
+  logical_id: vacancy_page.VACANCY_EXPERIENCE
+  origin: reference_consensus
+  verification: contract_tested
 - value: '[data-qa="vacancy-response-letter-submit"]'
   references:
   - tgeruzov
@@ -2863,6 +3034,10 @@ upstream_consensus:
       line: 368
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#1::0
       value: '[data-qa="vacancy-response-letter-submit"]'
+  decision: reject
+  reason_code: write_risk
+  reason: 'Не нужен боту: локальный apply_form.APPLY_SUBMIT_BUTTON уже покрывает submit-flow; альтернативный WRITE-target
+    добавил бы непроверенный fallback.'
 - value: '[data-qa="vacancy-response-letter-toggle"]'
   references:
   - tgeruzov
@@ -2893,6 +3068,10 @@ upstream_consensus:
       line: 263
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#1::0
       value: '[data-qa="vacancy-response-link-bottom"]'
+  decision: reject
+  reason_code: write_risk
+  reason: 'Не нужен боту: локальный vacancy_page.VACANCY_APPLY_BUTTON уже покрывает apply-flow; второй WRITE-target расширил
+    бы mutation scope без отдельного live evidence.'
 - value: '[data-qa="vacancy-response-link-top"]'
   references:
   - steev
@@ -3007,6 +3186,10 @@ upstream_consensus:
       line: 164
       key: app/parsers/hh.py::module.HHParser.get_vacancy_details.emp_el#0::0
       value: '[data-qa="vacancy-view-employment-mode"]'
+  decision: port_exact
+  logical_id: vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE
+  origin: reference_consensus
+  verification: contract_tested
 - value: '[data-qa="vacancy-view-location"]'
   references:
   - steev
@@ -3022,6 +3205,10 @@ upstream_consensus:
       line: 1362
       key: script.js::pick#4::0
       value: '[data-qa="vacancy-view-location"]'
+  decision: port_exact
+  logical_id: vacancy_page.VACANCY_VIEW_LOCATION
+  origin: reference_consensus
+  verification: contract_tested
 - value: '[data-qa="vacancy-view-raw-address"]'
   references:
   - steev
@@ -3037,6 +3224,10 @@ upstream_consensus:
       line: 1364
       key: script.js::pick#5::0
       value: '[data-qa="vacancy-view-raw-address"]'
+  decision: port_exact
+  logical_id: vacancy_page.VACANCY_VIEW_RAW_ADDRESS
+  origin: reference_consensus
+  verification: contract_tested
 - value: h1[data-qa="vacancy-title"]
   references:
   - steev
@@ -3052,6 +3243,10 @@ upstream_consensus:
       line: 1356
       key: script.js::pick#1::0
       value: h1[data-qa="vacancy-title"]
+  decision: reject
+  reason_code: duplicate_local_role
+  reason: 'Дубликат локального vacancy_page.VACANCY_TITLE: canonical [data-qa="vacancy-title"] уже покрывает ту же роль; fallback
+    не добавляется.'
 binding_definitions:
   apply.success.APPLY_SUCCESS_MARKER:
     tgeruzov:

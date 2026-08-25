@@ -588,6 +588,14 @@ def classify_criticality(logical_id: str) -> str:
         return "read"
     if logical_id.startswith("professional_roles."):
         return "write" if logical_id == "professional_roles.TREE_LABEL" else "read"
+    if logical_id in {
+        "vacancy_page.VACANCY_DESCRIPTION",
+        "vacancy_page.VACANCY_EXPERIENCE",
+        "vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE",
+        "vacancy_page.VACANCY_VIEW_LOCATION",
+        "vacancy_page.VACANCY_VIEW_RAW_ADDRESS",
+    }:
+        return "read"
     write_prefixes = (
         "apply.",
         "apply_form.",
@@ -840,28 +848,45 @@ def _preserve_lines(items: list[SourceSelector], known: dict[str, int]) -> list[
     ]
 
 
-def _upstream_consensus(indexes: dict[str, list[SourceSelector]]) -> list[dict[str, Any]]:
+def _upstream_consensus(
+    indexes: dict[str, list[SourceSelector]],
+    previous: Iterable[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     grouped: defaultdict[str, dict[str, list[SourceSelector]]] = defaultdict(
         lambda: defaultdict(list)
     )
     for reference, items in indexes.items():
         for item in items:
             grouped[item.normalized][reference].append(item)
+    previous_by_value = {
+        normalize_selector(row["value"]): row for row in previous or () if row.get("value")
+    }
     rows: list[dict[str, Any]] = []
     for _normalized, by_reference in sorted(grouped.items()):
         if len(by_reference) < 2:
             continue
         first = next(iter(next(iter(by_reference.values()))))
-        rows.append(
-            {
-                "value": first.value,
-                "references": sorted(by_reference),
-                "sources": {
-                    name: [_source_dict(item) for item in items[:8]]
-                    for name, items in sorted(by_reference.items())
-                },
-            }
-        )
+        row = {
+            "value": first.value,
+            "references": sorted(by_reference),
+            "sources": {
+                name: [_source_dict(item) for item in items[:8]]
+                for name, items in sorted(by_reference.items())
+            },
+        }
+        old = previous_by_value.get(_normalized)
+        if old:
+            for field in (
+                "decision",
+                "logical_id",
+                "origin",
+                "verification",
+                "reason_code",
+                "reason",
+            ):
+                if field in old:
+                    row[field] = copy.deepcopy(old[field])
+        rows.append(row)
     return rows
 
 
@@ -951,9 +976,7 @@ def load_catalog() -> dict[str, Any]:
         raise SystemExit(f"selector map missing: {MAP_PATH}")
     catalog = yaml.safe_load(MAP_PATH.read_text(encoding="utf-8"))
     evidence = (
-        json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
-        if EVIDENCE_PATH.exists()
-        else {}
+        json.loads(EVIDENCE_PATH.read_text(encoding="utf-8")) if EVIDENCE_PATH.exists() else {}
     )
     _ensure_extra_contracts(catalog, evidence)
     catalog["selectors"] = dict(sorted(catalog["selectors"].items()))
@@ -1246,7 +1269,9 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     if mode is not None:
         catalog["policy"]["mode"] = mode
     catalog["binding_definitions"] = _binding_definitions()
-    catalog["upstream_consensus"] = _upstream_consensus(indexes)
+    catalog["upstream_consensus"] = _upstream_consensus(
+        indexes, catalog.get("upstream_consensus", [])
+    )
     _refresh_bindings(catalog, indexes)
     for row in catalog["selectors"].values():
         current_value = row["value"]

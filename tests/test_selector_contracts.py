@@ -21,6 +21,42 @@ SPEC.loader.exec_module(contracts)
 pytestmark = pytest.mark.unit
 
 
+VACANCY_CONSENSUS_PORTS = {
+    "vacancy_page.VACANCY_DESCRIPTION": {
+        "value": '[data-qa="vacancy-description"]',
+        "references": {"steev", "yamakayama"},
+    },
+    "vacancy_page.VACANCY_EXPERIENCE": {
+        "value": '[data-qa="vacancy-experience"]',
+        "references": {"steev", "yamakayama"},
+    },
+    "vacancy_page.VACANCY_VIEW_EMPLOYMENT_MODE": {
+        "value": '[data-qa="vacancy-view-employment-mode"]',
+        "references": {"steev", "yamakayama"},
+    },
+    "vacancy_page.VACANCY_VIEW_LOCATION": {
+        "value": '[data-qa="vacancy-view-location"]',
+        "references": {"steev", "tgeruzov"},
+    },
+    "vacancy_page.VACANCY_VIEW_RAW_ADDRESS": {
+        "value": '[data-qa="vacancy-view-raw-address"]',
+        "references": {"steev", "tgeruzov"},
+    },
+}
+
+
+VACANCY_CANDIDATE_VALUES = {
+    '[data-qa="vacancy-description"]',
+    '[data-qa="vacancy-experience"]',
+    '[data-qa="vacancy-response-letter-submit"]',
+    '[data-qa="vacancy-response-link-bottom"]',
+    '[data-qa="vacancy-view-employment-mode"]',
+    '[data-qa="vacancy-view-location"]',
+    '[data-qa="vacancy-view-raw-address"]',
+    'h1[data-qa="vacancy-title"]',
+}
+
+
 def _commit_repository(path: Path, selector: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "selectors.py").write_text(f'SELECTOR = "{selector}"\n', encoding="utf-8")
@@ -49,6 +85,80 @@ def test_current_repository_selector_contract_is_self_consistent():
     assert contracts.verify_catalog(catalog) == []
     assert len(catalog["references"]) == 3
     assert catalog["policy"]["consensus_threshold"] == 2
+
+
+@pytest.mark.parametrize("logical_id, expected", VACANCY_CONSENSUS_PORTS.items())
+def test_vacancy_consensus_ports_are_exact_reference_literals(logical_id, expected):
+    row = contracts.load_catalog()["selectors"][logical_id]
+
+    assert row["decision"] == "consensus"
+    assert row["origin"] == "reference_consensus"
+    assert row["verification"] == "contract_tested"
+    assert row["criticality"] == "read"
+    assert set(row["sources"]) == expected["references"]
+    for source_entries in row["sources"].values():
+        for source in source_entries:
+            assert source["file"]
+            assert isinstance(source["line"], int)
+            assert source["key"]
+            assert source["value"] == expected["value"]
+
+
+def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
+    catalog = contracts.load_catalog()
+    candidates = {
+        contracts.normalize_selector(row["value"]): row
+        for row in catalog["upstream_consensus"]
+        if contracts.normalize_selector(row["value"])
+        in {contracts.normalize_selector(value) for value in VACANCY_CANDIDATE_VALUES}
+    }
+
+    assert set(candidates) == {
+        contracts.normalize_selector(value) for value in VACANCY_CANDIDATE_VALUES
+    }
+    for row in candidates.values():
+        assert row["decision"] in {"port_exact", "reject"}
+        if row["decision"] == "port_exact":
+            assert row["logical_id"] in VACANCY_CONSENSUS_PORTS
+            assert row["origin"] == "reference_consensus"
+            assert row["verification"] == "contract_tested"
+        else:
+            assert row["reason_code"] in {"duplicate_local_role", "write_risk"}
+            assert row["reason"]
+
+
+def test_refresh_preserves_upstream_candidate_decisions():
+    selector = '[data-qa="vacancy-description"]'
+    indexes = {
+        reference: [
+            contracts.SourceSelector(
+                selector,
+                contracts.normalize_selector(selector),
+                f"{reference}.py",
+                1,
+                f"{reference}#0",
+            )
+        ]
+        for reference in contracts.REFERENCE_CONFIG
+    }
+    previous = [
+        {
+            "value": selector,
+            "references": ["steev", "yamakayama"],
+            "sources": {},
+            "decision": "port_exact",
+            "logical_id": "vacancy_page.VACANCY_DESCRIPTION",
+            "origin": "reference_consensus",
+            "verification": "contract_tested",
+        }
+    ]
+
+    refreshed = contracts._upstream_consensus(indexes, previous)
+
+    assert refreshed[0]["decision"] == "port_exact"
+    assert refreshed[0]["logical_id"] == "vacancy_page.VACANCY_DESCRIPTION"
+    assert refreshed[0]["origin"] == "reference_consensus"
+    assert refreshed[0]["verification"] == "contract_tested"
 
 
 def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
@@ -203,7 +313,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 199" in output
+    assert "local selector contracts: 204" in output
     assert "Semantic mismatches:" in output
 
 
