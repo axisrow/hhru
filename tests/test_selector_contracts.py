@@ -201,6 +201,34 @@ def test_refresh_preserves_upstream_candidate_decisions():
     assert refreshed[0]["origin"] == "reference_consensus"
     assert refreshed[0]["verification"] == "contract_tested"
 
+def test_apply_response_upstream_candidates_have_explicit_safe_decisions():
+    catalog = contracts.load_catalog()
+    candidates = {
+        row["value"]: row
+        for row in catalog["upstream_consensus"]
+        if contracts._is_apply_response_candidate(row["value"])
+    }
+    expected = {
+        '[data-qa="vacancy-response-letter-submit"]',
+        '[data-qa="vacancy-response-letter-toggle"]',
+        '[data-qa="vacancy-response-link-bottom"]',
+        '[data-qa="vacancy-response-link-top"]',
+        '[data-qa="vacancy-response-link-view-topic"]',
+        '[data-qa="vacancy-response-submit-popup"]',
+        '[data-qa="vacancy-serp__vacancy-employer"]',
+    }
+    assert set(candidates) == expected
+    for value, row in candidates.items():
+        assert row["decision"] in {"port_exact", "reject", "unavailable"}, value
+        assert row["origin"] == "reference_consensus", value
+        assert row["verification"] == "contract_tested", value
+        assert row["reason"] and row["target"], value
+        assert row["evidence"]["source"] == "selectors/reference-map.yaml:upstream_consensus"
+        assert row["evidence"]["note"]
+        assert row["last_verified_at"] == "2026-08-25"
+        assert row["verified_flow"] == "python scripts/selector_contracts.py check"
+        assert row["verified_by"] == "human"
+
 
 def test_negotiation_withdraw_contracts_are_explicitly_unavailable():
     catalog = contracts.load_catalog()
@@ -319,6 +347,42 @@ def test_refresh_bindings_preserves_a_missing_key_on_later_refresh():
     }
     contracts._refresh_bindings(catalog, indexes)
     assert catalog["selectors"]["fixture"]["binding_gaps"] == ["steev:removed"]
+
+
+def test_upstream_refresh_preserves_explicit_candidate_decision():
+    selector = '[data-qa="vacancy-response-submit-popup"]'
+    indexes = {
+        name: [
+            contracts.SourceSelector(
+                selector,
+                contracts.normalize_selector(selector),
+                "fixture.js",
+                10,
+                f"fixture-{name}",
+            )
+        ]
+        for name in ("steev", "tgeruzov")
+    }
+    indexes["yamakayama"] = []
+    previous = [
+        {
+            "value": selector,
+            "decision": "reject",
+            "reason": "duplicate",
+            "target": "apply_form.APPLY_SUBMIT_BUTTON",
+            "origin": "reference_consensus",
+            "verification": "contract_tested",
+            "evidence": {"source": "map", "note": "reviewed"},
+            "last_verified_at": "2026-08-25",
+            "verified_flow": "check",
+            "verified_by": "human",
+        }
+    ]
+
+    refreshed = contracts._upstream_consensus(indexes, previous)
+
+    assert refreshed[0]["decision"] == "reject"
+    assert refreshed[0]["target"] == "apply_form.APPLY_SUBMIT_BUTTON"
 
 
 def test_python_source_key_does_not_depend_on_line_number(tmp_path):

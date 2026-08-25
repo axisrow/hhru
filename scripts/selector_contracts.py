@@ -883,6 +883,11 @@ def _upstream_consensus(
                 "verification",
                 "reason_code",
                 "reason",
+                "target",
+                "evidence",
+                "last_verified_at",
+                "verified_flow",
+                "verified_by",
             ):
                 if field in old:
                     row[field] = copy.deepcopy(old[field])
@@ -1109,6 +1114,36 @@ def render_matrix(catalog: dict[str, Any]) -> str:
         selector_value = _markdown(f"`{row['value']}`")
         references = _markdown(", ".join(row["references"]))
         lines.append(f"| {selector_value} | {references} |")
+    decisions = [
+        row
+        for row in catalog.get("upstream_consensus", [])
+        if _is_apply_response_candidate(row.get("value", "")) and row.get("decision")
+    ]
+    if decisions:
+        lines.extend(
+            [
+                "",
+                "## Apply/response candidate decisions",
+                "",
+                "Every apply/response candidate is explicitly resolved; rejected "
+                "WRITE candidates are not added as fallback selectors.",
+                "",
+                "| selector | decision | target | reason |",
+                "|---|---|---|---|",
+            ]
+        )
+        for row in decisions:
+            cells = (
+                f"`{row['value']}`",
+                row.get("decision", "—"),
+                row.get("target", "—"),
+                row.get("reason", "—"),
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown(value or "—") for value in cells)
+                + " |"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -1178,6 +1213,34 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
         errors.append("reference set differs from the approved three-project allowlist")
     if catalog.get("binding_definitions") != _binding_definitions():
         errors.append("semantic reference bindings are stale; run selector refresh")
+    for row in catalog.get("upstream_consensus", []):
+        if not _is_apply_response_candidate(row.get("value", "")):
+            continue
+        decision = row.get("decision")
+        if decision not in {"port_exact", "reject", "unavailable"}:
+            errors.append(
+                f"upstream candidate {row.get('value', '')}: "
+                "must have port_exact, reject, or unavailable decision"
+            )
+            continue
+        required_fields = (
+            "origin",
+            "verification",
+            "evidence",
+            "last_verified_at",
+            "verified_flow",
+            "verified_by",
+        )
+        for field in required_fields:
+            if not row.get(field):
+                errors.append(f"upstream candidate {row.get('value', '')}: missing {field}")
+        evidence = row.get("evidence", {})
+        if not evidence.get("source") or not evidence.get("note"):
+            errors.append(f"upstream candidate {row.get('value', '')}: evidence is incomplete")
+        if decision in {"reject", "unavailable"} and not row.get("reason"):
+            errors.append(f"upstream candidate {row.get('value', '')}: missing reject reason")
+        if decision == "port_exact" and not row.get("target"):
+            errors.append(f"upstream candidate {row.get('value', '')}: missing target contract")
     for logical_id, row in catalog.get("selectors", {}).items():
         sources = row.get("sources", {})
         reference_count = len(sources)
@@ -1348,6 +1411,10 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
 def _short(value: str, limit: int = 140) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _is_apply_response_candidate(value: str) -> bool:
+    return "vacancy-response-" in value or "vacancy-serp__vacancy-employer" in value
 
 
 def render_refresh_report(before: dict[str, Any], after: dict[str, Any]) -> str:

@@ -3682,13 +3682,13 @@ upstream_consensus:
   - yamakayama
   sources:
     tgeruzov:
-    - file: script.js
-      line: 75
-      key: script.js::module.SELECTORS.letterSubmit#0::1
+    - file: hh-apply-assistant.user.js
+      line: 108
+      key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::1
       value: '[data-qa="vacancy-response-letter-submit"]'
-    - file: script.js
-      line: 1614
-      key: script.js::fillLetterAndSubmit#1::0
+    - file: hh-apply-assistant.user.js
+      line: 3382
+      key: hh-apply-assistant.user.js::fillLetterAndSubmit#1::0
       value: '[data-qa="vacancy-response-letter-submit"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
@@ -3697,32 +3697,61 @@ upstream_consensus:
       value: '[data-qa="vacancy-response-letter-submit"]'
   decision: reject
   reason_code: write_risk
-  reason: 'Не нужен боту: локальный apply_form.APPLY_SUBMIT_BUTTON уже покрывает submit-flow; альтернативный WRITE-target
-    добавил бы непроверенный fallback.'
+  reason: duplicate of APPLY_SUBMIT_BUTTON; the local apply flow submits only the popup control. The upstream string is a
+    WRITE fallback and has no local DOM snapshot evidence for a second form shape.
+  target: apply_form.APPLY_SUBMIT_BUTTON
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-response-letter-toggle"]'
   references:
   - tgeruzov
   - yamakayama
   sources:
     tgeruzov:
-    - file: script.js
-      line: 71
-      key: script.js::module.SELECTORS.attachCoverInModal#0::4
+    - file: hh-apply-assistant.user.js
+      line: 104
+      key: hh-apply-assistant.user.js::module.SELECTORS.attachCoverInModal#0::4
       value: '[data-qa="vacancy-response-letter-toggle"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
       line: 769
       key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
       value: '[data-qa="vacancy-response-letter-toggle"]'
+  decision: reject
+  reason: duplicate of APPLY_COVER_LETTER_TOGGLE; the shared local cover-letter role is already mapped, so no additional WRITE
+    fallback is introduced.
+  target: apply_form.APPLY_COVER_LETTER_TOGGLE
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-response-link-bottom"]'
   references:
   - tgeruzov
   - yamakayama
   sources:
     tgeruzov:
-    - file: script.js
-      line: 65
-      key: script.js::module.SELECTORS.vacancyApply#0::3
+    - file: hh-apply-assistant.user.js
+      line: 99
+      key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::3
       value: '[data-qa="vacancy-response-link-bottom"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
@@ -3731,8 +3760,21 @@ upstream_consensus:
       value: '[data-qa="vacancy-response-link-bottom"]'
   decision: reject
   reason_code: write_risk
-  reason: 'Не нужен боту: локальный vacancy_page.VACANCY_APPLY_BUTTON уже покрывает apply-flow; второй WRITE-target расширил
-    бы mutation scope без отдельного live evidence.'
+  reason: duplicate apply role covered by VACANCY_APPLY_BUTTON; adding a bottom-link fallback would expand the WRITE path
+    without a local DOM snapshot.
+  target: vacancy_page.VACANCY_APPLY_BUTTON
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-response-link-top"]'
   references:
   - steev
@@ -3745,28 +3787,40 @@ upstream_consensus:
       key: lib/hh-response-selectors.mjs::tryClick#0::0
       value: '[data-qa="vacancy-response-link-top"]'
     tgeruzov:
-    - file: script.js
-      line: 65
-      key: script.js::module.SELECTORS.vacancyApply#0::1
-      value: '[data-qa="vacancy-response-link-top"]'
-    - file: script.js
-      line: 66
-      key: script.js::module.SELECTORS.topApply#0::1
+    - file: hh-apply-assistant.user.js
+      line: 99
+      key: hh-apply-assistant.user.js::module.SELECTORS.vacancyApply#0::1
       value: '[data-qa="vacancy-response-link-top"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
       line: 262
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
       value: '[data-qa="vacancy-response-link-top"]'
+  decision: reject
+  reason: duplicate of the existing VACANCY_APPLY_BUTTON contract; no second local apply contract is needed.
+  target: vacancy_page.VACANCY_APPLY_BUTTON
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      steev: 7a56af1e004e3908c15bea5d3c1d805ca2503c32
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-response-link-view-topic"]'
   references:
   - tgeruzov
   - yamakayama
   sources:
     tgeruzov:
-    - file: script.js
-      line: 77
-      key: script.js::module.SELECTORS.responseChat#0::0
+    - file: hh-apply-assistant.user.js
+      line: 110
+      key: hh-apply-assistant.user.js::module.SELECTORS.responseChat#0::0
       value: '[data-qa="vacancy-response-link-view-topic"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
@@ -3777,25 +3831,56 @@ upstream_consensus:
       line: 423
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
       value: '[data-qa="vacancy-response-link-view-topic"]'
+  decision: reject
+  reason: duplicate of VACANCY_ALREADY_RESPONDED_CHAT; the already-responded control is already represented in the local response
+    flow.
+  target: vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-response-submit-popup"]'
   references:
   - tgeruzov
   - yamakayama
   sources:
     tgeruzov:
-    - file: script.js
-      line: 75
-      key: script.js::module.SELECTORS.letterSubmit#0::4
+    - file: hh-apply-assistant.user.js
+      line: 108
+      key: hh-apply-assistant.user.js::module.SELECTORS.letterSubmit#0::4
       value: '[data-qa="vacancy-response-submit-popup"]'
-    - file: script.js
-      line: 1614
-      key: script.js::fillLetterAndSubmit#2::0
+    - file: hh-apply-assistant.user.js
+      line: 3382
+      key: hh-apply-assistant.user.js::fillLetterAndSubmit#2::0
       value: '[data-qa="vacancy-response-submit-popup"]'
     yamakayama:
     - file: app/parsers/hh_playwright.py
       line: 366
       key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
       value: '[data-qa="vacancy-response-submit-popup"]'
+  decision: reject
+  reason: duplicate of APPLY_SUBMIT_BUTTON; the popup submit control is already the local WRITE submit contract.
+  target: apply_form.APPLY_SUBMIT_BUTTON
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      tgeruzov: 981f2809f3ae4b8c24e447d6376dae84e02b9ca6
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-serp__vacancy-employer"]'
   references:
   - steev
@@ -3811,6 +3896,21 @@ upstream_consensus:
       line: 87
       key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
       value: '[data-qa="vacancy-serp__vacancy-employer"]'
+  decision: reject
+  reason: duplicate of VACANCY_CARD_COMPANY; the read-only SERP employer role is already represented locally.
+  target: search_page.VACANCY_CARD_COMPANY
+  origin: reference_consensus
+  verification: contract_tested
+  evidence:
+    source: selectors/reference-map.yaml:upstream_consensus
+    note: 'Explicit manual reject: the candidate is already covered by the target contract; no new selector or fallback is
+      generated.'
+    reference_commits:
+      steev: 7a56af1e004e3908c15bea5d3c1d805ca2503c32
+      yamakayama: bfb46696aec658b6b8fe7b9660376e0b286f056b
+  last_verified_at: '2026-08-25'
+  verified_flow: python scripts/selector_contracts.py check
+  verified_by: human
 - value: '[data-qa="vacancy-title"]'
   references:
   - steev
