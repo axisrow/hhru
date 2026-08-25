@@ -56,10 +56,12 @@ _SCRIPT = r"""
     const target = m.target.nodeType === 1 ? m.target : m.target.parentElement;
     const candidate = target && (target.closest(
       '[role="dialog"], [role="alert"], '
-      '[data-qa="cookies-policy-informer"], [data-qa^="notification"]'
+      '[data-qa="cookies-policy-informer"], '
+      '[data-qa^="notification"]:not([data-qa="notification-close"])'
     ) || (target.matches(
       '[role="dialog"], [role="alert"], '
-      '[data-qa="cookies-policy-informer"], [data-qa^="notification"]'
+      '[data-qa="cookies-policy-informer"], '
+      '[data-qa^="notification"]:not([data-qa="notification-close"])'
     ) ? target : null));
     if (candidate) scan(candidate);
     m.addedNodes.forEach(scan);
