@@ -22,6 +22,13 @@ def run(args: argparse.Namespace):
         history=Path(args.history), run_id=args.run_id, log_path=args.log, dom_dir=args.dom_dir
     )
     if args.output:
-        args.output.write_text(text, encoding="utf-8")
+        output = args.output.expanduser().resolve()
+        history = Path(args.history).expanduser().resolve()
+        if output == history or output in {
+            history.with_name(history.name + "-wal"),
+            history.with_name(history.name + "-shm"),
+        }:
+            raise ValueError("incident bundle нельзя записать поверх history.db")
+        output.write_text(text, encoding="utf-8")
     else:
         print(text, end="")
