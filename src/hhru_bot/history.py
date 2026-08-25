@@ -587,6 +587,7 @@ SKIP_REASONS = _SkipReasons()
 #: Все стабильные причины отсева (для ``--reason`` choices в clear-skipped и
 #: валидации). Кортеж, не set — порядок стабилен для ``--help``.
 SKIP_REASON_VALUES = (
+    _SkipReasons.BLACKLIST,
     _SkipReasons.STOPWORD_TITLE,
     _SkipReasons.STOPWORD_EMPLOYER,
     _SkipReasons.CURRENT_EMPLOYER,
