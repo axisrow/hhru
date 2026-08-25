@@ -834,11 +834,18 @@ def filter_candidates(
     причину — кэш консистентен по всем путям отсева.
     """
     from .scoring import employer_passes_prefilter  # локальный импорт: цикл search<->scoring
+    blacklist = history.blacklist_sets() if hasattr(history, "blacklist_sets") else {"company": set(), "keyword": set(), "vacancy": set()}
 
     candidates: list[VacancyCard] = []
     skipped: list[tuple[VacancyCard, str]] = []
 
     for card in cards:
+        from .blacklist import match as blacklist_match
+        blacklist_reason = blacklist_match(card, blacklist)
+        if blacklist_reason:
+            skipped.append((card, blacklist_reason))
+            history.record_skip(resume_id, card.vacancy_id, SKIP_REASONS.BLACKLIST)
+            continue
         # #87 кэш отсева: вакансия уже отсеяна ранее — пропускаем без повторного
         # разбора (и без дублирующей записи в журнал). Экономит LLM/время.
         if history.is_skipped(resume_id, card.vacancy_id):
