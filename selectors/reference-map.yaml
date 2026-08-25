@@ -1,0 +1,3093 @@
+version: 1
+policy:
+  mode: manual
+  consensus_threshold: 2
+references:
+  steev:
+    repository: Steev193/hh-ru-apply
+    license: MIT
+    commit: 7a56af1e004e3908c15bea5d3c1d805ca2503c32
+    selector_fingerprint: ab2a24dbccd904e18355fa84569b88f8d23e6e30f4311675ac268b0861b7733a
+  tgeruzov:
+    repository: tgeruzov/hh-auto-responder
+    license: MIT
+    commit: 3e30d85493fc4d050ec905e0ad04d9fe1767f833
+    selector_fingerprint: e6cc9eebd3da787771414a518f47c2c4e656a985730376b842b48e0bcba8579d
+  yamakayama:
+    repository: YAMAKAYAMACO/hh-autoresponder
+    license: MIT
+    commit: bfb46696aec658b6b8fe7b9660376e0b286f056b
+    selector_fingerprint: cb34b2dfc59479f22ec0ff7f5c26975962dd0de036546e80216add72ba78f6b1
+selectors:
+  account_profile.ACCOUNT_PROFILE_CITY:
+    value: '[data-qa=''profile-common-card-city'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:30
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:30
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+    active: true
+    bindings: {}
+  account_profile.ACCOUNT_PROFILE_EMAIL:
+    value: '[data-qa=''profile-contact-item-email'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:32
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:32
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+    active: true
+    bindings: {}
+  account_profile.ACCOUNT_PROFILE_FIRST_NAME:
+    value: '[data-qa=''profile-common-card-firstname'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:28
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:28
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+    active: true
+    bindings: {}
+  account_profile.ACCOUNT_PROFILE_LAST_NAME:
+    value: '[data-qa=''profile-common-card-lastname'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:29
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:29
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+    active: true
+    bindings: {}
+  account_profile.ACCOUNT_PROFILE_PHONE:
+    value: '[data-qa=''profile-contact-item-phone'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:31
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:31
+      note: Account-level fields from the authenticated live DOM observed on 2026-08-18.
+    active: true
+    bindings: {}
+  account_profile.ACCOUNT_PROFILE_READY:
+    value: h1[data-qa='title']
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:23
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - title
+    active: true
+    bindings: {}
+  account_profile.RESUME_CONTACT_EMAIL:
+    value: '[data-qa=''resume-contact-email-value'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-contact-email-value
+    active: true
+    bindings: {}
+  account_profile.RESUME_CONTACT_PHONE:
+    value: '[data-qa=''resume-contact-phone-value-preferred'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:36
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-contact-phone-value-preferred
+    active: true
+    bindings: {}
+  account_profile.RESUME_LIST_PROFILE_NAME:
+    value: '[data-qa=''profile-activator-fullname'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:41
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-activator-fullname
+    active: true
+    bindings: {}
+  apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1:
+    value: '[data-qa=''captcha'']'
+    criticality: write
+    declared_at: src/hhru_bot/apply/antibot.py:31
+    decision: safety_guard
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/apply/antibot.py:31
+      note: fail-closed captcha detector; absence never authorizes a write
+    active: true
+    bindings: {}
+  apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1:
+    value: '[data-qa=''account-captcha-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/apply/antibot.py:31
+    decision: safety_guard
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/apply/antibot.py:31
+      note: fail-closed captcha detector; absence never authorizes a write
+    active: true
+    bindings: {}
+  apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1:
+    value: '[data-qa=''account-captcha-picture'']'
+    criticality: write
+    declared_at: src/hhru_bot/apply/antibot.py:31
+    decision: safety_guard
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/apply/antibot.py:31
+      note: fail-closed captcha detector; absence never authorizes a write
+    active: true
+    bindings: {}
+  apply.success.APPLY_SUCCESS_MARKER:
+    value: '[data-qa=''vacancy-response-sent-message'']'
+    criticality: write
+    declared_at: src/hhru_bot/apply/success.py:46
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 1236
+        key: script.js::isResponseConfirmed#0::1
+        value: '[data-qa="vacancy-response-success"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 426
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
+        value: '[data-qa*="response-success"]'
+  apply_form.APPLY_COVER_LETTER_TEXTAREA:
+    value: textarea[data-qa='vacancy-response-popup-form-letter-input']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:90
+    decision: live_dom
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 73
+        key: script.js::module.SELECTORS.letterTextarea#0::1
+        value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
+      - file: script.js
+        line: 1603
+        key: script.js::fillLetterAndSubmit#0::0
+        value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
+    live_matches:
+    - vacancy-response-popup-form-letter-input
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 1603
+        key: script.js::fillLetterAndSubmit#0::0
+        value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
+      - file: script.js
+        line: 73
+        key: script.js::module.SELECTORS.letterTextarea#0::1
+        value: textarea[data-qa="vacancy-response-popup-form-letter-input"]
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 790
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form#0::0
+        value: '[data-qa="vacancy-response-popup-form-letter-input"]'
+  apply_form.APPLY_COVER_LETTER_TEXTAREA_FORM:
+    value: textarea[data-qa='vacancy-response-form-letter-input']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:103
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/apply_form.py:103
+      note: значением (сверено на вакансии с опциональным письмом на ПОЛНОЙ форме —
+    active: true
+    bindings: {}
+  apply_form.APPLY_COVER_LETTER_TOGGLE:
+    value: '[data-qa=''vacancy-response-letter-toggle'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:51
+    decision: consensus
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::4
+        value: '[data-qa="vacancy-response-letter-toggle"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 769
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
+        value: '[data-qa="vacancy-response-letter-toggle"]'
+    live_matches:
+    - vacancy-response-letter-toggle
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::4
+        value: '[data-qa="vacancy-response-letter-toggle"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 769
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
+        value: '[data-qa="vacancy-response-letter-toggle"]'
+  apply_form.APPLY_COVER_LETTER_TOGGLE_POPUP:
+    value: '[data-qa=''add-cover-letter'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:71
+    decision: live_dom
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::2
+        value: '[data-qa="add-cover-letter"]'
+    live_matches:
+    - add-cover-letter
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 71
+        key: script.js::module.SELECTORS.attachCoverInModal#0::2
+        value: '[data-qa="add-cover-letter"]'
+  apply_form.APPLY_QUESTION_BODY:
+    value: '[data-qa=''task-body'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:97
+    decision: live_dom
+    sources:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 510
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.blocks#0::0
+        value: '[data-qa="task-body"]'
+    live_matches:
+    - task-body
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 510
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.blocks#0::0
+        value: '[data-qa="task-body"]'
+  apply_form.APPLY_QUESTION_FORM_BODY:
+    value: form[name='vacancy_response'] [data-qa='task-body']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:99
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - task-body
+    active: true
+    bindings: {}
+  apply_form.APPLY_QUESTION_TEXT:
+    value: '[data-qa=''task-question'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:98
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - task-question
+    active: true
+    bindings: {}
+  apply_form.APPLY_RESUME_DROPDOWN:
+    value: '[data-qa=''drop-base'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:89
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - drop-base
+    active: true
+    bindings: {}
+  apply_form.APPLY_RESUME_OPTION:
+    value: '[data-qa=''magritte-select-option-{resume_id}'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - magritte-select-option-list
+    - magritte-select-option-{id}
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 878
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.first_resume#0::0
+        value: '[data-qa="vacancy-response-popup-form-resume-option"]'
+  apply_form.APPLY_RESUME_SELECT:
+    value: '[data-qa=''resume-title'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:46
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-title
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 873
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.resume_select#0::0
+        value: '[data-qa="vacancy-response-popup-form-resume-dropdown"]'
+  apply_form.APPLY_RESUME_TOGGLE:
+    value: '[data-qa=''resume-title''] >> xpath=ancestor::*[@role=''button''][1]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:49
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-title
+    active: true
+    bindings: {}
+  apply_form.APPLY_SUBMIT_BUTTON:
+    value: '[data-qa=''vacancy-response-submit-popup'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/apply_form.py:91
+    decision: consensus
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 75
+        key: script.js::module.SELECTORS.letterSubmit#0::4
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      - file: script.js
+        line: 1614
+        key: script.js::fillLetterAndSubmit#2::0
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 366
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
+        value: '[data-qa="vacancy-response-submit-popup"]'
+    live_matches:
+    - vacancy-response-submit-popup
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 1614
+        key: script.js::fillLetterAndSubmit#2::0
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      - file: script.js
+        line: 75
+        key: script.js::module.SELECTORS.letterSubmit#0::4
+        value: '[data-qa="vacancy-response-submit-popup"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 366
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
+        value: '[data-qa="vacancy-response-submit-popup"]'
+  browser.LOGIN_FORM:
+    value: '[data-qa=''account-login-form'']'
+    criticality: read
+    declared_at: src/hhru_bot/browser.py:319
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - account-login-form
+    active: true
+    bindings: {}
+  competitor_resume.PAGINATION_BLOCK:
+    value: '[data-qa*=''pager-block''], [data-qa*=''pagination'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:8
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/competitor_resume.py:8
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
+    active: true
+    bindings: {}
+  competitor_resume.PAGINATION_NEXT:
+    value: '[data-qa*=''pager-next''], [data-qa*=''pagination-next''], a[rel=''next'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:7
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/competitor_resume.py:7
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
+    active: true
+    bindings: {}
+  competitor_resume.PAGINATION_PAGE:
+    value: '[data-qa*=''pager-page''], [data-qa*=''pagination-page'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:9
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/competitor_resume.py:9
+      note: read-only public-resume pagination fallback; cannot trigger a mutation
+    active: true
+    bindings: {}
+  competitor_resume.SEARCH_EMPTY:
+    value: '[data-qa=''resume-search-empty''], [data-qa=''bloko-header-2'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:6
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/competitor_resume.py:6
+      note: read-only empty-state union; callers still require confirmed page state
+    active: true
+    bindings: {}
+  create_resume.TREE_ITEM_TEXT:
+    value: '[data-qa*=''tree-selector-item-text-'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/create_resume.py:1
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/create_resume.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
+    bindings: {}
+  negotiations.CHAT_AUTHOR_HINT:
+    value: '[data-qa*=''author''], [class*=''author''], [aria-label], [title]'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/negotiations_chat.py:1
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/negotiations_chat.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
+    bindings: {}
+  negotiations.CHAT_MESSAGE_INPUT:
+    value: textarea[data-qa='chatik-chat-message-input']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:80
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:80
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 1374
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.input_selectors#0::0
+        value: '[data-qa="chatik-new-message-text"]'
+  negotiations.CHAT_MESSAGE_ROOT:
+    value: '[data-qa^=''chatik-chat-message-'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:1
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
+    bindings: {}
+  negotiations.CHAT_MESSAGE_SEND:
+    value: button[data-qa='chatik-chat-message-send']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:81
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:81
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 1409
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.send_selectors#0::0
+        value: '[data-qa="chatik-do-send-message"]'
+  negotiations.CHAT_MESSAGE_TEXT:
+    value: '[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:71
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - account-signup-agreement-text
+    - account-signup-personal-data-russia-text
+    - allServices-button-text
+    - applicantProfileDesktopDrop-button-text
+    - applicantProfileMobileDrop-button-text
+    - applicantProfilePage-button-text
+    - careerhhru-button-text
+    - cell-text
+    - chatikActivator-button-text
+    - common-employment-text
+    - compensation-frequency-text
+    - cookies-policy-informer-link-desktop-text
+    - cp-entrypoint__carousel--link-text
+    - edit-position-button-text
+    - favVacancies-button-text
+    - footer_advertisingDescription-text
+    - footer_advertisingDescription-xs-text
+    - footer_agreement-text
+    - footer_agreement-xs-text
+    - footer_allServices-text
+    - footer_allServices-xs-text
+    - footer_anonymousCreateVacancy-xs-text
+    - footer_anonymousSearchByResume-xs-text
+    - footer_api-text
+    - footer_api-xs-text
+    - footer_articlesInsider-text
+    - footer_articlesInsider-xs-text
+    - footer_blog-text
+    - footer_blog-xs-text
+    - footer_blogSpecialProjects-text
+    - footer_blogSpecialProjects-xs-text
+    - footer_calendar-text
+    - footer_calendar-xs-text
+    - footer_career-text
+    - footer_career-xs-text
+    - footer_careerInNKO-text
+    - footer_careerInNKO-xs-text
+    - footer_compliance-text
+    - footer_compliance-xs-text
+    - footer_conditions-text
+    - footer_conditions-xs-text
+    - footer_copyright-text
+    - footer_copyright-xs-text
+    - footer_dataProtection-text
+    - footer_dataProtection-xs-text
+    - footer_employersRating-text
+    - footer_employersRating-xs-text
+    - footer_employersSearch-text
+    - footer_employersSearch-xs-text
+    - footer_expertresume-text
+    - footer_expertresume-xs-text
+    - footer_hardwareRequirements-text
+    - footer_hardwareRequirements-xs-text
+    - footer_hhCompanyInfo-text
+    - footer_hhCompanyInfo-xs-text
+    - footer_hhpro-text
+    - footer_hhpro-xs-text
+    - footer_investor-text
+    - footer_investor-xs-text
+    - footer_itAccreditation-text
+    - footer_itAccreditation-xs-text
+    - footer_itproject-text
+    - footer_itproject-xs-text
+    - footer_partners-text
+    - footer_partners-xs-text
+    - footer_proforientation-text
+    - footer_resumeAudit-text
+    - footer_resumeAudit-xs-text
+    - footer_safety-text
+    - footer_safety-xs-text
+    - footer_school-text
+    - footer_school-xs-text
+    - footer_setkaFooter-text
+    - footer_setkaFooter-xs-text
+    - footer_terms-text
+    - footer_terms-xs-text
+    - footer_vacancySearchCatalogListMainWithArea-text
+    - footer_vacancySearchCatalogListMainWithArea-xs-text
+    - footer_vacancySearchCatalogListMetro-text
+    - footer_vacancySearchCatalogListMetro-xs-text
+    - footer_wantwork-text
+    - footer_wantwork-xs-text
+    - geoSwitcher-button-text
+    - help-button-text
+    - lang-switch-button-text
+    - link-text
+    - mainmenu_profile-link-text
+    - mainmenu_userTypeSwitcher-text
+    - moreItems-button-text
+    - photo-viewer-action-assigned-text
+    - profileAndResumes-button-text
+    - related-vacancies-link-text
+    - responded-success-attach-cover-letter-text
+    - resume-button-edit-resume-text
+    - resume-contact-email-value-text
+    - resume-contact-phone-value-preferred-text
+    - resume-delete-text
+    - resume-position-professional-role-add-button-text
+    - resume-recommendation-link-changeVisibility-text
+    - resume-recommendation-link-editResume-text
+    - resume-recommendations__button_changeVisibility-text
+    - resume-update-button-text
+    - review-card-content-text
+    - searchVacancy-button-text
+    - serp-item__title-text
+    - userNotifications-button-text
+    - vacancy-address-big-map-link-text
+    - vacancy-serp__vacancy-employer-text
+    - vacancyResponses-button-text
+    - work-experience-text
+    - work-formats-text
+    - work-schedule-by-days-text
+    - working-hours-text
+    active: true
+    bindings: {}
+  negotiations.LEGACY_NEGOTIATION_CHAT_LINK:
+    value: '[data-qa=''negotiations-item__messages-link'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:62
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:62
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.LEGACY_NEGOTIATION_DATE:
+    value: '[data-qa=''negotiations-item__date'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:61
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:61
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.LEGACY_NEGOTIATION_EMPLOYER:
+    value: '[data-qa=''negotiations-item__employer'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:59
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:59
+      note: read-only compatibility with saved legacy markup
+    active: true
+    bindings: {}
+  negotiations.LEGACY_NEGOTIATION_STATUS:
+    value: '[data-qa=''negotiations-item__state'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:60
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:60
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.LEGACY_NEGOTIATION_VACANCY_LINK:
+    value: '[data-qa=''negotiations-item__vacancy-link'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:58
+    decision: structural_read_fallback
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:58
+      note: read-only compatibility with saved legacy markup
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATIONS_PAGINATION_BLOCK:
+    value: '[data-qa=''pager-block'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:47
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:47
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATIONS_PAGINATION_NEXT:
+    value: '[data-qa=''pager-next'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:43
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:43
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATIONS_PAGINATION_PAGE:
+    value: '[data-qa=''pager-page'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:45
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:45
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATION_CHAT_LINK:
+    value: '[data-qa=''open_chat'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:40
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:40
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATION_DATE:
+    value: '[data-qa=''negotiations-item-date'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:37
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:37
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings: {}
+  negotiations.NEGOTIATION_EMPLOYER:
+    value: '[data-qa=''negotiations-item-company'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:24
+    decision: documented_live
+    sources:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 977
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.company_el#0::0
+        value: '[data-qa="negotiations-item-company"]'
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:24
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 977
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.company_el#0::0
+        value: '[data-qa="negotiations-item-company"]'
+  negotiations.NEGOTIATION_ITEM:
+    value: '[data-qa=''negotiations-item'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:17
+    decision: documented_live
+    sources:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 898
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.check_messages#0::1
+        value: '[data-qa="negotiations-item"]'
+      - file: app/parsers/hh_playwright.py
+        line: 1030
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.check_negotiations_status#0::1
+        value: '[data-qa="negotiations-item"]'
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:17
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 898
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.check_messages#0::1
+        value: '[data-qa="negotiations-item"]'
+      - file: app/parsers/hh_playwright.py
+        line: 1030
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.check_negotiations_status#0::1
+        value: '[data-qa="negotiations-item"]'
+  negotiations.NEGOTIATION_STATUS:
+    value: '[data-qa^=''negotiations-tag'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:33
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:33
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 980
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.status_el#0::0
+        value: '[data-qa="negotiations-item-status"]'
+  negotiations.NEGOTIATION_VACANCY_LINK:
+    value: '[data-qa=''negotiations-item-vacancy'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:21
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:21
+      note: Страница откликов и переписки (/applicant/negotiations), сверенная 2026-08-16.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 970
+        key: app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.title_el#0::0
+        value: '[data-qa="negotiations-item-title"]'
+  negotiations.NEGOTIATION_WITHDRAW:
+    value: '[data-qa=''negotiations-item-withdraw'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:53
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings: {}
+  negotiations.NEGOTIATION_WITHDRAW_CONFIRM:
+    value: '[data-qa=''negotiations-withdraw-confirm'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:54
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings: {}
+  negotiations.NEGOTIATION_WITHDRAW_SUCCESS:
+    value: '[data-qa=''negotiations-item-withdrawn'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:55
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings: {}
+  professional_roles.FILTER_TRIGGER:
+    value: '[data-qa=''search-filter-professional-role-trigger'']'
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:27
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/professional_roles.py:27
+      note: successful cached live catalog proves the read-only discovery workflow
+    active: true
+    bindings: {}
+  professional_roles.TREE_CATEGORY_INPUT:
+    value: input[data-qa*='tree-selector-input-category-']
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:1
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/professional_roles.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
+    bindings: {}
+  professional_roles.TREE_CHEVRON:
+    value: '[data-qa~=''tree-selector-chevron-category-{category_id}'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:1
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/professional_roles.py:1
+      note: reviewed existing runtime selector and its read-only/live workflow
+    bindings: {}
+  professional_roles.TREE_INPUT:
+    value: '[data-qa~=''tree-selector-input-{}'']'
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:28
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/professional_roles.py:28
+      note: successful cached live catalog proves the read-only discovery workflow
+    active: true
+    bindings: {}
+  professional_roles.TREE_INPUT_ANY:
+    value: input[data-qa*='tree-selector-input-']
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:29
+    decision: workflow_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/professional_roles.py:29
+      note: successful cached live catalog proves the read-only discovery workflow
+    active: true
+    bindings: {}
+  professional_roles.TREE_LABEL:
+    value: '[data-qa=''cell-text-content'']'
+    criticality: write
+    declared_at: src/hhru_bot/professional_roles.py:30
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - cell-text-content
+    active: true
+    bindings: {}
+  resume_education.ADDITIONAL_ADD:
+    value: '[data-qa=''resume-list-card-additionalEducation''] [data-qa=''link'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - link
+    - resume-list-card-additionalEducation
+    active: true
+    bindings: {}
+  resume_education.ADDITIONAL_TRIGGER:
+    value: '[data-qa=''resume-edit-button-additionalEducation-{index}'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:32
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-button-additionalEducation-0
+    - resume-edit-button-additionalEducation-0-svg
+    - resume-edit-button-additionalEducation-1
+    - resume-edit-button-additionalEducation-1-svg
+    - resume-edit-button-additionalEducation-2
+    - resume-edit-button-additionalEducation-2-svg
+    - resume-edit-button-additionalEducation-3
+    - resume-edit-button-additionalEducation-3-svg
+    active: true
+    bindings: {}
+  resume_education.CANCEL_BUTTON:
+    value: '[data-qa=''profile-layout-cancel-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:40
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-cancel-button
+    active: true
+    bindings: {}
+  resume_education.PRIMARY_ADD:
+    value: '[data-qa=''resume-list-card-education''] [data-qa=''link'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:36
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - link
+    - resume-list-card-education
+    active: true
+    bindings: {}
+  resume_education.PRIMARY_TRIGGER:
+    value: '[data-qa=''resume-edit-button-education-{index}'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:31
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-button-education-0
+    - resume-edit-button-education-0-svg
+    active: true
+    bindings: {}
+  resume_education.SAVE_BUTTON:
+    value: '[data-qa=''profile-layout-save-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:41
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-save-button
+    active: true
+    bindings: {}
+  resume_education._ADDITIONAL_FIELDS.institution:
+    value: '[data-qa=''profile-education-additional-name'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:49
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-additional-name
+    active: true
+    bindings: {}
+  resume_education._ADDITIONAL_FIELDS.organization:
+    value: '[data-qa=''profile-education-additional-organization'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:49
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-additional-organization
+    active: true
+    bindings: {}
+  resume_education._ADDITIONAL_FIELDS.specialty:
+    value: '[data-qa=''profile-education-additional-specialty'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:49
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-additional-specialty
+    active: true
+    bindings: {}
+  resume_education._ADDITIONAL_FIELDS.year:
+    value: '[data-qa=''profile-education-year-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:49
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-year-input
+    active: true
+    bindings: {}
+  resume_education._PRIMARY_FIELDS.faculty:
+    value: '[data-qa=''profile-education-faculty-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:43
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-faculty-input
+    active: true
+    bindings: {}
+  resume_education._PRIMARY_FIELDS.institution:
+    value: '[data-qa=''profile-education-university-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:43
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-university-input
+    active: true
+    bindings: {}
+  resume_education._PRIMARY_FIELDS.specialty:
+    value: '[data-qa=''profile-education-specialty-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:43
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-specialty-input
+    active: true
+    bindings: {}
+  resume_education._PRIMARY_FIELDS.year:
+    value: '[data-qa=''profile-education-year-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_education.py:43
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-year-input
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_ADD_BUTTON:
+    value: '[data-qa=''resume-profile-experience-add-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:22
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings: {}
+  resume_experience.EXPERIENCE_CANCEL:
+    value: '[data-qa=''profile-layout-cancel-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:16
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-cancel-button
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_COMPANY:
+    value: '[data-qa=''resume-profile-experience-specific-company-input-{index}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:10
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-company-input-1
+    - resume-profile-experience-specific-company-input-2
+    - resume-profile-experience-specific-company-input-3
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_COMPANY_URL:
+    value: '[data-qa=''resume-editor-experience-company-url-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:12
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-company-url-input
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_DESCRIPTION:
+    value: '[data-qa=''resume-editor-experience-description-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:15
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-description-input
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_EDIT_BUTTON:
+    value: '[data-qa=''edit-experience-button-{index}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:9
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - edit-experience-button-0
+    - edit-experience-button-1
+    - edit-experience-button-1-svg
+    - edit-experience-button-2
+    - edit-experience-button-2-svg
+    - edit-experience-button-3
+    - edit-experience-button-3-svg
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_END_YEAR:
+    value: '[data-qa=''resume-editor-experience-end-year-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:14
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-end-year-input
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_POSITION:
+    value: '[data-qa=''resume-profile-experience-specific-position-input-{index}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:11
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-position-input-1
+    - resume-profile-experience-specific-position-input-2
+    - resume-profile-experience-specific-position-input-3
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_SAVE:
+    value: '[data-qa=''profile-layout-save-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:17
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-save-button
+    active: true
+    bindings: {}
+  resume_experience.EXPERIENCE_START_YEAR:
+    value: '[data-qa=''resume-editor-experience-start-year-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:13
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-start-year-input
+    active: true
+    bindings: {}
+  resume_list.RESUME_DUPLICATE_INLINE:
+    value: '[data-qa=''resume-dublicate'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:47
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-dublicate
+    active: true
+    bindings: {}
+  resume_list.RESUME_DUPLICATE_MENU_ITEM:
+    value: '[data-qa=''operations-list-duplicate-resume'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:44
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_list.py:44
+      note: '- RESUME_DUPLICATE_MENU_ITEM, RESUME_DUPLICATE_INLINE — ПОДТВЕРЖДЕНО'
+    active: true
+    bindings: {}
+  resume_list.RESUME_LIST_ACTION_MORE:
+    value: '[data-qa=''resume-list-action-more'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:35
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-list-action-more
+    active: true
+    bindings: {}
+  resume_list.RESUME_LIST_CARD:
+    value: '[data-qa=''resume'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:28
+    decision: live_dom
+    sources:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 1155
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.is_logged_in#2::0
+        value: '[data-qa="resume"]'
+      - file: app/parsers/hh_playwright.py
+        line: 1188
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.bump_resumes#0::2
+        value: '[data-qa="resume"]'
+    live_matches:
+    - resume
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 1188
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.bump_resumes#0::2
+        value: '[data-qa="resume"]'
+      - file: app/parsers/hh_playwright.py
+        line: 1155
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.is_logged_in#2::0
+        value: '[data-qa="resume"]'
+  resume_list.RESUME_LIST_CARD_LINK_PREFIX:
+    value: '[data-qa^=''resume-card-link-'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-card-link-{id}
+    bindings: {}
+  resume_list.RESUME_LIST_CARD_LINK_TPL:
+    value: '[data-qa=''resume-card-link-{resume_id}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:32
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-card-link-{id}
+    active: true
+    bindings: {}
+  resume_list.RESUME_LIST_CARD_TITLE:
+    value: '[data-qa=''resume-title'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_list.py:50
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-title
+    active: true
+    bindings: {}
+  resume_page.RESUME_ABOUT_EDITOR:
+    value: '[data-qa=''resume-editor-about'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:28
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-about
+    active: true
+    bindings: {}
+  resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON:
+    value: '[data-qa^=''resume-editor-about-no-experience-reason-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:29
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-about-no-experience-reason-army
+    - resume-editor-about-no-experience-reason-change
+    - resume-editor-about-no-experience-reason-decree
+    - resume-editor-about-no-experience-reason-house
+    - resume-editor-about-no-experience-reason-pension
+    - resume-editor-about-no-experience-reason-studies
+    - resume-editor-about-no-experience-reason-unemployed
+    active: true
+    bindings: {}
+  resume_page.RESUME_BUMP_BUTTON:
+    value: '[data-qa=''resume-update-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:12
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-update-button
+    active: true
+    bindings: {}
+  resume_page.RESUME_BUMP_DISABLED_HINT:
+    value: '[data-qa=''resume-update-button-disabled'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:13
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:13
+      note: confirmed by the bump workflow live check; optional read-only hint
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATE_BUTTON:
+    value: '[data-qa=''mainmenu_createResume'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:102
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - mainmenu_createResume
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_CATEGORY_INPUT:
+    value: '[data-qa~=''tree-selector-input-{}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:110
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:110
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_CATEGORY_SEARCH:
+    value: '[data-qa=''tree-selector-search-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:108
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:108
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_CATEGORY_SUBMIT:
+    value: '[data-qa=''category-modal-submit'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:109
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:109
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_NEXT:
+    value: '[data-qa=''resume-profile-next-screen'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:107
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-next-screen
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_POSITION:
+    value: '[data-qa=''resume-profile-position-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:105
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-position-input
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_POSITION_CLEAR:
+    value: '[data-qa=''input-clearable-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:106
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - input-clearable-button
+    active: true
+    bindings: {}
+  resume_page.RESUME_CREATION_SELECT_JOB:
+    value: '[data-qa=''resume-profile-card-select-job'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:104
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-card-select-job
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_BUTTON:
+    value: '[data-qa=''resume-delete'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:91
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-delete
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_CLOSE:
+    value: '[data-qa=''resume-delete-close'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:96
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:96
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_CONFIRM:
+    value: '[data-qa=''resume-delete-confirm'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:94
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:94
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_CONTENT:
+    value: '[data-qa=''resume-delete-content'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:93
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:93
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_HIDE_CONFIRM:
+    value: '[data-qa=''resume-hide-confirm'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:95
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:95
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_DELETE_TITLE:
+    value: '[data-qa=''resume-delete-title'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:92
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:92
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_EDIT_ABOUT_BUTTON:
+    value: '[data-qa=''resume-edit-button-about'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:27
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-button-about
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+    value: '[data-qa=''profile-language-add'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:75
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:75
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_ADD_FORM:
+    value: '[data-qa=''profile-language-add-form'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:76
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:76
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_CARD:
+    value: '[data-qa=''profile-language-card'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:72
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:72
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_DEGREE_OPTION:
+    value: '[data-qa=''magritte-select-option-{}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:83
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:83
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_FORM_DEGREE_SELECT:
+    value: '[data-qa=''profile-language-add-form-degree''] [data-qa=''magritte-select-activator'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:80
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - magritte-select-activator
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_FORM_LANGUAGE_SELECT:
+    value: '[data-qa=''profile-language-add-form-language''] [data-qa=''magritte-select-activator'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:77
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - magritte-select-activator
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_ROW:
+    value: '[data-qa^=''profile-language-card-row-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:73
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:73
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_ROW_CELL_TEXT:
+    value: '[data-qa=''cell-text'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:74
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - cell-text
+    active: true
+    bindings: {}
+  resume_page.RESUME_LANGUAGE_SAVE:
+    value: '[data-qa=''profile-modal-button-save'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:84
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:84
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_PARTIAL_EDIT_CANCEL:
+    value: '[data-qa=''resume-partial-edit-cancel'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:38
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-cancel
+    active: true
+    bindings: {}
+  resume_page.RESUME_PARTIAL_EDIT_SAVE:
+    value: '[data-qa=''resume-partial-edit-save'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:39
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-save
+    active: true
+    bindings: {}
+  resume_page.RESUME_POSITION_DROPDOWN:
+    value: '[data-qa=''drop-base'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:44
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - drop-base
+    active: true
+    bindings: {}
+  resume_page.RESUME_PUBLISH_BUTTON_DATA_QA:
+    value: '[data-qa=''resume-publish'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:18
+    decision: unavailable
+    sources: {}
+    live_matches: []
+    active: false
+    bindings: {}
+  resume_page.RESUME_SKILLS_CHIP:
+    value: '[data-qa^=''chips-trigger-chip-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - chips-trigger-chip-BigQuery
+    - chips-trigger-chip-Bothelp
+    - chips-trigger-chip-Direct Commander
+    - chips-trigger-chip-Email маркетинг
+    - chips-trigger-chip-GA4
+    - chips-trigger-chip-GTM
+    - chips-trigger-chip-GetCourse
+    - chips-trigger-chip-Google AdWords
+    - chips-trigger-chip-Google Ads Editor
+    - chips-trigger-chip-Google Analytics
+    - chips-trigger-chip-Google Apps Script
+    - chips-trigger-chip-Google Data Studio
+    - chips-trigger-chip-Google Tag Manager
+    - chips-trigger-chip-JavaScript
+    - chips-trigger-chip-Mailchimp
+    - chips-trigger-chip-Marquiz
+    - chips-trigger-chip-Roistat
+    - chips-trigger-chip-SEO оптимизация
+    - chips-trigger-chip-SimilarWeb
+    - chips-trigger-chip-Spywords
+    - chips-trigger-chip-WEB аналитика
+    - chips-trigger-chip-Zapier
+    - chips-trigger-chip-amoCRM
+    - chips-trigger-chip-Битрикс24
+    - chips-trigger-chip-Интернет-реклама
+    - chips-trigger-chip-Контекстная реклама
+    - chips-trigger-chip-Таргетированная реклама
+    - chips-trigger-chip-Яндекс.Директ
+    - chips-trigger-chip-Яндекс.Метрика
+    active: true
+    bindings: {}
+  resume_page.RESUME_SKILLS_CHIP_INPUT:
+    value: '[data-qa=''chips-trigger-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:35
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - chips-trigger-input
+    active: true
+    bindings: {}
+  resume_page.RESUME_SKILLS_EDIT_BUTTON:
+    value: '[data-qa=''skills-add'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:33
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - skills-add
+    active: true
+    bindings: {}
+  resume_page.RESUME_SKILLS_INPUT:
+    value: '[data-qa=''resume-editor-skills-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:34
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-skills-input
+    active: true
+    bindings: {}
+  resume_page.RESUME_SKILLS_RECOMMENDED:
+    value: '[data-qa^=''resume-editor-skills-recommended-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:36
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-skills-recommended-API
+    - resume-editor-skills-recommended-Bash
+    - resume-editor-skills-recommended-Bitbucket
+    - resume-editor-skills-recommended-Clickhouse
+    - resume-editor-skills-recommended-CorelDRAW
+    - resume-editor-skills-recommended-Digital Marketing
+    - resume-editor-skills-recommended-E-Mail Marketing
+    - resume-editor-skills-recommended-Jupyter Notebook
+    - resume-editor-skills-recommended-Miro
+    - resume-editor-skills-recommended-Perforce
+    - resume-editor-skills-recommended-Poetry
+    - resume-editor-skills-recommended-Power BI
+    - resume-editor-skills-recommended-Pytest
+    - resume-editor-skills-recommended-SEO
+    - resume-editor-skills-recommended-Scrum
+    - resume-editor-skills-recommended-Алгоритмы и структуры данных
+    - resume-editor-skills-recommended-Анализ данных
+    - resume-editor-skills-recommended-Анализ кода
+    - resume-editor-skills-recommended-Анализ конкурентной среды
+    - resume-editor-skills-recommended-Анализ тестирования
+    - resume-editor-skills-recommended-Анализ требований
+    - resume-editor-skills-recommended-Веб-аналитика
+    - resume-editor-skills-recommended-Делегирование
+    - resume-editor-skills-recommended-Интеграционное тестирование
+    - resume-editor-skills-recommended-Интернет маркетинг
+    - resume-editor-skills-recommended-Лидогенерация
+    - resume-editor-skills-recommended-Маркетинговые исследования
+    - resume-editor-skills-recommended-Маркетинговый анализ
+    - resume-editor-skills-recommended-Обратная связь
+    - resume-editor-skills-recommended-Онбординг
+    - resume-editor-skills-recommended-Планирование рекламных кампаний
+    - resume-editor-skills-recommended-Постановка задач разработчикам
+    - resume-editor-skills-recommended-Проведение рекламных кампаний
+    - resume-editor-skills-recommended-Реклама
+    - resume-editor-skills-recommended-Сквозная аналитика
+    - resume-editor-skills-recommended-Стратегический менеджмент
+    - resume-editor-skills-recommended-Таргетинг
+    - resume-editor-skills-recommended-Умение работать в коллективе
+    - resume-editor-skills-recommended-Управление стейкхолдерами
+    - resume-editor-skills-recommended-Управленческая отчетность
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_ADD:
+    value: '[data-qa=''resume-position-professional-role-add-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:51
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-professional-role-add-button
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_DELETE:
+    value: '[data-qa=''resume-position-professional-role-card-delete'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:57
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-professional-role-card-delete
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_MODAL:
+    value: '[data-qa=''professional-roles-modal'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:52
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:52
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_OPTION:
+    value: '[data-qa^=''tree-selector-item tree-selector-item-''][data-qa*=''tree-selector-child-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:54
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:54
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_SEARCH:
+    value: '[data-qa=''tree-selector-search-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:53
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:53
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_page.RESUME_SPECIALIZATION_SUBMIT:
+    value: '[data-qa=''professional-roles-submit'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:58
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:58
+      note: Inline editor selectors confirmed by the authenticated read-only research in
+    active: true
+    bindings: {}
+  resume_position.BUSINESS_TRIPS:
+    value: '[data-qa=''resume-edit-business-trip-readiness'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:88
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-business-trip-readiness
+    active: true
+    bindings: {}
+  resume_position.CANCEL:
+    value: '[data-qa=''resume-partial-edit-cancel'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:89
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-cancel
+    active: true
+    bindings: {}
+  resume_position.CURRENCY_TEMPLATE:
+    value: '[data-qa=''resume-currency-input-{code}'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-currency-input-EUR
+    - resume-currency-input-RUR
+    - resume-currency-input-USD
+    bindings: {}
+  resume_position.DISPLAY_BUSINESS_TRIPS:
+    value: '[data-qa=''resume-position-field-businessTripReadiness'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-field-businessTripReadiness
+    bindings: {}
+  resume_position.DISPLAY_EMPLOYMENT:
+    value: '[data-qa=''resume-position-field-employmentForms'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-field-employmentForms
+    bindings: {}
+  resume_position.DISPLAY_SALARY:
+    value: '[data-qa=''resume-block-salary'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-block-salary
+    bindings: {}
+  resume_position.DISPLAY_TITLE:
+    value: '[data-qa=''resume-block-title-position'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-block-title-position
+    bindings: {}
+  resume_position.DISPLAY_TRAVEL:
+    value: '[data-qa=''resume-position-field-travelTime'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-field-travelTime
+    bindings: {}
+  resume_position.DISPLAY_WORK_FORMAT:
+    value: '[data-qa=''resume-position-field-workFormats'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-position-field-workFormats
+    bindings: {}
+  resume_position.EDIT:
+    value: '[data-qa=''edit-position-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:80
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - edit-position-button
+    active: true
+    bindings: {}
+  resume_position.EMPLOYMENT:
+    value: '[data-qa=''resume-edit-employment-forms'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:85
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-employment-forms
+    active: true
+    bindings: {}
+  resume_position.FORM:
+    value: '[data-qa=''resume-edit-position-form'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:79
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-position-form
+    active: true
+    bindings: {}
+  resume_position.SALARY:
+    value: '[data-qa=''resume-salary-amount'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:82
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-salary-amount
+    active: true
+    bindings: {}
+  resume_position.SAVE:
+    value: '[data-qa=''resume-partial-edit-save'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:90
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-save
+    active: true
+    bindings: {}
+  resume_position.TITLE:
+    value: '[data-qa=''resume-edit-title-suggest'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:81
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-title-suggest
+    active: true
+    bindings: {}
+  resume_position.TRAVEL:
+    value: '[data-qa=''resume-edit-travel-time'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:87
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-travel-time
+    active: true
+    bindings: {}
+  resume_position.WORK_FORMAT:
+    value: '[data-qa=''resume-edit-work-formats'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_position.py:86
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-work-formats
+    active: true
+    bindings: {}
+  resume_sections.ATTESTATION_SELECTOR.0:
+    value: '[data-qa=''profile-education-attestation-name'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-attestation-name
+    bindings: {}
+  resume_sections.ATTESTATION_SELECTOR.1:
+    value: '[data-qa=''profile-education-attestation-organization'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-attestation-organization
+    bindings: {}
+  resume_sections.ATTESTATION_SELECTOR.2:
+    value: '[data-qa=''profile-education-attestation-specialty'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-attestation-specialty
+    bindings: {}
+  resume_sections.ATTESTATION_SELECTOR.3:
+    value: '[data-qa=''profile-education-year-input'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:1
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-education-year-input
+    bindings: {}
+  resume_sections.RESUME_EDIT_BUTTON.attestations:
+    value: '[data-qa^=''resume-edit-button-attestationEducation-'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:32
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-button-attestationEducation-0
+    - resume-edit-button-attestationEducation-0-svg
+    - resume-edit-button-attestationEducation-1
+    - resume-edit-button-attestationEducation-1-svg
+    - resume-edit-button-attestationEducation-2
+    - resume-edit-button-attestationEducation-2-svg
+    - resume-edit-button-attestationEducation-3
+    - resume-edit-button-attestationEducation-3-svg
+    active: true
+    bindings: {}
+  resume_sections.RESUME_EDIT_BUTTON.recommendations:
+    value: '[data-qa^=''resume-edit-button-recommendation-'']'
+    criticality: write
+    declared_at: src/hhru_bot/resume_sections.py:32
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-edit-button-recommendation-0
+    - resume-edit-button-recommendation-0-svg
+    - resume-edit-button-recommendation-1
+    - resume-edit-button-recommendation-1-svg
+    - resume-edit-button-recommendation-2
+    - resume-edit-button-recommendation-2-svg
+    active: true
+    bindings: {}
+  search_page.COMPANY_RATING_REVIEWS_COUNT:
+    value: '[data-qa=''company-review-rating-reviews-count'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:26
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - company-review-rating-reviews-count
+    active: true
+    bindings: {}
+  search_page.COMPANY_RATING_VALUE:
+    value: '[data-qa=''company-review-rating-value'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:25
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - company-review-rating-value
+    active: true
+    bindings: {}
+  search_page.PAGINATION_BLOCK:
+    value: '[data-qa=''pager-block'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:45
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:45
+      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+    active: true
+    bindings: {}
+  search_page.PAGINATION_NEXT:
+    value: '[data-qa=''pager-next'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:41
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:41
+      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+    active: true
+    bindings: {}
+  search_page.PAGINATION_PAGE:
+    value: '[data-qa=''pager-page'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:42
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:42
+      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+    active: true
+    bindings: {}
+  search_page.TRUSTED_EMPLOYER_LINK:
+    value: '[data-qa=''trusted-employer-link'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:27
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - trusted-employer-link
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD:
+    value: '[data-qa=''vacancy-serp__vacancy'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:5
+    decision: live_dom
+    sources:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 61
+        key: app/parsers/hh.py::module.HHParser.search_vacancies.cards#0::0
+        value: '[data-qa="vacancy-serp__vacancy"]'
+    live_matches:
+    - vacancy-serp__vacancy
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 61
+        key: app/parsers/hh.py::module.HHParser.search_vacancies.cards#0::0
+        value: '[data-qa="vacancy-serp__vacancy"]'
+      tgeruzov:
+      - file: script.js
+        line: 82
+        key: script.js::module.SELECTORS.vacancyCard#0::1
+        value: div[data-qa="vacancy-serp__vacancy"]
+  search_page.VACANCY_CARD_ACTIVITY:
+    value: '[data-qa=''vacancy-serp-item-activity'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:74
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp-item-activity
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_ADDRESS:
+    value: '[data-qa=''vacancy-serp__vacancy-address'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:60
+    decision: live_dom
+    sources:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 100
+        key: app/parsers/hh.py::module.HHParser._parse_card.loc_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-address"]'
+    live_matches:
+    - vacancy-serp__vacancy-address
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 100
+        key: app/parsers/hh.py::module.HHParser._parse_card.loc_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-address"]'
+  search_page.VACANCY_CARD_COMPANY:
+    value: '[data-qa=''vacancy-serp__vacancy-employer'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:11
+    decision: consensus
+    sources:
+      steev:
+      - file: scripts/scan-telegram.mjs
+        line: 85
+        key: scripts/scan-telegram.mjs::t#3::0
+        value: '[data-qa="vacancy-serp__vacancy-employer"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 87
+        key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-employer"]'
+    live_matches:
+    - vacancy-serp__vacancy-employer
+    active: true
+    bindings:
+      steev:
+      - file: scripts/scan-telegram.mjs
+        line: 85
+        key: scripts/scan-telegram.mjs::t#3::0
+        value: '[data-qa="vacancy-serp__vacancy-employer"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 87
+        key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-employer"]'
+  search_page.VACANCY_CARD_COMPENSATION:
+    value: '[data-qa=''vacancy-serp__vacancy-compensation'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:17
+    decision: unavailable
+    sources:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 96
+        key: app/parsers/hh.py::module.HHParser._parse_card.salary_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-compensation"]'
+    live_matches: []
+    active: false
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 96
+        key: app/parsers/hh.py::module.HHParser._parse_card.salary_el#0::0
+        value: '[data-qa="vacancy-serp__vacancy-compensation"]'
+  search_page.VACANCY_CARD_EXPERIENCE:
+    value: '[data-qa^=''vacancy-serp__vacancy-work-experience-'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:64
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy-work-experience-between1And3
+    - vacancy-serp__vacancy-work-experience-between3And6
+    - vacancy-serp__vacancy-work-experience-moreThan6
+    - vacancy-serp__vacancy-work-experience-noExperience
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_HH_RATING:
+    value: '[data-qa=''vacancy-serp__vacancy_employer-hh-rating'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:75
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy_employer-hh-rating
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_HRBRAND_WINNER:
+    value: '[data-qa=''vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:78
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy_hrbrand vacancy-serp__vacancy_hrbrand_winners
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_METRO_STATION:
+    value: '[data-qa=''address-metro-station-name'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:81
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - address-metro-station-name
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_NO_RESUME:
+    value: '[data-qa=''vacancy-label-no-resume'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:71
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-label-no-resume
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_PUBLICATION_TIME:
+    value: '[data-qa=''vacancy-serp__vacancy-date'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:21
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy-date
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_REMOTE_LABEL:
+    value: '[data-qa=''vacancy-label-work-schedule-remote'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:61
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-label-work-schedule-remote
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_RESPONSE_BUTTON:
+    value: '[data-qa=''vacancy-serp__vacancy_response'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:30
+    decision: live_dom
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 63
+        key: script.js::module.SELECTORS.applyBtn#0::1
+        value: '[data-qa="vacancy-serp__vacancy_response"]'
+    live_matches:
+    - vacancy-serp__vacancy_response
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 63
+        key: script.js::module.SELECTORS.applyBtn#0::1
+        value: '[data-qa="vacancy-serp__vacancy_response"]'
+  search_page.VACANCY_CARD_RESPONSE_STATUS:
+    value: '[data-qa=''vacancy-serp__vacancy_response_status'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:51
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:51
+      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_SIDE_JOB:
+    value: '[data-qa=''vacancy-label-side-job'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:70
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-label-side-job
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_SNIPPET_REQUIREMENT:
+    value: '[data-qa=''vacancy-serp__vacancy_snippet_requirement'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:65
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy_snippet_requirement
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY:
+    value: '[data-qa=''vacancy-serp__vacancy_snippet_responsibility'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:66
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-serp__vacancy_snippet_responsibility
+    active: true
+    bindings: {}
+  search_page.VACANCY_CARD_TITLE_LINK:
+    value: '[data-qa=''serp-item__title'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:10
+    decision: live_dom
+    sources:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 77
+        key: app/parsers/hh.py::module.HHParser._parse_card.title_el#0::0
+        value: '[data-qa="serp-item__title"]'
+    live_matches:
+    - serp-item__title
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 77
+        key: app/parsers/hh.py::module.HHParser._parse_card.title_el#0::0
+        value: '[data-qa="serp-item__title"]'
+      tgeruzov:
+      - file: script.js
+        line: 81
+        key: script.js::module.SELECTORS.vacancyLink#0::1
+        value: a[data-qa="serp-item__title"]
+  search_page.VACANCY_SEARCH_EMPTY:
+    value: '[data-qa=''empty-vacancy-search-block'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/search_page.py:9
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/search_page.py:9
+      note: 'Инфо о работодателе из карточки поиска (issue #74, Этап 1). Подтверждено в'
+    active: true
+    bindings: {}
+  selectors.LOGIN_CODE_INPUT:
+    value: '[data-qa=''magritte-pincode-input-field'']'
+    criticality: write
+    declared_at: src/hhru_bot/selectors.py:65
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selectors.py:65
+      note: Подтверждено live DOM после запроса кода (2026-08-19); ввод запускает авто-submit.
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_login.py
+        line: 43
+        key: app/parsers/hh_login.py::module.SEL_PIN#0::0
+        value: input[data-qa="magritte-pincode-input-field"]
+  selectors.LOGIN_CODE_REQUEST_BUTTON:
+    value: '[data-qa=''submit-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selectors.py:60
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - submit-button
+    active: true
+    bindings: {}
+  selectors.LOGIN_EMAIL_INPUT:
+    value: '[data-qa=''applicant-login-input-email'']'
+    criticality: write
+    declared_at: src/hhru_bot/selectors.py:62
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selectors.py:62
+      note: Подтверждено headless-рендером https://hh.ru/account/login от 2026-08-13
+    active: true
+    bindings:
+      yamakayama:
+      - file: app/parsers/hh_login.py
+        line: 41
+        key: app/parsers/hh_login.py::module.SEL_LOGIN#0::0
+        value: input[data-qa="login-input-username"]
+  selectors.LOGIN_EMAIL_TYPE:
+    value: input[data-qa='credential-type-email']
+    criticality: write
+    declared_at: src/hhru_bot/selectors.py:61
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - credential-type-email
+    active: true
+    bindings: {}
+  selectors.LOGIN_PHONE_INPUT:
+    value: '[data-qa=''magritte-phone-input-national-number-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selectors.py:63
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - magritte-phone-input-national-number-input
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN:
+    value: '[data-qa=''vacancy-response-link-top-again'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:8
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:8
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT:
+    value: '[data-qa=''vacancy-response-link-view-topic'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:9
+    decision: consensus
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 77
+        key: script.js::module.SELECTORS.responseChat#0::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 290
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#4::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      - file: app/parsers/hh_playwright.py
+        line: 423
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+    live_matches:
+    - vacancy-response-link-view-topic
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 77
+        key: script.js::module.SELECTORS.responseChat#0::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 290
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#4::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+      - file: app/parsers/hh_playwright.py
+        line: 423
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
+        value: '[data-qa="vacancy-response-link-view-topic"]'
+  vacancy_page.VACANCY_APPLY_BUTTON:
+    value: '[data-qa=''vacancy-response-link-top'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:5
+    decision: consensus
+    sources:
+      steev:
+      - file: lib/hh-response-selectors.mjs
+        line: 40
+        key: lib/hh-response-selectors.mjs::tryClick#0::0
+        value: '[data-qa="vacancy-response-link-top"]'
+      tgeruzov:
+      - file: script.js
+        line: 65
+        key: script.js::module.SELECTORS.vacancyApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      - file: script.js
+        line: 66
+        key: script.js::module.SELECTORS.topApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 262
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
+        value: '[data-qa="vacancy-response-link-top"]'
+    live_matches:
+    - vacancy-response-link-top
+    active: true
+    bindings:
+      steev:
+      - file: lib/hh-response-selectors.mjs
+        line: 40
+        key: lib/hh-response-selectors.mjs::tryClick#0::0
+        value: '[data-qa="vacancy-response-link-top"]'
+      tgeruzov:
+      - file: script.js
+        line: 66
+        key: script.js::module.SELECTORS.topApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      - file: script.js
+        line: 65
+        key: script.js::module.SELECTORS.vacancyApply#0::1
+        value: '[data-qa="vacancy-response-link-top"]'
+      yamakayama:
+      - file: app/parsers/hh_playwright.py
+        line: 262
+        key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
+        value: '[data-qa="vacancy-response-link-top"]'
+  vacancy_page.VACANCY_COMPANY_NAME:
+    value: '[data-qa=''vacancy-company-name'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:21
+    decision: consensus
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 12
+        key: lib/vacancy-parse.mjs::t#1::0
+        value: '[data-qa="vacancy-company-name"]'
+      - file: scripts/scan-telegram.mjs
+        line: 83
+        key: scripts/scan-telegram.mjs::t#1::0
+        value: '[data-qa="vacancy-company-name"]'
+      tgeruzov:
+      - file: script.js
+        line: 1359
+        key: script.js::pick#2::0
+        value: '[data-qa="vacancy-company-name"]'
+    live_matches:
+    - vacancy-company-name
+    active: true
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 12
+        key: lib/vacancy-parse.mjs::t#1::0
+        value: '[data-qa="vacancy-company-name"]'
+      - file: scripts/scan-telegram.mjs
+        line: 83
+        key: scripts/scan-telegram.mjs::t#1::0
+        value: '[data-qa="vacancy-company-name"]'
+      tgeruzov:
+      - file: script.js
+        line: 1359
+        key: script.js::pick#2::0
+        value: '[data-qa="vacancy-company-name"]'
+  vacancy_page.VACANCY_DIRECT_APPLICATION_ALERT:
+    value: '[data-qa="magritte-alert"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:16
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:16
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_DIRECT_APPLICATION_CANCEL:
+    value: '[data-qa="vacancy-response-link-advertising-cancel"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:15
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:15
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_HIDDEN_RESUME_WARNING:
+    value: '[data-qa=''hidden-resume-warning'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:12
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - hidden-resume-warning
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_LIMIT_ERROR:
+    value: '[data-qa-popup-error-code="negotiations-limit-exceeded"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:17
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:17
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_RELOCATION_CONFIRM:
+    value: '[data-qa="relocation-warning-confirm"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:13
+    decision: documented_live
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 79
+        key: script.js::module.SELECTORS.relocationBtn#0::0
+        value: '[data-qa="relocation-warning-confirm"]'
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:13
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 79
+        key: script.js::module.SELECTORS.relocationBtn#0::0
+        value: '[data-qa="relocation-warning-confirm"]'
+  vacancy_page.VACANCY_RESPONSE_ERROR:
+    value: '[data-qa="vacancy-response-error-notification"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:19
+    decision: documented_live
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 1253
+        key: script.js::detectAlreadyApplied#0::1
+        value: '[data-qa="vacancy-response-error-notification"]'
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:19
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 1253
+        key: script.js::detectAlreadyApplied#0::1
+        value: '[data-qa="vacancy-response-error-notification"]'
+  vacancy_page.VACANCY_RESPONSE_REJECT_WARNING:
+    value: '[data-qa="response-reject-warning"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:18
+    decision: documented_live
+    sources:
+      tgeruzov:
+      - file: script.js
+        line: 80
+        key: script.js::module.SELECTORS.rejectWarning#0::0
+        value: '[data-qa="response-reject-warning"]'
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:18
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings:
+      tgeruzov:
+      - file: script.js
+        line: 80
+        key: script.js::module.SELECTORS.rejectWarning#0::0
+        value: '[data-qa="response-reject-warning"]'
+  vacancy_page.VACANCY_SIMILAR_VACANCIES_CLOSE:
+    value: '[data-qa="vacancy-response-similar-vacancies-close"]'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:14
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_page.py:14
+      note: Страница вакансии (/vacancy/{id}) — подтверждено curl-дампом."""
+    active: true
+    bindings: {}
+  vacancy_page.VACANCY_TITLE:
+    value: '[data-qa=''vacancy-title'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_page.py:20
+    decision: consensus
+    sources:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 11
+        key: lib/vacancy-parse.mjs::t#0::0
+        value: '[data-qa="vacancy-title"]'
+      tgeruzov:
+      - file: script.js
+        line: 1355
+        key: script.js::pick#0::0
+        value: '[data-qa="vacancy-title"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 151
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
+        value: '[data-qa="vacancy-title"]'
+    live_matches:
+    - vacancy-title
+    active: true
+    bindings:
+      steev:
+      - file: lib/vacancy-parse.mjs
+        line: 11
+        key: lib/vacancy-parse.mjs::t#0::0
+        value: '[data-qa="vacancy-title"]'
+      tgeruzov:
+      - file: script.js
+        line: 1355
+        key: script.js::pick#0::0
+        value: '[data-qa="vacancy-title"]'
+      yamakayama:
+      - file: app/parsers/hh.py
+        line: 151
+        key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
+        value: '[data-qa="vacancy-title"]'
+upstream_consensus:
+- value: '[data-qa="vacancy-company-name"]'
+  references:
+  - steev
+  - tgeruzov
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 12
+      key: lib/vacancy-parse.mjs::t#1::0
+      value: '[data-qa="vacancy-company-name"]'
+    - file: scripts/scan-telegram.mjs
+      line: 83
+      key: scripts/scan-telegram.mjs::t#1::0
+      value: '[data-qa="vacancy-company-name"]'
+    tgeruzov:
+    - file: script.js
+      line: 1359
+      key: script.js::pick#2::0
+      value: '[data-qa="vacancy-company-name"]'
+- value: '[data-qa="vacancy-description"]'
+  references:
+  - steev
+  - yamakayama
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 19
+      key: lib/vacancy-parse.mjs::t#9::0
+      value: '[data-qa="vacancy-description"]'
+    - file: scripts/scan-telegram.mjs
+      line: 88
+      key: scripts/scan-telegram.mjs::t#5::0
+      value: '[data-qa="vacancy-description"]'
+    yamakayama:
+    - file: app/parsers/hh.py
+      line: 154
+      key: app/parsers/hh.py::module.HHParser.get_vacancy_details.desc_el#0::0
+      value: '[data-qa="vacancy-description"]'
+- value: '[data-qa="vacancy-experience"]'
+  references:
+  - steev
+  - yamakayama
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 14
+      key: lib/vacancy-parse.mjs::t#4::0
+      value: '[data-qa="vacancy-experience"]'
+    yamakayama:
+    - file: app/parsers/hh.py
+      line: 161
+      key: app/parsers/hh.py::module.HHParser.get_vacancy_details.exp_el#0::0
+      value: '[data-qa="vacancy-experience"]'
+- value: '[data-qa="vacancy-response-letter-submit"]'
+  references:
+  - tgeruzov
+  - yamakayama
+  sources:
+    tgeruzov:
+    - file: script.js
+      line: 75
+      key: script.js::module.SELECTORS.letterSubmit#0::1
+      value: '[data-qa="vacancy-response-letter-submit"]'
+    - file: script.js
+      line: 1614
+      key: script.js::fillLetterAndSubmit#1::0
+      value: '[data-qa="vacancy-response-letter-submit"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 368
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#1::0
+      value: '[data-qa="vacancy-response-letter-submit"]'
+- value: '[data-qa="vacancy-response-letter-toggle"]'
+  references:
+  - tgeruzov
+  - yamakayama
+  sources:
+    tgeruzov:
+    - file: script.js
+      line: 71
+      key: script.js::module.SELECTORS.attachCoverInModal#0::4
+      value: '[data-qa="vacancy-response-letter-toggle"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 769
+      key: app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.add_letter_btn#0::0
+      value: '[data-qa="vacancy-response-letter-toggle"]'
+- value: '[data-qa="vacancy-response-link-bottom"]'
+  references:
+  - tgeruzov
+  - yamakayama
+  sources:
+    tgeruzov:
+    - file: script.js
+      line: 65
+      key: script.js::module.SELECTORS.vacancyApply#0::3
+      value: '[data-qa="vacancy-response-link-bottom"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 263
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#1::0
+      value: '[data-qa="vacancy-response-link-bottom"]'
+- value: '[data-qa="vacancy-response-link-top"]'
+  references:
+  - steev
+  - tgeruzov
+  - yamakayama
+  sources:
+    steev:
+    - file: lib/hh-response-selectors.mjs
+      line: 40
+      key: lib/hh-response-selectors.mjs::tryClick#0::0
+      value: '[data-qa="vacancy-response-link-top"]'
+    tgeruzov:
+    - file: script.js
+      line: 65
+      key: script.js::module.SELECTORS.vacancyApply#0::1
+      value: '[data-qa="vacancy-response-link-top"]'
+    - file: script.js
+      line: 66
+      key: script.js::module.SELECTORS.topApply#0::1
+      value: '[data-qa="vacancy-response-link-top"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 262
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#0::0
+      value: '[data-qa="vacancy-response-link-top"]'
+- value: '[data-qa="vacancy-response-link-view-topic"]'
+  references:
+  - tgeruzov
+  - yamakayama
+  sources:
+    tgeruzov:
+    - file: script.js
+      line: 77
+      key: script.js::module.SELECTORS.responseChat#0::0
+      value: '[data-qa="vacancy-response-link-view-topic"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 290
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#4::0
+      value: '[data-qa="vacancy-response-link-view-topic"]'
+    - file: app/parsers/hh_playwright.py
+      line: 423
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#5::0
+      value: '[data-qa="vacancy-response-link-view-topic"]'
+- value: '[data-qa="vacancy-response-submit-popup"]'
+  references:
+  - tgeruzov
+  - yamakayama
+  sources:
+    tgeruzov:
+    - file: script.js
+      line: 75
+      key: script.js::module.SELECTORS.letterSubmit#0::4
+      value: '[data-qa="vacancy-response-submit-popup"]'
+    - file: script.js
+      line: 1614
+      key: script.js::fillLetterAndSubmit#2::0
+      value: '[data-qa="vacancy-response-submit-popup"]'
+    yamakayama:
+    - file: app/parsers/hh_playwright.py
+      line: 366
+      key: app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy.submit_btn#0::0
+      value: '[data-qa="vacancy-response-submit-popup"]'
+- value: '[data-qa="vacancy-serp__vacancy-employer"]'
+  references:
+  - steev
+  - yamakayama
+  sources:
+    steev:
+    - file: scripts/scan-telegram.mjs
+      line: 85
+      key: scripts/scan-telegram.mjs::t#3::0
+      value: '[data-qa="vacancy-serp__vacancy-employer"]'
+    yamakayama:
+    - file: app/parsers/hh.py
+      line: 87
+      key: app/parsers/hh.py::module.HHParser._parse_card.company_el#0::0
+      value: '[data-qa="vacancy-serp__vacancy-employer"]'
+- value: '[data-qa="vacancy-title"]'
+  references:
+  - steev
+  - tgeruzov
+  - yamakayama
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 11
+      key: lib/vacancy-parse.mjs::t#0::0
+      value: '[data-qa="vacancy-title"]'
+    tgeruzov:
+    - file: script.js
+      line: 1355
+      key: script.js::pick#0::0
+      value: '[data-qa="vacancy-title"]'
+    yamakayama:
+    - file: app/parsers/hh.py
+      line: 151
+      key: app/parsers/hh.py::module.HHParser.get_vacancy_details.title_el#0::0
+      value: '[data-qa="vacancy-title"]'
+- value: '[data-qa="vacancy-view-employment-mode"]'
+  references:
+  - steev
+  - yamakayama
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 15
+      key: lib/vacancy-parse.mjs::t#6::0
+      value: '[data-qa="vacancy-view-employment-mode"]'
+    yamakayama:
+    - file: app/parsers/hh.py
+      line: 164
+      key: app/parsers/hh.py::module.HHParser.get_vacancy_details.emp_el#0::0
+      value: '[data-qa="vacancy-view-employment-mode"]'
+- value: '[data-qa="vacancy-view-location"]'
+  references:
+  - steev
+  - tgeruzov
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 16
+      key: lib/vacancy-parse.mjs::t#7::0
+      value: '[data-qa="vacancy-view-location"]'
+    tgeruzov:
+    - file: script.js
+      line: 1362
+      key: script.js::pick#4::0
+      value: '[data-qa="vacancy-view-location"]'
+- value: '[data-qa="vacancy-view-raw-address"]'
+  references:
+  - steev
+  - tgeruzov
+  sources:
+    steev:
+    - file: lib/vacancy-parse.mjs
+      line: 16
+      key: lib/vacancy-parse.mjs::t#8::0
+      value: '[data-qa="vacancy-view-raw-address"]'
+    tgeruzov:
+    - file: script.js
+      line: 1364
+      key: script.js::pick#5::0
+      value: '[data-qa="vacancy-view-raw-address"]'
+- value: h1[data-qa="vacancy-title"]
+  references:
+  - steev
+  - tgeruzov
+  sources:
+    steev:
+    - file: scripts/scan-telegram.mjs
+      line: 81
+      key: scripts/scan-telegram.mjs::t#0::0
+      value: h1[data-qa="vacancy-title"]
+    tgeruzov:
+    - file: script.js
+      line: 1356
+      key: script.js::pick#1::0
+      value: h1[data-qa="vacancy-title"]
+binding_definitions:
+  apply.success.APPLY_SUCCESS_MARKER:
+    tgeruzov:
+    - script.js::isResponseConfirmed#0::1
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1
+  apply_form.APPLY_COVER_LETTER_TEXTAREA:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form#0::0
+  apply_form.APPLY_RESUME_OPTION:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.first_resume#0::0
+  apply_form.APPLY_RESUME_SELECT:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright._fill_response_form.resume_select#0::0
+  negotiations.CHAT_MESSAGE_INPUT:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.input_selectors#0::0
+  negotiations.CHAT_MESSAGE_SEND:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright.send_thanks_via_clicks.send_selectors#0::0
+  negotiations.NEGOTIATION_STATUS:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.status_el#0::0
+  negotiations.NEGOTIATION_VACANCY_LINK:
+    yamakayama:
+    - app/parsers/hh_playwright.py::module.HHPlaywright._parse_negotiation_item.title_el#0::0
+  search_page.VACANCY_CARD:
+    tgeruzov:
+    - script.js::module.SELECTORS.vacancyCard#0::1
+  search_page.VACANCY_CARD_TITLE_LINK:
+    tgeruzov:
+    - script.js::module.SELECTORS.vacancyLink#0::1
+  selectors.LOGIN_CODE_INPUT:
+    yamakayama:
+    - app/parsers/hh_login.py::module.SEL_PIN#0::0
+  selectors.LOGIN_EMAIL_INPUT:
+    yamakayama:
+    - app/parsers/hh_login.py::module.SEL_LOGIN#0::0
