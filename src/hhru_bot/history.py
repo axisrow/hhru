@@ -2993,16 +2993,23 @@ class History:
 
     def add_blacklist(self, entry_type: str, value: str, reason: str, created_by: str) -> None:
         from .blacklist import normalize_value, validate_value
+
         value = normalize_value(value)
         validate_value(entry_type, value)
         with self._connect() as conn:
-            conn.execute("INSERT INTO blacklist(entry_type,value,reason,created_by,created_at) VALUES (?,?,?,?,?)",
-                         (entry_type, value, reason.strip(), created_by.strip(), datetime.now().isoformat()))
+            conn.execute(
+                "INSERT INTO blacklist(entry_type,value,reason,created_by,created_at) VALUES (?,?,?,?,?)",
+                (entry_type, value, reason.strip(), created_by.strip(), datetime.now().isoformat()),
+            )
 
     def remove_blacklist(self, entry_type: str, value: str) -> int:
         from .blacklist import normalize_value
+
         with self._connect() as conn:
-            cur = conn.execute("DELETE FROM blacklist WHERE entry_type=? AND value=?", (entry_type, normalize_value(value)))
+            cur = conn.execute(
+                "DELETE FROM blacklist WHERE entry_type=? AND value=?",
+                (entry_type, normalize_value(value)),
+            )
             conn.execute("DELETE FROM skipped WHERE reason=?", (SKIP_REASONS.BLACKLIST,))
             return cur.rowcount
 
@@ -3011,8 +3018,10 @@ class History:
             return [dict(r) for r in conn.execute("SELECT * FROM blacklist ORDER BY id")]
 
     def blacklist_sets(self) -> dict[str, set[str]]:
-        return {kind: {row["value"] for row in self.list_blacklist() if row["entry_type"] == kind}
-                for kind in ("company", "keyword", "vacancy")}
+        return {
+            kind: {row["value"] for row in self.list_blacklist() if row["entry_type"] == kind}
+            for kind in ("company", "keyword", "vacancy")
+        }
 
     def record_skip(self, resume_id: str, vacancy_id: str, reason: str) -> None:
         """Записывает причину отсева вакансии (идемпотентно по UNIQUE).

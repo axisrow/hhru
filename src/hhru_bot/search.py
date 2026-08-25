@@ -834,13 +834,19 @@ def filter_candidates(
     причину — кэш консистентен по всем путям отсева.
     """
     from .scoring import employer_passes_prefilter  # локальный импорт: цикл search<->scoring
-    blacklist = history.blacklist_sets() if hasattr(history, "blacklist_sets") else {"company": set(), "keyword": set(), "vacancy": set()}
+
+    blacklist = (
+        history.blacklist_sets()
+        if hasattr(history, "blacklist_sets")
+        else {"company": set(), "keyword": set(), "vacancy": set()}
+    )
 
     candidates: list[VacancyCard] = []
     skipped: list[tuple[VacancyCard, str]] = []
 
     for card in cards:
         from .blacklist import match as blacklist_match
+
         blacklist_reason = blacklist_match(card, blacklist)
         if blacklist_reason:
             skipped.append((card, blacklist_reason))

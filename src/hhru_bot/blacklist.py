@@ -1,14 +1,18 @@
 """Persistent, deliberately narrow vacancy blacklist matching."""
+
 import re
+
 
 def normalize_value(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip()).casefold()
+
 
 def validate_value(entry_type: str, value: str) -> None:
     if entry_type not in {"company", "keyword", "vacancy"}:
         raise ValueError("тип должен быть company, keyword или vacancy")
     if not value or (entry_type == "keyword" and len(value) < 2):
         raise ValueError("пустое или слишком широкое правило")
+
 
 def match(card, rules: dict[str, set[str]]) -> str | None:
     if normalize_value(card.company) in rules["company"]:
