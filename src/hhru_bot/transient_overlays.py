@@ -65,7 +65,7 @@ _SCRIPT = r"""
     m.addedNodes.forEach(scan);
   })).observe(document.documentElement, {
     subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: ['data-qa', 'aria-label'],
+    attributeFilter: ['data-qa', 'aria-label', 'role'],
   });
 })();
 """
