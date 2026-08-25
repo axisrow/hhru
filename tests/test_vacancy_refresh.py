@@ -1,12 +1,16 @@
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
+import pytest
+
 from hhru_bot.vacancy_refresh import (
     VacancyBody,
     VacancyBodyCache,
     looks_parsed_ok,
     refresh_vacancy_body,
 )
+
+pytestmark = pytest.mark.unit
 
 GOOD = (
     "Python backend developer. "
