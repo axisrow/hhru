@@ -1378,6 +1378,18 @@ selectors:
     - resume-list-card-additionalEducation
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education.ADDITIONAL_TRIGGER:
     value: '[data-qa=''resume-edit-button-additionalEducation-{index}'']'
     criticality: write
@@ -1395,6 +1407,18 @@ selectors:
     - resume-edit-button-additionalEducation-3-svg
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education.CANCEL_BUTTON:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
@@ -1405,6 +1429,18 @@ selectors:
     - profile-layout-cancel-button
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE live_passed requires a mutation step and was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education.PRIMARY_ADD:
     value: '[data-qa=''resume-list-card-education''] [data-qa=''link'']'
     criticality: write
@@ -1416,6 +1452,18 @@ selectors:
     - resume-list-card-education
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education.PRIMARY_TRIGGER:
     value: '[data-qa=''resume-edit-button-education-{index}'']'
     criticality: write
@@ -1427,6 +1475,18 @@ selectors:
     - resume-edit-button-education-0-svg
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    status: intentionally local
+    origin: browser_dom
+    verification: live_passed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education.SAVE_BUTTON:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -1437,6 +1497,18 @@ selectors:
     - profile-layout-save-button
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE live_passed requires a mutation step and was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._ADDITIONAL_FIELDS.institution:
     value: '[data-qa=''profile-education-additional-name'']'
     criticality: write
@@ -1447,6 +1519,18 @@ selectors:
     - profile-education-additional-name
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._ADDITIONAL_FIELDS.organization:
     value: '[data-qa=''profile-education-additional-organization'']'
     criticality: write
@@ -1457,6 +1541,18 @@ selectors:
     - profile-education-additional-organization
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._ADDITIONAL_FIELDS.specialty:
     value: '[data-qa=''profile-education-additional-specialty'']'
     criticality: write
@@ -1467,6 +1563,18 @@ selectors:
     - profile-education-additional-specialty
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._ADDITIONAL_FIELDS.year:
     value: '[data-qa=''profile-education-year-input'']'
     criticality: write
@@ -1477,6 +1585,18 @@ selectors:
     - profile-education-year-input
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    status: needs-live-evidence
+    origin: manual
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._PRIMARY_FIELDS.faculty:
     value: '[data-qa=''profile-education-faculty-input'']'
     criticality: write
@@ -1487,6 +1607,18 @@ selectors:
     - profile-education-faculty-input
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    status: intentionally local
+    origin: browser_dom
+    verification: live_passed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._PRIMARY_FIELDS.institution:
     value: '[data-qa=''profile-education-university-input'']'
     criticality: write
@@ -1497,6 +1629,18 @@ selectors:
     - profile-education-university-input
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    status: intentionally local
+    origin: browser_dom
+    verification: live_passed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._PRIMARY_FIELDS.specialty:
     value: '[data-qa=''profile-education-specialty-input'']'
     criticality: write
@@ -1507,6 +1651,18 @@ selectors:
     - profile-education-specialty-input
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    status: intentionally local
+    origin: browser_dom
+    verification: live_passed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
+
+
   resume_education._PRIMARY_FIELDS.year:
     value: '[data-qa=''profile-education-year-input'']'
     criticality: write
@@ -1517,6 +1673,16 @@ selectors:
     - profile-education-year-input
     active: true
     bindings: {}
+    coverage_status: intentionally local
+    status: intentionally local
+    origin: browser_dom
+    verification: live_passed
+    evidence:
+      source: src/hhru_bot/resume_education.py
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_education_editor_read_only
+    verified_by: codex
   resume_experience.EXPERIENCE_ADD_BUTTON:
     value: '[data-qa=''resume-profile-experience-add-button'']'
     criticality: write
