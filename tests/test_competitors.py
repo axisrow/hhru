@@ -157,6 +157,14 @@ def test_skill_contact_tokens_are_not_persisted():
     assert [skill.name for skill in snapshot.skills] == ["Python"]
     assert sanitize_skill_name("test@example.com") is None
     assert sanitize_skill_name("+7 999 123-45-67") is None
+    for contact in ("www.example.com", "t.me/alice", "linkedin.com/in/alice"):
+        assert sanitize_skill_name(contact) is None
+    assert [sanitize_skill_name(v) for v in ("Python", "C++", "Node.js", "Разработка ПО")] == [
+        "Python",
+        "C++",
+        "Node.js",
+        "Разработка ПО",
+    ]
 
 
 def test_numeric_role_title_is_not_misparsed_as_salary():
@@ -260,8 +268,15 @@ class _PaginationPage:
         self.marker = self.block
 
     def locator(self, selector):
-        if selector == f"{selectors.PAGINATION_BLOCK}, {selectors.PAGINATION_LINK}":
-            return self.marker
+        if selector in (
+            f"{selectors.PAGINATION_BLOCK}, {selectors.PAGINATION_LINK}",
+            f"{selectors.PAGINATION_PAGE}, {selectors.PAGINATION_LINK}",
+        ):
+            return (
+                self.marker
+                if selector == f"{selectors.PAGINATION_BLOCK}, {selectors.PAGINATION_LINK}"
+                else self.pages
+            )
         return {
             selectors.PAGINATION_NEXT: self.next,
             selectors.PAGINATION_BLOCK: self.block,

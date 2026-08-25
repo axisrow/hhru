@@ -291,7 +291,14 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
 
 CREATE TABLE IF NOT EXISTS competitor_resume_skills (
     resume_id TEXT NOT NULL,
-    skill TEXT NOT NULL,
+    skill TEXT NOT NULL CHECK (
+        instr(skill, '@') = 0
+        AND lower(skill) NOT LIKE 'http%'
+        AND lower(skill) NOT LIKE 'www.%'
+        AND lower(skill) NOT LIKE 't.me/%'
+        AND lower(skill) NOT LIKE 'linkedin.com/%'
+        AND skill NOT GLOB '*[0-9]*'
+    ),
     proficiency TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,

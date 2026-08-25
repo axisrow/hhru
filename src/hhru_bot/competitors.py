@@ -265,7 +265,9 @@ def has_next_search_page(page: Page, page_num: int) -> bool:
 
     if pages.count() == 0 and links.count() == 0:
         try:
-            pages.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
+            page.locator(f"{sel.PAGINATION_PAGE}, {sel.PAGINATION_LINK}").first.wait_for(
+                state="attached", timeout=RENDER_TIMEOUT_MS
+            )
         except PlaywrightError:
             raise CompetitorSearchIndeterminate(
                 f"пагинация страницы поиска резюме {page_num} не подтверждена: "
@@ -321,7 +323,8 @@ _SALARY_HEADING_RE = re.compile(
 )
 _CONTACT_RE = re.compile(
     r"(?:[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|https?://\S+|www\.\S+|@[A-Za-z0-9_.-]+|"
-    r"(?:\+?\d[\d\s().-]{8,}\d))",
+    r"(?:\+?\d[\d\s().-]{8,}\d)|"
+    r"(?:[a-z0-9-]+\.)+(?:com|ru|net|org|io|me|co|рф)(?:/\S*)?)",
     re.IGNORECASE,
 )
 
