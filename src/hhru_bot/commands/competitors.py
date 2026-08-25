@@ -94,7 +94,10 @@ def _throttle_estimate(
     workers: int = 1,
 ) -> str:
     active_workers = max(1, min(workers, details))
-    waits = max(0, math.ceil(details / active_workers) - 1)
+    # Every request — the first included — now waits the configured delay
+    # (competitor_workers._worker_main, #663 Codex review), so a worker's
+    # wait count equals its request count, not request count minus one.
+    waits = math.ceil(details / active_workers)
     return (
         f"запрошено={requested_page_size}/стр., фактически={observed_page_size}/стр., "
         f"объём~{details} деталей, workers={active_workers}; только паузы троттлинга "
@@ -488,26 +491,36 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                         seen_resume_ids.add(card.resume_id)
                         page_cards.append(card)
 
-                    if page_cards and worker_pool is None:
-                        active_workers = min(args.detail_workers, len(page_cards))
-                        worker_pool = DetailWorkerPool(
-                            active_workers,
-                            DetailWorkerConfig(
-                                storage_state_file=(
-                                    str(config.storage_state_file)
-                                    if require_authentication
-                                    else None
+                    if page_cards:
+                        # Sizing from just this page (instead of capping at
+                        # args.detail_workers outright) undersizes the pool
+                        # for the rest of the run when an early page is
+                        # mostly duplicates (e.g. --resume) — #663 review.
+                        # grow() is additive/idempotent, so re-evaluating the
+                        # target on every page lets the pool catch up once a
+                        # later page proves there is more work than workers.
+                        target_workers = min(args.detail_workers, state["cards"])
+                        if worker_pool is None:
+                            worker_pool = DetailWorkerPool(
+                                target_workers,
+                                DetailWorkerConfig(
+                                    storage_state_file=(
+                                        str(config.storage_state_file)
+                                        if require_authentication
+                                        else None
+                                    ),
+                                    headless=args.headless,
+                                    user_agent=config.user_agent,
+                                    min_delay_seconds=config.throttle.min_delay_seconds,
+                                    max_delay_seconds=config.throttle.max_delay_seconds,
+                                    require_authentication=require_authentication,
                                 ),
-                                headless=args.headless,
-                                user_agent=config.user_agent,
-                                min_delay_seconds=config.throttle.min_delay_seconds,
-                                max_delay_seconds=config.throttle.max_delay_seconds,
-                                require_authentication=require_authentication,
-                            ),
-                        )
-                        worker_pool.start()
+                            )
+                            worker_pool.start()
+                        elif target_workers > worker_pool.size:
+                            worker_pool.grow(target_workers)
                         _progress(
-                            f"[WORKERS] run_id={run_id} запущено={active_workers}",
+                            f"[WORKERS] run_id={run_id} запущено={worker_pool.size}",
                             quiet=quiet,
                         )
 

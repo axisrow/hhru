@@ -61,13 +61,22 @@ def _worker_main(
                 if item is None:
                     return
                 task_id, card = item
-                if attempts:
-                    delay = random.uniform(
-                        config.min_delay_seconds,
-                        config.max_delay_seconds,
-                    )
-                    if stop_event.wait(delay):
-                        return
+                # Every request — including each worker's first — waits the
+                # configured random delay. Skipping it only before "attempts
+                # == 0" let every worker fire its first request in the same
+                # instant: N workers starting together burst N simultaneous
+                # requests at hh.ru with zero delay, defeating the two-level
+                # throttle this project relies on to avoid looking like
+                # automation (CLAUDE.md "Двухуровневый троттлинг", #663 Codex
+                # review). A random stagger before every request — first
+                # included — keeps concurrent workers spread out instead of
+                # bursting in lockstep.
+                delay = random.uniform(
+                    config.min_delay_seconds,
+                    config.max_delay_seconds,
+                )
+                if stop_event.wait(delay):
+                    return
                 attempts += 1
                 try:
                     snapshot = fetch_competitor_resume(
@@ -147,10 +156,29 @@ class DetailWorkerPool:
         self._processes: list[Any] = []
         self._closed = False
 
+    @property
+    def size(self) -> int:
+        """Number of worker processes started so far."""
+        return len(self._processes)
+
     def start(self) -> None:
         if self._processes:
             return
-        for worker_id in range(self.workers):
+        self.grow(self.workers)
+
+    def grow(self, target_workers: int) -> None:
+        """Start additional worker processes up to ``target_workers`` total.
+
+        The caller may learn the real workload only after the first page of
+        cards (mostly-duplicate first pages during a ``--resume`` undersize
+        the pool otherwise, #663 Codex review). Growing is additive and
+        idempotent — calling with a lower or equal ``target_workers`` is a
+        no-op, and existing workers/in-flight tasks are untouched.
+        """
+        if self._closed:
+            raise RuntimeError("detail worker pool уже закрыт")
+        start_id = len(self._processes)
+        for worker_id in range(start_id, target_workers):
             process = self._context.Process(
                 target=_worker_main,
                 args=(

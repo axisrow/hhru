@@ -57,8 +57,15 @@ class _WorkerPool:
         self.config = config
         self.results = []
 
+    @property
+    def size(self):
+        return self.workers
+
     def start(self):
         pass
+
+    def grow(self, target_workers):
+        self.workers = max(self.workers, target_workers)
 
     def submit(self, task_id, card):
         from hhru_bot.competitors import fetch_competitor_resume
@@ -452,9 +459,17 @@ class _WorkerPool:
     def __init__(self, _workers, config):
         self.config = config
         self.results = []
+        self._size = _workers
+
+    @property
+    def size(self):
+        return self._size
 
     def start(self):
         pass
+
+    def grow(self, target_workers):
+        self._size = max(self._size, target_workers)
 
     def submit(self, task_id, card):
         snapshot = hhru_bot.competitors.fetch_competitor_resume(
@@ -654,9 +669,12 @@ def test_estimate_reports_requested_and_observed_page_size():
 
     assert "запрошено=100/стр., фактически=20/стр." in estimate
     assert "объём~100 деталей" in estimate
-    assert "13 мин-41 мин" in estimate
+    assert "13 мин-42 мин" in estimate
     assert "ETA уточнится" in estimate
 
+    # A worker now waits before its FIRST request too (#663 Codex review:
+    # skipping the delay before "attempts == 0" let every worker burst its
+    # first request in lockstep), so even a single detail carries one wait.
     one_detail = _throttle_estimate(
         details=1,
         requested_page_size=1,
@@ -664,7 +682,7 @@ def test_estimate_reports_requested_and_observed_page_size():
         min_delay=8,
         max_delay=25,
     )
-    assert "троттлинга 0 с-0 с" in one_detail
+    assert "троттлинга 8 с-25 с" in one_detail
 
 
 def test_estimate_accounts_for_parallel_workers():
