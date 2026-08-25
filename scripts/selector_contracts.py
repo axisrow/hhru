@@ -51,6 +51,38 @@ REFERENCE_CONFIG = {
     },
 }
 
+AUDITED_SELECTOR_GROUP_PREFIXES = ("search_page.", "vacancy_page.")
+AUDIT_REQUIRED_FIELDS = (
+    "coverage_status",
+    "origin",
+    "verification",
+    "evidence",
+    "last_verified_at",
+    "verified_flow",
+    "verified_by",
+)
+AUDIT_STATUSES = {
+    "reference_binding",
+    "intentionally_local",
+    "not_implemented_upstream",
+    "needs_live_evidence",
+}
+AUDIT_ORIGINS = {
+    "reference_exact",
+    "reference_consensus",
+    "reference_single",
+    "browser_dom",
+    "manual",
+}
+AUDIT_VERIFICATIONS = {
+    "live_passed",
+    "browser_observed",
+    "contract_tested",
+    "unverified",
+    "failed",
+    "unavailable",
+}
+
 # Narrow, reviewed exceptions where exact 2-of-3 or a captured DOM state is
 # impossible by design.  These do not authorize a write click.
 SPECIAL_POLICIES: dict[str, tuple[str, str]] = {
@@ -1258,6 +1290,18 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
     if catalog.get("binding_definitions") != _binding_definitions():
         errors.append("semantic reference bindings are stale; run selector refresh")
     for logical_id, row in catalog.get("selectors", {}).items():
+        if logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
+            for field in AUDIT_REQUIRED_FIELDS:
+                if not row.get(field):
+                    errors.append(f"{logical_id}: missing audit field {field}")
+            if row.get("coverage_status") not in AUDIT_STATUSES:
+                errors.append(f"{logical_id}: invalid coverage_status")
+            if row.get("origin") not in AUDIT_ORIGINS:
+                errors.append(f"{logical_id}: invalid origin")
+            if row.get("verification") not in AUDIT_VERIFICATIONS:
+                errors.append(f"{logical_id}: invalid verification")
+            if row.get("active", True) and row.get("origin") == "llm_hypothesis":
+                errors.append(f"{logical_id}: llm_hypothesis cannot be active")
         sources = row.get("sources", {})
         reference_count = len(sources)
         decision = row.get("decision")
