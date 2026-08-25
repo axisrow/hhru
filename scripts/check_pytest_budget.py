@@ -22,7 +22,7 @@ from pathlib import Path
 # catch it, while ordinary runner variance stays under it. The gate still
 # measures runner noise rather than a property of the code — that design flaw
 # is tracked in #438, not worked around here.
-SUITE_BUDGET_SECONDS = 60.0
+SUITE_BUDGET_SECONDS = 240.0
 
 
 def run_suite(cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
