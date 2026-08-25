@@ -51,6 +51,15 @@ def test_current_repository_selector_contract_is_self_consistent():
     assert catalog["policy"]["consensus_threshold"] == 2
 
 
+def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
+    monkeypatch.setattr(contracts, "MAP_PATH", contracts.ROOT / "selectors" / "reference-map.yaml")
+    monkeypatch.setattr(contracts, "EVIDENCE_PATH", tmp_path / "live-evidence.json")
+
+    catalog = contracts.load_catalog()
+
+    assert contracts.verify_catalog(catalog) == []
+
+
 def test_issue_599_baseline_has_twelve_unique_ids():
     baseline = contracts.load_baseline()["scope"]
     assert baseline["literal_mismatches"] == 10

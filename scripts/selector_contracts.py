@@ -950,7 +950,11 @@ def load_catalog() -> dict[str, Any]:
     if not MAP_PATH.exists():
         raise SystemExit(f"selector map missing: {MAP_PATH}")
     catalog = yaml.safe_load(MAP_PATH.read_text(encoding="utf-8"))
-    evidence = json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
+    evidence = (
+        json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
+        if EVIDENCE_PATH.exists()
+        else {}
+    )
     _ensure_extra_contracts(catalog, evidence)
     catalog["selectors"] = dict(sorted(catalog["selectors"].items()))
     for logical_id, row in catalog.get("selectors", {}).items():
