@@ -6,6 +6,11 @@ in the three approved reference projects, and sanitized local live-DOM
 evidence where available. `reference-matrix.md` is the generated review view;
 `src/hhru_bot/selector_groups/_generated.py` is the generated runtime view.
 
+For adding or updating a selector, follow the [selector contribution
+guide](../docs/selector-contribution.md). It documents the reference search,
+READ/WRITE policy, required provenance and evidence fields, regeneration,
+testing, and the PR checklist.
+
 CI rejects:
 
 - any runtime `data-qa` literal outside the generated selector contract;
