@@ -1391,6 +1391,56 @@ class History:
             ).fetchone()
             return row is not None
 
+    def list_unresolved_uncertain(self, limit: int = 50) -> list[dict]:
+        """Return the operator queue, derived directly from the action ledger."""
+        if limit < 1:
+            raise ValueError("limit должен быть >= 1")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT a.*, r.command, r.started_at AS run_started_at
+                   FROM actions a LEFT JOIN command_runs r ON r.run_id=a.run_id
+                   WHERE a.status='uncertain'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM actions later
+                       WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
+                         AND later.action=a.action AND later.id>a.id
+                         AND later.status='success' AND a.action != 'reply'
+                     )
+                   ORDER BY a.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_uncertain(self, action_id: int) -> dict | None:
+        """Return one unresolved uncertain action, or ``None``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT a.*, r.command, r.started_at AS run_started_at
+                   FROM actions a LEFT JOIN command_runs r ON r.run_id=a.run_id
+                   WHERE a.id=? AND a.status='uncertain'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM actions later
+                       WHERE later.resume_id=a.resume_id AND later.vacancy_id=a.vacancy_id
+                         AND later.action=a.action AND later.id>a.id
+                         AND later.status='success' AND a.action != 'reply'
+                     )""",
+                (action_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def reconcile_uncertain(self, action_id: int, status: str, evidence: str) -> None:
+        """Close a queue row only after a verifier supplied authoritative evidence."""
+        if status not in {"success", "failed"} or not evidence.strip():
+            raise ValueError("reconcile требует status success/failed и evidence")
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE actions SET status=?, reason=?
+                   WHERE id=? AND status='uncertain'""",
+                (status, evidence, action_id),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("uncertain-запись уже закрыта или не найдена")
+
     # --- Агрегаты для команды stats (#11) -------------------------------------
     # Новые методы в конец файла: паттерн with self._connect(), существующие
     # методы не трогаем. summary/list_actions считают ВСЕ строки (success/

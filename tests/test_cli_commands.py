@@ -105,7 +105,6 @@ def test_all_commands_registered():
         "import-cookies",
         "clear-negotiations",
         "delete-resume",
-        "diagnostics",
         "create-resume",
         "reply-employers",
         "robot-queue",
@@ -129,6 +128,8 @@ def test_all_commands_registered():
         "restore",
         "resume-views",
         "review",
+        "uncertain",
+        "diagnostics",
         "blacklist",
     }
 
@@ -173,7 +174,6 @@ def test_register_commands_returns_names():
         "import_cookies",
         "clear_negotiations",
         "delete_resume",
-        "diagnostics",
         "create_resume",
         "reply_employers",
         "robot_queue",
@@ -196,6 +196,8 @@ def test_register_commands_returns_names():
         "backup",
         "resume_views",
         "review",
+        "uncertain",
+        "diagnostics",
         "blacklist",
     }
 
