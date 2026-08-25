@@ -127,6 +127,40 @@ def test_every_vacancy_upstream_candidate_has_an_explicit_decision():
             assert row["reason"]
 
 
+def test_refresh_preserves_upstream_candidate_decisions():
+    selector = '[data-qa="vacancy-description"]'
+    indexes = {
+        reference: [
+            contracts.SourceSelector(
+                selector,
+                contracts.normalize_selector(selector),
+                f"{reference}.py",
+                1,
+                f"{reference}#0",
+            )
+        ]
+        for reference in contracts.REFERENCE_CONFIG
+    }
+    previous = [
+        {
+            "value": selector,
+            "references": ["steev", "yamakayama"],
+            "sources": {},
+            "decision": "port_exact",
+            "logical_id": "vacancy_page.VACANCY_DESCRIPTION",
+            "origin": "reference_consensus",
+            "verification": "contract_tested",
+        }
+    ]
+
+    refreshed = contracts._upstream_consensus(indexes, previous)
+
+    assert refreshed[0]["decision"] == "port_exact"
+    assert refreshed[0]["logical_id"] == "vacancy_page.VACANCY_DESCRIPTION"
+    assert refreshed[0]["origin"] == "reference_consensus"
+    assert refreshed[0]["verification"] == "contract_tested"
+
+
 def test_catalog_load_does_not_require_generated_live_evidence(monkeypatch, tmp_path):
     monkeypatch.setattr(contracts, "MAP_PATH", contracts.ROOT / "selectors" / "reference-map.yaml")
     monkeypatch.setattr(contracts, "EVIDENCE_PATH", tmp_path / "live-evidence.json")
