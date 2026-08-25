@@ -24,15 +24,18 @@
 
 from __future__ import annotations
 
+from ._generated import selector as _selector
+
 # Карточка одного резюме в списке.
-RESUME_LIST_CARD = "[data-qa='resume']"
+RESUME_LIST_CARD = _selector("resume_list.RESUME_LIST_CARD")
 
 # Ссылка на резюме внутри карточки; hash — resume_id из URL резюме.
 # Используется для привязки карточки к конкретному резюме (identity-bound, #33).
-RESUME_LIST_CARD_LINK_TPL = "[data-qa='resume-card-link-{resume_id}']"
+RESUME_LIST_CARD_LINK_TPL = _selector("resume_list.RESUME_LIST_CARD_LINK_TPL")
+RESUME_LIST_CARD_LINK_PREFIX = _selector("resume_list.RESUME_LIST_CARD_LINK_PREFIX")
 
 # Кнопка «...» (меню действий) на карточке резюме.
-RESUME_LIST_ACTION_MORE = "[data-qa='resume-list-action-more']"
+RESUME_LIST_ACTION_MORE = _selector("resume_list.RESUME_LIST_ACTION_MORE")
 
 # Дополнительный (не обязательный) маркер завершённого client render. Карточка
 # приходит из SSR раньше, но actions ещё не подключены: на наблюдавшемся живом
@@ -41,10 +44,10 @@ RESUME_LIST_ACTION_MORE = "[data-qa='resume-list-action-more']"
 RESUME_PROFILE_READY = "button:has-text('подходящие вакансии')"
 
 # Пункт «Дублировать» в открытом меню «...».
-RESUME_DUPLICATE_MENU_ITEM = "[data-qa='operations-list-duplicate-resume']"
+RESUME_DUPLICATE_MENU_ITEM = _selector("resume_list.RESUME_DUPLICATE_MENU_ITEM")
 
 # Инлайн-кнопка «Дублировать» (второй вариант рендера того же действия).
-RESUME_DUPLICATE_INLINE = "[data-qa='resume-dublicate']"
+RESUME_DUPLICATE_INLINE = _selector("resume_list.RESUME_DUPLICATE_INLINE")
 
 # Заголовок (название) резюме внутри карточки — НЕ ПОДТВЕРЖДЕНО (см. докстринг).
-RESUME_LIST_CARD_TITLE = "[data-qa='resume-title']"
+RESUME_LIST_CARD_TITLE = _selector("resume_list.RESUME_LIST_CARD_TITLE")
