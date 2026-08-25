@@ -346,7 +346,8 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     resume_page INTEGER,
     resumed_from_run_id TEXT,
     observed_page_size INTEGER,
-    exit_code INTEGER
+    exit_code INTEGER,
+    cards_seen_completed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_runs_query
     ON competitor_collection_runs(search_query, started_at);
@@ -801,6 +802,16 @@ class History:
                 "INTEGER NOT NULL DEFAULT 100",
             )
             _ensure_column(conn, "competitor_collection_runs", "exit_code", "INTEGER")
+            # #660 (Codex review): cards_seen already includes the in-progress
+            # page's cards as soon as it's parsed, before that page's details
+            # are all fetched -- but resume_page still points at that same
+            # unfinished page. resume_rank_offset must exclude that page's
+            # cards (it will be re-parsed from scratch on resume), so it is
+            # computed from cards_seen_completed (cumulative cards as of the
+            # last *completed* page), not from cards_seen. Legacy rows stay
+            # NULL; begin_competitor_collection() falls back to cards_seen for
+            # those (old behavior, unaffected by this fix).
+            _ensure_column(conn, "competitor_collection_runs", "cards_seen_completed", "INTEGER")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.
@@ -2168,7 +2179,19 @@ class History:
             seen_run_ids: set[str] = set()
             while rank_checkpoint is not None and rank_checkpoint["run_id"] not in seen_run_ids:
                 seen_run_ids.add(rank_checkpoint["run_id"])
-                resume_rank_offset += int(rank_checkpoint["cards_seen"] or 0)
+                # #660 (Codex review): cards_seen includes the in-progress
+                # page's cards as soon as they're parsed, before all of that
+                # page's details are fetched -- but resume_page still points
+                # at that same unfinished page, which gets re-parsed from
+                # scratch on resume. Using cards_seen verbatim here would
+                # double-count that page's cards into the rank offset.
+                # cards_seen_completed tracks cards from *completed* pages
+                # only and is the correct offset source; legacy rows (NULL,
+                # predating this column) fall back to cards_seen unchanged.
+                completed = rank_checkpoint["cards_seen_completed"]
+                resume_rank_offset += int(
+                    completed if completed is not None else (rank_checkpoint["cards_seen"] or 0)
+                )
                 previous_run_id = rank_checkpoint["resumed_from_run_id"]
                 if not previous_run_id:
                     break
@@ -2225,6 +2248,7 @@ class History:
         last_completed_page: int | None,
         resume_page: int | None,
         observed_page_size: int | None,
+        cards_seen_completed: int | None = None,
     ) -> None:
         """Persist one heartbeat/checkpoint while the collector still owns the run."""
         with self._connect() as conn:
@@ -2232,7 +2256,7 @@ class History:
                 """UPDATE competitor_collection_runs
                    SET pages_fetched=?, cards_seen=?, details_saved=?, details_failed=?,
                        last_started_page=?, last_completed_page=?, resume_page=?,
-                       observed_page_size=?, heartbeat_at=?
+                       observed_page_size=?, cards_seen_completed=?, heartbeat_at=?
                    WHERE run_id=? AND status='running' AND owner_pid=?""",
                 (
                     pages_fetched,
@@ -2243,6 +2267,7 @@ class History:
                     last_completed_page,
                     resume_page,
                     observed_page_size,
+                    cards_seen_completed,
                     datetime.now().isoformat(timespec="seconds"),
                     run_id,
                     os.getpid(),
@@ -2266,6 +2291,7 @@ class History:
         last_started_page: int | None = None,
         last_completed_page: int | None = None,
         observed_page_size: int | None = None,
+        cards_seen_completed: int | None = None,
     ) -> None:
         allowed = {"complete", "limited", "partial", "failed"}
         if status not in allowed:
@@ -2277,7 +2303,7 @@ class History:
                    SET status = ?, pages_fetched = ?, cards_seen = ?, details_saved = ?,
                        details_failed = ?, finished_at = ?, detail = ?, exit_code = ?,
                        resume_page = ?, last_started_page = ?, last_completed_page = ?,
-                       observed_page_size = ?, heartbeat_at = ?
+                       observed_page_size = ?, cards_seen_completed = ?, heartbeat_at = ?
                    WHERE run_id = ? AND status = 'running' AND owner_pid = ?""",
                 (
                     status,
@@ -2292,6 +2318,7 @@ class History:
                     last_started_page,
                     last_completed_page,
                     observed_page_size,
+                    cards_seen_completed,
                     now,
                     run_id,
                     os.getpid(),

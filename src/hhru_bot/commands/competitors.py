@@ -293,6 +293,13 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     state = {
         "pages": 0,
         "cards": 0,
+        # Cumulative cards from *completed* pages only, kept in sync with
+        # last_completed_page. cards_seen (state["cards"]) already includes
+        # the in-progress page's cards as soon as they're parsed -- if a
+        # checkpoint fires before that page's details finish, resume_page
+        # still points at that same unfinished page, and a resume must not
+        # double-count its cards into the rank offset (#660, Codex review).
+        "cards_completed": 0,
         "saved": 0,
         "failed": 0,
         "last_started_page": None,
@@ -324,6 +331,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                 last_completed_page=current["last_completed_page"],
                 resume_page=current["resume_page"],
                 observed_page_size=current["observed_page_size"],
+                cards_seen_completed=current["cards_completed"],
             )
 
     details_failed = 0
@@ -489,6 +497,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
 
                 with state_lock:
                     state["last_completed_page"] = page_num
+                    state["cards_completed"] = state["cards"]
                     state["resume_page"] = page_num + 1 if has_next else None
                     if not has_next or _page_cap_reached(args.max_pages, pages_this_run, has_next):
                         state["expected_details"] = state["saved"] + state["failed"]
@@ -547,6 +556,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             last_started_page=current["last_started_page"],
             last_completed_page=current["last_completed_page"],
             observed_page_size=current["observed_page_size"],
+            cards_seen_completed=current["cards_completed"],
         )
         last_page = (
             current["last_completed_page"] + 1
@@ -586,6 +596,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         last_started_page=current["last_started_page"],
         last_completed_page=current["last_completed_page"],
         observed_page_size=current["observed_page_size"],
+        cards_seen_completed=current["cards_completed"],
     )
     total_results = coverage.total_results if coverage else None
     available_pages = coverage.available_pages if coverage else None

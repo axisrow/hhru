@@ -228,6 +228,57 @@ def test_resume_rank_offset_uses_exact_cards_seen_for_variable_page_sizes(tmp_pa
     assert resumed["resume_rank_offset"] == 120
 
 
+def test_resume_rank_offset_excludes_in_progress_page_cards(tmp_path):
+    """Issue #632/Codex review on PR #660: a heartbeat checkpoint taken
+    mid-page (search results already parsed and counted into cards_seen,
+    but not all of that page's details fetched yet) must not let the
+    resumed run double-count that page's cards in resume_rank_offset.
+
+    competitors.py sets `state["resume_page"] = page_num` *before* parsing
+    the page (so an interruption resumes by re-parsing the same page), but
+    `state["cards"]` is incremented right after parsing -- before all of
+    that page's details are processed. A heartbeat firing in that window
+    persists a checkpoint where `resume_page == last_started_page` (the
+    same, not-yet-completed page) while `cards_seen` already includes that
+    page's cards. Resuming must offset ranks only by cards from pages that
+    were actually *completed* (up to last_completed_page), not by
+    cards_seen verbatim -- otherwise the re-parsed page's cards get ranks
+    shifted past where they belong, and repeated interruptions compound
+    the drift.
+    """
+    history = History(tmp_path / "history.db")
+    run_id = history.start_competitor_collection("AI", 0, requested_page_size=100)
+    # Page 0 (100 cards) fully completed. Page 1's 100 cards were just
+    # parsed (cards_seen jumps to 200) but its details are still being
+    # fetched -- last_completed_page stays at 0, resume_page/
+    # last_started_page point at the in-progress page 1. This is exactly
+    # the mid-page heartbeat checkpoint shape (recorded here via
+    # finish_competitor_collection so the run isn't left 'running' --
+    # same checkpoint fields checkpoint_competitor_collection would have
+    # persisted from a live heartbeat).
+    history.finish_competitor_collection(
+        run_id,
+        status="partial",
+        pages_fetched=2,
+        cards_seen=200,
+        details_saved=105,
+        details_failed=0,
+        last_started_page=1,
+        last_completed_page=0,
+        resume_page=1,
+        observed_page_size=100,
+        cards_seen_completed=100,
+    )
+
+    resumed = history.begin_competitor_collection("AI", 1, resume=True)
+
+    assert resumed["resume_page"] == 1
+    # Only page 0's 100 completed cards should offset ranks -- page 1 will
+    # be re-parsed from scratch by the resumed run, so its own 100 cards
+    # must not be double-counted into the offset.
+    assert resumed["resume_rank_offset"] == 100
+
+
 def test_resume_does_not_cross_requested_page_sizes(tmp_path):
     history = History(tmp_path / "history.db")
     smoke = history.start_competitor_collection("AI", 1, requested_page_size=20)
