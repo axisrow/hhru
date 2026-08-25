@@ -342,7 +342,12 @@ def redact_free_text(_value: str) -> None:
 def sanitize_skill_name(value: str) -> str | None:
     """Keep professional skill labels, but never persist contact tokens."""
     text = value.strip()
-    if not text or _CONTACT_RE.search(text):
+    if not text:
+        return None
+    # Dotted technology names are skills, not contact endpoints.
+    if text.casefold() in {"asp.net", "vb.net", "socket.io"}:
+        return text
+    if _CONTACT_RE.search(text):
         return None
     return text
 

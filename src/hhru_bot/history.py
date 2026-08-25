@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from .search import SalaryInfo
 
 logger = logging.getLogger("hhru_bot.history")
+_COMPETITOR_CONTACT_SKILL_RE = re.compile(
+    r"(?:[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|https?://\S+|www\.\S+|"
+    r"(?:[a-z0-9-]+\.)+(?:com|ru|net|org|io|me|co|рф)(?:/\S*)?|"
+    r"(?:\+?\d[\d\s().-]{8,}\d))",
+    re.IGNORECASE,
+)
+
 
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
 # Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
@@ -297,7 +304,6 @@ CREATE TABLE IF NOT EXISTS competitor_resume_skills (
         AND lower(skill) NOT LIKE 'www.%'
         AND lower(skill) NOT LIKE 't.me/%'
         AND lower(skill) NOT LIKE 'linkedin.com/%'
-        AND skill NOT GLOB '*[0-9]*'
     ),
     proficiency TEXT,
     first_seen_at TEXT NOT NULL,
@@ -756,6 +762,7 @@ class History:
             # упадёт на "table command_runs already exists".
             _rename_apply_runs_to_command_runs(conn)
             conn.executescript(SCHEMA)
+            _migrate_competitor_skills_schema(conn)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
             _ensure_column(conn, "actions", "search_query", "TEXT")
             _ensure_column(conn, "actions", "run_id", "TEXT")
@@ -2197,7 +2204,10 @@ class History:
             conn.execute("DELETE FROM competitor_resume_skills WHERE resume_id = ?", (resume_id,))
             for skill in snapshot.get("skills") or []:
                 name = str(skill["name"]).strip()
-                if not name:
+                if not name or (
+                    name.casefold() not in {"asp.net", "vb.net", "socket.io"}
+                    and _COMPETITOR_CONTACT_SKILL_RE.search(name)
+                ):
                     continue
                 conn.execute(
                     """INSERT INTO competitor_resume_skills
@@ -4509,3 +4519,38 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
         return
     conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
     conn.execute(_APPLY_INDEX_SQL)
+
+
+def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
+    """Rebuild the skills table so old databases gain the privacy invariant."""
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("competitor_resume_skills",),
+    ).fetchone()
+    if not table or "CHECK" in (table[0] or "").upper():
+        return
+    conn.execute("ALTER TABLE competitor_resume_skills RENAME TO competitor_resume_skills_legacy")
+    conn.execute("""CREATE TABLE competitor_resume_skills (
+        resume_id TEXT NOT NULL, skill TEXT NOT NULL CHECK (
+            instr(skill, '@') = 0 AND lower(skill) NOT LIKE 'http%'
+            AND lower(skill) NOT LIKE 'www.%' AND lower(skill) NOT LIKE 't.me/%'
+            AND lower(skill) NOT LIKE 'linkedin.com/%'
+        ), proficiency TEXT, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (resume_id, skill)
+    )""")
+    rows = conn.execute(
+        """SELECT resume_id, skill, proficiency, first_seen_at, last_seen_at
+           FROM competitor_resume_skills_legacy"""
+    ).fetchall()
+    for row in rows:
+        skill = row[1].strip()
+        if skill.casefold() not in {
+            "asp.net",
+            "vb.net",
+            "socket.io",
+        } and _COMPETITOR_CONTACT_SKILL_RE.search(skill):
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)", tuple(row)
+        )
+    conn.execute("DROP TABLE competitor_resume_skills_legacy")
