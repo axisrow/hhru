@@ -330,6 +330,7 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     run_id TEXT PRIMARY KEY,
     search_query TEXT NOT NULL,
     max_pages INTEGER NOT NULL,
+    requested_page_size INTEGER NOT NULL DEFAULT 100,
     status TEXT NOT NULL,
     pages_fetched INTEGER NOT NULL DEFAULT 0,
     cards_seen INTEGER NOT NULL DEFAULT 0,
@@ -793,6 +794,12 @@ class History:
             _ensure_column(conn, "competitor_collection_runs", "resume_page", "INTEGER")
             _ensure_column(conn, "competitor_collection_runs", "resumed_from_run_id", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "observed_page_size", "INTEGER")
+            _ensure_column(
+                conn,
+                "competitor_collection_runs",
+                "requested_page_size",
+                "INTEGER NOT NULL DEFAULT 100",
+            )
             _ensure_column(conn, "competitor_collection_runs", "exit_code", "INTEGER")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
@@ -2091,7 +2098,12 @@ class History:
     # --- Конкуренты: обезличенные снимки резюме (#578) -------------------------
 
     def begin_competitor_collection(
-        self, search_query: str, max_pages: int, *, resume: bool = False
+        self,
+        search_query: str,
+        max_pages: int,
+        *,
+        requested_page_size: int = 100,
+        resume: bool = False,
     ) -> dict:
         """Recover dead collectors and atomically create a durable owned run (#654)."""
         now_dt = datetime.now()
@@ -2134,9 +2146,9 @@ class History:
             if resume:
                 latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
-                       WHERE search_query=? AND status != 'running'
+                       WHERE search_query=? AND requested_page_size=? AND status != 'running'
                        ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-                    (search_query,),
+                    (search_query, requested_page_size),
                 ).fetchone()
                 if (
                     latest is not None
@@ -2151,21 +2163,31 @@ class History:
                 if checkpoint is not None and checkpoint["observed_page_size"]
                 else None
             )
-            resume_rank_offset = (
-                resume_page * resume_observed_page_size
-                if resume_observed_page_size is not None
-                else 0
-            )
+            resume_rank_offset = 0
+            rank_checkpoint = checkpoint
+            seen_run_ids: set[str] = set()
+            while rank_checkpoint is not None and rank_checkpoint["run_id"] not in seen_run_ids:
+                seen_run_ids.add(rank_checkpoint["run_id"])
+                resume_rank_offset += int(rank_checkpoint["cards_seen"] or 0)
+                previous_run_id = rank_checkpoint["resumed_from_run_id"]
+                if not previous_run_id:
+                    break
+                rank_checkpoint = conn.execute(
+                    "SELECT * FROM competitor_collection_runs WHERE run_id=?",
+                    (previous_run_id,),
+                ).fetchone()
             conn.execute(
                 """INSERT INTO competitor_collection_runs
-                   (run_id, search_query, max_pages, status, started_at, heartbeat_at,
+                   (run_id, search_query, max_pages, requested_page_size, status,
+                    started_at, heartbeat_at,
                     owner_pid, last_started_page, last_completed_page, resume_page,
                     resumed_from_run_id, observed_page_size)
-                   VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
                 (
                     run_id,
                     search_query,
                     max_pages,
+                    requested_page_size,
                     now,
                     now,
                     os.getpid(),
@@ -2183,9 +2205,13 @@ class History:
             "recovered": recovered,
         }
 
-    def start_competitor_collection(self, search_query: str, max_pages: int) -> str:
+    def start_competitor_collection(
+        self, search_query: str, max_pages: int, *, requested_page_size: int = 100
+    ) -> str:
         """Compatibility wrapper for a fresh durable competitor run."""
-        return self.begin_competitor_collection(search_query, max_pages)["run_id"]
+        return self.begin_competitor_collection(
+            search_query, max_pages, requested_page_size=requested_page_size
+        )["run_id"]
 
     def checkpoint_competitor_collection(
         self,

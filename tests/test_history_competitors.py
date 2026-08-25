@@ -206,6 +206,51 @@ def test_resume_uses_only_explicit_checkpoint_for_same_query(tmp_path):
     assert resumed["resumed_from_run_id"] == first
 
 
+def test_resume_rank_offset_uses_exact_cards_seen_for_variable_page_sizes(tmp_path):
+    history = History(tmp_path / "history.db")
+    first = history.start_competitor_collection("AI", 2)
+    history.finish_competitor_collection(
+        first,
+        status="limited",
+        pages_fetched=2,
+        cards_seen=120,
+        details_saved=120,
+        details_failed=0,
+        resume_page=2,
+        last_started_page=1,
+        last_completed_page=1,
+        observed_page_size=100,
+    )
+
+    resumed = history.begin_competitor_collection("AI", 1, resume=True)
+
+    assert resumed["resume_page"] == 2
+    assert resumed["resume_rank_offset"] == 120
+
+
+def test_resume_does_not_cross_requested_page_sizes(tmp_path):
+    history = History(tmp_path / "history.db")
+    smoke = history.start_competitor_collection("AI", 1, requested_page_size=20)
+    history.finish_competitor_collection(
+        smoke,
+        status="limited",
+        pages_fetched=1,
+        cards_seen=20,
+        details_saved=20,
+        details_failed=0,
+        resume_page=1,
+        last_started_page=0,
+        last_completed_page=0,
+        observed_page_size=20,
+    )
+
+    production = history.begin_competitor_collection("AI", 1, requested_page_size=100, resume=True)
+
+    assert production["resume_page"] == 0
+    assert production["resumed_from_run_id"] is None
+    assert production["resume_rank_offset"] == 0
+
+
 def test_repeated_interruption_preserves_page_size_and_global_rank_offset(tmp_path):
     history = History(tmp_path / "history.db")
     first = history.start_competitor_collection("AI", 1)
