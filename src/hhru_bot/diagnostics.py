@@ -9,9 +9,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-_SECRET = re.compile(r"(?i)(cookie|authorization|token|password|secret)\s*[:=]\s*[^\r\n]*")
+_SECRET = re.compile(
+    r"(?i)(['\"]?(?:cookie|authorization|token|password|secret)['\"]?)\s*[:=]\s*[^\r\n,}]*"
+)
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
-_PHONE = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{8,}\d)(?!\w)")
+_PHONE = re.compile(r"(?<!\w)(?:\+\d[\d ()-]{8,}\d|\d{10,})(?!\w)")
 _MESSAGE = re.compile(
     r"(?is)(cover letter|message|letter|письм\w*|сообщен\w*)\s*[:=].*?(?=\s+[\w-]+\s*[:=]|$)"
 )
@@ -58,10 +60,9 @@ def build_bundle(
         row = db.execute(q, (run_id,) if run_id else ()).fetchone()
         if row is None:
             raise ValueError(f"command run not found: {run_id or 'latest'}")
-        run = {
-            key: redact(str(value)) if value is not None else None
-            for key, value in dict(row).items()
-        }
+        run = dict(row)
+        if run.get("detail"):
+            run["detail"] = str(run["detail"]).split(":", 1)[0]
     lines = []
     if log_path and log_path.is_file():
         lines = [
@@ -72,7 +73,10 @@ def build_bundle(
         ]
     snapshots = []
     if dom_dir and dom_dir.is_dir():
-        snapshots = [_safe_dom(p) for p in sorted(dom_dir.glob("*.html"))[:5]]
+        command = str(run.get("command", "")).replace("_", "-")
+        snapshots = [
+            _safe_dom(p) for p in sorted(dom_dir.glob("*.html")) if command and command in p.name
+        ][:5]
     return {
         "schema_version": "1.0.0",
         "bundle_version": "1",

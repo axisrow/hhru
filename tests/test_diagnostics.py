@@ -15,6 +15,8 @@ def test_redaction_adversarial():
     assert "a@b.example" not in out and "private words" not in out
     assert "sid=abc" not in redact("Cookie: sid=abc; csrftoken=def")
     assert "credential" not in redact("Authorization: Bearer credential")
+    assert "live-secret" not in redact('{"token":"live-secret"}')
+    assert "21:19:58" in redact("2026-08-25 21:19:58")
 
 
 def test_export_is_deterministic_and_dom_allowlist(tmp_path):
@@ -22,7 +24,7 @@ def test_export_is_deterministic_and_dom_allowlist(tmp_path):
     with sqlite3.connect(db) as c:
         c.execute("create table command_runs (run_id text, command text, status text)")
         c.execute("insert into command_runs values ('r1','probe','failed')")
-    (tmp_path / "x.html").write_text('<div data-qa="ok" class="secret">email a@b.io</div>')
+    (tmp_path / "probe_x.html").write_text('<div data-qa="ok" class="secret">email a@b.io</div>')
     a = build_bundle(db, run_id="r1", log_path=tmp_path / "missing", dom_dir=tmp_path)
     b = build_bundle(db, run_id="r1", log_path=tmp_path / "missing", dom_dir=tmp_path)
     assert a == b
