@@ -275,6 +275,8 @@ WRITE_REACHABILITY_IDS = frozenset(
         "search_page.VACANCY_CARD",
         "search_page.VACANCY_CARD_TITLE_LINK",
         "search_page.VACANCY_CARD_COMPANY",
+        "search_page.COMPANY_RATING_VALUE",
+        "search_page.COMPANY_RATING_REVIEWS_COUNT",
     }
 )
 

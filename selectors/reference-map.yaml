@@ -2747,7 +2747,7 @@ selectors:
     bindings: {}
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:26
     decision: live_dom
     sources: {}
@@ -2757,7 +2757,7 @@ selectors:
     bindings: {}
   search_page.COMPANY_RATING_VALUE:
     value: '[data-qa=''company-review-rating-value'']'
-    criticality: read
+    criticality: write
     declared_at: src/hhru_bot/selector_groups/search_page.py:25
     decision: live_dom
     sources: {}

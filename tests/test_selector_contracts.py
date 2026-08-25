@@ -229,6 +229,8 @@ def test_apply_reachable_search_selectors_are_write_critical():
         "search_page.VACANCY_CARD",
         "search_page.VACANCY_CARD_TITLE_LINK",
         "search_page.VACANCY_CARD_COMPANY",
+        "search_page.COMPANY_RATING_VALUE",
+        "search_page.COMPANY_RATING_REVIEWS_COUNT",
     }
     assert {contracts.classify_criticality(logical_id) for logical_id in logical_ids} == {"write"}
 
