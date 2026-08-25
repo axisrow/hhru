@@ -103,6 +103,7 @@ WRITE_COMMANDS = frozenset(
         "backup",
         "restore",
         "review",
+        "blacklist",
     }
 )
 

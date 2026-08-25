@@ -353,6 +353,10 @@ AIProfile/config.yaml.
 
 - `--output OUTPUT` — Путь к tar.gz
 
+### `blacklist`
+
+- (без аргументов)
+
 ### `bump`
 
 - `--resume` — Slug из конфига или resume_id HH.ru (по умолчанию — все)

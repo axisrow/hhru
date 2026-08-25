@@ -343,6 +343,16 @@ CREATE TABLE IF NOT EXISTS skipped (
     UNIQUE (resume_id, vacancy_id, reason)
 );
 
+CREATE TABLE IF NOT EXISTS blacklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('company','keyword','vacancy')),
+    value TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(entry_type, value)
+);
+
 -- review_queue — immutable, per-vacancy approval snapshots (#414).
 CREATE TABLE IF NOT EXISTS review_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -572,6 +582,7 @@ class _SkipReasons:
     """
 
     STOPWORD_TITLE = "stopword_title"  # exclude_keywords совпал в названии
+    BLACKLIST = "blacklist"
     STOPWORD_EMPLOYER = "stopword_employer"  # exclude_employers — стоп-компания
     CURRENT_EMPLOYER = "current_employer"  # account.current_employer
     ALREADY_APPLIED = "already_applied"  # history.has_applied — уже откликались
@@ -601,6 +612,7 @@ SKIP_REASONS = _SkipReasons()
 #: Все стабильные причины отсева (для ``--reason`` choices в clear-skipped и
 #: валидации). Кортеж, не set — порядок стабилен для ``--help``.
 SKIP_REASON_VALUES = (
+    _SkipReasons.BLACKLIST,
     _SkipReasons.STOPWORD_TITLE,
     _SkipReasons.STOPWORD_EMPLOYER,
     _SkipReasons.CURRENT_EMPLOYER,
@@ -3051,6 +3063,39 @@ class History:
     # причины — разные строки, как actions/responses. record_skip идемпотентен
     # по UNIQUE (INSERT OR IGNORE). Координируется с #85 (pre-LLM фильтр пишет
     # свои причины сюда же) — слой общий, точки записи не конфликтуют.
+
+    def add_blacklist(self, entry_type: str, value: str, reason: str, created_by: str) -> None:
+        from .blacklist import normalize_value, validate_value
+
+        value = normalize_value(value)
+        validate_value(entry_type, value)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO blacklist(entry_type,value,reason,created_by,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (entry_type, value, reason.strip(), created_by.strip(), datetime.now().isoformat()),
+            )
+
+    def remove_blacklist(self, entry_type: str, value: str) -> int:
+        from .blacklist import normalize_value
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM blacklist WHERE entry_type=? AND value=?",
+                (entry_type, normalize_value(value)),
+            )
+            conn.execute("DELETE FROM skipped WHERE reason=?", (SKIP_REASONS.BLACKLIST,))
+            return cur.rowcount
+
+    def list_blacklist(self) -> list[dict]:
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM blacklist ORDER BY id")]
+
+    def blacklist_sets(self) -> dict[str, set[str]]:
+        return {
+            kind: {row["value"] for row in self.list_blacklist() if row["entry_type"] == kind}
+            for kind in ("company", "keyword", "vacancy")
+        }
 
     def record_skip(self, resume_id: str, vacancy_id: str, reason: str) -> None:
         """Записывает причину отсева вакансии (идемпотентно по UNIQUE).
