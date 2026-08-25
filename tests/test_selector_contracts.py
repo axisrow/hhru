@@ -201,6 +201,8 @@ def test_refresh_preserves_upstream_candidate_decisions():
     assert refreshed[0]["logical_id"] == "vacancy_page.VACANCY_DESCRIPTION"
     assert refreshed[0]["origin"] == "reference_consensus"
     assert refreshed[0]["verification"] == "contract_tested"
+
+
 def test_issue_610_apply_login_negotiations_coverage_is_classified():
     catalog = contracts.load_catalog()
     prefixes = ("apply_form.", "negotiations.", "selectors.LOGIN")
