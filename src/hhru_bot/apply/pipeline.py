@@ -506,6 +506,7 @@ def _run(ctx: ApplyContext) -> ApplyResult:
         ctx.page,
         ctx.vacancy.vacancy_id,
         allow_relocation=ctx.allow_relocation,
+        run_id=ctx.run_id,
     )
     _halt_if_antibot(ctx)
     if isinstance(navigation_result, str):

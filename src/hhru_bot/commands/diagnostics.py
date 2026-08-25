@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..diagnostics import export_bundle
+from ..diagnostics import _same_path, export_bundle
 
 
 def register(subparsers) -> None:
@@ -24,12 +24,16 @@ def run(args: argparse.Namespace):
     if args.output:
         output = args.output.expanduser().resolve()
         history = Path(args.history).expanduser().resolve()
-        if output == history or output in {
-            history.with_name(history.name + "-wal"),
-            history.with_name(history.name + "-shm"),
-        }:
+        if any(
+            _same_path(output, candidate)
+            for candidate in (
+                history,
+                history.with_name(history.name + "-wal"),
+                history.with_name(history.name + "-shm"),
+            )
+        ):
             raise ValueError("incident bundle нельзя записать поверх history.db")
-        if output == args.log.expanduser().resolve():
+        if _same_path(output, args.log):
             raise ValueError("incident bundle нельзя записать поверх исходного лога")
         output.write_text(text, encoding="utf-8")
     else:

@@ -1203,7 +1203,11 @@ def _run_apply_for_resume(
         # id для сравнения с SSR; запись в history и троттл остаются в домене
         # хэша, миграций нет.
         return verify_response_in_negotiations(
-            page, vacancy_id, verify_resume_id, account_resume_ids=account_resume_ids
+            page,
+            vacancy_id,
+            verify_resume_id,
+            account_resume_ids=account_resume_ids,
+            run_id=progress.run_id if progress is not None else None,
         )
 
     applied_count = progress.applied_count if progress is not None else 0
@@ -1297,7 +1301,10 @@ def _run_apply_for_resume(
             # #473: the questionnaire audit is append-only and linked to the
             # command ledger/action outcome through this run id.
             apply_kwargs["questionnaire_history"] = history
-            apply_kwargs["run_id"] = progress.run_id if progress is not None else None
+        # Every apply producer, not only questionnaire auditing, must be
+        # attributable to this command run for offline incident correlation.
+        if progress is not None and progress.run_id is not None:
+            apply_kwargs["run_id"] = progress.run_id
         if progress is not None:
             progress.begin_attempt()
         try:

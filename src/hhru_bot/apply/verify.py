@@ -129,6 +129,7 @@ def verify_response_in_negotiations(
     vacancy_id: str | None,
     resume_id: str | None = None,
     account_resume_ids: set[str] | None = None,
+    run_id: str | None = None,
 ) -> NegotiationsVerifyResult:
     """Проверяет, присутствует ли вакансия в /applicant/negotiations.
 
@@ -173,7 +174,7 @@ def verify_response_in_negotiations(
             # но сервер отвечает формой входа (тот же маркер, что в fetch_responses).
             if not has_auth_cookie(page) or has_login_form(page):
                 return _indeterminate(
-                    page, wanted, "сессия не авторизована — список откликов недоступен"
+                    page, wanted, "сессия не авторизована — список откликов недоступен", run_id
                 )
             found_detail, clean, page_problem, incomplete, page_attribution_incomparable = (
                 _scan_negotiations(page, wanted, resume_id, account_resume_ids, seen_vacancy_ids)
@@ -196,7 +197,10 @@ def verify_response_in_negotiations(
         # чистое чтение другой (иначе OR-агрегация clean замаскировала бы
         # неполный скан, #207).
         return _indeterminate(
-            page, wanted, problem or "подтверждённая пагинация, но не все страницы прочитаны"
+            page,
+            wanted,
+            problem or "подтверждённая пагинация, но не все страницы прочитаны",
+            run_id,
         )
     if attribution_incomparable:
         # #212: хотя бы одна попытка нашла тему целевой вакансии, но не смогла
@@ -205,7 +209,7 @@ def verify_response_in_negotiations(
         # чтение ДРУГОЙ попытки не должно замаскировать incomparable (иначе
         # ложный not_found — ровно тот false-negative, что #212 устраняет).
         return _indeterminate(
-            page, wanted, problem or "тема вакансии найдена, но атрибуция резюме невозможна"
+            page, wanted, problem or "тема вакансии найдена, но атрибуция резюме невозможна", run_id
         )
     if clean_read:
         # #212: not_found не оставлял артефакта для аудита — «точно нет» без
@@ -217,13 +221,15 @@ def verify_response_in_negotiations(
             ", ".join(sorted(seen_vacancy_ids)) or "пусто",
         )
         return NegotiationsVerifyResult(NOT_FOUND, "список откликов прочитан, вакансии нет")
-    return _indeterminate(page, wanted, problem)
+    return _indeterminate(page, wanted, problem, run_id)
 
 
-def _indeterminate(page: Page, vacancy_id: str, detail: str) -> NegotiationsVerifyResult:
+def _indeterminate(
+    page: Page, vacancy_id: str, detail: str, run_id: str | None = None
+) -> NegotiationsVerifyResult:
     # Дамп в стиле #195: неразобравшийся случай должен оставлять артефакты
     # для посмертной диагностики (селектор — первый подозреваемый, CLAUDE.md).
-    _dump_navigation_diagnostics(page, "verify_indeterminate", vacancy_id)
+    _dump_navigation_diagnostics(page, "verify_indeterminate", vacancy_id, run_id)
     return NegotiationsVerifyResult(INDETERMINATE, detail)
 
 
