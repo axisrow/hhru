@@ -330,7 +330,36 @@ def test_refresh_keeps_audited_unavailable_rows_fail_closed(tmp_path, monkeypatc
                 "origin": "manual",
                 "verification": "unavailable",
                 "evidence": {"source": "tests/test_selector_contracts.py:1", "note": "no evidence"},
-            }
+            },
+            "search_page.unavailable_consensus_READ": {
+                "value": old,
+                "active": False,
+                "criticality": "read",
+                "declared_at": "tests/test_selector_contracts.py:1",
+                "decision": "unavailable",
+                "sources": {},
+                "bindings": {},
+                "live_matches": [],
+                "origin": "manual",
+                "verification": "unavailable",
+                "evidence": {"source": "tests/test_selector_contracts.py:1", "note": "no evidence"},
+            },
+            "search_page.unavailable_live_READ": {
+                "value": old,
+                "active": False,
+                "criticality": "read",
+                "declared_at": "tests/test_selector_contracts.py:1",
+                "decision": "unavailable",
+                "sources": {},
+                "bindings": {},
+                "live_matches": ["stale-match"],
+                "origin": "manual",
+                "verification": "failed",
+                "evidence": {
+                    "source": "tests/test_selector_contracts.py:1",
+                    "note": "failed evidence",
+                },
+            },
         },
     }
     map_path = tmp_path / "reference-map.yaml"
@@ -338,9 +367,14 @@ def test_refresh_keeps_audited_unavailable_rows_fail_closed(tmp_path, monkeypatc
     monkeypatch.setattr(contracts, "MAP_PATH", map_path)
     monkeypatch.setattr(contracts, "EXTRA_CONTRACTS", {})
     refreshed = contracts.refresh_catalog(reference_root, "manual")
-    row = refreshed["selectors"]["search_page.unavailable_READ"]
-    assert row["decision"] == "unavailable"
-    assert row["active"] is False
+    for logical_id in (
+        "search_page.unavailable_READ",
+        "search_page.unavailable_consensus_READ",
+        "search_page.unavailable_live_READ",
+    ):
+        row = refreshed["selectors"][logical_id]
+        assert row["decision"] == "unavailable"
+        assert row["active"] is False
 
 
 def test_affected_logical_ids_deduplicates_rows_variants_and_overlap():

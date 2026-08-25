@@ -215,9 +215,7 @@ EXTRA_CONTRACTS: dict[str, dict[str, str]] = {
 # keeps an older HH.ru variant).  Exact matches are bound automatically.
 REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     "apply.success.APPLY_SUCCESS_MARKER": {
-        "tgeruzov": (
-            "hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1",
-        ),
+        "tgeruzov": ("hh-apply-assistant.user.js::hasExactResponseConfirmation#0::1",),
         "yamakayama": ("app/parsers/hh_playwright.py::module.HHPlaywright.apply_to_vacancy#6::1",),
     },
     "apply_form.APPLY_COVER_LETTER_TEXTAREA": {
@@ -256,14 +254,10 @@ REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
     },
     "search_page.VACANCY_CARD": {
-        "tgeruzov": (
-            "hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1",
-        ),
+        "tgeruzov": ("hh-apply-assistant.user.js::module.SELECTORS.vacancyCard#0::1",),
     },
     "search_page.VACANCY_CARD_TITLE_LINK": {
-        "tgeruzov": (
-            "hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1",
-        ),
+        "tgeruzov": ("hh-apply-assistant.user.js::module.SELECTORS.vacancyLink#0::1",),
     },
     "selectors.LOGIN_CODE_INPUT": {
         "yamakayama": ("app/parsers/hh_login.py::module.SEL_PIN#0::0",),
@@ -1285,6 +1279,20 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
         )
         previous_decision = row.get("decision", "unavailable")
         previous_active = row.get("active", False)
+        # An audit record for failed/unavailable evidence is a durable
+        # fail-closed decision. Check it before consensus or cached DOM
+        # branches so a later refresh cannot silently reactivate a WRITE path.
+        if row.get("verification") in {"unavailable", "failed"}:
+            value = row["value"]
+            row["sources"] = {
+                name: matches
+                for name, items in indexes.items()
+                if (matches := _matching_sources(value, items))
+            }
+            row["decision"] = "unavailable"
+            row["active"] = False
+            row.pop("suggestion", None)
+            continue
         current_value = row["value"]
         tracked = _tracked_consensus(row, indexes)
         if tracked and normalize_selector(tracked[0]) != normalize_selector(current_value):
