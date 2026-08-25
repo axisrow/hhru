@@ -1139,11 +1139,7 @@ def render_matrix(catalog: dict[str, Any]) -> str:
                 row.get("target", "—"),
                 row.get("reason", "—"),
             )
-            lines.append(
-                "| "
-                + " | ".join(_markdown(value or "—") for value in cells)
-                + " |"
-            )
+            lines.append("| " + " | ".join(_markdown(value or "—") for value in cells) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -1338,9 +1334,7 @@ def refresh_catalog(reference_root: Path, mode: str | None = None) -> dict[str, 
     if mode is not None:
         catalog["policy"]["mode"] = mode
     catalog["binding_definitions"] = _binding_definitions()
-    catalog["upstream_consensus"] = _upstream_consensus(
-        indexes, previous_consensus
-    )
+    catalog["upstream_consensus"] = _upstream_consensus(indexes, previous_consensus)
     _invalidate_changed_candidate_verification(catalog, previous_consensus, unchanged)
     _refresh_bindings(catalog, indexes)
     for row in catalog["selectors"].values():
@@ -1430,9 +1424,7 @@ def _invalidate_changed_candidate_verification(
     unchanged_references: dict[str, bool],
 ) -> None:
     previous_by_value = {
-        normalize_selector(row.get("value", "")): row
-        for row in previous_rows
-        if row.get("value")
+        normalize_selector(row.get("value", "")): row for row in previous_rows if row.get("value")
     }
     for row in catalog.get("upstream_consensus", []):
         if not _is_apply_response_candidate(row.get("value", "")) or not row.get("decision"):

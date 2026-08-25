@@ -201,6 +201,7 @@ def test_refresh_preserves_upstream_candidate_decisions():
     assert refreshed[0]["origin"] == "reference_consensus"
     assert refreshed[0]["verification"] == "contract_tested"
 
+
 def test_apply_response_upstream_candidates_have_explicit_safe_decisions():
     catalog = contracts.load_catalog()
     candidates = {
