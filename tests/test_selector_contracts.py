@@ -247,7 +247,9 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
     logical_ids = [
         logical_id
         for logical_id in catalog["selectors"]
-        if logical_id.startswith(("apply.", "apply_form.", "resume_", "search_page.", "vacancy_page."))
+        if logical_id.startswith(
+            ("apply.", "apply_form.", "resume_", "search_page.", "vacancy_page.")
+        )
     ]
     # These are exactly the non-negotiations rows reported by the 2026-08-25
     # reference refresh.  The other domain's three OFF rows belong to #608.
