@@ -46,6 +46,39 @@ AUDIT_FIELDS = (
 )
 
 
+ISSUE_628_LOGICAL_IDS = {
+    "professional_roles.FILTER_TRIGGER",
+    "professional_roles.TREE_CATEGORY_INPUT",
+    "professional_roles.TREE_CHEVRON",
+    "professional_roles.TREE_INPUT",
+    "professional_roles.TREE_INPUT_ANY",
+    "professional_roles.TREE_LABEL",
+    "resume_sections.ATTESTATION_SELECTOR.0",
+    "resume_sections.ATTESTATION_SELECTOR.1",
+    "resume_sections.ATTESTATION_SELECTOR.2",
+    "resume_sections.ATTESTATION_SELECTOR.3",
+    "resume_sections.RESUME_EDIT_BUTTON.attestations",
+    "resume_sections.RESUME_EDIT_BUTTON.recommendations",
+    "apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1",
+    "apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1",
+    "apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1",
+    "browser.LOGIN_FORM",
+    "create_resume.TREE_ITEM_TEXT",
+}
+
+
+def test_issue_628_selector_contract_coverage_is_explicit():
+    selectors = contracts.load_catalog()["selectors"]
+    assert set(ISSUE_628_LOGICAL_IDS) <= selectors.keys()
+    for logical_id in ISSUE_628_LOGICAL_IDS:
+        row = selectors[logical_id]
+        assert all(row.get(field) not in (None, "", {}) for field in AUDIT_FIELDS), logical_id
+        assert row.get("coverage_status") in AUDIT_STATUSES, logical_id
+        assert row["origin"] != "llm_hypothesis", logical_id
+        if logical_id.startswith("apply.antibot."):
+            assert row["verification"] in {"unverified", "unavailable"}, logical_id
+
+
 VACANCY_CONSENSUS_PORTS = {
     "vacancy_page.VACANCY_DESCRIPTION": {
         "value": '[data-qa="vacancy-description"]',

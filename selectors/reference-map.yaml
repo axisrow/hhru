@@ -201,6 +201,12 @@ selectors:
       note: fail-closed captcha detector; absence never authorizes a write
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1:
     value: '[data-qa=''account-captcha-input'']'
     criticality: write
@@ -213,6 +219,12 @@ selectors:
       note: fail-closed captcha detector; absence never authorizes a write
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1:
     value: '[data-qa=''account-captcha-picture'']'
     criticality: write
@@ -225,6 +237,12 @@ selectors:
       note: fail-closed captcha detector; absence never authorizes a write
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   apply.success.APPLY_SUCCESS_MARKER:
     value: '[data-qa=''vacancy-response-sent-message'']'
     criticality: write
@@ -630,6 +648,15 @@ selectors:
     - account-login-form
     active: true
     bindings: {}
+    evidence:
+      source: live browser run 2026-08-25
+      note: Read-only navigation to https://hh.ru/account/login found one account-login-form marker in the rendered DOM; no account mutation performed.
+    coverage_status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: anonymous_login_page_read_only
+    verified_by: codex
   competitor_resume.PAGINATION_BLOCK:
     value: '[data-qa*=''pager-block''], [data-qa*=''pagination'']'
     criticality: read
@@ -714,6 +741,12 @@ selectors:
       source: src/hhru_bot/create_resume.py:1
       note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   negotiations.CHAT_AUTHOR_HINT:
     value: '[data-qa*=''author''], [class*=''author''], [aria-label], [title]'
     active: true
@@ -1309,6 +1342,12 @@ selectors:
       note: successful cached live catalog proves the read-only discovery workflow
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   professional_roles.TREE_CATEGORY_INPUT:
     value: input[data-qa*='tree-selector-input-category-']
     active: true
@@ -1321,6 +1360,12 @@ selectors:
       source: src/hhru_bot/professional_roles.py:1
       note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   professional_roles.TREE_CHEVRON:
     value: '[data-qa~=''tree-selector-chevron-category-{category_id}'']'
     active: true
@@ -1333,6 +1378,12 @@ selectors:
       source: src/hhru_bot/professional_roles.py:1
       note: reviewed existing runtime selector and its read-only/live workflow
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   professional_roles.TREE_INPUT:
     value: '[data-qa~=''tree-selector-input-{}'']'
     criticality: read
@@ -1345,6 +1396,12 @@ selectors:
       note: successful cached live catalog proves the read-only discovery workflow
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   professional_roles.TREE_INPUT_ANY:
     value: input[data-qa*='tree-selector-input-']
     criticality: read
@@ -1357,6 +1414,12 @@ selectors:
       note: successful cached live catalog proves the read-only discovery workflow
     active: true
     bindings: {}
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   professional_roles.TREE_LABEL:
     value: '[data-qa=''cell-text-content'']'
     criticality: write
@@ -1367,6 +1430,15 @@ selectors:
     - cell-text-content
     active: true
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_education.ADDITIONAL_ADD:
     value: '[data-qa=''resume-list-card-additionalEducation''] [data-qa=''link'']'
     criticality: write
@@ -2983,6 +3055,15 @@ selectors:
     live_matches:
     - profile-education-attestation-name
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_sections.ATTESTATION_SELECTOR.1:
     value: '[data-qa=''profile-education-attestation-organization'']'
     active: true
@@ -2993,6 +3074,15 @@ selectors:
     live_matches:
     - profile-education-attestation-organization
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_sections.ATTESTATION_SELECTOR.2:
     value: '[data-qa=''profile-education-attestation-specialty'']'
     active: true
@@ -3003,6 +3093,15 @@ selectors:
     live_matches:
     - profile-education-attestation-specialty
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_sections.ATTESTATION_SELECTOR.3:
     value: '[data-qa=''profile-education-year-input'']'
     active: true
@@ -3013,6 +3112,15 @@ selectors:
     live_matches:
     - profile-education-year-input
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_sections.RESUME_EDIT_BUTTON.attestations:
     value: '[data-qa^=''resume-edit-button-attestationEducation-'']'
     criticality: write
@@ -3030,6 +3138,15 @@ selectors:
     - resume-edit-button-attestationEducation-3-svg
     active: true
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   resume_sections.RESUME_EDIT_BUTTON.recommendations:
     value: '[data-qa^=''resume-edit-button-recommendation-'']'
     criticality: write
@@ -3045,6 +3162,15 @@ selectors:
     - resume-edit-button-recommendation-2-svg
     active: true
     bindings: {}
+    evidence:
+      source: selectors/reference-map.yaml
+      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+    coverage_status: needs-live-evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: codex
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
     criticality: read
