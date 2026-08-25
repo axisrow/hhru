@@ -27,9 +27,14 @@ _SCRIPT = r"""
     if (!cookie && !notice) return;
     if (/captcha|подтверд|анкета|отклик|сохранить|status/i.test(text)
       && !cookie && !el.matches('[data-qa^="notification"]')) return;
-    const button = [...el.querySelectorAll('button,[role="button"],[aria-label]')]
-      .find(b => /close|dismiss|закрыть|скрыть|не сейчас|принять|соглас|удалить/i.test(
-        `${b.getAttribute('aria-label') || ''} ${b.innerText || ''}`));
+    // Do not infer a dismiss action from button text.  These are the exact
+    // controls observed in the authenticated live DOM; broad matches could
+    // click an unrelated consent/delete/confirmation action in the subtree.
+    const button = cookie
+      ? el.querySelector('[data-qa="cookies-policy-informer-accept"]')
+      : el.querySelector(
+          '[data-qa="notification-close"] button[aria-label="Удалить"]'
+        );
     if (!button) return;
     const qa = button.getAttribute('data-qa');
     const label = button.getAttribute('aria-label');
