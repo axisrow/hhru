@@ -646,7 +646,8 @@ selectors:
     bindings: {}
     evidence:
       source: live browser run 2026-08-25
-      note: Read-only navigation to https://hh.ru/account/login found one account-login-form marker in the rendered DOM; no account mutation performed.
+      note: Read-only navigation to https://hh.ru/account/login found one account-login-form marker in the rendered DOM; no
+        account mutation performed.
     coverage_status: intentionally local
     origin: browser_dom
     verification: browser_observed
@@ -1328,7 +1329,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:27
-      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned
+        successfully.
     active: true
     bindings: {}
     coverage_status: intentionally local
@@ -1382,7 +1384,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:28
-      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned
+        successfully.
     active: true
     bindings: {}
     coverage_status: intentionally local
@@ -1400,7 +1403,8 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/professional_roles.py:29
-      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned successfully.
+      note: live CLI refresh completed against the authenticated session; read-only professional-role discovery workflow returned
+        successfully.
     active: true
     bindings: {}
     coverage_status: intentionally local
@@ -1445,12 +1449,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education.ADDITIONAL_TRIGGER:
     value: '[data-qa=''resume-edit-button-additionalEducation-{index}'']'
     criticality: write
@@ -1474,12 +1478,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education.CANCEL_BUTTON:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
@@ -1496,12 +1500,11 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE live_passed requires a mutation step and was not performed.
+      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE
+        live_passed requires a mutation step and was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education.PRIMARY_ADD:
     value: '[data-qa=''resume-list-card-education''] [data-qa=''link'']'
     criticality: write
@@ -1519,12 +1522,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education.PRIMARY_TRIGGER:
     value: '[data-qa=''resume-edit-button-education-{index}'']'
     criticality: write
@@ -1542,12 +1545,11 @@ selectors:
     verification: live_passed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled
+        without saving.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education.SAVE_BUTTON:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -1564,12 +1566,11 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE live_passed requires a mutation step and was not performed.
+      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE
+        live_passed requires a mutation step and was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._ADDITIONAL_FIELDS.institution:
     value: '[data-qa=''profile-education-additional-name'']'
     criticality: write
@@ -1586,12 +1587,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._ADDITIONAL_FIELDS.organization:
     value: '[data-qa=''profile-education-additional-organization'']'
     criticality: write
@@ -1608,12 +1609,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._ADDITIONAL_FIELDS.specialty:
     value: '[data-qa=''profile-education-additional-specialty'']'
     criticality: write
@@ -1630,12 +1631,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._ADDITIONAL_FIELDS.year:
     value: '[data-qa=''profile-education-year-input'']'
     criticality: write
@@ -1652,12 +1653,12 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which was not performed.
+      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
+        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
+        was not performed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._PRIMARY_FIELDS.faculty:
     value: '[data-qa=''profile-education-faculty-input'']'
     criticality: write
@@ -1674,12 +1675,11 @@ selectors:
     verification: live_passed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled
+        without saving.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._PRIMARY_FIELDS.institution:
     value: '[data-qa=''profile-education-university-input'']'
     criticality: write
@@ -1696,12 +1696,11 @@ selectors:
     verification: live_passed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled
+        without saving.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._PRIMARY_FIELDS.specialty:
     value: '[data-qa=''profile-education-specialty-input'']'
     criticality: write
@@ -1718,12 +1717,11 @@ selectors:
     verification: live_passed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled
+        without saving.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
-
-
   resume_education._PRIMARY_FIELDS.year:
     value: '[data-qa=''profile-education-year-input'']'
     criticality: write
@@ -1740,7 +1738,8 @@ selectors:
     verification: live_passed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled without saving.
+      note: Authenticated CLI edit-education --dry-run opened the primary education form, filled this field, and cancelled
+        without saving.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
@@ -3020,7 +3019,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3039,7 +3039,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3060,7 +3061,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3079,7 +3081,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3098,7 +3101,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3117,7 +3121,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3136,7 +3141,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3155,7 +3161,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3174,7 +3181,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3193,7 +3201,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3212,7 +3221,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3231,7 +3241,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3250,7 +3261,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3269,7 +3281,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3288,7 +3301,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3307,7 +3321,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -3326,7 +3341,8 @@ selectors:
     verification: unverified
     evidence:
       source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory; authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
+      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
+        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_position_editor_read_only
     verified_by: codex
@@ -4165,6 +4181,82 @@ selectors:
     last_verified_at: 2026-08-25
     verified_flow: login DOM healthcheck (read-only)
     verified_by: browser
+  transient_overlays.COOKIE_BANNER:
+    live_matches:
+    - cookies-policy-informer
+    value: '[data-qa=''cookies-policy-informer'']'
+    criticality: read
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_navigation
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      note: Visible cookie banner; dedicated dismiss control is [data-qa='cookies-policy-informer-accept'] and must be used
+        for session suppression.
+    active: true
+  transient_overlays.COOKIE_BANNER_DISMISS:
+    live_matches:
+    - cookies-policy-informer-accept
+    value: '[data-qa=''cookies-policy-informer-accept'']'
+    criticality: read
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_navigation
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM on /applicant/negotiations and /resume/9bb2b4d2ff10f96f1d0039ed1f323968737936
+      note: Button text is Понятно; no profile or form data is changed by dismissing the cookie banner.
+    active: true
+  transient_overlays.NOTIFICATION:
+    live_matches:
+    - notification notification_info
+    value: '[data-qa^=''notification'']'
+    criticality: read
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_notification_menu
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM after clicking [data-qa='userNotifications-button'] on /applicant/negotiations
+      note: Notification data-qa='notification notification_info', text Работодатели не знают ваш статус поиска; no status
+        link is clicked.
+    active: true
+  transient_overlays.NOTIFICATION_DISMISS:
+    live_matches:
+    - notification-close
+    value: '[data-qa=''notification-close''] button[aria-label=''Удалить'']'
+    criticality: read
+    decision: live_dom
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_read_only_notification_menu
+    verified_by: codex
+    evidence:
+      source: live Playwright DOM after clicking [data-qa='userNotifications-button'] on /applicant/negotiations
+      note: Dedicated notification close control observed; status link remains untouched.
+    active: true
+  transient_overlays.RESUME_DELIVERED:
+    value: ''
+    active: true
+    criticality: read
+    decision: needs_live_evidence
+    origin: browser_dom
+    verification: unverified
+    last_verified_at: '2026-08-25'
+    verified_flow: authenticated_submit_required
+    verified_by: codex
+    evidence:
+      source: issue
+      note: Transient overlay appears only after submit (WRITE); selector intentionally not invented. Obtain live evidence
+        after separate WRITE authorization.
   vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN:
     value: '[data-qa=''vacancy-response-link-top-again'']'
     criticality: write

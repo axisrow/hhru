@@ -190,6 +190,11 @@
 | selectors.LOGIN_EMAIL_INPUT | `[data-qa='applicant-login-input-email']` | — | — | input[data-qa="login-input-username"] | documented_live |
 | selectors.LOGIN_EMAIL_TYPE | `input[data-qa='credential-type-email']` | — | — | — | live_dom |
 | selectors.LOGIN_PHONE_INPUT | `[data-qa='magritte-phone-input-national-number-input']` | — | — | — | live_dom |
+| transient_overlays.COOKIE_BANNER | `[data-qa='cookies-policy-informer']` | — | — | — | live_dom |
+| transient_overlays.COOKIE_BANNER_DISMISS | `[data-qa='cookies-policy-informer-accept']` | — | — | — | live_dom |
+| transient_overlays.NOTIFICATION | `[data-qa^='notification']` | — | — | — | live_dom |
+| transient_overlays.NOTIFICATION_DISMISS | `[data-qa='notification-close'] button[aria-label='Удалить']` | — | — | — | live_dom |
+| transient_overlays.RESUME_DELIVERED | `` | — | — | — | needs_live_evidence |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | documented_live |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |
