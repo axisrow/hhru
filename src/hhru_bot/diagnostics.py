@@ -15,7 +15,7 @@ _SECRET = re.compile(
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _URL = re.compile(r"https?://[^\s\]}>]+")
 _PATH = re.compile(r"/(?:Users|home|private/var)/[^\s\]}>]+")
-_PHONE = re.compile(r"(?<!\w)(?:\+\d[\d ()-]{8,}\d|\d{10,})(?!\w)")
+_PHONE = re.compile(r"(?<!\w)(?:\+?[89][\d ()-]{8,}\d)(?!\w)")
 _MESSAGE = re.compile(
     r"(?is)(cover letter|message|letter|письм\w*|сообщен\w*)\s*[:=].*?(?=\s+[\w-]+\s*[:=]|$)"
 )

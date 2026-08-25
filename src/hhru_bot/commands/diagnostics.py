@@ -29,6 +29,8 @@ def run(args: argparse.Namespace):
             history.with_name(history.name + "-shm"),
         }:
             raise ValueError("incident bundle нельзя записать поверх history.db")
+        if output == args.log.expanduser().resolve():
+            raise ValueError("incident bundle нельзя записать поверх исходного лога")
         output.write_text(text, encoding="utf-8")
     else:
         print(text, end="")

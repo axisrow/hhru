@@ -307,7 +307,7 @@ def _execute(args: argparse.Namespace) -> None:
     # log сам ничего не логирует — ему не нужны handlers (цикл ревью #61, #58).
     # #179: то же условие решает, есть ли у логгера hhru_bot FileHandler — нужно
     # ниже ещё раз (except Exception), считаем один раз, не дублируем условие.
-    logging_enabled = args.command != "log" and not (
+    logging_enabled = args.command not in {"log", "diagnostics"} and not (
         args.command == "account" and getattr(args, "account_command", None) == "list"
     )
     if logging_enabled:
