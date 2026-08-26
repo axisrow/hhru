@@ -786,3 +786,62 @@ def test_interrupted_skills_migration_leaves_original_table_intact(tmp_path, mon
         rows = conn.execute("SELECT COUNT(*) FROM competitor_resume_skills").fetchone()[0]
     assert tables == {"competitor_resume_skills"}
     assert rows == 1
+
+
+def test_coverage_warning_follows_the_same_legacy_scope_as_membership(tmp_path):
+    """#669: обе половины отчёта обязаны одинаково понимать «легаси». Пока
+    счётчик покрытия коалесил NULL-режим прогона в `anonymous`, а членство
+    помечалось `unknown`, отчёт `--auth-mode anonymous` печатал предупреждение
+    об ограниченном покрытии при пустой выборке, а `--auth-mode unknown` —
+    единственный скоуп, возвращающий эти строки, — предупреждение терял."""
+    db = tmp_path / "history.db"
+    History(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE competitor_resume_queries")
+        conn.execute("""CREATE TABLE competitor_resume_queries (
+            resume_id TEXT NOT NULL,
+            search_query TEXT NOT NULL,
+            search_rank INTEGER NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (resume_id, search_query)
+        )""")
+        conn.execute(
+            "INSERT INTO competitor_resume_queries VALUES ('old','AI',1,'2026-08-01','2026-08-01')"
+        )
+
+    history = History(db)
+    # Снимок нужен, иначе JOIN отдаст ноль строк в любом скоупе и проверка
+    # выродится в тавтологию.
+    history.upsert_competitor_resume(
+        _snapshot_id("old"),
+        search_query="AI",
+        search_rank=1,
+        search_in="full_text",
+        auth_mode="unknown",
+    )
+    legacy_run = history.start_competitor_collection("AI", 1)
+    history.finish_competitor_collection(
+        legacy_run,
+        status="limited",
+        pages_fetched=1,
+        cards_seen=1,
+        details_saved=1,
+        details_failed=0,
+        resume_page=None,
+        last_started_page=0,
+        last_completed_page=0,
+        observed_page_size=20,
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE competitor_collection_runs SET auth_mode=NULL, search_in=NULL WHERE run_id=?",
+            (legacy_run,),
+        )
+
+    for scope in ("anonymous", "authenticated", "unknown"):
+        rows = history.list_competitor_resumes("AI", auth_mode=scope)
+        limited = history.count_limited_competitor_runs("AI", auth_mode=scope)
+        # Предупреждение о покрытии — свойство ТОЙ ЖЕ выборки, что и строки:
+        # пустая выборка не предупреждает, непустая легаси-выборка предупреждает.
+        assert bool(limited) == bool(rows), f"{scope}: rows={len(rows)} limited={limited}"

@@ -781,6 +781,13 @@ class History:
             # #669: по той же причине, что и RENAME выше — SCHEMA создаёт
             # idx_competitor_queries_query уже по новым колонкам, поэтому
             # пересборка ключа членства обязана пройти ДО executescript.
+            #
+            # Обе миграции ниже открывают собственный BEGIN IMMEDIATE, и это
+            # безопасно ровно здесь: legacy-режим sqlite3 открывает неявную
+            # транзакцию только на DML, а до них в этой функции идёт лишь DDL
+            # (_rename_apply_runs_to_command_runs) и executescript, который сам
+            # коммитит перед выполнением. Появится DML выше — вложенный BEGIN
+            # упадёт на "cannot start a transaction within a transaction".
             _migrate_competitor_query_scope_schema(conn)
             conn.executescript(SCHEMA)
             _migrate_competitor_skills_schema(conn)
@@ -2583,11 +2590,19 @@ class History:
             else:
                 conditions = ["search_query = ?", "finished_at IS NOT NULL"]
                 params: list[str] = [search_query]
+                # Обе половины отчёта обязаны одинаково понимать «легаси»: эти
+                # COALESCE подставляют ровно то, чем миграция помечает строки
+                # членства. Для search_in это факт `full_text` (pos был жёстко
+                # зашит), для auth_mode — LEGACY_UNKNOWN_SCOPE, потому что режим
+                # был выбираемым и в членстве не записывался. Разойдись они —
+                # и `--auth-mode anonymous` предупреждал бы об ограниченном
+                # покрытии выборки, в которой нет ни одной строки.
                 if search_in is not None:
                     conditions.append("COALESCE(search_in, 'full_text') = ?")
                     params.append(search_in)
                 if auth_mode is not None:
-                    conditions.append("COALESCE(auth_mode, 'anonymous') = ?")
+                    conditions.append("COALESCE(auth_mode, ?) = ?")
+                    params.append(LEGACY_UNKNOWN_SCOPE)
                     params.append(auth_mode)
                 row = conn.execute(
                     f"""SELECT CASE
