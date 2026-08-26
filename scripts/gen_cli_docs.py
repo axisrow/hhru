@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 README = REPO_ROOT / "README.md"
@@ -38,7 +38,13 @@ def _fmt_opt(action: argparse.Action, *, trim_help: bool = False) -> str:
     meta = ""
     if action.nargs != 0 and action.type not in (None, bool):
         meta = f" {getattr(action, 'metavar', None) or action.dest.upper()}"
-    default = "" if not action.default else f" (по умолчанию: {action.default!r})"
+    if isinstance(action.default, PurePath):
+        # Keep generated docs identical on POSIX and Windows. ``repr(Path)``
+        # otherwise changes from ``PosixPath`` to ``WindowsPath``.
+        default_repr = f"PosixPath({action.default.as_posix()!r})"
+    else:
+        default_repr = repr(action.default)
+    default = "" if not action.default else f" (по умолчанию: {default_repr})"
     help_text = (action.help or "").strip() if trim_help else action.help or ""
     if trim_help:
         description = f" — {help_text}" if help_text else ""
