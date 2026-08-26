@@ -36,6 +36,8 @@ root, so the path points to the checked-in top-level `skills/` directory; a
 
 Diagnostics include `environment.hhru.version` and
 `environment.hhru.commit_sha` together. The SHA is resolved from the actual
-checkout (or `HHRU_COMMIT_SHA`/`GITHUB_SHA` supplied by a build), rather than
-being copied into a tracked manifest. This avoids a self-referential hash in a
-floating branch manifest and identifies the exact installed source state.
+checkout (or the package-specific `HHRU_COMMIT_SHA` supplied by a build),
+rather than being copied into a tracked manifest. A consuming workflow's
+ambient `GITHUB_SHA` is intentionally ignored because it identifies the
+consumer repository, not necessarily hhru. This avoids a self-referential hash
+in a floating branch manifest and identifies the exact installed source state.

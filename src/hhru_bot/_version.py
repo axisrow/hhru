@@ -69,7 +69,11 @@ def _installed_commit_sha() -> str | None:
 
 def commit_sha() -> str:
     """Return the immutable commit for this installation or ``unknown``."""
-    configured = os.environ.get("HHRU_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
+    # GITHUB_SHA belongs to the workflow's checkout, which may be a consumer
+    # repository running an installed hhru wheel. Only accept the explicit
+    # package provenance variable; a package build may populate it from its
+    # own CI GITHUB_SHA before installation.
+    configured = os.environ.get("HHRU_COMMIT_SHA")
     if configured and _SHA.fullmatch(configured):
         return configured
 
