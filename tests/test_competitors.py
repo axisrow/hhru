@@ -7,6 +7,7 @@ from hhru_bot.competitors import (
     CompetitorResumeIndeterminate,
     CompetitorSearchCoverage,
     CompetitorSearchIndeterminate,
+    _months,
     available_search_page_count,
     build_competitor_search_url,
     coverage_warning,
@@ -52,6 +53,103 @@ FastAPI
 Гражданство, время в пути до работы
 Желательное время в пути до работы: Не имеет значения
 """
+
+
+# Резюме, заполненное в английской версии hh.ru. Подписи разделов приходят
+# английскими независимо от locale браузера — язык принадлежит анкете, а не
+# сессии (проверено на живом hh.ru 26.08, ?locale=RU не переключает). Слепок
+# снят с https://hh.ru/resume/016a96bb000522ca2e0039ed1f5a4c5a645465, где
+# прежний разбор по одним русским подписям терял ВСЕ секции сразу.
+DETAIL_EN = """
+Male
+Brazil, not willing to relocate, not prepared for business trips
+Machine Learning Engineer
+250 000 ₽ in hand
+Specializations:
+Programmer, developer
+Employment type: full time, part time
+Work format: at the employer's location, remote
+Work experience 9 years 11 months
+Skills
+Skill proficiency levels
+Advanced level
+Java
+Python
+Medium level
+Shell Scripting
+Level not specified
+Linux
+Education
+Higher education (Doctor of Science)
+Languages
+Portuguese — Native
+English — C2 — Proficiency
+Citizenship, travel time to work
+Desired travel time to work: not important
+"""
+
+
+def test_parse_detail_reads_english_resume_sections():
+    """hh.ru отдаёт подписи на языке анкеты — разбор обязан понимать обе локали.
+
+    Регрессия боевых данных: 472 из 6233 собранных резюме (7.6%) осели в базе
+    пустыми по ВСЕМ секциям сразу, потому что парсер знал только «Опыт работы»
+    и «Навыки». Потеря была смещена в самый технический сегмент — Machine
+    Learning 34%, Data Scientist 18% против 0% у «промпт инженер».
+    """
+    snapshot = parse_competitor_resume_text(
+        DETAIL_EN,
+        resume_id="en",
+        resume_url="https://hh.ru/resume/en",
+        headings=[
+            "Machine Learning Engineer",
+            "250 000 ₽ in hand",
+            "Work experience 9 years 11 months",
+            "Skills",
+            "Education",
+            "Languages",
+        ],
+    )
+    assert snapshot.desired_role == "Machine Learning Engineer"
+    assert snapshot.experience_months == 119
+    assert snapshot.specializations == ["Programmer, developer"]
+    assert snapshot.employment_types == ["full time", "part time"]
+    assert snapshot.work_formats == ["at the employer's location", "remote"]
+    assert snapshot.education == ["Higher education (Doctor of Science)"]
+    assert snapshot.languages == ["Portuguese — Native", "English — C2 — Proficiency"]
+    # Уровень владения нормализован к русскому имени: значение уходит в БД и
+    # отчёты, где английский дубль расщепил бы бакет.
+    assert [(skill.name, skill.proficiency) for skill in snapshot.skills] == [
+        ("Java", "Продвинутый уровень"),
+        ("Python", "Продвинутый уровень"),
+        ("Shell Scripting", "Средний уровень"),
+        ("Linux", "Уровень не указан"),
+    ]
+
+
+def test_parse_detail_english_headings_are_not_mistaken_for_desired_role():
+    """«Work experience …» — подпись раздела, а не должность."""
+    snapshot = parse_competitor_resume_text(
+        DETAIL_EN,
+        resume_id="en",
+        resume_url="https://hh.ru/resume/en",
+        headings=["Skills", "Machine Learning Engineer", "Work experience 9 years 11 months"],
+    )
+    assert snapshot.desired_role == "Machine Learning Engineer"
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        ("Опыт работы 5 лет 3 месяца", 63),
+        ("Work experience 9 years 11 months", 119),
+        ("Work experience 1 year 1 month", 13),
+        ("Work experience 6 months", 6),
+        ("Опыт работы", None),
+    ],
+)
+def test_experience_months_parses_both_locales(heading, expected):
+    assert _months(heading) == expected
 
 
 def test_search_url_is_keyword_only_and_page_numbered():
