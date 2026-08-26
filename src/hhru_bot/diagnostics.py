@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from ._version import build_info
+
 _SECRET = re.compile(
     r"(?i)(['\"]?(?:cookie|authorization|token|password|secret|api[_-]?key|csrf[_-]?token|session[_-]?id)['\"]?)\s*[:=]\s*[^\r\n,}]*"
 )
@@ -166,7 +168,11 @@ def build_bundle(
     return {
         "schema_version": "1.0.0",
         "bundle_version": "1",
-        "environment": {"python": platform.python_version(), "platform": platform.platform()},
+        "environment": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "hhru": build_info(),
+        },
         "run": run,
         "log_tail": lines,
         "selectors": {"hits": [], "misses": [], "evidence": []},
