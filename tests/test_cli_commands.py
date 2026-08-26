@@ -131,6 +131,7 @@ def test_all_commands_registered():
         "uncertain",
         "diagnostics",
         "blacklist",
+        "update",
     }
 
 
@@ -199,6 +200,7 @@ def test_register_commands_returns_names():
         "uncertain",
         "diagnostics",
         "blacklist",
+        "update",
     }
 
 
