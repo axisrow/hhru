@@ -364,6 +364,16 @@ AIProfile/config.yaml.
 
 - (без аргументов)
 
+#### `account create`
+
+Создать data/accounts/<name>/ и скопировать туда шаблон конфига.
+
+- (без аргументов)
+
+#### `account list`
+
+- (без аргументов)
+
 ### `apply`
 
 - `--resume` — Slug из конфига или resume_id HH.ru (по умолчанию — все)
@@ -383,6 +393,19 @@ AIProfile/config.yaml.
 
 - (без аргументов)
 
+#### `blacklist add`
+
+- `--reason`
+- `--by` (по умолчанию: 'cli')
+
+#### `blacklist list`
+
+- (без аргументов)
+
+#### `blacklist remove`
+
+- (без аргументов)
+
 ### `bump`
 
 - `--resume` — Slug из конфига или resume_id HH.ru (по умолчанию — все)
@@ -394,6 +417,24 @@ AIProfile/config.yaml.
 Создание события только по явно подтверждённым --start/--end. Автоматического триггера из responses нет.
 
 - (без аргументов)
+
+#### `calendar auth`
+
+- `--credentials` (по умолчанию: 'data/google_calendar/client_secret.json')
+- `--token` (по умолчанию: 'data/google_calendar/token.json')
+
+#### `calendar event`
+
+- `--credentials` (по умолчанию: 'data/google_calendar/client_secret.json')
+- `--token` (по умолчанию: 'data/google_calendar/token.json')
+- `--calendar-id` (по умолчанию: 'primary')
+- `--summary`
+- `--start` — Начало, RFC3339, например 2026-08-20T10:00:00+07:00
+- `--end` — Конец, RFC3339
+- `--timezone` (по умолчанию: 'UTC')
+- `--description`
+- `--location`
+- `--dry-run` — Показать payload без OAuth и записи
 
 ### `call-api`
 
@@ -423,6 +464,25 @@ AIProfile/config.yaml.
 READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]; локальный отчёт: competitors report [--text QUERY] [--search-in SCOPE] [--auth-mode MODE] [--top N].
 
 - (без аргументов)
+
+#### `competitors collect`
+
+- `--text` — Ключевое слово поиска резюме
+- `--max-pages MAX_PAGES` — Необязательный safety-cap (по умолчанию — до конца видимой выдачи)
+- `--resume` — Продолжить последний прерванный запуск того же запроса с checkpoint
+- `--execution-mode` — Режим выполнения (по умолчанию foreground; background не поддерживается) (по умолчанию: 'foreground')
+- `--progress-verbosity PROGRESS_VERBOSITY` — Поток прогресса: 1 — показывать, 0 — только финал/ошибки (по умолчанию 1) (по умолчанию: 1)
+- `--items-per-page ITEMS_PER_PAGE` — Запрошенный размер страницы hh.ru (по умолчанию 100; для smoke можно 20) (по умолчанию: 100)
+- `--search-in` — Область поиска --text на hh.ru: position — только желаемая должность (заголовок резюме), самая узкая и чистая (по умолчанию); keywords — по ключевым навыкам; full_text — по всему резюме (должность, навыки, описание опыта, достижения), самая широкая: запрос вроде «AI» так вытягивает дизайнеров с Adobe Illustrator (по умолчанию: 'position')
+- `--auth-mode` — Сессия браузера: anonymous — чистый контекст без cookie (по умолчанию); authenticated — загрузить сохранённую сессию из конфига (по умолчанию: 'anonymous')
+- `--detail-workers DETAIL_WORKERS` — Параллельные процессы деталей: 1–1000 (по умолчанию 10; для authenticated требуется 1) (по умолчанию: 10)
+
+#### `competitors report`
+
+- `--text` — Ограничить отчёт одним поисковым запросом
+- `--search-in` — Ограничить отчёт одной областью поиска: один и тот же --text в разных областях — это РАЗНЫЕ выборки (full_text по «AI» тянет дизайнеров с Adobe Illustrator). Без флага отчёт охватывает все области
+- `--auth-mode` — Ограничить отчёт одним режимом сессии: анонимная выдача hh.ru урезана относительно авторизованной. Без флага отчёт охватывает оба режима
+- `--top TOP` — Число строк в каждом топе (по умолчанию 20) (по умолчанию: 20)
 
 ### `config`
 
@@ -465,6 +525,20 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 ### `diagnostics`
 
 - (без аргументов)
+
+#### `diagnostics doctor`
+
+Сравнивает версию, release/tag и commit SHA установленного CLI, marketplace snapshot и загруженного Codex plugin.
+
+- `--marketplace-path, --marketplace MARKETPLACE` — Путь к marketplace snapshot (для диагностики нестандартной установки)
+- `--plugin-cache PLUGIN_CACHE` — Путь к Codex plugin cache (для диагностики нестандартной установки)
+
+#### `diagnostics export`
+
+- `--run-id`
+- `--output OUTPUT`
+- `--log LOG` (по умолчанию: PosixPath('data/logs/hhru_bot.log'))
+- `--dom-dir DOM_DIR` (по умолчанию: PosixPath('data/logs'))
 
 ### `edit-education`
 
@@ -597,6 +671,18 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 - (без аргументов)
 
+#### `profile set`
+
+- (без аргументов)
+
+#### `profile show`
+
+- (без аргументов)
+
+#### `profile unset`
+
+- (без аргументов)
+
 ### `publish-resume`
 
 Публикует черновик резюме кликом по кнопке hh.ru. WRITE-hh-ru: боевой режим требует --force; --dry-run ничего не нажимает.
@@ -617,6 +703,52 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 Показать очередь, аудит и шаблоны, задать ответ или обучить шаблон.
 
 - (без аргументов)
+
+#### `questionnaire audit`
+
+Что бот ответил в анкетах: ответ, уверенность, шаблон.
+
+- `--resume` — Slug резюме или resume_id (по умолчанию — все)
+- `--last LIMIT` — Сколько последних ответов показать (по умолчанию: 50)
+- `--template` — Только ответы этого шаблона
+- `--low-confidence` — Только вопросы, на которые бот не стал отвечать
+
+#### `questionnaire learn`
+
+Интерактивный разбор накопившихся вопросов анкет.
+
+- `--resume` — Slug резюме или resume_id
+- `--limit LIMIT` — Сколько вопросов разобрать (по умолчанию: 20)
+
+#### `questionnaire pending`
+
+Вопросы, на которые бот не стал отвечать сам.
+
+- `--resume` — Slug резюме или resume_id (по умолчанию — все)
+- `--limit LIMIT` — Сколько строк вывести (по умолчанию: 50)
+
+#### `questionnaire set`
+
+static — готовое значение; contextual — инструкция для LLM.
+
+- `--mode` — static (значение) или contextual (инструкция)
+- `--answer` — Готовый ответ (для --mode static)
+- `--instruction` — Инструкция для LLM (для --mode contextual)
+- `--example` — Формулировка вопроса, относящаяся к этому шаблону (можно повторять)
+- `--cluster` — Тематический кластер вопроса
+- `--resume` — Задать только для этого резюме
+
+#### `questionnaire templates`
+
+Шаблоны уровня аккаунта и переопределения резюме.
+
+- `--resume` — Slug резюме или resume_id
+
+#### `questionnaire unset`
+
+Удаляет шаблон только из своего скоупа.
+
+- `--resume` — Снять только переопределение этого резюме
 
 ### `refresh-token`
 
@@ -707,6 +839,26 @@ Account-wide ответы в чатах: план из локальной ист
 
 - (без аргументов)
 
+#### `review approve`
+
+- `--ttl TTL` (по умолчанию: 900)
+
+#### `review edit`
+
+- (без аргументов)
+
+#### `review list`
+
+- `--status`
+
+#### `review requeue`
+
+- (без аргументов)
+
+#### `review skip`
+
+- (без аргументов)
+
 ### `robot-queue`
 
 - `--limit LIMIT` —  (по умолчанию: 50)
@@ -756,6 +908,18 @@ Account-wide ответы в чатах: план из локальной ист
 - `--limit LIMIT` — Лимит строк в режиме --list (по умолчанию 50) (по умолчанию: 50)
 
 ### `uncertain`
+
+- (без аргументов)
+
+#### `uncertain inspect`
+
+- (без аргументов)
+
+#### `uncertain list`
+
+- `--limit LIMIT` (по умолчанию: 50)
+
+#### `uncertain reconcile`
 
 - (без аргументов)
 

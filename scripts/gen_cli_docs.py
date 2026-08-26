@@ -33,13 +33,25 @@ def _opts(parser: argparse.ArgumentParser) -> list[argparse.Action]:
     return [a for a in parser._actions if a.option_strings and a.dest != "help"]
 
 
-def _fmt_opt(action: argparse.Action) -> str:
+def _fmt_opt(action: argparse.Action, *, trim_help: bool = False) -> str:
     flag = ", ".join(action.option_strings)
     meta = ""
     if action.nargs != 0 and action.type not in (None, bool):
         meta = f" {getattr(action, 'metavar', None) or action.dest.upper()}"
     default = "" if not action.default else f" (по умолчанию: {action.default!r})"
-    return f"`{flag}{meta}` — {action.help or ''}{default}"
+    help_text = (action.help or "").strip() if trim_help else action.help or ""
+    if trim_help:
+        description = f" — {help_text}" if help_text else ""
+    else:
+        description = f" — {help_text}"
+    return f"`{flag}{meta}`{description}{default}"
+
+
+def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction | None:
+    return next(
+        (action for action in parser._actions if isinstance(action, argparse._SubParsersAction)),
+        None,
+    )
 
 
 def render() -> str:
@@ -72,6 +84,23 @@ def render() -> str:
         else:
             lines.append("- (без аргументов)")
         lines.append("")
+        nested = _subparsers(sub)
+        if nested is not None:
+            for nested_name in sorted(nested.choices):
+                nested_parser = nested.choices[nested_name]
+                lines.append(f"#### `{name} {nested_name}`")
+                nested_desc = (nested_parser.description or "").strip()
+                if nested_desc:
+                    lines.append("")
+                    lines.append(nested_desc)
+                lines.append("")
+                nested_opts = _opts(nested_parser)
+                if nested_opts:
+                    for a in nested_opts:
+                        lines.append(f"- {_fmt_opt(a, trim_help=True)}")
+                else:
+                    lines.append("- (без аргументов)")
+                lines.append("")
     lines.append(END)
     return "\n".join(lines)
 
