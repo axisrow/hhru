@@ -47,6 +47,11 @@ def test_format_salary_no_bounds_empty():
     assert _format_salary(s) == ""
 
 
+def test_format_salary_unknown_currency_omits_none():
+    s = SalaryInfo(5000, 7000, None, "5 000–7 000 XYZ на руки")
+    assert _format_salary(s) == "5000-7000"
+
+
 # --- _format_card_line ---
 
 

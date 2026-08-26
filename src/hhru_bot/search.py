@@ -241,6 +241,8 @@ def _detect_currency(text: str) -> str | None:
     for needle, code in _CURRENCY_PATTERNS:
         if needle == "br" and not re.search(r"\bbr\b", lower):
             continue
+        if needle == "сом" and not re.search(r"(?<!\w)сом(?!\w)", lower):
+            continue
         if needle in lower:
             return code
     # Не угадываем валюту по хвосту заголовка: «на руки» и «до вычета
@@ -271,8 +273,8 @@ def parse_salary(text: str | None) -> SalaryInfo | None:
     if not numbers:
         return None
 
-    has_from = "от" in raw.lower()
-    has_to = "до" in raw.lower()
+    has_from = bool(re.search(r"(?<!\w)от\s+\d", raw.lower()))
+    has_to = bool(re.search(r"(?<!\w)до\s+\d", raw.lower()))
 
     if len(numbers) >= 2:
         # Диапазон «A–B».

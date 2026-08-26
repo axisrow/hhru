@@ -67,7 +67,7 @@ def _format_salary(salary: SalaryInfo | None) -> str:
         amount = f"до {salary.salary_to}"
     else:
         return ""
-    return f"{amount} {salary.currency}"
+    return f"{amount} {salary.currency}" if salary.currency else amount
 
 
 def _format_card_line(card: VacancyCard) -> str:
