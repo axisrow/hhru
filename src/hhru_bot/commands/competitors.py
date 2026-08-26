@@ -237,10 +237,11 @@ def register(subparsers) -> None:
         choices=("position", "full_text", "keywords"),
         default="position",
         help=(
-            "Где hh.ru ищет --text: position — только в названии должности "
-            "(по умолчанию); full_text — по всему резюме, включая навыки, из-за чего "
-            "запрос вроде «AI» вытягивает дизайнеров с Adobe Illustrator; "
-            "keywords — по ключевым навыкам"
+            "Область поиска --text на hh.ru: position — только желаемая должность "
+            "(заголовок резюме), самая узкая и чистая (по умолчанию); "
+            "keywords — по ключевым навыкам; full_text — по всему резюме "
+            "(должность, навыки, описание опыта, достижения), самая широкая: "
+            "запрос вроде «AI» так вытягивает дизайнеров с Adobe Illustrator"
         ),
     )
     collect.add_argument(

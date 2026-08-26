@@ -66,15 +66,17 @@ def test_search_url_is_keyword_only_and_page_numbered():
 
 
 def test_search_url_defaults_to_position_scope():
-    """`pos=full_text` матчит навыки, из-за чего «AI» вытягивает дизайнеров с
-    Adobe Illustrator (.ai) — на живой выдаче ~81% результатов. Дефолт обязан
-    оставаться `position`, иначе сбор снова наберёт мусор."""
+    """Замер живой выдачи 26.08 по «AI»: position 619 / keywords ~3800 /
+    full_text ~5000, где у full_text топ-роль «Графический дизайнер» (~81%
+    мусора: `.ai` — формат Adobe Illustrator в навыках). Дефолт обязан
+    оставаться `position`, иначе сбор снова наберёт дизайнеров."""
     assert "pos=position" in build_competitor_search_url("AI", 0)
 
 
-def test_search_url_honours_explicit_search_in():
-    assert "pos=full_text" in build_competitor_search_url("AI", 0, search_in="full_text")
-    assert "pos=keywords" in build_competitor_search_url("AI", 0, search_in="keywords")
+@pytest.mark.parametrize("scope", ["full_text", "position", "keywords"])
+def test_search_url_supports_every_hh_search_scope(scope):
+    """Все три области hh.ru должны быть доступны явным выбором."""
+    assert f"pos={scope}" in build_competitor_search_url("AI", 0, search_in=scope)
 
 
 def test_search_url_rejects_unknown_search_in():
