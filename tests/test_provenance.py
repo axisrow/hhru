@@ -12,6 +12,9 @@ import pytest
 from hhru_bot.provenance import (
     ComponentIdentity,
     DoctorResult,
+    _git_identity,
+    _load_json_text,
+    _provenance_values,
     compare_identities,
     plugin_cache_identity,
 )
@@ -56,16 +59,17 @@ def test_editable_checkout_uses_git_identity_not_manifest_version(tmp_path: Path
     (root / ".codex-plugin" / "plugin.json").write_text(
         json.dumps({"name": "hhru-cc-plugin", "version": "0.1.0"}), encoding="utf-8"
     )
+    (root / "pyproject.toml").write_text("[project]\nversion = '0.1.0'\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
 
-    identity = plugin_cache_identity(root)
+    identity = _git_identity("installed CLI", root)
 
     assert identity.source == "git"
-    assert identity.version != "0.1.0"
+    assert identity.version == "0.1.0"
     assert (
         identity.commit_sha
         == subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
@@ -84,6 +88,26 @@ def test_plugin_cache_reports_missing_provenance(tmp_path: Path):
     assert identity.version == "0.1.0"
     assert identity.commit_sha is None
     assert identity.complete is False
+
+
+def test_direct_url_vcs_info_provides_commit_sha():
+    direct_url = _load_json_text(
+        json.dumps(
+            {
+                "url": "https://github.com/axisrow/hhru",
+                "vcs_info": {
+                    "vcs": "git",
+                    "requested_revision": "main",
+                    "commit_id": "d" * 40,
+                },
+            }
+        )
+    )
+
+    assert direct_url is not None
+    release, sha = _provenance_values(direct_url)
+    assert release is None
+    assert sha == "d" * 40
 
 
 def test_manifest_provenance_is_used_when_cache_has_no_git_directory(tmp_path: Path):

@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import os
 import subprocess
+import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,17 @@ def _git_root(path: Path) -> Path | None:
     return Path(root).resolve() if root else None
 
 
+def _source_version(root: Path) -> str | None:
+    """Read the checkout's declared version without using installed metadata."""
+
+    try:
+        payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    project = payload.get("project")
+    return _first_string((project.get("version"),)) if isinstance(project, dict) else None
+
+
 def _git_identity(name: str, path: Path, *, manifest_version: str | None = None):
     root = _git_root(path)
     if root is None:
@@ -84,10 +96,15 @@ def _git_identity(name: str, path: Path, *, manifest_version: str | None = None)
     sha = run_git(root, "rev-parse", "HEAD")
     if sha is None:
         return None
-    # An editable install has no reliable wheel metadata.  Its version is the
-    # git description, as opposed to importlib.metadata.version().  This also
-    # makes a checkout copied into the plugin cache comparable to the CLI.
-    version = run_git(root, "describe", "--tags", "--always", "HEAD")
+    # An editable install has no reliable wheel metadata.  Read its declared
+    # source version, then use git for release/SHA provenance.  A git
+    # description is only a last-resort version for a checkout without a
+    # pyproject, never a replacement for a semantic package version.
+    version = (
+        manifest_version
+        or _source_version(root)
+        or run_git(root, "describe", "--tags", "--always", "HEAD")
+    )
     release = run_git(root, "describe", "--tags", "--exact-match", "HEAD")
     return ComponentIdentity(name, version or manifest_version, release, sha, root, "git")
 
@@ -116,7 +133,6 @@ def _provenance_values(*objects: Any) -> tuple[str | None, str | None]:
         sha_values.extend(obj.get(key) for key in ("commit_sha", "git_commit_sha", "commit", "sha"))
         vcs_info = obj.get("vcs_info")
         if isinstance(vcs_info, dict):
-            release_values.append(vcs_info.get("requested_revision"))
             sha_values.append(vcs_info.get("commit_id"))
         source = obj.get("source")
         if isinstance(source, dict):
@@ -131,6 +147,16 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_json_text(text: str | None) -> dict[str, Any] | None:
+    if text is None:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -208,7 +234,7 @@ def cli_identity() -> ComponentIdentity:
     try:
         version = importlib.metadata.version("hhru-bot")
         distribution = importlib.metadata.distribution("hhru-bot")
-        direct_url = _load_json(Path(distribution.locate_file("direct_url.json")))
+        direct_url = _load_json_text(distribution.read_text("direct_url.json"))
         release, sha = _provenance_values(direct_url)
     except importlib.metadata.PackageNotFoundError:
         version, release, sha = None, None, None
