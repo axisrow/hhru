@@ -135,6 +135,21 @@ def _patch_runtime(monkeypatch) -> None:
     monkeypatch.setattr("hhru_bot.competitor_workers.DetailWorkerPool", _WorkerPool)
 
 
+def test_competing_collect_returns_fail_without_traceback(tmp_path, monkeypatch, capsys):
+    """A live collection lease is reported as a normal command failure."""
+    _patch_runtime(monkeypatch)
+    history = History(tmp_path / "history.db")
+    history.start_competitor_collection("AI", 1)
+
+    result = run_collect(_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert result is True
+    assert captured.out.startswith("[FAIL] ")
+    assert "Traceback" not in captured.out
+    assert captured.err == ""
+
+
 @pytest.mark.parametrize(
     ("signum", "expected"),
     [
