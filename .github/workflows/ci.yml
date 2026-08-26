@@ -58,6 +58,8 @@ jobs:
         # Справочник команд в README автогенерируется из argparse. Если кто-то
         # добавил флаг/команду, но забыл перегенерить доку — шаг падает.
         # Модель FastAPI/OpenAPI: код = источник правды, .md собирается.
+        env:
+          PYTHONIOENCODING: utf-8
         run: python3 scripts/gen_cli_docs.py --check
 
   packaging:
