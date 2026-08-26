@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from hhru_bot import cli
@@ -23,6 +28,51 @@ def test_write_lock_can_be_reused_after_release(tmp_path):
         pass
     with acquire_write_lock(path):
         pass
+
+
+def test_windows_backend_reports_owner_on_mandatory_lock_collision(tmp_path, monkeypatch):
+    import hhru_bot.write_lock as write_lock
+
+    class FakeMsvcrt:
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+        locked = False
+
+        @classmethod
+        def locking(cls, _fd, mode, _size):
+            if mode == cls.LK_NBLCK:
+                if cls.locked:
+                    raise OSError("lock is held")
+                cls.locked = True
+            else:
+                cls.locked = False
+
+    monkeypatch.setattr(write_lock, "_IS_WINDOWS", True)
+    monkeypatch.setattr(write_lock, "_lock_backend", FakeMsvcrt)
+    path = tmp_path / ".hhru.lock"
+
+    with write_lock.acquire_write_lock(path, command="probe"):
+        with pytest.raises(write_lock.WriteLockBusy) as error:
+            with write_lock.acquire_write_lock(path, command="apply"):
+                pass
+        assert error.value.owner["command"] == "probe"
+        assert error.value.owner["pid"] > 0
+        assert error.value.owner["started_at"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows import regression test")
+def test_cli_import_does_not_require_posix_lock_module():
+    env = os.environ.copy()
+    src = str(Path(__file__).parents[1] / "src")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (src, env.get("PYTHONPATH"))))
+    result = subprocess.run(
+        [sys.executable, "-c", "import hhru_bot.cli; assert 'fcntl' not in sys.modules"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert not result.stderr
 
 
 def test_cli_rejects_concurrent_write_command(tmp_path, monkeypatch, capsys):

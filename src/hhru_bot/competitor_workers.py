@@ -38,6 +38,8 @@ def _worker_main(
     # Keep terminal Ctrl-C scoped to the durable parent. Worker-owned
     # Playwright drivers then stay alive long enough for an orderly close
     # instead of dumping Node EPIPE traces into stdout.
+    # Windows has no process-group detachment primitive; the worker remains
+    # in the parent group there, while POSIX keeps Ctrl-C scoped to the parent.
     if hasattr(os, "setsid"):
         os.setsid()
     # Ctrl-C belongs to the durable parent. It coordinates checkpointing and
