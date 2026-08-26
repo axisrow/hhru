@@ -360,6 +360,31 @@ def _has_next_search_link(links, page_num: int) -> bool:
     return False
 
 
+# hh.ru рендерит подписи разделов на языке, которым соискатель ЗАПОЛНЯЛ анкету,
+# а не по локали браузера: `browser.py` ставит locale=ru-RU и <html lang="ru">,
+# но резюме, созданное в английской версии, всё равно приходит с «Work experience»
+# вместо «Опыт работы». Переключить нельзя — ни ?locale=RU, ни ?lang=RU не
+# действуют (проверено на живых страницах 26.08). Разбор по одним русским
+# подписям молча терял ВСЕ секции такого резюме: в базе оседали
+# specializations='[]', experience_months=NULL, 0 навыков при полной странице.
+# Потеря была смещена в самый технический сегмент (Machine Learning 34%,
+# Data Scientist 18%, «промпт инженер» 0%), потому что англоязычную анкету
+# заполняют в основном международные ИТ-специалисты.
+#
+# Каждая секция описана парой подписей RU/EN. Ключ разбора — русская подпись:
+# она остаётся каноническим именем внутри парсера, а `_canonical_heading`
+# приводит к нему английский вариант. Так двуязычность не расползается по коду
+# отдельными ветками if/else на каждую секцию.
+_SECTION_ALIASES = {
+    "Skills": "Навыки",
+    "Driving experience": "Опыт вождения",
+    "Education": "Образование",
+    "Languages": "Знание языков",
+    "Citizenship, travel time to work": "Гражданство, время в пути до работы",
+    "About me": "Обо мне",
+    "Key achievements": "Ключевые достижения",
+    "Specific achievements": "Конкретные достижения",
+}
 _SECTION_HEADINGS = {
     "Навыки",
     "Опыт вождения",
@@ -369,6 +394,14 @@ _SECTION_HEADINGS = {
     "Обо мне",
     "Ключевые достижения",
     "Конкретные достижения",
+    *_SECTION_ALIASES,
+}
+_PROFICIENCY_ALIASES = {
+    "Basic level": "Базовый уровень",
+    "Beginner level": "Начальный уровень",
+    "Medium level": "Средний уровень",
+    "Advanced level": "Продвинутый уровень",
+    "Level not specified": "Уровень не указан",
 }
 _PROFICIENCY = {
     "Базовый уровень",
@@ -376,7 +409,16 @@ _PROFICIENCY = {
     "Средний уровень",
     "Продвинутый уровень",
     "Уровень не указан",
+    *_PROFICIENCY_ALIASES,
 }
+# Строчные подписи-префиксы: у них после двоеточия идёт CSV-хвост (_csv_tail),
+# либо они открывают перечисление (специализации).
+_SPECIALIZATIONS_PREFIXES = ("Специализации:", "Specializations:")
+_EMPLOYMENT_PREFIXES = ("Тип занятости:", "Employment type:")
+_FORMAT_PREFIXES = ("Формат работы:", "Work format:")
+_EXPERIENCE_PREFIXES = ("Опыт работы", "Work experience")
+_CITIZENSHIP_PREFIXES = ("Гражданство", "Citizenship")
+_SKILL_LEVELS_CAPTION = ("Уровни владения навыками", "Skill proficiency levels")
 _SALARY_HEADING_RE = re.compile(
     r"\d.*(?:₽|\$|€|руб(?:\.|лей)?|RUB|USD|EUR|KZT|тенге|Br\b|so['’ʼʻ]m|сом|на руки)",
     re.IGNORECASE,
@@ -390,11 +432,17 @@ def redact_free_text(value: str) -> str | None:
 
 
 def _months(text: str) -> int | None:
-    years = re.search(r"(\d+)\s+(?:год|года|лет)", text, re.IGNORECASE)
-    months = re.search(r"(\d+)\s+месяц", text, re.IGNORECASE)
+    # «5 лет 3 месяца» и «9 years 11 months» — один разбор на обе локали.
+    years = re.search(r"(\d+)\s+(?:год|года|лет|years?)", text, re.IGNORECASE)
+    months = re.search(r"(\d+)\s+(?:месяц|months?)", text, re.IGNORECASE)
     if not years and not months:
         return None
     return (int(years.group(1)) * 12 if years else 0) + (int(months.group(1)) if months else 0)
+
+
+def _canonical_heading(line: str) -> str:
+    """Привести английскую подпись раздела к русской — канонической в парсере."""
+    return _SECTION_ALIASES.get(line, line)
 
 
 def _csv_tail(line: str) -> list[str]:
@@ -403,13 +451,17 @@ def _csv_tail(line: str) -> list[str]:
 
 
 def _section(lines: list[str], heading: str) -> list[str]:
-    try:
-        start = lines.index(heading) + 1
-    except ValueError:
+    """Строки раздела до следующей подписи. Ищет раздел в обеих локалях."""
+    aliases = [heading, *(en for en, ru in _SECTION_ALIASES.items() if ru == heading)]
+    start = next(
+        (lines.index(alias) + 1 for alias in aliases if alias in lines),
+        None,
+    )
+    if start is None:
         return []
     result: list[str] = []
     for line in lines[start:]:
-        if line in _SECTION_HEADINGS or line.startswith("Гражданство"):
+        if line in _SECTION_HEADINGS or line.startswith(_CITIZENSHIP_PREFIXES):
             break
         result.append(line)
     return result
@@ -439,8 +491,8 @@ def parse_competitor_resume_text(
         value.strip()
         for value in normalized_headings
         if value.strip()
-        and value.strip() not in _SECTION_HEADINGS
-        and not value.strip().startswith("Опыт работы")
+        and _canonical_heading(value.strip()) not in _SECTION_HEADINGS
+        and not value.strip().startswith(_EXPERIENCE_PREFIXES)
         and not is_salary_heading(value.strip())
     ]
     if not desired_candidates:
@@ -452,29 +504,33 @@ def parse_competitor_resume_text(
     )
     salary = parse_salary(salary_heading) if salary_heading else None
     experience_heading = next(
-        (value for value in normalized_headings if value.startswith("Опыт работы")), ""
+        (value for value in normalized_headings if value.startswith(_EXPERIENCE_PREFIXES)), ""
     )
 
     specializations: list[str] = []
-    if "Специализации:" in lines:
-        start = lines.index("Специализации:") + 1
-        for line in lines[start:]:
-            if line.startswith("Тип занятости:"):
+    spec_index = next(
+        (lines.index(prefix) for prefix in _SPECIALIZATIONS_PREFIXES if prefix in lines),
+        None,
+    )
+    if spec_index is not None:
+        for line in lines[spec_index + 1 :]:
+            if line.startswith(_EMPLOYMENT_PREFIXES):
                 break
             specializations.append(line.lstrip("— ").strip())
 
-    employment = next((line for line in lines if line.startswith("Тип занятости:")), "")
-    formats = next((line for line in lines if line.startswith("Формат работы:")), "")
+    employment = next((line for line in lines if line.startswith(_EMPLOYMENT_PREFIXES)), "")
+    formats = next((line for line in lines if line.startswith(_FORMAT_PREFIXES)), "")
 
     skill_lines = _section(lines, "Навыки")
     skills: list[CompetitorSkill] = []
     proficiency: str | None = None
     for line in skill_lines:
-        if line == "Уровни владения навыками":
+        if line in _SKILL_LEVELS_CAPTION:
             continue
-        normalized_level = line.replace("не указан", "не указан")
-        if normalized_level in _PROFICIENCY:
-            proficiency = normalized_level
+        if line in _PROFICIENCY:
+            # Уровень нормализуем к русскому имени: значение уезжает в БД и
+            # попадает в отчёты, где английский дубль расщепил бы бакет.
+            proficiency = _PROFICIENCY_ALIASES.get(line, line)
             continue
         skill_name = line.strip()
         if skill_name:
