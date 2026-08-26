@@ -558,7 +558,11 @@ def test_legacy_membership_rows_are_scoped_as_full_text_anonymous(tmp_path):
 
     history = History(db)
     history.upsert_competitor_resume(
-        _snapshot_id("legacy"), search_query="AI", search_rank=7, search_in="full_text"
+        _snapshot_id("legacy"),
+        search_query="AI",
+        search_rank=7,
+        search_in="full_text",
+        auth_mode="unknown",
     )
 
     with sqlite3.connect(db) as conn:
@@ -570,7 +574,9 @@ def test_legacy_membership_rows_are_scoped_as_full_text_anonymous(tmp_path):
                 " WHERE resume_id='legacy'"
             )
         ]
-    assert rows == [{"search_in": "full_text", "auth_mode": "anonymous", "search_rank": 7}]
+    # `full_text` — факт (pos был жёстко зашит), а режим сессии в членстве не
+    # хранился и был выбираемым, поэтому он неизвестен, а не анонимен.
+    assert rows == [{"search_in": "full_text", "auth_mode": "unknown", "search_rank": 7}]
 
 
 def test_resume_does_not_cross_search_scopes(tmp_path):
@@ -617,3 +623,166 @@ def test_resume_does_not_cross_search_scopes(tmp_path):
     full_text = history.begin_competitor_collection("AI", 1, search_in="full_text", resume=True)
     assert full_text["resume_page"] == 3
     assert full_text["resumed_from_run_id"] == legacy
+
+
+def test_interrupted_scope_migration_leaves_original_table_intact(tmp_path, monkeypatch):
+    """#669: SQLite не держит DDL в транзакции по умолчанию, поэтому крах между
+    RENAME и копирующим INSERT оставлял пустую новую таблицу рядом с legacy.
+    Гвард видел в ней `search_in`, молча выходил — и всё членство исчезало
+    из scoped-отчётов навсегда, без единой ошибки."""
+    import hhru_bot.history as history_module
+
+    db = tmp_path / "history.db"
+    History(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE competitor_resume_queries")
+        conn.execute("""CREATE TABLE competitor_resume_queries (
+            resume_id TEXT NOT NULL,
+            search_query TEXT NOT NULL,
+            search_rank INTEGER NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (resume_id, search_query)
+        )""")
+        conn.executemany(
+            "INSERT INTO competitor_resume_queries VALUES (?, 'AI', ?, '2026-08-01', '2026-08-01')",
+            [(f"r{i}", i) for i in range(50)],
+        )
+
+    original = history_module._migrate_competitor_query_scope_schema
+
+    def crashing_migration(conn):
+        # Падение ровно в момент копирования строк: RENAME/CREATE уже прошли.
+        original(conn, _fail_after_create=True)
+
+    monkeypatch.setattr(
+        history_module, "_migrate_competitor_query_scope_schema", crashing_migration
+    )
+    with pytest.raises(sqlite3.OperationalError, match="simulated crash"):
+        History(db)
+    monkeypatch.undo()
+
+    with sqlite3.connect(db) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'competitor_resume_queries%'"
+            )
+        }
+        rows = conn.execute("SELECT COUNT(*) FROM competitor_resume_queries").fetchone()[0]
+    # Откат обязан быть полным: ни осиротевшей legacy-таблицы, ни пустой новой.
+    assert tables == {"competitor_resume_queries"}
+    assert rows == 50
+
+    # Повторное открытие доводит миграцию до конца — данные не потеряны.
+    history = History(db)
+    assert len(history.list_competitor_resumes("AI", search_in="full_text")) == 0  # снимков нет
+    with sqlite3.connect(db) as conn:
+        migrated = conn.execute(
+            "SELECT COUNT(*) FROM competitor_resume_queries WHERE search_in='full_text'"
+        ).fetchone()[0]
+    assert migrated == 50
+
+
+def test_legacy_membership_is_not_claimed_by_either_auth_mode(tmp_path):
+    """#669: `--auth-mode authenticated` существовал до этой миграции, а в
+    членстве режим не хранился. Пометить легаси-строки `anonymous` значило бы
+    выдумать провенанс: authenticated-резюме исчезли бы из своего отчёта и
+    загрязнили чужой. Неизвестное остаётся неизвестным."""
+    db = tmp_path / "history.db"
+    History(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE competitor_resume_queries")
+        conn.execute("""CREATE TABLE competitor_resume_queries (
+            resume_id TEXT NOT NULL,
+            search_query TEXT NOT NULL,
+            search_rank INTEGER NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (resume_id, search_query)
+        )""")
+        conn.execute(
+            "INSERT INTO competitor_resume_queries VALUES ('old', 'AI', 1, '2026-08-01', '2026-08-01')"
+        )
+
+    history = History(db)
+    history.upsert_competitor_resume(
+        _snapshot_id("old"),
+        search_query="AI",
+        search_rank=1,
+        search_in="full_text",
+        auth_mode="unknown",
+    )
+
+    # Ни один скоуп режима сессии не присваивает себе строку с неизвестным
+    # происхождением — она видна только в общем отчёте.
+    assert history.list_competitor_resumes("AI", auth_mode="anonymous") == []
+    assert history.list_competitor_resumes("AI", auth_mode="authenticated") == []
+    assert [row["resume_id"] for row in history.list_competitor_resumes("AI")] == ["old"]
+    assert [
+        row["resume_id"] for row in history.list_competitor_resumes("AI", search_in="full_text")
+    ] == ["old"]
+
+
+def test_legacy_membership_rekey_is_idempotent(tmp_path):
+    """Сентинел вместо NULL: NULL в составном PRIMARY KEY не конфликтует сам с
+    собой, поэтому повторная запись легаси-строки плодила бы дубликаты."""
+    db = tmp_path / "history.db"
+    History(db)
+    history = History(db)
+    for _ in range(2):
+        history.upsert_competitor_resume(
+            _snapshot_id("dup"), search_query="AI", search_rank=1, search_in="full_text"
+        )
+
+    with sqlite3.connect(db) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM competitor_resume_queries WHERE resume_id='dup'"
+        ).fetchone()[0]
+    assert count == 1
+
+
+def test_interrupted_skills_migration_leaves_original_table_intact(tmp_path, monkeypatch):
+    """Тот же незащищённый паттерн жил и в миграции навыков: обрыв копирования
+    оставлял строки осиротевшими в legacy-таблице, а гвард (нет CHECK) больше
+    не срабатывал — навыки исчезали молча."""
+    import hhru_bot.history as history_module
+
+    db = tmp_path / "history.db"
+    History(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE competitor_resume_skills")
+        conn.execute("""CREATE TABLE competitor_resume_skills (
+            resume_id TEXT NOT NULL,
+            skill TEXT NOT NULL,
+            proficiency TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            CHECK (skill NOT LIKE '%@%'),
+            PRIMARY KEY (resume_id, skill)
+        )""")
+        conn.execute("INSERT INTO competitor_resume_skills VALUES ('r1','Python',NULL,'x','x')")
+
+    original = history_module._migrate_competitor_skills_schema
+
+    def crashing_migration(conn):
+        # Обрываем ровно на копировании: RENAME и CREATE уже прошли, значит
+        # откат обязан вернуть исходную таблицу вместе со строками.
+        original(conn, _fail_after_create=True)
+
+    monkeypatch.setattr(history_module, "_migrate_competitor_skills_schema", crashing_migration)
+    with pytest.raises(sqlite3.OperationalError, match="simulated crash"):
+        History(db)
+    monkeypatch.undo()
+
+    with sqlite3.connect(db) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name LIKE 'competitor_resume_skills%'"
+            )
+        }
+        rows = conn.execute("SELECT COUNT(*) FROM competitor_resume_skills").fetchone()[0]
+    assert tables == {"competitor_resume_skills"}
+    assert rows == 1

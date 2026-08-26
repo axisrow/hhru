@@ -307,7 +307,11 @@ CREATE TABLE IF NOT EXISTS competitor_resume_queries (
     resume_id TEXT NOT NULL,
     search_query TEXT NOT NULL,
     search_in TEXT NOT NULL DEFAULT 'full_text',
-    auth_mode TEXT NOT NULL DEFAULT 'anonymous',
+    -- 'unknown' (LEGACY_UNKNOWN_SCOPE), а не 'anonymous': режим сессии был
+    -- выбираемым до #669 и в членстве не записывался, поэтому у легаси-строк
+    -- он неизвестен, а не анонимен. NOT NULL — потому что NULL в составном
+    -- PRIMARY KEY не конфликтует сам с собой и ломал бы дедупликацию.
+    auth_mode TEXT NOT NULL DEFAULT 'unknown',
     search_rank INTEGER NOT NULL,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -715,6 +719,13 @@ def _pid_is_alive(pid: int | None) -> bool:
 #: (``apply``/``run`` under daily limits can run for a while), not "a couple
 #: of minutes" -- comparable in order of magnitude to ``throttle.BUMP_COOLDOWN``.
 LEGACY_LEASE_GRACE = timedelta(hours=6)
+
+#: Провенанс режима сессии у строк членства, записанных до #669: он там не
+#: хранился, а `--auth-mode authenticated` уже существовал, поэтому подставить
+#: 'anonymous' значило бы выдумать провенанс. Такие строки не попадают ни в
+#: один scoped-отчёт и видны только в общем — тот же приём, что и NULL-режим
+#: у legacy-строк `competitor_collection_runs`.
+LEGACY_UNKNOWN_SCOPE = "unknown"
 
 
 def _row_is_live(row: sqlite3.Row, *, now: datetime) -> bool:
@@ -2368,7 +2379,7 @@ class History:
         search_query: str,
         search_rank: int,
         search_in: str = "full_text",
-        auth_mode: str = "anonymous",
+        auth_mode: str = LEGACY_UNKNOWN_SCOPE,
     ) -> str:
         """Atomically replace one confirmed current snapshot and its skills."""
         now = datetime.now().isoformat(timespec="seconds")
@@ -4815,14 +4826,33 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
     conn.execute(_APPLY_INDEX_SQL)
 
 
-def _migrate_competitor_query_scope_schema(conn: sqlite3.Connection) -> None:
+def _migrate_competitor_query_scope_schema(
+    conn: sqlite3.Connection, *, _fail_after_create: bool = False
+) -> None:
     """Re-key resume membership by the full search scope (#669).
 
-    Legacy rows predate ``--search-in``/``--auth-mode``: they were all
-    collected with a hardcoded ``pos=full_text`` and an anonymous context, so
-    the column defaults describe what those rows factually were -- not a
-    guess. SQLite cannot alter a PRIMARY KEY in place, so the table is rebuilt
-    the same way ``_migrate_competitor_skills_schema`` does.
+    ``search_in`` for legacy rows is a FACT: before ``--search-in`` existed
+    ``pos`` was hardcoded ``full_text``, so no other value was reachable.
+    ``auth_mode`` is NOT the same case -- ``--auth-mode authenticated`` predates
+    this migration, the mode was user-selectable, and membership never recorded
+    it. Labelling those rows ``anonymous`` would invent provenance, so they are
+    marked ``LEGACY_UNKNOWN_SCOPE`` instead: matching neither scoped report,
+    visible only in the unscoped one, mirroring how
+    ``competitor_collection_runs`` already treats legacy runs of unknown auth
+    scope. A NULL would say the same thing but silently break the composite
+    PRIMARY KEY -- SQLite treats every NULL as distinct, so re-running a legacy
+    row would insert a duplicate instead of conflicting. Reconstructing the mode
+    from timestamps is not an option either: ``last_seen_at`` moves on every
+    re-scrape, so a resume seen under both modes carries an interval spanning
+    both.
+
+    SQLite cannot alter a PRIMARY KEY in place, so the table is rebuilt the same
+    way ``_migrate_competitor_skills_schema`` does -- but inside an explicit
+    transaction. DDL does not join the connection's implicit transaction, so a
+    crash between the RENAME and the copy would otherwise leave an empty new
+    table beside the renamed legacy one; the guard below would then see
+    ``search_in`` in that empty table and skip the migration forever, silently
+    dropping every membership row from scoped reports.
 
     CAVEAT: a database collected between the ``--search-in`` flag landing and
     this migration holds both populations under one ``search_query`` with no
@@ -4838,35 +4868,55 @@ def _migrate_competitor_query_scope_schema(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if not table or "search_in" in (table[0] or ""):
         return
-    conn.execute("ALTER TABLE competitor_resume_queries RENAME TO competitor_resume_queries_legacy")
-    conn.execute("DROP INDEX IF EXISTS idx_competitor_queries_query")
-    conn.execute("""CREATE TABLE competitor_resume_queries (
-        resume_id TEXT NOT NULL,
-        search_query TEXT NOT NULL,
-        search_in TEXT NOT NULL DEFAULT 'full_text',
-        auth_mode TEXT NOT NULL DEFAULT 'anonymous',
-        search_rank INTEGER NOT NULL,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        PRIMARY KEY (resume_id, search_query, search_in, auth_mode)
-    )""")
-    conn.execute(
-        """INSERT OR IGNORE INTO competitor_resume_queries
-           (resume_id, search_query, search_in, auth_mode,
-            search_rank, first_seen_at, last_seen_at)
-           SELECT resume_id, search_query, 'full_text', 'anonymous',
-                  search_rank, first_seen_at, last_seen_at
-           FROM competitor_resume_queries_legacy"""
-    )
-    conn.execute("DROP TABLE competitor_resume_queries_legacy")
-    conn.execute(
-        """CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
-           ON competitor_resume_queries(search_query, search_in, auth_mode, search_rank)"""
-    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "ALTER TABLE competitor_resume_queries RENAME TO competitor_resume_queries_legacy"
+        )
+        conn.execute("DROP INDEX IF EXISTS idx_competitor_queries_query")
+        conn.execute("""CREATE TABLE competitor_resume_queries (
+            resume_id TEXT NOT NULL,
+            search_query TEXT NOT NULL,
+            search_in TEXT NOT NULL DEFAULT 'full_text',
+            auth_mode TEXT NOT NULL DEFAULT 'unknown',
+            search_rank INTEGER NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (resume_id, search_query, search_in, auth_mode)
+        )""")
+        if _fail_after_create:
+            raise sqlite3.OperationalError("simulated crash during copy")
+        conn.execute(
+            """INSERT OR IGNORE INTO competitor_resume_queries
+               (resume_id, search_query, search_in, auth_mode,
+                search_rank, first_seen_at, last_seen_at)
+               SELECT resume_id, search_query, 'full_text', ?,
+                      search_rank, first_seen_at, last_seen_at
+               FROM competitor_resume_queries_legacy""",
+            (LEGACY_UNKNOWN_SCOPE,),
+        )
+        conn.execute("DROP TABLE competitor_resume_queries_legacy")
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
+               ON competitor_resume_queries(search_query, search_in, auth_mode, search_rank)"""
+        )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
-def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
-    """Remove legacy skill filters that could roll back a complete resume."""
+def _migrate_competitor_skills_schema(
+    conn: sqlite3.Connection, *, _fail_after_create: bool = False
+) -> None:
+    """Remove legacy skill filters that could roll back a complete resume.
+
+    Wrapped in an explicit transaction for the same reason as
+    ``_migrate_competitor_query_scope_schema``: DDL does not join the
+    connection's implicit transaction, so a crash between the RENAME and the
+    copy strands every skill row in the renamed legacy table -- and the guard
+    below then sees a CHECK-free table and skips the migration forever.
+    """
     table = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
         ("competitor_resume_skills",),
@@ -4875,21 +4925,31 @@ def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TRIGGER IF EXISTS competitor_resume_skills_no_contacts_update")
     if not table or "CHECK" not in (table[0] or "").upper():
         return
-    conn.execute("ALTER TABLE competitor_resume_skills RENAME TO competitor_resume_skills_legacy")
-    conn.execute("""CREATE TABLE competitor_resume_skills (
-        resume_id TEXT NOT NULL,
-        skill TEXT NOT NULL,
-        proficiency TEXT,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        PRIMARY KEY (resume_id, skill)
-    )""")
-    rows = conn.execute(
-        """SELECT resume_id, skill, proficiency, first_seen_at, last_seen_at
-           FROM competitor_resume_skills_legacy"""
-    ).fetchall()
-    for row in rows:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
         conn.execute(
-            "INSERT OR IGNORE INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)", tuple(row)
+            "ALTER TABLE competitor_resume_skills RENAME TO competitor_resume_skills_legacy"
         )
-    conn.execute("DROP TABLE competitor_resume_skills_legacy")
+        conn.execute("""CREATE TABLE competitor_resume_skills (
+            resume_id TEXT NOT NULL,
+            skill TEXT NOT NULL,
+            proficiency TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (resume_id, skill)
+        )""")
+        if _fail_after_create:
+            raise sqlite3.OperationalError("simulated crash during skills copy")
+        rows = conn.execute(
+            """SELECT resume_id, skill, proficiency, first_seen_at, last_seen_at
+               FROM competitor_resume_skills_legacy"""
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "INSERT OR IGNORE INTO competitor_resume_skills VALUES (?, ?, ?, ?, ?)", tuple(row)
+            )
+        conn.execute("DROP TABLE competitor_resume_skills_legacy")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
