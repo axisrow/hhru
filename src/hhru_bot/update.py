@@ -212,12 +212,12 @@ def _plugin_commit(path: Path | None) -> str | None:
     # A future Codex cache may not retain .git.  Release metadata is preferred
     # over a version-only comparison, because the latter was the original drift
     # bug (old and new components both reported 0.1.0).
-    for name in (".hhru-release.json", "hhru-release.json"):
+    for name in (".hhru-release.json", "hhru-release.json", "release.json"):
         try:
             data = json.loads((path / name).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        commit = data.get("commit")
+        commit = data.get("commit") or data.get("commit_sha")
         if isinstance(commit, str) and _SHA_RE.fullmatch(commit):
             return commit
     return None
@@ -313,10 +313,7 @@ def _ensure_marketplace(codex: str, source: str) -> None:
 def _select_release(codex: str, source: str, editable: Path | None) -> tuple[ReleaseIdentity, Path]:
     _ensure_marketplace(codex, source)
     configured_ref = _configured_marketplace_ref()
-    if configured_ref is not None and configured_ref != DEFAULT_REF:
-        raise UpdateError(
-            f"marketplace hhru настроен на ref {configured_ref!r}, ожидался {DEFAULT_REF!r}"
-        )
+    selected_ref = configured_ref or DEFAULT_REF
     upgraded = _run([codex, "plugin", "marketplace", "upgrade", MARKETPLACE, "--json"])
     payload = _json_output(upgraded.stdout)
     errors = payload.get("errors")
@@ -343,7 +340,7 @@ def _select_release(codex: str, source: str, editable: Path | None) -> tuple[Rel
                 "и повторите hhru update"
             )
     version = _manifest_version(root)
-    return ReleaseIdentity(version, commit, actual_source, DEFAULT_REF), root
+    return ReleaseIdentity(version, commit, actual_source, selected_ref), root
 
 
 def _install_cli(release: ReleaseIdentity, editable: Path | None) -> str:
