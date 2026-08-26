@@ -40,7 +40,7 @@ def test_codex_plugin_manifest_exposes_all_skills():
     ]
 
 
-def test_codex_repo_marketplace_points_to_the_team_plugin():
+def test_codex_repo_marketplace_points_to_a_release_not_floating_main():
     root = _repo_root()
     marketplace = json.loads((root / ".agents" / "plugins" / "marketplace.json").read_text())
     plugin = marketplace["plugins"][0]
@@ -52,7 +52,7 @@ def test_codex_repo_marketplace_points_to_the_team_plugin():
     assert plugin["source"] == {
         "source": "url",
         "url": "https://github.com/axisrow/hhru.git",
-        "ref": "main",
+        "ref": "v0.1.0",
     }
     assert plugin["policy"] == {
         "installation": "AVAILABLE",
