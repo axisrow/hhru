@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -58,10 +59,45 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build --wheel
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          python scripts/build_release.py \
+            --tag "v${VERSION}" \
+            --commit "$(git rev-parse HEAD)" \
+            --output dist/release
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
           /tmp/venv/bin/pip install dist/*.whl
           /tmp/venv/bin/pip install playwright PyYAML
 
       - name: Smoke — History works from installed wheel
-        run: /tmp/venv/bin/python tests/packaging_smoke.py
+        run: /tmp/venv/bin/python tests/packaging_smoke.py --plugin-archive dist/release/hhru-cc-plugin-*.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the CLI wheel and tagged plugin bundle
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          python scripts/build_release.py \
+            --tag "$RELEASE_TAG" \
+            --commit "$RELEASE_SHA" \
+            --output dist/release
+
+      - name: Publish one tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.whl dist/release/* --generate-notes

@@ -256,18 +256,24 @@ claude plugin install hhru-cc-plugin@hhru --scope user
 
 ### Установка для команды в Codex
 
-Каждый участник устанавливает CLI, затем добавляет marketplace из проверенной
-ветки `main`:
+Каждый участник устанавливает CLI и plugin из **одного release tag**. Подставьте
+один и тот же опубликованный tag в обе команды (например, `v0.1.0`):
 
 ```bash
-pip install "git+https://github.com/axisrow/hhru.git@main"
-codex plugin marketplace add axisrow/hhru --ref main
+RELEASE=v0.1.0
+pip install "git+https://github.com/axisrow/hhru.git@${RELEASE}"
+codex plugin marketplace add axisrow/hhru --ref "${RELEASE}"
 ```
 
 В Codex CLI открой `/plugins`, выбери marketplace `hhru`, установи
 `hhru-cc-plugin` и начни новый чат. Repo marketplace зарегистрирован в
 `.agents/plugins/marketplace.json`; public submission в OpenAI Plugins Directory
 для командной установки не требуется.
+
+Release bundle содержит версии, release tag и полный commit SHA во всех
+manifest-файлах и в `release.json`. CI собирает wheel и plugin bundle из одного
+тега и отклоняет расхождение provenance. Уже начатая задача Codex продолжает
+использовать загруженный skill; после обновления начните новый чат.
 
 ### Команда `/hhru`
 
