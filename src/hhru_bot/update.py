@@ -241,19 +241,32 @@ def _tree_digest(path: Path) -> str:
 
 def _verified_plugin_commit(path: Path | None, source_root: Path, expected: str) -> str | None:
     commit = _plugin_commit(path)
-    if commit:
-        return commit
-    if path is not None and path.exists():
-        try:
-            if _tree_digest(path) == _tree_digest(source_root):
-                return expected
-        except OSError as exc:
-            raise UpdateError(f"не удалось проверить содержимое plugin cache: {path}") from exc
+    if path is None or not path.exists():
+        return None
+    try:
+        content_matches = _tree_digest(path) == _tree_digest(source_root)
+    except OSError as exc:
+        raise UpdateError(f"не удалось проверить содержимое plugin cache: {path}") from exc
+    if not content_matches:
+        return None
+    if commit is None or commit == expected:
+        return expected
     return None
 
 
 def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+
+
+def _configured_marketplace_ref() -> str | None:
+    config_path = _codex_home() / "config.toml"
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    marketplace = config.get("marketplaces", {}).get(MARKETPLACE, {})
+    ref = marketplace.get("ref")
+    return ref if isinstance(ref, str) else None
 
 
 def _installed_plugin(result: dict) -> dict | None:
@@ -299,6 +312,11 @@ def _ensure_marketplace(codex: str, source: str) -> None:
 
 def _select_release(codex: str, source: str, editable: Path | None) -> tuple[ReleaseIdentity, Path]:
     _ensure_marketplace(codex, source)
+    configured_ref = _configured_marketplace_ref()
+    if configured_ref is not None and configured_ref != DEFAULT_REF:
+        raise UpdateError(
+            f"marketplace hhru настроен на ref {configured_ref!r}, ожидался {DEFAULT_REF!r}"
+        )
     upgraded = _run([codex, "plugin", "marketplace", "upgrade", MARKETPLACE, "--json"])
     payload = _json_output(upgraded.stdout)
     errors = payload.get("errors")

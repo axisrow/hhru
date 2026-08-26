@@ -39,6 +39,7 @@ def _patch_common(monkeypatch, root: Path, *, editable=None):
     monkeypatch.setattr(update_module, "_install_cli", lambda release, _editable: "test-cli")
     monkeypatch.setattr(update_module, "_verify_cli", lambda _release, _editable: None)
     monkeypatch.setattr(update_module, "_plugin_commit", lambda path: COMMIT if path else None)
+    monkeypatch.setattr(update_module, "_tree_digest", lambda _path: "same")
 
     state = {"installed": False}
 
@@ -160,6 +161,18 @@ def test_plugin_failure_is_an_explicit_update_error(tmp_path, monkeypatch):
 
     with pytest.raises(update_module.UpdateError, match="plugin install failed"):
         update_module._update_plugin("codex", release, path)
+
+
+def test_modified_cache_is_not_accepted_for_matching_git_commit(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    cache = tmp_path / "cache"
+    source.mkdir()
+    cache.mkdir()
+    (source / "skills.txt").write_text("expected", encoding="utf-8")
+    (cache / "skills.txt").write_text("injected", encoding="utf-8")
+    monkeypatch.setattr(update_module, "_plugin_commit", lambda _path: COMMIT)
+
+    assert update_module._verified_plugin_commit(cache, source, COMMIT) is None
 
 
 def test_command_reports_partial_failure_without_success(monkeypatch, capsys):
