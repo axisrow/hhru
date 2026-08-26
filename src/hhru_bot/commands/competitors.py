@@ -272,7 +272,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
         parse_search_page,
     )
     from ..config import load_config_or_exit
-    from ..history import History
+    from ..history import CommandRunBusy, History
 
     query = args.text.strip()
     if not query:
@@ -283,13 +283,17 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
     config = load_config_or_exit(args.config)
     history = History(args.history)
     require_authentication = args.auth_mode == "authenticated"
-    started = history.begin_competitor_collection(
-        query,
-        args.max_pages or 0,
-        requested_page_size=args.items_per_page,
-        auth_mode=args.auth_mode,
-        resume=bool(getattr(args, "resume", False)),
-    )
+    try:
+        started = history.begin_competitor_collection(
+            query,
+            args.max_pages or 0,
+            requested_page_size=args.items_per_page,
+            auth_mode=args.auth_mode,
+            resume=bool(getattr(args, "resume", False)),
+        )
+    except CommandRunBusy as exc:
+        print(f"[FAIL] {exc}")
+        return True
     run_id = started["run_id"]
     page_num = started["resume_page"]
     rank_offset_base = started["resume_rank_offset"]
