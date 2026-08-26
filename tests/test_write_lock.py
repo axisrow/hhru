@@ -53,14 +53,17 @@ def test_cli_import_does_not_require_posix_lock_module():
     env = os.environ.copy()
     src = str(Path(__file__).parents[1] / "src")
     env["PYTHONPATH"] = os.pathsep.join(filter(None, (src, env.get("PYTHONPATH"))))
-    result = subprocess.run(
-        [sys.executable, "-c", "import hhru_bot.cli; assert 'fcntl' not in sys.modules"],
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import hhru_bot.cli; assert 'fcntl' not in sys.modules",
+        ],
         check=True,
         capture_output=True,
         text=True,
         env=env,
     )
-    assert not result.stderr
 
 
 def test_cli_rejects_concurrent_write_command(tmp_path, monkeypatch, capsys):

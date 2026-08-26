@@ -35,7 +35,7 @@ def _read_owner(path: Path) -> dict:
 
 def _write_owner(path: Path, owner: dict) -> None:
     path.write_text(json.dumps(owner, sort_keys=True), encoding="utf-8")
-    with path.open("rb") as owner_file:
+    with path.open("r+b") as owner_file:
         owner_file.seek(0, os.SEEK_END)
         owner_file.flush()
         os.fsync(owner_file.fileno())
