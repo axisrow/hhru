@@ -15,6 +15,7 @@ dependencies = [
     "PyYAML>=6.0",
     "browser-cookie3>=0.20.1",
     "snowballstemmer>=3.0",
+    "filelock>=3.16.0",
 ]
 
 [project.scripts]

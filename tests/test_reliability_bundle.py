@@ -211,7 +211,7 @@ def test_exit_codes_cover_persistence_and_sigterm() -> None:
 def test_lock_file_contains_owner_metadata(tmp_path: Path) -> None:
     lock = tmp_path / ".hhru.lock"
     with acquire_write_lock(lock, command="probe --questionnaires-only"):
-        owner = json.loads(lock.read_text())
+        owner = json.loads(lock.with_name(f"{lock.name}.owner").read_text())
         assert owner["pid"] > 0
         assert owner["command"] == "probe --questionnaires-only"
         assert owner["started_at"]
