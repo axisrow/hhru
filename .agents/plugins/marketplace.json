@@ -15,7 +15,11 @@
         "installation": "AVAILABLE",
         "authentication": "ON_INSTALL"
       },
-      "category": "Productivity"
+      "category": "Productivity",
+      "version": "0.1.0"
     }
-  ]
+  ],
+  "metadata": {
+    "version": "0.1.0"
+  }
 }

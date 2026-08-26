@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -14,12 +15,22 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _project_version(root: Path) -> str:
+    with (root / "pyproject.toml").open("rb") as stream:
+        return tomllib.load(stream)["project"]["version"]
+
+
 def test_codex_plugin_manifest_exposes_all_skills():
     root = _repo_root()
     manifest = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
+    version = _project_version(root)
 
     assert manifest["name"] == "hhru-cc-plugin"
+    assert manifest["version"] == version
     assert manifest["skills"] == "./skills/"
+    # .codex-plugin is metadata inside the plugin root. Codex resolves this
+    # relative path from the checked-out plugin root, not from .codex-plugin/.
+    assert (root / manifest["skills"]).resolve() == (root / "skills").resolve()
     assert manifest["interface"]["capabilities"] == ["Read", "Write"]
     assert sorted(path.parent.name for path in (root / "skills").glob("*/SKILL.md")) == [
         "hhru",
@@ -33,9 +44,11 @@ def test_codex_repo_marketplace_points_to_the_team_plugin():
     root = _repo_root()
     marketplace = json.loads((root / ".agents" / "plugins" / "marketplace.json").read_text())
     plugin = marketplace["plugins"][0]
+    version = _project_version(root)
 
     assert marketplace["name"] == "hhru"
     assert plugin["name"] == "hhru-cc-plugin"
+    assert plugin["version"] == version
     assert plugin["source"] == {
         "source": "url",
         "url": "https://github.com/axisrow/hhru.git",
@@ -46,6 +59,7 @@ def test_codex_repo_marketplace_points_to_the_team_plugin():
         "authentication": "ON_INSTALL",
     }
     assert plugin["category"] == "Productivity"
+    assert marketplace["metadata"]["version"] == version
 
 
 def test_shared_skills_use_the_installed_hhru_cli():

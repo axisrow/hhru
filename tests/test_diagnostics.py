@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from hhru_bot import __version__
+from hhru_bot import _version as version_module
 from hhru_bot.diagnostics import _same_path, build_bundle, redact
 
 pytestmark = pytest.mark.unit
@@ -105,3 +107,28 @@ def test_export_path_aliases_are_detected_and_history_is_read_only(tmp_path):
     before = Path(db).read_bytes()
     build_bundle(alias, run_id="r1")
     assert Path(db).read_bytes() == before
+
+
+def test_bundle_identifies_hhru_version_and_commit(monkeypatch, tmp_path):
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as c:
+        c.execute("create table command_runs (run_id text)")
+        c.execute("insert into command_runs values ('r1')")
+    sha = "a" * 40
+    monkeypatch.setenv("HHRU_COMMIT_SHA", sha)
+
+    bundle = build_bundle(db, run_id="r1")
+
+    assert bundle["environment"]["hhru"] == {
+        "version": __version__,
+        "commit_sha": sha,
+    }
+
+
+def test_commit_does_not_use_consuming_workflow_sha(monkeypatch):
+    monkeypatch.delenv("HHRU_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("GITHUB_SHA", "b" * 40)
+    monkeypatch.setattr(version_module, "_checkout_root", lambda: None)
+    monkeypatch.setattr(version_module, "_installed_commit_sha", lambda: None)
+
+    assert version_module.commit_sha() == "unknown"
