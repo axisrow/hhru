@@ -114,6 +114,7 @@ def _args(tmp_path: Path, *, resume: bool = False) -> Namespace:
         progress_verbosity=1,
         items_per_page=100,
         auth_mode="anonymous",
+        search_in="position",
         detail_workers=10,
         config=str(tmp_path / "config.yaml"),
         history=str(tmp_path / "history.db"),
@@ -568,6 +569,7 @@ args = Namespace(
     progress_verbosity=1,
     items_per_page=100,
     auth_mode="anonymous",
+    search_in="position",
     detail_workers=10,
     config={config_path!r},
     history={history_path!r},
@@ -729,3 +731,76 @@ def test_observed_eta_waits_for_three_details_and_stops_at_completion():
 
     state = {"saved": 99, "failed": 1, "expected_details": 100}
     assert _observed_eta(state, elapsed=2000) is None
+
+
+def _report_args(tmp_path: Path, **overrides) -> Namespace:
+    args = {
+        "text": "AI",
+        "search_in": None,
+        "auth_mode": None,
+        "top": 5,
+        "history": str(tmp_path / "history.db"),
+    }
+    args.update(overrides)
+    return Namespace(**args)
+
+
+def _seed_two_scopes(db: Path) -> None:
+    from hhru_bot.history import History
+
+    history = History(db)
+    for resume_id, role, scope in (
+        ("designer", "Графический дизайнер", "full_text"),
+        ("engineer", "AI Engineer", "position"),
+    ):
+        history.upsert_competitor_resume(
+            {
+                "resume_id": resume_id,
+                "resume_url": f"https://hh.ru/resume/{resume_id}",
+                "desired_role": role,
+                "salary_from": 100_000,
+                "salary_to": 150_000,
+                "salary_currency": "RUB",
+                "experience_months": 48,
+                "specializations": ["Разработчик"],
+                "employment_types": ["полная занятость"],
+                "work_formats": ["удалённо"],
+                "languages": ["Русский — Родной"],
+                "education": ["Высшее образование"],
+                "experience_summary": None,
+                "achievements": None,
+                "skills": [{"name": "Python", "proficiency": None}],
+                "content_hash": f"hash:{resume_id}",
+            },
+            search_query="AI",
+            search_rank=1,
+            search_in=scope,
+        )
+
+
+def test_report_scope_flag_excludes_other_search_in(tmp_path, capsys):
+    """#669: отчёт по одному --text обязан показывать одну выборку. Без скоупа
+    в него попадали дизайнеры из прежнего full_text-прогона."""
+    from hhru_bot.commands.competitors import run_report
+
+    db = tmp_path / "history.db"
+    _seed_two_scopes(db)
+
+    run_report(_report_args(tmp_path, search_in="position"))
+    scoped = capsys.readouterr().out
+    assert "AI Engineer" in scoped
+    assert "Графический дизайнер" not in scoped
+
+    run_report(_report_args(tmp_path))
+    everything = capsys.readouterr().out
+    assert "AI Engineer" in everything
+    assert "Графический дизайнер" in everything
+
+
+def test_report_scope_flags_require_text(tmp_path):
+    """Область поиска — свойство одной выборки: без --text фильтровать нечего,
+    и молча игнорировать флаг нельзя."""
+    from hhru_bot.commands.competitors import run_report
+
+    with pytest.raises(ValueError, match="--search-in/--auth-mode"):
+        run_report(_report_args(tmp_path, text=None, search_in="position"))

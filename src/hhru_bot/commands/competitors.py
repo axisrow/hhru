@@ -194,8 +194,9 @@ def register(subparsers) -> None:
         "competitors",
         help="Собрать и проанализировать профессиональные снимки резюме конкурентов",
         description=(
-            "READ hh.ru: competitors collect --text QUERY [--max-pages N]; "
-            "локальный отчёт: competitors report [--text QUERY] [--top N]."
+            "READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] "
+            "[--max-pages N]; локальный отчёт: competitors report [--text QUERY] "
+            "[--search-in SCOPE] [--auth-mode MODE] [--top N]."
         ),
     )
     commands = parser.add_subparsers(dest="competitors_command", required=True)
@@ -233,6 +234,18 @@ def register(subparsers) -> None:
         help="Запрошенный размер страницы hh.ru (по умолчанию 100; для smoke можно 20)",
     )
     collect.add_argument(
+        "--search-in",
+        choices=("position", "full_text", "keywords"),
+        default="position",
+        help=(
+            "Область поиска --text на hh.ru: position — только желаемая должность "
+            "(заголовок резюме), самая узкая и чистая (по умолчанию); "
+            "keywords — по ключевым навыкам; full_text — по всему резюме "
+            "(должность, навыки, описание опыта, достижения), самая широкая: "
+            "запрос вроде «AI» так вытягивает дизайнеров с Adobe Illustrator"
+        ),
+    )
+    collect.add_argument(
         "--auth-mode",
         choices=("anonymous", "authenticated"),
         default="anonymous",
@@ -253,6 +266,23 @@ def register(subparsers) -> None:
 
     report = commands.add_parser("report", help="Построить локальный отчёт по сохранённой базе")
     report.add_argument("--text", help="Ограничить отчёт одним поисковым запросом")
+    report.add_argument(
+        "--search-in",
+        choices=("position", "full_text", "keywords"),
+        help=(
+            "Ограничить отчёт одной областью поиска: один и тот же --text в разных "
+            "областях — это РАЗНЫЕ выборки (full_text по «AI» тянет дизайнеров "
+            "с Adobe Illustrator). Без флага отчёт охватывает все области"
+        ),
+    )
+    report.add_argument(
+        "--auth-mode",
+        choices=("anonymous", "authenticated"),
+        help=(
+            "Ограничить отчёт одним режимом сессии: анонимная выдача hh.ru урезана "
+            "относительно авторизованной. Без флага отчёт охватывает оба режима"
+        ),
+    )
     report.add_argument(
         "--top", type=_positive, default=20, help="Число строк в каждом топе (по умолчанию 20)"
     )
@@ -289,6 +319,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             args.max_pages or 0,
             requested_page_size=args.items_per_page,
             auth_mode=args.auth_mode,
+            search_in=args.search_in,
             resume=bool(getattr(args, "resume", False)),
         )
     except CommandRunBusy as exc:
@@ -428,7 +459,10 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                     goto_hh(
                         search_page,
                         build_competitor_search_url(
-                            query, page_num, items_per_page=requested_page_size
+                            query,
+                            page_num,
+                            items_per_page=requested_page_size,
+                            search_in=args.search_in,
                         ),
                     )
                     cards_before = snapshot()["cards"]
@@ -574,6 +608,8 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                             result["payload"],
                             search_query=query,
                             search_rank=card.rank,
+                            search_in=args.search_in,
+                            auth_mode=args.auth_mode,
                         )
                         with state_lock:
                             state["saved"] += 1
@@ -736,7 +772,13 @@ def run_report(args: argparse.Namespace) -> None:
     query = args.text.strip() if args.text else None
     if args.text is not None and not query:
         raise ValueError("--text не может быть пустым")
+    search_in = getattr(args, "search_in", None)
+    auth_mode = getattr(args, "auth_mode", None)
+    if query is None and (search_in or auth_mode):
+        # Область поиска — свойство одной выборки, а не всей базы: без --text
+        # фильтровать нечего, и молча игнорировать флаг нельзя.
+        raise ValueError("--search-in/--auth-mode требуют --text")
     history = History(args.history)
-    rows = history.list_competitor_resumes(query)
-    limited = history.count_limited_competitor_runs(query)
+    rows = history.list_competitor_resumes(query, search_in=search_in, auth_mode=auth_mode)
+    limited = history.count_limited_competitor_runs(query, search_in=search_in, auth_mode=auth_mode)
     print(report_competitors(rows, top=args.top, limited_runs=limited))

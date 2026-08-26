@@ -21,6 +21,18 @@ SEARCH_URL = f"{HH_BASE_URL}/search/resume"
 RENDER_TIMEOUT_MS = 30_000
 FULL_PAGE_RENDER_TIMEOUT_MS = 5_000
 ITEMS_PER_PAGE = 100
+
+# hh.ru `pos` — область текстового поиска по резюме. Все три значения замерены
+# на живой выдаче 26.08 запросом «AI»:
+#   position  ->  619 резюме — только желаемая должность (заголовок резюме);
+#                 топ: AI-инженер, AI Engineer, AI Creator
+#   keywords  -> ~3800 резюме — по ключевым навыкам; уже подмешивает дизайнеров
+#   full_text -> ~5000 резюме — вся анкета: должность, навыки, описание опыта,
+#                 достижения; топ-роль «Графический дизайнер», ~81% мусора,
+#                 потому что `.ai` — формат Adobe Illustrator в навыках
+# Дефолт — `position`: он единственный не смешивает профессию с инструментом.
+SEARCH_IN_VALUES = frozenset({"full_text", "position", "keywords"})
+DEFAULT_SEARCH_IN = "position"
 _TOTAL_RESULTS_RE = re.compile(
     r"(?:показали|найдено)\s+([\d\s\u00a0\u202f]+)\s+резюм",
     re.IGNORECASE,
@@ -89,7 +101,11 @@ class CompetitorResume:
 
 
 def build_competitor_search_url(
-    text: str, page_num: int, *, items_per_page: int = ITEMS_PER_PAGE
+    text: str,
+    page_num: int,
+    *,
+    items_per_page: int = ITEMS_PER_PAGE,
+    search_in: str = DEFAULT_SEARCH_IN,
 ) -> str:
     if not text.strip():
         raise ValueError("--text не может быть пустым")
@@ -97,9 +113,11 @@ def build_competitor_search_url(
         raise ValueError("page_num должен быть >= 0")
     if not 1 <= items_per_page <= ITEMS_PER_PAGE:
         raise ValueError(f"items_per_page должен быть от 1 до {ITEMS_PER_PAGE}")
+    if search_in not in SEARCH_IN_VALUES:
+        raise ValueError(f"search_in должен быть одним из {sorted(SEARCH_IN_VALUES)}")
     params = {
         "text": text,
-        "pos": "full_text",
+        "pos": search_in,
         "logic": "normal",
         "exp_period": "all_time",
         "ored_clusters": "true",

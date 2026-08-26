@@ -65,6 +65,25 @@ def test_search_url_is_keyword_only_and_page_numbered():
     assert "items_on_page=20" in smoke_url
 
 
+def test_search_url_defaults_to_position_scope():
+    """Замер живой выдачи 26.08 по «AI»: position 619 / keywords ~3800 /
+    full_text ~5000, где у full_text топ-роль «Графический дизайнер» (~81%
+    мусора: `.ai` — формат Adobe Illustrator в навыках). Дефолт обязан
+    оставаться `position`, иначе сбор снова наберёт дизайнеров."""
+    assert "pos=position" in build_competitor_search_url("AI", 0)
+
+
+@pytest.mark.parametrize("scope", ["full_text", "position", "keywords"])
+def test_search_url_supports_every_hh_search_scope(scope):
+    """Все три области hh.ru должны быть доступны явным выбором."""
+    assert f"pos={scope}" in build_competitor_search_url("AI", 0, search_in=scope)
+
+
+def test_search_url_rejects_unknown_search_in():
+    with pytest.raises(ValueError, match="search_in"):
+        build_competitor_search_url("AI", 0, search_in="everywhere")
+
+
 def test_search_result_count_parses_thin_space_and_coverage_warning():
     text = "Показали 12 368 резюме — остальные можно увидеть после регистрации работодателя"
     assert parse_search_result_count(text) == 12_368
