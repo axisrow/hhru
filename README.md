@@ -420,7 +420,7 @@ AIProfile/config.yaml.
 
 ### `competitors`
 
-READ hh.ru: competitors collect --text QUERY [--max-pages N]; локальный отчёт: competitors report [--text QUERY] [--top N].
+READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]; локальный отчёт: competitors report [--text QUERY] [--search-in SCOPE] [--auth-mode MODE] [--top N].
 
 - (без аргументов)
 

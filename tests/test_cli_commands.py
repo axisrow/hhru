@@ -281,6 +281,25 @@ def test_competitors_collect_and_report_arguments():
     assert report.competitors_command == "report"
     assert report.text == "AI"
     assert report.top == 7
+    # Без флагов отчёт охватывает все области и оба режима сессии — прежнее
+    # поведение сохраняется.
+    assert report.search_in is None
+    assert report.auth_mode is None
+
+    scoped = parser.parse_args(
+        [
+            "competitors",
+            "report",
+            "--text",
+            "AI",
+            "--search-in",
+            "position",
+            "--auth-mode",
+            "authenticated",
+        ]
+    )
+    assert scoped.search_in == "position"
+    assert scoped.auth_mode == "authenticated"
 
 
 @pytest.mark.parametrize(

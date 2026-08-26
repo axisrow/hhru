@@ -296,16 +296,25 @@ CREATE TABLE IF NOT EXISTS competitor_resume_skills (
     PRIMARY KEY (resume_id, skill)
 );
 
+-- Членство резюме в выдаче ключуется полной идентичностью выборки, а не
+-- одним текстом запроса (#669). `search_in` и `auth_mode` меняют не точность
+-- одной и той же популяции, а то, КАКАЯ популяция собрана: «AI» в режиме
+-- full_text даёт ~5000 резюме с ~81% графических дизайнеров (`.ai` — формат
+-- Adobe Illustrator в навыках), а position — 619 профильных. Без них в ключе
+-- отчёт по одному `--text` молча склеивал бы обе выборки, а общий
+-- `search_rank` перезаписывался бы более поздним прогоном.
 CREATE TABLE IF NOT EXISTS competitor_resume_queries (
     resume_id TEXT NOT NULL,
     search_query TEXT NOT NULL,
+    search_in TEXT NOT NULL DEFAULT 'full_text',
+    auth_mode TEXT NOT NULL DEFAULT 'anonymous',
     search_rank INTEGER NOT NULL,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
-    PRIMARY KEY (resume_id, search_query)
+    PRIMARY KEY (resume_id, search_query, search_in, auth_mode)
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
-    ON competitor_resume_queries(search_query, search_rank);
+    ON competitor_resume_queries(search_query, search_in, auth_mode, search_rank);
 
 CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     run_id TEXT PRIMARY KEY,
@@ -758,6 +767,10 @@ class History:
             # успеть создать пустую command_runs раньше RENAME, иначе RENAME
             # упадёт на "table command_runs already exists".
             _rename_apply_runs_to_command_runs(conn)
+            # #669: по той же причине, что и RENAME выше — SCHEMA создаёт
+            # idx_competitor_queries_query уже по новым колонкам, поэтому
+            # пересборка ключа членства обязана пройти ДО executescript.
+            _migrate_competitor_query_scope_schema(conn)
             conn.executescript(SCHEMA)
             _migrate_competitor_skills_schema(conn)
             _ensure_column(conn, "actions", "letter_variant", "TEXT")
@@ -2142,6 +2155,13 @@ class History:
 
             checkpoint = None
             if resume:
+                # NULL в search_in — прогон, записанный до #669, когда `pos`
+                # был жёстко full_text: COALESCE описывает факт, а не догадку.
+                # Как следствие, `--resume` под новым дефолтом `position` такой
+                # чекпоинт не подхватит и начнёт с нуля — это правильный
+                # исход, а не потеря: 619 результатов против ~5000 означают
+                # несопоставимую нумерацию страниц, и продолжение с чужого
+                # смещения молча пропустило бы бо'льшую часть узкой выборки.
                 latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
                        WHERE search_query=? AND requested_page_size=? AND auth_mode=?
@@ -2347,6 +2367,8 @@ class History:
         *,
         search_query: str,
         search_rank: int,
+        search_in: str = "full_text",
+        auth_mode: str = "anonymous",
     ) -> str:
         """Atomically replace one confirmed current snapshot and its skills."""
         now = datetime.now().isoformat(timespec="seconds")
@@ -2444,33 +2466,59 @@ class History:
 
             conn.execute(
                 """INSERT INTO competitor_resume_queries
-                   (resume_id, search_query, search_rank, first_seen_at, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(resume_id, search_query) DO UPDATE SET
+                   (resume_id, search_query, search_in, auth_mode,
+                    search_rank, first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(resume_id, search_query, search_in, auth_mode) DO UPDATE SET
                      search_rank = excluded.search_rank,
                      last_seen_at = excluded.last_seen_at""",
-                (resume_id, search_query, search_rank, now, now),
+                (resume_id, search_query, search_in, auth_mode, search_rank, now, now),
             )
         return outcome
 
-    def list_competitor_resumes(self, search_query: str | None = None) -> list[dict]:
-        """Return current snapshots with source-faithful skills, optionally scoped by query."""
+    def list_competitor_resumes(
+        self,
+        search_query: str | None = None,
+        *,
+        search_in: str | None = None,
+        auth_mode: str | None = None,
+    ) -> list[dict]:
+        """Return current snapshots with source-faithful skills, optionally scoped by query.
+
+        ``search_in``/``auth_mode`` narrow the membership to one collected
+        population (#669): the same ``--text`` under a different scope is a
+        different result set, not a refinement of the same one. ``None`` keeps
+        the previous behaviour and spans every scope.
+        """
         with self._connect() as conn:
             if search_query is None:
                 rows = conn.execute(
                     "SELECT r.* FROM competitor_resumes r ORDER BY r.last_seen_at DESC, r.resume_id"
                 ).fetchall()
             else:
+                conditions = ["q.search_query = ?"]
+                params: list[str] = [search_query]
+                if search_in is not None:
+                    conditions.append("q.search_in = ?")
+                    params.append(search_in)
+                if auth_mode is not None:
+                    conditions.append("q.auth_mode = ?")
+                    params.append(auth_mode)
                 rows = conn.execute(
-                    """SELECT r.* FROM competitor_resumes r
+                    f"""SELECT r.*, MIN(q.search_rank) AS scope_rank
+                       FROM competitor_resumes r
                        JOIN competitor_resume_queries q ON q.resume_id = r.resume_id
-                       WHERE q.search_query = ?
-                       ORDER BY q.search_rank, r.resume_id""",
-                    (search_query,),
+                       WHERE {" AND ".join(conditions)}
+                       GROUP BY r.resume_id
+                       ORDER BY scope_rank, r.resume_id""",
+                    tuple(params),
                 ).fetchall()
             result: list[dict] = []
             for row in rows:
                 item = dict(row)
+                # Служебная колонка только для сортировки: форма результата
+                # должна остаться прежней (снимок резюме, без полей членства).
+                item.pop("scope_rank", None)
                 for field in (
                     "specializations",
                     "employment_types",
@@ -2490,8 +2538,20 @@ class History:
                 result.append(item)
             return result
 
-    def count_limited_competitor_runs(self, search_query: str | None = None) -> int:
-        """Count queries whose latest finished collection has limited coverage."""
+    def count_limited_competitor_runs(
+        self,
+        search_query: str | None = None,
+        *,
+        search_in: str | None = None,
+        auth_mode: str | None = None,
+    ) -> int:
+        """Count queries whose latest finished collection has limited coverage.
+
+        Scoped like ``list_competitor_resumes`` (#669): coverage of a
+        ``position`` collection says nothing about a ``full_text`` one, so the
+        warning must come from the run that produced the reported population.
+        Legacy runs carry NULL and match the pre-scope defaults.
+        """
         with self._connect() as conn:
             if search_query is None:
                 row = conn.execute(
@@ -2510,14 +2570,22 @@ class History:
                               OR r.detail LIKE '%limited_by_max_pages=1%')"""
                 ).fetchone()
             else:
+                conditions = ["search_query = ?", "finished_at IS NOT NULL"]
+                params: list[str] = [search_query]
+                if search_in is not None:
+                    conditions.append("COALESCE(search_in, 'full_text') = ?")
+                    params.append(search_in)
+                if auth_mode is not None:
+                    conditions.append("COALESCE(auth_mode, 'anonymous') = ?")
+                    params.append(auth_mode)
                 row = conn.execute(
-                    """SELECT CASE
+                    f"""SELECT CASE
                          WHEN status = 'limited' OR detail LIKE '%limited_by_max_pages=1%'
                          THEN 1 ELSE 0 END AS total
                        FROM competitor_collection_runs
-                       WHERE search_query = ? AND finished_at IS NOT NULL
+                       WHERE {" AND ".join(conditions)}
                        ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-                    (search_query,),
+                    tuple(params),
                 ).fetchone()
             return int(row["total"] if row else 0)
 
@@ -4745,6 +4813,56 @@ def _ensure_apply_index(conn: sqlite3.Connection) -> None:
         return
     conn.execute("DROP INDEX IF EXISTS idx_resume_vacancy_apply")
     conn.execute(_APPLY_INDEX_SQL)
+
+
+def _migrate_competitor_query_scope_schema(conn: sqlite3.Connection) -> None:
+    """Re-key resume membership by the full search scope (#669).
+
+    Legacy rows predate ``--search-in``/``--auth-mode``: they were all
+    collected with a hardcoded ``pos=full_text`` and an anonymous context, so
+    the column defaults describe what those rows factually were -- not a
+    guess. SQLite cannot alter a PRIMARY KEY in place, so the table is rebuilt
+    the same way ``_migrate_competitor_skills_schema`` does.
+
+    CAVEAT: a database collected between the ``--search-in`` flag landing and
+    this migration holds both populations under one ``search_query`` with no
+    surviving provenance -- every membership row there is labelled
+    ``full_text``. That is the honest floor, not a repair: the scope was never
+    recorded, so it cannot be recovered. Such a mixed row set stays mixed under
+    ``--search-in full_text``; a clean per-scope population comes from
+    re-collecting under the wanted scope, which then writes its own rows.
+    """
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("competitor_resume_queries",),
+    ).fetchone()
+    if not table or "search_in" in (table[0] or ""):
+        return
+    conn.execute("ALTER TABLE competitor_resume_queries RENAME TO competitor_resume_queries_legacy")
+    conn.execute("DROP INDEX IF EXISTS idx_competitor_queries_query")
+    conn.execute("""CREATE TABLE competitor_resume_queries (
+        resume_id TEXT NOT NULL,
+        search_query TEXT NOT NULL,
+        search_in TEXT NOT NULL DEFAULT 'full_text',
+        auth_mode TEXT NOT NULL DEFAULT 'anonymous',
+        search_rank INTEGER NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (resume_id, search_query, search_in, auth_mode)
+    )""")
+    conn.execute(
+        """INSERT OR IGNORE INTO competitor_resume_queries
+           (resume_id, search_query, search_in, auth_mode,
+            search_rank, first_seen_at, last_seen_at)
+           SELECT resume_id, search_query, 'full_text', 'anonymous',
+                  search_rank, first_seen_at, last_seen_at
+           FROM competitor_resume_queries_legacy"""
+    )
+    conn.execute("DROP TABLE competitor_resume_queries_legacy")
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_competitor_queries_query
+           ON competitor_resume_queries(search_query, search_in, auth_mode, search_rank)"""
+    )
 
 
 def _migrate_competitor_skills_schema(conn: sqlite3.Connection) -> None:
