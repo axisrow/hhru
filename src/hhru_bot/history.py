@@ -311,6 +311,7 @@ CREATE TABLE IF NOT EXISTS competitor_collection_runs (
     run_id TEXT PRIMARY KEY,
     search_query TEXT NOT NULL,
     auth_mode TEXT,
+    search_in TEXT,
     max_pages INTEGER NOT NULL,
     requested_page_size INTEGER NOT NULL DEFAULT 100,
     status TEXT NOT NULL,
@@ -772,6 +773,7 @@ class History:
             # They must never be selected as resume checkpoints for a new,
             # explicitly scoped collection.
             _ensure_column(conn, "competitor_collection_runs", "auth_mode", "TEXT")
+            _ensure_column(conn, "competitor_collection_runs", "search_in", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "heartbeat_at", "TEXT")
             _ensure_column(conn, "competitor_collection_runs", "last_started_page", "INTEGER")
             _ensure_column(conn, "competitor_collection_runs", "last_completed_page", "INTEGER")
@@ -2098,6 +2100,7 @@ class History:
         *,
         requested_page_size: int = 100,
         auth_mode: str = "anonymous",
+        search_in: str = "position",
         resume: bool = False,
     ) -> dict:
         """Recover dead collectors and atomically create a durable owned run (#654)."""
@@ -2142,9 +2145,10 @@ class History:
                 latest = conn.execute(
                     """SELECT * FROM competitor_collection_runs
                        WHERE search_query=? AND requested_page_size=? AND auth_mode=?
+                         AND COALESCE(search_in, 'full_text')=?
                          AND status != 'running'
                        ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-                    (search_query, requested_page_size, auth_mode),
+                    (search_query, requested_page_size, auth_mode, search_in),
                 ).fetchone()
                 if (
                     latest is not None
@@ -2186,15 +2190,17 @@ class History:
                 ).fetchone()
             conn.execute(
                 """INSERT INTO competitor_collection_runs
-                   (run_id, search_query, auth_mode, max_pages, requested_page_size, status,
+                   (run_id, search_query, auth_mode, search_in, max_pages,
+                    requested_page_size, status,
                     started_at, heartbeat_at,
                     owner_pid, last_started_page, last_completed_page, resume_page,
                     resumed_from_run_id, observed_page_size)
-                   VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, NULL, NULL, ?, ?, ?)""",
                 (
                     run_id,
                     search_query,
                     auth_mode,
+                    search_in,
                     max_pages,
                     requested_page_size,
                     now,

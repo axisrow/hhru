@@ -239,6 +239,14 @@ def test_competitors_collect_and_report_arguments():
     assert collect.items_per_page == 100
     assert collect.auth_mode == "anonymous"
     assert collect.detail_workers == 10
+    # `full_text` матчит навыки: «AI» так вытягивает дизайнеров с Adobe
+    # Illustrator (.ai). Дефолт держим на `position` — только должность.
+    assert collect.search_in == "position"
+
+    full_text = parser.parse_args(
+        ["competitors", "collect", "--text", "AI", "--search-in", "full_text"]
+    )
+    assert full_text.search_in == "full_text"
 
     explicit = parser.parse_args(
         [

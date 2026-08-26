@@ -65,6 +65,23 @@ def test_search_url_is_keyword_only_and_page_numbered():
     assert "items_on_page=20" in smoke_url
 
 
+def test_search_url_defaults_to_position_scope():
+    """`pos=full_text` матчит навыки, из-за чего «AI» вытягивает дизайнеров с
+    Adobe Illustrator (.ai) — на живой выдаче ~81% результатов. Дефолт обязан
+    оставаться `position`, иначе сбор снова наберёт мусор."""
+    assert "pos=position" in build_competitor_search_url("AI", 0)
+
+
+def test_search_url_honours_explicit_search_in():
+    assert "pos=full_text" in build_competitor_search_url("AI", 0, search_in="full_text")
+    assert "pos=keywords" in build_competitor_search_url("AI", 0, search_in="keywords")
+
+
+def test_search_url_rejects_unknown_search_in():
+    with pytest.raises(ValueError, match="search_in"):
+        build_competitor_search_url("AI", 0, search_in="everywhere")
+
+
 def test_search_result_count_parses_thin_space_and_coverage_warning():
     text = "Показали 12 368 резюме — остальные можно увидеть после регистрации работодателя"
     assert parse_search_result_count(text) == 12_368

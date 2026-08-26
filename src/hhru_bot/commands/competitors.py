@@ -233,6 +233,17 @@ def register(subparsers) -> None:
         help="Запрошенный размер страницы hh.ru (по умолчанию 100; для smoke можно 20)",
     )
     collect.add_argument(
+        "--search-in",
+        choices=("position", "full_text", "keywords"),
+        default="position",
+        help=(
+            "Где hh.ru ищет --text: position — только в названии должности "
+            "(по умолчанию); full_text — по всему резюме, включая навыки, из-за чего "
+            "запрос вроде «AI» вытягивает дизайнеров с Adobe Illustrator; "
+            "keywords — по ключевым навыкам"
+        ),
+    )
+    collect.add_argument(
         "--auth-mode",
         choices=("anonymous", "authenticated"),
         default="anonymous",
@@ -289,6 +300,7 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
             args.max_pages or 0,
             requested_page_size=args.items_per_page,
             auth_mode=args.auth_mode,
+            search_in=args.search_in,
             resume=bool(getattr(args, "resume", False)),
         )
     except CommandRunBusy as exc:
@@ -428,7 +440,10 @@ def run_collect(args: argparse.Namespace) -> bool | CommandExitCode:
                     goto_hh(
                         search_page,
                         build_competitor_search_url(
-                            query, page_num, items_per_page=requested_page_size
+                            query,
+                            page_num,
+                            items_per_page=requested_page_size,
+                            search_in=args.search_in,
                         ),
                     )
                     cards_before = snapshot()["cards"]
