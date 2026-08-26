@@ -89,9 +89,17 @@ def _source_version(root: Path) -> str | None:
     return _first_string((project.get("version"),)) if isinstance(project, dict) else None
 
 
-def _git_identity(name: str, path: Path, *, manifest_version: str | None = None):
+def _git_identity(
+    name: str,
+    path: Path,
+    *,
+    manifest_version: str | None = None,
+    require_package_source: bool = False,
+):
     root = _git_root(path)
     if root is None:
+        return None
+    if require_package_source and not _is_package_source_checkout(path, root):
         return None
     sha = run_git(root, "rev-parse", "HEAD")
     if sha is None:
@@ -107,6 +115,13 @@ def _git_identity(name: str, path: Path, *, manifest_version: str | None = None)
     )
     release = run_git(root, "describe", "--tags", "--exact-match", "HEAD")
     return ComponentIdentity(name, version or manifest_version, release, sha, root, "git")
+
+
+def _is_package_source_checkout(package_path: Path, root: Path) -> bool:
+    package_path = package_path.resolve()
+    expected = (root / "src" / "hhru_bot").resolve()
+    legacy_expected = (root / "hhru_bot").resolve()
+    return package_path in {expected, legacy_expected}
 
 
 def _first_string(values: Iterable[Any]) -> str | None:
@@ -228,7 +243,7 @@ def cli_identity() -> ComponentIdentity:
 
     path = _package_location()
     package_root = path.parent
-    identity = _git_identity("installed CLI", package_root)
+    identity = _git_identity("installed CLI", package_root, require_package_source=True)
     if identity is not None:
         return identity
     try:

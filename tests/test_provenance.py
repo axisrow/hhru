@@ -110,6 +110,20 @@ def test_direct_url_vcs_info_provides_commit_sha():
     assert sha == "d" * 40
 
 
+def test_noneditable_package_inside_checkout_does_not_inherit_checkout_sha(tmp_path: Path):
+    root = tmp_path / "project"
+    package = root / ".venv" / "lib" / "python3.12" / "site-packages" / "hhru_bot"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+
+    assert _git_identity("installed CLI", package, require_package_source=True) is None
+
+
 def test_manifest_provenance_is_used_when_cache_has_no_git_directory(tmp_path: Path):
     root = tmp_path / "cache" / "0.2.0" / ".codex-plugin"
     root.mkdir(parents=True)
