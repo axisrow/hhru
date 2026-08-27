@@ -187,6 +187,46 @@ def test_invalid_coverage_status_fails_catalog_gate():
     assert "search_page.VACANCY_CARD: invalid coverage_status" in errors
 
 
+def test_extra_contract_bootstrap_has_catalog_wide_coverage():
+    catalog = {"selectors": {}}
+
+    contracts._ensure_extra_contracts(catalog, {})
+
+    assert catalog["selectors"]
+    assert all(
+        row.get("coverage_status") in contracts.AUDIT_STATUSES
+        for row in catalog["selectors"].values()
+    )
+
+
+def test_bootstrap_output_passes_catalog_gate(tmp_path, monkeypatch):
+    source_root = tmp_path / "src" / "hhru_bot"
+    selector_group = source_root / "selector_groups" / "account_profile.py"
+    selector_group.parent.mkdir(parents=True)
+    selector_group.write_text("ACCOUNT_NAME = \"[data-qa='account-name']\"\n", encoding="utf-8")
+    monkeypatch.setattr(contracts, "ROOT", tmp_path)
+    monkeypatch.setattr(contracts, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(
+        contracts, "GENERATED_PATH", source_root / "selector_groups" / "_generated.py"
+    )
+    monkeypatch.setattr(contracts, "MATRIX_PATH", tmp_path / "selectors" / "reference-matrix.md")
+    monkeypatch.setattr(contracts, "EXTRA_CONTRACTS", {})
+
+    reference_root = tmp_path / "references"
+    for config in contracts.REFERENCE_CONFIG.values():
+        _commit_repository(reference_root / config["directory"], "[data-qa='account-name']")
+
+    catalog, _ = contracts.build_map(reference_root, tmp_path / "live")
+    contracts.GENERATED_PATH.write_text(contracts.render_generated(catalog), encoding="utf-8")
+    contracts.MATRIX_PATH.parent.mkdir(parents=True)
+    contracts.MATRIX_PATH.write_text(contracts.render_matrix(catalog), encoding="utf-8")
+
+    assert contracts.verify_catalog(catalog) == []
+    assert catalog["selectors"]["account_profile.ACCOUNT_NAME"]["coverage_status"] == (
+        "reference_binding"
+    )
+
+
 def test_resume_account_competitor_unbound_selectors_have_provenance():
     catalog = contracts.load_catalog()
     rows = {

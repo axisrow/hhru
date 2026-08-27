@@ -974,6 +974,12 @@ def _ensure_extra_contracts(catalog: dict[str, Any], evidence: dict[str, Any]) -
             "decision": decision,
             "sources": {},
             "live_matches": live_matches,
+            **_audit_metadata(
+                logical_id,
+                sources={},
+                live_matches=live_matches,
+                declared_at=contract["declared_at"],
+            ),
         }
         if decision in {"documented_live", "workflow_live"}:
             row["evidence"] = {
@@ -992,11 +998,15 @@ def _audit_metadata(
     today: str | None = None,
 ) -> dict[str, Any]:
     """Return deterministic bootstrap provenance for audited selector groups."""
-    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-        return {}
     verified_at = today or date.today().isoformat()
     reference_count = len(sources)
-    if reference_count >= 2:
+    if reference_count >= 3:
+        origin = "reference_exact"
+        status = "reference_binding"
+        verification = "contract_tested"
+        flow = "reference_selector_scan_and_contract_check"
+        note = "Exact selector value is bound to all three approved reference sources."
+    elif reference_count >= 2:
         origin = "reference_consensus"
         status = "reference_binding"
         verification = "contract_tested"
