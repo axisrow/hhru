@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -19,7 +20,6 @@ from .browser import (
 from .config import AppConfig
 from .session_security import (
     create_storage_state_temp,
-    secure_storage_state_file,
     secure_storage_state_parent,
 )
 
@@ -104,12 +104,21 @@ def login(
         # (has_auth_cookie(page) and not has_login_form(page)) — повторная
         # проверка cookie здесь была бы недостижимым дублированием.
         fd, temporary_state = create_storage_state_temp(storage_state_file, account_dir=account_dir)
-        os.close(fd)
         try:
-            context.storage_state(path=str(temporary_state))
-            secure_storage_state_file(temporary_state)
+            # Ask Playwright for the state in memory, then serialize it through
+            # the already-open 0600 descriptor.  Reopening the temporary path
+            # by name would let a writer of a shared custom parent redirect
+            # bearer-token contents through a symlink (Codex review).
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                json.dump(context.storage_state(), handle, ensure_ascii=False)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary_state, storage_state_file)
         except BaseException:
+            if fd >= 0:
+                os.close(fd)
             temporary_state.unlink(missing_ok=True)
             raise
         logger.info("Сессия сохранена: %s", storage_state_file)

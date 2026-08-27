@@ -189,6 +189,20 @@ def test_managed_account_symlink_is_rejected_without_touching_target(tmp_path: P
     assert not (external / "storage_state").exists()
 
 
+def test_existing_directory_destination_is_rejected_without_chmod(tmp_path: Path):
+    if os.name == "nt":
+        pytest.skip("POSIX directory modes are not available on Windows")
+
+    destination = tmp_path / "project"
+    destination.mkdir()
+    destination.chmod(0o755)
+
+    with pytest.raises(OSError, match="обычным файлом"):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert destination.stat().st_mode & 0o777 == 0o755
+
+
 def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
     # Codex + /review re-review (PR #168): a previous fix called
     # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file

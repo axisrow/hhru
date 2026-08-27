@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -64,6 +65,8 @@ def secure_storage_state_file(destination: Path | str) -> None:
     if permissions_are_posix():
         fd = _open_without_follow(Path(destination), os.O_RDONLY)
         try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"файл сессии не является обычным файлом: {destination}")
             os.fchmod(fd, SESSION_FILE_MODE)
         finally:
             os.close(fd)
