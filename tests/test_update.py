@@ -200,6 +200,10 @@ def test_github_fallback_does_not_require_release_asset(tmp_path, monkeypatch):
     assert result.release.commit == COMMIT
 
 
+def test_file_url_path_round_trips_platform_path(tmp_path):
+    assert update_module._file_url_path(tmp_path.as_uri()) == tmp_path
+
+
 def test_editable_install_does_not_replace_checkout_with_wheel(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     monkeypatch.setattr(update_module, "_git_commit", lambda _path: COMMIT)
@@ -300,12 +304,12 @@ def test_windows_launcher_reexecs_through_python_before_update(monkeypatch):
     monkeypatch.setattr(command.sys, "argv", [r"C:\Scripts\hhru.exe", "update", "--codex", "codex"])
     called = {}
 
-    def fake_execve(interpreter, argv, environment):
-        called.update(interpreter=interpreter, argv=argv, environment=environment)
+    def fake_execv(interpreter, argv):
+        called.update(interpreter=interpreter, argv=argv)
 
-    monkeypatch.setattr(command.os, "execve", fake_execve)
+    monkeypatch.setattr(command.os, "execv", fake_execv)
 
     assert command._reexec_windows_launcher()
     assert called["interpreter"] == r"C:\Venv\python.exe"
     assert called["argv"][2:] == ["hhru_bot.cli", "update", "--codex", "codex"]
-    assert called["environment"][command._WINDOWS_REEXEC_ENV] == "1"
+    assert command.os.environ[command._WINDOWS_REEXEC_ENV] == "1"

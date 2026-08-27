@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import quote, urlparse
+from urllib.request import Request, url2pathname, urlopen
 
 DEFAULT_SOURCE = "https://github.com/axisrow/hhru.git"
 DEFAULT_REF = "main"
@@ -150,7 +150,7 @@ def _file_url_path(url: str) -> Path | None:
     parsed = urlparse(url)
     if parsed.scheme != "file":
         return None
-    return Path(unquote(parsed.path))
+    return Path(url2pathname(parsed.path))
 
 
 def editable_root() -> Path | None:

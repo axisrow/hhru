@@ -57,6 +57,10 @@ jobs:
         if: runner.os == 'Windows'
         run: python -m pytest -q tests/test_write_lock.py
 
+      - name: Windows updater console-launcher test
+        if: runner.os == 'Windows'
+        run: python -m pytest -q tests/test_update_windows.py
+
       - name: Selector contract check
         run: python scripts/selector_contracts.py check
 
