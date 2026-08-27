@@ -20,6 +20,16 @@ different version. It updates these fields:
 - `.agents/plugins/marketplace.json:metadata.version` and
   `plugins[0].version`.
 
+## Release refs
+
+The Codex marketplace uses the release model introduced by #676 and merged in
+#681: its Git source must point to the version tag (`v` plus
+`pyproject.toml`'s version), rather than to a floating branch. CI runs
+`python3 scripts/check_plugin_refs.py`, which resolves every URL source with
+`git ls-remote` and fails if the referenced tag is absent. The first release
+therefore requires publishing `v0.1.0`; subsequent version bumps require a
+corresponding tag before their marketplace manifest can pass CI.
+
 The marketplace files are both needed. `.claude-plugin/marketplace.json` is
 the Claude Code local marketplace entry (`source: "./"`), while
 `.agents/plugins/marketplace.json` is the Codex team marketplace entry (a Git
