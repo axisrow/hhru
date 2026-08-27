@@ -734,6 +734,20 @@ def test_refresh_keeps_audited_unavailable_rows_fail_closed(tmp_path, monkeypatc
         row = refreshed["selectors"][logical_id]
         assert row["decision"] == "unavailable"
         assert row["active"] is False
+        assert row["verification"] in {"unavailable", "failed"}
+
+    current = refreshed
+    monkeypatch.setattr(contracts, "load_catalog", lambda: copy.deepcopy(current))
+    refreshed_again = contracts.refresh_catalog(reference_root, "manual")
+    for logical_id in (
+        "search_page.unavailable_READ",
+        "search_page.unavailable_consensus_READ",
+        "search_page.unavailable_live_READ",
+    ):
+        row = refreshed_again["selectors"][logical_id]
+        assert row["decision"] == "unavailable"
+        assert row["active"] is False
+        assert row["verification"] in {"unavailable", "failed"}
 
 
 def test_affected_logical_ids_deduplicates_rows_variants_and_overlap():

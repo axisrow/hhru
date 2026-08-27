@@ -1057,6 +1057,13 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
     for logical_id, row in catalog.get("selectors", {}).items():
         sources = row.get("sources", {})
         previous_origin = row.get("origin")
+        # A durable failure is stronger than any refreshed metadata. Keep the
+        # row unavailable even when the source set is empty and the audit
+        # fields need bootstrapping.
+        if row.get("verification") in {"unavailable", "failed"}:
+            row["decision"] = "unavailable"
+            row["active"] = False
+            continue
         if sources:
             reference_count = len(sources)
             lost_consensus = reference_count < 2 and previous_origin in {
