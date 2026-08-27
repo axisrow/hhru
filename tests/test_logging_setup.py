@@ -131,3 +131,26 @@ handler.close()
 
     assert (tmp_path / "hhru_bot.log.1").read_text(encoding="utf-8") == "original\n"
     assert (tmp_path / "hhru_bot.log.2").exists()
+
+
+def test_rollover_does_not_truncate_inode_replaced_externally(tmp_path: Path):
+    """An external rename cannot make the handler erase the old segment."""
+    log_file = tmp_path / "hhru_bot.log"
+    log_file.write_text("old\n", encoding="utf-8")
+    handler = logging_setup._PreservingRotatingFileHandler(
+        log_file,
+        maxBytes=1,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    try:
+        log_file.rename(tmp_path / "external.log")
+        log_file.write_text("fresh\n", encoding="utf-8")
+        record = logging.LogRecord("hhru_bot", logging.INFO, __file__, 1, "new", (), None)
+        handler.emit(record)
+    finally:
+        handler.close()
+
+    assert (tmp_path / "external.log").read_text(encoding="utf-8") == "old\n"
+    assert (tmp_path / "hhru_bot.log.1").read_text(encoding="utf-8") == "fresh\n"
+    assert "new" in log_file.read_text(encoding="utf-8")

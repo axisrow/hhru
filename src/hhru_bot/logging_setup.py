@@ -48,6 +48,7 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
         """
         try:
             with self._rollover_lock, FileLock(self._rotation_lock_path):
+                self._reopen_if_path_was_replaced_locked()
                 if self.shouldRollover(record):
                     self._do_rollover_locked()
                 logging.FileHandler.emit(self, record)
@@ -55,6 +56,7 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
             self.handleError(record)
 
     def _do_rollover_locked(self) -> None:
+        self._reopen_if_path_was_replaced_locked()
         if self.stream is not None:
             self.stream.flush()
 
@@ -69,6 +71,21 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
             self.stream.flush()
         elif not self.delay:
             self.stream = self._open()
+
+    def _reopen_if_path_was_replaced_locked(self) -> None:
+        """Rebind the writer after an external rename-based rotation."""
+        if self.stream is None:
+            return
+        try:
+            current = os.fstat(self.stream.fileno())
+            active = os.stat(self.baseFilename)
+        except FileNotFoundError:
+            return
+        if (current.st_dev, current.st_ino) == (active.st_dev, active.st_ino):
+            return
+        self.stream.flush()
+        self.stream.close()
+        self.stream = self._open()
 
     def _create_archive_locked(self) -> str:
         index = 1
