@@ -49,7 +49,7 @@ def test_plist_run_uses_start_interval_and_run_argv():
     parsed = _plist(out)
 
     assert parsed["StartInterval"] == 4 * 60 * 60
-    assert parsed["ProgramArguments"][1:] == ["--headless", "run"]
+    assert parsed["ProgramArguments"][1:] == ["--headless", "run", "--limit", "5"]
     assert parsed["Label"] == "com.hhru.bot.run"
 
 
@@ -115,7 +115,7 @@ def test_crontab_run_uses_bump_interval():
     out = render_schedule(format="crontab", action="run")
 
     assert out.startswith("0 */4 * * * ")
-    assert "scheduled_run.sh --headless run" in out
+    assert "scheduled_run.sh --headless run --limit 5" in out
 
 
 def test_invalid_interval_raises():
@@ -167,7 +167,7 @@ def test_program_arguments_headless_before_subcommand_apply():
 def test_program_arguments_headless_before_subcommand_run():
     from hhru_bot.commands.schedule import _program_arguments
 
-    assert _program_arguments("run", 5) == ["--headless", "run"]
+    assert _program_arguments("run", 5) == ["--headless", "run", "--limit", "5"]
 
 
 def test_program_arguments_preserve_account():
@@ -210,7 +210,7 @@ def test_cli_accepts_emitted_argv_bump():
 
     parser = build_parser()
     for action in ("bump", "apply", "run"):
-        argv = ["--headless", action] + (["--limit", "5"] if action == "apply" else [])
+        argv = ["--headless", action] + (["--limit", "5"] if action in {"apply", "run"} else [])
         # parse_args бросает SystemExit(2) при 'unrecognized arguments'
         ns = parser.parse_args(argv)
         assert ns.headless is True

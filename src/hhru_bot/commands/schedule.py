@@ -96,8 +96,8 @@ def _program_arguments(
 ) -> list[str]:
     """Аргументы, которые планировщик передаёт scheduled_run.sh.
 
-    bump/run — без лимита (дневной лимит и кулдаун 4ч держит throttle).
-    apply — с --limit N (сверх дневного лимита, чтобы один прогон не
+    bump — без лимита (дневной лимит и кулдаун 4ч держит throttle).
+    apply/run — с --limit N (сверх дневного лимита, чтобы один прогон не
     выработал весь daily_apply_limit за раз).
 
     --headless ставится ПЕРВЫМ (до subcommand): это глобальный флаг корневого
@@ -113,8 +113,10 @@ def _program_arguments(
             args += ["--history", history]
     elif account is not None:
         args += ["--account", account]
-    if action in {"bump", "run"}:
+    if action == "bump":
         return [*args, action]
+    if action == "run":
+        return [*args, action, "--limit", str(apply_limit)]
     return [*args, "apply", "--limit", str(apply_limit)]
 
 
