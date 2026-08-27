@@ -52,7 +52,23 @@ REFERENCE_CONFIG = {
     },
 }
 
-AUDITED_SELECTOR_GROUP_PREFIXES = ("search_page.", "vacancy_page.")
+# Keep this list aligned with ``src/hhru_bot/selector_groups``.  The login
+# module's catalog IDs retain the historical ``selectors.`` prefix, so it is
+# included here as the audit prefix for ``selector_groups/login.py``.
+AUDITED_SELECTOR_GROUP_PREFIXES = (
+    "account_profile.",
+    "apply_form.",
+    "competitor_resume.",
+    "negotiations.",
+    "resume_experience.",
+    "resume_list.",
+    "resume_page.",
+    "resume_rename.",
+    "resume_visibility.",
+    "search_page.",
+    "vacancy_page.",
+    "selectors.",
+)
 AUDIT_REQUIRED_FIELDS = (
     "coverage_status",
     "origin",
@@ -975,7 +991,7 @@ def _audit_metadata(
     declared_at: str,
     today: str | None = None,
 ) -> dict[str, Any]:
-    """Return deterministic bootstrap provenance for the audited page groups."""
+    """Return deterministic bootstrap provenance for audited selector groups."""
     if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
         return {}
     verified_at = today or date.today().isoformat()
@@ -1423,12 +1439,15 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
     if catalog.get("binding_definitions") != _binding_definitions():
         errors.append("semantic reference bindings are stale; run selector refresh")
     for logical_id, row in catalog.get("selectors", {}).items():
+        # coverage_status is the catalog-wide canonical provenance field.  Do
+        # this check before the group-specific audit so records outside the
+        # page-group list cannot silently omit or bypass it.
+        if row.get("coverage_status") not in AUDIT_STATUSES:
+            errors.append(f"{logical_id}: invalid coverage_status")
         if logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
             for field in AUDIT_REQUIRED_FIELDS:
                 if not row.get(field):
                     errors.append(f"{logical_id}: missing audit field {field}")
-            if row.get("coverage_status") not in AUDIT_STATUSES:
-                errors.append(f"{logical_id}: invalid coverage_status")
             if row.get("origin") not in AUDIT_ORIGINS:
                 errors.append(f"{logical_id}: invalid origin")
             if row.get("coverage_status") == "reference_binding":

@@ -33,10 +33,10 @@ AUDIT_GROUPS = {
     "resume_position",
 }
 AUDIT_STATUSES = {
-    "reference binding",
-    "intentionally local",
-    "not implemented upstream",
-    "needs-live-evidence",
+    "reference_binding",
+    "intentionally_local",
+    "not_implemented_upstream",
+    "needs_live_evidence",
 }
 AUDIT_FIELDS = (
     "origin",
@@ -147,6 +147,46 @@ def test_current_repository_selector_contract_is_self_consistent():
     assert catalog["policy"]["consensus_threshold"] == 2
 
 
+def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
+    catalog = contracts.load_catalog()
+    expected_prefixes = {
+        "account_profile.",
+        "apply_form.",
+        "competitor_resume.",
+        "negotiations.",
+        "resume_experience.",
+        "resume_list.",
+        "resume_page.",
+        "resume_rename.",
+        "resume_visibility.",
+        "search_page.",
+        "vacancy_page.",
+        # selector_groups/login.py retains the historical selectors.* IDs.
+        "selectors.",
+    }
+
+    assert set(contracts.AUDITED_SELECTOR_GROUP_PREFIXES) == expected_prefixes
+    assert len(catalog["selectors"]) == 215
+    assert all(
+        row.get("coverage_status") in contracts.AUDIT_STATUSES
+        for row in catalog["selectors"].values()
+    )
+    for logical_id, row in catalog["selectors"].items():
+        if logical_id.startswith(contracts.AUDITED_SELECTOR_GROUP_PREFIXES):
+            assert all(
+                row.get(field) not in (None, "", {}) for field in contracts.AUDIT_REQUIRED_FIELDS
+            )
+
+
+def test_invalid_coverage_status_fails_catalog_gate():
+    catalog = contracts.load_catalog()
+    catalog["selectors"]["search_page.VACANCY_CARD"]["coverage_status"] = "needs-live-evidence"
+
+    errors = contracts.verify_catalog(catalog)
+
+    assert "search_page.VACANCY_CARD: invalid coverage_status" in errors
+
+
 def test_resume_account_competitor_unbound_selectors_have_provenance():
     catalog = contracts.load_catalog()
     rows = {
@@ -157,7 +197,12 @@ def test_resume_account_competitor_unbound_selectors_have_provenance():
 
     assert rows
     for logical_id, row in rows.items():
-        assert row.get("status") in AUDIT_STATUSES, logical_id
+        assert row.get("status") in {
+            "reference binding",
+            "intentionally local",
+            "not implemented upstream",
+            "needs-live-evidence",
+        }, logical_id
         assert all(row.get(field) not in (None, "", {}) for field in AUDIT_FIELDS), logical_id
         assert "llm_hypothesis" not in row, logical_id
         if not (row.get("bindings") or row.get("sources")):
@@ -256,10 +301,10 @@ def test_issue_610_apply_login_negotiations_coverage_is_classified():
     catalog = contracts.load_catalog()
     prefixes = ("apply_form.", "negotiations.", "selectors.LOGIN")
     allowed_statuses = {
-        "reference binding",
-        "intentionally local",
-        "not implemented upstream",
-        "needs-live-evidence",
+        "reference_binding",
+        "intentionally_local",
+        "not_implemented_upstream",
+        "needs_live_evidence",
     }
     required_fields = {
         "coverage_status",
@@ -284,9 +329,9 @@ def test_issue_610_apply_login_negotiations_coverage_is_classified():
         assert row["origin"] != "llm_hypothesis", logical_id
         if row.get("active", True):
             assert row["origin"] and row["verification"], logical_id
-        if row["coverage_status"] == "reference binding":
+        if row["coverage_status"] == "reference_binding":
             assert row.get("bindings") or row.get("sources"), logical_id
-        if row["coverage_status"] == "needs-live-evidence":
+        if row["coverage_status"] == "needs_live_evidence":
             assert row["verification"] in {"unverified", "unavailable"}, logical_id
 
 
