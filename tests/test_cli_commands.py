@@ -466,6 +466,7 @@ def test_funnel_has_format_and_dead_flags():
     assert "--format" in opts
     assert "--dead" in opts
     assert "--dead-days" in opts
+    assert "--rejections" in opts
     # воронка — не браузерная команда
     assert "--dry-run" not in opts
 
