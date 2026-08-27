@@ -154,3 +154,25 @@ def test_rollover_does_not_truncate_inode_replaced_externally(tmp_path: Path):
     assert (tmp_path / "external.log").read_text(encoding="utf-8") == "old\n"
     assert (tmp_path / "hhru_bot.log.1").read_text(encoding="utf-8") == "fresh\n"
     assert "new" in log_file.read_text(encoding="utf-8")
+
+
+def test_missing_active_path_does_not_truncate_renamed_segment(tmp_path: Path):
+    """A rename/create gap must preserve the still-open archived descriptor."""
+    log_file = tmp_path / "hhru_bot.log"
+    log_file.write_text("old\n", encoding="utf-8")
+    handler = logging_setup._PreservingRotatingFileHandler(
+        log_file,
+        maxBytes=1,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    archived = tmp_path / "external.log"
+    try:
+        log_file.rename(archived)
+        record = logging.LogRecord("hhru_bot", logging.INFO, __file__, 1, "new", (), None)
+        handler.emit(record)
+    finally:
+        handler.close()
+
+    assert archived.read_text(encoding="utf-8") == "old\nnew\n"
+    assert not (tmp_path / "hhru_bot.log.1").exists()

@@ -57,6 +57,11 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
 
     def _do_rollover_locked(self) -> None:
         self._reopen_if_path_was_replaced_locked()
+        # During an external rename rotation there can be a short interval in
+        # which the active path does not exist. Never truncate the still-open
+        # descriptor in that interval: it is already the archived segment.
+        if not os.path.exists(self.baseFilename):
+            return
         if self.stream is not None:
             self.stream.flush()
 
