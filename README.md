@@ -185,13 +185,16 @@ config/
 Для Linux или macOS с cron скопируй `scripts/crontab.example`, замени
 `__REPO_ROOT__` и `__PYTHON_BIN__` на абсолютные пути и добавь строку через
 `crontab -e`. Важно использовать Python из виртуального окружения: cron не
-активирует его сам. Обёртка переходит в корень проекта, пишет в
-`data/logs/scheduled.log` и возвращает код ошибки планировщику.
+активирует его сам. Обёртка переходит в корень проекта, сама пишет в
+`data/logs/scheduled.log` и возвращает код ошибки планировщику; внешние
+редиректы в cron не нужны.
 
 На macOS вместо cron можно использовать готовый шаблон
 `deploy/com.hhru.bot.apply.plist` (ежедневный apply) или
 `deploy/com.hhru.bot.bump.plist` (проверка bump каждые 4 часа). В копии plist
-замени `__REPO_ROOT__`, `__LOG_DIR__` и `__PYTHON_BIN__`, затем установи его:
+замени `__REPO_ROOT__` и `__PYTHON_BIN__`, затем установи его. Шаблоны
+направляют stdout/stderr launchd в `/dev/null`: постоянный вывод сохраняет
+сама обёртка в `data/logs/scheduled.log`, поэтому второй записи нет:
 
 ```bash
 cp deploy/com.hhru.bot.apply.plist ~/Library/LaunchAgents/com.hhru.bot.apply.plist
