@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tarfile
 from pathlib import Path
@@ -18,8 +19,18 @@ pytestmark = pytest.mark.smoke
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
+def _tagless_source(tmp_path: Path) -> Path:
+    """Build from a checkout without the repository's real release tags."""
+    source = Path(__file__).parents[1]
+    return shutil.copytree(
+        source,
+        tmp_path / "source",
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+    )
+
+
 def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_path):
-    archive = build_release(Path(__file__).parents[1], tmp_path, "v0.1.0", COMMIT)
+    archive = build_release(_tagless_source(tmp_path), tmp_path, "v0.1.0", COMMIT)
 
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
@@ -42,7 +53,7 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
 
 
 def test_release_validation_rejects_manifest_from_another_commit(tmp_path):
-    archive = build_release(Path(__file__).parents[1], tmp_path, "v0.1.0", COMMIT)
+    archive = build_release(_tagless_source(tmp_path), tmp_path, "v0.1.0", COMMIT)
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())
