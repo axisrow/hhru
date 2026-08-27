@@ -29,6 +29,7 @@ from .selectors import (
     LOGIN_EMAIL_TYPE,
     LOGIN_PHONE_INPUT,
 )
+from .session_security import secure_storage_state_parent
 
 logger = logging.getLogger("hhru_bot.auth_code")
 
@@ -121,7 +122,7 @@ def login_with_code(
         raise ValueError("Логин не должен быть пустым")
     if timeout_seconds <= 0:
         raise ValueError("Таймаут должен быть положительным")
-    config.storage_state_file.parent.mkdir(parents=True, exist_ok=True)
+    secure_storage_state_parent(config.storage_state_file, account_dir=account_dir)
     temporary_state = config.storage_state_file.with_name(
         config.storage_state_file.name + ".login-code.tmp.json"
     )
