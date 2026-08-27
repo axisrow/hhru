@@ -14,6 +14,7 @@ import pytest
 import hhru_bot.apply.pipeline as pipeline_module
 from hhru_bot.apply import ProbeHook, apply_to_vacancy
 from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
+from hhru_bot.browser import NotAuthenticated
 from hhru_bot.history import SKIP_REASONS
 from hhru_bot.search import VacancyCard
 
@@ -119,6 +120,9 @@ class FakePage:
         submit_click_error: Exception | None = None,
     ):
         self.url = ""
+        self.context = SimpleNamespace(
+            cookies=lambda: [{"name": "hhtoken", "value": "test-session"}]
+        )
         self.goto_calls: list[str] = []
         self._apply_button = apply_button
         self._already_responded = already_responded
@@ -224,20 +228,20 @@ def test_apply_login_form_is_checked_after_navigation(monkeypatch):
         events.append("goto")
         p.goto(url)
 
-    def fake_has_login_form(_page):
+    def fake_require_authenticated_page(_page):
         events.append("auth")
         assert events == ["goto", "auth"]
-        return True
+        raise NotAuthenticated("сессия истекла")
 
     monkeypatch.setattr(pipeline_module, "goto_hh", fake_goto)
-    monkeypatch.setattr(pipeline_module, "has_login_form", fake_has_login_form)
+    monkeypatch.setattr(
+        pipeline_module, "require_authenticated_page", fake_require_authenticated_page
+    )
 
-    result = apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
+    with pytest.raises(NotAuthenticated, match="сессия истекла"):
+        apply_to_vacancy(page, _vacancy(), "RID", "x", dry_run=True)
 
-    assert result.success is False
-    assert "Сессия недействительна" in result.reason
     assert events == ["goto", "auth"]
-    assert result.acted is False  # #163: провал до submit — без паузы и записи
 
 
 def test_antibot_detection_terminates_pipeline_before_per_vacancy_work(monkeypatch):

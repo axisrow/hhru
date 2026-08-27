@@ -266,3 +266,13 @@ def test_shipped_scheduler_configs_have_one_persistent_log_writer(path):
         parsed = plistlib.loads(text.encode())
         assert parsed["StandardOutPath"] == "/dev/null"
         assert parsed["StandardErrorPath"] == "/dev/null"
+
+
+def test_scheduled_wrapper_surfaces_expired_session():
+    script = (Path(__file__).parents[1] / "scripts" / "scheduled_run.sh").read_text()
+
+    assert "SESSION_EXPIRED_EXIT_CODE=78" in script
+    assert 'if [[ "${status}" -eq "${SESSION_EXPIRED_EXIT_CODE}" ]]' in script
+    assert "[SESSION_EXPIRED]" in script
+    assert "hhru login или hhru refresh-token" in script
+    assert 'tee -a "${LOG_FILE}"' in script

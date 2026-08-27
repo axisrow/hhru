@@ -53,6 +53,8 @@ LOG_FILE="${LOG_DIR}/scheduled.log"
 # python3, что и интерактивный run.sh (совместимость с ручным запуском).
 # Без PYTHONPATH=src: код резолвится из site-packages editable install.
 PYTHON_BIN="${HHRU_PYTHON:-python3}"
+# Keep synchronized with CommandExitCode.SESSION_EXPIRED in exit_codes.py.
+SESSION_EXPIRED_EXIT_CODE=78
 run_cli() {
   "${PYTHON_BIN}" -m hhru_bot.cli "$@" 2>&1 | tee -a "${LOG_FILE}"
   return "${PIPESTATUS[0]}"
@@ -63,4 +65,14 @@ if [[ -n "${HHRU_ACCOUNT:-}" ]]; then
   ACCOUNT_ARGS=(--account "${HHRU_ACCOUNT}")
 fi
 
+set +e
 run_cli "${ACCOUNT_ARGS[@]}" "$@"
+status=$?
+set -e
+
+if [[ "${status}" -eq "${SESSION_EXPIRED_EXIT_CODE}" ]]; then
+  echo "[SESSION_EXPIRED] Сессия hh.ru истекла; выполните: hhru login или hhru refresh-token" \
+    | tee -a "${LOG_FILE}"
+fi
+
+exit "${status}"
