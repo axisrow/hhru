@@ -257,9 +257,9 @@ def _render_crontab(
         hour, minute = _parse_time(cfg.apply_time)
         schedule = f"{minute} {hour} * * *"
 
-    # scheduled_run.sh owns persistent logging through tee; an outer cron
-    # redirect would write every line to scheduled.log a second time.
-    return f"{schedule} {command}\n"
+    # scheduled_run.sh owns persistent logging through tee.  Discard the
+    # inherited stream so cron does not mail the complete run output.
+    return f"{schedule} {command} > /dev/null 2>&1\n"
 
 
 def _instructions(cfg: ScheduleConfig) -> str:

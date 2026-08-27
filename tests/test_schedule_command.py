@@ -88,6 +88,7 @@ def test_crontab_format():
     for line in job_lines:
         assert len(line.split()) >= 6
     assert ">>" not in out
+    assert "> /dev/null 2>&1" in out
     assert "scheduled.log" not in out
 
 
@@ -259,6 +260,7 @@ def test_shipped_scheduler_configs_have_one_persistent_log_writer(path):
     text = (Path(__file__).parents[1] / path).read_text()
     if path.endswith("crontab.example"):
         assert ">>" not in text
+        assert "> /dev/null 2>&1" in text
         assert "scheduled.log" not in text.splitlines()[-1]
     else:
         parsed = plistlib.loads(text.encode())
