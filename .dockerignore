@@ -6,6 +6,7 @@ data/
 **/storage_state/*.json
 **/storage_state/*.json.bak*
 **/storage_state/*.json.tmp
+**/storage_state/*.json.*.tmp
 
 # Never send repository metadata or local environments to the Docker daemon.
 .git/
