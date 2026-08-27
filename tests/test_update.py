@@ -24,6 +24,12 @@ def _source_root(tmp_path: Path) -> Path:
     (root / ".codex-plugin" / "plugin.json").write_text(
         '{"name": "hhru-cc-plugin", "version": "1.2.3"}', encoding="utf-8"
     )
+    (root / ".agents" / "plugins").mkdir(parents=True)
+    (root / ".agents" / "plugins" / "marketplace.json").write_text(
+        '{"plugins": [{"name": "hhru-cc-plugin", "version": "1.2.3", '
+        '"source": {"url": "https://example.test/hhru.git", "ref": "main"}}]}',
+        encoding="utf-8",
+    )
     return root
 
 
@@ -40,6 +46,9 @@ def _patch_common(monkeypatch, root: Path, *, editable=None):
     monkeypatch.setattr(update_module, "_verify_cli", lambda _release, _editable: None)
     monkeypatch.setattr(update_module, "_plugin_commit", lambda path: COMMIT if path else None)
     monkeypatch.setattr(update_module, "_tree_digest", lambda _path: "same")
+    monkeypatch.setattr(update_module, "_latest_release_ref", lambda _source: None)
+    monkeypatch.setattr(update_module, "_resolve_ref_commit", lambda *_args: COMMIT)
+    monkeypatch.setattr(update_module, "_revision_tree_digest", lambda *_args: "same")
 
     state = {"installed": False}
 

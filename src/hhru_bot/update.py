@@ -11,11 +11,14 @@ before returning.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from importlib import metadata
@@ -239,12 +242,45 @@ def _tree_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _verified_plugin_commit(path: Path | None, source_root: Path, expected: str) -> str | None:
+def _revision_tree_digest(source_root: Path, release: ReleaseIdentity) -> str:
+    """Hash the plugin source revision, even when it differs from marketplace HEAD."""
+    available = _run(
+        ["git", "-C", str(source_root), "cat-file", "-e", f"{release.commit}^{{commit}}"],
+        check=False,
+    )
+    if available.returncode:
+        _run(["git", "-C", str(source_root), "fetch", "--quiet", release.source, release.commit])
+    try:
+        archive = subprocess.run(
+            ["git", "-C", str(source_root), "archive", release.commit],
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise UpdateError(
+            f"не удалось прочитать содержимое commit plugin {release.commit}"
+        ) from exc
+    with tempfile.TemporaryDirectory(prefix="hhru-plugin-source-") as directory:
+        extracted = Path(directory)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+                bundle.extractall(extracted, filter="data")
+        except (OSError, tarfile.TarError) as exc:
+            raise UpdateError("не удалось распаковать source revision plugin") from exc
+        return _tree_digest(extracted)
+
+
+def _verified_plugin_commit(
+    path: Path | None,
+    source_root: Path,
+    expected: str,
+    source_digest: str | None = None,
+) -> str | None:
     commit = _plugin_commit(path)
     if path is None or not path.exists():
         return None
     try:
-        content_matches = _tree_digest(path) == _tree_digest(source_root)
+        content_matches = _tree_digest(path) == (source_digest or _tree_digest(source_root))
     except OSError as exc:
         raise UpdateError(f"не удалось проверить содержимое plugin cache: {path}") from exc
     if not content_matches:
@@ -269,6 +305,55 @@ def _configured_marketplace_ref() -> str | None:
     return ref if isinstance(ref, str) else None
 
 
+def _latest_release_ref(source: str) -> str | None:
+    """Return the highest published ``vX.Y.Z`` tag, if releases exist."""
+    result = _run(["git", "ls-remote", "--tags", "--refs", source, "refs/tags/v*"], check=False)
+    if result.returncode:
+        return None
+    refs: list[tuple[tuple[int, ...], str]] = []
+    for line in result.stdout.splitlines():
+        _sha, _separator, ref = line.partition("\t")
+        tag = ref.removeprefix("refs/tags/")
+        match = re.fullmatch(r"v(\d+)(?:\.(\d+)){0,2}", tag)
+        if match and _SHA_RE.fullmatch(_sha):
+            refs.append((tuple(int(part) for part in tag[1:].split(".")), tag))
+    return max(refs)[1] if refs else None
+
+
+def _marketplace_plugin_source(root: Path) -> tuple[str, str, str]:
+    """Read the exact source ref selected by the Codex marketplace manifest."""
+    try:
+        marketplace = json.loads(
+            (root / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        plugin = next(item for item in marketplace["plugins"] if item.get("name") == PLUGIN)
+        source = plugin["source"]
+        url = source["url"]
+        ref = source["ref"]
+        version = plugin["version"]
+    except (KeyError, OSError, StopIteration, TypeError, json.JSONDecodeError) as exc:
+        raise UpdateError("marketplace не сообщает source/ref/version hhru plugin") from exc
+    if not all(isinstance(value, str) and value for value in (url, ref, version)):
+        raise UpdateError("marketplace содержит неполный source/ref/version hhru plugin")
+    return url, ref, version
+
+
+def _resolve_ref_commit(source_root: Path, source: str, ref: str) -> str:
+    if _SHA_RE.fullmatch(ref):
+        return ref
+    local_source = _git_remote(source_root)
+    if _same_repository(local_source, source):
+        local = _git(source_root, "rev-parse", ref, check=False)
+        if _SHA_RE.fullmatch(local):
+            return local
+    result = _run(["git", "ls-remote", source, ref, f"refs/heads/{ref}", f"refs/tags/{ref}"])
+    for line in result.stdout.splitlines():
+        commit, _separator, _remote_ref = line.partition("\t")
+        if _SHA_RE.fullmatch(commit):
+            return commit
+    raise UpdateError(f"не удалось разрешить ref {ref!r} источника plugin")
+
+
 def _installed_plugin(result: dict) -> dict | None:
     return next(
         (
@@ -290,12 +375,16 @@ def _cache_path(record: dict | None) -> Path | None:
     return root if root.exists() else None
 
 
-def _ensure_marketplace(codex: str, source: str) -> None:
+def _ensure_marketplace(codex: str, source: str, ref: str) -> None:
     listed = _run([codex, "plugin", "marketplace", "list"], check=False)
     if listed.returncode == 0 and any(
         line.strip().startswith(f"{MARKETPLACE} ") for line in listed.stdout.splitlines()
     ):
-        return
+        configured_ref = _configured_marketplace_ref()
+        if configured_ref and configured_ref != ref:
+            _run([codex, "plugin", "marketplace", "remove", MARKETPLACE, "--json"])
+        else:
+            return
     _run(
         [
             codex,
@@ -304,16 +393,16 @@ def _ensure_marketplace(codex: str, source: str) -> None:
             "add",
             source,
             "--ref",
-            DEFAULT_REF,
+            ref,
             "--json",
         ]
     )
 
 
 def _select_release(codex: str, source: str, editable: Path | None) -> tuple[ReleaseIdentity, Path]:
-    _ensure_marketplace(codex, source)
     configured_ref = _configured_marketplace_ref()
-    selected_ref = configured_ref or DEFAULT_REF
+    selected_ref = _latest_release_ref(source) or configured_ref or DEFAULT_REF
+    _ensure_marketplace(codex, source, selected_ref)
     upgraded = _run([codex, "plugin", "marketplace", "upgrade", MARKETPLACE, "--json"])
     payload = _json_output(upgraded.stdout)
     errors = payload.get("errors")
@@ -332,15 +421,14 @@ def _select_release(codex: str, source: str, editable: Path | None) -> tuple[Rel
             f"marketplace hhru указывает на неожиданный источник {actual_source!r}; "
             f"ожидался {source!r}"
         )
-    if editable is not None:
-        local_commit = _git_commit(editable)
-        if local_commit != commit:
-            raise UpdateError(
-                "editable CLI и marketplace выбрали разные commit; выполните git pull "
-                "и повторите hhru update"
-            )
-    version = _manifest_version(root)
-    return ReleaseIdentity(version, commit, actual_source, selected_ref), root
+    plugin_source, plugin_ref, version = _marketplace_plugin_source(root)
+    plugin_commit = _resolve_ref_commit(root, plugin_source, plugin_ref)
+    if editable is not None and _git_commit(editable) != plugin_commit:
+        raise UpdateError(
+            "editable CLI и marketplace plugin выбрали разные commit; выполните git pull "
+            "и повторите hhru update"
+        )
+    return ReleaseIdentity(version, plugin_commit, plugin_source, plugin_ref), root
 
 
 def _install_cli(release: ReleaseIdentity, editable: Path | None) -> str:
@@ -387,11 +475,16 @@ def _verify_cli(release: ReleaseIdentity, editable: Path | None) -> None:
     raise UpdateError("CLI обновлён, но его commit provenance не удалось подтвердить")
 
 
-def _update_plugin(codex: str, release: ReleaseIdentity, source_root: Path) -> str:
+def _update_plugin(
+    codex: str,
+    release: ReleaseIdentity,
+    source_root: Path,
+    source_digest: str | None = None,
+) -> str:
     listed = _run([codex, "plugin", "list", "--marketplace", MARKETPLACE, "--json"])
     record = _installed_plugin(_json_output(listed.stdout))
     path = _cache_path(record)
-    if _verified_plugin_commit(path, source_root, release.commit) != release.commit:
+    if _verified_plugin_commit(path, source_root, release.commit, source_digest) != release.commit:
         if record is not None:
             _run([codex, "plugin", "remove", f"{PLUGIN}@{MARKETPLACE}", "--json"])
         installed = _run([codex, "plugin", "add", f"{PLUGIN}@{MARKETPLACE}", "--json"])
@@ -399,7 +492,7 @@ def _update_plugin(codex: str, release: ReleaseIdentity, source_root: Path) -> s
         path = Path(str(payload.get("installedPath", ""))).expanduser()
         if not path.exists():
             raise UpdateError("Codex не сообщил существующий путь установленного plugin")
-    if _verified_plugin_commit(path, source_root, release.commit) != release.commit:
+    if _verified_plugin_commit(path, source_root, release.commit, source_digest) != release.commit:
         raise UpdateError(
             f"plugin cache не соответствует commit {release.commit}; повторите hhru update"
         )
@@ -415,5 +508,6 @@ def update(*, codex: str = "codex") -> UpdateResult:
     release, marketplace_root = _select_release(codex, source, editable)
     cli_source = _install_cli(release, editable)
     _verify_cli(release, editable)
-    plugin_source = _update_plugin(codex, release, marketplace_root)
+    plugin_digest = _revision_tree_digest(marketplace_root, release)
+    plugin_source = _update_plugin(codex, release, marketplace_root, plugin_digest)
     return UpdateResult(release, cli_source, plugin_source)
