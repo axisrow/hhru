@@ -33,10 +33,10 @@ AUDIT_GROUPS = {
     "resume_position",
 }
 AUDIT_STATUSES = {
-    "reference binding",
-    "intentionally local",
-    "not implemented upstream",
-    "needs-live-evidence",
+    "reference_binding",
+    "intentionally_local",
+    "not_implemented_upstream",
+    "needs_live_evidence",
 }
 AUDIT_FIELDS = (
     "origin",
@@ -147,6 +147,86 @@ def test_current_repository_selector_contract_is_self_consistent():
     assert catalog["policy"]["consensus_threshold"] == 2
 
 
+def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
+    catalog = contracts.load_catalog()
+    expected_prefixes = {
+        "account_profile.",
+        "apply_form.",
+        "competitor_resume.",
+        "negotiations.",
+        "resume_experience.",
+        "resume_list.",
+        "resume_page.",
+        "resume_rename.",
+        "resume_visibility.",
+        "search_page.",
+        "vacancy_page.",
+        # selector_groups/login.py retains the historical selectors.* IDs.
+        "selectors.",
+    }
+
+    assert set(contracts.AUDITED_SELECTOR_GROUP_PREFIXES) == expected_prefixes
+    assert len(catalog["selectors"]) == 215
+    assert all(
+        row.get("coverage_status") in contracts.AUDIT_STATUSES
+        for row in catalog["selectors"].values()
+    )
+    for logical_id, row in catalog["selectors"].items():
+        if logical_id.startswith(contracts.AUDITED_SELECTOR_GROUP_PREFIXES):
+            assert all(
+                row.get(field) not in (None, "", {}) for field in contracts.AUDIT_REQUIRED_FIELDS
+            )
+
+
+def test_invalid_coverage_status_fails_catalog_gate():
+    catalog = contracts.load_catalog()
+    catalog["selectors"]["search_page.VACANCY_CARD"]["coverage_status"] = "needs-live-evidence"
+
+    errors = contracts.verify_catalog(catalog)
+
+    assert "search_page.VACANCY_CARD: invalid coverage_status" in errors
+
+
+def test_extra_contract_bootstrap_has_catalog_wide_coverage():
+    catalog = {"selectors": {}}
+
+    contracts._ensure_extra_contracts(catalog, {})
+
+    assert catalog["selectors"]
+    assert all(
+        row.get("coverage_status") in contracts.AUDIT_STATUSES
+        for row in catalog["selectors"].values()
+    )
+
+
+def test_bootstrap_output_passes_catalog_gate(tmp_path, monkeypatch):
+    source_root = tmp_path / "src" / "hhru_bot"
+    selector_group = source_root / "selector_groups" / "account_profile.py"
+    selector_group.parent.mkdir(parents=True)
+    selector_group.write_text("ACCOUNT_NAME = \"[data-qa='account-name']\"\n", encoding="utf-8")
+    monkeypatch.setattr(contracts, "ROOT", tmp_path)
+    monkeypatch.setattr(contracts, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(
+        contracts, "GENERATED_PATH", source_root / "selector_groups" / "_generated.py"
+    )
+    monkeypatch.setattr(contracts, "MATRIX_PATH", tmp_path / "selectors" / "reference-matrix.md")
+    monkeypatch.setattr(contracts, "EXTRA_CONTRACTS", {})
+
+    reference_root = tmp_path / "references"
+    for config in contracts.REFERENCE_CONFIG.values():
+        _commit_repository(reference_root / config["directory"], "[data-qa='account-name']")
+
+    catalog, _ = contracts.build_map(reference_root, tmp_path / "live")
+    contracts.GENERATED_PATH.write_text(contracts.render_generated(catalog), encoding="utf-8")
+    contracts.MATRIX_PATH.parent.mkdir(parents=True)
+    contracts.MATRIX_PATH.write_text(contracts.render_matrix(catalog), encoding="utf-8")
+
+    assert contracts.verify_catalog(catalog) == []
+    assert catalog["selectors"]["account_profile.ACCOUNT_NAME"]["coverage_status"] == (
+        "reference_binding"
+    )
+
+
 def test_resume_account_competitor_unbound_selectors_have_provenance():
     catalog = contracts.load_catalog()
     rows = {
@@ -157,7 +237,12 @@ def test_resume_account_competitor_unbound_selectors_have_provenance():
 
     assert rows
     for logical_id, row in rows.items():
-        assert row.get("status") in AUDIT_STATUSES, logical_id
+        assert row.get("status") in {
+            "reference binding",
+            "intentionally local",
+            "not implemented upstream",
+            "needs-live-evidence",
+        }, logical_id
         assert all(row.get(field) not in (None, "", {}) for field in AUDIT_FIELDS), logical_id
         assert "llm_hypothesis" not in row, logical_id
         if not (row.get("bindings") or row.get("sources")):
@@ -256,10 +341,10 @@ def test_issue_610_apply_login_negotiations_coverage_is_classified():
     catalog = contracts.load_catalog()
     prefixes = ("apply_form.", "negotiations.", "selectors.LOGIN")
     allowed_statuses = {
-        "reference binding",
-        "intentionally local",
-        "not implemented upstream",
-        "needs-live-evidence",
+        "reference_binding",
+        "intentionally_local",
+        "not_implemented_upstream",
+        "needs_live_evidence",
     }
     required_fields = {
         "coverage_status",
@@ -284,9 +369,9 @@ def test_issue_610_apply_login_negotiations_coverage_is_classified():
         assert row["origin"] != "llm_hypothesis", logical_id
         if row.get("active", True):
             assert row["origin"] and row["verification"], logical_id
-        if row["coverage_status"] == "reference binding":
+        if row["coverage_status"] == "reference_binding":
             assert row.get("bindings") or row.get("sources"), logical_id
-        if row["coverage_status"] == "needs-live-evidence":
+        if row["coverage_status"] == "needs_live_evidence":
             assert row["verification"] in {"unverified", "unavailable"}, logical_id
 
 
@@ -414,6 +499,36 @@ def test_refresh_invalidates_stale_reference_audit_metadata():
     assert row["coverage_status"] == "needs_live_evidence"
     assert row["origin"] == "manual"
     assert row["verification"] == "unverified"
+
+
+def test_refresh_invalidates_stale_reference_metadata_outside_audited_groups():
+    catalog = {
+        "selectors": {
+            "resume_position.fixture": {
+                "declared_at": "src/hhru_bot/resume_position.py:1",
+                "sources": {},
+                "live_matches": [],
+                "coverage_status": "reference_binding",
+                "origin": "reference_consensus",
+                "verification": "contract_tested",
+                "evidence": {
+                    "source": "old",
+                    "note": "old",
+                    "runtime_authoritative": True,
+                },
+                "last_verified_at": "2026-08-20",
+                "verified_flow": "old",
+                "verified_by": "ci",
+            }
+        }
+    }
+
+    contracts._reconcile_audit_metadata(catalog)
+    row = catalog["selectors"]["resume_position.fixture"]
+
+    assert row["coverage_status"] == "needs_live_evidence"
+    assert row["evidence"]["runtime_authoritative"] is False
+    assert not contracts._has_reviewed_runtime_evidence("resume_position.fixture", row)
 
 
 def test_refresh_does_not_authorize_a_consensus_downgrade():
@@ -619,6 +734,20 @@ def test_refresh_keeps_audited_unavailable_rows_fail_closed(tmp_path, monkeypatc
         row = refreshed["selectors"][logical_id]
         assert row["decision"] == "unavailable"
         assert row["active"] is False
+        assert row["verification"] in {"unavailable", "failed"}
+
+    current = refreshed
+    monkeypatch.setattr(contracts, "load_catalog", lambda: copy.deepcopy(current))
+    refreshed_again = contracts.refresh_catalog(reference_root, "manual")
+    for logical_id in (
+        "search_page.unavailable_READ",
+        "search_page.unavailable_consensus_READ",
+        "search_page.unavailable_live_READ",
+    ):
+        row = refreshed_again["selectors"][logical_id]
+        assert row["decision"] == "unavailable"
+        assert row["active"] is False
+        assert row["verification"] in {"unavailable", "failed"}
 
 
 def test_affected_logical_ids_deduplicates_rows_variants_and_overlap():

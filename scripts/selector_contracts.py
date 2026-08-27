@@ -52,7 +52,23 @@ REFERENCE_CONFIG = {
     },
 }
 
-AUDITED_SELECTOR_GROUP_PREFIXES = ("search_page.", "vacancy_page.")
+# Keep this list aligned with ``src/hhru_bot/selector_groups``.  The login
+# module's catalog IDs retain the historical ``selectors.`` prefix, so it is
+# included here as the audit prefix for ``selector_groups/login.py``.
+AUDITED_SELECTOR_GROUP_PREFIXES = (
+    "account_profile.",
+    "apply_form.",
+    "competitor_resume.",
+    "negotiations.",
+    "resume_experience.",
+    "resume_list.",
+    "resume_page.",
+    "resume_rename.",
+    "resume_visibility.",
+    "search_page.",
+    "vacancy_page.",
+    "selectors.",
+)
 AUDIT_REQUIRED_FIELDS = (
     "coverage_status",
     "origin",
@@ -958,6 +974,12 @@ def _ensure_extra_contracts(catalog: dict[str, Any], evidence: dict[str, Any]) -
             "decision": decision,
             "sources": {},
             "live_matches": live_matches,
+            **_audit_metadata(
+                logical_id,
+                sources={},
+                live_matches=live_matches,
+                declared_at=contract["declared_at"],
+            ),
         }
         if decision in {"documented_live", "workflow_live"}:
             row["evidence"] = {
@@ -975,12 +997,16 @@ def _audit_metadata(
     declared_at: str,
     today: str | None = None,
 ) -> dict[str, Any]:
-    """Return deterministic bootstrap provenance for the audited page groups."""
-    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-        return {}
+    """Return deterministic bootstrap provenance for audited selector groups."""
     verified_at = today or date.today().isoformat()
     reference_count = len(sources)
-    if reference_count >= 2:
+    if reference_count >= 3:
+        origin = "reference_exact"
+        status = "reference_binding"
+        verification = "contract_tested"
+        flow = "reference_selector_scan_and_contract_check"
+        note = "Exact selector value is bound to all three approved reference sources."
+    elif reference_count >= 2:
         origin = "reference_consensus"
         status = "reference_binding"
         verification = "contract_tested"
@@ -1029,10 +1055,15 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
     """Invalidate reference provenance when a refresh changes its bindings."""
     today = date.today().isoformat()
     for logical_id, row in catalog.get("selectors", {}).items():
-        if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-            continue
         sources = row.get("sources", {})
         previous_origin = row.get("origin")
+        # A durable failure is stronger than any refreshed metadata. Keep the
+        # row unavailable even when the source set is empty and the audit
+        # fields need bootstrapping.
+        if row.get("verification") in {"unavailable", "failed"}:
+            row["decision"] = "unavailable"
+            row["active"] = False
+            continue
         if sources:
             reference_count = len(sources)
             lost_consensus = reference_count < 2 and previous_origin in {
@@ -1086,8 +1117,6 @@ def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool
     """Do not let audit bookkeeping become activation evidence on refresh."""
     if not row.get("evidence"):
         return False
-    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-        return True
     if row["evidence"].get("runtime_authoritative") is False:
         return False
     return not (not row.get("active", True) and row.get("decision") == "unavailable")
@@ -1423,12 +1452,15 @@ def verify_catalog(catalog: dict[str, Any]) -> list[str]:
     if catalog.get("binding_definitions") != _binding_definitions():
         errors.append("semantic reference bindings are stale; run selector refresh")
     for logical_id, row in catalog.get("selectors", {}).items():
+        # coverage_status is the catalog-wide canonical provenance field.  Do
+        # this check before the group-specific audit so records outside the
+        # page-group list cannot silently omit or bypass it.
+        if row.get("coverage_status") not in AUDIT_STATUSES:
+            errors.append(f"{logical_id}: invalid coverage_status")
         if logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
             for field in AUDIT_REQUIRED_FIELDS:
                 if not row.get(field):
                     errors.append(f"{logical_id}: missing audit field {field}")
-            if row.get("coverage_status") not in AUDIT_STATUSES:
-                errors.append(f"{logical_id}: invalid coverage_status")
             if row.get("origin") not in AUDIT_ORIGINS:
                 errors.append(f"{logical_id}: invalid origin")
             if row.get("coverage_status") == "reference_binding":
