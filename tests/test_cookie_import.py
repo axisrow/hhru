@@ -169,6 +169,26 @@ def test_custom_accounts_path_is_not_treated_as_managed_account(tmp_path: Path):
     assert (parent.stat().st_mode & 0o777) == 0o755
 
 
+def test_managed_account_symlink_is_rejected_without_touching_target(tmp_path: Path):
+    if os.name == "nt":
+        pytest.skip("POSIX symlink and directory modes are not available on Windows")
+
+    accounts = tmp_path / "data" / "accounts"
+    accounts.mkdir(parents=True)
+    external = tmp_path / "external"
+    external.mkdir()
+    external.chmod(0o755)
+    account_link = accounts / "work"
+    account_link.symlink_to(external, target_is_directory=True)
+
+    destination = account_link / "storage_state" / "hh_session.json"
+    with pytest.raises(OSError):
+        write_storage_state({"cookies": [], "origins": []}, destination, account_dir=account_link)
+
+    assert external.stat().st_mode & 0o777 == 0o755
+    assert not (external / "storage_state").exists()
+
+
 def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
     # Codex + /review re-review (PR #168): a previous fix called
     # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file

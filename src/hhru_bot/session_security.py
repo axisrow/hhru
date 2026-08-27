@@ -19,11 +19,15 @@ def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool
     """Create a directory and tighten its mode where Unix modes are supported."""
     path.mkdir(parents=True, exist_ok=exist_ok, mode=mode)
     if permissions_are_posix():
-        os.chmod(path, mode)
+        fd = _open_without_follow(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
 
 
 def _open_without_follow(path: Path, flags: int) -> int:
-    """Open a session path without following a symlink on POSIX."""
+    """Open a filesystem path without following a symlink on POSIX."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if not nofollow and path.is_symlink():
         raise OSError(f"путь сессии является символической ссылкой: {path}")
@@ -41,6 +45,9 @@ def secure_storage_state_parent(
     because the caller may share them with unrelated processes.
     """
     destination = Path(destination)
+    if account_dir is not None:
+        secure_directory(Path(account_dir))
+
     # Do not chmod an arbitrary existing path supplied by a user.  For
     # example, a custom ``/tmp/hh_session.json`` must not turn shared /tmp
     # into a private directory.  A missing parent is ours to create, so it can
@@ -49,8 +56,6 @@ def secure_storage_state_parent(
     destination.parent.mkdir(parents=True, exist_ok=True, mode=ACCOUNT_DIR_MODE)
     if not parent_exists and permissions_are_posix():
         os.chmod(destination.parent, ACCOUNT_DIR_MODE)
-    if account_dir is not None:
-        secure_directory(Path(account_dir))
     return destination
 
 
