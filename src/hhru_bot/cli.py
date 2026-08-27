@@ -172,6 +172,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    raw_argv = sys.argv[1:] if argv is None else argv
+    # A Windows console-script launcher cannot be replaced while it is the
+    # active process. Re-exec before argparse/help, logging, or the write lock
+    # so every form of the documented ``hhru update`` command starts from the
+    # unlocked Python interpreter.
+    if "update" in raw_argv:
+        from .commands.update import _reexec_windows_launcher
+
+        _reexec_windows_launcher()
     parser = build_parser()
     args = parser.parse_args(argv)
     _reject_sandboxed_browser_command(args)

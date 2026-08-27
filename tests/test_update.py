@@ -271,3 +271,24 @@ def test_command_reports_partial_failure_without_success(monkeypatch, capsys):
     assert "[FAIL]" in output
     assert "повторите `hhru update`" in output
     assert "[OK]" not in output
+
+
+def test_windows_launcher_reexecs_through_python_before_update(monkeypatch):
+    from hhru_bot.commands import update as command
+
+    monkeypatch.setattr(command.os, "name", "nt")
+    monkeypatch.delenv(command._WINDOWS_REEXEC_ENV, raising=False)
+    monkeypatch.setattr(command.sys, "executable", r"C:\Python\python.exe")
+    monkeypatch.setattr(command.sys, "_base_executable", r"C:\Python\python.exe", raising=False)
+    monkeypatch.setattr(command.sys, "argv", [r"C:\Scripts\hhru.exe", "update", "--codex", "codex"])
+    called = {}
+
+    def fake_execve(interpreter, argv, environment):
+        called.update(interpreter=interpreter, argv=argv, environment=environment)
+
+    monkeypatch.setattr(command.os, "execve", fake_execve)
+
+    assert command._reexec_windows_launcher()
+    assert called["interpreter"].endswith("python.exe")
+    assert called["argv"][2:] == ["hhru_bot.cli", "update", "--codex", "codex"]
+    assert called["environment"][command._WINDOWS_REEXEC_ENV] == "1"

@@ -3,8 +3,53 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
+import sys
+from pathlib import Path
 
 from ..update import UpdateError, update
+
+_WINDOWS_REEXEC_ENV = "HHRU_UPDATE_REEXEC"
+
+
+def _reexec_windows_launcher() -> bool:
+    """Re-exec through Python so ``hhru.exe`` is not locked during pip.
+
+    A Windows console-script launcher remains open for the duration of the
+    command and cannot be replaced by pip. Replacing this process image with
+    the interpreter releases the launcher before the update starts; the
+    environment marker prevents an exec loop. The normal user-facing command
+    and its arguments continue unchanged.
+    """
+    if os.name != "nt" or os.environ.get(_WINDOWS_REEXEC_ENV) == "1":
+        return False
+    candidates = (
+        getattr(sys, "_base_executable", ""),
+        sys.executable,
+        shutil.which("python") or "",
+    )
+    interpreter = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate and Path(candidate).name.casefold() not in {"hhru.exe", "hhru-bot.exe"}
+        ),
+        None,
+    )
+    if interpreter is None:
+        raise UpdateError("не найден Python interpreter для безопасного Windows update")
+    environment = os.environ.copy()
+    environment[_WINDOWS_REEXEC_ENV] = "1"
+    try:
+        os.execve(
+            interpreter,
+            [interpreter, "-m", "hhru_bot.cli", *sys.argv[1:]],
+            environment,
+        )
+    except OSError as exc:
+        raise UpdateError(f"не удалось перезапустить Windows update через Python: {exc}") from exc
+    return True
 
 
 def register(subparsers) -> None:
