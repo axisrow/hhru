@@ -1035,10 +1035,10 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
         previous_origin = row.get("origin")
         if sources:
             reference_count = len(sources)
-            lost_consensus = (
-                reference_count < 2
-                and previous_origin in {"reference_exact", "reference_consensus"}
-            )
+            lost_consensus = reference_count < 2 and previous_origin in {
+                "reference_exact",
+                "reference_consensus",
+            }
             row["coverage_status"] = "reference_binding"
             row["origin"] = (
                 "reference_exact"

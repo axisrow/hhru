@@ -35,10 +35,10 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Ruff check
-        run: ruff check src tests
+        run: ruff check src tests scripts
 
       - name: Ruff format check
-        run: ruff format --check src tests
+        run: ruff format --check src tests scripts
 
       - name: Plugin manifests in sync with package version
         run: python3 scripts/sync_plugin_manifests.py --check
