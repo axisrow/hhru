@@ -88,6 +88,90 @@ def test_responses_run_history_only_skips_browser(capsys, tmp_path):
     assert "обход hh.ru пропущен" in out
 
 
+def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_path, monkeypatch):
+    """--alert-new prints only new invitations and returns its scheduler code."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-invitation", employer="ACME", status=ResponseStatus.INVITATION
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert result is CommandExitCode.NEW_INVITATIONS
+    out = capsys.readouterr().out
+    assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
+
+
+def test_responses_alert_new_is_idempotent(capsys, tmp_path, monkeypatch):
+    """A successful second poll with unchanged statuses is silent and exits 0."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-invitation", employer="ACME", status=ResponseStatus.INVITATION
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    capsys.readouterr()
+    result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert result is None
+    assert capsys.readouterr().out == ""
+
+
+def test_responses_alert_new_ignores_other_statuses(capsys, tmp_path, monkeypatch):
+    """A newly seen response is not an invitation alert."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(vacancy_id="v-response", status=ResponseStatus.RESPONSE)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    assert responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True)) is None
+    assert capsys.readouterr().out == ""
+
+
 def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):
     """Zero is a valid sync window, not a request for history-only mode."""
     import contextlib

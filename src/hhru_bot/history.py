@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("hhru_bot.history")
 
+RESPONSES_ALERT_CHECKPOINT = "responses.alert_new.last_success_at"
+
 # Схема SQLite — одна константа, CREATE TABLE IF NOT EXISTS для всех таблиц.
 # Системы миграций для такого маленького проекта не нужно (оверинжиниринг): при
 # сильных изменениях схемы базу пересоздают заново (данных мало). _init_schema()
@@ -1843,6 +1845,22 @@ class History:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def responses_alert_checkpoint(self) -> datetime | None:
+        """Return the last successful ``responses --alert-new`` timestamp."""
+        value = self.get_setting(RESPONSES_ALERT_CHECKPOINT)
+        if value is None:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Некорректная метка responses --alert-new в истории: {value!r}"
+            ) from exc
+
+    def mark_responses_alert_success(self, at: datetime | None = None) -> None:
+        """Persist the completion time of a successful alert poll."""
+        self.set_setting(RESPONSES_ALERT_CHECKPOINT, (at or datetime.now()).isoformat())
 
     # --- Воронка и ручная пометка оффера (#13) ----------------------------
     # Воронка JOIN'ит actions × responses. Таблица responses — account-scope

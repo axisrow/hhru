@@ -459,6 +459,11 @@ def test_responses_has_resume_max_pages_since_hours():
     assert "--limit" not in opts
 
 
+def test_responses_has_alert_new_flag():
+    opts = _opts_for("responses")
+    assert "--alert-new" in opts
+
+
 def test_funnel_has_format_and_dead_flags():
     opts = _opts_for("funnel")
     assert "--resume" in opts

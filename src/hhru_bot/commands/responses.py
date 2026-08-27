@@ -17,6 +17,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ..exit_codes import CommandExitCode
+
 
 def _positive_int(value: str) -> int:
     parsed = int(value)
@@ -58,6 +60,11 @@ def register(subparsers) -> None:
         "--sync-applied",
         action="store_true",
         help="Импортировать однозначные ручные/внешние отклики в dedup ledger",
+    )
+    p.add_argument(
+        "--alert-new",
+        action="store_true",
+        help="Сообщить о новых приглашениях и вернуть специальный exit-код",
     )
     p.set_defaults(func=run)
 
@@ -108,7 +115,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
     print(border())
 
 
-def run(args: argparse.Namespace) -> None:
+def run(args: argparse.Namespace) -> CommandExitCode | None:
     from datetime import datetime, timedelta
 
     from ..browser import launch_context
@@ -123,24 +130,46 @@ def run(args: argparse.Namespace) -> None:
     # --sync-applied всегда выполняет живой read, включая --since-hours 0.
     remindable_only = getattr(args, "remindable", False)
     sync_applied = getattr(args, "sync_applied", False)
-    if sync_applied and (remindable_only or getattr(args, "detect_external_tests", False)):
+    alert_new = getattr(args, "alert_new", False)
+    detect_external_tests = getattr(args, "detect_external_tests", False)
+    if sync_applied and (remindable_only or detect_external_tests):
         print(
             "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if alert_new and (sync_applied or remindable_only or detect_external_tests):
+        print(
+            "Ошибка: --alert-new нельзя совмещать с --sync-applied, --remindable "
+            "или --detect-external-tests",
             file=sys.stderr,
         )
         sys.exit(2)
     if args.max_pages < 1:
         print("Ошибка: --max-pages должен быть положительным", file=sys.stderr)
         sys.exit(2)
-    fresh_only = args.since_hours <= 0 and not remindable_only and not sync_applied
-    since_fetch = datetime.now() - timedelta(hours=args.since_hours)
+    fresh_only = (
+        args.since_hours <= 0 and not remindable_only and not sync_applied and not alert_new
+    )
+    scan_started_at = datetime.now()
+    since_fetch = scan_started_at - timedelta(hours=args.since_hours)
     # Для сводки «что нового»: в режиме history-only берём вообще всё (min), иначе —
     # окно since-fetch. datetime.min — «любая status_changed_at подходит».
     since_summary = datetime.min if fresh_only else since_fetch
+    alert_since = None
+    if alert_new:
+        try:
+            # A first alert poll establishes a baseline at its start. Thus an
+            # invitation already present in an old local history is not
+            # reported, while one discovered by this poll is.
+            alert_since = history.responses_alert_checkpoint() or scan_started_at
+        except ValueError as e:
+            print(f"Ошибка: {e}", file=sys.stderr)
+            sys.exit(1)
 
     if fresh_only:
         print("\n=== Ответы работодателей (вся история, без обхода hh.ru) ===")
-    else:
+    elif not alert_new:
         print(f"\n=== Ответы работодателей (новое за {args.since_hours:g}ч) ===")
 
     # Responses — account-scope: страница /applicant/negotiations общая и НЕ несёт
@@ -149,7 +178,7 @@ def run(args: argparse.Namespace) -> None:
     # под все resume_id из конфига — клонирование фабриковало бы данные (ответ
     # резюме A приписывался бы и резюме B). --resume здесь warn+ignore: фильтр по
     # резюме для ответов работодателя невозможен без достоверной атрибуции.
-    if args.resume is not None:
+    if args.resume is not None and not alert_new:
         print(
             "Внимание: --resume игнорируется как фильтр обхода — /applicant/negotiations "
             "сканируется на уровне аккаунта; подтверждённая SSR-атрибуция выводится "
@@ -176,7 +205,9 @@ def run(args: argparse.Namespace) -> None:
                             f"вакансия={ref.vacancy} vacancy_id={ref.vacancy_id}"
                         )
                     return
-                cards = fetch_responses(page, max_pages=args.max_pages, strict_empty=sync_applied)
+                cards = fetch_responses(
+                    page, max_pages=args.max_pages, strict_empty=sync_applied or alert_new
+                )
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
@@ -198,7 +229,7 @@ def run(args: argparse.Namespace) -> None:
                 )
                 return
 
-            if args.detect_external_tests:
+            if detect_external_tests:
                 # fetch_responses performs its own navigation. Re-open the
                 # list read-only so SSR topicList is captured from the actual
                 # negotiations page, then use the confirmed chatId route.
@@ -238,15 +269,17 @@ def run(args: argparse.Namespace) -> None:
                         detected += 1
                 print(f"Назначений внешнего теста обнаружено: {detected}")
 
-        print(f"Собрано карточек переписки: {len(cards)}")
+        if not alert_new:
+            print(f"Собрано карточек переписки: {len(cards)}")
 
         skipped_ambiguous = 0
         for card in cards:
-            print(
-                "[CORRELATION] "
-                f"vacancy_id={card.vacancy_id} topic={card.topic or '-'} "
-                f"resume_id={card.resume_id or '-'}"
-            )
+            if not alert_new:
+                print(
+                    "[CORRELATION] "
+                    f"vacancy_id={card.vacancy_id} topic={card.topic or '-'} "
+                    f"resume_id={card.resume_id or '-'}"
+                )
             if card.topic_ambiguous:
                 # Несколько SSR-topic кандидатов на одну вакансию — fetch_responses
                 # намеренно оставил topic=None (см. ResponseItem.topic_ambiguous).
@@ -271,6 +304,18 @@ def run(args: argparse.Namespace) -> None:
                 updated += 1
             else:
                 unchanged += 1
+
+        if alert_new:
+            rows = history.new_responses_since(alert_since, resume_id=None)
+            invitations = [row for row in rows if row.get("status") == "invitation"]
+            history.mark_responses_alert_success()
+            if invitations:
+                print(f"[INFO] Новых приглашений: {len(invitations)}")
+                for row in invitations:
+                    employer = (row.get("employer") or "").strip() or "(скрыт)"
+                    print(f"Вакансия: {row.get('vacancy_id', '')} | Работодатель: {employer}")
+                return CommandExitCode.NEW_INVITATIONS
+            return None
 
         print(
             f"Новых ответов: {inserted + updated} "
