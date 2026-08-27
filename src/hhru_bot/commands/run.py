@@ -25,7 +25,7 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> bool:
+def run(args: argparse.Namespace) -> bool | CommandExitCode:
     print("=== Полный цикл: search -> apply -> bump ===")
     apply_failed = apply_cmd.run(args)
     # Apply and bump are independent actions: even if vacancy search is
@@ -33,5 +33,7 @@ def run(args: argparse.Namespace) -> bool:
     # Keep bump for the same resume and report apply's failure to the caller.
     if isinstance(apply_failed, CommandExitCode):
         return apply_failed
-    bump_cmd.run(args)
-    return bool(apply_failed)
+    bump_failed = bump_cmd.run(args)
+    if isinstance(bump_failed, CommandExitCode):
+        return bump_failed
+    return bool(apply_failed or bump_failed)

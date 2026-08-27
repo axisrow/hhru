@@ -23,7 +23,7 @@ def test_schema_creates_all_tables():
     try:
         conn.executescript(SCHEMA)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"actions", "responses", "manual_offers"} <= tables
+        assert {"actions", "responses", "manual_offers", "selector_observations"} <= tables
         # служебных таблиц системы миграций быть не должно
         assert "schema_migrations" not in tables
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
@@ -41,7 +41,7 @@ def test_init_schema_is_idempotent_via_if_not_exists():
         conn.executescript(SCHEMA)
         conn.executescript(SCHEMA)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"actions", "responses", "manual_offers"} <= tables
+        assert {"actions", "responses", "manual_offers", "selector_observations"} <= tables
     finally:
         conn.close()
 

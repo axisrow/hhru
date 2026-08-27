@@ -215,7 +215,10 @@ docker compose run --rm --entrypoint hhru hhru --headless --account default run
 ```
 
 Для непрерывного варианта `docker-compose.yml` содержит минимальный sleep-loop:
-он запускает `--account default run --headless`, ждёт 4 часа и повторяет. Запусти его так:
+он запускает `--account default run --headless`, затем ждёт остаток 4-часового
+интервала с момента начала прогона и повторяет. Поэтому длительность прогона не
+накапливает дрейф расписания. Контейнеру также выделен увеличенный `/dev/shm`
+(`shm_size: 1gb`) для Chromium. Запусти его так:
 
 ```bash
 docker compose up -d

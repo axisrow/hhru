@@ -3,6 +3,7 @@ services:
     build: .
     init: true
     restart: unless-stopped
+    shm_size: 1gb
     # The image entrypoint is hhru; this service command is a shell loop.
     entrypoint: []
     environment:
@@ -14,6 +15,9 @@ services:
       - -c
       - >-
         while true; do
+          started_at=$$(date +%s);
           hhru --account "$${HHRU_ACCOUNT:-default}" --headless run;
-          sleep 14400;
+          elapsed=$$(($$(date +%s) - started_at));
+          remaining=$$((14400 - elapsed));
+          if [ "$$remaining" -gt 0 ]; then sleep "$$remaining"; fi;
         done

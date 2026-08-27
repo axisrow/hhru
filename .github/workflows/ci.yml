@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff pytest pytest-xdist
+          pip install jsonschema ruff pytest pytest-xdist
       - name: Install Chromium (Linux)
         if: runner.os == 'Linux'
         run: python -m playwright install --with-deps chromium

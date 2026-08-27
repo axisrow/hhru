@@ -326,3 +326,33 @@ def test_combined_run_does_not_bump_after_typed_interrupt(monkeypatch) -> None:
     )
 
     assert run_command.run(argparse.Namespace()) is CommandExitCode.SIGINT
+
+
+@pytest.mark.parametrize(
+    ("apply_failed", "bump_failed"),
+    [(False, True), (True, False), (True, True)],
+)
+def test_combined_run_fails_if_either_phase_fails(monkeypatch, apply_failed, bump_failed) -> None:
+    from hhru_bot.commands import run as run_command
+
+    bump_calls = []
+    monkeypatch.setattr(run_command.apply_cmd, "run", lambda _args: apply_failed)
+    monkeypatch.setattr(
+        run_command.bump_cmd,
+        "run",
+        lambda _args: bump_calls.append(True) or bump_failed,
+    )
+
+    assert run_command.run(argparse.Namespace()) is True
+    assert bump_calls == [True]
+
+
+def test_combined_run_propagates_bump_exit_code(monkeypatch) -> None:
+    from hhru_bot.commands import run as run_command
+
+    monkeypatch.setattr(run_command.apply_cmd, "run", lambda _args: False)
+    monkeypatch.setattr(
+        run_command.bump_cmd, "run", lambda _args: CommandExitCode.PERSISTENCE_FAILED
+    )
+
+    assert run_command.run(argparse.Namespace()) is CommandExitCode.PERSISTENCE_FAILED
