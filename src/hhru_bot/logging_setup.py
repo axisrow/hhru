@@ -64,18 +64,24 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
             return
         if self.stream is not None:
             self.stream.flush()
+            self.stream.close()
+            self.stream = None
 
-        if os.path.exists(self.baseFilename):
-            archive = self._create_archive_locked()
-            with open(self.baseFilename, "rb") as source, open(archive, "wb") as target:
-                shutil.copyfileobj(source, target)
-
-        if self.stream is not None:
-            self.stream.seek(0)
-            self.stream.truncate()
-            self.stream.flush()
-        elif not self.delay:
-            self.stream = self._open()
+        try:
+            # Keep the copy and truncate on the same read/write descriptor. In
+            # particular, do not copy by path and truncate self.stream: an
+            # external rename between those operations could erase a segment
+            # which is no longer the active file.
+            with open(self.baseFilename, "r+b") as active:
+                archive = self._create_archive_locked()
+                active.seek(0)
+                with open(archive, "wb") as target:
+                    shutil.copyfileobj(active, target)
+                active.seek(0)
+                active.truncate()
+        finally:
+            if not self.delay:
+                self.stream = self._open()
 
     def _reopen_if_path_was_replaced_locked(self) -> None:
         """Rebind the writer after an external rename-based rotation."""
