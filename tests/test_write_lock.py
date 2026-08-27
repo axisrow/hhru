@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from hhru_bot import cli
@@ -23,6 +29,41 @@ def test_write_lock_can_be_reused_after_release(tmp_path):
         pass
     with acquire_write_lock(path):
         pass
+
+
+def test_lock_collision_reports_owner_from_adjacent_metadata(tmp_path):
+    import hhru_bot.write_lock as write_lock
+
+    path = tmp_path / ".hhru.lock"
+
+    with acquire_write_lock(path, command="probe"):
+        owner_path = path.with_name(f"{path.name}.owner")
+        owner = json.loads(owner_path.read_text())
+        assert owner["command"] == "probe"
+        with pytest.raises(write_lock.WriteLockBusy) as error:
+            with acquire_write_lock(path, command="apply"):
+                pass
+        assert error.value.owner["command"] == "probe"
+        assert error.value.owner["pid"] > 0
+        assert error.value.owner["started_at"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows import regression test")
+def test_cli_import_does_not_require_posix_lock_module():
+    env = os.environ.copy()
+    src = str(Path(__file__).parents[1] / "src")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (src, env.get("PYTHONPATH"))))
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import hhru_bot.cli; assert 'fcntl' not in sys.modules",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
 
 
 def test_cli_rejects_concurrent_write_command(tmp_path, monkeypatch, capsys):

@@ -8,7 +8,10 @@ on:
 
 jobs:
   lint-test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +26,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff pytest pytest-xdist
-          python -m playwright install --with-deps chromium
+      - name: Install Chromium (Linux)
+        if: runner.os == 'Linux'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Install Chromium (Windows)
+        if: runner.os == 'Windows'
+        run: python -m playwright install chromium
 
       - name: Ruff check
         run: ruff check src tests
@@ -34,8 +43,13 @@ jobs:
       - name: Plugin manifests in sync with package version
         run: python3 scripts/sync_plugin_manifests.py --check
 
-      - name: Pytest suite budget
+      - name: Pytest suite budget (Linux)
+        if: runner.os == 'Linux'
         run: python scripts/check_pytest_budget.py
+
+      - name: Windows portability smoke tests
+        if: runner.os == 'Windows'
+        run: python -m pytest -q tests/test_write_lock.py
 
       - name: Selector contract check
         run: python scripts/selector_contracts.py check
@@ -44,6 +58,8 @@ jobs:
         # Справочник команд в README автогенерируется из argparse. Если кто-то
         # добавил флаг/команду, но забыл перегенерить доку — шаг падает.
         # Модель FastAPI/OpenAPI: код = источник правды, .md собирается.
+        env:
+          PYTHONIOENCODING: utf-8
         run: python3 scripts/gen_cli_docs.py --check
 
   packaging:
