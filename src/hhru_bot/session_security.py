@@ -23,9 +23,20 @@ def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool
 
 def _account_directory(path: Path) -> Path | None:
     for parent in (path.parent, *path.parent.parents):
-        if parent.parent.name == "accounts":
+        # Only the repository's standard ``data/accounts/<name>`` layout is
+        # managed here.  A user may intentionally configure a custom path
+        # such as ``/srv/accounts/shared``; chmod must not lock that directory.
+        if parent.parent.name == "accounts" and parent.parent.parent.name == "data":
             return parent
     return None
+
+
+def _open_without_follow(path: Path, flags: int) -> int:
+    """Open a session path without following a symlink on POSIX."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and path.is_symlink():
+        raise OSError(f"путь сессии является символической ссылкой: {path}")
+    return os.open(path, flags | nofollow)
 
 
 def secure_storage_state_parent(destination: Path | str) -> Path:
@@ -65,20 +76,31 @@ def prepare_storage_state_file(destination: Path | str) -> bool:
         return False
 
     try:
-        os.chmod(destination, SESSION_FILE_MODE)
+        fd = _open_without_follow(destination, os.O_RDONLY)
     except FileNotFoundError:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags = os.O_WRONLY | os.O_CREAT
         try:
-            fd = os.open(destination, flags, SESSION_FILE_MODE)
+            fd = _open_without_follow(destination, flags | os.O_EXCL)
         except FileExistsError:
-            os.chmod(destination, SESSION_FILE_MODE)
+            fd = _open_without_follow(destination, os.O_RDONLY)
         else:
-            os.close(fd)
+            try:
+                os.fchmod(fd, SESSION_FILE_MODE)
+            finally:
+                os.close(fd)
             return True
+    try:
+        os.fchmod(fd, SESSION_FILE_MODE)
+    finally:
+        os.close(fd)
     return False
 
 
 def secure_storage_state_file(destination: Path | str) -> None:
     """Tighten an existing session file after a writer has populated it."""
     if permissions_are_posix():
-        os.chmod(Path(destination), SESSION_FILE_MODE)
+        fd = _open_without_follow(Path(destination), os.O_RDONLY)
+        try:
+            os.fchmod(fd, SESSION_FILE_MODE)
+        finally:
+            os.close(fd)

@@ -151,6 +151,22 @@ def test_custom_existing_session_parent_is_not_rechmodded(tmp_path: Path):
     assert (destination.stat().st_mode & 0o777) == 0o600
 
 
+def test_custom_accounts_path_is_not_treated_as_managed_account(tmp_path: Path):
+    account_dir = tmp_path / "srv" / "accounts" / "shared"
+    parent = account_dir / "storage_state"
+    parent.mkdir(parents=True)
+    destination = parent / "hh_session.json"
+    if os.name == "nt":
+        pytest.skip("POSIX directory modes are not available on Windows")
+    account_dir.chmod(0o755)
+    parent.chmod(0o755)
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert (account_dir.stat().st_mode & 0o777) == 0o755
+    assert (parent.stat().st_mode & 0o777) == 0o755
+
+
 def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
     # Codex + /review re-review (PR #168): a previous fix called
     # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file
