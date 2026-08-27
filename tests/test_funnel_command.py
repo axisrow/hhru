@@ -46,6 +46,7 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
         "period": 30,
         "dead_days": 14,
         "dead": False,
+        "rejections": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -165,3 +166,19 @@ def test_funnel_run_search_query_warns_about_unattributed_applies(capsys, tmp_pa
     out = capsys.readouterr().out
     assert "[INFO]" in out
     assert "1" in out.split("[INFO]")[1]
+
+
+def test_funnel_run_rejections(capsys, tmp_path):
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.record_action("12345", "v1", "apply", "success")
+    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100000)
+    h.upsert_response("v1", "Acme", "discard", None, topic="1")
+
+    funnel_cmd.run(_args(config, tmp_path / "h.db", rejections=True, period=0))
+    out = capsys.readouterr().out
+
+    assert "Работодатель" in out
+    assert "Поисковый запрос" in out
+    assert "Acme" in out
+    assert "Отказов" in out
