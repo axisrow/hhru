@@ -300,12 +300,12 @@ def test_windows_launcher_reexecs_through_python_before_update(monkeypatch):
     monkeypatch.setattr(command.sys, "argv", [r"C:\Scripts\hhru.exe", "update", "--codex", "codex"])
     called = {}
 
-    def fake_execve(interpreter, argv, environment):
-        called.update(interpreter=interpreter, argv=argv, environment=environment)
+    def fake_execv(interpreter, argv):
+        called.update(interpreter=interpreter, argv=argv)
 
-    monkeypatch.setattr(command.os, "execve", fake_execve)
+    monkeypatch.setattr(command.os, "execv", fake_execv)
 
     assert command._reexec_windows_launcher()
     assert called["interpreter"] == r"C:\Venv\python.exe"
     assert called["argv"][2:] == ["hhru_bot.cli", "update", "--codex", "codex"]
-    assert called["environment"][command._WINDOWS_REEXEC_ENV] == "1"
+    assert command.os.environ[command._WINDOWS_REEXEC_ENV] == "1"

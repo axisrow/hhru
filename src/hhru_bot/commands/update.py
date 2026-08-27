@@ -39,14 +39,13 @@ def _reexec_windows_launcher() -> bool:
     )
     if interpreter is None:
         raise UpdateError("не найден Python interpreter для безопасного Windows update")
-    environment = os.environ.copy()
-    environment[_WINDOWS_REEXEC_ENV] = "1"
+    os.environ[_WINDOWS_REEXEC_ENV] = "1"
     try:
-        os.execve(
-            interpreter,
-            [interpreter, "-m", "hhru_bot.cli", *sys.argv[1:]],
-            environment,
-        )
+        # ``os.execve`` is prone to a CPython/UCRT access violation on
+        # Windows when called from a subprocess with a copied environment.
+        # ``execv`` inherits the already-updated process environment and keeps
+        # the launcher handoff without rebuilding that environment block.
+        os.execv(interpreter, [interpreter, "-m", "hhru_bot.cli", *sys.argv[1:]])
     except OSError as exc:
         raise UpdateError(f"не удалось перезапустить Windows update через Python: {exc}") from exc
     return True
