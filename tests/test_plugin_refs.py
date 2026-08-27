@@ -17,6 +17,7 @@ pytestmark = pytest.mark.smoke
 
 
 def _write_marketplace(root: Path, *, url: str, ref: str) -> None:
+    (root / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n', encoding="utf-8")
     path = root / ".agents/plugins/marketplace.json"
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -66,3 +67,19 @@ def test_check_refs_rejects_a_missing_remote_ref(tmp_path, monkeypatch):
     errors = check_plugin_refs.check_refs(tmp_path)
     assert len(errors) == 1
     assert "tag 'v0.1.0' does not resolve" in errors[0]
+
+
+def test_check_refs_rejects_a_tag_for_another_project_version(tmp_path, monkeypatch):
+    _write_marketplace(tmp_path, url="https://github.com/axisrow/hhru.git", ref="v0.1.0")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n', encoding="utf-8")
+
+    def fail_if_called(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("a mismatched tag must not be queried")
+
+    monkeypatch.setattr(check_plugin_refs.subprocess, "run", fail_if_called)
+
+    errors = check_plugin_refs.check_refs(tmp_path)
+    assert errors == [
+        ".agents/plugins/marketplace.json plugins[0] tag 'v0.1.0' does not match "
+        "project version; expected 'v0.2.0'"
+    ]

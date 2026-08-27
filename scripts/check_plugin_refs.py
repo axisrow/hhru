@@ -13,6 +13,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,17 @@ def _load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"marketplace manifest must be a JSON object: {path}")
     return value
+
+
+def _expected_tag(root: Path) -> str:
+    try:
+        with (root / "pyproject.toml").open("rb") as stream:
+            version = tomllib.load(stream)["project"]["version"]
+    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"cannot read project.version from {root / 'pyproject.toml'}") from exc
+    if not isinstance(version, str) or not version:
+        raise ValueError("project.version must be a non-empty string")
+    return f"v{version}"
 
 
 def _tag_exists(url: str, ref: str) -> tuple[bool, str]:
@@ -50,6 +62,10 @@ def check_refs(root: Path) -> list[str]:
     """Return human-readable errors for URL refs missing from their remotes."""
 
     errors: list[str] = []
+    try:
+        expected_tag = _expected_tag(root)
+    except ValueError as exc:
+        return [str(exc)]
     for relative_path in MARKETPLACE_PATHS:
         path = root / relative_path
         try:
@@ -77,6 +93,11 @@ def check_refs(root: Path) -> list[str]:
                 continue
             if not isinstance(ref, str) or not ref:
                 errors.append(f"{label} has no Git ref")
+                continue
+            if ref != expected_tag:
+                errors.append(
+                    f"{label} tag {ref!r} does not match project version; expected {expected_tag!r}"
+                )
                 continue
             exists, detail = _tag_exists(url, ref)
             if not exists:
