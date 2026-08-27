@@ -8,6 +8,11 @@ data/
 **/storage_state/*.json.tmp
 **/storage_state/*.json.*.tmp
 
+# Local environment files may contain API keys or other credentials.
+.env
+.env.*
+!.env.example
+
 # Never send repository metadata or local environments to the Docker daemon.
 .git/
 .venv/
