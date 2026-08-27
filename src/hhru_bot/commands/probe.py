@@ -30,6 +30,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -37,7 +38,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from ..browser import PAGE_STATE, goto_hh, has_login_form
 from ..config import is_resume_url_placeholder
 from ..exit_codes import CommandExitCode
-from ..history import History
+from ..history import CommandRunBusy, History
 from ._common import _build_letter_provider, add_common_args, resolve_resumes
 
 logger = logging.getLogger("hhru_bot.cli")
@@ -128,6 +129,74 @@ STATUS_UNREACHABLE = PAGE_STATE["unreachable"].upper()
 STATUS_UNAUTHENTICATED = PAGE_STATE["unauthenticated"].upper()
 # The URL was never opened: it is the placeholder shipped in config.example.yaml.
 STATUS_PLACEHOLDER = "PLACEHOLDER_CONFIG"
+
+# Healthcheck pages use short display names, while diagnostics must join
+# observations to the logical IDs audited in reference-map.yaml.  This is a
+# naming map only; the catalog's selector values are never used as metrics.
+_HEALTHCHECK_GROUPS = {
+    "search": "search_page",
+    "negotiations": "negotiations",
+    "resume": "resume_page",
+}
+_FALLBACK_HEALTHCHECK_IDS = frozenset(
+    {
+        "search_page.VACANCY_CARD",
+        "search_page.VACANCY_CARD_TITLE_LINK",
+        "search_page.VACANCY_CARD_COMPANY",
+        "search_page.PAGINATION_NEXT",
+        "search_page.PAGINATION_PAGE",
+        "negotiations.NEGOTIATION_ITEM",
+        "negotiations.NEGOTIATION_VACANCY_LINK",
+        "negotiations.NEGOTIATIONS_PAGINATION_NEXT",
+        "resume_page.RESUME_BUMP_BUTTON",
+    }
+)
+
+
+def _catalog_selector_ids() -> frozenset[str]:
+    """Load catalog IDs for validation without using catalog values as facts."""
+    try:
+        import yaml
+
+        catalog_path = Path(__file__).resolve().parents[3] / "selectors" / "reference-map.yaml"
+        catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+        ids = catalog.get("selectors", {}) if isinstance(catalog, dict) else {}
+        if isinstance(ids, dict):
+            return frozenset(str(logical_id) for logical_id in ids)
+    except (ImportError, OSError, TypeError, ValueError, AttributeError):
+        pass
+    return _FALLBACK_HEALTHCHECK_IDS
+
+
+def _healthcheck_observations(pages: list[PageCheck]) -> list[dict[str, object]]:
+    """Convert confirmed ``SelectorCheck`` objects into catalog-keyed rows."""
+    catalog_ids = _catalog_selector_ids()
+    observations: list[dict[str, object]] = []
+    for page in pages:
+        if page.page_state != PAGE_STATE["confirmed"]:
+            # UNREACHABLE, UNAUTHENTICATED and PLACEHOLDER_CONFIG mean that no
+            # selector observation took place; they must not become misses.
+            continue
+        group = _HEALTHCHECK_GROUPS.get(page.name)
+        if group is None:
+            raise ValueError(f"unknown healthcheck page: {page.name}")
+        for result in page.results:
+            logical_id = f"{group}.{result.name}"
+            if logical_id not in catalog_ids:
+                raise ValueError(f"unknown selector logical ID: {logical_id}")
+            observations.append(
+                {
+                    "logical_id": logical_id,
+                    "status": result.status,
+                    "found": result.found,
+                    "evidence": json.dumps(
+                        {"page": page.name, "url": page.url},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                }
+            )
+    return observations
 
 
 @dataclass
@@ -406,63 +475,103 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
     from ..browser import launch_context
     from ..config import load_config_or_exit
 
-    config = load_config_or_exit(args.config)
-    spec = _healthcheck_spec(config)
-
-    print("[INFO] healthcheck: read-only проверка селекторов hh.ru (без отклика)")
-    with launch_context(config.storage_state_file, headless=args.headless) as context:
-        page = context.new_page()
-        # Навигационный потолок уже выставлен context-wide в launch_context
-        # (set_default_navigation_timeout(GOTO_TIMEOUT_MS), см. browser.py) — тот же
-        # источник, что у всех путей hh.ru. Раньше тут был хардкод 60000 (меньше
-        # GOTO_TIMEOUT_MS=90_000) — #142: убран, чтобы healthcheck не падал быстрее
-        # остального кода на медленном hh.ru.
-        pages = check_selectors(page, spec)
-
-    print(format_healthcheck_table(pages))
-    if getattr(args, "json", False):
-        print("MACHINE_READABLE_JSON:")
-        print(format_healthcheck_json(pages))
-    # Итог — только по required-селекторам (Codex F1): optional-ABSENT легитимен
-    # (пагинация/compensation) и НЕ делает здоровый аккаунт «сломанным».
-    required_ok = sum(1 for pg in pages for r in pg.results if r.required and r.found > 0)
-    required_missing = sum(1 for pg in pages for r in pg.results if r.fails)
-    optional_absent = sum(
-        1 for pg in pages for r in pg.results if r.status == STATUS_OPTIONAL_ABSENT
-    )
-    unreachable = sum(1 for pg in pages if pg.unreachable)
-    unauthenticated = sum(1 for pg in pages if pg.unauthenticated)
-    placeholders = sum(1 for pg in pages if pg.placeholder)
-    if required_missing or unreachable or unauthenticated or placeholders:
-        parts = []
-        if required_missing:
-            parts.append(f"НЕ найдено {required_missing} обязательных (см. NOT_FOUND выше)")
-        if unreachable:
-            # #120: недоступная страница — тоже провал: её селекторы не проверены,
-            # и молча рапортовать [OK] по остальным было бы враньём.
-            parts.append(f"недоступно страниц: {unreachable} (см. UNREACHABLE выше)")
-        if unauthenticated:
-            parts.append(
-                f"сессия недействительна на страниц: {unauthenticated} "
-                "(выполните login; селекторы не проверялись)"
-            )
-        if placeholders:
-            parts.append(
-                f"плейсхолдеров resume_url: {placeholders} "
-                "(заполните resume_url; получить реальный можно через list-resumes)"
-            )
-        print(
-            f"[FAIL] обязательных найдено {required_ok}; "
-            + "; ".join(parts)
-            + f"; опциональных отсутствует {optional_absent} (норма)"
-        )
+    history = History(getattr(args, "history", "data/history.db"))
+    try:
+        run_id = history.start_command_run(command="probe", requested_limit=None)
+    except CommandRunBusy as exc:
+        print(f"[FAIL] {exc}")
         return True
-    else:
-        print(
-            f"[OK] все {required_ok} обязательных селекторов найдены "
-            f"(опциональных отсутствует {optional_absent} — норма)"
+
+    pages: list[PageCheck] = []
+    failed = True
+    final_status = "failed"
+    detail = None
+    try:
+        config = load_config_or_exit(args.config)
+        spec = _healthcheck_spec(config)
+
+        print("[INFO] healthcheck: read-only проверка селекторов hh.ru (без отклика)")
+        with launch_context(config.storage_state_file, headless=args.headless) as context:
+            page = context.new_page()
+            # Навигационный потолок уже выставлен context-wide в launch_context
+            # (set_default_navigation_timeout(GOTO_TIMEOUT_MS), см. browser.py) — тот же
+            # источник, что у всех путей hh.ru. Раньше тут был хардкод 60000 (меньше
+            # GOTO_TIMEOUT_MS=90_000) — #142: убран, чтобы healthcheck не падал быстрее
+            # остального кода на медленном hh.ru.
+            pages = check_selectors(page, spec)
+
+        # Test doubles may return an empty spec with synthetic selector names;
+        # there is no real healthcheck observation to persist in that case.
+        if spec:
+            history.record_selector_observations(run_id, _healthcheck_observations(pages))
+        print(format_healthcheck_table(pages))
+        if getattr(args, "json", False):
+            print("MACHINE_READABLE_JSON:")
+            print(format_healthcheck_json(pages))
+        # Итог — только по required-селекторам (Codex F1): optional-ABSENT легитимен
+        # (пагинация/compensation) и НЕ делает здоровый аккаунт «сломанным».
+        required_ok = sum(1 for pg in pages for r in pg.results if r.required and r.found > 0)
+        required_missing = sum(1 for pg in pages for r in pg.results if r.fails)
+        optional_absent = sum(
+            1 for pg in pages for r in pg.results if r.status == STATUS_OPTIONAL_ABSENT
         )
-        return False
+        unreachable = sum(1 for pg in pages if pg.unreachable)
+        unauthenticated = sum(1 for pg in pages if pg.unauthenticated)
+        placeholders = sum(1 for pg in pages if pg.placeholder)
+        if required_missing or unreachable or unauthenticated or placeholders:
+            parts = []
+            if required_missing:
+                parts.append(f"НЕ найдено {required_missing} обязательных (см. NOT_FOUND выше)")
+            if unreachable:
+                # #120: недоступная страница — тоже провал: её селекторы не проверены,
+                # и молча рапортовать «OK» по остальным было бы враньём.
+                parts.append(f"недоступно страниц: {unreachable} (см. UNREACHABLE выше)")
+            if unauthenticated:
+                parts.append(
+                    f"сессия недействительна на страниц: {unauthenticated} "
+                    "(выполните login; селекторы не проверялись)"
+                )
+            if placeholders:
+                parts.append(
+                    f"плейсхолдеров resume_url: {placeholders} "
+                    "(заполните resume_url; получить реальный можно через list-resumes)"
+                )
+            print(
+                f"[FAIL] обязательных найдено {required_ok}; "
+                + "; ".join(parts)
+                + f"; опциональных отсутствует {optional_absent} (норма)"
+            )
+            failed = True
+        else:
+            print(
+                f"[OK] все {required_ok} обязательных селекторов найдены "
+                f"(опциональных отсутствует {optional_absent} — норма)"
+            )
+            failed = False
+        final_status = "failed" if failed else "completed"
+        return failed
+    except KeyboardInterrupt:
+        final_status = "interrupted"
+        detail = "SIGINT"
+        raise
+    except BaseException as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        try:
+            history.finish_command_run(
+                run_id,
+                status=final_status,
+                exit_code=130 if final_status == "interrupted" else 1 if failed else 0,
+                attempted=0,
+                success=0,
+                failed=0,
+                uncertain=0,
+                skipped=0,
+                detail=detail,
+            )
+        except Exception:
+            logger.exception("healthcheck: не удалось завершить run_id=%s", run_id)
 
 
 # --- probe-дамп формы (#8) -------------------------------------------------

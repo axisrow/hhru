@@ -77,6 +77,22 @@ CREATE TABLE IF NOT EXISTS command_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_command_runs_status ON command_runs(status, started_at);
 
+-- Runtime selector observations (#701).  This is deliberately separate from
+-- the provenance catalog: the catalog describes what a selector is, while
+-- these rows record what the browser actually observed during one healthcheck.
+CREATE TABLE IF NOT EXISTS selector_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    logical_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    found INTEGER NOT NULL,
+    evidence TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    UNIQUE (run_id, logical_id)
+);
+CREATE INDEX IF NOT EXISTS idx_selector_observations_run_id
+    ON selector_observations(run_id, id);
+
 -- #177: 'uncertain' тоже дедуплицируется в has_applied() (клик мог реально
 -- уйти на hh.ru, статус неизвестен) — индекс обязан покрывать этот статус,
 -- иначе гонка/повтор вставит несколько uncertain-строк для одной пары.
@@ -1190,6 +1206,54 @@ class History:
             )
             if cur.rowcount != 1:
                 raise ValueError(f"running command run не найден: {run_id}")
+
+    def record_selector_observations(
+        self, run_id: str, observations: list[dict[str, object]]
+    ) -> int:
+        """Persist the confirmed selector observations for one healthcheck.
+
+        The caller supplies logical IDs and already-classified statuses from
+        ``commands.probe.SelectorCheck``.  Indeterminate page states have no
+        selector rows and are ignored defensively here as well.  Catalog
+        membership is checked by the producer because ``History`` is also
+        used by offline callers that do not import the selector registry.
+        """
+        allowed_statuses = {"OK", "NOT_FOUND", "OPTIONAL_ABSENT"}
+        from .selector_groups._generated import VALUES as selector_values
+
+        rows: list[tuple[str, str, str, int, str]] = []
+        for observation in observations:
+            status = str(observation["status"])
+            if status not in allowed_statuses:
+                continue
+            logical_id = str(observation["logical_id"])
+            if logical_id not in selector_values:
+                raise ValueError(f"unknown selector logical ID: {logical_id}")
+            found = int(observation["found"])
+            if found < 0:
+                raise ValueError("selector observation count cannot be negative")
+            rows.append(
+                (
+                    run_id,
+                    logical_id,
+                    status,
+                    found,
+                    str(observation.get("evidence", "")),
+                )
+            )
+        with self._connect() as conn:
+            if (
+                conn.execute("SELECT 1 FROM command_runs WHERE run_id=?", (run_id,)).fetchone()
+                is None
+            ):
+                raise ValueError(f"command run не найден: {run_id}")
+            conn.executemany(
+                """INSERT INTO selector_observations
+                   (run_id, logical_id, status, found, evidence, observed_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [(*row, datetime.now().isoformat()) for row in rows],
+            )
+        return len(rows)
 
     def command_runs(self) -> list[dict]:
         with self._connect() as conn:
