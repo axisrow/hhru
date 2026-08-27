@@ -270,6 +270,10 @@ CREATE TABLE IF NOT EXISTS competitor_resumes (
     resume_id TEXT PRIMARY KEY,
     resume_url TEXT NOT NULL,
     desired_role TEXT NOT NULL,
+    area TEXT,
+    relocation TEXT,
+    business_trips TEXT,
+    metro_station TEXT,
     salary_from INTEGER,
     salary_to INTEGER,
     salary_currency TEXT,
@@ -828,6 +832,12 @@ class History:
             # NULL; begin_competitor_collection() falls back to cards_seen for
             # those (old behavior, unaffected by this fix).
             _ensure_column(conn, "competitor_collection_runs", "cards_seen_completed", "INTEGER")
+            # #679: geography was absent from the original competitor snapshot.
+            # NULL keeps existing rows valid until their next collection.
+            _ensure_column(conn, "competitor_resumes", "area", "TEXT")
+            _ensure_column(conn, "competitor_resumes", "relocation", "TEXT")
+            _ensure_column(conn, "competitor_resumes", "business_trips", "TEXT")
+            _ensure_column(conn, "competitor_resumes", "metro_station", "TEXT")
             # #473: questionnaire research snapshots predate the apply audit
             # fields.  CREATE TABLE IF NOT EXISTS leaves those old tables
             # untouched, so keep the migration explicitly idempotent.
@@ -2417,14 +2427,19 @@ class History:
             )
             conn.execute(
                 """INSERT INTO competitor_resumes
-                   (resume_id, resume_url, desired_role, salary_from, salary_to,
+                   (resume_id, resume_url, desired_role, area, relocation,
+                    business_trips, metro_station, salary_from, salary_to,
                     salary_currency, experience_months, specializations, employment_types,
                     work_formats, languages, education, experience_summary, achievements,
                     content_hash, first_seen_at, last_seen_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(resume_id) DO UPDATE SET
                      resume_url = excluded.resume_url,
                      desired_role = excluded.desired_role,
+                     area = excluded.area,
+                     relocation = excluded.relocation,
+                     business_trips = excluded.business_trips,
+                     metro_station = excluded.metro_station,
                      salary_from = excluded.salary_from,
                      salary_to = excluded.salary_to,
                      salary_currency = excluded.salary_currency,
@@ -2445,6 +2460,10 @@ class History:
                     resume_id,
                     snapshot["resume_url"],
                     snapshot["desired_role"],
+                    snapshot.get("area"),
+                    snapshot.get("relocation"),
+                    snapshot.get("business_trips"),
+                    snapshot.get("metro_station"),
                     snapshot.get("salary_from"),
                     snapshot.get("salary_to"),
                     snapshot.get("salary_currency"),

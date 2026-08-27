@@ -1,0 +1,9 @@
+[RECOVERED] run_id=e31bfa7f-771d-42f0-98a5-8c81aaeed6f7 status=partial; checkpoint: страниц=0, карточек=0, сохранено=0; причина=owner process exited without finalization; owner_pid=67371; last_heartbeat=2026-08-27T02:31:35
+[START] run_id=509e8df4-401c-461a-aa03-83bca334eebb competitors collect: execution_mode=foreground, progress_verbosity=1, auth_mode=anonymous, detail_workers=10, headless=да, запрошено карточек/страницу=20, объём=до 1 стр., лимит страниц=1
+2026-08-27 02:31:56 [INFO] hhru_bot.browser: Запущен чистый браузерный контекст без сохранённой сессии
+[ESTIMATE] run_id=509e8df4-401c-461a-aa03-83bca334eebb запрошено=20/стр., фактически=20/стр., объём~20 деталей, workers=10; только паузы троттлинга 16 с-1 мин; ETA уточнится по фактической скорости
+[WORKERS] run_id=509e8df4-401c-461a-aa03-83bca334eebb запущено=10
+[HEARTBEAT] run_id=509e8df4-401c-461a-aa03-83bca334eebb competitors collect жив: страница=1, карточек=20, сохранено=16, ошибок=0, осталось~11 с (диапазон 8 с-14 с)
+[PROGRESS] run_id=509e8df4-401c-461a-aa03-83bca334eebb страница=1, карточек=20, деталей=20, новых/обновлено=20, ошибок=0
+Конкуренты: run_id=509e8df4-401c-461a-aa03-83bca334eebb, заявлено hh.ru не подтверждено, доступно страниц 31, фактически карточек/страницу 20, просмотрено страниц 1, увидено карточек 20, сохранено уникальных 20, новых 20, обновлено 0, без изменений 0, ошибок 0, код завершения=0, время=53 с
+[WARN] run_id=509e8df4-401c-461a-aa03-83bca334eebb выдача ограничена --max-pages=1; следующий checkpoint: страница=2
