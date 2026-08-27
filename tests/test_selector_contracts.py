@@ -859,7 +859,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 209" in output
+    assert "local selector contracts: 215" in output
     assert "Semantic mismatches:" in output
 
 

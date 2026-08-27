@@ -30,10 +30,16 @@
 | apply_form.APPLY_RESUME_TOGGLE | `[data-qa='resume-title'] >> xpath=ancestor::*[@role='button'][1]` | — | — | — | live_dom |
 | apply_form.APPLY_SUBMIT_BUTTON | `[data-qa='vacancy-response-submit-popup']` | — | [data-qa="vacancy-response-submit-popup"] | [data-qa="vacancy-response-submit-popup"] | consensus |
 | browser.LOGIN_FORM | `[data-qa='account-login-form']` | — | — | — | live_dom |
+| competitor_resume.DETAIL_PERSONAL_ADDRESS | `[data-qa='resume-personal-address']` | — | — | — | live_dom |
+| competitor_resume.DETAIL_PERSONAL_INFO | `main p:has([data-qa^='relocation_'])` | — | — | — | live_dom |
+| competitor_resume.DETAIL_RELOCATION | `[data-qa^='relocation_']` | — | — | — | live_dom |
 | competitor_resume.PAGINATION_BLOCK | `[data-qa*='pager-block'], [data-qa*='pagination']` | — | — | — | structural_read_fallback |
 | competitor_resume.PAGINATION_NEXT | `[data-qa*='pager-next'], [data-qa*='pagination-next'], a[rel='next']` | — | — | — | structural_read_fallback |
 | competitor_resume.PAGINATION_PAGE | `[data-qa*='pager-page'], [data-qa*='pagination-page']` | — | — | — | structural_read_fallback |
+| competitor_resume.SEARCH_AREA_AND_RELOCATION | `[data-qa='resume-serp_resume-item-area-and-relocation-content']` | — | — | — | live_dom |
+| competitor_resume.SEARCH_CARD | `[data-qa='resume-serp__resume']` | — | — | — | live_dom |
 | competitor_resume.SEARCH_EMPTY | `[data-qa='resume-search-empty'], [data-qa='bloko-header-2']` | — | — | — | structural_read_fallback |
+| competitor_resume.SEARCH_RESULT_TITLE_LINK | `[data-qa='serp-item__title']` | — | — | — | live_dom |
 | create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | workflow_live |
 | negotiations.CHAT_AUTHOR_HINT | `[data-qa*='author'], [class*='author'], [aria-label], [title]` | — | — | — | documented_live |
 | negotiations.CHAT_MESSAGE_INPUT | `textarea[data-qa='chatik-chat-message-input']` | — | — | [data-qa="chatik-new-message-text"] | documented_live |

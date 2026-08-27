@@ -654,6 +654,61 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: anonymous_login_page_read_only
     verified_by: codex
+  competitor_resume.DETAIL_PERSONAL_ADDRESS:
+    value: '[data-qa=''resume-personal-address'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:19
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - resume-personal-address
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of the public resume city marker on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
+    verified_flow: public_resume_detail_read_only
+    verified_by: codex
+  competitor_resume.DETAIL_PERSONAL_INFO:
+    value: main p:has([data-qa^='relocation_'])
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:21
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - relocation_no_relocation
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of the public resume header paragraph containing city, relocation and business-trip
+        text on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
+    verified_flow: public_resume_detail_read_only
+    verified_by: codex
+  competitor_resume.DETAIL_RELOCATION:
+    value: '[data-qa^=''relocation_'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:20
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - relocation_no_relocation
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of the public resume relocation marker on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
+    verified_flow: public_resume_detail_read_only
+    verified_by: codex
   competitor_resume.PAGINATION_BLOCK:
     value: '[data-qa*=''pager-block''], [data-qa*=''pagination'']'
     criticality: read
@@ -708,6 +763,42 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: public_resume_search_read_only
     verified_by: codex
+  competitor_resume.SEARCH_AREA_AND_RELOCATION:
+    value: '[data-qa=''resume-serp_resume-item-area-and-relocation-content'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:11
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - resume-serp_resume-item-area-and-relocation-content
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of combined area and business-trip field on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
+  competitor_resume.SEARCH_CARD:
+    value: '[data-qa=''resume-serp__resume'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:9
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - resume-serp__resume
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of resume search cards on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
   competitor_resume.SEARCH_EMPTY:
     value: '[data-qa=''resume-search-empty''], [data-qa=''bloko-header-2'']'
     criticality: read
@@ -724,6 +815,24 @@ selectors:
     origin: browser_dom
     verification: verified
     last_verified_at: '2026-08-25'
+    verified_flow: public_resume_search_read_only
+    verified_by: codex
+  competitor_resume.SEARCH_RESULT_TITLE_LINK:
+    value: '[data-qa=''serp-item__title'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:10
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - serp-item__title
+    evidence:
+      source: docs/research/issue-679-live-probe.md
+      note: Read-only Chrome observation of resume search card title links on 2026-08-27.
+    active: true
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-27T00:00:00Z'
     verified_flow: public_resume_search_read_only
     verified_by: codex
   create_resume.TREE_ITEM_TEXT:

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -63,6 +63,8 @@ class CompetitorSearchCard:
     resume_url: str
     desired_role: str
     rank: int
+    area: str | None = None
+    business_trips: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,10 @@ class CompetitorResume:
     resume_id: str
     resume_url: str
     desired_role: str
+    area: str | None = None
+    relocation: str | None = None
+    business_trips: str | None = None
+    metro_station: str | None = None
     salary_from: int | None = None
     salary_to: int | None = None
     salary_currency: str | None = None
@@ -255,6 +261,51 @@ def parse_search_links(
     return result
 
 
+_GEO_EMPTY_VALUES = frozenset({"—", "-", "не указано", "не указана", "не указан"})
+_BUSINESS_TRIPS_RE = re.compile(
+    r"(?:не\s+)?(?:готов(?:а|ы)?|готов)\s+к\s+(?:\S+\s+)?командировкам(?:\s+[^,]+)?"
+    r"|(?:not\s+)?prepared\s+for\s+business\s+trips",
+    re.IGNORECASE,
+)
+_METRO_RE = re.compile(r"(?:\bм\.\s*|\bметро\s+)([^,;]+)", re.IGNORECASE)
+
+
+def _clean_geo_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.replace("\u00a0", " ").replace("\u202f", " ").strip()
+    return None if not normalized or normalized.casefold() in _GEO_EMPTY_VALUES else normalized
+
+
+def parse_search_area_and_business_trips(value: str | None) -> tuple[str | None, str | None]:
+    """Split the single area/travel field rendered in a resume search card."""
+    normalized = _clean_geo_value(value)
+    if normalized is None:
+        return None, None
+    parts = [part.strip() for part in re.split(r"\s*[•·]\s*", normalized) if part.strip()]
+    if not parts:
+        return None, None
+    trip = next((part for part in parts[1:] if _BUSINESS_TRIPS_RE.search(part)), None)
+    if trip is None and _BUSINESS_TRIPS_RE.search(parts[0]):
+        trip = parts[0]
+        area = None
+    else:
+        area = _clean_geo_value(parts[0])
+    return area, _clean_geo_value(trip)
+
+
+def parse_detail_business_trips_and_metro(value: str | None) -> tuple[str | None, str | None]:
+    """Read optional travel/metro text from the public resume header."""
+    normalized = _clean_geo_value(value)
+    if normalized is None:
+        return None, None
+    trip_match = _BUSINESS_TRIPS_RE.search(normalized)
+    trip = _clean_geo_value(trip_match.group(0)) if trip_match else None
+    metro_match = _METRO_RE.search(normalized)
+    metro = _clean_geo_value(metro_match.group(1)) if metro_match else None
+    return trip, metro
+
+
 def parse_search_page(
     page: Page,
     *,
@@ -296,7 +347,33 @@ def parse_search_page(
     cards = parse_search_links(observed, rank_offset=rank_offset)
     if not cards:
         raise CompetitorSearchIndeterminate("ссылки выдачи не содержат подтверждённых resume ID")
-    return cards
+
+    # The search card already exposes the area and business-trip readiness.
+    # Keep this optional: the title link remains the identity-bearing fallback
+    # for layouts that omit the newer card data-qa markers.
+    search_cards = page.locator(sel.SEARCH_CARD)
+    if search_cards.count() == 0:
+        return cards
+    geo_by_resume: dict[str, tuple[str | None, str | None]] = {}
+    for index in range(search_cards.count()):
+        card = search_cards.nth(index)
+        title_link = card.locator(sel.SEARCH_RESULT_TITLE_LINK)
+        if title_link.count() != 1:
+            continue
+        identity = _resume_identity(title_link.get_attribute("href") or "")
+        if identity is None:
+            continue
+        area_locator = card.locator(sel.SEARCH_AREA_AND_RELOCATION)
+        area_text = area_locator.inner_text() if area_locator.count() == 1 else None
+        geo_by_resume[identity[0]] = parse_search_area_and_business_trips(area_text)
+    return [
+        replace(
+            card,
+            area=geo_by_resume.get(card.resume_id, (None, None))[0],
+            business_trips=geo_by_resume.get(card.resume_id, (None, None))[1],
+        )
+        for card in cards
+    ]
 
 
 def has_next_search_page(page: Page, page_num: int) -> bool:
@@ -589,11 +666,35 @@ def fetch_competitor_resume(
     except PlaywrightError:
         raise CompetitorResumeIndeterminate("основной блок резюме не появился") from None
     headings = [value.strip() for value in page.locator(sel.DETAIL_HEADING).all_inner_texts()]
-    return parse_competitor_resume_text(
+    snapshot = parse_competitor_resume_text(
         main.inner_text(),
         resume_id=card.resume_id,
         resume_url=card.resume_url,
         headings=headings,
+    )
+    address_locator = page.locator(sel.DETAIL_PERSONAL_ADDRESS)
+    relocation_locator = page.locator(sel.DETAIL_RELOCATION)
+    personal_locator = page.locator(sel.DETAIL_PERSONAL_INFO)
+    detail_area = (
+        _clean_geo_value(address_locator.inner_text()) if address_locator.count() == 1 else None
+    )
+    # The result card may include the parent region, e.g. ``Подольск
+    # (Московская область)``; prefer that richer value over the detail-page
+    # city-only label while retaining the detail fallback for older layouts.
+    area = card.area or detail_area
+    relocation = (
+        _clean_geo_value(relocation_locator.inner_text())
+        if relocation_locator.count() == 1
+        else None
+    )
+    personal_text = personal_locator.inner_text() if personal_locator.count() == 1 else None
+    business_trips, metro_station = parse_detail_business_trips_and_metro(personal_text)
+    return replace(
+        snapshot,
+        area=area,
+        relocation=relocation,
+        business_trips=business_trips or card.business_trips,
+        metro_station=metro_station,
     )
 
 

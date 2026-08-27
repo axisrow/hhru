@@ -13,6 +13,8 @@ from hhru_bot.competitors import (
     coverage_warning,
     has_next_search_page,
     parse_competitor_resume_text,
+    parse_detail_business_trips_and_metro,
+    parse_search_area_and_business_trips,
     parse_search_links,
     parse_search_result_count,
     redact_free_text,
@@ -236,6 +238,34 @@ def test_parse_search_links_normalizes_url_deduplicates_and_keeps_rank():
         ("def", "AI Creator", 22),
     ]
     assert cards[0].resume_url == "https://hh.ru/resume/abc"
+
+
+@pytest.mark.parametrize(
+    ("raw", "area", "business_trips"),
+    [
+        ("Екатеринбург • Не готов к командировкам", "Екатеринбург", "Не готов к командировкам"),
+        (
+            "Подольск (Московская область) • Не готов к командировкам",
+            "Подольск (Московская область)",
+            "Не готов к командировкам",
+        ),
+        ("Москва • Готова к редким командировкам", "Москва", "Готова к редким командировкам"),
+        (None, None, None),
+        ("—", None, None),
+    ],
+)
+def test_parse_search_area_and_business_trips(raw, area, business_trips):
+    assert parse_search_area_and_business_trips(raw) == (area, business_trips)
+
+
+def test_parse_detail_business_trips_and_metro():
+    assert parse_detail_business_trips_and_metro(
+        "Москва, м. Тверская, не готова к командировкам"
+    ) == ("не готова к командировкам", "Тверская")
+
+
+def test_parse_detail_business_trips_and_metro_accepts_missing_header():
+    assert parse_detail_business_trips_and_metro(None) == (None, None)
 
 
 def test_parse_detail_extracts_only_competitor_fields():

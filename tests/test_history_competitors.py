@@ -18,6 +18,10 @@ def _snapshot(*, role="AI Engineer", skills=None):
         "resume_id": "r1",
         "resume_url": "https://hh.ru/resume/r1",
         "desired_role": role,
+        "area": "Москва",
+        "relocation": "не готов к переезду",
+        "business_trips": "готов к командировкам",
+        "metro_station": None,
         "salary_from": 100_000,
         "salary_to": 150_000,
         "salary_currency": "RUB",
@@ -49,6 +53,43 @@ def test_history_creates_competitor_tables(tmp_path):
     } <= tables
 
 
+def test_existing_competitor_rows_get_nullable_geography_columns(tmp_path):
+    db = tmp_path / "history.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """CREATE TABLE competitor_resumes (
+                resume_id TEXT PRIMARY KEY, resume_url TEXT NOT NULL,
+                desired_role TEXT NOT NULL, salary_from INTEGER, salary_to INTEGER,
+                salary_currency TEXT, experience_months INTEGER,
+                specializations TEXT NOT NULL DEFAULT '[]',
+                employment_types TEXT NOT NULL DEFAULT '[]',
+                work_formats TEXT NOT NULL DEFAULT '[]',
+                languages TEXT NOT NULL DEFAULT '[]',
+                education TEXT NOT NULL DEFAULT '[]', experience_summary TEXT,
+                achievements TEXT, content_hash TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO competitor_resumes
+               VALUES ('old', 'https://hh.ru/resume/old', 'Old role', NULL, NULL,
+                       NULL, NULL, '[]', '[]', '[]', '[]', '[]', NULL, NULL,
+                       'hash', '2026-08-01', '2026-08-01', '2026-08-01')"""
+        )
+
+    History(db)
+
+    with sqlite3.connect(db) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(competitor_resumes)")}
+        row = conn.execute(
+            "SELECT desired_role, area, relocation, business_trips, metro_station "
+            "FROM competitor_resumes WHERE resume_id='old'"
+        ).fetchone()
+    assert {"area", "relocation", "business_trips", "metro_station"} <= columns
+    assert row == ("Old role", None, None, None, None)
+
+
 def test_upsert_current_snapshot_and_query_relations_are_atomic(tmp_path):
     history = History(tmp_path / "history.db")
     assert history.upsert_competitor_resume(_snapshot(), search_query="AI", search_rank=1) == "new"
@@ -62,6 +103,9 @@ def test_upsert_current_snapshot_and_query_relations_are_atomic(tmp_path):
     rows = history.list_competitor_resumes("AI")
     assert len(rows) == 1
     assert rows[0]["desired_role"] == "AI Infrastructure Engineer"
+    assert rows[0]["area"] == "Москва"
+    assert rows[0]["relocation"] == "не готов к переезду"
+    assert rows[0]["business_trips"] == "готов к командировкам"
     assert rows[0]["skills"] == [{"name": "Docker", "proficiency": None}]
     assert len(history.list_competitor_resumes("LLM")) == 1
 
