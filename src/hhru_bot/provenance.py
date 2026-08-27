@@ -20,7 +20,7 @@ from typing import Any
 
 PLUGIN_NAME = "hhru-cc-plugin"
 MARKETPLACE_NAME = "hhru"
-RECOVERY_COMMAND = "codex plugin marketplace upgrade hhru --json"
+RECOVERY_COMMAND = "hhru update"
 
 
 @dataclass(frozen=True)
