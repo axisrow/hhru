@@ -42,6 +42,10 @@ def _fmt_opt(action: argparse.Action, *, trim_help: bool = False) -> str:
         # Keep generated docs identical on POSIX and Windows. ``repr(Path)``
         # otherwise changes from ``PosixPath`` to ``WindowsPath``.
         default_repr = f"PosixPath({action.default.as_posix()!r})"
+    elif isinstance(action.default, str):
+        # Some command defaults are strings rather than Path objects. Normalize
+        # their Windows separators for the same cross-platform stability.
+        default_repr = repr(action.default.replace("\\", "/"))
     else:
         default_repr = repr(action.default)
     default = "" if not action.default else f" (по умолчанию: {default_repr})"
