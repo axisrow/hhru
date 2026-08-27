@@ -177,6 +177,42 @@ def test_responses_alert_new_ignores_other_statuses(capsys, tmp_path, monkeypatc
     assert capsys.readouterr().out == ""
 
 
+def test_responses_alert_new_does_not_checkpoint_ambiguous_invitation(
+    capsys, tmp_path, monkeypatch
+):
+    """An invitation without a safe topic mapping fails closed and remains retryable."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-ambiguous",
+        status=ResponseStatus.INVITATION,
+        topic_ambiguous=True,
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "checkpoint не обновлён" in captured.err
+    assert History(tmp_path / "h.db").responses_alert_checkpoint() is None
+
+
 def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):
     """Zero is a valid sync window, not a request for history-only mode."""
     import contextlib

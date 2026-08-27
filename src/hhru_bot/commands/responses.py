@@ -121,7 +121,12 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..history import History
-    from ..responses import NotAuthenticated, ResponsesIndeterminate, fetch_responses
+    from ..responses import (
+        NotAuthenticated,
+        ResponsesIndeterminate,
+        ResponseStatus,
+        fetch_responses,
+    )
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
@@ -304,15 +309,26 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 unchanged += 1
 
         if alert_new:
+            if any(
+                card.topic_ambiguous and card.status == ResponseStatus.INVITATION for card in cards
+            ):
+                print(
+                    "Ошибка: новое приглашение пропущено из-за неоднозначного topic; "
+                    "checkpoint не обновлён",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             rows = history.new_responses_since(alert_since, resume_id=None)
             invitations = [row for row in rows if row.get("status") == "invitation"]
-            history.mark_responses_alert_success()
             if invitations:
                 print(f"[INFO] Новых приглашений: {len(invitations)}")
                 for row in invitations:
                     employer = (row.get("employer") or "").strip() or "(скрыт)"
                     print(f"Вакансия: {row.get('vacancy_id', '')} | Работодатель: {employer}")
+                sys.stdout.flush()
+                history.mark_responses_alert_success()
                 return CommandExitCode.NEW_INVITATIONS
+            history.mark_responses_alert_success()
             return None
 
         print(
