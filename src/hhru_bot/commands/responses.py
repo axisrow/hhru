@@ -210,7 +210,12 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                             f"вакансия={ref.vacancy} vacancy_id={ref.vacancy_id}"
                         )
                     return
-                cards = fetch_responses(page, max_pages=args.max_pages, strict_empty=sync_applied)
+                cards = fetch_responses(
+                    page,
+                    max_pages=args.max_pages,
+                    strict_empty=sync_applied,
+                    strict_scrape=alert_new,
+                )
                 if alert_new and any(
                     card.topic_ambiguous and card.status == ResponseStatus.INVITATION
                     for card in cards

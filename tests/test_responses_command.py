@@ -118,7 +118,7 @@ def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_p
     result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
 
     assert result is CommandExitCode.NEW_INVITATIONS
-    assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False}]
+    assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False, "strict_scrape": True}]
     out = capsys.readouterr().out
     assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
     history = History(tmp_path / "h.db")
@@ -385,7 +385,7 @@ def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path,
         lambda *args, **kwargs: seen.append(kwargs) or [card],
     )
     responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=0.0, sync_applied=True))
-    assert seen == [{"max_pages": 5, "strict_empty": True}]
+    assert seen == [{"max_pages": 5, "strict_empty": True, "strict_scrape": False}]
     assert "добавлено 1" in capsys.readouterr().out
 
 
