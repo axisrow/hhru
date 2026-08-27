@@ -413,7 +413,7 @@ def test_schedule_action_choices():
     action = _subparser_actions(parser)
     sub = action.choices["schedule"]
     act = next(a for a in sub._actions if "--action" in a.option_strings)
-    assert set(act.choices) == {"bump", "apply"}
+    assert set(act.choices) == {"bump", "apply", "run"}
 
 
 def test_login_no_common_args():

@@ -27,7 +27,9 @@ import argparse
 import sys
 from dataclasses import dataclass
 
-VALID_ACTIONS = ("bump", "apply")
+from ..throttle import BUMP_COOLDOWN
+
+VALID_ACTIONS = ("bump", "apply", "run")
 VALID_FORMATS = ("plist", "crontab")
 
 # Шаблонные плейсхолдеры — НЕ реальные пути. Пользователь заменяет их под свою
@@ -39,10 +41,9 @@ PLACEHOLDER_REPO_ROOT = "__REPO_ROOT__"
 # резолвится в системный без playwright. scheduled_run.sh читает HHRU_PYTHON.
 PLACEHOLDER_PYTHON_BIN = "__PYTHON_BIN__"
 
-# Дефолты повторяют логику авторегулярного запуска: bump не чаще 4ч (равен
-# BUMP_COOLDOWN в throttle.py, чтобы запуск приходился на границу кулдауна),
-# apply раз в день утром.
-DEFAULT_BUMP_INTERVAL_HOURS = 4
+# Дефолты повторяют логику авторегулярного запуска: bump/run не чаще кулдауна
+# поднятия (чтобы запуск приходился на границу кулдауна), apply раз в день утром.
+DEFAULT_BUMP_INTERVAL_HOURS = int(BUMP_COOLDOWN.total_seconds() // 3600)
 DEFAULT_APPLY_TIME = "10:00"
 DEFAULT_APPLY_LIMIT = 5
 
@@ -62,9 +63,9 @@ class ScheduleConfig:
             raise ValueError(f"Неизвестный формат '{self.format}'. Допустимо: {VALID_FORMATS}.")
         if self.action not in VALID_ACTIONS:
             raise ValueError(f"Неизвестное действие '{self.action}'. Допустимо: {VALID_ACTIONS}.")
-        if self.action == "bump" and self.interval_hours < 1:
+        if self.action in {"bump", "run"} and self.interval_hours < 1:
             raise ValueError(
-                f"Интервал bump должен быть >= 1 часа (получено {self.interval_hours})."
+                f"Интервал {self.action} должен быть >= 1 часа (получено {self.interval_hours})."
             )
         if self.action == "apply":
             _parse_time(self.apply_time)
@@ -95,7 +96,7 @@ def _program_arguments(
 ) -> list[str]:
     """Аргументы, которые планировщик передаёт scheduled_run.sh.
 
-    bump — без лимита (дневной лимит и кулдаун 4ч держит throttle).
+    bump/run — без лимита (дневной лимит и кулдаун 4ч держит throttle).
     apply — с --limit N (сверх дневного лимита, чтобы один прогон не
     выработал весь daily_apply_limit за раз).
 
@@ -112,8 +113,8 @@ def _program_arguments(
             args += ["--history", history]
     elif account is not None:
         args += ["--account", account]
-    if action == "bump":
-        return [*args, "bump"]
+    if action in {"bump", "run"}:
+        return [*args, action]
     return [*args, "apply", "--limit", str(apply_limit)]
 
 
@@ -210,8 +211,8 @@ def _render_plist(
 
 
 def _plist_start_block(cfg: ScheduleConfig) -> str:
-    """Блок запуска по расписанию: StartInterval для bump, StartCalendarInterval для apply."""
-    if cfg.action == "bump":
+    """Блок запуска: StartInterval для bump/run, календарный запуск для apply."""
+    if cfg.action in {"bump", "run"}:
         seconds = cfg.interval_hours * 3600
         return f"    <key>StartInterval</key>\n    <integer>{seconds}</integer>"
     hour, minute = _parse_time(cfg.apply_time)
@@ -247,7 +248,7 @@ def _render_crontab(
     # cron-окружении не имеет playwright. scheduled_run.sh читает HHRU_PYTHON.
     command = f"HHRU_PYTHON={PLACEHOLDER_PYTHON_BIN} {wrapper} {cmd_args}"
 
-    if cfg.action == "bump":
+    if cfg.action in {"bump", "run"}:
         # «0 */N * * *» срабатывает в начале каждого N-го часа от полуночи
         # (0:00, N:00, 2N:00, ...). Для N, не делящего 24, последний интервал
         # до следующей полуночи короче — это свойство cron, не баг. Для
@@ -280,7 +281,7 @@ def _instructions(cfg: ScheduleConfig) -> str:
             "Установка: cp файл в ~/Library/LaunchAgents/<label>.plist и\n"
             "  launchctl load ~/Library/LaunchAgents/<label>.plist\n"
             "Предохранители в коде (throttle.py) не дадут сработать раньше срока:\n"
-            "  bump — кулдаун 4ч (can_bump_now), apply — дневной лимит (check_apply_limit).\n"
+            "  bump/run — кулдаун 4ч (can_bump_now), apply — дневной лимит (check_apply_limit).\n"
         )
     return (
         "crontab (Linux/macOS) — ШАБЛОН. Скопируйте строку из stdout.\n"
@@ -310,13 +311,13 @@ def register(subparsers) -> None:
         "--action",
         choices=VALID_ACTIONS,
         default="bump",
-        help="Какое действие планировать: bump (периодически) или apply (раз в день)",
+        help=("Какое действие планировать: bump/run (периодически) или apply (раз в день)"),
     )
     p.add_argument(
         "--bump-interval-hours",
         type=int,
         default=DEFAULT_BUMP_INTERVAL_HOURS,
-        help="Интервал запуска bump в часах (по умолчанию 4, равен кулдауну)",
+        help="Интервал запуска bump/run в часах (по умолчанию 4, равен кулдауну)",
     )
     p.add_argument(
         "--apply-time",
