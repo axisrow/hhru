@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -53,6 +54,8 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
     git("commit", "-qm", "fixture")
     git("branch", "-M", "main")
     git("remote", "add", "origin", checkout.as_uri())
+    plugin_cache = tmp_path / "plugin-cache"
+    shutil.copytree(checkout, plugin_cache, ignore=shutil.ignore_patterns(".git"))
 
     harness = tmp_path / "harness"
     harness.mkdir()
@@ -70,6 +73,7 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
         "    ' '.join(args) + '\\n'\n"
         ")\n"
         "root = os.environ['HHRU_TEST_CHECKOUT']\n"
+        "cache = os.environ['HHRU_TEST_PLUGIN_CACHE']\n"
         "if args[:3] == ['plugin', 'marketplace', 'list']:\n"
         "    print('{}')\n"
         "elif args[:3] == ['plugin', 'marketplace', 'add']:\n"
@@ -79,7 +83,7 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
         "elif args[:2] == ['plugin', 'list']:\n"
         "    print(json.dumps({'installed': []}))\n"
         "elif args[:2] == ['plugin', 'add']:\n"
-        "    print(json.dumps({'installedPath': root}))\n"
+        "    print(json.dumps({'installedPath': cache}))\n"
         "else:\n"
         "    raise SystemExit(f'unexpected fake Codex args: {args!r}')\n",
         encoding="utf-8",
@@ -102,6 +106,7 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
             "CODEX_HOME": str(tmp_path / "codex-home"),
             "HHRU_TEST_CHECKOUT": str(checkout),
             "HHRU_TEST_CODEX_LOG": str(tmp_path / "codex.log"),
+            "HHRU_TEST_PLUGIN_CACHE": str(plugin_cache),
             "HHRU_TEST_UPDATE_SOURCE": checkout.as_uri(),
             "HHRU_UPDATE_REEXEC": "",
             # The Windows runner's active code page cannot encode the CLI's
