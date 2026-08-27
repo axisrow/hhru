@@ -82,6 +82,21 @@ def test_manifest_check_fails_for_intentionally_drifted_version(tmp_path):
     assert json.loads(path.read_text())["version"] == _project_version(tmp_path)
 
 
+def test_manifest_check_fails_for_drifted_codex_release_ref(tmp_path):
+    source = Path(__file__).resolve().parents[1]
+    _copy_metadata_fixture(source, tmp_path)
+    path = tmp_path / ".agents/plugins/marketplace.json"
+    manifest = json.loads(path.read_text())
+    manifest["plugins"][0]["source"]["ref"] = "main"
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+    assert not _synchronize(tmp_path, check=True)
+    assert _synchronize(tmp_path)
+    assert json.loads(path.read_text())["plugins"][0]["source"]["ref"] == (
+        f"v{_project_version(tmp_path)}"
+    )
+
+
 def test_claude_and_codex_marketplaces_are_distinct_supported_schemas():
     root = Path(__file__).resolve().parents[1]
     claude = json.loads((root / ".claude-plugin/marketplace.json").read_text())
