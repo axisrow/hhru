@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tarfile
 from pathlib import Path
 
@@ -19,7 +20,7 @@ pytestmark = pytest.mark.integration
 def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Path):
     """Run a real installed ``hhru.exe update`` against local Git fixtures.
 
-    The temporary venv deliberately installs a non-editable package, so the
+    The test interpreter deliberately installs a non-editable package, so the
     updater reaches its pip-install path.  The fake Codex executable only
     replaces network/plugin discovery; the generated Windows launcher and
     the real update/provenance code run in a child process.
@@ -86,21 +87,13 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
     codex = harness / "codex.cmd"
     codex.write_text(f'@echo off\n"{sys.executable}" "{codex_script}" %*\n', encoding="utf-8")
 
-    venv = tmp_path / "venv"
     subprocess.run(
-        [sys.executable, "-m", "venv", "--system-site-packages", str(venv)],
+        [sys.executable, "-m", "pip", "install", "--no-deps", str(checkout)],
         check=True,
         capture_output=True,
         text=True,
     )
-    venv_python = venv / "Scripts" / "python.exe"
-    subprocess.run(
-        [str(venv_python), "-m", "pip", "install", "--no-deps", str(checkout)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    launcher = venv / "Scripts" / "hhru.exe"
+    launcher = Path(sysconfig.get_path("scripts")) / "hhru.exe"
     assert launcher.is_file()
 
     environment = os.environ.copy()
