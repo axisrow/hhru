@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -35,31 +36,57 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
 
     def doRollover(self) -> None:
         with self._rollover_lock, FileLock(self._rotation_lock_path):
-            if self.stream is not None:
-                self.stream.flush()
-                self.stream.close()
-                self.stream = None
+            self._do_rollover_locked()
 
-            if os.path.exists(self.baseFilename):
-                archive = self._next_archive_path()
-                os.replace(self.baseFilename, archive)
+    def emit(self, record: logging.LogRecord) -> None:
+        """Serialize writes as well as rollover across processes.
 
-            if not self.delay:
-                self.stream = self._open()
+        The lock must cover the record write: on Windows another process may
+        keep the active file open, so rename-based rollover is not available.
+        Copy-truncating under the same lock lets all processes keep writing
+        without dropping the record which triggered rotation.
+        """
+        try:
+            with self._rollover_lock, FileLock(self._rotation_lock_path):
+                if self.shouldRollover(record):
+                    self._do_rollover_locked()
+                logging.FileHandler.emit(self, record)
+        except Exception:
+            self.handleError(record)
+
+    def _do_rollover_locked(self) -> None:
+        if self.stream is not None:
+            self.stream.flush()
+
+        if os.path.exists(self.baseFilename):
+            archive = self._create_archive_locked()
+            with open(self.baseFilename, "rb") as source, open(archive, "wb") as target:
+                shutil.copyfileobj(source, target)
+
+        if self.stream is not None:
+            self.stream.seek(0)
+            self.stream.truncate()
+            self.stream.flush()
+        elif not self.delay:
+            self.stream = self._open()
+
+    def _create_archive_locked(self) -> str:
+        index = 1
+        while True:
+            archive = f"{self.baseFilename}.{index}"
+            try:
+                fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError:
+                index += 1
+                continue
+            os.close(fd)
+            return archive
 
     @property
     def _rotation_lock_path(self) -> str:
         """A hidden sidecar path which is not mistaken for a log archive."""
         base = Path(self.baseFilename)
         return str(base.with_name(f".{base.name}.rotate.lock"))
-
-    def _next_archive_path(self) -> str:
-        index = 1
-        while True:
-            archive = f"{self.baseFilename}.{index}"
-            if not os.path.exists(archive):
-                return archive
-            index += 1
 
 
 def setup_logging(verbose: bool = False) -> None:
