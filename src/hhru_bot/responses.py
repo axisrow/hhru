@@ -424,6 +424,11 @@ def fetch_responses(
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
             refs = topic_refs(page.content())
+            if strict_scrape and len(refs) > count:
+                raise ResponsesIndeterminate(
+                    f"страница {page_num}: DOM содержит {count} карточек, "
+                    f"а SSR topicList — {len(refs)}"
+                )
             if strict_empty:
                 raw_topics = (
                     parse_initial_state(page.content())
