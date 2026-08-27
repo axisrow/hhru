@@ -482,6 +482,32 @@ def test_rejections_keep_vacancy_without_seen_card_and_filter_resume(tmp_path):
     ]
 
 
+def test_rejections_prefer_apply_search_query_over_other_seen_queries(tmp_path):
+    """Точная actions.search_query не приписывается соседним поискам."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success", search_query="python")
+    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
+    h.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
+    h.upsert_response("v1", "Acme", "discard", None, topic="1")
+
+    rows = h.rejections_by_employer()
+
+    assert [(row["search_query"], row["salary_from"]) for row in rows] == [("python", 100_000)]
+
+
+def test_rejections_resume_filter_respects_known_response_attribution(tmp_path):
+    """Подтверждённый response.resume_id не смешивается с выбранным резюме."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v1", "apply", "success")
+    h.upsert_response("v1", "Acme", "discard", None, topic="1", resume_id="r1")
+    h.upsert_response("v1", "Beta", "discard", None, topic="2", resume_id="r2")
+
+    rows = h.rejections_by_employer(resume_id="r1")
+
+    assert [row["employer"] for row in rows] == ["Acme"]
+
+
 def test_rejections_exclude_non_discard_and_old_applications(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")

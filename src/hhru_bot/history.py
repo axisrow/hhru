@@ -2127,12 +2127,20 @@ class History:
         отказов без карточки добавляется отдельная строка с пустым поиском и
         зарплатой: INNER JOIN используется только для найденных карточек, а
         ``NOT EXISTS`` сохраняет непросмотренные через ``search`` вакансии.
-        EXISTS-предикаты не размножают отказ по нескольким topic или actions.
+        DISTINCT по response_id не размножает отказ несколькими topic или
+        actions; NOT EXISTS используется для надёжного detection отсутствующей
+        карточки.
         """
         from .responses import ResponseStatus
 
         filters = ["r.status = ?"]
         params: list = [ResponseStatus.DISCARD]
+        if resume_id is not None:
+            # responses is account-scoped, but an unambiguous SSR mapping may
+            # carry resume_id. Do not attribute a known r2 conversation to r1;
+            # an unattributed row still falls back to the vacancy-level action.
+            filters.append("(r.resume_id IS NULL OR r.resume_id = ?)")
+            params.append(resume_id)
         action_filters = [
             "a.vacancy_id = r.vacancy_id",
             "a.action = 'apply'",
@@ -2145,16 +2153,48 @@ class History:
         if resume_id is not None:
             action_filters.append("a.resume_id = ?")
             action_params.append(resume_id)
-        action_exists = " AND ".join(action_filters)
-        response_filters = [*filters, f"EXISTS (SELECT 1 FROM actions a WHERE {action_exists})"]
-        response_params = [*params, *action_params]
-        response_where = " AND ".join(response_filters)
+        action_where = " AND ".join(action_filters)
+        response_where = " AND ".join(filters)
+        branch_params = [*params, *action_params]
 
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
                 WITH rejection_rows AS (
-                    SELECT
+                    -- An explicit query on the apply is authoritative. A
+                    -- vacancy can be present under several searches; using
+                    -- every vacancies_seen row here would report the same
+                    -- rejection for searches where no application was sent.
+                    SELECT DISTINCT
+                        r.id AS response_id,
+                        NULLIF(TRIM(r.employer), '') AS employer,
+                        a.search_query AS search_query,
+                        (
+                            SELECT v.salary_from FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = r.vacancy_id
+                              AND v.search_query = a.search_query
+                        ) AS salary_from,
+                        (
+                            SELECT v.salary_to FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = r.vacancy_id
+                              AND v.search_query = a.search_query
+                        ) AS salary_to,
+                        (
+                            SELECT v.salary_currency FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = r.vacancy_id
+                              AND v.search_query = a.search_query
+                        ) AS salary_currency
+                    FROM responses AS r
+                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
+                    WHERE {response_where}
+                      AND {action_where}
+                      AND a.search_query IS NOT NULL
+
+                    UNION ALL
+
+                    -- Legacy actions have no query of their own, so retain
+                    -- each known search attribution from vacancies_seen.
+                    SELECT DISTINCT
                         r.id AS response_id,
                         NULLIF(TRIM(r.employer), '') AS employer,
                         v.search_query AS search_query,
@@ -2162,12 +2202,17 @@ class History:
                         v.salary_to AS salary_to,
                         v.salary_currency AS salary_currency
                     FROM responses AS r
+                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
                     JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
                     WHERE {response_where}
+                      AND {action_where}
+                      AND a.search_query IS NULL
 
                     UNION ALL
 
-                    SELECT
+                    -- No card was ever collected: keep the rejection with
+                    -- empty metadata instead of silently dropping it.
+                    SELECT DISTINCT
                         r.id AS response_id,
                         NULLIF(TRIM(r.employer), '') AS employer,
                         NULL AS search_query,
@@ -2175,9 +2220,12 @@ class History:
                         NULL AS salary_to,
                         NULL AS salary_currency
                     FROM responses AS r
+                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
                     WHERE {response_where}
+                      AND {action_where}
+                      AND a.search_query IS NULL
                       AND NOT EXISTS (
-                          SELECT 1 FROM vacancies_seen v
+                          SELECT 1 FROM vacancies_seen AS v
                           WHERE v.vacancy_id = r.vacancy_id
                       )
                 )
@@ -2190,7 +2238,7 @@ class History:
                          COALESCE(search_query, ''),
                          salary_from, salary_to, salary_currency
                 """,
-                [*response_params, *response_params],
+                [*branch_params, *branch_params, *branch_params],
             ).fetchall()
 
         return [dict(row) for row in rows]
