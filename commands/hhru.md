@@ -1,6 +1,6 @@
 ---
 name: hhru
-description: Run hhru CLI commands (search, apply, bump, probe, stats, query, responses, funnel, whoami, list-resumes, market, ...)
+description: Run hhru CLI commands (search, apply, bump, update, probe, stats, query, responses, funnel, whoami, list-resumes, market, ...)
 argument-hint: "<command> [flags]"
 allowed-tools: Bash
 ---

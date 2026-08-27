@@ -5,7 +5,8 @@ The Claude Code and Codex marketplace files are intentionally different
 schemas: Claude consumes the local ``source: ./`` entry, while the Codex team
 marketplace consumes a Git URL plus installation policy. They are two
 supported entry points, not interchangeable copies. This script keeps their
-shared release version generated from the package's single source of truth.
+shared release version and Codex release ref generated from the package's
+single source of truth.
 
 Run ``python3 scripts/sync_plugin_manifests.py`` after changing the project
 version. CI can use ``--check`` to make a stale generated manifest fail.
@@ -66,7 +67,11 @@ def expected_manifests(root: Path = ROOT) -> dict[Path, dict[str, Any]]:
 
     agents = manifests[Path(".agents/plugins/marketplace.json")]
     agents.setdefault("metadata", {})["version"] = value
-    agents["plugins"][0]["version"] = value
+    agent_plugin = agents["plugins"][0]
+    agent_plugin["version"] = value
+    source = agent_plugin.get("source")
+    if isinstance(source, dict) and source.get("source") == "url":
+        source["ref"] = f"v{value}"
 
     return manifests
 

@@ -256,24 +256,26 @@ claude plugin install hhru-cc-plugin@hhru --scope user
 
 ### Установка для команды в Codex
 
-Каждый участник устанавливает CLI и plugin из **одного release tag**. Подставьте
-один и тот же опубликованный tag в обе команды (например, `v0.1.0`):
+После установки CLI поддерживается одна команда lifecycle. Она сама добавит
+marketplace при первом запуске, обновит его snapshot, CLI и установленный
+plugin до одного release tag и commit, а затем проверит provenance обоих
+компонентов:
 
 ```bash
-RELEASE=v0.1.0
-pip install "git+https://github.com/axisrow/hhru.git@${RELEASE}"
-codex plugin marketplace add axisrow/hhru --ref "${RELEASE}"
+hhru update
 ```
 
-В Codex CLI открой `/plugins`, выбери marketplace `hhru`, установи
-`hhru-cc-plugin` и начни новый чат. Repo marketplace зарегистрирован в
-`.agents/plugins/marketplace.json`; public submission в OpenAI Plugins Directory
-для командной установки не требуется.
+Для новой установки достаточно один раз установить CLI любым согласованным
+способом, затем выполнить `hhru update`; отдельные `codex plugin marketplace`
+или `codex plugin add` пользователю не нужны. Повторный `hhru update` идемпотентен.
+Если обновление plugin не удалось, команда возвращает ненулевой код и не
+рапортует об успехе частично обновлённого состояния — повторите ту же команду.
 
 Release bundle содержит версии, release tag и полный commit SHA во всех
-manifest-файлах и в `release.json`. CI собирает wheel и plugin bundle из одного
-тега и отклоняет расхождение provenance. Уже начатая задача Codex продолжает
-использовать загруженный skill; после обновления начните новый чат.
+manifest-файлах и в `release.json`. Уже открытая задача Codex продолжит
+использовать ранее загруженный skill; после успешного обновления начните новую
+задачу Codex. Repo marketplace зарегистрирован в `.agents/plugins/marketplace.json`;
+public submission в OpenAI Plugins Directory для командной установки не требуется.
 
 ### Команда `/hhru`
 
@@ -928,6 +930,12 @@ Account-wide ответы в чатах: план из локальной ист
 #### `uncertain reconcile`
 
 - (без аргументов)
+
+### `update`
+
+Обновляет hhru и установленный Codex plugin из одного commit, проверяет provenance обоих компонентов и явно завершается ошибкой при частичном сбое. Уже открытая задача Codex продолжит использовать старый skill — после обновления начните новую задачу.
+
+- `--codex` — Путь к Codex CLI (для диагностики и тестов; по умолчанию: codex) (по умолчанию: 'codex')
 
 ### `whoami`
 
