@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS responses (
     employer TEXT,
     status TEXT NOT NULL,
     last_status TEXT,
+    last_invitation_at TEXT,
     chat_url TEXT,
     response_date TEXT,
     last_seen_at TEXT NOT NULL,
@@ -817,6 +818,7 @@ class History:
             _ensure_column(conn, "actions", "search_query", "TEXT")
             _ensure_column(conn, "actions", "run_id", "TEXT")
             _ensure_column(conn, "actions", "reason_code", "TEXT")
+            _ensure_column(conn, "responses", "last_invitation_at", "TEXT")
             _ensure_column(conn, "command_runs", "owner_pid", "INTEGER")
             # #654: competitor collection predates durable ownership/checkpoints.
             # Existing rows stay NULL and are handled with the same legacy grace
@@ -1769,8 +1771,9 @@ class History:
                     """
                     INSERT INTO responses
                         (resume_id, vacancy_id, topic, employer, status, chat_url,
-                         response_date, last_seen_at, status_changed_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         response_date, last_seen_at, status_changed_at, created_at,
+                         last_invitation_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         resume_id,
@@ -1783,6 +1786,7 @@ class History:
                         now,
                         now,
                         now,
+                        now if status == "invitation" else None,
                     ),
                 )
                 return "inserted"
@@ -1796,7 +1800,10 @@ class History:
                        SET resume_id = COALESCE(?, resume_id), employer = ?,
                            last_status = status, status = ?,
                            chat_url = ?, response_date = ?, last_seen_at = ?,
-                           status_changed_at = ?
+                           status_changed_at = ?,
+                           last_invitation_at = CASE WHEN ? = 'invitation'
+                                                     THEN ?
+                                                     ELSE last_invitation_at END
                      WHERE vacancy_id = ? AND topic IS ?
                     """,
                     (
@@ -1806,6 +1813,8 @@ class History:
                         chat_url,
                         response_date,
                         now,
+                        now,
+                        status,
                         now,
                         vacancy_id,
                         topic,
@@ -1828,8 +1837,8 @@ class History:
         «Новый ответ» = status_changed_at > since (включает впервые заведённые
         строки: у них status_changed_at == created_at). resume_id=None — по всем
         резюме. Свежие первыми. Возвращает словари с ключами resume_id/vacancy_id/
-        topic/employer/status/last_status/chat_url/response_date/status_changed_at
-        — для вывода команды responses.
+        topic/employer/status/last_status/last_invitation_at/chat_url/response_date/
+        status_changed_at — для вывода команды responses.
         """
         where = ["status_changed_at > ?"]
         params: list = [since.isoformat()]
@@ -1840,7 +1849,7 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT resume_id, vacancy_id, topic, employer, status, last_status, chat_url, "
-                f"response_date, status_changed_at "
+                f"response_date, status_changed_at, last_invitation_at "
                 f"FROM responses{clause} ORDER BY status_changed_at DESC, id DESC",
                 params,
             ).fetchall()

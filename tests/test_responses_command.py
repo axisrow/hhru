@@ -182,8 +182,10 @@ def test_responses_alert_new_ignores_other_statuses(capsys, tmp_path, monkeypatc
     assert capsys.readouterr().out == ""
 
 
-def test_responses_alert_new_reports_invitation_transition(capsys, tmp_path, monkeypatch):
-    """A later status must not hide an invitation transition since the checkpoint."""
+def test_responses_alert_new_reports_invitation_after_later_transitions(
+    capsys, tmp_path, monkeypatch
+):
+    """Later status changes must not hide an invitation since the checkpoint."""
     import contextlib
     from datetime import datetime, timedelta
 
@@ -197,6 +199,7 @@ def test_responses_alert_new_reports_invitation_transition(capsys, tmp_path, mon
     history.mark_responses_alert_success(datetime.now() - timedelta(seconds=1))
     history.upsert_response("v-transition", "ACME", ResponseStatus.INVITATION, "/c1")
     history.upsert_response("v-transition", "ACME", ResponseStatus.RESPONSE, "/c1")
+    history.upsert_response("v-transition", "ACME", ResponseStatus.READ, "/c1")
 
     class _FakeContext:
         def new_page(self):
@@ -210,7 +213,7 @@ def test_responses_alert_new_reports_invitation_transition(capsys, tmp_path, mon
     monkeypatch.setattr(
         "hhru_bot.responses.fetch_responses",
         lambda *a, **k: [
-            ResponseItem(vacancy_id="v-transition", employer="ACME", status=ResponseStatus.RESPONSE)
+            ResponseItem(vacancy_id="v-transition", employer="ACME", status=ResponseStatus.READ)
         ],
     )
 

@@ -330,7 +330,11 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             invitations = [
                 row
                 for row in rows
-                if row.get("status") == "invitation" or row.get("last_status") == "invitation"
+                if row.get("status") == "invitation"
+                or (
+                    row.get("last_invitation_at")
+                    and row["last_invitation_at"] > alert_since.isoformat()
+                )
             ]
             if invitations:
                 print(f"[INFO] Новых приглашений: {len(invitations)}")
