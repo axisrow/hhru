@@ -182,6 +182,45 @@ def test_responses_alert_new_ignores_other_statuses(capsys, tmp_path, monkeypatc
     assert capsys.readouterr().out == ""
 
 
+def test_responses_alert_new_reports_invitation_transition(capsys, tmp_path, monkeypatch):
+    """A later status must not hide an invitation transition since the checkpoint."""
+    import contextlib
+    from datetime import datetime, timedelta
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+    history_path = tmp_path / "h.db"
+    history = History(history_path)
+    history.upsert_response("v-transition", "ACME", ResponseStatus.READ, "/c1")
+    history.mark_responses_alert_success(datetime.now() - timedelta(seconds=1))
+    history.upsert_response("v-transition", "ACME", ResponseStatus.INVITATION, "/c1")
+    history.upsert_response("v-transition", "ACME", ResponseStatus.RESPONSE, "/c1")
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses",
+        lambda *a, **k: [
+            ResponseItem(vacancy_id="v-transition", employer="ACME", status=ResponseStatus.RESPONSE)
+        ],
+    )
+
+    assert (
+        responses_cmd.run(_args(config, history_path, alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "v-transition" in capsys.readouterr().out
+
+
 def test_responses_alert_new_does_not_checkpoint_ambiguous_invitation(
     capsys, tmp_path, monkeypatch
 ):

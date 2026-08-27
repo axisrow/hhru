@@ -327,7 +327,11 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             # this read then have a later watermark and remain for the next poll.
             alert_watermark = datetime.now()
             rows = history.new_responses_since(alert_since, resume_id=None)
-            invitations = [row for row in rows if row.get("status") == "invitation"]
+            invitations = [
+                row
+                for row in rows
+                if row.get("status") == "invitation" or row.get("last_status") == "invitation"
+            ]
             if invitations:
                 print(f"[INFO] Новых приглашений: {len(invitations)}")
                 for row in invitations:

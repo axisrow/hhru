@@ -89,6 +89,9 @@ WRITE_COMMANDS = frozenset(
         "edit-experience",
         "about",
         "reply-employers",
+        # responses only reads hh.ru, but it persists response rows and its
+        # alert watermark; serialize those commits with the alert boundary.
+        "responses",
         "edit-education",
         "clear-negotiations",
         "delete-resume",
