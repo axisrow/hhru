@@ -508,6 +508,24 @@ def test_rejections_resume_filter_respects_known_response_attribution(tmp_path):
     assert [row["employer"] for row in rows] == ["Acme"]
 
 
+def test_rejections_default_report_respects_known_response_attribution(tmp_path):
+    """Без --resume известные response.resume_id не смешивают поиски резюме."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success", search_query="python")
+    h.record_action("r2", "v1", "apply", "success", search_query="backend")
+    h.upsert_vacancy_seen("v1", search_query="python", salary_from=100_000)
+    h.upsert_vacancy_seen("v1", search_query="backend", salary_from=200_000)
+    h.upsert_response("v1", "Acme", "discard", None, topic="1", resume_id="r1")
+    h.upsert_response("v1", "Beta", "discard", None, topic="2", resume_id="r2")
+
+    rows = h.rejections_by_employer()
+
+    assert [(row["employer"], row["search_query"]) for row in rows] == [
+        ("Acme", "python"),
+        ("Beta", "backend"),
+    ]
+
+
 def test_rejections_exclude_non_discard_and_old_applications(tmp_path):
     h = History(tmp_path / "h.db")
     h.record_action("r1", "v1", "apply", "success")

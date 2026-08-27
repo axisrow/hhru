@@ -2145,6 +2145,7 @@ class History:
             "a.vacancy_id = r.vacancy_id",
             "a.action = 'apply'",
             "a.status = 'success'",
+            "(r.resume_id IS NULL OR r.resume_id = a.resume_id)",
         ]
         action_params: list = []
         if since is not None:
