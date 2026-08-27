@@ -23,7 +23,9 @@ import tomllib
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 DEFAULT_SOURCE = "https://github.com/axisrow/hhru.git"
 DEFAULT_REF = "main"
@@ -305,17 +307,56 @@ def _configured_marketplace_ref() -> str | None:
     return ref if isinstance(ref, str) else None
 
 
+def _github_repository(source: str) -> str | None:
+    """Extract ``owner/repository`` from a GitHub remote URL."""
+    if source.startswith("git@github.com:"):
+        path = source.removeprefix("git@github.com:")
+    else:
+        parsed = urlparse(source)
+        if parsed.hostname != "github.com":
+            return None
+        path = parsed.path.lstrip("/")
+    path = path.removesuffix(".git").strip("/")
+    parts = path.split("/")
+    return "/".join(parts) if len(parts) == 2 and all(parts) else None
+
+
 def _latest_release_ref(source: str) -> str | None:
-    """Return the highest published ``vX.Y.Z`` tag, if releases exist."""
-    result = _run(["git", "ls-remote", "--tags", "--refs", source, "refs/tags/v*"], check=False)
-    if result.returncode:
+    """Return the highest published ``vX.Y.Z`` release tag.
+
+    Git tags can exist before their release workflow passes its publish gate.
+    GitHub's releases API is therefore the authority here, rather than
+    ``git ls-remote --tags``.
+    """
+    repository = _github_repository(source)
+    if repository is None:
         return None
+    request = Request(
+        f"https://api.github.com/repos/{repository}/releases?per_page=100",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "hhru-update",
+        },
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            releases = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise UpdateError(f"не удалось получить опубликованные релизы {repository}: {exc}") from exc
+    if not isinstance(releases, list):
+        raise UpdateError(f"GitHub вернул неожиданный список релизов {repository}")
+
     refs: list[tuple[tuple[int, ...], str]] = []
-    for line in result.stdout.splitlines():
-        _sha, _separator, ref = line.partition("\t")
-        tag = ref.removeprefix("refs/tags/")
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        if release.get("draft") or release.get("prerelease") or not release.get("published_at"):
+            continue
+        tag = release.get("tag_name")
+        if not isinstance(tag, str):
+            continue
         match = re.fullmatch(r"v(\d+)(?:\.(\d+)){0,2}", tag)
-        if match and _SHA_RE.fullmatch(_sha):
+        if match:
             refs.append((tuple(int(part) for part in tag[1:].split(".")), tag))
     return max(refs)[1] if refs else None
 
@@ -343,11 +384,26 @@ def _resolve_ref_commit(source_root: Path, source: str, ref: str) -> str:
         return ref
     local_source = _git_remote(source_root)
     if _same_repository(local_source, source):
-        local = _git(source_root, "rev-parse", ref, check=False)
+        local = _git(source_root, "rev-parse", f"{ref}^{{commit}}", check=False)
         if _SHA_RE.fullmatch(local):
             return local
-    result = _run(["git", "ls-remote", source, ref, f"refs/heads/{ref}", f"refs/tags/{ref}"])
-    for line in result.stdout.splitlines():
+    result = _run(
+        [
+            "git",
+            "ls-remote",
+            source,
+            ref,
+            f"refs/heads/{ref}",
+            f"refs/tags/{ref}",
+            f"refs/tags/{ref}^{{}}",
+        ]
+    )
+    lines = result.stdout.splitlines()
+    for line in lines:
+        commit, _separator, remote_ref = line.partition("\t")
+        if remote_ref.endswith("^{}") and _SHA_RE.fullmatch(commit):
+            return commit
+    for line in lines:
         commit, _separator, _remote_ref = line.partition("\t")
         if _SHA_RE.fullmatch(commit):
             return commit

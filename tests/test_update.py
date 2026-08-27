@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +77,45 @@ def _patch_common(monkeypatch, root: Path, *, editable=None):
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(update_module, "_run", run)
+
+
+def test_latest_release_uses_published_releases_not_tags(monkeypatch):
+    payload = [
+        {"tag_name": "v9.9.9", "draft": True, "prerelease": False, "published_at": None},
+        {"tag_name": "v1.2.0", "draft": False, "prerelease": False, "published_at": "now"},
+        {"tag_name": "v1.1.0", "draft": False, "prerelease": True, "published_at": None},
+    ]
+
+    class Response(io.StringIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setattr(
+        update_module, "urlopen", lambda *_args, **_kwargs: Response(json.dumps(payload))
+    )
+
+    assert update_module._latest_release_ref("https://github.com/axisrow/hhru.git") == "v1.2.0"
+
+
+def test_resolve_ref_commit_peels_annotated_tag(monkeypatch, tmp_path):
+    annotated = "c" * 40
+    peeled = "d" * 40
+    monkeypatch.setattr(update_module, "_git_remote", lambda _path: "https://other.test/hhru.git")
+    monkeypatch.setattr(
+        update_module,
+        "_run",
+        lambda _args: update_module._Completed(
+            (), 0, f"{annotated}\trefs/tags/v1.2.0\n{peeled}\trefs/tags/v1.2.0^{{}}\n", ""
+        ),
+    )
+
+    assert (
+        update_module._resolve_ref_commit(tmp_path, "https://example.test/hhru.git", "v1.2.0")
+        == peeled
+    )
 
 
 def test_fresh_install_updates_both_components_from_one_commit(tmp_path, monkeypatch):
