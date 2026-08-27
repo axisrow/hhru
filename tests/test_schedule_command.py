@@ -13,6 +13,7 @@ CLAUDE.md запрещает фоновые демоны в коде проек�
 from __future__ import annotations
 
 import plistlib
+from pathlib import Path
 
 import pytest
 
@@ -63,9 +64,13 @@ def test_plist_parseable_by_plistlib():
     assert "StandardErrorPath" in parsed
 
 
-def test_plist_logs_to_scheduled_log():
+def test_plist_discards_scheduler_output():
     out = render_schedule(format="plist", action="apply", apply_time="10:00", apply_limit=3)
-    assert "scheduled.log" in out
+    parsed = _plist(out)
+    # scheduled_run.sh already persists the output through tee; launchd must
+    # not append the same stream to scheduled.log a second time.
+    assert parsed["StandardOutPath"] == "/dev/null"
+    assert parsed["StandardErrorPath"] == "/dev/null"
 
 
 def test_crontab_format():
@@ -82,6 +87,9 @@ def test_crontab_format():
     assert job_lines, "должна быть хотя бы одна crontab-строка с scheduled_run.sh"
     for line in job_lines:
         assert len(line.split()) >= 6
+    assert ">>" not in out
+    assert "> /dev/null 2>&1" in out
+    assert "scheduled.log" not in out
 
 
 def test_crontab_apply_daily_at_time():
@@ -238,3 +246,23 @@ def test_crontab_has_hhru_python_prefix():
     assert "HHRU_PYTHON=__PYTHON_BIN__" in job
     # префикс идёт ДО scheduled_run.sh (env-присваивание перед командой)
     assert job.index("HHRU_PYTHON=") < job.index("scheduled_run.sh")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/crontab.example",
+        "deploy/com.hhru.bot.apply.plist",
+        "deploy/com.hhru.bot.bump.plist",
+    ],
+)
+def test_shipped_scheduler_configs_have_one_persistent_log_writer(path):
+    text = (Path(__file__).parents[1] / path).read_text()
+    if path.endswith("crontab.example"):
+        assert ">>" not in text
+        assert "> /dev/null 2>&1" in text
+        assert "scheduled.log" not in text.splitlines()[-1]
+    else:
+        parsed = plistlib.loads(text.encode())
+        assert parsed["StandardOutPath"] == "/dev/null"
+        assert parsed["StandardErrorPath"] == "/dev/null"

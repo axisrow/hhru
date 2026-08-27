@@ -34,7 +34,6 @@ VALID_FORMATS = ("plist", "crontab")
 # машину перед установкой LaunchAgent / crontab-записи. Так шаблоны безопасно
 # коммитятся без раскрытия чьей-либо файловой системы.
 PLACEHOLDER_REPO_ROOT = "__REPO_ROOT__"
-PLACEHOLDER_LOG_DIR = "__LOG_DIR__"
 # Абсолютный путь к python из venv проекта (напр. __REPO_ROOT__/.venv/bin/python).
 # launchd/cron не активируют venv и имеют урезанный PATH — голый python3
 # резолвится в системный без playwright. scheduled_run.sh читает HHRU_PYTHON.
@@ -132,7 +131,7 @@ def render_schedule(
     """Генерирует текст конфига планировщика для копирования (чистая функция).
 
     Возвращает строку-ШАБЛОН (plist XML или crontab-запись) с плейсхолдерами
-    __REPO_ROOT__ / __LOG_DIR__. Ничего не пишет на диск и не регистрирует
+    __REPO_ROOT__. Ничего не пишет на диск и не регистрирует
     агентов — только готовит текст для пользователя.
     """
     cfg = ScheduleConfig(
@@ -168,8 +167,9 @@ def _render_plist(
         *_program_arguments(cfg.action, cfg.apply_limit, account, config, history),
     ]
     label = f"com.hhru.bot.{cfg.action}"
-    log_out = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
-    log_err = f"{PLACEHOLDER_LOG_DIR}/scheduled.log"
+    # scheduled_run.sh owns persistent logging through tee.  launchd must not
+    # append the same output to scheduled.log as a second writer.
+    log_out = log_err = "/dev/null"
 
     start_block = _plist_start_block(cfg)
 
@@ -257,7 +257,9 @@ def _render_crontab(
         hour, minute = _parse_time(cfg.apply_time)
         schedule = f"{minute} {hour} * * *"
 
-    return f"{schedule} {command} >> {PLACEHOLDER_LOG_DIR}/scheduled.log 2>&1\n"
+    # scheduled_run.sh owns persistent logging through tee.  Discard the
+    # inherited stream so cron does not mail the complete run output.
+    return f"{schedule} {command} > /dev/null 2>&1\n"
 
 
 def _instructions(cfg: ScheduleConfig) -> str:
@@ -271,7 +273,6 @@ def _instructions(cfg: ScheduleConfig) -> str:
             "launchd LaunchAgent (macOS) — ШАБЛОН. Скопируйте stdout в файл.\n"
             "Замените плейсхолдеры под свою машину:\n"
             f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория (напр. /Users/me/hhru)\n"
-            f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/data/logs)\n"
             f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
             f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python; узнать: `which python`"
             " в активированном venv). launchd НЕ активирует venv — без этого\n"
@@ -285,7 +286,6 @@ def _instructions(cfg: ScheduleConfig) -> str:
         "crontab (Linux/macOS) — ШАБЛОН. Скопируйте строку из stdout.\n"
         "Замените плейсхолдеры под свою машину:\n"
         f"  {PLACEHOLDER_REPO_ROOT} — путь к клону репозитория\n"
-        f"  {PLACEHOLDER_LOG_DIR} — каталог логов (напр. {PLACEHOLDER_REPO_ROOT}/data/logs)\n"
         f"  {PLACEHOLDER_PYTHON_BIN} — абсолютный путь к python из venv проекта\n"
         f"    (напр. {PLACEHOLDER_REPO_ROOT}/.venv/bin/python). cron НЕ активирует\n"
         "    venv — без этого джоб упадёт на ModuleNotFoundError: playwright.\n"
