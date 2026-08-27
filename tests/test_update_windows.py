@@ -117,6 +117,8 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
         env=environment,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
