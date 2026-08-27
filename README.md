@@ -282,12 +282,13 @@ public submission в OpenAI Plugins Directory для командной уста
 #### Fresh install
 
 Сначала установи сам CLI и его зависимости — это только начальная установка
-исполняемого файла, а не отдельное обновление plugin:
+исполняемого файла, а не отдельное обновление plugin. Для пользовательской
+установки используй обычный (не editable) пакет:
 
 ```bash
 pip3 install -r requirements.txt
 python3 -m playwright install chromium
-pip3 install -e .
+pip3 install .
 ```
 
 После этого выполни единственную поддерживаемую операцию lifecycle:
@@ -316,8 +317,10 @@ marketplace или `main`), получает его неизменяемый com
 CLI и plugin и сверяет версию и provenance. Для обычной установки CLI обновляется
 через текущий Python interpreter из `git+<source>@<commit>`. Для editable checkout
 команда не заменяет checkout wheel-пакетом: checkout должен быть чистым и уже
-совпадать с выбранным commit. После `git pull --ff-only` в таком checkout
-повтори тот же `hhru update`; отдельного обновления plugin нет.
+совпадать с выбранным commit. `git pull --ff-only` сам не переключает checkout
+на выбранный release; если HEAD отличается, сначала приведи checkout к этому
+commit и только затем повтори тот же `hhru update`. Отдельного обновления plugin
+нет.
 
 Повторный `hhru update` идемпотентен. Успех печатает commit CLI и plugin;
 ненулевой код означает, что согласованное состояние не подтверждено. В Windows
@@ -349,9 +352,9 @@ version, release/tag и commit SHA. При полном совпадении о�
 за успешное.
 
 Для нестандартных расположений можно передать `--marketplace PATH` и
-`--plugin-cache PATH`. Если текущая версия doctor при drift показывает legacy
-подсказку `[FIX]` с отдельным marketplace upgrade, не используй её как recovery:
-она обновляет только plugin. Поддерживаемое исправление drift — `hhru update`.
+`--plugin-cache PATH`. При drift doctor печатает `[FIX]` с одной командой
+`hhru update`; это тот же единый flow, который обновляет CLI и plugin. Не
+заменяй его отдельным marketplace upgrade или `codex plugin add`.
 
 #### Recovery после ошибки
 
