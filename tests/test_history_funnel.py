@@ -413,6 +413,89 @@ def test_dead_responses_empty_is_zero(tmp_path):
     assert dead["dead_rate"] == 0.0
 
 
+# --- rejections_by_employer: отказы с атрибуцией карточки -------------------
+
+
+def test_rejections_group_by_employer_query_and_salary_without_cartesian_rows(tmp_path):
+    """Отказ атрибутируется по карточке, а EXISTS не размножает его actions."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v1", "apply", "success")  # второй action не удваивает отказ
+    h.record_action("r1", "v2", "apply", "success")
+    h.upsert_vacancy_seen(
+        "v1",
+        search_query="python",
+        salary_from=100_000,
+        salary_to=150_000,
+        salary_currency="RUR",
+    )
+    h.upsert_vacancy_seen(
+        "v2",
+        search_query="backend",
+        salary_from=200_000,
+        salary_currency="RUR",
+    )
+    h.upsert_response("v1", "Acme", "discard", None, topic="1")
+    h.upsert_response("v2", "Acme", "discard", None, topic="2")
+
+    rows = h.rejections_by_employer()
+
+    assert rows == [
+        {
+            "employer": "Acme",
+            "search_query": "backend",
+            "salary_from": 200_000,
+            "salary_to": None,
+            "salary_currency": "RUR",
+            "rejections": 1,
+        },
+        {
+            "employer": "Acme",
+            "search_query": "python",
+            "salary_from": 100_000,
+            "salary_to": 150_000,
+            "salary_currency": "RUR",
+            "rejections": 1,
+        },
+    ]
+
+
+def test_rejections_keep_vacancy_without_seen_card_and_filter_resume(tmp_path):
+    """Отказ без vacancies_seen не выпадает и --resume сужает actions."""
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r2", "v2", "apply", "success")
+    h.upsert_response("v1", "Acme", "discard", None, topic="1")
+    h.upsert_response("v2", "Beta", "discard", None, topic="2")
+
+    rows = h.rejections_by_employer(resume_id="r1")
+
+    assert rows == [
+        {
+            "employer": "Acme",
+            "search_query": None,
+            "salary_from": None,
+            "salary_to": None,
+            "salary_currency": None,
+            "rejections": 1,
+        }
+    ]
+
+
+def test_rejections_exclude_non_discard_and_old_applications(tmp_path):
+    h = History(tmp_path / "h.db")
+    h.record_action("r1", "v1", "apply", "success")
+    h.record_action("r1", "v2", "apply", "success")
+    h.upsert_response("v1", "Old", "discard", None, topic="1")
+    h.upsert_response("v2", "Fresh", "read", None, topic="2")
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE actions SET created_at = '2020-01-01T00:00:00' WHERE vacancy_id = 'v1'"
+        )
+
+    assert h.rejections_by_employer(since="2021-01-01T00:00:00") == []
+
+
 # --- mark_offer: липкая ручная пометка (manual_offers) ---------------------
 
 
