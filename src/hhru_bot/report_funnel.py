@@ -136,3 +136,50 @@ def format_dead(dead: dict, fmt: str) -> str:
     from .report import _ascii_table
 
     return _ascii_table(header, rows)
+
+
+_REJECTION_HEADERS = (
+    "Работодатель",
+    "Поисковый запрос",
+    "ЗП от",
+    "ЗП до",
+    "Валюта",
+    "Отказов",
+)
+
+
+def format_rejections(rejections: Iterable[dict], fmt: str) -> str:
+    """Отрисовать агрегат отказов работодателей в table/md.
+
+    Строки уже сгруппированы ``History.rejections_by_employer`` по работодателю,
+    поисковому запросу и границам зарплаты. Пустые значения намеренно остаются
+    пустыми: отказ по вакансии, которую не собирал ``search``, не маскируется
+    выдуманным запросом или зарплатой.
+    """
+    _check_format(fmt)
+    header = list(_REJECTION_HEADERS)
+    body = []
+    for row in rejections:
+        body.append(
+            [
+                str(row.get("employer") or ""),
+                str(row.get("search_query") or ""),
+                str(row.get("salary_from") if row.get("salary_from") is not None else ""),
+                str(row.get("salary_to") if row.get("salary_to") is not None else ""),
+                str(row.get("salary_currency") or ""),
+                str(row.get("rejections", row.get("count", 0))),
+            ]
+        )
+
+    if fmt == "md":
+        lines = [
+            "| " + " | ".join(header) + " |",
+            "| " + " | ".join("---" for _ in header) + " |",
+        ]
+        for row in body:
+            lines.append("| " + " | ".join(row) + " |")
+        return "\n".join(lines)
+
+    from .report import _ascii_table
+
+    return _ascii_table(header, body)
