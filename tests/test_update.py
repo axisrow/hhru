@@ -100,6 +100,39 @@ def test_latest_release_uses_published_releases_not_tags(monkeypatch):
     assert update_module._latest_release_ref("https://github.com/axisrow/hhru.git") == "v1.2.0"
 
 
+def test_published_release_uses_immutable_asset_commit(monkeypatch):
+    commit = "e" * 40
+
+    class Response(io.StringIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    responses = iter(
+        [
+            Response(
+                json.dumps(
+                    {
+                        "tag_name": "v1.2.0",
+                        "assets": [
+                            {"name": "release.json", "browser_download_url": "https://asset"}
+                        ],
+                    }
+                )
+            ),
+            Response(json.dumps({"tag": "v1.2.0", "commit_sha": commit})),
+        ]
+    )
+    monkeypatch.setattr(update_module, "urlopen", lambda *_args, **_kwargs: next(responses))
+
+    assert (
+        update_module._published_release_commit("https://github.com/axisrow/hhru.git", "v1.2.0")
+        == commit
+    )
+
+
 def test_resolve_ref_commit_peels_annotated_tag(monkeypatch, tmp_path):
     annotated = "c" * 40
     peeled = "d" * 40

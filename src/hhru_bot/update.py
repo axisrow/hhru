@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_SOURCE = "https://github.com/axisrow/hhru.git"
@@ -361,6 +361,48 @@ def _latest_release_ref(source: str) -> str | None:
     return max(refs)[1] if refs else None
 
 
+def _published_release_commit(source: str, ref: str) -> str | None:
+    """Return the immutable commit recorded in a published release asset."""
+    repository = _github_repository(source)
+    if repository is None:
+        return None
+    request = Request(
+        f"https://api.github.com/repos/{repository}/releases/tags/{quote(ref, safe='')}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "hhru-update",
+        },
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            release = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise UpdateError(f"не удалось получить release {ref} {repository}: {exc}") from exc
+    if not isinstance(release, dict) or release.get("tag_name") != ref:
+        raise UpdateError(f"GitHub вернул неожиданный release {ref} {repository}")
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise UpdateError(f"release {ref} не содержит список assets")
+    asset = next(
+        (item for item in assets if isinstance(item, dict) and item.get("name") == "release.json"),
+        None,
+    )
+    download_url = asset.get("browser_download_url") if isinstance(asset, dict) else None
+    if not isinstance(download_url, str) or not download_url:
+        raise UpdateError(f"release {ref} не содержит release.json с provenance")
+    try:
+        request = Request(download_url, headers={"User-Agent": "hhru-update"})
+        with urlopen(request, timeout=10) as response:
+            metadata_payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise UpdateError(f"не удалось прочитать release.json для {ref}: {exc}") from exc
+    commit = metadata_payload.get("commit_sha") if isinstance(metadata_payload, dict) else None
+    metadata_tag = metadata_payload.get("tag") if isinstance(metadata_payload, dict) else None
+    if metadata_tag != ref or not isinstance(commit, str) or not _SHA_RE.fullmatch(commit):
+        raise UpdateError(f"release.json {ref} не содержит валидный immutable commit")
+    return commit
+
+
 def _marketplace_plugin_source(root: Path) -> tuple[str, str, str]:
     """Read the exact source ref selected by the Codex marketplace manifest."""
     try:
@@ -479,6 +521,12 @@ def _select_release(codex: str, source: str, editable: Path | None) -> tuple[Rel
         )
     plugin_source, plugin_ref, version = _marketplace_plugin_source(root)
     plugin_commit = _resolve_ref_commit(root, plugin_source, plugin_ref)
+    published_commit = _published_release_commit(source, selected_ref)
+    if published_commit is not None and plugin_commit != published_commit:
+        raise UpdateError(
+            f"release {selected_ref} указывает на commit {plugin_commit}, "
+            f"а опубликован с commit {published_commit}; обновление остановлено"
+        )
     if editable is not None and _git_commit(editable) != plugin_commit:
         raise UpdateError(
             "editable CLI и marketplace plugin выбрали разные commit; выполните git pull "
