@@ -550,6 +550,10 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
             failed = False
         final_status = "failed" if failed else "completed"
         return failed
+    except KeyboardInterrupt:
+        final_status = "interrupted"
+        detail = "SIGINT"
+        raise
     except BaseException as exc:
         detail = f"{type(exc).__name__}: {exc}"
         raise
@@ -558,7 +562,7 @@ def run_healthcheck(args: argparse.Namespace) -> bool:
             history.finish_command_run(
                 run_id,
                 status=final_status,
-                exit_code=1 if failed else 0,
+                exit_code=130 if final_status == "interrupted" else 1 if failed else 0,
                 attempted=0,
                 success=0,
                 failed=0,

@@ -139,6 +139,42 @@ def test_healthcheck_persists_observations_with_command_run(monkeypatch, tmp_pat
     assert bundle["run"]["command"] == "probe"
 
 
+def test_healthcheck_records_interrupted_run(monkeypatch, tmp_path):
+    db = tmp_path / "history.db"
+
+    class _Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def new_page(self):
+            return object()
+
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda _path: SimpleNamespace(storage_state_file="session.json"),
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *_a, **_kw: _Context())
+    monkeypatch.setattr(probe_command, "_healthcheck_spec", lambda _config: [("search", "u", [])])
+
+    def _interrupt(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(probe_command, "check_selectors", _interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        probe_command.run_healthcheck(
+            SimpleNamespace(config="config.yaml", headless=True, json=False, history=str(db))
+        )
+
+    run = History(db).command_runs()[0]
+    assert run["status"] == "interrupted"
+    assert run["exit_code"] == 130
+    assert run["detail"] == "SIGINT"
+
+
 def test_metrics_are_redacted(tmp_path):
     history, run_id = _history_with_run(tmp_path)
     history.record_selector_observations(
