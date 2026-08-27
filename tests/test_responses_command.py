@@ -213,6 +213,49 @@ def test_responses_alert_new_does_not_checkpoint_ambiguous_invitation(
     assert History(tmp_path / "h.db").responses_alert_checkpoint() is None
 
 
+def test_responses_alert_new_valid_invitation_is_retryable_after_ambiguity(
+    capsys, tmp_path, monkeypatch
+):
+    """An ambiguous card cannot consume an unambiguous invitation in the same poll."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    invitation = ResponseItem(
+        vacancy_id="v-valid", employer="ACME", status=ResponseStatus.INVITATION, topic="t1"
+    )
+    ambiguous = ResponseItem(
+        vacancy_id="v-ambiguous", status=ResponseStatus.INVITATION, topic_ambiguous=True
+    )
+    cards = [invitation, ambiguous]
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: cards)
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    assert exc.value.code == 1
+    capsys.readouterr()
+    assert History(tmp_path / "h.db").new_responses_since(__import__("datetime").datetime.min) == []
+
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [invitation])
+    assert (
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "v-valid" in capsys.readouterr().out
+
+
 def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):
     """Zero is a valid sync window, not a request for history-only mode."""
     import contextlib

@@ -211,6 +211,16 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                         )
                     return
                 cards = fetch_responses(page, max_pages=args.max_pages, strict_empty=sync_applied)
+                if alert_new and any(
+                    card.topic_ambiguous and card.status == ResponseStatus.INVITATION
+                    for card in cards
+                ):
+                    print(
+                        "Ошибка: новое приглашение пропущено из-за неоднозначного topic; "
+                        "checkpoint не обновлён",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
@@ -309,15 +319,6 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 unchanged += 1
 
         if alert_new:
-            if any(
-                card.topic_ambiguous and card.status == ResponseStatus.INVITATION for card in cards
-            ):
-                print(
-                    "Ошибка: новое приглашение пропущено из-за неоднозначного topic; "
-                    "checkpoint не обновлён",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
             rows = history.new_responses_since(alert_since, resume_id=None)
             invitations = [row for row in rows if row.get("status") == "invitation"]
             if invitations:
