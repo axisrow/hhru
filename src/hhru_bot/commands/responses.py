@@ -205,9 +205,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                             f"вакансия={ref.vacancy} vacancy_id={ref.vacancy_id}"
                         )
                     return
-                cards = fetch_responses(
-                    page, max_pages=args.max_pages, strict_empty=sync_applied or alert_new
-                )
+                cards = fetch_responses(page, max_pages=args.max_pages, strict_empty=sync_applied)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».

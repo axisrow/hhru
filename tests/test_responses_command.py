@@ -108,12 +108,17 @@ def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_p
     card = ResponseItem(
         vacancy_id="v-invitation", employer="ACME", status=ResponseStatus.INVITATION
     )
+    fetch_kwargs = []
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
-    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses",
+        lambda *a, **k: fetch_kwargs.append(k) or [card],
+    )
 
     result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
 
     assert result is CommandExitCode.NEW_INVITATIONS
+    assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False}]
     out = capsys.readouterr().out
     assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
 
