@@ -1859,7 +1859,7 @@ class History:
             ) from exc
 
     def mark_responses_alert_success(self, at: datetime | None = None) -> None:
-        """Persist the completion time of a successful alert poll."""
+        """Persist the upper-bound watermark of a successful alert poll."""
         self.set_setting(RESPONSES_ALERT_CHECKPOINT, (at or datetime.now()).isoformat())
 
     # --- Воронка и ручная пометка оффера (#13) ----------------------------

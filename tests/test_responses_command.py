@@ -121,6 +121,11 @@ def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_p
     assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False}]
     out = capsys.readouterr().out
     assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
+    history = History(tmp_path / "h.db")
+    row = history.new_responses_since(__import__("datetime").datetime.min)[0]
+    assert __import__("datetime").datetime.fromisoformat(row["status_changed_at"]) <= (
+        history.responses_alert_checkpoint()
+    )
 
 
 def test_responses_alert_new_is_idempotent(capsys, tmp_path, monkeypatch):
@@ -254,6 +259,59 @@ def test_responses_alert_new_valid_invitation_is_retryable_after_ambiguity(
         is CommandExitCode.NEW_INVITATIONS
     )
     assert "v-valid" in capsys.readouterr().out
+
+
+def test_responses_alert_new_keeps_baseline_after_partial_upsert(capsys, tmp_path, monkeypatch):
+    """A first-poll write failure leaves already-upserted invitations retryable."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    cards = [
+        ResponseItem(vacancy_id="v-first", status=ResponseStatus.INVITATION),
+        ResponseItem(vacancy_id="v-second", status=ResponseStatus.INVITATION),
+    ]
+    original_upsert = History.upsert_response
+    calls = 0
+
+    def _upsert_then_fail(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("write failed")
+        return original_upsert(self, *args, **kwargs)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: cards)
+    monkeypatch.setattr(History, "upsert_response", _upsert_then_fail)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    capsys.readouterr()
+    history = History(tmp_path / "h.db")
+    assert history.responses_alert_checkpoint() is not None
+    assert {
+        row["vacancy_id"]
+        for row in history.new_responses_since(__import__("datetime").datetime.min)
+    } == {"v-first"}
+
+    monkeypatch.setattr(History, "upsert_response", original_upsert)
+    assert (
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "Новых приглашений: 2" in capsys.readouterr().out
 
 
 def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):

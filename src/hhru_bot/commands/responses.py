@@ -221,6 +221,10 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
+                if alert_new and alert_since == scan_started_at:
+                    # The first poll has no durable baseline yet. Store it before
+                    # incremental upserts so a partial write remains retryable.
+                    history.mark_responses_alert_success(scan_started_at)
             except (NotAuthenticated, ResponsesIndeterminate, ValueError) as e:
                 # Истёкшая сессия или не подтверждённый DOM: НЕ затираем
                 # историю и НЕ выдаём неопределённость за «нет новых ответов».
@@ -319,6 +323,9 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                 unchanged += 1
 
         if alert_new:
+            # Bound the successful poll before reading history. Writes racing
+            # this read then have a later watermark and remain for the next poll.
+            alert_watermark = datetime.now()
             rows = history.new_responses_since(alert_since, resume_id=None)
             invitations = [row for row in rows if row.get("status") == "invitation"]
             if invitations:
@@ -327,9 +334,9 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
                     employer = (row.get("employer") or "").strip() or "(скрыт)"
                     print(f"Вакансия: {row.get('vacancy_id', '')} | Работодатель: {employer}")
                 sys.stdout.flush()
-                history.mark_responses_alert_success()
+                history.mark_responses_alert_success(alert_watermark)
                 return CommandExitCode.NEW_INVITATIONS
-            history.mark_responses_alert_success()
+            history.mark_responses_alert_success(alert_watermark)
             return None
 
         print(
