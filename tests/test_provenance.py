@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,6 @@ import pytest
 
 from hhru_bot.provenance import (
     ComponentIdentity,
-    DoctorResult,
     _git_identity,
     _load_json_text,
     _provenance_values,
@@ -145,18 +145,53 @@ def test_manifest_provenance_is_used_when_cache_has_no_git_directory(tmp_path: P
     assert identity.commit_sha == "c" * 40
 
 
-def test_doctor_prints_one_recovery_command(capsys, monkeypatch):
+def test_doctor_recovery_action_clears_drift(capsys, monkeypatch):
+    from hhru_bot.cli import build_parser
     from hhru_bot.commands import diagnostics
+    from hhru_bot.commands import update as update_command
 
-    components = (_identity("installed CLI"), _identity("marketplace snapshot", sha="b" * 40))
+    state = {
+        "components": (
+            ComponentIdentity("installed CLI", "0.1.0", None, "a" * 40),
+            _identity("marketplace snapshot", sha="b" * 40),
+            _identity("installed plugin cache", sha="b" * 40),
+        )
+    }
     monkeypatch.setattr(
         diagnostics,
         "run_doctor",
-        lambda **_: DoctorResult(components, True, ("different commit SHA",)),
+        lambda **_: compare_identities(state["components"]),
     )
 
-    assert (
-        diagnostics.run_doctor_command(SimpleNamespace(marketplace=None, plugin_cache=None)) is True
-    )
+    def unified_update(**_kwargs):
+        state["components"] = tuple(
+            ComponentIdentity(component.name, component.version, component.release, "c" * 40)
+            for component in state["components"]
+        )
+        return SimpleNamespace(
+            release=SimpleNamespace(version="0.1.0", commit="c" * 40),
+            cli_source="test-cli",
+            plugin_source="test-plugin",
+        )
+
+    monkeypatch.setattr(update_command, "update", unified_update)
+
+    assert diagnostics.run_doctor_command(SimpleNamespace(marketplace=None, plugin_cache=None))
     output = capsys.readouterr().out
-    assert output.count("codex plugin marketplace upgrade hhru --json") == 1
+    fix_line = next(line for line in output.splitlines() if line.startswith("[FIX] "))
+    recommended_argv = shlex.split(fix_line.split(": ", 1)[1])
+
+    # Execute the action advertised by doctor through the real CLI parser. This
+    # rejects plugin-only commands and verifies that the recommendation reaches
+    # the unified update command rather than merely matching a string literal.
+    args = build_parser().parse_args(recommended_argv[1:])
+    assert args.func is update_command.run
+    assert args.func(args) is None
+    capsys.readouterr()
+
+    assert not compare_identities(state["components"]).drift
+    assert (
+        diagnostics.run_doctor_command(SimpleNamespace(marketplace=None, plugin_cache=None))
+        is False
+    )
+    assert "[OK]" in capsys.readouterr().out

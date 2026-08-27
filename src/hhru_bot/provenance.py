@@ -20,7 +20,7 @@ from typing import Any
 
 PLUGIN_NAME = "hhru-cc-plugin"
 MARKETPLACE_NAME = "hhru"
-RECOVERY_COMMAND = "codex plugin marketplace upgrade hhru --json"
+RECOVERY_COMMAND = "hhru update"
 
 
 @dataclass(frozen=True)
@@ -342,6 +342,11 @@ def compare_identities(components: Iterable[ComponentIdentity]) -> DoctorResult:
             ("commit_sha", "commit SHA"),
         ):
             values = {getattr(component, field) for component in components}
+            # A wheel installed from an immutable commit has PEP 610 commit
+            # provenance but no release tag. Matching commit provenance is the
+            # stronger identity check; an absent tag alone is not drift.
+            if field == "release" and None in values:
+                continue
             if len(values) > 1:
                 reasons.append(
                     f"разный {label}: "
