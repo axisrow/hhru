@@ -152,7 +152,7 @@ def test_doctor_recovery_action_clears_drift(capsys, monkeypatch):
 
     state = {
         "components": (
-            _identity("installed CLI", sha="a" * 40),
+            ComponentIdentity("installed CLI", "0.1.0", None, "a" * 40),
             _identity("marketplace snapshot", sha="b" * 40),
             _identity("installed plugin cache", sha="b" * 40),
         )
@@ -165,7 +165,8 @@ def test_doctor_recovery_action_clears_drift(capsys, monkeypatch):
 
     def unified_update(**_kwargs):
         state["components"] = tuple(
-            _identity(component.name, sha="c" * 40) for component in state["components"]
+            ComponentIdentity(component.name, component.version, component.release, "c" * 40)
+            for component in state["components"]
         )
         return SimpleNamespace(
             release=SimpleNamespace(version="0.1.0", commit="c" * 40),
