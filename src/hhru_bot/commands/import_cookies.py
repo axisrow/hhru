@@ -46,7 +46,11 @@ def run(args: argparse.Namespace) -> bool:
         if not hhtoken:
             print("[FAIL] Cookie hhtoken не найден; текущая сессия не изменена.")
             return True
-        backup = write_storage_state(state, config.storage_state_file)
+        backup = write_storage_state(
+            state,
+            config.storage_state_file,
+            account_dir=getattr(args, "account_dir", None),
+        )
     except (OSError, RuntimeError, ValueError, browser_cookie3.BrowserCookieError) as exc:
         print(f"[FAIL] Не удалось импортировать куки Chrome: {exc}")
         return True

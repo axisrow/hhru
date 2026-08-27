@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from .browser import (
 )
 from .config import AppConfig
 from .session_security import (
-    prepare_storage_state_file,
+    create_storage_state_temp,
     secure_storage_state_file,
     secure_storage_state_parent,
 )
@@ -25,7 +26,11 @@ from .session_security import (
 logger = logging.getLogger("hhru_bot.auth")
 
 
-def login(config: AppConfig, history_path: str | Path = Path("data/history.db")) -> None:
+def login(
+    config: AppConfig,
+    history_path: str | Path = Path("data/history.db"),
+    account_dir: str | Path | None = None,
+) -> None:
     """
     Открывает hh.ru в headed-браузере и ждёт, пока пользователь вручную войдёт
     в аккаунт (логин/пароль, СМС-код, капча — всё, что попросит hh.ru).
@@ -38,7 +43,7 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
     timeout_seconds = 300
     progress_interval_seconds = 15
     storage_state_file = config.storage_state_file
-    secure_storage_state_parent(storage_state_file)
+    secure_storage_state_parent(storage_state_file, account_dir=account_dir)
 
     with sync_playwright() as p:
         browser = launch_browser(p, headless=False)
@@ -98,13 +103,14 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
         # Цикл выше выходит сюда только через `break` на строке успеха
         # (has_auth_cookie(page) and not has_login_form(page)) — повторная
         # проверка cookie здесь была бы недостижимым дублированием.
-        placeholder_created = prepare_storage_state_file(storage_state_file)
+        fd, temporary_state = create_storage_state_temp(storage_state_file, account_dir=account_dir)
+        os.close(fd)
         try:
-            context.storage_state(path=str(storage_state_file))
-            secure_storage_state_file(storage_state_file)
+            context.storage_state(path=str(temporary_state))
+            secure_storage_state_file(temporary_state)
+            os.replace(temporary_state, storage_state_file)
         except BaseException:
-            if placeholder_created:
-                storage_state_file.unlink(missing_ok=True)
+            temporary_state.unlink(missing_ok=True)
             raise
         logger.info("Сессия сохранена: %s", storage_state_file)
         read_account_profile(page, history_path)

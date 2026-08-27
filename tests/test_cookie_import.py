@@ -129,7 +129,9 @@ def test_write_does_not_widen_session_file_permissions(tmp_path: Path):
 
 def test_new_account_session_and_directories_are_private(tmp_path: Path):
     destination = tmp_path / "data" / "accounts" / "work" / "storage_state" / "hh_session.json"
-    write_storage_state({"cookies": [], "origins": []}, destination)
+    write_storage_state(
+        {"cookies": [], "origins": []}, destination, account_dir=destination.parents[1]
+    )
 
     if os.name != "nt":
         assert (destination.stat().st_mode & 0o777) == 0o600

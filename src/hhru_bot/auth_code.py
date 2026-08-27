@@ -114,6 +114,7 @@ def login_with_code(
     *,
     code_file: Path | None = None,
     timeout_seconds: int = CODE_TIMEOUT_SECONDS,
+    account_dir: str | Path | None = None,
 ) -> None:
     """Complete login in one browser process and save only confirmed state."""
     if not login.strip():
@@ -156,7 +157,9 @@ def login_with_code(
             code = _read_code(code_file, timeout_seconds)
             code_field.fill(code)
             _wait_for_authenticated_page(page, timeout_seconds)
-            write_storage_state(context.storage_state(), config.storage_state_file)
+            write_storage_state(
+                context.storage_state(), config.storage_state_file, account_dir=account_dir
+            )
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
         raise RuntimeError("Ошибка браузера при входе; сессия не сохранена") from exc
     finally:

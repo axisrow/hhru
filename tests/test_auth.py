@@ -62,7 +62,11 @@ def test_login_succeeds_when_auth_confirmed_on_third_poll(monkeypatch, tmp_path)
 
     auth.login(config)
 
-    context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
+    context.storage_state.assert_called_once()
+    temporary_path = Path(context.storage_state.call_args.kwargs["path"])
+    assert temporary_path != config.storage_state_file
+    assert temporary_path.name.startswith("session.json.")
+    assert not temporary_path.exists()
     read_profile.assert_called_once_with(context.new_page.return_value, Path("data/history.db"))
 
 
@@ -78,7 +82,7 @@ def test_login_creates_private_account_session_path(monkeypatch, tmp_path):
     session = tmp_path / "data" / "accounts" / "work" / "storage_state" / "hh_session.json"
     config = MagicMock(storage_state_file=session, user_agent=None)
 
-    auth.login(config)
+    auth.login(config, account_dir=session.parents[1])
 
     if os.name != "nt":
         assert (session.stat().st_mode & 0o777) == 0o600
@@ -114,4 +118,8 @@ def test_login_never_calls_input_in_non_tty(monkeypatch, tmp_path):
         auth.login(config)
 
     mocked_input.assert_not_called()
-    context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
+    context.storage_state.assert_called_once()
+    temporary_path = Path(context.storage_state.call_args.kwargs["path"])
+    assert temporary_path != config.storage_state_file
+    assert temporary_path.name.startswith("session.json.")
+    assert not temporary_path.exists()

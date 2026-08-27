@@ -22,5 +22,10 @@ def run(args: argparse.Namespace) -> None:
     from ..config import load_config_or_exit
 
     config = load_config_or_exit(args.config)
-    login_with_code(config, args.login, code_file=args.code_file)
+    login_with_code(
+        config,
+        args.login,
+        code_file=args.code_file,
+        account_dir=getattr(args, "account_dir", None),
+    )
     print("[OK] Сессия сохранена")

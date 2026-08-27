@@ -50,6 +50,7 @@ def run(args: argparse.Namespace) -> bool:
                 write_storage_state(
                     context.storage_state(),
                     config.storage_state_file,
+                    account_dir=getattr(args, "account_dir", None),
                 )
                 print(f"[OK] Сессия пересохранена в {config.storage_state_file}")
             else:

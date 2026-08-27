@@ -309,6 +309,10 @@ def _resolve_paths(args: argparse.Namespace) -> None:
         if account_paths is not None
         else DEFAULT_HISTORY_PATH
     )
+    # Keep the managed account directory separate from the user-controlled
+    # config path.  A caller may combine --account with an explicit --config;
+    # that config's parent must never be chmodded as if it were an account.
+    args.account_dir = str(account_paths.config.parent) if account_paths else None
 
 
 def _execute(args: argparse.Namespace) -> None:

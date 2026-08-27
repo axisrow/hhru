@@ -140,10 +140,15 @@ def read_chrome_cookies(cookie_file: Path | str) -> list[dict[str, Any]]:
     return rows
 
 
-def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path | None:
+def write_storage_state(
+    state: dict[str, Any],
+    destination: Path | str,
+    *,
+    account_dir: Path | str | None = None,
+) -> Path | None:
     """Write state, preserving existing state and an existing backup."""
     destination = Path(destination)
-    secure_storage_state_parent(destination)
+    secure_storage_state_parent(destination, account_dir=account_dir)
     destination_exists = destination.exists()
     if destination_exists:
         secure_storage_state_file(destination)
