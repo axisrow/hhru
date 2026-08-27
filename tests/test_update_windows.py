@@ -111,6 +111,9 @@ def test_hhru_exe_reexecs_real_upgrade_before_pip_replaces_launcher(tmp_path: Pa
             "HHRU_TEST_CODEX_LOG": str(tmp_path / "codex.log"),
             "HHRU_TEST_UPDATE_SOURCE": checkout.as_uri(),
             "HHRU_UPDATE_REEXEC": "",
+            # The Windows runner's active code page cannot encode the CLI's
+            # Russian status messages; keep the launcher child deterministic.
+            "PYTHONIOENCODING": "utf-8",
             "PYTHONPATH": str(harness)
             + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else ""),
         }
