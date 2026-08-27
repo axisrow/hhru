@@ -277,6 +277,113 @@ manifest-файлах и в `release.json`. Уже открытая задача
 задачу Codex. Repo marketplace зарегистрирован в `.agents/plugins/marketplace.json`;
 public submission в OpenAI Plugins Directory для командной установки не требуется.
 
+### Четыре сценария lifecycle
+
+#### Fresh install
+
+Сначала установи сам CLI и его зависимости — это только начальная установка
+исполняемого файла, а не отдельное обновление plugin. Для пользовательской
+установки используй обычный (не editable) пакет:
+
+```bash
+pip3 install -r requirements.txt
+python3 -m playwright install chromium
+pip3 install .
+```
+
+После этого выполни единственную поддерживаемую операцию lifecycle:
+
+```bash
+hhru update
+```
+
+При первом запуске `hhru update` сам добавляет marketplace, обновляет его
+snapshot, устанавливает отсутствующий `hhru-cc-plugin` и приводит CLI к тому же
+commit (для editable checkout проверяет уже установленный checkout). Отдельные
+`codex plugin marketplace` и `codex plugin add` для
+пользовательской установки не нужны. После успешного запуска его строки `[OK]`
+подтверждают CLI и plugin; отдельную проверку выполни командой
+`hhru diagnostics doctor`. Она может дополнительно показать drift marketplace
+snapshot или неполную provenance plugin cache. Если Codex использует gitless
+cache без release metadata, update всё равно проверяет содержимое cache по
+digest, но doctor не может вывести SHA, который не сохранён в cache.
+
+#### Upgrade
+
+Для уже установленного CLI используй ту же одну команду:
+
+```bash
+hhru update
+```
+
+Flow выбирает опубликованный release (а если его нет — настроенный ref
+marketplace или `main`), получает его неизменяемый commit, обновляет marketplace,
+CLI и plugin и сверяет версию и provenance. Для обычной установки CLI обновляется
+через текущий Python interpreter из `git+<source>@<commit>`. Для editable checkout
+команда не заменяет checkout wheel-пакетом: checkout должен быть чистым и уже
+совпадать с выбранным commit. `git pull --ff-only` сам не переключает checkout
+на выбранный release; если HEAD отличается, сначала приведи checkout к этому
+commit и только затем повтори тот же `hhru update`. Отдельного обновления plugin
+нет.
+
+Повторный `hhru update` идемпотентен. Успех печатает commit CLI и plugin;
+ненулевой код означает, что согласованное состояние не подтверждено. В Windows
+launcher перед обновлением прозрачно перезапускается через Python, чтобы
+`hhru.exe` не оставался заблокированным во время `pip`.
+
+Уже начатую задачу Codex нельзя горячо переключить на заново загруженный skill.
+После upgrade открой новую задачу Codex; это ограничение lifecycle сессии Codex,
+а не дефект hhru.
+
+#### Проверка состояния
+
+Запусти read-only проверку:
+
+```bash
+hhru diagnostics doctor
+```
+
+Из checkout допустима эквивалентная форма:
+
+```bash
+./scripts/run.sh diagnostics doctor
+```
+
+Doctor сравнивает установленный CLI, marketplace snapshot и plugin cache по
+version, release/tag и commit SHA. При полном совпадении он печатает `[OK]` и
+завершается с кодом 0. При drift или неполной provenance он печатает `[DRIFT]`
+и `[DETAIL]`, завершается с кодом 1 и не выдаёт рассинхронизированное состояние
+за успешное. Update проверяет CLI и plugin относительно выбранного commit, а
+doctor отдельно видит commit самого marketplace snapshot; поэтому snapshot,
+собранный из другого commit, может дать `[DRIFT]` даже после успешного update.
+
+Для нестандартных расположений можно передать `--marketplace PATH` и
+`--plugin-cache PATH`. При drift doctor печатает `[FIX]` с одной командой
+`hhru update`; это тот же единый flow, который обновляет CLI и plugin. Не
+заменяй его отдельным marketplace upgrade или `codex plugin add`. Для gitless
+cache без release metadata doctor может показать неполную provenance даже после
+успешно проверенного update; это ограничение отдельной проверки идентичности,
+а не повод запускать второй plugin lifecycle.
+
+#### Recovery после ошибки
+
+Если `hhru update` завершился с `[FAIL]`, он возвращает ненулевой код и не
+рапортует об успехе. Повтори ту же единую команду:
+
+```bash
+hhru update
+```
+
+Это штатный recovery path и для ошибки marketplace, и для частичного обновления:
+flow снова выбирает commit, проверяет CLI и приводит plugin cache к тому же
+содержимому. Не обновляй CLI и plugin отдельными командами. После успешного
+повтора при необходимости подтверди результат через `hhru diagnostics doctor`.
+
+Для editable checkout сначала сохрани или отмени незакоммиченные изменения,
+затем повтори `hhru update`; dirty checkout намеренно отклоняется, чтобы не
+выдавать неподтверждённую provenance за рабочее состояние. Если нужен
+нестандартный executable Codex, передай его путь через `hhru update --codex PATH`.
+
 ### Команда `/hhru`
 
 Одна команда с сабкомандами — диспетчеризует аргументы в CLI:
