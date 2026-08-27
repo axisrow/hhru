@@ -6,6 +6,8 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from filelock import FileLock
+
 # Логи — относительно cwd (точки запуска), не относительно пакета: после
 # `pip install` пакет в site-packages, писать логи туда нельзя. См. cli.py.
 # Внутри data/ (#133): все изменяемые данные проекта в одной папке, покрытой
@@ -32,7 +34,7 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
     _rollover_lock = threading.Lock()
 
     def doRollover(self) -> None:
-        with self._rollover_lock:
+        with self._rollover_lock, FileLock(self._rotation_lock_path):
             if self.stream is not None:
                 self.stream.flush()
                 self.stream.close()
@@ -44,6 +46,12 @@ class _PreservingRotatingFileHandler(RotatingFileHandler):
 
             if not self.delay:
                 self.stream = self._open()
+
+    @property
+    def _rotation_lock_path(self) -> str:
+        """A hidden sidecar path which is not mistaken for a log archive."""
+        base = Path(self.baseFilename)
+        return str(base.with_name(f".{base.name}.rotate.lock"))
 
     def _next_archive_path(self) -> str:
         index = 1
