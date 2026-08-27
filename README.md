@@ -277,6 +277,101 @@ manifest-файлах и в `release.json`. Уже открытая задача
 задачу Codex. Repo marketplace зарегистрирован в `.agents/plugins/marketplace.json`;
 public submission в OpenAI Plugins Directory для командной установки не требуется.
 
+### Четыре сценария lifecycle
+
+#### Fresh install
+
+Сначала установи сам CLI и его зависимости — это только начальная установка
+исполняемого файла, а не отдельное обновление plugin:
+
+```bash
+pip3 install -r requirements.txt
+python3 -m playwright install chromium
+pip3 install -e .
+```
+
+После этого выполни единственную поддерживаемую операцию lifecycle:
+
+```bash
+hhru update
+```
+
+При первом запуске `hhru update` сам добавляет marketplace, обновляет его
+snapshot, устанавливает отсутствующий `hhru-cc-plugin` и приводит CLI к тому же
+commit (для editable checkout проверяет уже установленный checkout). Отдельные
+`codex plugin marketplace` и `codex plugin add` для
+пользовательской установки не нужны. После успешного запуска проверь состояние
+командой `hhru diagnostics doctor`.
+
+#### Upgrade
+
+Для уже установленного CLI используй ту же одну команду:
+
+```bash
+hhru update
+```
+
+Flow выбирает опубликованный release (а если его нет — настроенный ref
+marketplace или `main`), получает его неизменяемый commit, обновляет marketplace,
+CLI и plugin и сверяет версию и provenance. Для обычной установки CLI обновляется
+через текущий Python interpreter из `git+<source>@<commit>`. Для editable checkout
+команда не заменяет checkout wheel-пакетом: checkout должен быть чистым и уже
+совпадать с выбранным commit. После `git pull --ff-only` в таком checkout
+повтори тот же `hhru update`; отдельного обновления plugin нет.
+
+Повторный `hhru update` идемпотентен. Успех печатает commit CLI и plugin;
+ненулевой код означает, что согласованное состояние не подтверждено. В Windows
+launcher перед обновлением прозрачно перезапускается через Python, чтобы
+`hhru.exe` не оставался заблокированным во время `pip`.
+
+Уже начатую задачу Codex нельзя горячо переключить на заново загруженный skill.
+После upgrade открой новую задачу Codex; это ограничение lifecycle сессии Codex,
+а не дефект hhru.
+
+#### Проверка состояния
+
+Запусти read-only проверку:
+
+```bash
+hhru diagnostics doctor
+```
+
+Из checkout допустима эквивалентная форма:
+
+```bash
+./scripts/run.sh diagnostics doctor
+```
+
+Doctor сравнивает установленный CLI, marketplace snapshot и plugin cache по
+version, release/tag и commit SHA. При полном совпадении он печатает `[OK]` и
+завершается с кодом 0. При drift или неполной provenance он печатает `[DRIFT]`
+и `[DETAIL]`, завершается с кодом 1 и не выдаёт рассинхронизированное состояние
+за успешное.
+
+Для нестандартных расположений можно передать `--marketplace PATH` и
+`--plugin-cache PATH`. Если текущая версия doctor при drift показывает legacy
+подсказку `[FIX]` с отдельным marketplace upgrade, не используй её как recovery:
+она обновляет только plugin. Поддерживаемое исправление drift — `hhru update`.
+
+#### Recovery после ошибки
+
+Если `hhru update` завершился с `[FAIL]`, он возвращает ненулевой код и не
+рапортует об успехе. Повтори ту же единую команду:
+
+```bash
+hhru update
+```
+
+Это штатный recovery path и для ошибки marketplace, и для частичного обновления:
+flow снова выбирает commit, проверяет CLI и приводит plugin cache к тому же
+содержимому. Не обновляй CLI и plugin отдельными командами. После успешного
+повтора при необходимости подтверди результат через `hhru diagnostics doctor`.
+
+Для editable checkout сначала сохрани или отмени незакоммиченные изменения,
+затем повтори `hhru update`; dirty checkout намеренно отклоняется, чтобы не
+выдавать неподтверждённую provenance за рабочее состояние. Если нужен
+нестандартный executable Codex, передай его путь через `hhru update --codex PATH`.
+
 ### Команда `/hhru`
 
 Одна команда с сабкомандами — диспетчеризует аргументы в CLI:
