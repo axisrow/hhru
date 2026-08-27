@@ -499,7 +499,8 @@ def _ensure_marketplace(codex: str, source: str, ref: str) -> None:
 
 def _select_release(codex: str, source: str, editable: Path | None) -> tuple[ReleaseIdentity, Path]:
     configured_ref = _configured_marketplace_ref()
-    selected_ref = _latest_release_ref(source) or configured_ref or DEFAULT_REF
+    published_ref = _latest_release_ref(source)
+    selected_ref = published_ref or configured_ref or DEFAULT_REF
     _ensure_marketplace(codex, source, selected_ref)
     upgraded = _run([codex, "plugin", "marketplace", "upgrade", MARKETPLACE, "--json"])
     payload = _json_output(upgraded.stdout)
@@ -521,7 +522,9 @@ def _select_release(codex: str, source: str, editable: Path | None) -> tuple[Rel
         )
     plugin_source, plugin_ref, version = _marketplace_plugin_source(root)
     plugin_commit = _resolve_ref_commit(root, plugin_source, plugin_ref)
-    published_commit = _published_release_commit(source, selected_ref)
+    published_commit = (
+        _published_release_commit(source, selected_ref) if published_ref is not None else None
+    )
     if published_commit is not None and plugin_commit != published_commit:
         raise UpdateError(
             f"release {selected_ref} указывает на commit {plugin_commit}, "

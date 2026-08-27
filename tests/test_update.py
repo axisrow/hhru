@@ -183,6 +183,23 @@ def test_upgrade_reuses_the_same_provenance_on_second_run(tmp_path, monkeypatch)
     assert not any(call[1:3] == ("plugin", "remove") for call in calls)
 
 
+def test_github_fallback_does_not_require_release_asset(tmp_path, monkeypatch):
+    root = _source_root(tmp_path)
+    _patch_common(monkeypatch, root)
+    monkeypatch.setattr(update_module, "DEFAULT_SOURCE", "https://github.com/axisrow/hhru.git")
+    monkeypatch.setattr(update_module, "_git_remote", lambda _path: update_module.DEFAULT_SOURCE)
+    monkeypatch.setattr(update_module, "_ensure_marketplace", lambda *_args: None)
+
+    def fail_if_queried(*_args):
+        raise AssertionError("fallback branch must not request release.json")
+
+    monkeypatch.setattr(update_module, "_published_release_commit", fail_if_queried)
+
+    result = update_module.update()
+
+    assert result.release.commit == COMMIT
+
+
 def test_editable_install_does_not_replace_checkout_with_wheel(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     monkeypatch.setattr(update_module, "_git_commit", lambda _path: COMMIT)
