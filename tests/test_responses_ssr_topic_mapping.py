@@ -353,7 +353,26 @@ def test_strict_scrape_rejects_partial_dom_against_ssr_topics(monkeypatch):
     monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
     monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
 
-    with pytest.raises(responses.ResponsesIndeterminate, match="DOM содержит 1 карточек"):
+    with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
+def test_strict_scrape_matches_ssr_topics_to_dom_vacancies(monkeypatch):
+    """Equal DOM/SSR counts do not hide a missing vacancy card."""
+    items = [
+        responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ),
+        responses.ResponseItem(vacancy_id="900", status=responses.ResponseStatus.DISCARD),
+    ]
+    page = _SSRPage(
+        pages_cards=[items],
+        pages_html=[_ssr_html([("222", "333", "700"), ("444", "555", "701")])],
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
 
 

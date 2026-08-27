@@ -424,11 +424,6 @@ def fetch_responses(
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
             refs = topic_refs(page.content())
-            if strict_scrape and len(refs) > count:
-                raise ResponsesIndeterminate(
-                    f"страница {page_num}: DOM содержит {count} карточек, "
-                    f"а SSR topicList — {len(refs)}"
-                )
             if strict_empty:
                 raw_topics = (
                     parse_initial_state(page.content())
@@ -477,6 +472,22 @@ def fetch_responses(
             # multiple cards at all) marks every unresolved card for that
             # vacancy_id as ambiguous instead of guessing positionally.
             cards_by_vacancy: dict[str, list] = {}
+            if strict_scrape and refs:
+                rendered_by_vacancy: dict[str, int] = {}
+                for result in results[page_start:]:
+                    rendered_by_vacancy[result.vacancy_id] = (
+                        rendered_by_vacancy.get(result.vacancy_id, 0) + 1
+                    )
+                missing_vacancies = {
+                    vacancy_id: len(candidates) - rendered_by_vacancy.get(vacancy_id, 0)
+                    for vacancy_id, candidates in refs_by_vacancy.items()
+                    if len(candidates) > rendered_by_vacancy.get(vacancy_id, 0)
+                }
+                if missing_vacancies:
+                    raise ResponsesIndeterminate(
+                        f"страница {page_num}: DOM не покрывает SSR topicList "
+                        f"по вакансиям {sorted(missing_vacancies)}"
+                    )
             for result in results[page_start:]:
                 if result.topic is None:
                     cards_by_vacancy.setdefault(result.vacancy_id, []).append(result)
