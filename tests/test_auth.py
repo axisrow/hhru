@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -63,6 +64,26 @@ def test_login_succeeds_when_auth_confirmed_on_third_poll(monkeypatch, tmp_path)
 
     context.storage_state.assert_called_once_with(path=str(config.storage_state_file))
     read_profile.assert_called_once_with(context.new_page.return_value, Path("data/history.db"))
+
+
+def test_login_creates_private_account_session_path(monkeypatch, tmp_path):
+    context = _make_playwright(monkeypatch)
+    monkeypatch.setattr(auth, "has_auth_cookie", lambda p: True)
+    monkeypatch.setattr(auth, "has_login_form", lambda p: False)
+    monkeypatch.setattr(time, "monotonic", iter([0, 0]).__next__)
+    context.storage_state.side_effect = lambda path: Path(path).write_text(
+        '{"cookies": [], "origins": []}\n', encoding="utf-8"
+    )
+
+    session = tmp_path / "data" / "accounts" / "work" / "storage_state" / "hh_session.json"
+    config = MagicMock(storage_state_file=session, user_agent=None)
+
+    auth.login(config)
+
+    if os.name != "nt":
+        assert (session.stat().st_mode & 0o777) == 0o600
+        assert (session.parent.stat().st_mode & 0o777) == 0o700
+        assert (session.parents[1].stat().st_mode & 0o777) == 0o700
 
 
 def test_login_times_out_when_login_form_never_disappears(monkeypatch, tmp_path):

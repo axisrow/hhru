@@ -127,6 +127,16 @@ def test_write_does_not_widen_session_file_permissions(tmp_path: Path):
     assert mode == 0o600, f"storage_state_file permissions widened to {oct(mode)}"
 
 
+def test_new_account_session_and_directories_are_private(tmp_path: Path):
+    destination = tmp_path / "data" / "accounts" / "work" / "storage_state" / "hh_session.json"
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    if os.name != "nt":
+        assert (destination.stat().st_mode & 0o777) == 0o600
+        assert (destination.parent.stat().st_mode & 0o777) == 0o700
+        assert (destination.parents[1].stat().st_mode & 0o777) == 0o700
+
+
 def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
     # Codex + /review re-review (PR #168): a previous fix called
     # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file

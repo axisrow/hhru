@@ -16,6 +16,11 @@ from .browser import (
     launch_browser,
 )
 from .config import AppConfig
+from .session_security import (
+    prepare_storage_state_file,
+    secure_storage_state_file,
+    secure_storage_state_parent,
+)
 
 logger = logging.getLogger("hhru_bot.auth")
 
@@ -33,7 +38,7 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
     timeout_seconds = 300
     progress_interval_seconds = 15
     storage_state_file = config.storage_state_file
-    storage_state_file.parent.mkdir(parents=True, exist_ok=True)
+    secure_storage_state_parent(storage_state_file)
 
     with sync_playwright() as p:
         browser = launch_browser(p, headless=False)
@@ -93,7 +98,14 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
         # Цикл выше выходит сюда только через `break` на строке успеха
         # (has_auth_cookie(page) and not has_login_form(page)) — повторная
         # проверка cookie здесь была бы недостижимым дублированием.
-        context.storage_state(path=str(storage_state_file))
+        placeholder_created = prepare_storage_state_file(storage_state_file)
+        try:
+            context.storage_state(path=str(storage_state_file))
+            secure_storage_state_file(storage_state_file)
+        except BaseException:
+            if placeholder_created:
+                storage_state_file.unlink(missing_ok=True)
+            raise
         logger.info("Сессия сохранена: %s", storage_state_file)
         read_account_profile(page, history_path)
 

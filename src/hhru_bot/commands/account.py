@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..accounts import AccountError
 from ..report import _ascii_table
+from ..session_security import secure_directory
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_TEMPLATE_PATH = Path("config") / "config.example.yaml"
@@ -188,7 +189,7 @@ def create_account(
 
     account_dir = data_dir / "accounts" / name
     try:
-        account_dir.mkdir(parents=True)
+        secure_directory(account_dir, exist_ok=False)
     except FileExistsError as exc:
         raise AccountError(
             f"аккаунт '{name}' уже существует: {account_dir} (перезапись запрещена)"

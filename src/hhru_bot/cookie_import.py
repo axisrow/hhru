@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .session_security import secure_storage_state_file, secure_storage_state_parent
+
 CHROME_EPOCH_OFFSET = 11_644_473_600
 MAX_PLAYWRIGHT_EXPIRES = 253_402_300_799  # 9999-12-31T23:59:59Z
 SAMESITE = {-1: "Lax", 0: "None", 1: "Lax", 2: "Strict"}
@@ -141,8 +143,12 @@ def read_chrome_cookies(cookie_file: Path | str) -> list[dict[str, Any]]:
 def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path | None:
     """Write state, preserving existing state and an existing backup."""
     destination = Path(destination)
+    secure_storage_state_parent(destination)
+    destination_exists = destination.exists()
+    if destination_exists:
+        secure_storage_state_file(destination)
     backup: Path | None = None
-    if destination.exists():
+    if destination_exists:
         # Exclusive create (O_CREAT|O_EXCL), not candidate.exists(): a
         # pre-planted symlink at the guessable `<destination>.bak` name can be
         # *dangling*, so exists() (which follows symlinks) reports False and
@@ -199,7 +205,6 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
             candidate.unlink(missing_ok=True)
             raise
         backup = candidate
-    destination.parent.mkdir(parents=True, exist_ok=True)
     # Write-then-rename: an interrupted/failed write must never leave the
     # active session truncated (Codex review, PR #168) — the backup above
     # already preserves the old session, but only a temp write + atomic
@@ -233,4 +238,5 @@ def write_storage_state(state: dict[str, Any], destination: Path | str) -> Path 
         tmp.unlink(missing_ok=True)
         raise
     os.replace(tmp, destination)
+    secure_storage_state_file(destination)
     return backup
