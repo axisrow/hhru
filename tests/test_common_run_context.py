@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from hhru_bot.browser import NotAuthenticated
 from hhru_bot.commands._common import ApplyProgress, SignalTermination, run_supervised_command
 from hhru_bot.exit_codes import CommandExitCode
 from hhru_bot.history import LEGACY_LEASE_GRACE, CommandRunBusy, History
@@ -211,6 +212,31 @@ def test_generic_exception_persists_failed_status_with_detail(tmp_path: Path) ->
     assert row["status"] == "failed"
     assert row["exit_code"] == 1
     assert row["detail"] == "RuntimeError: boom"
+
+
+def test_expired_session_has_dedicated_exit_code_and_no_uncertain_count(
+    tmp_path: Path, capsys
+) -> None:
+    """A pre-action auth failure stops the batch and remains outside grey-zone accounting."""
+    history = History(tmp_path / "history.db")
+    seen: list[int] = []
+
+    def body(_progress: ApplyProgress) -> bool:
+        seen.append(1)
+        raise NotAuthenticated("cookie hhtoken не найден")
+
+    result = run_supervised_command(command="apply", history=history, requested_limit=5, body=body)
+
+    assert result is CommandExitCode.SESSION_EXPIRED
+    assert seen == [1]
+    row = history.command_runs()[-1]
+    assert row["status"] == "failed"
+    assert row["exit_code"] == CommandExitCode.SESSION_EXPIRED.value
+    assert row["attempted"] == 0
+    assert row["uncertain"] == 0
+    output = capsys.readouterr().out
+    assert "hhru login" in output
+    assert "hhru refresh-token" in output
 
 
 def test_nested_call_restores_outer_handler_lifo(tmp_path: Path) -> None:

@@ -22,6 +22,7 @@ from ..apply.antibot import AntiBotChallengeDetected, raise_for_antibot
 from ..apply.letter import CoverLetterProvider
 from ..apply.verify import verify_response_in_negotiations
 from ..blacklist import match as blacklist_match
+from ..browser import NotAuthenticated
 from ..config import AppConfig, ResumeConfig, SearchFilters, is_resume_url_placeholder
 from ..config_sections.scoring import ScoringWeights
 from ..copy_resume import resolve_numeric_resume_ids
@@ -556,7 +557,7 @@ def run_supervised_command(
     command: str,
     history: History,
     requested_limit: int | None,
-    body: Callable[[ApplyProgress], bool],
+    body: Callable[[ApplyProgress], bool | CommandExitCode],
     reconcile: Callable[[ApplyProgress, History, str], None] | None = None,
     print_summary: bool = True,
 ) -> bool | CommandExitCode:
@@ -616,15 +617,22 @@ def run_supervised_command(
     result: bool | CommandExitCode = True
     try:
         failed = body(progress)
-        final_status = (
-            "partial"
-            if failed and progress.attempted_count
-            else "failed"
-            if failed
-            else "completed"
-        )
-        exit_code = 1 if failed else 0
-        result = bool(failed)
+        if isinstance(failed, CommandExitCode):
+            # Typed terminal outcomes (currently expired authentication) must
+            # reach the CLI unchanged instead of becoming generic exit 1.
+            final_status = "failed"
+            exit_code = failed.value
+            result = failed
+        else:
+            final_status = (
+                "partial"
+                if failed and progress.attempted_count
+                else "failed"
+                if failed
+                else "completed"
+            )
+            exit_code = 1 if failed else 0
+            result = bool(failed)
     except KeyboardInterrupt:
         final_status = "interrupted"
         exit_code = CommandExitCode.SIGINT.value
@@ -635,6 +643,20 @@ def run_supervised_command(
         exit_code = 128 + exc.signum
         detail = f"signal={exc.signum}"
         result = CommandExitCode.SIGTERM
+    except NotAuthenticated as exc:
+        # A confirmed unauthenticated page is terminal before any action.  It
+        # is intentionally not recorded as an uncertain action: that state is
+        # reserved for the post-click grey zone where hh.ru may have accepted
+        # the request.  Keep the reason in the command ledger and expose a
+        # dedicated status for schedulers/automation.
+        final_status = "failed"
+        exit_code = CommandExitCode.SESSION_EXPIRED.value
+        detail = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[FAIL] Сессия hh.ru недействительна: {exc}. "
+            "Выполните `hhru login` или `hhru refresh-token`, затем повторите."
+        )
+        result = CommandExitCode.SESSION_EXPIRED
     except BaseException as exc:
         detail = f"{type(exc).__name__}: {exc}"
         raise

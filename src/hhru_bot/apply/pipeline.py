@@ -20,7 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from ..ai.questions import AIQuestionAnswerer, AnswerProposal, extract_questions
-from ..browser import goto_hh, has_login_form
+from ..browser import goto_hh, require_authenticated_page
 from ..history import SKIP_REASONS, History
 from ..search import VacancyCard
 from ..vacancy_refresh import VacancyBodyCache, refresh_card
@@ -443,8 +443,10 @@ def _run(ctx: ApplyContext) -> ApplyResult:
     _halt_if_antibot(ctx)
     # Reuse the already-open vacancy page; no second navigation is needed.
     ctx.vacancy = refresh_card(ctx.page, ctx.vacancy, cache=ctx.vacancy_body_cache)
-    if has_login_form(ctx.page):
-        return ctx.fail("Сессия недействительна: страница содержит форму входа. Выполните login.")
+    # Authentication is a terminal pre-submit invariant.  Do not turn this
+    # into an ApplyResult(uncertain=True): unlike a submit failure, no action
+    # could have reached hh.ru before the page passed this check.
+    require_authenticated_page(ctx.page)
     ctx.probe("vacancy_loaded", url=ctx.vacancy.url)
 
     apply_button_found = apply_steps.wait_apply_button(ctx.page)

@@ -157,6 +157,11 @@ def require_authenticated_page(
 
     This must be called after navigation: the login form is a server-rendered
     positive signal, while a cookie alone only proves that it remains in the jar.
+
+    ``NotAuthenticated`` is a terminal pre-action signal for callers that may
+    otherwise continue through a batch.  It must not be converted into the
+    post-click ``uncertain`` state: no irreversible action is possible before
+    this check succeeds.
     """
     if not (auth_cookie_check or has_auth_cookie)(page):
         raise NotAuthenticated(

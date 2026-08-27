@@ -775,6 +775,9 @@ class _ApplyPipelineFakePage:
 
     def __init__(self):
         self.goto_calls: list[str] = []
+        self.context = SimpleNamespace(
+            cookies=lambda: [{"name": "hhtoken", "value": "test-session"}]
+        )
 
     def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.goto_calls.append(url)
