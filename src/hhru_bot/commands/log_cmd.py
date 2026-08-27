@@ -153,6 +153,12 @@ def follow(
     заново. Без этого offset остался бы за новым EOF и записи пропускались бы,
     пока файл не перерастёт прежний размер (цикл ревью #61, раунд 2).
 
+    При штатной ротации logging_setup переименовывает активный файл, поэтому
+    открытый дескриптор follow продолжает указывать на архивный inode. Перед
+    каждой итерацией проверяем inode пути и после дочитывания старого файла
+    переключаемся на новый ``hhru_bot.log``. Это сохраняет работу ``log -f``
+    после size-based ротации.
+
     Known limitation (цикл ревью #61, раунд 3, находка Codex): size-only-детектор
     не ловит truncate-and-regrow — если активный writer после copytruncate
     допишет столько, что новый размер ПЕРЕРАСТЁТ старый offset за один poll
@@ -178,6 +184,23 @@ def follow(
                 if before_read is not None:
                     before_read(path, f.tell())
                 _handle_truncation(f)
+                if _log_path_was_replaced(f, path):
+                    chunk = f.read()
+                    if chunk:
+                        emit(chunk)
+                    try:
+                        replacement = open(
+                            path,
+                            encoding="utf-8",
+                            errors=LOG_READ_ERRORS,
+                        )
+                    except FileNotFoundError:
+                        # The writer can be between rename and reopening the
+                        # active path. Retry on the next polling iteration.
+                        pass
+                    else:
+                        f.close()
+                        f = replacement
                 chunk = f.read()
                 if chunk:
                     emit(chunk)
@@ -200,6 +223,21 @@ def _handle_truncation(f) -> None:
     size = os.fstat(f.fileno()).st_size
     if pos > size:
         f.seek(0)
+
+
+def _log_path_was_replaced(f, path: Path) -> bool:
+    """Return whether ``path`` now names a different file than ``f``.
+
+    The comparison is based on device and inode so a rename-based rollover is
+    distinguishable from ordinary appends.  If the writer has not reopened the
+    path yet, leave the old descriptor in place and retry on the next poll.
+    """
+    try:
+        current = os.fstat(f.fileno())
+        active = os.stat(path)
+    except FileNotFoundError:
+        return False
+    return (current.st_dev, current.st_ino) != (active.st_dev, active.st_ino)
 
 
 def run(args: argparse.Namespace) -> None:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Логи — относительно cwd (точки запуска), не относительно пакета: после
@@ -8,6 +11,47 @@ from pathlib import Path
 # Внутри data/ (#133): все изменяемые данные проекта в одной папке, покрытой
 # .gitignore одной строкой. Единая точка — probe.PROBE_LOG_DIR наследует её.
 LOG_DIR = Path.cwd() / "data" / "logs"
+
+# 10 MiB is large enough for a useful diagnostic window while putting a
+# bounded ceiling on the active file.  The backup count is deliberately kept
+# in the handler configuration for compatibility with RotatingFileHandler,
+# but _PreservingRotatingFileHandler never uses it as a retention limit.
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 1000
+
+
+class _PreservingRotatingFileHandler(RotatingFileHandler):
+    """Size-based rotation which never removes an archived log.
+
+    ``RotatingFileHandler`` normally shifts ``.1`` ... ``.N`` and deletes the
+    oldest file once ``backupCount`` is reached.  Log history is user data for
+    this application, so archives are instead assigned the next unused
+    numeric suffix.  Cleanup is intentionally a manual user decision.
+    """
+
+    _rollover_lock = threading.Lock()
+
+    def doRollover(self) -> None:
+        with self._rollover_lock:
+            if self.stream is not None:
+                self.stream.flush()
+                self.stream.close()
+                self.stream = None
+
+            if os.path.exists(self.baseFilename):
+                archive = self._next_archive_path()
+                os.replace(self.baseFilename, archive)
+
+            if not self.delay:
+                self.stream = self._open()
+
+    def _next_archive_path(self) -> str:
+        index = 1
+        while True:
+            archive = f"{self.baseFilename}.{index}"
+            if not os.path.exists(archive):
+                return archive
+            index += 1
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -29,6 +73,11 @@ def setup_logging(verbose: bool = False) -> None:
     console_handler.setFormatter(formatter)
     root.addHandler(console_handler)
 
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler = _PreservingRotatingFileHandler(
+        log_file,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
