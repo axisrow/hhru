@@ -1055,8 +1055,6 @@ def _reconcile_audit_metadata(catalog: dict[str, Any]) -> None:
     """Invalidate reference provenance when a refresh changes its bindings."""
     today = date.today().isoformat()
     for logical_id, row in catalog.get("selectors", {}).items():
-        if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-            continue
         sources = row.get("sources", {})
         previous_origin = row.get("origin")
         if sources:
@@ -1112,8 +1110,6 @@ def _has_reviewed_runtime_evidence(logical_id: str, row: dict[str, Any]) -> bool
     """Do not let audit bookkeeping become activation evidence on refresh."""
     if not row.get("evidence"):
         return False
-    if not logical_id.startswith(AUDITED_SELECTOR_GROUP_PREFIXES):
-        return True
     if row["evidence"].get("runtime_authoritative") is False:
         return False
     return not (not row.get("active", True) and row.get("decision") == "unavailable")

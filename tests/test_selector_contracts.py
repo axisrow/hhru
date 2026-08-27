@@ -501,6 +501,36 @@ def test_refresh_invalidates_stale_reference_audit_metadata():
     assert row["verification"] == "unverified"
 
 
+def test_refresh_invalidates_stale_reference_metadata_outside_audited_groups():
+    catalog = {
+        "selectors": {
+            "resume_position.fixture": {
+                "declared_at": "src/hhru_bot/resume_position.py:1",
+                "sources": {},
+                "live_matches": [],
+                "coverage_status": "reference_binding",
+                "origin": "reference_consensus",
+                "verification": "contract_tested",
+                "evidence": {
+                    "source": "old",
+                    "note": "old",
+                    "runtime_authoritative": True,
+                },
+                "last_verified_at": "2026-08-20",
+                "verified_flow": "old",
+                "verified_by": "ci",
+            }
+        }
+    }
+
+    contracts._reconcile_audit_metadata(catalog)
+    row = catalog["selectors"]["resume_position.fixture"]
+
+    assert row["coverage_status"] == "needs_live_evidence"
+    assert row["evidence"]["runtime_authoritative"] is False
+    assert not contracts._has_reviewed_runtime_evidence("resume_position.fixture", row)
+
+
 def test_refresh_does_not_authorize_a_consensus_downgrade():
     catalog = {
         "selectors": {
