@@ -148,6 +148,12 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 - **Вывод:** `name | config_path | history_exists | session | last_action`, через
   `report._ascii_table`.
 
+`schedule --action run` генерирует запуск полного цикла `run` (apply + bump)
+через внешний планировщик. Для plist используется `StartInterval`, а для cron —
+интервал `--bump-interval-hours`; значение по умолчанию — 4 часа, то есть равно
+кулдауну поднятия резюме. Значение `--apply-limit` передаётся в `run` как его
+`--limit`. Внутри Python-демон не создаётся.
+
 Для разового поиска без изменения `config.yaml` команда `search` принимает
 опциональный `--text <TEXT>`. Сигнатура:
 `hhru_bot search [--resume <id>] [--text <TEXT>] [--max-pages N]`.

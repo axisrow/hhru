@@ -44,6 +44,15 @@ def test_plist_apply_uses_start_calendar_interval():
     assert "5" in out
 
 
+def test_plist_run_uses_start_interval_and_run_argv():
+    out = render_schedule(format="plist", action="run")
+    parsed = _plist(out)
+
+    assert parsed["StartInterval"] == 4 * 60 * 60
+    assert parsed["ProgramArguments"][1:] == ["--headless", "run", "--limit", "5"]
+    assert parsed["Label"] == "com.hhru.bot.run"
+
+
 def test_plist_parseable_by_plistlib():
     """Сгенерированный .plist — валидный XML property list (полный stdout, без преамбулы).
 
@@ -102,9 +111,17 @@ def test_crontab_apply_daily_at_time():
     assert "30 9" in out
 
 
+def test_crontab_run_uses_bump_interval():
+    out = render_schedule(format="crontab", action="run")
+
+    assert out.startswith("0 */4 * * * ")
+    assert "scheduled_run.sh --headless run --limit 5" in out
+
+
 def test_invalid_interval_raises():
-    with pytest.raises((ValueError, TypeError)):
-        render_schedule(format="plist", action="bump", interval_hours=0)
+    for action in ("bump", "run"):
+        with pytest.raises((ValueError, TypeError)):
+            render_schedule(format="plist", action=action, interval_hours=0)
 
 
 def test_invalid_apply_time_raises():
@@ -147,6 +164,12 @@ def test_program_arguments_headless_before_subcommand_apply():
     assert _program_arguments("apply", 5) == ["--headless", "apply", "--limit", "5"]
 
 
+def test_program_arguments_headless_before_subcommand_run():
+    from hhru_bot.commands.schedule import _program_arguments
+
+    assert _program_arguments("run", 5) == ["--headless", "run", "--limit", "5"]
+
+
 def test_program_arguments_preserve_account():
     from hhru_bot.commands.schedule import _program_arguments
 
@@ -186,8 +209,8 @@ def test_cli_accepts_emitted_argv_bump():
     from hhru_bot.cli import build_parser
 
     parser = build_parser()
-    for action in ("bump", "apply"):
-        argv = ["--headless", action] + (["--limit", "5"] if action == "apply" else [])
+    for action in ("bump", "apply", "run"):
+        argv = ["--headless", action] + (["--limit", "5"] if action in {"apply", "run"} else [])
         # parse_args бросает SystemExit(2) при 'unrecognized arguments'
         ns = parser.parse_args(argv)
         assert ns.headless is True
@@ -217,6 +240,13 @@ def test_full_plist_stdout_apply_parseable():
     assert out.lstrip().startswith("<?xml")
     parsed = _plist(out)
     assert "StartCalendarInterval" in parsed
+
+
+def test_full_plist_stdout_run_parseable():
+    out = render_schedule(format="plist", action="run")
+    assert out.lstrip().startswith("<?xml")
+    parsed = _plist(out)
+    assert parsed["StartInterval"] == 4 * 60 * 60
 
 
 # --- FIX: launchd/cron имеют урезанный PATH и не активируют venv →
