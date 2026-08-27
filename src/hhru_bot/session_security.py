@@ -32,12 +32,19 @@ def secure_storage_state_parent(destination: Path | str) -> Path:
     """Prepare private directories surrounding a storage-state file.
 
     The account directory is tightened when the destination belongs to the
-    standard ``data/accounts/<name>`` layout.  The immediate storage directory
-    is private too, including for custom paths, so a session cannot be listed
-    by another local user while it is being written.
+    standard ``data/accounts/<name>`` layout.  A missing storage directory is
+    created privately; existing custom directories are left untouched because
+    the caller may share them with unrelated processes.
     """
     destination = Path(destination)
-    secure_directory(destination.parent)
+    # Do not chmod an arbitrary existing path supplied by a user.  For
+    # example, a custom ``/tmp/hh_session.json`` must not turn shared /tmp
+    # into a private directory.  A missing parent is ours to create, so it can
+    # safely start private; the standard account directory is tightened below.
+    parent_exists = destination.parent.exists()
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=ACCOUNT_DIR_MODE)
+    if not parent_exists and permissions_are_posix():
+        os.chmod(destination.parent, ACCOUNT_DIR_MODE)
     account_directory = _account_directory(destination)
     if account_directory is not None:
         secure_directory(account_directory)
