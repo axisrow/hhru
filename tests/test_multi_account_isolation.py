@@ -16,6 +16,7 @@ import pytest
 
 from hhru_bot import browser
 from hhru_bot.accounts import AccountPaths, resolve_account_paths
+from hhru_bot.cli import main
 from hhru_bot.config import AppConfig, load_config
 from hhru_bot.history import History
 from hhru_bot.throttle import LimitReached, Throttle
@@ -150,3 +151,48 @@ def test_browser_context_loads_selected_account_session(tmp_path, monkeypatch):
         str(configs["beta"].storage_state_file),
     ]
     assert captured[0]["storage_state"] != captured[1]["storage_state"]
+
+
+def test_main_account_selection_routes_history_and_session_to_each_account(tmp_path, monkeypatch):
+    paths, configs = _accounts(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    real_history = History
+    history_paths: list[Path] = []
+    session_paths: list[Path] = []
+
+    def history_factory(path):
+        history_paths.append(Path(path).resolve())
+        return real_history(path)
+
+    @contextmanager
+    def fake_launch_context(storage_state_file, **_kwargs):
+        session_paths.append(Path(storage_state_file).resolve())
+
+        class Context:
+            def new_page(self):
+                return object()
+
+        yield Context()
+
+    monkeypatch.setattr("hhru_bot.history.History", history_factory)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", load_config)
+    monkeypatch.setattr(browser, "launch_context", fake_launch_context)
+
+    from hhru_bot.bump import BumpResult
+
+    monkeypatch.setattr(
+        "hhru_bot.bump.bump_resume",
+        lambda _page, resume, dry_run: BumpResult(resume.resume_id, True, "dry-run"),
+    )
+
+    for name in ("alpha", "beta"):
+        main(["--account", name, "--headless", "bump", "--dry-run"])
+
+    assert history_paths == [paths["alpha"].history.resolve(), paths["beta"].history.resolve()]
+    assert session_paths == [
+        configs["alpha"].storage_state_file.resolve(),
+        configs["beta"].storage_state_file.resolve(),
+    ]
+    assert history_paths[0] != history_paths[1]
+    assert session_paths[0] != session_paths[1]
