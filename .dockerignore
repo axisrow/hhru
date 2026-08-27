@@ -1,0 +1,20 @@
+# Runtime state, credentials, history, logs, and browser diagnostics stay on
+# the host and are mounted into /app/data by docker-compose.yml.
+data/
+
+# Never send repository metadata or local environments to the Docker daemon.
+.git/
+.venv/
+.worktrees/
+
+# Build and test artefacts are not needed at runtime.
+build/
+dist/
+__pycache__/
+**/__pycache__/
+*.db
+**/*.db
+*.pyc
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
