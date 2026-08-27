@@ -2,6 +2,11 @@
 # the host and are mounted into /app/data by docker-compose.yml.
 data/
 
+# Defence-in-depth for configurations that place Playwright state outside data/.
+**/storage_state/*.json
+**/storage_state/*.json.bak*
+**/storage_state/*.json.tmp
+
 # Never send repository metadata or local environments to the Docker daemon.
 .git/
 .venv/
