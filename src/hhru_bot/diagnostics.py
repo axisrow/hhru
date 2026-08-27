@@ -112,6 +112,39 @@ def _safe_dom(path: Path) -> dict[str, Any]:
     return {"path": path.name, "available": True, "nodes": nodes}
 
 
+def _selector_metrics(db: sqlite3.Connection, run_id: str) -> dict[str, list[Any]]:
+    """Read only runtime observations belonging to ``run_id``.
+
+    Older history databases do not have the #701 table yet.  Treating that as
+    an empty metric keeps offline export compatible with those databases while
+    preserving the run scoping used by the other bundle sections.
+    """
+    try:
+        rows = db.execute(
+            """SELECT logical_id, status, found, evidence
+               FROM selector_observations WHERE run_id=? ORDER BY id""",
+            (run_id,),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
+        rows = []
+
+    hits = [row["logical_id"] for row in rows if row["status"] == "OK"]
+    misses = [row["logical_id"] for row in rows if row["status"] == "NOT_FOUND"]
+    evidence = [
+        {
+            "id": row["logical_id"],
+            "status": row["status"],
+            "count": row["found"],
+            "evidence": redact(str(row["evidence"])),
+        }
+        for row in rows
+        if row["status"] in {"OK", "NOT_FOUND", "OPTIONAL_ABSENT"}
+    ]
+    return {"hits": hits, "misses": misses, "evidence": evidence}
+
+
 def build_bundle(
     history: Path,
     run_id: str | None = None,
@@ -132,6 +165,7 @@ def build_bundle(
         run = dict(row)
         if run.get("detail"):
             run["detail"] = str(run["detail"]).split(":", 1)[0]
+        selectors = _selector_metrics(db, run["run_id"])
     lines: list[dict[str, str]] = []
     if log_path and log_path.is_file():
         start = _parse_timestamp(run.get("started_at"))
@@ -166,7 +200,7 @@ def build_bundle(
                 snapshots.append(_safe_dom(p))
         snapshots = snapshots[:5]
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "bundle_version": "1",
         "environment": {
             "python": platform.python_version(),
@@ -175,7 +209,7 @@ def build_bundle(
         },
         "run": run,
         "log_tail": lines,
-        "selectors": {"hits": [], "misses": [], "evidence": []},
+        "selectors": selectors,
         "snapshots": snapshots,
     }
 
