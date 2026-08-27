@@ -301,11 +301,12 @@ hhru update
 snapshot, устанавливает отсутствующий `hhru-cc-plugin` и приводит CLI к тому же
 commit (для editable checkout проверяет уже установленный checkout). Отдельные
 `codex plugin marketplace` и `codex plugin add` для
-пользовательской установки не нужны. После успешного запуска проверь состояние
-командой `hhru diagnostics doctor`. Если Codex использует gitless cache без
-release metadata, doctor может отдельно сообщить о неполной provenance: сам
-update уже проверяет содержимое cache по digest, но doctor не может вывести SHA,
-который не сохранён в cache.
+пользовательской установки не нужны. После успешного запуска его строки `[OK]`
+подтверждают CLI и plugin; отдельную проверку выполни командой
+`hhru diagnostics doctor`. Она может дополнительно показать drift marketplace
+snapshot или неполную provenance plugin cache. Если Codex использует gitless
+cache без release metadata, update всё равно проверяет содержимое cache по
+digest, но doctor не может вывести SHA, который не сохранён в cache.
 
 #### Upgrade
 
@@ -352,7 +353,9 @@ Doctor сравнивает установленный CLI, marketplace snapshot
 version, release/tag и commit SHA. При полном совпадении он печатает `[OK]` и
 завершается с кодом 0. При drift или неполной provenance он печатает `[DRIFT]`
 и `[DETAIL]`, завершается с кодом 1 и не выдаёт рассинхронизированное состояние
-за успешное.
+за успешное. Update проверяет CLI и plugin относительно выбранного commit, а
+doctor отдельно видит commit самого marketplace snapshot; поэтому snapshot,
+собранный из другого commit, может дать `[DRIFT]` даже после успешного update.
 
 Для нестандартных расположений можно передать `--marketplace PATH` и
 `--plugin-cache PATH`. При drift doctor печатает `[FIX]` с одной командой
