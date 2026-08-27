@@ -2045,6 +2045,92 @@ class History:
             ),
         )
 
+    def rejections_by_employer(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> list[dict]:
+        """Агрегат отказов работодателей по поиску и вилке зарплаты.
+
+        Отказ берётся из текущего статуса ``responses`` (``discard``), а
+        вакансия считается только если для неё есть успешный отклик в
+        ``actions`` — тот же scope, что и у воронки. ``since`` фильтрует дату
+        отклика из ``actions``, поэтому ``--period`` имеет одинаковую семантику
+        во всех режимах ``funnel``.
+
+        ``vacancies_seen`` хранит по строке на пару (vacancy_id, search_query),
+        поэтому одна вакансия может попасть в несколько поисковых групп. Для
+        отказов без карточки добавляется отдельная строка с пустым поиском и
+        зарплатой: INNER JOIN используется только для найденных карточек, а
+        ``NOT EXISTS`` сохраняет непросмотренные через ``search`` вакансии.
+        EXISTS-предикаты не размножают отказ по нескольким topic или actions.
+        """
+        from .responses import ResponseStatus
+
+        filters = ["r.status = ?"]
+        params: list = [ResponseStatus.DISCARD]
+        action_filters = [
+            "a.vacancy_id = r.vacancy_id",
+            "a.action = 'apply'",
+            "a.status = 'success'",
+        ]
+        action_params: list = []
+        if since is not None:
+            action_filters.append("a.created_at >= ?")
+            action_params.append(since)
+        if resume_id is not None:
+            action_filters.append("a.resume_id = ?")
+            action_params.append(resume_id)
+        action_exists = " AND ".join(action_filters)
+        response_filters = [*filters, f"EXISTS (SELECT 1 FROM actions a WHERE {action_exists})"]
+        response_params = [*params, *action_params]
+        response_where = " AND ".join(response_filters)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                WITH rejection_rows AS (
+                    SELECT
+                        r.id AS response_id,
+                        NULLIF(TRIM(r.employer), '') AS employer,
+                        v.search_query AS search_query,
+                        v.salary_from AS salary_from,
+                        v.salary_to AS salary_to,
+                        v.salary_currency AS salary_currency
+                    FROM responses AS r
+                    JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
+                    WHERE {response_where}
+
+                    UNION ALL
+
+                    SELECT
+                        r.id AS response_id,
+                        NULLIF(TRIM(r.employer), '') AS employer,
+                        NULL AS search_query,
+                        NULL AS salary_from,
+                        NULL AS salary_to,
+                        NULL AS salary_currency
+                    FROM responses AS r
+                    WHERE {response_where}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM vacancies_seen v
+                          WHERE v.vacancy_id = r.vacancy_id
+                      )
+                )
+                SELECT employer, search_query, salary_from, salary_to, salary_currency,
+                       COUNT(DISTINCT response_id) AS rejections
+                FROM rejection_rows
+                GROUP BY employer, search_query, salary_from, salary_to, salary_currency
+                ORDER BY rejections DESC,
+                         COALESCE(employer, ''),
+                         COALESCE(search_query, ''),
+                         salary_from, salary_to, salary_currency
+                """,
+                [*response_params, *response_params],
+            ).fetchall()
+
+        return [dict(row) for row in rows]
+
     def count_unattributed_applies(
         self,
         since: str | None = None,
