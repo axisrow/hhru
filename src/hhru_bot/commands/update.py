@@ -25,8 +25,8 @@ def _reexec_windows_launcher() -> bool:
     if os.name != "nt" or os.environ.get(_WINDOWS_REEXEC_ENV) == "1":
         return False
     candidates = (
-        getattr(sys, "_base_executable", ""),
         sys.executable,
+        getattr(sys, "_base_executable", ""),
         shutil.which("python") or "",
     )
     interpreter = next(
