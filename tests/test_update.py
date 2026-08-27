@@ -200,6 +200,10 @@ def test_github_fallback_does_not_require_release_asset(tmp_path, monkeypatch):
     assert result.release.commit == COMMIT
 
 
+def test_file_url_path_round_trips_platform_path(tmp_path):
+    assert update_module._file_url_path(tmp_path.as_uri()) == tmp_path
+
+
 def test_editable_install_does_not_replace_checkout_with_wheel(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
     monkeypatch.setattr(update_module, "_git_commit", lambda _path: COMMIT)
