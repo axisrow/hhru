@@ -95,9 +95,11 @@ if [[ "${status}" -eq "${NEW_INVITATIONS_EXIT_CODE}" ]]; then
   # почты/пушей в самом репозитории.
   if [[ -n "${HHRU_ALERT_CMD:-}" ]]; then
     echo "[ALERT_HOOK] Вызываю HHRU_ALERT_CMD" | tee -a "${LOG_FILE}"
-    set +e
-    eval "${HHRU_ALERT_CMD}" >> "${LOG_FILE}" 2>&1
-    set -e
+    # Подшелл обязателен: eval выполняется в ТЕКУЩЕМ шелле, и если хук
+    # содержит `exit` (например `notify-send ...; exit 0`), он завершит саму
+    # обёртку раньше `exit "${status}"` ниже, подменив итоговый код 10 на
+    # код хука — планировщик молча потеряет сигнал о приглашении.
+    ( eval "${HHRU_ALERT_CMD}" ) >> "${LOG_FILE}" 2>&1 || true
   fi
 fi
 
