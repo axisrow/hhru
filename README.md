@@ -117,6 +117,10 @@ config/
 Дампы `probe` содержат HTML и скриншот формы отклика залогиненного
 пользователя — это такие же приватные данные, как сессия.
 
+Каждый локальный аккаунт — это отдельный набор секретов: его `hh_session.json`
+содержит доступ к hh.ru. Хранилище `data/` нельзя коммитить или включать в
+Docker-образ; передавайте его контейнеру только как приватный mount.
+
 ## Первый запуск: вход в аккаунт
 
 ```bash
@@ -651,7 +655,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 #### `diagnostics doctor`
 
-Сравнивает версию, release/tag и commit SHA установленного CLI, marketplace snapshot и загруженного Codex plugin.
+Сравнивает версию, release/tag и commit SHA установленного CLI, marketplace snapshot и загруженного Codex plugin; проверяет права каталогов аккаунтов и файлов сессий.
 
 - `--marketplace-path, --marketplace MARKETPLACE` — Путь к marketplace snapshot (для диагностики нестандартной установки)
 - `--plugin-cache PLUGIN_CACHE` — Путь к Codex plugin cache (для диагностики нестандартной установки)

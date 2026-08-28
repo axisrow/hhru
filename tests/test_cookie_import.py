@@ -127,6 +127,82 @@ def test_write_does_not_widen_session_file_permissions(tmp_path: Path):
     assert mode == 0o600, f"storage_state_file permissions widened to {oct(mode)}"
 
 
+def test_new_account_session_and_directories_are_private(tmp_path: Path):
+    destination = tmp_path / "data" / "accounts" / "work" / "storage_state" / "hh_session.json"
+    write_storage_state(
+        {"cookies": [], "origins": []}, destination, account_dir=destination.parents[1]
+    )
+
+    if os.name != "nt":
+        assert (destination.stat().st_mode & 0o777) == 0o600
+        assert (destination.parent.stat().st_mode & 0o777) == 0o700
+        assert (destination.parents[1].stat().st_mode & 0o777) == 0o700
+
+
+def test_custom_existing_session_parent_is_not_rechmodded(tmp_path: Path):
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    destination = parent / "hh_session.json"
+    if os.name == "nt":
+        pytest.skip("POSIX directory modes are not available on Windows")
+    parent.chmod(0o755)
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert (parent.stat().st_mode & 0o777) == 0o755
+    assert (destination.stat().st_mode & 0o777) == 0o600
+
+
+def test_custom_accounts_path_is_not_treated_as_managed_account(tmp_path: Path):
+    account_dir = tmp_path / "srv" / "accounts" / "shared"
+    parent = account_dir / "storage_state"
+    parent.mkdir(parents=True)
+    destination = parent / "hh_session.json"
+    if os.name == "nt":
+        pytest.skip("POSIX directory modes are not available on Windows")
+    account_dir.chmod(0o755)
+    parent.chmod(0o755)
+
+    write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert (account_dir.stat().st_mode & 0o777) == 0o755
+    assert (parent.stat().st_mode & 0o777) == 0o755
+
+
+def test_managed_account_symlink_is_rejected_without_touching_target(tmp_path: Path):
+    if os.name == "nt":
+        pytest.skip("POSIX symlink and directory modes are not available on Windows")
+
+    accounts = tmp_path / "data" / "accounts"
+    accounts.mkdir(parents=True)
+    external = tmp_path / "external"
+    external.mkdir()
+    external.chmod(0o755)
+    account_link = accounts / "work"
+    account_link.symlink_to(external, target_is_directory=True)
+
+    destination = account_link / "storage_state" / "hh_session.json"
+    with pytest.raises(OSError):
+        write_storage_state({"cookies": [], "origins": []}, destination, account_dir=account_link)
+
+    assert external.stat().st_mode & 0o777 == 0o755
+    assert not (external / "storage_state").exists()
+
+
+def test_existing_directory_destination_is_rejected_without_chmod(tmp_path: Path):
+    if os.name == "nt":
+        pytest.skip("POSIX directory modes are not available on Windows")
+
+    destination = tmp_path / "project"
+    destination.mkdir()
+    destination.chmod(0o755)
+
+    with pytest.raises(OSError, match="обычным файлом"):
+        write_storage_state({"cookies": [], "origins": []}, destination)
+
+    assert destination.stat().st_mode & 0o777 == 0o755
+
+
 def test_temp_file_is_never_world_readable_while_written(tmp_path: Path, monkeypatch):
     # Codex + /review re-review (PR #168): a previous fix called
     # tmp.chmod(0o600) AFTER tmp.write_text() had already created the file

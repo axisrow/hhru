@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -16,11 +18,19 @@ from .browser import (
     launch_browser,
 )
 from .config import AppConfig
+from .session_security import (
+    create_storage_state_temp,
+    secure_storage_state_parent,
+)
 
 logger = logging.getLogger("hhru_bot.auth")
 
 
-def login(config: AppConfig, history_path: str | Path = Path("data/history.db")) -> None:
+def login(
+    config: AppConfig,
+    history_path: str | Path = Path("data/history.db"),
+    account_dir: str | Path | None = None,
+) -> None:
     """
     Открывает hh.ru в headed-браузере и ждёт, пока пользователь вручную войдёт
     в аккаунт (логин/пароль, СМС-код, капча — всё, что попросит hh.ru).
@@ -33,7 +43,7 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
     timeout_seconds = 300
     progress_interval_seconds = 15
     storage_state_file = config.storage_state_file
-    storage_state_file.parent.mkdir(parents=True, exist_ok=True)
+    secure_storage_state_parent(storage_state_file, account_dir=account_dir)
 
     with sync_playwright() as p:
         browser = launch_browser(p, headless=False)
@@ -93,7 +103,24 @@ def login(config: AppConfig, history_path: str | Path = Path("data/history.db"))
         # Цикл выше выходит сюда только через `break` на строке успеха
         # (has_auth_cookie(page) and not has_login_form(page)) — повторная
         # проверка cookie здесь была бы недостижимым дублированием.
-        context.storage_state(path=str(storage_state_file))
+        fd, temporary_state = create_storage_state_temp(storage_state_file, account_dir=account_dir)
+        try:
+            # Ask Playwright for the state in memory, then serialize it through
+            # the already-open 0600 descriptor.  Reopening the temporary path
+            # by name would let a writer of a shared custom parent redirect
+            # bearer-token contents through a symlink (Codex review).
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                json.dump(context.storage_state(), handle, ensure_ascii=False)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_state, storage_state_file)
+        except BaseException:
+            if fd >= 0:
+                os.close(fd)
+            temporary_state.unlink(missing_ok=True)
+            raise
         logger.info("Сессия сохранена: %s", storage_state_file)
         read_account_profile(page, history_path)
 

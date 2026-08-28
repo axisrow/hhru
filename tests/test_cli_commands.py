@@ -42,6 +42,7 @@ def test_account_paths_are_defaults_but_explicit_paths_win(tmp_path, monkeypatch
     _resolve_paths(args)
     assert Path(args.config).resolve() == account / "config.yaml"
     assert Path(args.history).resolve() == account / "history.db"
+    assert Path(args.account_dir).resolve() == account
 
     args = parser.parse_args(
         [
@@ -59,6 +60,7 @@ def test_account_paths_are_defaults_but_explicit_paths_win(tmp_path, monkeypatch
     _resolve_paths(args)
     assert Path(args.config) == tmp_path / "custom.yaml"
     assert Path(args.history) == tmp_path / "custom.db"
+    assert args.account_dir is None
     assert DEFAULT_CONFIG_PATH == Path("data/config.yaml")
     assert DEFAULT_HISTORY_PATH == Path("data/history.db")
 

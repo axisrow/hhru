@@ -31,6 +31,8 @@ def test_create_copies_template(tmp_path, monkeypatch, capsys):
     created = tmp_path / "data" / "accounts" / "marketing" / "config.yaml"
     assert created.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
     assert 'Аккаунт "marketing" создан' in capsys.readouterr().out
+    if os.name != "nt":
+        assert (created.parent.stat().st_mode & 0o777) == 0o700
 
 
 def test_create_does_not_overwrite_existing_account(tmp_path, monkeypatch, capsys):

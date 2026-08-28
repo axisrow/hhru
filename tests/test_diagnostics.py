@@ -1,14 +1,69 @@
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from hhru_bot import __version__
 from hhru_bot import _version as version_module
+from hhru_bot.commands import diagnostics as diagnostics_command
 from hhru_bot.diagnostics import _same_path, build_bundle, redact
 
 pytestmark = pytest.mark.unit
+
+
+def _write_account(tmp_path: Path, *, session: bool = True) -> tuple[Path, Path]:
+    account_dir = tmp_path / "data" / "accounts" / "work"
+    (account_dir / "storage_state").mkdir(parents=True)
+    (account_dir / "config.yaml").write_text(
+        "account:\n  storage_state_file: storage_state/hh_session.json\n", encoding="utf-8"
+    )
+    session_path = account_dir / "storage_state" / "hh_session.json"
+    if session:
+        session_path.write_text('{"token":"do-not-print"}', encoding="utf-8")
+    return account_dir, session_path
+
+
+def test_diagnostics_reports_weak_session_permissions_without_reading_secret(
+    tmp_path, monkeypatch, capsys
+):
+    account_dir, session_path = _write_account(tmp_path)
+    account_dir.chmod(0o755)
+    session_path.chmod(0o644)
+    monkeypatch.chdir(tmp_path)
+
+    entries = diagnostics_command.check_session_permissions()
+    assert len(entries) == 1
+    assert entries[0].weak is True
+
+    monkeypatch.setattr(
+        diagnostics_command,
+        "run_doctor",
+        lambda **_: SimpleNamespace(components=(), drift=False, reasons=()),
+    )
+    assert (
+        diagnostics_command.run_doctor_command(SimpleNamespace(marketplace=None, plugin_cache=None))
+        is True
+    )
+    output = capsys.readouterr().out
+    assert "0755" in output and "0644" in output
+    assert "chmod 700" in output and "chmod 600" in output
+    assert "do-not-print" not in output
+
+
+def test_diagnostics_does_not_fake_posix_modes_on_windows(tmp_path, monkeypatch):
+    _write_account(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(diagnostics_command, "permissions_are_posix", lambda: False)
+
+    entries = diagnostics_command.check_session_permissions()
+
+    assert len(entries) == 1
+    assert entries[0].error is not None
+    assert entries[0].account_mode is None
+    assert entries[0].session_mode is None
+    assert entries[0].weak is False
 
 
 def test_redaction_adversarial():
