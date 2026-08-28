@@ -238,6 +238,31 @@ def test_follow_survives_truncation(tmp_path):
     assert "fresh1" in joined and "fresh2" in joined
 
 
+def test_follow_switches_to_active_file_after_rename_rotation(tmp_path):
+    """Rename-based rotation does not leave ``log -f`` on the old inode."""
+    path = _log_file(tmp_path, ["old"])
+    out: list[str] = []
+    called = {"n": 0}
+
+    def rotate_before_read(_p, _pos):
+        called["n"] += 1
+        if called["n"] == 1:
+            path.rename(tmp_path / "hhru_bot.log.1")
+            path.write_text("fresh\n", encoding="utf-8")
+
+    follow(
+        path,
+        out.append,
+        initial_lines=0,
+        sleep_interval=0,
+        stop_after=1,
+        before_read=rotate_before_read,
+    )
+
+    assert "fresh\n" in out
+    assert (tmp_path / "hhru_bot.log.1").read_text(encoding="utf-8") == "old\n"
+
+
 # --- realtime flush при pipe -------------------------------------------------
 
 
