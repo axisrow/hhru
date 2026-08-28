@@ -15,6 +15,7 @@ Chrome. Оба теста проверяют только резолв пути 
 from __future__ import annotations
 
 import argparse
+import json
 import textwrap
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,7 +35,8 @@ def _write_account_config(base_dir: Path, name: str, *, session_name: str) -> Pa
 
     storage_state_file указан относительным путём — именно так это выглядит в
     config.example.yaml и в реальных data/accounts/<name>/config.yaml; резолв
-    в абсолютный путь проверяет parse_account(), а не этот тест.
+    в абсолютный путь проверяет parse_account(), а не этот тест. Общий helper
+    для обоих тестов (login и import-cookies) — конфиги им нужны идентичные.
     """
     account_dir = base_dir / name
     account_dir.mkdir(parents=True)
@@ -56,11 +58,17 @@ def _write_account_config(base_dir: Path, name: str, *, session_name: str) -> Pa
     return config_path
 
 
+_FAKE_STORAGE_STATE = {
+    "cookies": [{"name": "hhtoken", "value": "alpha-session-token"}],
+    "origins": [],
+}
+
+
 @contextmanager
 def _fake_sync_playwright_confirmed_login():
     """Playwright-заглушка: вход считается уже подтверждённым (первый опрос)."""
     context = MagicMock(name="BrowserContext")
-    context.storage_state.return_value = {"cookies": [], "origins": []}
+    context.storage_state.return_value = _FAKE_STORAGE_STATE
     fake_browser = MagicMock(name="Browser")
     fake_browser.new_context.return_value = context
     playwright = MagicMock(name="Playwright")
@@ -99,27 +107,10 @@ def test_login_writes_session_only_to_own_account_path(tmp_path, monkeypatch):
     assert not config_b.storage_state_file.exists(), (
         "login записал сессию в путь чужого аккаунта (beta) — утечка секрета"
     )
-
-
-def _write_config_for_import_cookies(tmp_path, name: str, *, session_name: str) -> str:
-    account_dir = tmp_path / name
-    account_dir.mkdir(parents=True)
-    config_path = account_dir / "config.yaml"
-    config_path.write_text(
-        textwrap.dedent(
-            f"""\
-            account:
-              storage_state_file: storage_state/{session_name}
-            resumes:
-              - id: r1
-                resume_url: "https://hh.ru/resume/{name}RESUME"
-                search:
-                  text: "python"
-            """
-        ),
-        encoding="utf-8",
+    written = json.loads(config_a.storage_state_file.read_text(encoding="utf-8"))
+    assert written == _FAKE_STORAGE_STATE, (
+        "login записал в storage_state_file не то, что вернул context.storage_state()"
     )
-    return str(config_path)
 
 
 def _import_cookies_args(config_path: str) -> argparse.Namespace:
@@ -141,8 +132,8 @@ def _fake_cookie_db_row(hhtoken_value: str = "token-value") -> dict:
 
 
 def test_import_cookies_writes_session_only_to_own_account_path(tmp_path, monkeypatch):
-    config_path_a = _write_config_for_import_cookies(tmp_path, "alpha", session_name="alpha.json")
-    config_path_b = _write_config_for_import_cookies(tmp_path, "beta", session_name="beta.json")
+    config_path_a = _write_account_config(tmp_path, "alpha", session_name="alpha.json")
+    config_path_b = _write_account_config(tmp_path, "beta", session_name="beta.json")
     config_a = load_config(config_path_a)
     config_b = load_config(config_path_b)
 
@@ -156,7 +147,7 @@ def test_import_cookies_writes_session_only_to_own_account_path(tmp_path, monkey
         lambda _cookie_file: [_fake_cookie_db_row()],
     )
 
-    failed = import_cookies_cmd.run(_import_cookies_args(config_path_a))
+    failed = import_cookies_cmd.run(_import_cookies_args(str(config_path_a)))
 
     assert failed is False
     assert config_a.storage_state_file.exists(), (
