@@ -2109,6 +2109,146 @@ class History:
             ),
         )
 
+    def rejections_by_employer(
+        self,
+        since: str | None = None,
+        resume_id: str | None = None,
+    ) -> list[dict]:
+        """Агрегат отказов работодателей по поиску и вилке зарплаты.
+
+        Отказ берётся из текущего статуса ``responses`` (``discard``), а
+        вакансия считается только если для неё есть успешный отклик в
+        ``actions`` — тот же scope, что и у воронки. ``since`` фильтрует дату
+        отклика из ``actions``, поэтому ``--period`` имеет одинаковую семантику
+        во всех режимах ``funnel``.
+
+        ``vacancies_seen`` хранит по строке на пару (vacancy_id, search_query),
+        поэтому одна вакансия может попасть в несколько поисковых групп. Для
+        отказов без карточки добавляется отдельная строка с пустым поиском и
+        зарплатой: INNER JOIN используется только для найденных карточек, а
+        ``NOT EXISTS`` сохраняет непросмотренные через ``search`` вакансии.
+        DISTINCT по response_id не размножает отказ несколькими topic или
+        actions; NOT EXISTS используется для надёжного detection отсутствующей
+        карточки.
+        """
+        from .responses import ResponseStatus
+
+        filters = ["r.status = ?"]
+        params: list = [ResponseStatus.DISCARD]
+        if resume_id is not None:
+            # responses is account-scoped, but an unambiguous SSR mapping may
+            # carry resume_id. Do not attribute a known r2 conversation to r1;
+            # an unattributed row still falls back to the vacancy-level action.
+            filters.append("(r.resume_id IS NULL OR r.resume_id = ?)")
+            params.append(resume_id)
+        action_filters = [
+            "a.action = 'apply'",
+            "a.status = 'success'",
+        ]
+        action_params: list = []
+        if since is not None:
+            action_filters.append("a.created_at >= ?")
+            action_params.append(since)
+        if resume_id is not None:
+            action_filters.append("a.resume_id = ?")
+            action_params.append(resume_id)
+        action_where = " AND ".join(action_filters)
+        response_where = " AND ".join(filters)
+        branch_params = [*params, *action_params]
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                WITH matched_actions AS (
+                    -- A known response belongs only to the application made
+                    -- with the same resume. Unattributed responses retain the
+                    -- vacancy-level fallback used by the legacy data.
+                    SELECT DISTINCT
+                        r.id AS response_id,
+                        NULLIF(TRIM(r.employer), '') AS employer,
+                        r.vacancy_id AS vacancy_id,
+                        a.search_query AS search_query
+                    FROM responses AS r
+                    JOIN actions AS a
+                      ON a.vacancy_id = r.vacancy_id
+                     AND (r.resume_id IS NULL OR r.resume_id = a.resume_id)
+                    WHERE {response_where}
+                      AND {action_where}
+                ),
+                rejection_rows AS (
+                    -- An explicit query on the apply is authoritative. A
+                    -- vacancy can be present under several searches; using
+                    -- every vacancies_seen row here would report the same
+                    -- rejection for searches where no application was sent.
+                    SELECT DISTINCT
+                        m.response_id,
+                        m.employer,
+                        m.search_query,
+                        (
+                            SELECT v.salary_from FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
+                        ) AS salary_from,
+                        (
+                            SELECT v.salary_to FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
+                        ) AS salary_to,
+                        (
+                            SELECT v.salary_currency FROM vacancies_seen AS v
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
+                        ) AS salary_currency
+                    FROM matched_actions AS m
+                    WHERE m.search_query IS NOT NULL
+
+                    UNION ALL
+
+                    -- Legacy actions have no query of their own, so retain
+                    -- each known search attribution from vacancies_seen.
+                    SELECT DISTINCT
+                        m.response_id,
+                        m.employer,
+                        v.search_query AS search_query,
+                        v.salary_from AS salary_from,
+                        v.salary_to AS salary_to,
+                        v.salary_currency AS salary_currency
+                    FROM matched_actions AS m
+                    JOIN vacancies_seen AS v ON v.vacancy_id = m.vacancy_id
+                    WHERE m.search_query IS NULL
+
+                    UNION ALL
+
+                    -- No card was ever collected: keep the rejection with
+                    -- empty metadata instead of silently dropping it.
+                    SELECT DISTINCT
+                        m.response_id,
+                        m.employer,
+                        NULL AS search_query,
+                        NULL AS salary_from,
+                        NULL AS salary_to,
+                        NULL AS salary_currency
+                    FROM matched_actions AS m
+                    WHERE m.search_query IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM vacancies_seen AS v
+                          WHERE v.vacancy_id = m.vacancy_id
+                      )
+                )
+                SELECT employer, search_query, salary_from, salary_to, salary_currency,
+                       COUNT(DISTINCT response_id) AS rejections
+                FROM rejection_rows
+                GROUP BY employer, search_query, salary_from, salary_to, salary_currency
+                ORDER BY rejections DESC,
+                         COALESCE(employer, ''),
+                         COALESCE(search_query, ''),
+                         salary_from, salary_to, salary_currency
+                """,
+                branch_params,
+            ).fetchall()
+
+        return [dict(row) for row in rows]
+
     def count_unattributed_applies(
         self,
         since: str | None = None,

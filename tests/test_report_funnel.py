@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from hhru_bot.report_funnel import format_dead, format_funnel
+from hhru_bot.report_funnel import format_dead, format_funnel, format_rejections
 
 pytestmark = pytest.mark.unit
 
@@ -127,3 +127,30 @@ def test_format_dead_md_is_pipe_table():
 def test_format_dead_zero_rate_does_not_crash():
     out = format_dead({"total_sent": 0, "dead": 0, "dead_rate": 0.0}, "table")
     assert isinstance(out, str)
+
+
+def test_format_rejections_table_keeps_search_and_salary_columns():
+    out = format_rejections(
+        [
+            {
+                "employer": "Acme",
+                "search_query": "python",
+                "salary_from": 100000,
+                "salary_to": 150000,
+                "salary_currency": "RUR",
+                "rejections": 2,
+            }
+        ],
+        "table",
+    )
+    for value in ("Работодатель", "Поисковый запрос", "ЗП от", "ЗП до", "Отказов"):
+        assert value in out
+    assert "Acme" in out and "python" in out and "100000" in out and "2" in out
+    assert "+" in out and "-" in out
+    assert _has_emoji(out) is False
+
+
+def test_format_rejections_md_is_pipe_table():
+    out = format_rejections([], "md")
+    assert "| Работодатель |" in out
+    assert "---" in out

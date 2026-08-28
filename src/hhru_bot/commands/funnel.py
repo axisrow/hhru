@@ -55,6 +55,11 @@ def register(subparsers) -> None:
         default=14,
         help="Порог «мёртвой зоны» в днях (по умолчанию 14)",
     )
+    p.add_argument(
+        "--rejections",
+        action="store_true",
+        help="Показать агрегат отказов по работодателю, поиску и вилке зарплаты",
+    )
     p.set_defaults(func=run)
 
 
@@ -78,7 +83,7 @@ def run(args: argparse.Namespace) -> None:
     from datetime import datetime, timedelta
 
     from ..history import History
-    from ..report_funnel import format_dead, format_funnel
+    from ..report_funnel import format_dead, format_funnel, format_rejections
 
     resume_id = _resolve_resume_id(args)
 
@@ -89,6 +94,11 @@ def run(args: argparse.Namespace) -> None:
         since = None
 
     history = History(args.history)
+
+    if getattr(args, "rejections", False):
+        rejections = history.rejections_by_employer(since=since, resume_id=resume_id)
+        print(format_rejections(rejections, args.format))
+        return
 
     if args.dead:
         # «мёртвая зона»: доля откликов без ответа старше --dead-days.
