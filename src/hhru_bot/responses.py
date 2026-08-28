@@ -309,7 +309,11 @@ def parse_response_card(item) -> ResponseItem | None:
 
 
 def fetch_responses(
-    page: Page, max_pages: int = 5, *, strict_empty: bool = False
+    page: Page,
+    max_pages: int = 5,
+    *,
+    strict_empty: bool = False,
+    strict_scrape: bool = False,
 ) -> list[ResponseItem]:
     """Собирает ответы работодателей с /applicant/negotiations.
 
@@ -328,9 +332,10 @@ def fetch_responses(
     DOM-маркер серверной формы входа. Если он обнаружен, поднимается
     NotAuthenticated (команда НЕ должна трактовать такой пустой результат как
     «нет новых ответов» и НЕ должна затирать историю). Для списка negotiations пока нет проверенного
-    empty-state-селектора: timeout логируется и сохраняет исторический контракт
-    пустого inbox; fail-closed применяется к пагинации, где ложный конец теряет
-    уже прочитанные карточки.
+    ``strict_scrape`` включает fail-closed для рендера и разбора карточек без
+    требования topic/resume identity (более строгий контракт ``strict_empty``
+    остаётся только для --sync-applied). Это позволяет alert-polling принимать
+    легитимные chatless-карточки, но не сохранять checkpoint неполного обхода.
     """
     results: list[ResponseItem] = []
 
@@ -378,7 +383,7 @@ def fetch_responses(
         cards = page.locator(ns.NEGOTIATION_ITEM)
         count = cards.count()
         if count == 0:
-            if page_num == 0 and strict_empty and not cards_rendered:
+            if page_num == 0 and (strict_empty or strict_scrape) and not cards_rendered:
                 raise ResponsesIndeterminate(
                     f"первая страница negotiations не подтверждена: карточки "
                     f"не появились за {RENDER_TIMEOUT_MS} мс"
@@ -400,7 +405,7 @@ def fetch_responses(
                 )
                 continue
             results.append(item)
-        if strict_empty and len(results) - page_start != count:
+        if (strict_empty or strict_scrape) and len(results) - page_start != count:
             raise ResponsesIndeterminate(
                 f"страница {page_num}: не удалось распознать все карточки negotiations"
             )
@@ -467,6 +472,22 @@ def fetch_responses(
             # multiple cards at all) marks every unresolved card for that
             # vacancy_id as ambiguous instead of guessing positionally.
             cards_by_vacancy: dict[str, list] = {}
+            if strict_scrape and refs:
+                rendered_by_vacancy: dict[str, int] = {}
+                for result in results[page_start:]:
+                    rendered_by_vacancy[result.vacancy_id] = (
+                        rendered_by_vacancy.get(result.vacancy_id, 0) + 1
+                    )
+                missing_vacancies = {
+                    vacancy_id: len(candidates) - rendered_by_vacancy.get(vacancy_id, 0)
+                    for vacancy_id, candidates in refs_by_vacancy.items()
+                    if len(candidates) > rendered_by_vacancy.get(vacancy_id, 0)
+                }
+                if missing_vacancies:
+                    raise ResponsesIndeterminate(
+                        f"страница {page_num}: DOM не покрывает SSR topicList "
+                        f"по вакансиям {sorted(missing_vacancies)}"
+                    )
             for result in results[page_start:]:
                 if result.topic is None:
                     cards_by_vacancy.setdefault(result.vacancy_id, []).append(result)
@@ -521,7 +542,7 @@ def fetch_responses(
         if not has_next:
             logger.info("Достигнута последняя страница откликов (%d)", page_num)
             break
-        if strict_empty and page_num == max_pages - 1:
+        if (strict_empty or strict_scrape) and page_num == max_pages - 1:
             raise ResponsesIndeterminate(
                 "sync достиг ограничения страниц, но negotiations продолжается"
             )

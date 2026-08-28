@@ -88,6 +88,274 @@ def test_responses_run_history_only_skips_browser(capsys, tmp_path):
     assert "обход hh.ru пропущен" in out
 
 
+def test_responses_alert_new_reports_invitation_and_returns_signal(capsys, tmp_path, monkeypatch):
+    """--alert-new prints only new invitations and returns its scheduler code."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-invitation", employer="ACME", status=ResponseStatus.INVITATION
+    )
+    fetch_kwargs = []
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses",
+        lambda *a, **k: fetch_kwargs.append(k) or [card],
+    )
+
+    result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert result is CommandExitCode.NEW_INVITATIONS
+    assert fetch_kwargs == [{"max_pages": 5, "strict_empty": False, "strict_scrape": True}]
+    out = capsys.readouterr().out
+    assert out == ("[INFO] Новых приглашений: 1\nВакансия: v-invitation | Работодатель: ACME\n")
+    history = History(tmp_path / "h.db")
+    row = history.new_responses_since(__import__("datetime").datetime.min)[0]
+    assert __import__("datetime").datetime.fromisoformat(row["status_changed_at"]) <= (
+        history.responses_alert_checkpoint()
+    )
+
+
+def test_responses_alert_new_is_idempotent(capsys, tmp_path, monkeypatch):
+    """A successful second poll with unchanged statuses is silent and exits 0."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-invitation", employer="ACME", status=ResponseStatus.INVITATION
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    capsys.readouterr()
+    result = responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert result is None
+    assert capsys.readouterr().out == ""
+
+
+def test_responses_alert_new_ignores_other_statuses(capsys, tmp_path, monkeypatch):
+    """A newly seen response is not an invitation alert."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(vacancy_id="v-response", status=ResponseStatus.RESPONSE)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    assert responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True)) is None
+    assert capsys.readouterr().out == ""
+
+
+def test_responses_alert_new_reports_invitation_after_later_transitions(
+    capsys, tmp_path, monkeypatch
+):
+    """Later status changes must not hide an invitation since the checkpoint."""
+    import contextlib
+    from datetime import datetime, timedelta
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+    history_path = tmp_path / "h.db"
+    history = History(history_path)
+    history.upsert_response("v-transition", "ACME", ResponseStatus.READ, "/c1")
+    history.mark_responses_alert_success(datetime.now() - timedelta(seconds=1))
+    history.upsert_response("v-transition", "ACME", ResponseStatus.INVITATION, "/c1")
+    history.upsert_response("v-transition", "ACME", ResponseStatus.RESPONSE, "/c1")
+    history.upsert_response("v-transition", "ACME", ResponseStatus.READ, "/c1")
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.responses.fetch_responses",
+        lambda *a, **k: [
+            ResponseItem(vacancy_id="v-transition", employer="ACME", status=ResponseStatus.READ)
+        ],
+    )
+
+    assert (
+        responses_cmd.run(_args(config, history_path, alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "v-transition" in capsys.readouterr().out
+
+
+def test_responses_alert_new_does_not_checkpoint_ambiguous_invitation(
+    capsys, tmp_path, monkeypatch
+):
+    """An invitation without a safe topic mapping fails closed and remains retryable."""
+    import contextlib
+
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    card = ResponseItem(
+        vacancy_id="v-ambiguous",
+        status=ResponseStatus.INVITATION,
+        topic_ambiguous=True,
+    )
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [card])
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "checkpoint не обновлён" in captured.err
+    assert History(tmp_path / "h.db").responses_alert_checkpoint() is None
+
+
+def test_responses_alert_new_valid_invitation_is_retryable_after_ambiguity(
+    capsys, tmp_path, monkeypatch
+):
+    """An ambiguous card cannot consume an unambiguous invitation in the same poll."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    invitation = ResponseItem(
+        vacancy_id="v-valid", employer="ACME", status=ResponseStatus.INVITATION, topic="t1"
+    )
+    ambiguous = ResponseItem(
+        vacancy_id="v-ambiguous", status=ResponseStatus.INVITATION, topic_ambiguous=True
+    )
+    cards = [invitation, ambiguous]
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: cards)
+
+    with pytest.raises(SystemExit) as exc:
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    assert exc.value.code == 1
+    capsys.readouterr()
+    assert History(tmp_path / "h.db").new_responses_since(__import__("datetime").datetime.min) == []
+
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: [invitation])
+    assert (
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "v-valid" in capsys.readouterr().out
+
+
+def test_responses_alert_new_keeps_baseline_after_partial_upsert(capsys, tmp_path, monkeypatch):
+    """A first-poll write failure leaves already-upserted invitations retryable."""
+    import contextlib
+
+    from hhru_bot.exit_codes import CommandExitCode
+    from hhru_bot.responses import ResponseItem, ResponseStatus
+
+    config = _write_config(tmp_path, _minimal_config())
+
+    class _FakeContext:
+        def new_page(self):
+            return object()
+
+    @contextlib.contextmanager
+    def _fake_launch_context(*_args, **_kwargs):
+        yield _FakeContext()
+
+    cards = [
+        ResponseItem(vacancy_id="v-first", status=ResponseStatus.INVITATION),
+        ResponseItem(vacancy_id="v-second", status=ResponseStatus.INVITATION),
+    ]
+    original_upsert = History.upsert_response
+    calls = 0
+
+    def _upsert_then_fail(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("write failed")
+        return original_upsert(self, *args, **kwargs)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.responses.fetch_responses", lambda *a, **k: cards)
+    monkeypatch.setattr(History, "upsert_response", _upsert_then_fail)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+    capsys.readouterr()
+    history = History(tmp_path / "h.db")
+    assert history.responses_alert_checkpoint() is not None
+    assert {
+        row["vacancy_id"]
+        for row in history.new_responses_since(__import__("datetime").datetime.min)
+    } == {"v-first"}
+
+    monkeypatch.setattr(History, "upsert_response", original_upsert)
+    assert (
+        responses_cmd.run(_args(config, tmp_path / "h.db", alert_new=True))
+        is CommandExitCode.NEW_INVITATIONS
+    )
+    assert "Новых приглашений: 2" in capsys.readouterr().out
+
+
 def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path, monkeypatch):
     """Zero is a valid sync window, not a request for history-only mode."""
     import contextlib
@@ -117,7 +385,7 @@ def test_sync_applied_with_zero_since_hours_still_uses_browser(capsys, tmp_path,
         lambda *args, **kwargs: seen.append(kwargs) or [card],
     )
     responses_cmd.run(_args(config, tmp_path / "h.db", since_hours=0.0, sync_applied=True))
-    assert seen == [{"max_pages": 5, "strict_empty": True}]
+    assert seen == [{"max_pages": 5, "strict_empty": True, "strict_scrape": False}]
     assert "добавлено 1" in capsys.readouterr().out
 
 
