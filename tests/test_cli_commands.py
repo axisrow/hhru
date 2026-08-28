@@ -657,3 +657,43 @@ def test_network_connection_failure_prints_environment_without_traceback(monkeyp
     assert "[ENVIRONMENT]" in stderr
     assert "Traceback" not in stderr
     logging.getLogger("hhru_bot").handlers.clear()
+
+
+def test_plain_timeout_without_net_err_stays_unclassified(monkeypatch, capsys):
+    """#747 (граница скоупа): throttled-канал — TCP/TLS-хендшейк проходит,
+    страница просто не успевает докачаться за GOTO_TIMEOUT_MS. Playwright в
+    этом случае бросает "чистый" PlaywrightTimeoutError БЕЗ net::ERR_* в
+    сообщении (как и в первой попытке из живого лога issue #747 — net::ERR_*
+    появился только на второй попытке goto).
+
+    Такой сбой НЕ должен переквалифицироваться в "[ENVIRONMENT]": причина
+    неизвестна (может быть анти-бот, может быть медленный/задушенный канал —
+    не отличить программно), и по fail-closed инварианту (CLAUDE.md §5)
+    остаётся неопределённой. Контракт — тот же, что и до #747: traceback
+    в консоли + запись в hhru_bot.log (#179), НЕ "[ENVIRONMENT]".
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from hhru_bot.logging_setup import LOG_DIR
+
+    def _render_timeout(_args: argparse.Namespace) -> bool:
+        raise PlaywrightTimeoutError("Page.goto: Timeout 90000ms exceeded.")
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _render_timeout)
+
+    try:
+        with pytest.raises(PlaywrightTimeoutError, match="Timeout 90000ms exceeded"):
+            main(["whoami"])
+
+        stderr = capsys.readouterr().err
+        assert "[ENVIRONMENT]" not in stderr
+
+        log_file = LOG_DIR / "hhru_bot.log"
+        assert log_file.exists()
+        content = log_file.read_text(encoding="utf-8")
+        assert "Необработанное исключение в команде 'whoami'" in content
+        assert "страница не отрисовалась / возможен анти-бот" in content
+    finally:
+        logging.getLogger("hhru_bot").handlers.clear()
