@@ -112,6 +112,10 @@ class AppConfig:
     throttle: ThrottleConfig
     cover_letter_default: str
     resumes: list[ResumeConfig]
+    # #710: статичный шаблон напоминания reply-employers --follow-up, по
+    # аналогии с cover_letter_default. Пусто по умолчанию — follow-up без
+    # заданного шаблона отказывает явным [FAIL], а не шлёт пустое сообщение.
+    follow_up_letter: str = ""
     # None = родной UA Playwright. Пробрасывается из account.user_agent (см. parse_account).
     user_agent: str | None = None
     # None = AI-функциональность выключена (issue #16, Этап 5). TOP-LEVEL секция ai
@@ -197,6 +201,7 @@ def load_config(path: str | Path) -> AppConfig:
     )
 
     cover_letter_default = raw.get("cover_letter_default", "")
+    follow_up_letter = raw.get("follow_up_letter", "")
 
     # #320: resumes — опциональный overlay настроек, а не реестр резюме:
     # пустой список или отсутствие раздела допустимы (канонический список живёт
@@ -259,6 +264,7 @@ def load_config(path: str | Path) -> AppConfig:
         storage_state_file=storage_state_file,
         throttle=throttle,
         cover_letter_default=cover_letter_default,
+        follow_up_letter=follow_up_letter,
         resumes=resumes,
         user_agent=user_agent,
         ai=ai,

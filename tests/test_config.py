@@ -151,6 +151,41 @@ def test_load_config_cover_letter_default_fallback(tmp_path):
     assert config.cover_letter_for(resume) == "Default letter for {vacancy_title}"
 
 
+def test_load_config_follow_up_letter_defaults_to_empty(tmp_path):
+    """#710: отсутствие секции — пустая строка, не ошибка (reply-employers сам
+    отказывает [FAIL] на пустой шаблон, а не молчит пустым сообщением)."""
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/CCC333"
+            search:
+              text: "x"
+    """,
+    )
+    assert load_config(path).follow_up_letter == ""
+
+
+def test_load_config_follow_up_letter_is_read(tmp_path):
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        follow_up_letter: "Reminder for {vacancy_title}"
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/CCC333"
+            search:
+              text: "x"
+    """,
+    )
+    assert load_config(path).follow_up_letter == "Reminder for {vacancy_title}"
+
+
 def test_load_config_cover_letter_override(tmp_path):
     path = _write_config(
         tmp_path,

@@ -136,6 +136,26 @@ def needs_reply(chat: ChatMessage | None) -> ReplyDecision:
     return ReplyDecision(False, "author_unknown")
 
 
+def needs_follow_up(chat: ChatMessage | None) -> ReplyDecision:
+    """Decide whether a follow-up reminder may be sent (#710).
+
+    Mirror image of :func:`needs_reply`: a follow-up is due only when the
+    LAST word in the chat is already ours (``author == "me"``) — sending one
+    while the employer's message is unread would be a duplicate reply, not a
+    reminder. Same fail-closed contract as ``needs_reply``: a missing
+    message, author, or marker never permits sending.
+    """
+    if chat is None:
+        return ReplyDecision(False, "empty_chat")
+    if not chat.inbound_marker:
+        return ReplyDecision(False, "inbound_marker_unknown")
+    if chat.author == "me":
+        return ReplyDecision(True, "last_message_from_us")
+    if chat.author == "employer":
+        return ReplyDecision(False, "last_message_from_employer")
+    return ReplyDecision(False, "author_unknown")
+
+
 def _message_id(data_qa: str | None) -> str | None:
     if not data_qa or not data_qa.startswith("chatik-chat-message-"):
         return None

@@ -9,6 +9,7 @@ from hhru_bot.negotiations_chat import (
     ChatMessage,
     extract_external_test_link,
     is_robot_questionnaire,
+    needs_follow_up,
     needs_reply,
     read_chat,
     wait_reply_confirmation,
@@ -36,6 +37,30 @@ def test_needs_reply_is_fail_closed_for_empty_chat():
 def test_needs_reply_is_fail_closed_for_unknown_author_or_marker():
     assert needs_reply(ChatMessage(None, "message-1")).should_reply is False
     assert needs_reply(ChatMessage("employer", None)).reason == "inbound_marker_unknown"
+
+
+# --- needs_follow_up (#710): mirror image of needs_reply --------------------
+
+
+def test_needs_follow_up_when_last_message_is_ours():
+    decision = needs_follow_up(ChatMessage("me", "message-1"))
+    assert decision.should_reply is True
+    assert decision.reason == "last_message_from_us"
+
+
+def test_needs_follow_up_skips_when_employer_already_answered():
+    decision = needs_follow_up(ChatMessage("employer", "message-1"))
+    assert decision.should_reply is False
+    assert decision.reason == "last_message_from_employer"
+
+
+def test_needs_follow_up_is_fail_closed_for_empty_chat():
+    assert needs_follow_up(None).reason == "empty_chat"
+
+
+def test_needs_follow_up_is_fail_closed_for_unknown_author_or_marker():
+    assert needs_follow_up(ChatMessage(None, "message-1")).should_reply is False
+    assert needs_follow_up(ChatMessage("me", None)).reason == "inbound_marker_unknown"
 
 
 def test_robot_questionnaire_detects_two_employer_questions():

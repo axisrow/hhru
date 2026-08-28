@@ -466,6 +466,72 @@ def test_record_reply_and_action_without_resume_id_keeps_account_wide_sentinel(t
         )
 
 
+# --- follow_up_candidates (#710) -------------------------------------------
+
+
+def _seed_response_at(
+    h: History, *, vacancy_id: str, topic: str, status: str, status_changed_at: str
+):
+    h.upsert_response(vacancy_id, "Acme", status, None, topic=topic)
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE responses SET status_changed_at=? WHERE vacancy_id=? AND topic=?",
+            (status_changed_at, vacancy_id, topic),
+        )
+
+
+def test_follow_up_candidates_returns_stale_read_response(tmp_path):
+    h = History(tmp_path / "h.db")
+    stale = (datetime.now() - timedelta(days=10)).isoformat()
+    _seed_response_at(h, vacancy_id="v1", topic="t1", status="read", status_changed_at=stale)
+
+    rows = h.follow_up_candidates(after_days=7)
+    assert [r["vacancy_id"] for r in rows] == ["v1"]
+
+
+def test_follow_up_candidates_excludes_recent_response(tmp_path):
+    h = History(tmp_path / "h.db")
+    recent = (datetime.now() - timedelta(days=1)).isoformat()
+    _seed_response_at(h, vacancy_id="v1", topic="t1", status="read", status_changed_at=recent)
+
+    assert h.follow_up_candidates(after_days=7) == []
+
+
+def test_follow_up_candidates_excludes_invitation_and_discard(tmp_path):
+    """Нечего напоминать: работодатель уже ответил (invitation) или отказал."""
+    h = History(tmp_path / "h.db")
+    stale = (datetime.now() - timedelta(days=30)).isoformat()
+    _seed_response_at(h, vacancy_id="v1", topic="t1", status="invitation", status_changed_at=stale)
+    _seed_response_at(h, vacancy_id="v2", topic="t2", status="discard", status_changed_at=stale)
+
+    assert h.follow_up_candidates(after_days=7) == []
+
+
+def test_follow_up_candidates_respects_limit(tmp_path):
+    h = History(tmp_path / "h.db")
+    stale = (datetime.now() - timedelta(days=30)).isoformat()
+    for i in range(3):
+        _seed_response_at(
+            h, vacancy_id=f"v{i}", topic=f"t{i}", status="response", status_changed_at=stale
+        )
+
+    assert len(h.follow_up_candidates(after_days=7, limit=2)) == 2
+
+
+def test_follow_up_candidates_dedup_marker_survives_a_second_run(tmp_path):
+    """Переиспользует has_replied как барьер, свой namespace marker'а (#710)."""
+    h = History(tmp_path / "h.db")
+    stale = (datetime.now() - timedelta(days=10)).isoformat()
+    _seed_response_at(h, vacancy_id="v1", topic="t1", status="read", status_changed_at=stale)
+
+    candidate = h.follow_up_candidates(after_days=7)[0]
+    marker = f"follow_up:{candidate['status_changed_at']}"
+    assert h.has_replied("t1", marker) is False
+
+    h.record_reply("t1", marker, vacancy_id="v1", status="success")
+    assert h.has_replied("t1", marker) is True
+
+
 # --- регресс: существующие таблицы не тронуты ------------------------------
 
 

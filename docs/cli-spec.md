@@ -476,9 +476,24 @@ Checkpoint `--resume` привязан также к `items-per-page`: smoke н�
 - **Сигнатура:**
   ```
   hhru_bot reply-employers [--dry-run] [--limit <n>] [--template <text>] --force
+  hhru_bot reply-employers --follow-up --after-days <n> [--dry-run] [--limit <n>] [--template <text>] --force
   ```
   - Без `--template` — использует `cover_letter_default` (аккаунт-wide шаблон; см.
     оговорку о scope ниже).
+  - **`--follow-up --after-days N` (#710)** — режим напоминания: вместо ответа на
+    входящее напоминает о себе там, где **последнее слово уже за нами**
+    (`needs_follow_up`, зеркало `needs_reply`) и работодатель молчит `N` дней
+    (`responses.status_changed_at`). Дополнительно требуется, чтобы hh.ru явно
+    разрешал напоминание для этого чата (`responseReminderState.allowed`, тот же
+    SSR-признак, что у `responses --remindable`) — иначе чат пропускается
+    `[skip]` независимо от возраста. LLM здесь не подключается — только
+    статичный `follow_up_letter` (по аналогии с `cover_letter_default`) или
+    `--template`. `--after-days` без `--follow-up` (и наоборот) — ошибка
+    аргументов; `--suggest` с `--follow-up` несовместимы (LLM-путь только для
+    обычного ответа). Дедупликация — тот же `has_replied`, но с собственным
+    namespace marker'а (`follow_up:<status_changed_at>`), потому что живой
+    `inbound_marker` чата — это marker НАШЕГО последнего сообщения и не
+    появляется заново при каждом напоминании.
 - **Scope — account-wide (без `--resume`):** команда НЕ принимает `--resume`.
   > **Основание пересмотрено (#200, 2026-08-16).** Прежняя формулировка — «страница
   > `/applicant/negotiations` не даёт достоверного признака, к какому резюме относится

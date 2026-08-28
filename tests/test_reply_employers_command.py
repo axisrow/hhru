@@ -16,7 +16,11 @@ def _args(**overrides):
     values = dict(
         dry_run=False,
         limit=0,
+        max_pages=5,
         template=None,
+        suggest=False,
+        follow_up=False,
+        after_days=None,
         force=False,
         config="unused",
         history="unused",
@@ -30,6 +34,7 @@ class _Cfg:
     storage_state_file = "unused"
     user_agent = None
     cover_letter_default = "Здравствуйте! {vacancy_title}"
+    follow_up_letter = "Напоминание! {vacancy_title}"
 
     class _Throttle:
         daily_apply_limit = 100
@@ -74,6 +79,7 @@ def _patch_common(
     send=None,
     reader=None,
     confirmation=True,
+    remindable_refs=None,
 ):
     monkeypatch.setattr(command, "confirm_write", lambda *a, **k: True)
     monkeypatch.setattr(
@@ -87,6 +93,24 @@ def _patch_common(
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda *a, **k: _Cfg())
     monkeypatch.setattr("hhru_bot.history.History", lambda *a, **k: history)
     monkeypatch.setattr("hhru_bot.negotiations_probe.topic_refs", lambda html: refs or [])
+    # #710: --follow-up reads a second SSR view of the same negotiations page
+    # (responseReminderState.allowed) via paginated_remindable_topic_refs.
+    # parse_initial_state() itself is also stubbed: paginated_remindable_
+    # topic_refs() reads page_num==0's topicList directly off it (loop-
+    # continuation check, not through remindable_topic_refs()) to decide
+    # whether the inbox is confirmed-empty.
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_probe.remindable_topic_refs", lambda html: remindable_refs or []
+    )
+    monkeypatch.setattr(
+        "hhru_bot.negotiations_probe.parse_initial_state",
+        lambda html: {"applicantNegotiations": {"topicList": [{}]}},
+    )
+    # Lightweight _Page fakes expose content() but not locator() (single-page
+    # inbox in tests); paginated_topic_refs() tolerates the resulting
+    # AttributeError itself, but paginated_remindable_topic_refs() calls
+    # _has_next_page() unconditionally, so it is stubbed here instead.
+    monkeypatch.setattr("hhru_bot.responses._has_next_page", lambda page, page_num: False)
     if reader is not None:
         monkeypatch.setattr("hhru_bot.negotiations_chat.read_chat", reader)
     if send is not None:
@@ -758,3 +782,184 @@ def test_routine_already_answered_sweep_does_not_fail_the_run(tmp_path, monkeypa
 
     result = command.run(_args(force=True))
     assert result is False
+
+
+# --- #710: --follow-up --after-days N ---------------------------------------
+
+
+def _seed_stale_response(
+    history: History, *, vacancy_id: str, topic: str, days_ago: int, title: str = "Python dev"
+):
+    """A responded/read chat whose status_changed_at is `days_ago` in the past."""
+    from datetime import datetime, timedelta
+
+    _seed_response(history, vacancy_id=vacancy_id, topic=topic, title=title)
+    stale = (datetime.now() - timedelta(days=days_ago)).isoformat()
+    with history._connect() as conn:
+        conn.execute(
+            "UPDATE responses SET status_changed_at=? WHERE vacancy_id=? AND topic=?",
+            (stale, vacancy_id, topic),
+        )
+
+
+def test_follow_up_requires_after_days(monkeypatch):
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(follow_up=True, dry_run=True))
+    assert exc.value.code == 1
+
+
+def test_after_days_requires_follow_up(monkeypatch):
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(after_days=5, dry_run=True))
+    assert exc.value.code == 1
+
+
+def test_after_days_must_be_positive(monkeypatch):
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(follow_up=True, after_days=0, dry_run=True))
+    assert exc.value.code == 1
+
+
+def test_follow_up_incompatible_with_suggest(monkeypatch):
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(follow_up=True, after_days=7, suggest=True, dry_run=True))
+    assert exc.value.code == 1
+
+
+def test_follow_up_dry_run_plans_reminder_for_stale_chat(tmp_path, monkeypatch, capsys):
+    from hhru_bot.negotiations_probe import RemindableTopicRef
+
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="me", inbound_marker="m1")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        remindable_refs=[RemindableTopicRef("tp1", "c1", "1", "Acme", "Python dev")],
+    )
+
+    command.run(_args(follow_up=True, after_days=7, dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out
+    assert "Напоминание" in out
+    # dry_run пишется в историю, но не дедуплицирует (has_replied смотрит
+    # только на status='success') -- как и в обычном reply-режиме.
+    with history._connect() as conn:
+        row = conn.execute("SELECT status, inbound_marker FROM replies").fetchone()
+    assert row["status"] == "dry_run"
+    assert row["inbound_marker"].startswith("follow_up:")
+
+
+def test_follow_up_is_not_offered_when_reminder_not_allowed(tmp_path, monkeypatch, capsys):
+    """hh.ru's responseReminderState.allowed gates the reminder, not just age."""
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="me", inbound_marker="m1")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        remindable_refs=[],  # hh.ru does not permit a reminder for this chat
+    )
+
+    command.run(_args(follow_up=True, after_days=7, dry_run=True))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" not in out
+    assert "не разрешает напоминание" in out
+
+
+def test_follow_up_skips_when_employer_already_replied(tmp_path, monkeypatch, capsys):
+    """The live chat re-read shows the employer answered -- a reminder must not fire."""
+    from hhru_bot.negotiations_probe import RemindableTopicRef
+
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="employer", inbound_marker="m1")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("must not send a reminder once the employer replied")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+        remindable_refs=[RemindableTopicRef("tp1", "c1", "1", "Acme", "Python dev")],
+    )
+
+    result = command.run(_args(follow_up=True, after_days=7, force=True))
+    out = capsys.readouterr().out
+    assert "[skip]" in out
+    assert result is False
+
+
+def test_follow_up_second_run_does_not_resend_same_reminder(tmp_path, monkeypatch, capsys):
+    """Dedup: a follow-up already sent for this stale status must not repeat (#710)."""
+    from hhru_bot.negotiations_probe import RemindableTopicRef
+
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    with history._connect() as conn:
+        status_changed_at = conn.execute(
+            "SELECT status_changed_at FROM responses WHERE vacancy_id='1'"
+        ).fetchone()[0]
+    history.record_reply(
+        "tp1",
+        f"follow_up:{status_changed_at}",
+        vacancy_id="1",
+        status="success",
+        letter_variant=None,
+    )
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="me", inbound_marker="m1")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("must not resend an already-delivered reminder")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=_boom_send,
+        remindable_refs=[RemindableTopicRef("tp1", "c1", "1", "Acme", "Python dev")],
+    )
+
+    command.run(_args(follow_up=True, after_days=7, force=True))
+    assert "уже напоминали" in capsys.readouterr().out
+
+
+def test_follow_up_successful_send_records_reply_and_action(tmp_path, monkeypatch, capsys):
+    from hhru_bot.negotiations_probe import RemindableTopicRef
+
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+    chat = ChatMessage(author="me", inbound_marker="m1")
+
+    _patch_common(
+        monkeypatch,
+        history,
+        refs=[Ref],
+        reader=lambda page, topic, refs: chat,
+        send=lambda page, text: None,
+        remindable_refs=[RemindableTopicRef("tp1", "c1", "1", "Acme", "Python dev")],
+    )
+
+    result = command.run(_args(follow_up=True, after_days=7, force=True))
+    assert result is False
+    with history._connect() as conn:
+        reply_row = conn.execute("SELECT status, inbound_marker FROM replies").fetchone()
+        action_row = conn.execute("SELECT action, status FROM actions").fetchone()
+    assert reply_row["status"] == "success"
+    assert reply_row["inbound_marker"].startswith("follow_up:")
+    assert tuple(action_row) == ("reply", "success")
