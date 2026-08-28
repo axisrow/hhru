@@ -7,9 +7,9 @@ const OVERLAY_SELECTORS = [
 ];
 
 function classify(element) {
-  const text = (element.innerText || element.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 500);
+  const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 500);
   const role = element.getAttribute('role');
-  const className = typeof element.className === 'string' ? element.className : '';
+  const className = element.getAttribute('class') ?? '';
   const type = /cookie/i.test(className + text)
     ? 'cookie_banner' : role === 'dialog' || role === 'alertdialog' || /modal|popup/i.test(className)
     ? 'modal' : /toast|notification/i.test(className) ? 'notification' : 'overlay';

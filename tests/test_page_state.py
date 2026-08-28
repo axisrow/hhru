@@ -212,3 +212,49 @@ def test_hhru_live_extension_readme_notes_agent_channel_is_external_only():
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     readme = (root / "README.md").read_text()
     assert "external" in readme.lower()
+
+
+def test_hhru_live_extension_collapses_whitespace_with_single_backslash_regex():
+    """Issue #743 finding 2: classify()'s text-collapse regex was
+    written as double-backslash /\\\\s+/g in the source, which matches a
+    literal backslash + 's' in DOM text — not whitespace. It must be the
+    single-backslash /\\s+/g whitespace-class regex.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    assert ".replace(/\\s+/g, ' ')" in content
+    assert ".replace(/\\\\s+/g, ' ')" not in content
+
+
+def test_hhru_live_extension_reads_class_attribute_not_classname_property():
+    """Issue #743 finding 4: element.className is an SVGAnimatedString
+    (not a string) for SVG elements, so the old
+    `typeof element.className === 'string'` guard was always false for
+    SVG, silently degrading classification's className to ''. Read the
+    class attribute directly instead, which works uniformly for HTML and
+    SVG elements.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    assert "element.getAttribute('class')" in content
+    assert "typeof element.className" not in content
+
+
+def test_hhru_live_extension_readme_does_not_overclaim_external_reachability():
+    """Issue #743 finding 3 (Option B — documentation only, no code fix
+    yet, tracked as backlog): README previously claimed the hhru-agent
+    channel is "reachable only from an external caller", but onConnect
+    (not onConnectExternal) is registered and manifest.json has no
+    externally_connectable key — the channel is not actually reachable
+    by anyone yet. README must not overclaim reachability.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    readme = (root / "README.md").read_text()
+    assert "reachable only from an **external** caller" not in readme
+    assert "#743" in readme
