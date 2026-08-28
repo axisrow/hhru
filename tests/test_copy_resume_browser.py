@@ -201,6 +201,16 @@ class StubPage:
     def on(self, event, handler):
         self._event_handlers.setdefault(event, []).append(handler)
 
+    def remove_listener(self, event, handler):
+        # #749 code-review round 1, finding #3: goto_hh registers a
+        # response-listener per attempt and always removes it in a
+        # `finally` (including the success path). A Page double with `on`
+        # but no `remove_listener` blows up with an uncaught AttributeError
+        # the first time a test exercises the real goto_hh through it.
+        handlers = self._event_handlers.get(event, [])
+        if handler in handlers:
+            handlers.remove(handler)
+
     def emit(self, event, value):
         for handler in self._event_handlers.get(event, []):
             handler(value)
@@ -214,6 +224,29 @@ class StubPage:
         self.reloads.append(wait_until)
         if self.reload_action is not None:
             self.reload_action()
+
+
+def test_real_goto_hh_survives_stub_page_without_remove_listener_bug(monkeypatch):
+    """#749 code-review round 1, finding #3 (regression guard).
+
+    StubPage is the one Page double in this suite that defines ``on`` for
+    transient-overlay wiring without also defining ``remove_listener``.
+    Every other test in this file bypasses this by having ``_patch_env``
+    replace ``cr.goto_hh`` with a fake BEFORE any ``original_goto = cr.goto_hh``
+    capture runs, so the real ``goto_hh`` never actually touches StubPage in
+    those tests. This test calls the real ``browser.goto_hh`` directly,
+    closing that gap: StubPage must expose a working ``remove_listener`` (see
+    the method above) or this raises AttributeError from goto_hh's `finally`
+    on the ordinary success path.
+    """
+    from hhru_bot.browser import goto_hh
+
+    page = StubPage()
+    page.goto = lambda url, **kwargs: page.gotos.append(url)  # type: ignore[attr-defined]
+
+    goto_hh(page, "https://hh.ru/applicant/my_resumes")
+
+    assert page.gotos == ["https://hh.ru/applicant/my_resumes"]
 
 
 class StubConsoleMessage:

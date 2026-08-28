@@ -96,35 +96,47 @@ class ThrottledChannelDetected(PlaywrightTimeoutError):
     main-document response was observed with an OK status (TCP connect + TLS
     handshake + HTTP headers all succeeded — server is alive and reachable),
     yet the body never finished downloading before GOTO_TIMEOUT_MS. This is
-    the structural signature of a throttled/degraded network channel (e.g. a
-    dying VPN tunnel), not an anti-bot challenge or selector drift — both of
-    which would still leave goto without any observed response at all.
+    the typical signature of a throttled/degraded network channel (e.g. a
+    dying VPN tunnel).
+
+    Known limit (code-review round 1): it is not a proof. hh.ru's DDoS-Guard
+    can serve a challenge interstitial as a 200 document on the same path,
+    producing the same signature. The verdict is therefore diagnostic only —
+    it never changes control flow, and goto_hh still raises (CLAUDE.md §5,
+    fail-closed).
 
     Subclasses PlaywrightTimeoutError so it keeps flowing through every
     existing `except PlaywrightError`/`except PlaywrightTimeoutError` call
     site unchanged; only cli.py's classification branch inspects it directly.
-    Fail-closed (CLAUDE.md §5): this only relabels the failure, it never
-    turns it into a success — goto_hh still raises.
     """
 
 
 def _is_navigation_response(response, url: str) -> bool:
-    """Whether ``response`` answers the navigation request for ``url``.
+    """Whether ``response`` answers the navigation (document) request for ``url``.
 
-    Compares without the query string: hh.ru's own redirects/tracking params
-    can differ between the requested URL and the response URL that reports
-    them, and only the path identifies "this is the document we asked for".
+    Navigation-ness is taken from Playwright's own structural signal
+    (``request.is_navigation_request()`` + ``resource_type == "document"``),
+    not guessed from the URL (code-review round 1): hh.ru's SPA issues
+    xhr/fetch/prefetch requests against the very same path, and counting
+    those as "the server answered the document" would misclassify an
+    unanswered navigation as a live channel.
+
+    The path is still compared (without the query string: hh.ru's own
+    redirects/tracking params can differ between the requested URL and the
+    response URL that reports them), so a document response for a
+    *different* page does not count either.
     """
     try:
+        request = response.request
+        if not request.is_navigation_request():
+            return False
+        if request.resource_type != "document":
+            return False
         response_url = response.url
         status = response.status
-    except PlaywrightError:
+    except (PlaywrightError, AttributeError):
         return False
-    return (
-        urlsplit(response_url).path == urlsplit(url).path
-        and isinstance(status, int)
-        and status < 400
-    )
+    return urlsplit(response_url).path == urlsplit(url).path and status < 400
 
 
 def open_hydrated_resume_editor(
@@ -260,10 +272,14 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
     2. ``ready_selector`` (опц.) — после удачного goto дождаться конкретного
        ``data-qa`` маркера страницы (короткий GOTO_TIMEOUT_MS, если не задан
        context-timeout), вместо ненадёжного networkidle. None — не ждать.
-    3. (#749) Если попытка провалилась таймаутом, но за это время пришёл
-       response навигационного запроса со статусом < 400 — сервер живой,
-       узкое место в скорости передачи тела. Такую ошибку оборачиваем в
-       ``ThrottledChannelDetected`` вместо проброса как есть.
+    3. (#749) Если сам ``page.goto`` (не ``ready_selector``) провалился
+       таймаутом, но за это время пришёл response навигационного document-
+       запроса со статусом < 400 — сервер живой, узкое место в скорости
+       передачи тела. Такую ошибку оборачиваем в ``ThrottledChannelDetected``
+       вместо проброса как есть. ``ready_selector`` — отдельная проверка ПОСЛЕ
+       успешного goto; её таймаут classification'у не подлежит (code-review
+       round 1: канал там уже доказано живой, причина — дрейф селектора или
+       анти-бот интерстишл, и должна остаться неопределённой, см. #748).
 
     domcontentloaded НЕ меняем (рекомендация референсов #80: DDoS-Guard держит
     сеть активной, networkidle может не сработать).
@@ -285,19 +301,32 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
         # implement only goto/locator, not the full event-emitter surface.
         # The throttled-channel signal is a diagnostic nicety layered on top
         # of retry — its absence must not break goto_hh for callers whose
-        # fake Page has no .on/.remove_listener.
-        listener_attached = hasattr(page, "on")
+        # fake Page has no .on/.remove_listener. Require BOTH methods: a
+        # double with .on but no .remove_listener (test_copy_resume_browser.py
+        # StubPage, code-review round 1) would register the listener fine and
+        # then blow up in `finally` with an uncaught AttributeError — on the
+        # success path too, not just on error, since `return` still runs it.
+        listener_attached = hasattr(page, "on") and hasattr(page, "remove_listener")
         if listener_attached:
             page.on("response", _on_response)
         try:
             try:
-                page.goto(url, wait_until="domcontentloaded")
+                try:
+                    page.goto(url, wait_until="domcontentloaded")
+                except (PlaywrightTimeoutError, PlaywrightError) as exc:
+                    # #749 code-review round 1: throttled-классификация
+                    # применима ТОЛЬКО к самому goto() (докачке тела
+                    # документа). ready_selector — отдельная проверка ниже,
+                    # её таймаут НЕ должен попадать в эту ветку: это дрейф
+                    # селектора/анти-бот на уже докачанной странице, канал
+                    # тут ни при чём.
+                    if response_observed and "net::ERR_" not in str(exc):
+                        raise ThrottledChannelDetected(str(exc)) from exc
+                    raise
                 if ready_selector:
                     page.locator(ready_selector).wait_for(timeout=GOTO_TIMEOUT_MS)
                 return
             except (PlaywrightTimeoutError, PlaywrightError) as exc:
-                if response_observed and "net::ERR_" not in str(exc):
-                    exc = ThrottledChannelDetected(str(exc))
                 last_error = exc
                 if attempt < _GOTO_MAX_ATTEMPTS:
                     wait = _GOTO_BACKOFF_SECONDS * attempt
@@ -313,7 +342,7 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
             if listener_attached:
                 try:
                     page.remove_listener("response", _on_response)
-                except PlaywrightError:
+                except (PlaywrightError, AttributeError):
                     pass
     # Последняя попытка провалилась — пробрасываем, как обычный goto.
     assert last_error is not None

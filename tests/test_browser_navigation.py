@@ -395,10 +395,18 @@ def _page_with_response_listener(monkeypatch):
     return page, listeners
 
 
-def _fake_response(url: str, status: int):
+def _fake_response(url: str, status: int, *, navigation: bool = True):
+    """Мок Response с настраиваемым структурным признаком навигации.
+
+    navigation=False эмулирует SPA-субресурс (xhr/fetch/prefetch) — code-review
+    round 1: совпадение URL само по себе не доказывает, что это ответ на
+    document-запрос, а не побочный запрос по тому же пути.
+    """
     response = MagicMock(name="Response")
     response.url = url
     response.status = status
+    response.request.is_navigation_request.return_value = navigation
+    response.request.resource_type = "document" if navigation else "xhr"
     return response
 
 
@@ -475,6 +483,52 @@ def test_goto_hh_response_for_unrelated_url_ignored(monkeypatch):
 
     with pytest.raises(PlaywrightTimeoutError) as excinfo:
         goto_hh(page, "https://hh.ru/search/vacancy")
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+
+
+def test_goto_hh_non_navigation_response_same_path_ignored(monkeypatch):
+    """Code-review round 1, finding #2: субресурс (xhr/fetch) по ТОМУ ЖЕ
+    пути — не доказательство того, что сервер отдал документ. Навигационность
+    берётся из структурного признака Playwright, а не из совпадения URL.
+    """
+    url = "https://hh.ru/search/vacancy"
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        for handler in listeners:
+            handler(_fake_response(url, 200, navigation=False))
+        raise PlaywrightTimeoutError("Page.goto: Timeout 90000ms exceeded.")
+
+    page.goto.side_effect = _goto
+
+    with pytest.raises(PlaywrightTimeoutError) as excinfo:
+        goto_hh(page, url)
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+
+
+def test_goto_hh_ready_selector_timeout_not_throttled(monkeypatch):
+    """Code-review round 1, finding #1 (блокер): goto прошёл (канал доказано
+    живой, ответ 200 наблюдён), но ready_selector не появился — дрейф
+    селектора/анти-бот интерстишл на уже докачанной странице. Причина
+    остаётся неопределённой (#748) — это НЕ throttled-канал.
+    """
+    url = "https://hh.ru/resume/abc"
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        for handler in listeners:
+            handler(_fake_response(url, 200))
+        return None  # goto успешен — канал доказано живой
+
+    page.goto.side_effect = _goto
+    page.locator.return_value.wait_for.side_effect = PlaywrightTimeoutError(
+        "Locator.wait_for: Timeout 90000ms exceeded."
+    )
+
+    with pytest.raises(PlaywrightTimeoutError) as excinfo:
+        goto_hh(page, url, ready_selector="[data-qa='resume-update-button']")
 
     assert not isinstance(excinfo.value, ThrottledChannelDetected)
 
