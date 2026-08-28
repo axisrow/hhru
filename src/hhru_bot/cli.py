@@ -16,6 +16,8 @@ import pkgutil
 import sys
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
+
 from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
@@ -318,6 +320,28 @@ def _resolve_paths(args: argparse.Namespace) -> None:
     args.account_dir = str(account_paths.config.parent) if account_paths else None
 
 
+def _log_unhandled_to_file(command: str, message: str) -> None:
+    """Write an unhandled-exception record to the hhru_bot FileHandler only.
+
+    Shared by the generic ``except Exception`` path (#179) and the #747
+    PlaywrightError branch below: both re-raise afterwards, letting Python's
+    own excepthook print the traceback to stderr exactly once. Duplicating the
+    console output here would print it twice.
+    """
+    record = logging.getLogger("hhru_bot").makeRecord(
+        "hhru_bot",
+        logging.ERROR,
+        __file__,
+        0,
+        message,
+        (command,),
+        sys.exc_info(),
+    )
+    for handler in logging.getLogger("hhru_bot").handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.handle(record)
+
+
 def _execute(args: argparse.Namespace) -> None:
     # READ-команда `log` намеренно минует setup_logging: FileHandler создал бы
     # data/logs/hhru_bot.log на запись до run(), что нарушает READ-контракт «не меняет
@@ -348,6 +372,31 @@ def _execute(args: argparse.Namespace) -> None:
     except BrowserLaunchError as exc:
         print(f"[ENVIRONMENT] {exc}", file=sys.stderr)
         sys.exit(1)
+    except PlaywrightError as exc:
+        # #747: goto_hh (browser.py) пробрасывает PlaywrightTimeoutError/
+        # PlaywrightError одинаково для любой причины — сеть недоступна вовсе
+        # (DNS/connect timeout), анти-бот hh.ru или дрейф селектора/медленный
+        # рендер. Различаем только то, что можно различить достоверно:
+        # net::ERR_* — код уровня сетевого стека Chromium (Playwright не
+        # добрался до ответа сервера вообще), а не таймаут рендера/анти-бота.
+        if "net::ERR_" in str(exc):
+            print(
+                f"[ENVIRONMENT] похоже на отсутствие сети/соединения с hh.ru: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Остальные PlaywrightError (в т.ч. "чистый" TimeoutError без net::ERR_*
+        # в сообщении — страница не отрисовалась, возможен анти-бот) НЕ
+        # переквалифицируем: причина неизвестна, и по fail-closed инварианту
+        # (CLAUDE.md §5) остаётся неопределённой. Тот же путь логирования в файл
+        # + traceback, что и в except Exception ниже (#179).
+        if logging_enabled:
+            _log_unhandled_to_file(
+                args.command,
+                "Необработанное исключение в команде '%s' "
+                "(страница не отрисовалась / возможен анти-бот)",
+            )
+        raise
     except AntiBotChallengeDetected as exc:
         # #344: terminal apply/run state.  Do not render a traceback or continue
         # with another vacancy/resume (or bump in the combined ``run`` command).
@@ -371,18 +420,7 @@ def _execute(args: argparse.Namespace) -> None:
             # через excepthook — пользователь видел бы его дважды. Пишем запись
             # только в FileHandler напрямую, консоль получает traceback один раз
             # от самого Python (стандартное поведение необработанного исключения).
-            record = logging.getLogger("hhru_bot").makeRecord(
-                "hhru_bot",
-                logging.ERROR,
-                __file__,
-                0,
-                "Необработанное исключение в команде '%s'",
-                (args.command,),
-                sys.exc_info(),
-            )
-            for handler in logging.getLogger("hhru_bot").handlers:
-                if isinstance(handler, logging.FileHandler):
-                    handler.handle(record)
+            _log_unhandled_to_file(args.command, "Необработанное исключение в команде '%s'")
         raise
 
 
