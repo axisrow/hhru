@@ -66,7 +66,46 @@ def register(subparsers) -> None:
         action="store_true",
         help="Сообщить о новых приглашениях и вернуть специальный exit-код",
     )
+    p.add_argument(
+        "--calendar-hint",
+        action="store_true",
+        help="Для каждого нового приглашения напечатать готовую команду "
+        "`hhru calendar event` с плейсхолдерами времени (#711)",
+    )
     p.set_defaults(func=run)
+
+
+def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
+    """Готовая к копированию строка вызова ``calendar event`` для приглашения.
+
+    Время — ВСЕГДА плейсхолдер (#711): hh.ru не сообщает время собеседования в
+    статусе приглашения, а вывести его из ``response_date``/``status_changed_at``
+    значило бы догадаться — догадка в календаре означает пропущенное интервью
+    (см. контракт в ``commands/calendar.py:3-5``). Пользователь подставляет
+    реальное время сам.
+    """
+    summary = f"{employer} - {vacancy_id}"
+    return (
+        f'hhru calendar event --summary "{summary}" '
+        "--start <YYYY-MM-DDTHH:MM:SS+TZ> --end <YYYY-MM-DDTHH:MM:SS+TZ>"
+    )
+
+
+def _print_calendar_hints(rows: list[dict]) -> None:
+    """Печатает calendar-hint для каждого приглашения из ``rows`` (#711).
+
+    ``rows`` — уже отфильтрованная выборка «новых» ответов (см.
+    ``history.new_responses_since``); функция сама отбирает только
+    ``status == 'invitation'``, не трогая остальные статусы.
+    """
+    invitations = [r for r in rows if r.get("status") == "invitation"]
+    if not invitations:
+        return
+    print(f"\n[INFO] Calendar hint для новых приглашений: {len(invitations)}")
+    for row in invitations:
+        employer = (row.get("employer") or "").strip() or "(скрыт)"
+        vacancy_id = row.get("vacancy_id", "")
+        print(_calendar_hint_line(employer, vacancy_id))
 
 
 def _print_responses_table(rows: list[dict], title: str) -> None:
@@ -137,6 +176,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     sync_applied = getattr(args, "sync_applied", False)
     alert_new = getattr(args, "alert_new", False)
     detect_external_tests = getattr(args, "detect_external_tests", False)
+    calendar_hint = getattr(args, "calendar_hint", False)
     if sync_applied and (remindable_only or detect_external_tests):
         print(
             "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
@@ -368,3 +408,5 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
     rows = history.new_responses_since(since_summary)
     _print_responses_table(rows, "Новые ответы работодателей")
+    if calendar_hint:
+        _print_calendar_hints(rows)

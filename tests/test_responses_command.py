@@ -54,6 +54,60 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+def test_calendar_hint_prints_placeholder_not_response_date(capsys, tmp_path):
+    """#711: --calendar-hint печатает готовую команду calendar event.
+
+    Контракт (docs/calendar.py:3-5): время — ВСЕГДА плейсхолдер. Тест обязан
+    падать, если кто-то попытается подставить дату из responses (response_date/
+    status_changed_at) вместо плейсхолдера.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response(
+        "v1",
+        "ACME Corp",
+        "invitation",
+        "/c1",
+        response_date="27 июля, 14:05",
+    )
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" in out
+    calendar_line = next(line for line in out.splitlines() if "hhru calendar event" in line)
+    assert '--summary "ACME Corp - v1"' in calendar_line
+    # Плейсхолдер присутствует...
+    assert "--start <" in calendar_line and "--end <" in calendar_line
+    # ...а фактическая дата ответа с hh.ru в calendar-строку НЕ попадает
+    # (ASCII-таблица выше её печатает — контракт только про саму calendar-строку).
+    assert "27 июля" not in calendar_line
+
+
+def test_calendar_hint_skips_non_invitation_statuses(capsys, tmp_path):
+    """Calendar hint печатается только для приглашений, не для отказов/ответов."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "Beta LLC", "discard", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" not in out
+
+
+def test_calendar_hint_off_by_default(capsys, tmp_path):
+    """Без флага --calendar-hint вывод не содержит подсказку календаря."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "ACME Corp", "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" not in out
+
+
 def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     """--since-hours 0: нет обхода hh.ru, выводится ASCII-таблица из истории."""
     config = _write_config(tmp_path, _minimal_config())
