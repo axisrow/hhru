@@ -21,14 +21,33 @@ function report(element) {
   chrome.runtime.sendMessage(report);
 }
 
-function inspect(node) {
+function inspect(node, seen) {
   if (!(node instanceof Element)) return;
-  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector))) report(node);
-  node.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach(report);
+  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector)) && !seen.has(node)) {
+    seen.add(node);
+    report(node);
+  }
+  node.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    report(el);
+  });
 }
 
-const observer = new MutationObserver((mutations) => mutations.forEach(({ addedNodes }) => addedNodes.forEach(inspect)));
-observer.observe(document.documentElement, { childList: true, subtree: true });
+document.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => report(el));
+const observer = new MutationObserver((mutations) => {
+  const seen = new WeakSet();
+  mutations.forEach(({ type, target, addedNodes }) => {
+    if (type === 'attributes') { inspect(target, seen); return; }
+    addedNodes.forEach((node) => inspect(node, seen));
+  });
+});
+observer.observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['class', 'style', 'hidden', 'aria-hidden']
+});
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || !ACTION_ALLOWLIST.has(message.action)) {
     sendResponse({ ok: false, error: 'action_not_allowed' });

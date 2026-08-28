@@ -2,7 +2,7 @@
 
 Load this directory via `chrome://extensions` → Developer mode → Load unpacked. Open an already authenticated `https://hh.ru` tab and click the extension icon. The content script observes dynamically added dialog/modal/toast/notification/cookie elements and reports structured, detection-only events. It never closes or clicks anything.
 
-The agent channel is `chrome.runtime.connect({name: "hhru-agent"})`; stage one has an explicit empty action allowlist and returns `action_not_allowed` for every command. Diagnostics are stored in `chrome.storage.session` when available. Permissions are limited to the HH.ru hosts and no API permissions.
+The agent channel is `chrome.runtime.connect({name: "hhru-agent"})`; stage one has an explicit empty action allowlist and returns `action_not_allowed` for every command. Diagnostics are stored in `chrome.storage.session`. Permissions are limited to the HH.ru hosts plus the `storage` API permission (required by `chrome.storage.session`; without it `chrome.storage` is `undefined` and the popup would always show an empty report list).
 
 ## CLI question
 
