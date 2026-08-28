@@ -172,6 +172,30 @@ def paginated_topic_refs(page, max_pages: int = 5) -> list[TopicRef]:
 
 def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[RemindableTopicRef]:
     """Read the fail-closed reminder state from every negotiations page."""
+    return paginated_topic_and_remindable_refs(page, max_pages)[1]
+
+
+def paginated_topic_and_remindable_refs(
+    page, max_pages: int = 5
+) -> tuple[list[TopicRef], list[RemindableTopicRef]]:
+    """One negotiations pagination pass, both SSR views of the same HTML (#710).
+
+    ``reply-employers --follow-up`` needs both the topic→chat mapping
+    (:func:`topic_refs`) and the reminder-permission flags
+    (:func:`remindable_topic_refs`). Calling :func:`paginated_topic_refs` and
+    :func:`paginated_remindable_topic_refs` back-to-back would ``goto_hh``
+    every negotiations page TWICE for data already sitting in the first
+    response's HTML — doubling real browser navigations against the same
+    account, working against this project's own anti-fraud throttling
+    principle for no benefit. This walks the pages once and parses both views
+    out of the one ``page.content()`` per page.
+
+    Kept as a single walk with the STRICTER (remindable) render barrier for
+    every page: :func:`paginated_topic_refs` alone doesn't wait for cards to
+    render, but this combined walk needs the remindable parser's confirmed
+    ``NEGOTIATION_ITEM`` wait either way, so both views get the same
+    guarantee.
+    """
     if max_pages < 1:
         raise ValueError("max_pages must be >= 1")
     from .browser import goto_hh, require_authenticated_page
@@ -183,13 +207,15 @@ def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[Remindable
     )
     from .selector_groups import negotiations as ns
 
-    refs: list[RemindableTopicRef] = []
+    topics_out: list[TopicRef] = []
+    remindable_out: list[RemindableTopicRef] = []
     for page_num in range(max_pages):
         url = NEGOTIATIONS_URL if page_num == 0 else f"{NEGOTIATIONS_URL}?page={page_num}"
         goto_hh(page, url)
         require_authenticated_page(page)
         html = page.content()
-        refs.extend(remindable_topic_refs(html))
+        topics_out.extend(topic_refs(html))
+        remindable_out.extend(remindable_topic_refs(html))
         topics = parse_initial_state(html)["applicantNegotiations"]["topicList"]
         # An explicitly empty SSR list is a confirmed empty inbox.  Waiting
         # for a card in that case would turn a valid zero-result read into a
@@ -211,7 +237,7 @@ def paginated_remindable_topic_refs(page, max_pages: int = 5) -> list[Remindable
                 ) from None
         if not _has_next_page(page, page_num):
             break
-    return refs
+    return topics_out, remindable_out
 
 
 def chat_url(chat_id: str, chatik_origin: str = "https://chatik.hh.ru") -> str:

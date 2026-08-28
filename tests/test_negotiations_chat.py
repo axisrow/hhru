@@ -271,3 +271,29 @@ def test_confirmation_timeout_logs_page_url(caplog):
         result = wait_reply_confirmation(cast(Page, page), timeout_ms=0)
     assert result is False
     assert any("https://hh.ru/chat/42" in record.message for record in caplog.records)
+
+
+# --- min_count (#710, cycle-review round 2) ---------------------------------
+#
+# For --follow-up, "last message is ours" is already TRUE before the send
+# click (needs_follow_up's precondition) -- unlike a plain reply, where the
+# pre-click last message is the employer's. Without min_count, a silently
+# failed follow-up click (network drop, no exception) would still pass this
+# check on the very first poll and be journaled as a false 'success'.
+
+
+def test_min_count_rejects_unchanged_message_list():
+    """The message that is 'ours' pre-existed the click -- not new evidence."""
+    page = _FakeChatPage(authors=[True])  # same single "our" message as before
+    assert wait_reply_confirmation(cast(Page, page), timeout_ms=0, min_count=2) is False
+
+
+def test_min_count_confirms_once_a_new_message_renders():
+    page = _FakeChatPage(authors=[True, True])  # a second "our" message appeared
+    assert wait_reply_confirmation(cast(Page, page), timeout_ms=0, min_count=2) is True
+
+
+def test_min_count_default_preserves_plain_reply_behaviour():
+    """min_count=1 (default) is exactly the pre-existing contract."""
+    page = _FakeChatPage(authors=[True])
+    assert wait_reply_confirmation(cast(Page, page)) is True

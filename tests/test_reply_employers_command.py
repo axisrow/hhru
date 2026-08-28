@@ -93,12 +93,13 @@ def _patch_common(
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda *a, **k: _Cfg())
     monkeypatch.setattr("hhru_bot.history.History", lambda *a, **k: history)
     monkeypatch.setattr("hhru_bot.negotiations_probe.topic_refs", lambda html: refs or [])
-    # #710: --follow-up reads a second SSR view of the same negotiations page
-    # (responseReminderState.allowed) via paginated_remindable_topic_refs.
-    # parse_initial_state() itself is also stubbed: paginated_remindable_
-    # topic_refs() reads page_num==0's topicList directly off it (loop-
-    # continuation check, not through remindable_topic_refs()) to decide
-    # whether the inbox is confirmed-empty.
+    # #710: --follow-up reads the reminder-permission SSR view
+    # (responseReminderState.allowed) via the same one-pass walk as the
+    # topic mapping (paginated_topic_and_remindable_refs).
+    # parse_initial_state() itself is also stubbed: that walk reads
+    # page_num==0's topicList directly off it (loop-continuation check, not
+    # through remindable_topic_refs()) to decide whether the inbox is
+    # confirmed-empty.
     monkeypatch.setattr(
         "hhru_bot.negotiations_probe.remindable_topic_refs", lambda html: remindable_refs or []
     )
@@ -115,6 +116,9 @@ def _patch_common(
         monkeypatch.setattr("hhru_bot.negotiations_chat.read_chat", reader)
     if send is not None:
         monkeypatch.setattr("hhru_bot.negotiations_chat.send_reply_current", send)
+    # #710: pre-click message count for wait_reply_confirmation's min_count
+    # guard (--follow-up only) — the lightweight _Page fake has no locator().
+    monkeypatch.setattr("hhru_bot.negotiations_chat.count_visible_messages", lambda page: 0)
     monkeypatch.setattr(
         "hhru_bot.negotiations_chat.wait_reply_confirmation", lambda page, **k: confirmation
     )
@@ -183,6 +187,31 @@ def test_dry_run_prints_plan_and_sends_nothing(tmp_path, monkeypatch, capsys):
         assert conn.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 1
         row = conn.execute("SELECT status FROM replies").fetchone()
         assert row[0] == "dry_run"
+
+
+def test_empty_cover_letter_default_fails_closed_not_blank_send(tmp_path, monkeypatch, capsys):
+    """Regression (cycle-review round 2): the empty-template guard added for
+    --follow-up applies to the pre-existing plain reply path too -- an unset
+    cover_letter_default (and no --template) must fail closed with [FAIL],
+    not fall through to sending a blank letter."""
+    history = History(tmp_path / "history.db")
+    _seed_response(history, vacancy_id="1", topic="tp1")
+    Ref = TopicRef("tp1", "c1", None, "96223331")
+
+    def _boom_send(*a, **k):
+        raise AssertionError("must not send when the letter template is empty")
+
+    class _EmptyTemplateCfg(_Cfg):
+        cover_letter_default = ""
+
+    _patch_common(monkeypatch, history, refs=[Ref], send=_boom_send)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda *a, **k: _EmptyTemplateCfg())
+
+    result = command.run(_args(force=True))
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "Пустой шаблон письма" in out
+    assert result is True
 
 
 def test_no_candidates_prints_info_and_returns(tmp_path, monkeypatch, capsys):
@@ -800,6 +829,31 @@ def _seed_stale_response(
             "UPDATE responses SET status_changed_at=? WHERE vacancy_id=? AND topic=?",
             (stale, vacancy_id, topic),
         )
+
+
+def test_follow_up_schema_drift_in_remindable_refs_fails_closed_not_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    """remindable_topic_refs() is strict and raises ValueError on SSR schema
+    drift (unlike topic_refs(), which drops bad entries with a log). Without
+    ValueError in the except tuple this would be an uncaught traceback instead
+    of a clean [FAIL] -- the same class of defect #747/#748 fixed for goto_hh.
+    """
+    history = History(tmp_path / "history.db")
+    _seed_stale_response(history, vacancy_id="1", topic="tp1", days_ago=10)
+    Ref = TopicRef("tp1", "c1", "1", "r1")
+
+    _patch_common(monkeypatch, history, refs=[Ref], reader=lambda page, topic, refs: None)
+
+    def _boom(html):
+        raise ValueError("SSR responseReminderState.allowed schema is not recognised")
+
+    monkeypatch.setattr("hhru_bot.negotiations_probe.remindable_topic_refs", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        command.run(_args(follow_up=True, after_days=7, dry_run=True))
+    assert exc.value.code == 1
+    assert "[FAIL]" in capsys.readouterr().err
 
 
 def test_follow_up_requires_after_days(monkeypatch):

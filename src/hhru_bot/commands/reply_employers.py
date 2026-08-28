@@ -68,6 +68,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     from ..browser import launch_context
     from ..negotiations_chat import (
         NoReplyForm,
+        count_visible_messages,
         is_robot_questionnaire,
         needs_follow_up,
         needs_reply,
@@ -75,7 +76,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         send_reply_current,
         wait_reply_confirmation,
     )
-    from ..negotiations_probe import paginated_remindable_topic_refs, paginated_topic_refs
+    from ..negotiations_probe import paginated_topic_and_remindable_refs, paginated_topic_refs
     from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
@@ -115,9 +116,36 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # исключений, что и у fetch_responses (её собственный вызывающий код
         # в responses.py ловит их так же): истёкшая сессия или не
         # подтверждённая пагинация не должны крашить команду с traceback.
+        remindable_topics: set[str] | None = None
         try:
-            topic_list = paginated_topic_refs(page, max_pages=max_pages)
-        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            if follow_up:
+                # #710: локальная история говорит «работодатель молчит N дней»,
+                # но финальное разрешение на напоминание — прерогатива hh.ru
+                # (responseReminderState.allowed), а не эвристика по возрасту.
+                # Один обход даёт ОБА SSR-представления одного и того же HTML
+                # (topic→chat mapping + remindable-флаги) — раздельные вызовы
+                # paginated_topic_refs()+paginated_remindable_topic_refs()
+                # удвоили бы реальные браузерные переходы по тем же страницам
+                # negotiations без всякой новой информации.
+                topic_list, remindable_refs = paginated_topic_and_remindable_refs(
+                    page, max_pages=max_pages
+                )
+                remindable_topics = {ref.topic_id for ref in remindable_refs}
+            else:
+                # #201: пагинируем SSR chat mapping по всем страницам
+                # negotiations (аналогично --max-pages в других командах),
+                # иначе чат, ушедший за пределы первой страницы, тихо
+                # выглядит как empty_chat.
+                topic_list = paginated_topic_refs(page, max_pages=max_pages)
+        except (NotAuthenticated, ResponsesIndeterminate, ValueError) as exc:
+            # ValueError (#710, cycle-review round 2): remindable_topic_refs()
+            # -- в отличие от topic_refs(), который молча дропает битые
+            # записи -- намеренно строгий и бросает ValueError на дрейфе
+            # SSR-схемы (см. negotiations_probe.py). Без этого класса в except
+            # дрейф разметки hh.ru печатал бы голый traceback вместо [FAIL]
+            # (тот же дефект, что #747/#748 чинил для goto_hh). Тот же except
+            # покрывает обе ветки: ResponsesIndeterminate/NotAuthenticated
+            # остаются достижимы и для обычного пути через topic_refs().
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
@@ -129,23 +157,6 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # read_chat принимает Mapping[str, str] topic→chat_id, и менять его
         # контракт ради аналитического поля незачем.
         resume_by_topic = {ref.topic_id: ref.resume_id for ref in topic_list}
-        remindable_topics: set[str] | None = None
-        if follow_up:
-            # #710: локальная история говорит «работодатель молчит N дней», но
-            # финальное разрешение на напоминание — прерогатива hh.ru, а не
-            # эвристика по возрасту (responseReminderState.allowed, отдельный
-            # SSR-обход того же /applicant/negotiations — переиспользует уже
-            # подтверждённый парсер remindable_topic_refs, см. responses.py
-            # --remindable).
-            try:
-                remindable_refs = paginated_remindable_topic_refs(page, max_pages=max_pages)
-                remindable_topics = {ref.topic_id for ref in remindable_refs}
-            except (NotAuthenticated, ResponsesIndeterminate) as exc:
-                print(
-                    f"[FAIL] не удалось прочитать разрешённые напоминания: {exc}",
-                    file=sys.stderr,
-                )
-                raise SystemExit(1) from exc
         for candidate in candidates:
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
@@ -226,11 +237,9 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — {skip_reason}")
                 progress.skipped_count += 1
                 continue
-            if follow_up and getattr(args, "suggest", False):
-                print(f"[FAIL] {label} — --suggest несовместим с --follow-up")
-                progress.failed_count += 1
-                failed = True
-                continue
+            # --follow-up/--suggest несовместимость проверена в run() до входа
+            # сюда (sys.exit(1)); эта ветка её не дублирует, чтобы не оставлять
+            # недостижимый код на случай прямого вызова _run() в обход run().
             if getattr(args, "suggest", False):
                 from ..ai.llm_client import LLMClient
                 from ..reply_suggestions import ReplyContext, suggest
@@ -287,6 +296,17 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # чат перечитываем непосредственно перед кликом, чтобы
                 # TOCTOU-окно не пропустило входящее от работодателя или наш
                 # собственный ответ с другого устройства между этими шагами.
+                # #710 (cycle-review round 2): remindable_topics — снимок ДО
+                # цикла кандидатов, не перепроверяется здесь. hh.ru теоретически
+                # может отозвать разрешение на напоминание в этом узком окне
+                # (throttle-задержка предыдущего кандидата + рендер письма),
+                # но повторная проверка стоила бы ещё одной навигации на
+                # /applicant/negotiations на каждого кандидата — тот же
+                # анти-фрод trade-off, из-за которого reply/remindable читаются
+                # ОДНИМ обходом, а не двумя (см. paginated_topic_and_remindable_
+                # refs). Окно уже сужено содержательной TOCTOU-проверкой чата
+                # ниже (decide(live_chat)): реальный новый ответ работодателя
+                # по-прежнему блокирует отправку.
                 live_chat = read_chat(page, topic, refs)
                 live_decision = decide(live_chat)
                 if not live_decision.should_reply:
@@ -333,6 +353,16 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     search_query=None,
                     run_id=progress.run_id,
                 )
+                # #710 (cycle-review round 2): for a plain reply, the message
+                # BEFORE the click is the employer's -- "last message is ours"
+                # after the click is itself new evidence. For --follow-up the
+                # precondition (needs_follow_up) is the mirror: the last
+                # message is ALREADY ours before the click, so that same
+                # signal is true regardless of whether the click delivered
+                # anything. min_count anchors wait_reply_confirmation() to a
+                # strictly higher message count, the only signal a follow-up
+                # actually rendered a new message.
+                pre_click_count = count_visible_messages(page) if follow_up else 0
                 try:
                     send_reply_current(page, letter)
                 except NoReplyForm as exc:
@@ -362,7 +392,8 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     # apply/success.py (#7): таймаут не даёт false-positive
                     # success, но после состоявшегося клика фиксируется как
                     # uncertain, а не как безопасный для retry failed.
-                    if wait_reply_confirmation(page):
+                    min_count = pre_click_count + 1 if follow_up else 1
+                    if wait_reply_confirmation(page, min_count=min_count):
                         status = "success"
                         reason = None
                         sent += 1

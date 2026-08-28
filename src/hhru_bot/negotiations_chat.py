@@ -305,6 +305,18 @@ def read_employer_messages(page: Page, chat_id: str) -> list[str]:
     return texts
 
 
+def count_visible_messages(page: Page) -> int:
+    """Number of message DOM nodes currently rendered on an already-open chat.
+
+    Read-only, no navigation. Used by callers of :func:`wait_reply_confirmation`
+    (#710) to capture the pre-click message count for its ``min_count`` guard —
+    for ``--follow-up``, "last message is ours" is already true before the
+    click (that's the ``needs_follow_up`` precondition), so a strictly higher
+    count is the only signal that a NEW message actually rendered.
+    """
+    return page.locator(CHAT_MESSAGE_TEXT).count()
+
+
 def send_reply_current(page: Page, text: str) -> None:
     """Submit on the chat page already opened by :func:`read_last_message`."""
     input_loc = page.locator(CHAT_MESSAGE_INPUT)
@@ -326,7 +338,7 @@ def _sleep(page: Page, ms: float) -> None:
         time.sleep(ms / 1000)
 
 
-def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
+def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000, *, min_count: int = 1) -> bool:
     """Подтверждает, что клик отправки реально доставил сообщение (Codex #198).
 
     ``send_reply_current`` только кликает — клик мог не дойти (отклонение
@@ -337,6 +349,19 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
     ``read_last_message``). Опрашиваем union «последнее сообщение наше» в цикле
     до таймаута — hh.ru может отрисовать новое сообщение в DOM асинхронно.
 
+    ``min_count`` (#710, cycle-review round 2): для обычного ответа последнее
+    сообщение ДО клика — от работодателя (``needs_reply`` требует
+    ``author == "employer"``), поэтому «последнее — наше» само по себе уже
+    доказывает новое сообщение. Для ``--follow-up`` это неверно:
+    ``needs_follow_up`` требует, чтобы последнее сообщение уже БЫЛО нашим ДО
+    клика — тот же сигнал истинен ещё до отправки и не отличает реальную
+    доставку напоминания от сетевого сбоя, тихо провалившегося без exception.
+    Вызывающий код передаёт число сообщений чата, прочитанное непосредственно
+    перед кликом (``len(chat.conversation)`` или ``messages.count()``);
+    подтверждение засчитывается, только когда число сообщений СТРОГО
+    превышает это значение — то есть в DOM реально появилось новое сообщение,
+    а не просто осталось прежнее.
+
     Как и ``apply/success.wait_success_confirmation`` (#7): таймаут даёт
     false-negative (status='failed', разрешает повторную попытку), а не
     false-positive success — постоянная дедупликация по success опаснее.
@@ -345,7 +370,7 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
     while True:
         messages = page.locator(CHAT_MESSAGE_TEXT)
         count = messages.count()
-        if count:
+        if count >= min_count:
             message = messages.nth(count - 1)
             author = message.evaluate(
                 """(el, marker) => {

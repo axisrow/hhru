@@ -507,6 +507,43 @@ def test_follow_up_candidates_excludes_invitation_and_discard(tmp_path):
     assert h.follow_up_candidates(after_days=7) == []
 
 
+def test_follow_up_candidates_boundary_exactly_after_days_is_included(tmp_path):
+    """cutoff — status_changed_at <= now - after_days (инклюзивная граница)."""
+    h = History(tmp_path / "h.db")
+    exactly = (datetime.now() - timedelta(days=7)).isoformat()
+    _seed_response_at(h, vacancy_id="v1", topic="t1", status="read", status_changed_at=exactly)
+
+    rows = h.follow_up_candidates(after_days=7)
+    assert [r["vacancy_id"] for r in rows] == ["v1"]
+
+
+def test_follow_up_candidates_marker_is_stable_while_employer_stays_silent(tmp_path):
+    """status_changed_at не двигается на unchanged-обновлении (только last_seen_at) --
+    поэтому dedup-marker follow_up:<status_changed_at> остаётся тем же между
+    запусками, пока работодатель молчит (см. history.upsert_response)."""
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "Acme", "read", None, topic="t1")
+    with h._connect() as conn:
+        conn.execute(
+            "UPDATE responses SET status_changed_at=? WHERE vacancy_id='v1'",
+            ((datetime.now() - timedelta(days=10)).isoformat(),),
+        )
+        first_marker = conn.execute(
+            "SELECT status_changed_at FROM responses WHERE vacancy_id='v1'"
+        ).fetchone()[0]
+
+    # Второй, тот же по сути scrape того же статуса -- "свежий взгляд без
+    # изменений" (upsert_response docstring): last_seen_at обновляется,
+    # status_changed_at -- нет.
+    h.upsert_response("v1", "Acme", "read", None, topic="t1")
+    with h._connect() as conn:
+        second_marker = conn.execute(
+            "SELECT status_changed_at FROM responses WHERE vacancy_id='v1'"
+        ).fetchone()[0]
+
+    assert second_marker == first_marker
+
+
 def test_follow_up_candidates_respects_limit(tmp_path):
     h = History(tmp_path / "h.db")
     stale = (datetime.now() - timedelta(days=30)).isoformat()
