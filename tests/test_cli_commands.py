@@ -628,3 +628,32 @@ def test_antibot_terminal_state_prints_fail_without_traceback(monkeypatch, capsy
     assert "решите её вручную" in stderr
     assert "Traceback" not in stderr
     logging.getLogger("hhru_bot").handlers.clear()
+
+
+def test_network_connection_failure_prints_environment_without_traceback(monkeypatch, capsys):
+    """#747: сетевой сбой соединения (нет доступа до hh.ru — прокси/GFW/etc,
+    причина не устанавливается) должен получать тот же структурированный
+    контракт, что и BrowserLaunchError/AntiBotChallengeDetected (см. соседние
+    тесты выше в этом файле), а не падать в общий except Exception с голым
+    Python-traceback.
+
+    RED: сейчас cli.py::_execute не классифицирует net::ERR_* отдельно —
+    Playwright Error из goto_hh улетает в generic except Exception → raise,
+    печатая traceback в stderr вместо "[ENVIRONMENT] ...".
+    """
+    from playwright.sync_api import Error as PlaywrightError
+
+    def _network_down(_args: argparse.Namespace) -> bool:
+        raise PlaywrightError("Page.goto: net::ERR_TIMED_OUT at https://hh.ru/applicant/my_resumes")
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _network_down)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["whoami"])
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "[ENVIRONMENT]" in stderr
+    assert "Traceback" not in stderr
+    logging.getLogger("hhru_bot").handlers.clear()
