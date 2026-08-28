@@ -30,19 +30,27 @@ experience.py, ...) — это осознанно оставлено sub-issue #
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 
 from ..config import ConfigError
 from ._registry import register
+
+# Поля-даты (year, period_from, period_to) естественно писать в YAML без
+# кавычек ("2015", "2021-03-01") — PyYAML парсит их как int/date, не str.
+# Соседняя секция education.py уже терпит int для year (isinstance(value,
+# (str, int))); здесь то же самое расширено на date/datetime ради
+# period_from/period_to (полный ISO-вид тоже валиден без кавычек в YAML).
+_SCALAR_TYPES = (str, int, datetime.date, datetime.datetime)
 
 
 def _require_str(raw: dict, key: str, context: str) -> str:
     value = raw.get(key, "")
     if value is None:
         return ""
-    if not isinstance(value, str):
+    if not isinstance(value, _SCALAR_TYPES):
         raise ConfigError(f"Поле '{key}' в '{context}' должно быть строкой, получено: {value!r}")
-    return value
+    return str(value).strip() if not isinstance(value, str) else value
 
 
 def _require_str_list(raw: dict, key: str, context: str) -> list[str]:
@@ -102,93 +110,40 @@ class CandidateFacts:
     projects: list[ProjectFact] = field(default_factory=list)
 
 
-def _parse_work_experience(raw, context: str) -> list[WorkExperienceFact]:
-    value = raw.get("work_experience", [])
+# (dataclass, поля-строки, поля-списки-строк) на каждую подсекцию — параметризует
+# generic-парсер ниже вместо четырёх механически идентичных функций (все четыре
+# отличались только именем секции/полей, ту же форму уже обобщает
+# education.py::_records() для одной записи).
+_FACT_SPECS: dict[str, tuple[type, tuple[str, ...], tuple[str, ...]]] = {
+    "work_experience": (
+        WorkExperienceFact,
+        ("company", "position", "period_from", "period_to", "description"),
+        ("skills", "tags"),
+    ),
+    "education": (EducationFact, ("institution", "specialty", "year"), ("tags",)),
+    "languages": (LanguageFact, ("name", "level"), ("tags",)),
+    "projects": (ProjectFact, ("name", "description"), ("skills", "tags")),
+}
+
+
+def _parse_fact_list(raw: dict, section: str, context: str) -> list:
+    fact_cls, str_fields, list_fields = _FACT_SPECS[section]
+    value = raw.get(section, [])
     if value is None:
         return []
     if not isinstance(value, list):
-        raise ConfigError(f"Поле '{context}.work_experience' должно быть списком")
+        raise ConfigError(f"Поле '{context}.{section}' должно быть списком")
     result = []
     for i, item in enumerate(value):
-        item_context = f"{context}.work_experience[{i}]"
+        item_context = f"{context}.{section}[{i}]"
         if not isinstance(item, dict):
             raise ConfigError(f"Элемент '{item_context}' должен быть отображением")
-        result.append(
-            WorkExperienceFact(
-                company=_require_str(item, "company", item_context),
-                position=_require_str(item, "position", item_context),
-                period_from=_require_str(item, "period_from", item_context),
-                period_to=_require_str(item, "period_to", item_context),
-                description=_require_str(item, "description", item_context),
-                skills=_require_str_list(item, "skills", item_context),
-                tags=_require_str_list(item, "tags", item_context),
-            )
-        )
-    return result
-
-
-def _parse_education(raw, context: str) -> list[EducationFact]:
-    value = raw.get("education", [])
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ConfigError(f"Поле '{context}.education' должно быть списком")
-    result = []
-    for i, item in enumerate(value):
-        item_context = f"{context}.education[{i}]"
-        if not isinstance(item, dict):
-            raise ConfigError(f"Элемент '{item_context}' должен быть отображением")
-        result.append(
-            EducationFact(
-                institution=_require_str(item, "institution", item_context),
-                specialty=_require_str(item, "specialty", item_context),
-                year=_require_str(item, "year", item_context),
-                tags=_require_str_list(item, "tags", item_context),
-            )
-        )
-    return result
-
-
-def _parse_languages(raw, context: str) -> list[LanguageFact]:
-    value = raw.get("languages", [])
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ConfigError(f"Поле '{context}.languages' должно быть списком")
-    result = []
-    for i, item in enumerate(value):
-        item_context = f"{context}.languages[{i}]"
-        if not isinstance(item, dict):
-            raise ConfigError(f"Элемент '{item_context}' должен быть отображением")
-        result.append(
-            LanguageFact(
-                name=_require_str(item, "name", item_context),
-                level=_require_str(item, "level", item_context),
-                tags=_require_str_list(item, "tags", item_context),
-            )
-        )
-    return result
-
-
-def _parse_projects(raw, context: str) -> list[ProjectFact]:
-    value = raw.get("projects", [])
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ConfigError(f"Поле '{context}.projects' должно быть списком")
-    result = []
-    for i, item in enumerate(value):
-        item_context = f"{context}.projects[{i}]"
-        if not isinstance(item, dict):
-            raise ConfigError(f"Элемент '{item_context}' должен быть отображением")
-        result.append(
-            ProjectFact(
-                name=_require_str(item, "name", item_context),
-                description=_require_str(item, "description", item_context),
-                skills=_require_str_list(item, "skills", item_context),
-                tags=_require_str_list(item, "tags", item_context),
-            )
-        )
+        kwargs: dict[str, str | list[str]] = {}
+        for name in str_fields:
+            kwargs[name] = _require_str(item, name, item_context)
+        for name in list_fields:
+            kwargs[name] = _require_str_list(item, name, item_context)
+        result.append(fact_cls(**kwargs))
     return result
 
 
@@ -201,8 +156,8 @@ def parse_candidate_facts(raw, context: str) -> CandidateFacts | None:
         raise ConfigError(f"Секция '{context}' должна быть отображением")
 
     return CandidateFacts(
-        work_experience=_parse_work_experience(raw, context),
-        education=_parse_education(raw, context),
-        languages=_parse_languages(raw, context),
-        projects=_parse_projects(raw, context),
+        work_experience=_parse_fact_list(raw, "work_experience", context),
+        education=_parse_fact_list(raw, "education", context),
+        languages=_parse_fact_list(raw, "languages", context),
+        projects=_parse_fact_list(raw, "projects", context),
     )

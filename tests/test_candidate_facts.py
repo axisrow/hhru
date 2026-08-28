@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime
 import textwrap
 
 import pytest
@@ -141,6 +142,54 @@ def test_parse_candidate_facts_tags_default_empty_list():
     )
     assert facts is not None
     assert facts.work_experience[0].tags == []
+
+
+def test_parse_candidate_facts_unquoted_year_and_date_coerced_to_str():
+    # "year: 2015" и "period_from: 2021-03-01" без кавычек — естественный
+    # способ написать их в YAML; PyYAML парсит их как int/datetime.date, не
+    # str. Соседняя education.py секция уже терпит int для year — здесь то
+    # же самое, иначе load_config аварийно падает на самом обычном вводе.
+    facts = parse_candidate_facts(
+        {
+            "education": [{"institution": "МГУ", "year": 2015}],
+            "work_experience": [
+                {
+                    "company": "X",
+                    "period_from": datetime.date(2021, 3, 1),
+                    "period_to": datetime.date(2024, 6, 1),
+                }
+            ],
+        },
+        "resumes[0].candidate_facts",
+    )
+    assert facts is not None
+    assert facts.education[0].year == "2015"
+    assert facts.work_experience[0].period_from == "2021-03-01"
+    assert facts.work_experience[0].period_to == "2024-06-01"
+
+
+def test_load_config_candidate_facts_unquoted_year_does_not_raise(tmp_path):
+    # Integration-регрессия: тот же кейс через полный load_config с реальным
+    # YAML-парсингом (не dict, собранный вручную в тесте выше).
+    path = _write_config(
+        tmp_path,
+        """
+        account:
+          storage_state_file: data/storage_state/hh_session.json
+        resumes:
+          - id: r1
+            resume_url: "https://hh.ru/resume/CF500"
+            search:
+              text: "x"
+            candidate_facts:
+              education:
+                - institution: "МГУ"
+                  year: 2015
+        """,
+    )
+    facts = load_config(path).resumes[0].candidate_facts
+    assert facts is not None
+    assert facts.education[0].year == "2015"
 
 
 @pytest.mark.parametrize(
