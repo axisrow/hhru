@@ -17,6 +17,15 @@
 # приоритет, если заданы оба варианта.
 # Планировщик обычно зовёт одно действие за раз (см. deploy/*.plist шаблоны и
 # вывод `hhru-bot schedule`).
+#
+# `responses --alert-new` (#707/#708, эпик #704): при новых приглашениях CLI
+# возвращает CommandExitCode.NEW_INVITATIONS (10). Обёртка распознаёт этот
+# код, пишет заметную строку в scheduled.log и опционально вызывает
+# пользовательский хук HHRU_ALERT_CMD (см. ниже) — строго opt-in, дефолт
+# ничего не делает:
+#   scripts/scheduled_run.sh --headless responses --alert-new
+#   HHRU_ALERT_CMD='terminal-notifier -message "Новое приглашение hh.ru"' \
+#     scripts/scheduled_run.sh --headless responses --alert-new
 
 set -euo pipefail
 
@@ -55,6 +64,10 @@ LOG_FILE="${LOG_DIR}/scheduled.log"
 PYTHON_BIN="${HHRU_PYTHON:-python3}"
 # Keep synchronized with CommandExitCode.SESSION_EXPIRED in exit_codes.py.
 SESSION_EXPIRED_EXIT_CODE=78
+# Keep synchronized with CommandExitCode.NEW_INVITATIONS in exit_codes.py.
+# Возвращается только `responses --alert-new` (#707/#708, эпик #704) — на
+# остальные команды/коды этот код не завязан.
+NEW_INVITATIONS_EXIT_CODE=10
 run_cli() {
   "${PYTHON_BIN}" -m hhru_bot.cli "$@" 2>&1 | tee -a "${LOG_FILE}"
   return "${PIPESTATUS[0]}"
@@ -73,6 +86,19 @@ set -e
 if [[ "${status}" -eq "${SESSION_EXPIRED_EXIT_CODE}" ]]; then
   echo "[SESSION_EXPIRED] Сессия hh.ru истекла; выполните: hhru login или hhru refresh-token" \
     | tee -a "${LOG_FILE}"
+fi
+
+if [[ "${status}" -eq "${NEW_INVITATIONS_EXIT_CODE}" ]]; then
+  echo "***** НОВОЕ ПРИГЛАШЕНИЕ *****" | tee -a "${LOG_FILE}"
+  # Опциональный пользовательский хук — строго opt-in, дефолт "ничего не
+  # вызывать" (инвариант issue #708). Никакой встроенной отправки
+  # почты/пушей в самом репозитории.
+  if [[ -n "${HHRU_ALERT_CMD:-}" ]]; then
+    echo "[ALERT_HOOK] Вызываю HHRU_ALERT_CMD" | tee -a "${LOG_FILE}"
+    set +e
+    eval "${HHRU_ALERT_CMD}" >> "${LOG_FILE}" 2>&1
+    set -e
+  fi
 fi
 
 exit "${status}"

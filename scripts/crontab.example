@@ -1,3 +1,9 @@
 # hhru-bot: replace both placeholders, then add this line with `crontab -e`.
 # The wrapper changes to the repository root and appends to data/logs/scheduled.log.
 0 */4 * * * HHRU_PYTHON=__PYTHON_BIN__ __REPO_ROOT__/scripts/scheduled_run.sh --headless run --limit 5 > /dev/null 2>&1
+
+# Optional: alert on new invitations (#707/#708). Exit code 10
+# (CommandExitCode.NEW_INVITATIONS) makes the wrapper print a visible line in
+# scheduled.log; set HHRU_ALERT_CMD to also run a custom notification command
+# (opt-in only, nothing runs by default).
+# 15 */4 * * * HHRU_PYTHON=__PYTHON_BIN__ HHRU_ALERT_CMD='terminal-notifier -message "New hh.ru invitation"' __REPO_ROOT__/scripts/scheduled_run.sh --headless responses --alert-new > /dev/null 2>&1
