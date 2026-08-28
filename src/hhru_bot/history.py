@@ -2142,10 +2142,8 @@ class History:
             filters.append("(r.resume_id IS NULL OR r.resume_id = ?)")
             params.append(resume_id)
         action_filters = [
-            "a.vacancy_id = r.vacancy_id",
             "a.action = 'apply'",
             "a.status = 'success'",
-            "(r.resume_id IS NULL OR r.resume_id = a.resume_id)",
         ]
         action_params: list = []
         if since is not None:
@@ -2161,73 +2159,80 @@ class History:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                WITH rejection_rows AS (
+                WITH matched_actions AS (
+                    -- A known response belongs only to the application made
+                    -- with the same resume. Unattributed responses retain the
+                    -- vacancy-level fallback used by the legacy data.
+                    SELECT DISTINCT
+                        r.id AS response_id,
+                        NULLIF(TRIM(r.employer), '') AS employer,
+                        r.vacancy_id AS vacancy_id,
+                        a.search_query AS search_query
+                    FROM responses AS r
+                    JOIN actions AS a
+                      ON a.vacancy_id = r.vacancy_id
+                     AND (r.resume_id IS NULL OR r.resume_id = a.resume_id)
+                    WHERE {response_where}
+                      AND {action_where}
+                ),
+                rejection_rows AS (
                     -- An explicit query on the apply is authoritative. A
                     -- vacancy can be present under several searches; using
                     -- every vacancies_seen row here would report the same
                     -- rejection for searches where no application was sent.
                     SELECT DISTINCT
-                        r.id AS response_id,
-                        NULLIF(TRIM(r.employer), '') AS employer,
-                        a.search_query AS search_query,
+                        m.response_id,
+                        m.employer,
+                        m.search_query,
                         (
                             SELECT v.salary_from FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = r.vacancy_id
-                              AND v.search_query = a.search_query
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
                         ) AS salary_from,
                         (
                             SELECT v.salary_to FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = r.vacancy_id
-                              AND v.search_query = a.search_query
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
                         ) AS salary_to,
                         (
                             SELECT v.salary_currency FROM vacancies_seen AS v
-                            WHERE v.vacancy_id = r.vacancy_id
-                              AND v.search_query = a.search_query
+                            WHERE v.vacancy_id = m.vacancy_id
+                              AND v.search_query = m.search_query
                         ) AS salary_currency
-                    FROM responses AS r
-                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
-                    WHERE {response_where}
-                      AND {action_where}
-                      AND a.search_query IS NOT NULL
+                    FROM matched_actions AS m
+                    WHERE m.search_query IS NOT NULL
 
                     UNION ALL
 
                     -- Legacy actions have no query of their own, so retain
                     -- each known search attribution from vacancies_seen.
                     SELECT DISTINCT
-                        r.id AS response_id,
-                        NULLIF(TRIM(r.employer), '') AS employer,
+                        m.response_id,
+                        m.employer,
                         v.search_query AS search_query,
                         v.salary_from AS salary_from,
                         v.salary_to AS salary_to,
                         v.salary_currency AS salary_currency
-                    FROM responses AS r
-                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
-                    JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
-                    WHERE {response_where}
-                      AND {action_where}
-                      AND a.search_query IS NULL
+                    FROM matched_actions AS m
+                    JOIN vacancies_seen AS v ON v.vacancy_id = m.vacancy_id
+                    WHERE m.search_query IS NULL
 
                     UNION ALL
 
                     -- No card was ever collected: keep the rejection with
                     -- empty metadata instead of silently dropping it.
                     SELECT DISTINCT
-                        r.id AS response_id,
-                        NULLIF(TRIM(r.employer), '') AS employer,
+                        m.response_id,
+                        m.employer,
                         NULL AS search_query,
                         NULL AS salary_from,
                         NULL AS salary_to,
                         NULL AS salary_currency
-                    FROM responses AS r
-                    JOIN actions AS a ON a.vacancy_id = r.vacancy_id
-                    WHERE {response_where}
-                      AND {action_where}
-                      AND a.search_query IS NULL
+                    FROM matched_actions AS m
+                    WHERE m.search_query IS NULL
                       AND NOT EXISTS (
                           SELECT 1 FROM vacancies_seen AS v
-                          WHERE v.vacancy_id = r.vacancy_id
+                          WHERE v.vacancy_id = m.vacancy_id
                       )
                 )
                 SELECT employer, search_query, salary_from, salary_to, salary_currency,
@@ -2239,7 +2244,7 @@ class History:
                          COALESCE(search_query, ''),
                          salary_from, salary_to, salary_currency
                 """,
-                [*branch_params, *branch_params, *branch_params],
+                branch_params,
             ).fetchall()
 
         return [dict(row) for row in rows]
