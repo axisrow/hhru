@@ -75,6 +75,11 @@ def register(subparsers) -> None:
     p.set_defaults(func=run)
 
 
+def _response_employer_label(row: dict) -> str:
+    """Человекочитаемый работодатель из строки responses, тот же, что в таблице."""
+    return (row.get("employer") or "").strip() or "(скрыт)"
+
+
 def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
     """Готовая к копированию строка вызова ``calendar event`` для приглашения.
 
@@ -83,10 +88,16 @@ def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
     значило бы догадаться — догадка в календаре означает пропущенное интервью
     (см. контракт в ``commands/calendar.py:3-5``). Пользователь подставляет
     реальное время сам.
+
+    ``summary`` экранируется через ``shlex.quote`` — работодатель может
+    содержать кавычки (напр. `ООО "Ромашка"`), которые иначе сломали бы
+    copy-paste команды в shell.
     """
-    summary = f"{employer} - {vacancy_id}"
+    import shlex
+
+    summary = f"{employer} - {vacancy_id or '(скрыт)'}"
     return (
-        f'hhru calendar event --summary "{summary}" '
+        f"hhru calendar event --summary {shlex.quote(summary)} "
         "--start <YYYY-MM-DDTHH:MM:SS+TZ> --end <YYYY-MM-DDTHH:MM:SS+TZ>"
     )
 
@@ -103,9 +114,7 @@ def _print_calendar_hints(rows: list[dict]) -> None:
         return
     print(f"\n[INFO] Calendar hint для новых приглашений: {len(invitations)}")
     for row in invitations:
-        employer = (row.get("employer") or "").strip() or "(скрыт)"
-        vacancy_id = row.get("vacancy_id", "")
-        print(_calendar_hint_line(employer, vacancy_id))
+        print(_calendar_hint_line(_response_employer_label(row), row.get("vacancy_id", "")))
 
 
 def _print_responses_table(rows: list[dict], title: str) -> None:
@@ -128,7 +137,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
     body = []
     for r in rows:
         vac = r.get("vacancy_id", "")
-        emp = (r.get("employer") or "").strip() or "(скрыт)"
+        emp = _response_employer_label(r)
         st = status_label.get(r.get("status", ""), r.get("status", "") or "?")
         # Дата ответа с hh.ru как есть (текстовый блок карточки); «-» если hh.ru
         # не отдал блок даты.

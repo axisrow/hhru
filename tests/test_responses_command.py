@@ -76,7 +76,10 @@ def test_calendar_hint_prints_placeholder_not_response_date(capsys, tmp_path):
 
     assert "hhru calendar event" in out
     calendar_line = next(line for line in out.splitlines() if "hhru calendar event" in line)
-    assert '--summary "ACME Corp - v1"' in calendar_line
+    import shlex
+
+    tokens = shlex.split(calendar_line)
+    assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
     # Плейсхолдер присутствует...
     assert "--start <" in calendar_line and "--end <" in calendar_line
     # ...а фактическая дата ответа с hh.ru в calendar-строку НЕ попадает
@@ -94,6 +97,23 @@ def test_calendar_hint_skips_non_invitation_statuses(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "hhru calendar event" not in out
+
+
+def test_calendar_hint_escapes_quotes_in_employer(capsys, tmp_path):
+    """Работодатель с кавычками (ООО "Ромашка") не должен ломать copy-paste."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response('ООО "Ромашка"', 'ООО "Ромашка"', "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+    calendar_line = next(line for line in out.splitlines() if "hhru calendar event" in line)
+
+    import shlex
+
+    tokens = shlex.split(calendar_line)
+    summary = tokens[tokens.index("--summary") + 1]
+    assert summary == 'ООО "Ромашка" - ООО "Ромашка"'
 
 
 def test_calendar_hint_off_by_default(capsys, tmp_path):
