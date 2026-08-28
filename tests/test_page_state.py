@@ -116,3 +116,99 @@ def test_hhru_live_extension_dedupes_reports_by_element():
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     content = (root / "content.js").read_text()
     assert "WeakSet" in content
+
+
+def test_hhru_live_extension_dedup_set_persists_across_mutation_batches():
+    """Round-2 review of PR #644 (Codex + /review), finding: the dedup
+    WeakSet was created fresh inside the MutationObserver callback, so an
+    overlay whose attribute toggles across separate mutation batches
+    (each a distinct callback invocation) was re-reported every batch.
+    The seen-set must be declared outside the callback so it persists for
+    the observer's lifetime.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    observer_decl = content.index("new MutationObserver(")
+    weakset_decl = content.index("new WeakSet()")
+    assert weakset_decl < observer_decl, (
+        "the seen WeakSet must be declared before/outside the MutationObserver "
+        "callback so it persists across callback invocations, not recreated per batch"
+    )
+    # No second, per-callback WeakSet re-creation.
+    assert len(re.findall(r"new WeakSet\(\)", content)) == 1
+
+
+def test_hhru_live_extension_classifies_cookie_banner_before_role_dialog():
+    """Round-2 review of PR #644 (/review), finding: classify()'s ternary
+    tested role === 'dialog'/'alertdialog' before the cookie-text check, so
+    a cookie-consent banner marked role="dialog" (a common accessible
+    pattern) was always misclassified as 'modal' instead of 'cookie_banner'.
+    The cookie check must be evaluated first.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    cookie_check = content.index("/cookie/i.test")
+    dialog_role_check = content.index("role === 'dialog'")
+    assert cookie_check < dialog_role_check, (
+        "cookie-text classification must be checked before the dialog/modal "
+        'role check, so a role="dialog" cookie banner is still classified '
+        "as cookie_banner"
+    )
+
+
+def test_hhru_live_extension_awaits_storage_write():
+    """Round-2 review of PR #644 (/review), finding: chrome.storage.session
+    .set() was fire-and-forget; a rejected write (e.g. quota exceeded) was
+    silently swallowed while sendResponse still reported ok: true.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    background = (root / "background.js").read_text()
+    assert "await chrome.storage.session" in background
+    # A storage write can only be awaited from an async context; the
+    # listener must keep the message channel open (`return true`) while it does.
+    assert "return true;" in background
+
+
+def test_hhru_live_extension_rehydrates_reports_on_worker_startup():
+    """Round-2 review of PR #644 (Codex), finding: recentReports is an
+    in-memory array never rehydrated from chrome.storage.session on
+    service-worker startup; an MV3 SW restart silently truncates
+    diagnostics history to just the next incoming report.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    background = (root / "background.js").read_text()
+    assert "storage.session.get" in background or "storage.session?.get" in background
+
+
+def test_hhru_live_extension_validates_sender_origin():
+    """Round-2 review of PR #644 (Codex), finding: onMessage/onConnect
+    accepted any sender without validating it came from an hh.ru tab,
+    which is the wrong foundation for the planned action bridge.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    background = (root / "background.js").read_text()
+    assert "hh.ru" in background or "hh\\.ru" in background
+
+
+def test_hhru_live_extension_readme_notes_agent_channel_is_external_only():
+    """Round-2 review of PR #644 (/review), finding: the README described
+    the hhru-agent runtime.connect channel without noting that no code in
+    the extension itself (content.js/popup.js) ever opens that port —
+    it exists only for a future external caller.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    readme = (root / "README.md").read_text()
+    assert "external" in readme.lower()

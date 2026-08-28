@@ -10,9 +10,9 @@ function classify(element) {
   const text = (element.innerText || element.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 500);
   const role = element.getAttribute('role');
   const className = typeof element.className === 'string' ? element.className : '';
-  const type = role === 'dialog' || role === 'alertdialog' || /modal|popup/i.test(className)
-    ? 'modal' : /cookie/i.test(className + text) ? 'cookie_banner'
-    : /toast|notification/i.test(className) ? 'notification' : 'overlay';
+  const type = /cookie/i.test(className + text)
+    ? 'cookie_banner' : role === 'dialog' || role === 'alertdialog' || /modal|popup/i.test(className)
+    ? 'modal' : /toast|notification/i.test(className) ? 'notification' : 'overlay';
   return { type, text, role, className: className.slice(0, 200), visible: !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length) };
 }
 
@@ -34,9 +34,12 @@ function inspect(node, seen) {
   });
 }
 
-document.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => report(el));
+const seen = new WeakSet();
+document.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
+  seen.add(el);
+  report(el);
+});
 const observer = new MutationObserver((mutations) => {
-  const seen = new WeakSet();
   mutations.forEach(({ type, target, addedNodes }) => {
     if (type === 'attributes') { inspect(target, seen); return; }
     addedNodes.forEach((node) => inspect(node, seen));
