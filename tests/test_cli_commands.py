@@ -697,3 +697,33 @@ def test_plain_timeout_without_net_err_stays_unclassified(monkeypatch, capsys):
         assert "страница не отрисовалась / возможен анти-бот" in content
     finally:
         logging.getLogger("hhru_bot").handlers.clear()
+
+
+def test_throttled_channel_prints_environment_without_traceback(monkeypatch, capsys):
+    """#749: goto_hh уже подтвердил (по response навигационного запроса,
+    полученному до таймаута), что сервер живой — узкое место строго в
+    скорости докачки тела (throttled/задушенный канал, напр. умирающий VPN).
+
+    Это третий класс, отдельный от net::ERR_* (#748, соединение не
+    установлено вовсе) и от "чистого" TimeoutError без наблюдаемого response
+    (#747, остаётся неопределённым намеренно) — должен получить тот же
+    структурированный [ENVIRONMENT]-контракт, что и net::ERR_*, но с текстом,
+    отличающим причину.
+    """
+    from hhru_bot.browser import ThrottledChannelDetected
+
+    def _throttled(_args: argparse.Namespace) -> bool:
+        raise ThrottledChannelDetected("Page.goto: Timeout 90000ms exceeded.")
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _throttled)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["whoami"])
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "[ENVIRONMENT]" in stderr
+    assert "медленный" in stderr or "задушенный" in stderr
+    assert "Traceback" not in stderr
+    logging.getLogger("hhru_bot").handlers.clear()

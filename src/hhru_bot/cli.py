@@ -21,7 +21,7 @@ from playwright.sync_api import Error as PlaywrightError
 from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
-from .browser import BrowserLaunchError
+from .browser import BrowserLaunchError, ThrottledChannelDetected
 from .exit_codes import CommandExitCode
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
@@ -382,6 +382,19 @@ def _execute(args: argparse.Namespace) -> None:
         if "net::ERR_" in str(exc):
             print(
                 f"[ENVIRONMENT] похоже на отсутствие сети/соединения с hh.ru: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # #749: третий класс — throttled-канал. goto_hh уже подтвердил (по
+        # response навигационного запроса, полученному ДО таймаута), что
+        # сервер ответил — TCP/TLS/заголовки прошли, узкое место строго в
+        # скорости докачки тела. Отличается и от net::ERR_* (нет вовсе), и
+        # от "чистого" TimeoutError без наблюдаемого response (там причина
+        # остаётся неопределённой намеренно, см. ветку ниже).
+        if isinstance(exc, ThrottledChannelDetected):
+            print(
+                f"[ENVIRONMENT] похоже на медленный/задушенный канал до hh.ru "
+                f"(сервер ответил, но страница не докачалась): {exc}",
                 file=sys.stderr,
             )
             sys.exit(1)

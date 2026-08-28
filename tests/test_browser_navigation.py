@@ -19,6 +19,7 @@ from hhru_bot import browser
 from hhru_bot.browser import (
     GOTO_TIMEOUT_MS,
     NotAuthenticated,
+    ThrottledChannelDetected,
     goto_hh,
     open_confirmed_resume,
     require_authenticated_page,
@@ -377,3 +378,115 @@ def test_goto_hh_ready_selector_absent_retries_then_raises(monkeypatch):
 
     # retry сработал: 3 goto-попытки (ready_selector проверяется после каждой)
     assert page.goto.call_count == 3
+
+
+def _page_with_response_listener(monkeypatch):
+    """Мок Page, эмулирующий page.on('response', handler)/remove_listener.
+
+    goto_hh регистрирует ровно один response-listener за попытку; тест
+    вызывает его вручную (эмулируя приход HTTP-ответа сервера ДО таймаута),
+    затем поднимает page.goto из PlaywrightTimeoutError, как реальный
+    Playwright делает при таймауте после уже полученных заголовков.
+    """
+    monkeypatch.setattr(browser.time, "sleep", lambda _: None)
+    listeners: list = []
+    page = MagicMock(name="Page")
+    page.on.side_effect = lambda _event, handler: listeners.append(handler)
+    return page, listeners
+
+
+def _fake_response(url: str, status: int):
+    response = MagicMock(name="Response")
+    response.url = url
+    response.status = status
+    return response
+
+
+def test_goto_hh_wraps_timeout_as_throttled_when_response_observed(monkeypatch):
+    """#749: сервер ответил (status 200 на навигационный URL), но тело не
+    успело докачаться — PlaywrightTimeoutError без net::ERR_*.  goto_hh
+    должен переквалифицировать это в ThrottledChannelDetected — throttled-
+    канал, а не анти-бот/дрейф селектора.
+    """
+    url = "https://hh.ru/search/vacancy"
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        # Сервер успел ответить до того, как истёк таймаут рендера.
+        for handler in listeners:
+            handler(_fake_response(url, 200))
+        raise PlaywrightTimeoutError("Page.goto: Timeout 90000ms exceeded.")
+
+    page.goto.side_effect = _goto
+
+    with pytest.raises(ThrottledChannelDetected):
+        goto_hh(page, url)
+
+    assert page.goto.call_count == 3  # ретраится и на последней пробрасывает
+
+
+def test_goto_hh_no_response_stays_unclassified_timeout(monkeypatch):
+    """Симметричный случай: response вообще не пришёл (анти-бот/дрейф
+    селектора/сеть недоступна) — ошибка НЕ должна переквалифицироваться.
+    """
+    page, _listeners = _page_with_response_listener(monkeypatch)
+    page.goto.side_effect = PlaywrightTimeoutError("Page.goto: Timeout 90000ms exceeded.")
+
+    with pytest.raises(PlaywrightTimeoutError) as excinfo:
+        goto_hh(page, "https://hh.ru/search/vacancy")
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+
+
+def test_goto_hh_net_err_not_reclassified_as_throttled(monkeypatch):
+    """net::ERR_* остаётся в своём классе (#748) даже если listener успел
+    увидеть какой-то response до обрыва соединения — net::ERR_* в тексте
+    ошибки приоритетнее throttled-эвристики.
+    """
+    url = "https://hh.ru/search/vacancy"
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        for handler in listeners:
+            handler(_fake_response(url, 200))
+        raise PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET")
+
+    page.goto.side_effect = _goto
+
+    with pytest.raises(PlaywrightError) as excinfo:
+        goto_hh(page, url)
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+    assert "net::ERR_" in str(excinfo.value)
+
+
+def test_goto_hh_response_for_unrelated_url_ignored(monkeypatch):
+    """Response для другого URL (напр. аналитика/трекер) не должен
+    засчитываться как подтверждение навигационного запроса.
+    """
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        for handler in listeners:
+            handler(_fake_response("https://hh.ru/analytics/beacon", 200))
+        raise PlaywrightTimeoutError("Page.goto: Timeout 90000ms exceeded.")
+
+    page.goto.side_effect = _goto
+
+    with pytest.raises(PlaywrightTimeoutError) as excinfo:
+        goto_hh(page, "https://hh.ru/search/vacancy")
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+
+
+def test_goto_hh_removes_response_listener_after_each_attempt(monkeypatch):
+    """Listener не должен копиться между попытками/вызовами (утечка памяти)."""
+    page, listeners = _page_with_response_listener(monkeypatch)
+    removed: list = []
+    page.remove_listener.side_effect = lambda _event, handler: removed.append(handler)
+    page.goto.return_value = None
+
+    goto_hh(page, "https://hh.ru/search/vacancy")
+
+    assert len(listeners) == 1
+    assert removed == listeners
