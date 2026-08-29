@@ -35,15 +35,21 @@ AREA = "Программист, разработчик"
 class TreeItem:
     """Пункт каталога профессий: ``.all()`` отдаёт обёртку с data-qa leaf."""
 
-    def __init__(self, text, qa):
+    def __init__(self, text, qa, page=None):
         self._text = text
         self._qa = qa
+        self.page = page
 
     def text_content(self):
         return self._text
 
     def get_attribute(self, name):
         return self._qa if name == "data-qa" else None
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        # Клик по строке профессии переключает скрытый за обёрткой чекбокс.
+        if self.page is not None:
+            self.page.checked = True
 
 
 class Locator:
@@ -65,7 +71,7 @@ class Locator:
     def all(self):
         # Дерево каталога профессий: ровно одна leaf, совпадающая с AREA.
         if "tree-selector-item-text-" in self.selector:
-            return [TreeItem(AREA, "tree-selector-item-text-96")]
+            return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
         return [self]
 
     def text_content(self):
@@ -76,6 +82,10 @@ class Locator:
 
     def check(self):
         self.page.clicks.append(f"check:{self.selector}")
+
+    def is_checked(self):
+        # По умолчанию клик по строке отмечает чекбокс; страж переопределяет.
+        return getattr(self.page, "checked", True)
 
     def locator(self, selector):
         return Locator(self.page, selector, 0)
@@ -324,14 +334,14 @@ class CatalogLocator(HydrationLocator):
         self.page.tree_reads += 1
         if self.page.reads_until_filtered is None:
             # Профессии нет в каталоге: фильтр не даст совпадения никогда.
-            return [TreeItem("Аналитик", "tree-selector-item-text-10")]
+            return [TreeItem("Аналитик", "tree-selector-item-text-10", self.page)]
         if self.page.tree_reads <= self.page.reads_until_filtered:
             # Ещё не отфильтровано: чужие профессии, точного совпадения нет.
             return [
-                TreeItem("Аналитик", "tree-selector-item-text-10"),
-                TreeItem("Тестировщик", "tree-selector-item-text-11"),
+                TreeItem("Аналитик", "tree-selector-item-text-10", self.page),
+                TreeItem("Тестировщик", "tree-selector-item-text-11", self.page),
             ]
-        return [TreeItem(AREA, "tree-selector-item-text-96")]
+        return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
 
 
 def test_catalog_tree_is_read_after_filter_applies(monkeypatch):
@@ -383,3 +393,61 @@ def test_polling_stops_as_soon_as_match_appears(monkeypatch):
     assert result.success
     # 1 чтение нефильтрованного дерева + 1 чтение с совпадением = выход.
     assert page.tree_reads == 2, f"лишние чтения после совпадения: {page.tree_reads}"
+
+
+class CheckboxWrapperPage(CatalogFilterPage):
+    """hh.ru оборачивает <input type=checkbox> в стилизованный контейнер.
+
+    Живая разведка #778: ``Locator.check()`` по самому input падает с
+    «Clicking the checkbox did not change its state» (у него ``tabindex="-1"``
+    и оформление на родительском ``magritte-checkbox-container``), а клик по
+    текстовой строке профессии переключает его штатно.
+    """
+
+    def __init__(self):
+        super().__init__(reads_until_filtered=0)
+        self.checked = False
+
+    def locator(self, selector):
+        if "tree-selector-input-" in selector:
+            return CheckboxLocator(self, selector, 1)
+        return super().locator(selector)
+
+
+class CheckboxLocator(HydrationLocator):
+    def check(self):
+        raise PlaywrightError("Locator.check: Clicking the checkbox did not change its state")
+
+
+def test_profession_is_selected_by_clicking_the_row(monkeypatch):
+    """Профессия отмечается кликом по строке, а не check() по input."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CheckboxWrapperPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"строка профессии должна кликаться: {result.reason}"
+
+
+def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
+    """Клик по строке не отметил профессию — отказ до submit (fail-closed).
+
+    Молчаливое продолжение отправило бы каталог без выбранной профессии и
+    создало бы резюме не с той специализацией.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    class NeverChecksPage(CheckboxWrapperPage):
+        def locator(self, selector):
+            loc = super().locator(selector)
+            if "tree-selector-input-" in selector:
+                loc.is_checked = lambda: False  # type: ignore[method-assign]
+            return loc
+
+    page = NeverChecksPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не отмечена" in result.reason
