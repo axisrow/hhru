@@ -96,6 +96,7 @@ def test_lock_covers_all_hhru_write_commands():
         "create-resume",
         "resume-position",
         "resume-sections",
+        "resume-pool",
         "edit-skills",
         "edit-languages",
         "settings",

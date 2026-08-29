@@ -211,6 +211,13 @@ resumes:
     #       description: "CLI на Playwright для автопоиска вакансий."
     #       skills: ["python", "playwright"]
     #       tags: ["backend", "automation"]
+
+    # Опционально (#754): ключ кластера вакансий (resume_clusters.py), с
+    # которым связано это резюме — заполняется автоматически командой
+    # `resume-pool --write-config` для каждой созданной копии пула, либо
+    # вручную. Допустимые значения: ai_llm, data_science, data_engineer,
+    # python_backend.
+    # cluster: "ai_llm"
     cover_letter: null
 
   - id: "resume-name-2"
