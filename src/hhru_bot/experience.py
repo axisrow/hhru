@@ -37,6 +37,7 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_START_YEAR,
     FIRST_EXPERIENCE_CANCEL,
     FIRST_EXPERIENCE_COMPANY,
+    FIRST_EXPERIENCE_CURRENT_CHECKBOX,
     FIRST_EXPERIENCE_POSITION,
     FIRST_EXPERIENCE_SAVE,
 )
@@ -332,8 +333,44 @@ def edit_experience_on_hh(
             _fill(page.locator(company_selector), entry.company)
             _fill(page.locator(position_selector), entry.position)
             _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
-            if page.locator(EXPERIENCE_END_YEAR).count() == 1:
-                _fill(page.locator(EXPERIENCE_END_YEAR), "" if entry.current else entry.end_year)
+            end_year_locator = page.locator(EXPERIENCE_END_YEAR)
+            if end_year_locator.count() == 1:
+                # #800: the end-year field is disabled while the "Работаю
+                # сейчас" checkbox is checked (checked by default on a new
+                # entry). Filling a disabled field just retries fill() until
+                # Playwright's timeout — check is_enabled() first rather than
+                # attempting the fill unconditionally.
+                end_year_enabled = end_year_locator.is_enabled()
+                if entry.current:
+                    if end_year_enabled:
+                        _fill(end_year_locator, "")
+                    # else: already disabled/blank — nothing to do.
+                elif end_year_enabled:
+                    _fill(end_year_locator, entry.end_year)
+                elif first_entry:
+                    # Checkbox selector is confirmed only on the first-row
+                    # editor's distinct DOM shape (#800) — uncheck it to
+                    # unlock the end-date fields before filling.
+                    checkbox = page.locator(FIRST_EXPERIENCE_CURRENT_CHECKBOX)
+                    if checkbox.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: чекбокс 'Работаю сейчас' "
+                                "не подтверждён однозначно"
+                            )
+                        ]
+                    checkbox.click()
+                    end_year_locator.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+                    _fill(end_year_locator, entry.end_year)
+                else:
+                    # Indexed row editor: no confirmed checkbox selector for
+                    # this DOM shape — fail closed rather than guess.
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: поле окончания заблокировано, чекбокс "
+                            "'Работаю сейчас' для этой формы не подтверждён"
+                        )
+                    ]
             _fill(page.locator(EXPERIENCE_DESCRIPTION), entry.description())
             if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
                 _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)

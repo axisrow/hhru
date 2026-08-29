@@ -96,6 +96,7 @@
 | resume_experience.EXPERIENCE_START_YEAR | `[data-qa='resume-editor-experience-start-year-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_COMPANY | `[data-qa='resume-editor-experience-company-input']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX | `[data-qa='checkbox']` | — | — | — | documented_live |
 | resume_experience.FIRST_EXPERIENCE_POSITION | `[data-qa='resume-editor-experience-position-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | live_dom |
 | resume_list.RESUME_DUPLICATE_INLINE | `[data-qa='resume-dublicate']` | — | — | — | live_dom |
