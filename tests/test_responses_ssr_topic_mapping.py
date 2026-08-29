@@ -387,3 +387,111 @@ def test_strict_sync_rejects_unattributed_dom_card(monkeypatch):
 
     with pytest.raises(responses.ResponsesIndeterminate, match="полного однозначного"):
         responses.fetch_responses(page, max_pages=1, strict_empty=True)
+
+
+# #742: strict_scrape (--alert-new) must not silently accept a partially
+# attached DOM as evidence of a confirmed-empty SSR topicList. Covers the
+# acceptance criteria in issue #742: distinguish a confirmed empty SSR topic
+# list from missing/malformed SSR state, treat dropped/incomplete topic_refs()
+# entries as indeterminate rather than empty, preserve the chatless-card
+# allowance, and never advance on uncertain page state.
+
+
+def test_strict_scrape_accepts_confirmed_empty_ssr_topic_list(monkeypatch):
+    """A genuinely empty SSR topicList (parsed successfully) is legitimate.
+
+    No chat-having cards exist to cover, so the coverage check must not
+    treat "SSR unavailable" and "SSR confirms zero negotiations" the same.
+    """
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    page = _SSRPage(pages_cards=[[item]], pages_html=[_ssr_html([])])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    results = responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+    assert len(results) == 1
+    assert results[0].topic_ambiguous is False
+
+
+def test_strict_scrape_rejects_missing_ssr_state(monkeypatch):
+    """Missing HH-Lux-InitialState must not fail open under strict_scrape."""
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    page = _SSRPage(pages_cards=[[item]], pages_html=["<html><body>no SSR template</body></html>"])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
+def test_strict_scrape_rejects_malformed_ssr_json(monkeypatch):
+    """Malformed JSON inside the SSR template must not fail open either."""
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    broken_html = '<template id="HH-Lux-InitialState">{not valid json</template>'
+    page = _SSRPage(pages_cards=[[item]], pages_html=[broken_html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
+def test_strict_scrape_rejects_incomplete_topic_dropped_by_topic_refs(monkeypatch):
+    """topic_refs() silently drops entries missing id/chatId/vacancyId.
+
+    If that drop empties `refs` while the raw SSR topicList is non-empty,
+    strict_scrape must treat it as indeterminate coverage, not as a
+    confirmed-empty list (the #742 regression: `strict_scrape and refs`
+    used to skip the coverage check entirely in this case).
+    """
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    # A single topic entry missing chatId -> topic_refs() drops it -> refs == [].
+    incomplete_html = (
+        '<template id="HH-Lux-InitialState">'
+        '{"applicantNegotiations":{"topicList":[{"id":222,"vacancyId":700}]}}'
+        "</template>"
+    )
+    page = _SSRPage(pages_cards=[[item]], pages_html=[incomplete_html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="неполную запись"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
+def test_strict_scrape_preserves_chatless_card_allowance(monkeypatch):
+    """A card genuinely without a chat is fine alongside a fully covered one.
+
+    strict_scrape must reject only unconfirmed page state, not a vacancy
+    that legitimately has no negotiation chat attached — vacancy_id=900 has
+    no SSR entries at all (nothing to miss), while vacancy_id=700 has an
+    exact 1:1 DOM/SSR match.
+    """
+    items = [
+        responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ),
+        responses.ResponseItem(vacancy_id="900", status=responses.ResponseStatus.DISCARD),
+    ]
+    page = _SSRPage(
+        pages_cards=[items],
+        pages_html=[_ssr_html([("222", "333", "700")])],
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    results = responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+    assert len(results) == 2
+    chatless = next(r for r in results if r.vacancy_id == "900")
+    assert chatless.topic is None
+    assert chatless.topic_ambiguous is False

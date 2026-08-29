@@ -336,6 +336,13 @@ def fetch_responses(
     требования topic/resume identity (более строгий контракт ``strict_empty``
     остаётся только для --sync-applied). Это позволяет alert-polling принимать
     легитимные chatless-карточки, но не сохранять checkpoint неполного обхода.
+
+    #742: ``strict_scrape`` также требует подтверждённого SSR-состояния для
+    coverage-проверки DOM-карточек против SSR ``topicList``. Отсутствующий/
+    битый ``HH-Lux-InitialState`` и неполные записи ``topicList`` (дропаемые
+    ``topic_refs()``) поднимают :class:`ResponsesIndeterminate`, а не молча
+    трактуются как пустой topicList — подтверждённо пустой SSR-список (после
+    успешного парсинга) остаётся легитимным и не блокирует чекпоинт.
     """
     results: list[ResponseItem] = []
 
@@ -423,14 +430,28 @@ def fetch_responses(
 
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
-            refs = topic_refs(page.content())
-            if strict_empty:
+            html = page.content()
+            refs = topic_refs(html)
+            # topic_refs() молча дропает неполные записи (id/chatId/vacancyId
+            # отсутствуют) — приемлемо для non-strict пути (лучшее из
+            # доступного), но означает, что refs может оказаться короче
+            # raw_topics или вовсе пустым, даже когда SSR-состояние реально
+            # содержит переговоры. И strict_empty, и strict_scrape читают
+            # raw_topics напрямую, чтобы отличить это от подтверждённо
+            # пустого topicList: пустой raw_topics — легитимный empty-state
+            # (нечего покрывать, coverage-проверка ниже тривиально пройдёт
+            # на пустых refs_by_vacancy), а НЕПОЛНАЯ запись внутри непустого
+            # raw_topics — сигнал недостоверного скрейпа, а не пустоты.
+            if strict_empty or strict_scrape:
                 raw_topics = (
-                    parse_initial_state(page.content())
-                    .get("applicantNegotiations", {})
-                    .get("topicList")
+                    parse_initial_state(html).get("applicantNegotiations", {}).get("topicList")
                 )
-                if not isinstance(raw_topics, list) or any(
+                if not isinstance(raw_topics, list):
+                    raise ResponsesIndeterminate(
+                        f"страница {page_num}: SSR topicList отсутствует или имеет "
+                        "неожиданный формат"
+                    )
+                if any(
                     not isinstance(ref, dict)
                     or any(ref.get(key) in (None, "") for key in ("id", "chatId", "vacancyId"))
                     for ref in raw_topics
@@ -472,7 +493,7 @@ def fetch_responses(
             # multiple cards at all) marks every unresolved card for that
             # vacancy_id as ambiguous instead of guessing positionally.
             cards_by_vacancy: dict[str, list] = {}
-            if strict_scrape and refs:
+            if strict_scrape:
                 rendered_by_vacancy: dict[str, int] = {}
                 for result in results[page_start:]:
                     rendered_by_vacancy[result.vacancy_id] = (
@@ -531,8 +552,16 @@ def fetch_responses(
                         f"страница {page_num}: SSR topicList и DOM карточки "
                         "не имеют полного однозначного соответствия"
                     )
+        except ResponsesIndeterminate:
+            raise
         except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
-            if strict_empty:
+            if strict_empty or strict_scrape:
+                # #742: отсутствующий/битый HH-Lux-InitialState — тот же
+                # неопределённый page-state, что и не появившиеся карточки
+                # выше (RENDER_TIMEOUT_MS). strict_scrape гарантирует
+                # покрытие SSR topicList, и без прочитанного SSR эту
+                # гарантию нечем подтвердить — fail-open здесь означал бы
+                # молчаливое принятие частично отрисованного DOM.
                 raise ResponsesIndeterminate(
                     f"страница {page_num}: SSR topic/resume mapping не подтверждён"
                 ) from None
