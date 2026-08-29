@@ -7,7 +7,19 @@ const OVERLAY_SELECTORS = [
 ];
 
 function isVisible(element) {
-  return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+  // offsetWidth/offsetHeight/getClientRects() only react to display:none —
+  // a visibility:hidden element still reports non-zero layout metrics, so it
+  // would be treated as "visible" here (Codex round-3 review of #767: this
+  // silently defeats the hide->show re-detect gate for that CSS pattern).
+  // checkVisibility() (Chrome 105+) covers visibility/display/content-visibility
+  // in one call; fall back to the layout check + an explicit visibility read
+  // for older Chrome (MV3's floor is Chrome 88).
+  if (typeof element.checkVisibility === 'function') {
+    return element.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true });
+  }
+  const hasLayout = !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+  if (!hasLayout) return false;
+  return getComputedStyle(element).visibility !== 'hidden';
 }
 
 function classify(element) {

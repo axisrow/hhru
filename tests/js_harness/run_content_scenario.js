@@ -19,6 +19,7 @@ const context = vm.createContext({
   chrome: env.chrome,
   MutationObserver: env.MutationObserver,
   Element: env.Element,
+  getComputedStyle: env.getComputedStyle,
   location: env.location,
   console,
 });

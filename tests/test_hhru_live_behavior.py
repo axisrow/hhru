@@ -29,14 +29,15 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).parents[1]
 RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_content_scenario.js"
+VISIBILITY_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_visibility_hidden_scenario.js"
 
 
-def _run_scenario() -> dict:
+def _run_node_scenario(runner: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node не найден в PATH — поведенческий тест content.js пропущен")
     result = subprocess.run(
-        [node, str(RUNNER)],
+        [node, str(runner)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -46,6 +47,10 @@ def _run_scenario() -> dict:
         f"node harness завершился с ошибкой:\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     return json.loads(result.stdout)
+
+
+def _run_scenario() -> dict:
+    return _run_node_scenario(RUNNER)
 
 
 def test_hhru_live_content_script_re_detects_overlay_after_hide_then_show():
@@ -78,3 +83,28 @@ def test_hhru_live_content_script_reports_connected_on_load():
     """
     scenario = _run_scenario()
     assert "connected" in scenario["kinds"]
+
+
+def test_hhru_live_content_script_does_not_misreport_css_visibility_hidden_as_shown():
+    """PR #767 Codex round-3 review, finding 1 (confidence 0.9): offsetWidth/
+    offsetHeight/getClientRects() alone react only to display:none, not to
+    CSS `visibility:hidden` -- an element with visibility:hidden still has
+    non-zero layout metrics. Without an explicit visibility check, an overlay
+    that starts visibility:hidden would be misreported as already-visible on
+    the initial DOM scan (and added to `seen`), permanently suppressing the
+    real reveal that follows -- silently defeating the issue #743 finding 1
+    hide->show re-detect fix for this specific CSS pattern.
+
+    Scenario in tests/js_harness/run_visibility_hidden_scenario.js: a modal
+    already in the DOM, laid out but visibility:hidden -> revealed by
+    clearing that property. Expects zero reports before the reveal and
+    exactly one report after.
+    """
+    scenario = _run_node_scenario(VISIBILITY_RUNNER)
+    assert scenario["reportsBeforeReveal"] == 0, (
+        "overlay must not be reported while still visibility:hidden "
+        f"(offsetWidth/offsetHeight/getClientRects alone would wrongly see it as visible): {scenario}"
+    )
+    assert scenario["overlayReportCount"] == 1, (
+        f"expected exactly one overlay_detected after the reveal, got: {scenario}"
+    )

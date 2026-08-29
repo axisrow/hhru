@@ -56,6 +56,7 @@ class Element {
     this._offsetWidth = 0;
     this._offsetHeight = 0;
     this._clientRects = [];
+    this._visibilityHidden = false;
     this.classList = new ClassList(this);
   }
 
@@ -71,11 +72,36 @@ class Element {
 
   // Test-only helper: flips the visibility signals content.js's isVisible()
   // reads (offsetWidth/offsetHeight/getClientRects().length), simulating a
-  // real browser's post-layout state after a class/style toggle.
+  // real browser's post-layout state after a class/style toggle. This models
+  // display:none (all layout signals zeroed) — NOT visibility:hidden, which
+  // in a real browser keeps non-zero layout metrics. Use _setCssVisibility()
+  // to model that case instead.
   _setVisible(visible) {
     this._offsetWidth = visible ? 100 : 0;
     this._offsetHeight = visible ? 40 : 0;
     this._clientRects = visible ? [{ width: 100, height: 40 }] : [];
+    this._visibilityHidden = false;
+  }
+
+  // Test-only helper: models CSS `visibility:hidden` specifically — layout
+  // metrics stay non-zero (unlike display:none) but the element is not
+  // actually visible. Exercises the checkVisibility()/getComputedStyle()
+  // branch of content.js's isVisible() (issue #743 / PR #767 Codex round 3).
+  _setCssVisibility(hidden) {
+    this._offsetWidth = 100;
+    this._offsetHeight = 40;
+    this._clientRects = [{ width: 100, height: 40 }];
+    this._visibilityHidden = hidden;
+  }
+
+  // Mirrors the real Element.checkVisibility({checkOpacity, checkVisibilityCSS})
+  // contract closely enough for content.js's usage: false when display:none
+  // (zero layout) or visibility:hidden; true otherwise. Ignores checkOpacity
+  // (content.js always passes checkOpacity: false).
+  checkVisibility(_opts) {
+    const hasLayout = !!(this._offsetWidth || this._offsetHeight || this._clientRects.length);
+    if (!hasLayout) return false;
+    return !this._visibilityHidden;
   }
 
   getAttribute(name) {
@@ -184,12 +210,20 @@ function createEnvironment() {
     }
   }
 
+  // Fallback branch coverage for isVisible() on engines without
+  // checkVisibility(): getComputedStyle(el).visibility. Only `.visibility`
+  // is read by content.js, so that's all this stub needs to provide.
+  function getComputedStyle(element) {
+    return { visibility: element._visibilityHidden ? 'hidden' : 'visible' };
+  }
+
   return {
     document,
     chrome,
     sentMessages,
     MutationObserver,
     Element,
+    getComputedStyle,
     location: { href: 'https://hh.ru/vacancy/1' },
     flush: () => documentElement._flush(),
   };
