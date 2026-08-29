@@ -69,6 +69,7 @@ BROWSER_COMMANDS = frozenset(
         "refresh-token",
         "rename-resume",
         "reply-employers",
+        "report-vacancy",
         "responses",
         "resume-position",
         "resume-sections",
@@ -112,6 +113,7 @@ WRITE_COMMANDS = frozenset(
         "review",
         "blacklist",
         "update",
+        "report-vacancy",
     }
 )
 

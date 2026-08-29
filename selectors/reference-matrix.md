@@ -218,6 +218,16 @@
 | transient_overlays.NOTIFICATION | `[data-qa^='notification']` | — | — | — | live_dom |
 | transient_overlays.NOTIFICATION_DISMISS | `[data-qa='notification-close'] button[aria-label='Удалить']` | — | — | — | live_dom |
 | transient_overlays.RESUME_DELIVERED | `` | — | — | — | needs_live_evidence |
+| vacancy_complain.VACANCY_COMPLAIN_COMMENT_TEXTAREA | `[data-qa='employer-complain-reason-text']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_MENU_ITEM | `[data-qa='vacancy__complain']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_MODAL | `[data-qa='bloko-modal']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_MODAL_CLOSE | `[data-qa='bloko-modal-close']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_PAGE_BUTTON | `[data-qa='employer-vacancy-complain-button']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_REASON_RADIO | `[data-qa='employer-complain-reason-{reason}']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_WIZARD_CANCEL | `[data-qa='employer-review-wizard-cancel']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_WIZARD_NEXT | `[data-qa='employer-review-wizard-next']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_COMPLAIN_WIZARD_PREV | `[data-qa='employer-review-wizard-prev']` | — | — | — | documented_live |
+| vacancy_complain.VACANCY_MORE_ACTIONS | `[data-qa='vacancy__more-actions']` | — | — | — | documented_live |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |

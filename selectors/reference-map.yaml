@@ -4774,6 +4774,208 @@ selectors:
       source: issue
       note: Transient overlay appears only after submit (WRITE); selector intentionally not invented. Obtain live evidence
         after separate WRITE authorization.
+  vacancy_complain.VACANCY_COMPLAIN_COMMENT_TEXTAREA:
+    value: '[data-qa=''employer-complain-reason-text'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:74
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:74
+      note: 'Шаг 2 (комментарий) bloko-modal wizard-а жалобы на вакансию, подтверждено живым DOM (vacancy_id=136672001, issue
+        #745) 2026-08-29. commentRequired=true для всех 9 причин.'
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_MENU_ITEM:
+    value: '[data-qa=''vacancy__complain'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:30
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:30
+      note: Пункт "Пожаловаться на вакансию" в дропдауне "Ещё", подтверждено живым DOM (vacancy_id=135660703 disabled/"Оставили
+        жалобу", vacancy_id=136672001 активен) 2026-08-29. Клик по нему не открывает форму напрямую — открывает VACANCY_COMPLAIN_PAGE_BUTTON
+        на странице.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_MODAL:
+    value: '[data-qa=''bloko-modal'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:41
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:41
+      note: Контейнер bloko-modal wizard-а жалобы (заголовок "Причина жалобы" на шаге 1, "Подробно опишите ситуацию" на шаге
+        2), подтверждено живым DOM (vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_MODAL_CLOSE:
+    value: '[data-qa=''bloko-modal-close'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:42
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:42
+      note: Крестик закрытия bloko-modal wizard-а жалобы, подтверждено живым DOM (vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_PAGE_BUTTON:
+    value: '[data-qa=''employer-vacancy-complain-button'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:38
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:38
+      note: Реальный триггер формы жалобы — отдельная кнопка на странице вакансии (микрофронтенд employer-reviews-front),
+        появляется после клика по VACANCY_COMPLAIN_MENU_ITEM. Подтверждено живым DOM (vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_REASON_RADIO:
+    value: '[data-qa=''employer-complain-reason-{reason}'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:47
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:47
+      note: Радио-инпут причины жалобы, {reason} — один из 9 ID в VACANCY_COMPLAIN_REASON_IDS. Подтверждено живым DOM (vacancy_id=136672001,
+        все 9 причин присутствуют в разметке) 2026-08-29. bloko-radio — input визуально перекрыт своим label, клик нужно делать
+        по label.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_WIZARD_CANCEL:
+    value: '[data-qa=''employer-review-wizard-cancel'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:71
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:71
+      note: Кнопка "Отменить" на шаге 1 (причина) wizard-а жалобы, подтверждено живым DOM (vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_WIZARD_NEXT:
+    value: '[data-qa=''employer-review-wizard-next'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:69
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:69
+      note: 'Кнопка "Продолжить", общая для шага 1 и шага 2 wizard-а жалобы. Disabled, пока не выбрана причина (шаг 1) / не
+        заполнен комментарий (шаг 2). Подтверждено живым DOM (vacancy_id=136672001) 2026-08-29. ВНИМАНИЕ: поведение клика
+        после шага 2 (комментарий заполнен) не исследовано — issue #745 запрещает клик дальше этой точки. Селектор подтверждён
+        только для проверки состояния disabled/enabled, не для клика за пределы шага 2.'
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_COMPLAIN_WIZARD_PREV:
+    value: '[data-qa=''employer-review-wizard-prev'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:70
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:70
+      note: Кнопка "Назад" на шаге 2 (комментарий) wizard-а жалобы, подтверждено живым DOM (vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
+  vacancy_complain.VACANCY_MORE_ACTIONS:
+    value: '[data-qa=''vacancy__more-actions'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/vacancy_complain.py:33
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/vacancy_complain.py:33
+      note: Кнопка "Ещё" в шапке вакансии (aria-label="Ещё"). Страница рендерит два элемента с этим data-qa (desktop/другой
+        брейкпоинт), только один visible — локатор должен фильтровать по видимости. Подтверждено живым DOM (vacancy_id=135660703,
+        vacancy_id=136672001) 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_complain_read_only_up_to_step2
+    verified_by: claude
   vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN:
     value: '[data-qa=''vacancy-response-link-top-again'']'
     criticality: write
