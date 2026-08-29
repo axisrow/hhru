@@ -176,6 +176,18 @@ def _add_employer(page: Page, name: str) -> tuple[bool, str, list[EmployerCandid
     Ambiguous/zero matches are a fail-closed refusal — issue #746 requires
     resolving multiple similarly-named employers to stay with the caller
     (interactively confirmed one level up), never an automatic pick.
+
+    #746 review (AO reviewer): the search field is explicitly cleared after a
+    successful add. The probe dump confirms the "Кто видит"/"Кто не видит"
+    already-added-employers list (which ``_remove_employer`` reads) only
+    renders while the search field is empty — a non-empty query switches the
+    modal to the search-results container instead. hh.ru's own post-click
+    behavior for the field is unconfirmed either way, so this does not rely on
+    it: leaving a non-empty query behind would make a subsequent
+    ``--remove-employer`` in the same call see zero already-added rows and
+    fail-closed with a misleading "не найден в текущем списке", even though
+    the employer is actually present — breaking the documented combined
+    add+remove scenario (docs/cli-spec.md).
     """
     search, reason = _one(page, RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT, "поиск работодателя")
     if reason:
@@ -212,6 +224,10 @@ def _add_employer(page: Page, name: str) -> tuple[bool, str, list[EmployerCandid
         return False, reason, []
     assert confirm is not None
     confirm.click()
+    # See the docstring above: clear the search query so a later
+    # --remove-employer in the same call sees the already-added-employers
+    # list (empty-query container), not the still-filtered search results.
+    search.fill("")
     return True, "", []
 
 
@@ -346,6 +362,25 @@ def set_resume_visibility_on_hh(
                     reason,
                     ambiguous_candidates=ambiguous,
                     ambiguous_query=name if ambiguous else "",
+                )
+        if add_employers and remove_employers:
+            # #746 review (AO reviewer): _add_employer clears the search query
+            # after each add, but the already-added-employers list container is
+            # a conditional React render (same commit-vs-hydration race already
+            # guarded elsewhere in this module) — a strict lookup right after
+            # the clear could still see the stale search-results container.
+            # Wait for the empty-query container before _remove_employer reads
+            # it, so a combined add+remove call doesn't misreport "не найден в
+            # текущем списке" for an employer that is actually present.
+            try:
+                page.locator(RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX).first.wait_for(
+                    state="visible", timeout=15000
+                )
+            except PlaywrightError as exc:
+                return ResumeVisibilityResult(
+                    resume_id,
+                    False,
+                    f"список добавленных работодателей не отрисовался после add: {exc}",
                 )
         for name in remove_employers:
             ok, reason = _remove_employer(page, name)

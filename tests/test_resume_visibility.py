@@ -7,7 +7,7 @@ Playwright Page/Locator — по тому же паттерну, что ``test_r
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -245,7 +245,10 @@ def test_add_employer_single_match_checks_and_confirms(monkeypatch):
     )
 
     assert result.success
-    search_input.fill.assert_called_once_with("ЮMoney")
+    # #746 review (AO reviewer): the query is cleared after a successful add so
+    # a later --remove-employer call in the same run sees the already-added
+    # list, not the still-filtered search results.
+    search_input.fill.assert_has_calls([call("ЮMoney"), call("")])
     checkbox.check.assert_called_once_with()
     confirm.click.assert_called_once_with()
     close.click.assert_called_once_with()
@@ -368,6 +371,85 @@ def test_remove_employer_exact_name_match_clicks_delete(monkeypatch):
     )
 
     assert result.success
+
+
+def test_combined_add_and_remove_clears_search_before_remove(monkeypatch):
+    """Regression for the AO reviewer's PR #774 finding: without clearing the
+    search field after add_employer, the already-added-employers list
+    (which remove_employer reads) stays hidden behind the still-filtered
+    search-results container, and remove would wrongly fail-closed with
+    "не найден в текущем списке" for an employer that is actually present."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    activator = _mock_locator()
+    search_input = _mock_locator()
+    close = _mock_locator()
+    confirm = _mock_locator()
+
+    # --add-employer "Яндекс" search results.
+    add_result_items = MagicMock()
+    add_result_items.count.return_value = 1
+    add_item = MagicMock()
+    add_item.get_attribute.side_effect = lambda attr: (
+        f"{sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_DATA_QA_PREFIX}1740"
+        if attr == "data-qa"
+        else None
+    )
+    add_name_locator = MagicMock()
+    add_name_locator.count.return_value = 1
+    add_name_locator.first.text_content.return_value = "Яндекс"
+    add_item.locator.return_value = add_name_locator
+    add_result_items.all.return_value = [add_item]
+    add_row = MagicMock()
+    add_row.count.return_value = 1
+    add_row.first = add_row
+    add_checkbox = MagicMock()
+    add_checkbox.count.return_value = 1
+    add_checkbox.first = add_checkbox
+    add_row.locator.return_value = add_checkbox
+    add_row_selector = (
+        f"[data-qa='{sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_DATA_QA_PREFIX}1740']"
+    )
+
+    # --remove-employer "ЮMoney" — an already-added row, only visible once the
+    # search field is cleared. list_items.all() is queried AFTER search.fill("")
+    # in the real flow, so the mock does not need to distinguish before/after —
+    # what matters is that the code reaches this branch at all, which the old
+    # code (no clear) would never do (it would try to look up the search
+    # field's still-filtered state, not this container).
+    yumoney_item, yumoney_delete = _list_item("655542", "ЮMoney")
+    list_items = MagicMock()
+    list_items.all.return_value = [yumoney_item]
+
+    def _by_selector(selector):
+        return {
+            sel.RESUME_VISIBILITY_SAVE: save,
+            sel.RESUME_VISIBILITY_MODE_BLACKLIST: _mock_locator(),
+            sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST: activator,
+            sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
+            sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_PREFIX: add_result_items,
+            add_row_selector: add_row,
+            sel.RESUME_VISIBILITY_MODAL_CONFIRM: confirm,
+            sel.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX: list_items,
+            sel.RESUME_VISIBILITY_MODAL_CLOSE: close,
+        }[selector]
+
+    page = MagicMock()
+    page.locator.side_effect = _by_selector
+
+    result = rv.set_resume_visibility_on_hh(
+        page,
+        _resume(),
+        "blacklist",
+        dry_run=False,
+        add_employers=("Яндекс",),
+        remove_employers=("ЮMoney",),
+    )
+
+    assert result.success
+    # The search query is cleared after add, before remove reads the list.
+    search_input.fill.assert_has_calls([call("Яндекс"), call("")])
+    yumoney_delete.click.assert_called_once_with()
     yumoney_delete.click.assert_called_once_with()
 
 
