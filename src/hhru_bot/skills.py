@@ -7,6 +7,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -156,21 +157,53 @@ def edit_skills_on_hh(
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
     edit_path = f"/resume/edit/{resume.resume_id}/keySkills"
-    try:
-        editor = open_hydrated_resume_editor(
-            page,
-            trigger_selector=resume_page.RESUME_SKILLS_EDIT_BUTTON,
-            editor_selector=resume_page.RESUME_SKILLS_INPUT,
-            profile_path=f"/resume/{resume.resume_id}",
-            edit_path=edit_path,
-            click_trigger=True,
-            timeout=EDITOR_MOUNT_TIMEOUT_MS,
-            trigger_error="кнопка редактирования навыков не найдена однозначно",
-            open_error="форма навыков не открылась",
-            wrong_route_error="форма навыков открыта не для того резюме",
-        )
-    except RuntimeError as exc:
-        return SkillsResult(False, reason=str(exc))
+    trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
+    first_entry = trigger.count() == 0
+    if first_entry:
+        # #789/#787: on a resume with zero skills the regular edit button is
+        # absent. The visible suggestion chip navigates to the *shared*
+        # profile editor (/profile/edit/keySkills) without a reliable
+        # resumeFrom binding on an incomplete resume (#787 live
+        # confirmation: the query param was dropped entirely). The
+        # resume-scoped route below was confirmed live (#787 write test)
+        # to open the form directly, pre-bound to this resume_id, with
+        # no click or checkbox panel involved.
+        try:
+            goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+        except PlaywrightError as exc:
+            return SkillsResult(
+                False,
+                reason=f"форма навыков не открылась: {exc}",
+            )
+        if urlsplit(page.url).path.rstrip("/") != edit_path:
+            return SkillsResult(
+                False,
+                reason=f"форма навыков открыта не для того резюме ({page.url})",
+            )
+        editor = page.locator(resume_page.RESUME_SKILLS_INPUT)
+        try:
+            editor.wait_for(state="visible", timeout=EDITOR_MOUNT_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            return SkillsResult(
+                False,
+                reason=f"форма навыков не открылась: {exc}",
+            )
+    else:
+        try:
+            editor = open_hydrated_resume_editor(
+                page,
+                trigger_selector=trigger,
+                editor_selector=resume_page.RESUME_SKILLS_INPUT,
+                profile_path=f"/resume/{resume.resume_id}",
+                edit_path=edit_path,
+                click_trigger=True,
+                timeout=EDITOR_MOUNT_TIMEOUT_MS,
+                trigger_error="кнопка редактирования навыков не найдена однозначно",
+                open_error="форма навыков не открылась",
+                wrong_route_error="форма навыков открыта не для того резюме",
+            )
+        except RuntimeError as exc:
+            return SkillsResult(False, reason=str(exc))
     existing = read_skills(page)
     existing_keys = {_skill_key(skill) for skill in existing}
     additions = tuple(skill for skill in skills if _skill_key(skill.name) not in existing_keys)
