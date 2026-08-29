@@ -865,14 +865,18 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/create_resume.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
+      note: 'Live-проверено 2026-08-29: реальный wizard создания резюме (/profile/resume/professional_role -> "Укажу профессию")
+        НЕ использует tree-selector dialog. Кандидат [data-qa*=''tree-selector-item-text-''] не найден (count=0); вместо этого
+        экран — плоский radio-список профессий с data-qa=''cell'' / ''cell-text-content'' / ''radio'' / ''resume-profile-position-chip-popular''
+        (37 совпадений каждый). Не используется нигде в create_resume.py (dead alias). Остаётся needs_live_evidence — устаревшее
+        предположение о структуре этого экрана, не подтверждается реальным DOM.'
     bindings: {}
     coverage_status: needs_live_evidence
     origin: browser_dom
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_create_resume_wizard_read_only (/profile/resume/professional_role)
+    verified_by: human
   negotiations.CHAT_AUTHOR_HINT:
     value: '[data-qa*=''author''], [class*=''author''], [aria-label], [title]'
     active: true
@@ -883,13 +887,17 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/negotiations_chat.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
+      note: 'Live-проверено 2026-08-29 на реальном чате: селектор "[data-qa*=''author''], [class*=''author''], [aria-label],
+        [title]" совпал 40 раз (count=40), в основном с посторонней разметкой страницы (логотип, nav-меню, opensearch link
+        title) — ни один найденный узел не идентифицирует автора конкретного сообщения. Селектор не используется нигде в коде
+        (dead), оставлен needs_live_evidence: подтверждение было бы ложным (селектор неоднозначен, не пригоден для различения
+        авторов).'
     bindings: {}
     coverage_status: needs_live_evidence
     origin: manual
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations chat author attribution (not run)
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_chat_read_only (chatik.hh.ru/chat/5574052518)
     verified_by: human
   negotiations.CHAT_MESSAGE_INPUT:
     value: textarea[data-qa='chatik-chat-message-input']
@@ -921,19 +929,25 @@ selectors:
     active: true
     criticality: write
     declared_at: src/hhru_bot/selector_groups/negotiations.py:1
-    decision: documented_live
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - chatik-chat-message-15219584821
+    - chatik-chat-message-15221573036
+    - chatik-chat-message-15273341207
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
+      note: 'Live-подтверждено 2026-08-29: authenticated read-only открытие чата с реальной перепиской (topic 5523965651 ->
+        chat 5574052518) вернуло 6 совпадений (data-qa=''chatik-chat-message-<id>'' контейнеры) для 3 видимых сообщений; используется
+        в probe.py для дампа outerHTML первого сообщения.'
     bindings: {}
-    coverage_status: needs_live_evidence
-    origin: manual
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations chat message parsing (not run)
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_chat_read_only (probe --negotiations --topic, chatik.hh.ru/chat/5574052518)
     verified_by: human
+    status: intentionally local
   negotiations.CHAT_MESSAGE_SEND:
     value: button[data-qa='chatik-chat-message-send']
     criticality: write
@@ -966,130 +980,23 @@ selectors:
     decision: live_dom
     sources: {}
     live_matches:
-    - account-signup-agreement-text
-    - account-signup-personal-data-russia-text
-    - allServices-button-text
-    - applicantProfileDesktopDrop-button-text
-    - applicantProfileMobileDrop-button-text
-    - applicantProfilePage-button-text
-    - careerhhru-button-text
-    - cell-text
-    - chatikActivator-button-text
-    - common-employment-text
-    - compensation-frequency-text
-    - cookies-policy-informer-link-desktop-text
-    - cp-entrypoint__carousel--link-text
-    - edit-position-button-text
-    - favVacancies-button-text
-    - footer_advertisingDescription-text
-    - footer_advertisingDescription-xs-text
-    - footer_agreement-text
-    - footer_agreement-xs-text
-    - footer_allServices-text
-    - footer_allServices-xs-text
-    - footer_anonymousCreateVacancy-xs-text
-    - footer_anonymousSearchByResume-xs-text
-    - footer_api-text
-    - footer_api-xs-text
-    - footer_articlesInsider-text
-    - footer_articlesInsider-xs-text
-    - footer_blog-text
-    - footer_blog-xs-text
-    - footer_blogSpecialProjects-text
-    - footer_blogSpecialProjects-xs-text
-    - footer_calendar-text
-    - footer_calendar-xs-text
-    - footer_career-text
-    - footer_career-xs-text
-    - footer_careerInNKO-text
-    - footer_careerInNKO-xs-text
-    - footer_compliance-text
-    - footer_compliance-xs-text
-    - footer_conditions-text
-    - footer_conditions-xs-text
-    - footer_copyright-text
-    - footer_copyright-xs-text
-    - footer_dataProtection-text
-    - footer_dataProtection-xs-text
-    - footer_employersRating-text
-    - footer_employersRating-xs-text
-    - footer_employersSearch-text
-    - footer_employersSearch-xs-text
-    - footer_expertresume-text
-    - footer_expertresume-xs-text
-    - footer_hardwareRequirements-text
-    - footer_hardwareRequirements-xs-text
-    - footer_hhCompanyInfo-text
-    - footer_hhCompanyInfo-xs-text
-    - footer_hhpro-text
-    - footer_hhpro-xs-text
-    - footer_investor-text
-    - footer_investor-xs-text
-    - footer_itAccreditation-text
-    - footer_itAccreditation-xs-text
-    - footer_itproject-text
-    - footer_itproject-xs-text
-    - footer_partners-text
-    - footer_partners-xs-text
-    - footer_proforientation-text
-    - footer_resumeAudit-text
-    - footer_resumeAudit-xs-text
-    - footer_safety-text
-    - footer_safety-xs-text
-    - footer_school-text
-    - footer_school-xs-text
-    - footer_setkaFooter-text
-    - footer_setkaFooter-xs-text
-    - footer_terms-text
-    - footer_terms-xs-text
-    - footer_vacancySearchCatalogListMainWithArea-text
-    - footer_vacancySearchCatalogListMainWithArea-xs-text
-    - footer_vacancySearchCatalogListMetro-text
-    - footer_vacancySearchCatalogListMetro-xs-text
-    - footer_wantwork-text
-    - footer_wantwork-xs-text
-    - geoSwitcher-button-text
-    - help-button-text
-    - lang-switch-button-text
-    - link-text
-    - mainmenu_profile-link-text
-    - mainmenu_userTypeSwitcher-text
-    - moreItems-button-text
-    - photo-viewer-action-assigned-text
-    - profileAndResumes-button-text
-    - related-vacancies-link-text
-    - responded-success-attach-cover-letter-text
-    - resume-button-edit-resume-text
-    - resume-contact-email-value-text
-    - resume-contact-phone-value-preferred-text
-    - resume-delete-text
-    - resume-position-professional-role-add-button-text
-    - resume-recommendation-link-changeVisibility-text
-    - resume-recommendation-link-editResume-text
-    - resume-recommendations__button_changeVisibility-text
-    - resume-update-button-text
-    - review-card-content-text
-    - searchVacancy-button-text
-    - serp-item__title-text
-    - userNotifications-button-text
-    - vacancy-address-big-map-link-text
-    - vacancy-serp__vacancy-employer-text
-    - vacancyResponses-button-text
-    - work-experience-text
-    - work-formats-text
-    - work-schedule-by-days-text
-    - working-hours-text
+    - chatik-chat-message-15219584821-text
+    - chatik-chat-message-15221573036-text
+    - chatik-chat-message-15273341207-text
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    origin: manual
-    verification: unverified
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/selector_groups/negotiations.py:74
-      note: The saved live-match list contains unrelated *-text nodes; a scoped authenticated chat artifact is still required.
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations chat message parsing (not run)
+      source: src/hhru_bot/selector_groups/negotiations.py:71
+      note: 'Live-подтверждено 2026-08-29: на том же чате селектор вернул ровно 3 совпадения текстовых узлов сообщений (data-qa=''chatik-chat-message-<id>-text''),
+        совпадающих 1:1 с 3 реальными сообщениями, показанными probe.py; applicant-action текст корректно исключён (не найден
+        лишний 4-й узел).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_chat_read_only (probe --negotiations --topic, chatik.hh.ru/chat/5574052518)
     verified_by: human
+    status: intentionally local
   negotiations.LEGACY_NEGOTIATION_CHAT_LINK:
     value: '[data-qa=''negotiations-item__messages-link'']'
     criticality: write
@@ -1402,9 +1309,14 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations withdrawal (not run; write path disabled)
+      note: 'Live-проверено 2026-08-29: кандидатные data-qa (negotiations-item-withdraw / negotiations-withdraw-confirm /
+        negotiations-item-withdrawn) не найдены ни разу (count=0) на текущей странице списка переговоров (20 карточек). Обнаружен
+        другой control — data-qa=''negotiations-delete'' (кнопка "Удалить", count=20 по карточке), но его семантика (soft-delete
+        из списка vs. реальный отзыв отклика работодателю) не может быть подтверждена read-only без клика (WRITE запрещён
+        без отдельного разрешения); он не используется нигде в коде. Остаётся fail-closed needs_live_evidence — не додумываем
+        соответствие.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_list_read_only (hh.ru/applicant/negotiations)
     verified_by: human
     unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
       withdrawal selector control flow; selector remains unproven and cannot authorize a destructive click.
@@ -1422,9 +1334,14 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations withdrawal (not run; write path disabled)
+      note: 'Live-проверено 2026-08-29: кандидатные data-qa (negotiations-item-withdraw / negotiations-withdraw-confirm /
+        negotiations-item-withdrawn) не найдены ни разу (count=0) на текущей странице списка переговоров (20 карточек). Обнаружен
+        другой control — data-qa=''negotiations-delete'' (кнопка "Удалить", count=20 по карточке), но его семантика (soft-delete
+        из списка vs. реальный отзыв отклика работодателю) не может быть подтверждена read-only без клика (WRITE запрещён
+        без отдельного разрешения); он не используется нигде в коде. Остаётся fail-closed needs_live_evidence — не додумываем
+        соответствие.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_list_read_only (hh.ru/applicant/negotiations)
     verified_by: human
     unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
       withdrawal confirmation selector control flow; selector remains unproven and cannot authorize a destructive click.
@@ -1442,9 +1359,14 @@ selectors:
     verification: unavailable
     evidence:
       source: src/hhru_bot/selector_groups/negotiations.py:52
-      note: No authenticated withdrawal DOM snapshot or safe read-only flow was run; selector remains inactive and fail-closed.
-    last_verified_at: '2026-08-25'
-    verified_flow: negotiations withdrawal (not run; write path disabled)
+      note: 'Live-проверено 2026-08-29: кандидатные data-qa (negotiations-item-withdraw / negotiations-withdraw-confirm /
+        negotiations-item-withdrawn) не найдены ни разу (count=0) на текущей странице списка переговоров (20 карточек). Обнаружен
+        другой control — data-qa=''negotiations-delete'' (кнопка "Удалить", count=20 по карточке), но его семантика (soft-delete
+        из списка vs. реальный отзыв отклика работодателю) не может быть подтверждена read-only без клика (WRITE запрещён
+        без отдельного разрешения); он не используется нигде в коде. Остаётся fail-closed needs_live_evidence — не додумываем
+        соответствие.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_negotiations_list_read_only (hh.ru/applicant/negotiations)
     verified_by: human
     unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
       withdrawal success selector control flow; selector remains unproven and cannot be used to report a destructive action
@@ -1473,37 +1395,47 @@ selectors:
     active: true
     criticality: read
     declared_at: src/hhru_bot/professional_roles.py:1
-    decision: workflow_live
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - tree-selector-input-category-* (via successful catalog refresh)
     evidence:
       source: src/hhru_bot/professional_roles.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
+      note: 'Live-подтверждено 2026-08-29: `professional-roles --refresh` (read-only, не выбирает и не сохраняет) успешно
+        собрал полный каталог (27 категорий, 194 профессии) на аутентифицированной сессии. Код (_category_from_tree_item)
+        использует идентичный CSS-литерал "input[data-qa*=''tree-selector-input-category-'']" inline, а не через этот module-level
+        alias — сам alias нигде не импортируется, но литерал в нём совпадает 1:1 с тем, что реально сработало во время прогона.'
     bindings: {}
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_professional_roles_refresh_read_only (hhru professional-roles --refresh)
+    verified_by: human
+    status: intentionally local
   professional_roles.TREE_CHEVRON:
     value: '[data-qa~=''tree-selector-chevron-category-{category_id}'']'
     active: true
     criticality: read
     declared_at: src/hhru_bot/professional_roles.py:1
-    decision: workflow_live
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - tree-selector-chevron-category-* (via successful catalog refresh)
     evidence:
       source: src/hhru_bot/professional_roles.py:1
-      note: reviewed existing runtime selector and its read-only/live workflow
+      note: 'Live-подтверждено 2026-08-29: тот же успешный `--refresh` прогон прошёл через _find_category(), который использует
+        идентичный CSS-шаблон "[data-qa~=''tree-selector-chevron-category-{category_id}'']" inline (без импорта этого alias)
+        для навигации по категориям при сборе 194 профессий из 27 категорий — без рабочего chevron-селектора сбор не дошёл
+        бы до конца.'
     bindings: {}
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_professional_roles_refresh_read_only (hhru professional-roles --refresh)
+    verified_by: human
+    status: intentionally local
   professional_roles.TREE_INPUT:
     value: '[data-qa~=''tree-selector-input-{}'']'
     criticality: read
@@ -1553,14 +1485,17 @@ selectors:
     active: true
     bindings: {}
     evidence:
-      source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
-    coverage_status: needs_live_evidence
+      source: src/hhru_bot/professional_roles.py:30
+      note: 'Live-подтверждено 2026-08-29 дважды: (1) `professional-roles --refresh` использует эту константу напрямую (item.locator(TREE_LABEL))
+        и успешно собрал 194 профессии; (2) [data-qa=''cell-text-content''] также найден 37 раз на экране выбора профессии
+        визарда создания резюме (/profile/resume/professional_role).'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_professional_roles_refresh_read_only + create_resume wizard read_only
+    verified_by: human
+    status: intentionally local
   resume_education.ADDITIONAL_ADD:
     value: '[data-qa=''resume-list-card-additionalEducation''] [data-qa=''link'']'
     criticality: write
@@ -1568,22 +1503,20 @@ selectors:
     decision: live_dom
     sources: {}
     live_matches:
-    - link
-    - resume-list-card-additionalEducation
+    - resume-list-card-additionalEducation > link
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
-    origin: manual
+    coverage_status: intentionally_local
+    status: intentionally local
+    origin: browser_dom
     verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_education.py:37
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-list-card-additionalEducation''] [data-qa=''link''] найден 1
+        раз; клик (force=True, JS-триггер без href) открывает /resume/edit/<id>/additionalEducation с формой доп. образования.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/584926d4ff10f8b2870039ed1f707779623239)
+    verified_by: human
   resume_education.ADDITIONAL_TRIGGER:
     value: '[data-qa=''resume-edit-button-additionalEducation-{index}'']'
     criticality: write
@@ -1592,27 +1525,19 @@ selectors:
     sources: {}
     live_matches:
     - resume-edit-button-additionalEducation-0
-    - resume-edit-button-additionalEducation-0-svg
-    - resume-edit-button-additionalEducation-1
-    - resume-edit-button-additionalEducation-1-svg
-    - resume-edit-button-additionalEducation-2
-    - resume-edit-button-additionalEducation-2-svg
-    - resume-edit-button-additionalEducation-3
-    - resume-edit-button-additionalEducation-3-svg
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
-    origin: manual
+    coverage_status: intentionally_local
+    status: intentionally local
+    origin: browser_dom
     verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_education.py:32
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-edit-button-additionalEducation-0''] найден 1 раз; клик открывает
+        /resume/edit/<id>/additionalEducation/0 (редактирование конкретной записи доп. образования).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/584926d4ff10f8b2870039ed1f707779623239)
+    verified_by: human
   resume_education.CANCEL_BUTTON:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
@@ -1629,11 +1554,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE
-        live_passed requires a mutation step and was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: [data-qa=''profile-layout-cancel-button''] ПОДТВЕРЖДЁН (count=1) на форме PRIMARY
+        education (/profile/edit/primaryEducation) — но на форме ADDITIONAL education (/resume/edit/<id>/additionalEducation)
+        count=0; там реальный control — [data-qa=''resume-partial-edit-cancel''] (count=1, другой data-qa). Этот логический
+        ID общий для двух разных flow с разными кнопками — честно оставлен needs_live_evidence, т.к. одна запись не может
+        покрыть оба наблюдения без введения путаницы. См. также SAVE_BUTTON.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_education_forms_read_only (primaryEducation vs additionalEducation)
+    verified_by: human
   resume_education.PRIMARY_ADD:
     value: '[data-qa=''resume-list-card-education''] [data-qa=''link'']'
     criticality: write
@@ -1641,22 +1569,20 @@ selectors:
     decision: live_dom
     sources: {}
     live_matches:
-    - link
-    - resume-list-card-education
+    - resume-list-card-education > link
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
-    origin: manual
+    coverage_status: intentionally_local
+    status: intentionally local
+    origin: browser_dom
     verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_education.py:36
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-list-card-education''] [data-qa=''link''] найден 1 раз; клик
+        (force=True, JS-триггер без href) открывает /profile/edit/primaryEducation?resumeFrom=<id> с формой первичного образования.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/fb6ef122ff11063b840039ed1f3857524a7a30)
+    verified_by: human
   resume_education.PRIMARY_TRIGGER:
     value: '[data-qa=''resume-edit-button-education-{index}'']'
     criticality: write
@@ -1695,11 +1621,13 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: Authenticated CLI edit-education --dry-run observed the form control; dry-run cancelled and did not save. SAVE
-        live_passed requires a mutation step and was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: [data-qa=''profile-layout-save-button''] ПОДТВЕРЖДЁН (count=1) на форме PRIMARY education
+        (/profile/edit/primaryEducation) — но на форме ADDITIONAL education (/resume/edit/<id>/additionalEducation) count=0;
+        там реальный control — [data-qa=''resume-partial-edit-save''] (count=1, другой data-qa, идентичен SAVE control в resume_position).
+        Общий логический ID для двух разных flow — честно оставлен needs_live_evidence вместо ложного подтверждения.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_education_forms_read_only (primaryEducation vs additionalEducation)
+    verified_by: human
   resume_education._ADDITIONAL_FIELDS.institution:
     value: '[data-qa=''profile-education-additional-name'']'
     criticality: write
@@ -1716,12 +1644,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Название" (подтверждено скриншотом),
+        но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских элементов —
+        поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых полях
+        этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся needs_live_evidence
+        — устаревший селектор, а не проверочная недостаточность.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+    verified_by: human
   resume_education._ADDITIONAL_FIELDS.organization:
     value: '[data-qa=''profile-education-additional-organization'']'
     criticality: write
@@ -1738,12 +1668,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Проводившая организация" (подтверждено
+        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
+        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
+        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
+        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+    verified_by: human
   resume_education._ADDITIONAL_FIELDS.specialty:
     value: '[data-qa=''profile-education-additional-specialty'']'
     criticality: write
@@ -1760,12 +1692,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Специализация" (подтверждено
+        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
+        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
+        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
+        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+    verified_by: human
   resume_education._ADDITIONAL_FIELDS.year:
     value: '[data-qa=''profile-education-year-input'']'
     criticality: write
@@ -1782,12 +1716,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: No authenticated live DOM was available in this run; static selector evidence is recorded, but authenticated form
-        confirmation is still required. For SAVE/CANCEL, live_passed additionally requires the prohibited mutation step, which
-        was not performed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_education_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Год окончания" (подтверждено
+        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
+        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
+        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
+        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+    verified_by: human
   resume_education._PRIMARY_FIELDS.faculty:
     value: '[data-qa=''profile-education-faculty-input'']'
     criticality: write
@@ -1887,11 +1823,13 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:22
-      note: 'Candidate selector is explicitly fail-closed: the add trigger was not present in the read-only research dump
-        and needs authenticated live-DOM confirmation before use.'
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_experience_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29 на двух резюме с уже заполненным опытом работы: [data-qa=''resume-profile-experience-add-button'']
+        не найден (count=0). Контейнер [data-qa=''resume-list-card-experience''] существует, но его "Добавить" использует
+        общий data-qa=''link'' (тот же паттерн, что и в resume_education.PRIMARY_ADD/ADDITIONAL_ADD), а не выделенный add-button
+        data-qa. Остаётся needs_live_evidence — кандидат не подтверждён в наблюдаемой разметке.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (2 resumes with existing experience)
+    verified_by: human
   resume_experience.EXPERIENCE_CANCEL:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
@@ -2244,18 +2182,18 @@ selectors:
     live_matches:
     - resume-title
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
-    origin: manual
-    verification: unverified
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_list.py:50
-      note: The declaration explicitly says this value was not confirmed on /applicant/resumes; live-DOM evidence is required
-        before relying on it.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_list_read_only
-    verified_by: codex
+      note: 'Live-подтверждено 2026-08-29: селектор [data-qa=''resume-title''] вернул 10 совпадений на /applicant/resumes,
+        что совпадает с 10 резюме аккаунта из list-resumes.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_list_read_only (hh.ru/applicant/resumes)
+    verified_by: human
   resume_page.RESUME_ABOUT_EDITOR:
     value: '[data-qa=''resume-editor-about'']'
     criticality: write
@@ -2265,18 +2203,18 @@ selectors:
     live_matches:
     - resume-editor-about
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
-    origin: manual
-    verification: unverified
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:28
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_editor_read_only
-    verified_by: codex
+      note: 'Live-подтверждено 2026-08-29: клик по RESUME_EDIT_ABOUT_BUTTON открывает отдельную страницу /resume/edit/<id>/about
+        (не модалку); [data-qa=''resume-editor-about''] найден ровно 1 раз после навигации.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_about_editor_read_only (hh.ru/resume/edit/<id>/about)
+    verified_by: human
   resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON:
     value: '[data-qa^=''resume-editor-about-no-experience-reason-'']'
     criticality: write
@@ -2292,18 +2230,18 @@ selectors:
     - resume-editor-about-no-experience-reason-studies
     - resume-editor-about-no-experience-reason-unemployed
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
-    origin: manual
-    verification: unverified
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:29
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_editor_read_only
-    verified_by: codex
+      note: 'Live-подтверждено 2026-08-29: на той же странице найдены все 7 вариантов префикса [data-qa^=''resume-editor-about-no-experience-reason-'']
+        (army/change/decree/house/pension/studies/unemployed).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_about_editor_read_only (hh.ru/resume/edit/<id>/about)
+    verified_by: human
   resume_page.RESUME_BUMP_BUTTON:
     value: '[data-qa=''resume-update-button'']'
     criticality: write
@@ -2631,18 +2569,18 @@ selectors:
     live_matches:
     - resume-edit-button-about
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
-    origin: manual
-    verification: unverified
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:27
-      note: The declaration cites earlier live research but explicitly marks that claim unaudited against the later editor-route
-        finding; live reverification is required.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_editor_read_only
-    verified_by: codex
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-edit-button-about''] найден ровно 1 раз на странице черновика
+        резюме.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/fb6ef122ff11063b840039ed1f3857524a7a30)
+    verified_by: human
   resume_page.RESUME_LANGUAGE_ADD_BUTTON:
     value: '[data-qa=''profile-language-add'']'
     criticality: write
@@ -2898,11 +2836,15 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_page.py:18
-      note: 'Candidate selector is explicitly unavailable: the publish control was not observed on the blocked draft and needs
-        a live check on a ready-to-publish resume.'
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_editor_read_only
-    verified_by: codex
+      note: 'Live-проверено 2026-08-29 на всех 4 черновиках аккаунта (fb6ef122.../3d292cf4.../51b6b2bc.../66b35db0...) и на
+        /applicant/resumes: [data-qa=''resume-publish''] не найден ни разу (count=0). Верхняя панель действий резюме содержит
+        resume-employer-view/resume-download-button/resume-print-view/resume-delete, но не publish-контрол; список резюме
+        показывает у черновиков только ссылки "Добавить"/"Удалить" без three-dot меню. Клик по three-dot меню на опубликованном
+        резюме не показал пунктов меню в headless-режиме. Остаётся needs_live_evidence: реальный publish-контрол на этом аккаунте
+        не локализован read-only.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_read_only (4 draft resumes + /applicant/resumes list)
+    verified_by: human
   resume_page.RESUME_SKILLS_CHIP:
     value: '[data-qa^=''chips-trigger-chip-'']'
     criticality: write
@@ -3202,18 +3144,20 @@ selectors:
     live_matches:
     - resume-edit-business-trip-readiness
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:88
+      note: 'Live-подтверждено 2026-08-29: Блок готовности к командировкам [data-qa=''resume-edit-business-trip-readiness'']
+        найден ровно 1 раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'')
+        + settle timeout. SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного
+        разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.CANCEL:
     value: '[data-qa=''resume-partial-edit-cancel'']'
     criticality: write
@@ -3223,45 +3167,44 @@ selectors:
     live_matches:
     - resume-partial-edit-cancel
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:89
+      note: 'Live-подтверждено 2026-08-29: Кнопка отмены редактирования позиции [data-qa=''resume-partial-edit-cancel''] найден
+        ровно 1 раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle
+        timeout. SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.CURRENCY_TEMPLATE:
     value: '[data-qa=''resume-currency-input-{code}'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
     sources: {}
     live_matches:
-    - resume-currency-input-EUR
     - resume-currency-input-RUR
-    - resume-currency-input-USD
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: шаблон [data-qa=''resume-currency-input-{code}''] проверен подстановкой code=RUR
+        — [data-qa=''resume-currency-input-RUR''] найден ровно 1 раз (кнопка переключателя валюты "Рубли") на форме позиции.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.DISPLAY_BUSINESS_TRIPS:
     value: '[data-qa=''resume-position-field-businessTripReadiness'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3269,20 +3212,20 @@ selectors:
     live_matches:
     - resume-position-field-businessTripReadiness
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-position-field-businessTripReadiness''] найден ровно 1 раз на
+        странице резюме (read-only отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.DISPLAY_EMPLOYMENT:
     value: '[data-qa=''resume-position-field-employmentForms'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3290,20 +3233,20 @@ selectors:
     live_matches:
     - resume-position-field-employmentForms
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-position-field-employmentForms''] найден ровно 1 раз на странице
+        резюме (read-only отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.DISPLAY_SALARY:
     value: '[data-qa=''resume-block-salary'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3311,20 +3254,20 @@ selectors:
     live_matches:
     - resume-block-salary
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-block-salary''] найден ровно 1 раз на странице резюме (read-only
+        отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.DISPLAY_TITLE:
     value: '[data-qa=''resume-block-title-position'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3332,20 +3275,20 @@ selectors:
     live_matches:
     - resume-block-title-position
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-block-title-position''] найден ровно 1 раз на странице резюме
+        (read-only отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.DISPLAY_TRAVEL:
     value: '[data-qa=''resume-position-field-travelTime'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3353,20 +3296,20 @@ selectors:
     live_matches:
     - resume-position-field-travelTime
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-position-field-travelTime''] найден ровно 1 раз на странице резюме
+        (read-only отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.DISPLAY_WORK_FORMAT:
     value: '[data-qa=''resume-position-field-workFormats'']'
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     criticality: write
     declared_at: src/hhru_bot/resume_position.py:1
     decision: live_dom
@@ -3374,16 +3317,16 @@ selectors:
     live_matches:
     - resume-position-field-workFormats
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:1
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''resume-position-field-workFormats''] найден ровно 1 раз на странице
+        резюме (read-only отображение блока "Желаемая должность" до открытия редактора).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/<id>, display-only block before edit)
+    verified_by: human
   resume_position.EDIT:
     value: '[data-qa=''edit-position-button'']'
     criticality: write
@@ -3393,18 +3336,19 @@ selectors:
     live_matches:
     - edit-position-button
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:80
+      note: 'Live-подтверждено 2026-08-29: Кнопка открытия редактора позиции [data-qa=''edit-position-button''] найден ровно
+        1 раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout.
+        SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.EMPLOYMENT:
     value: '[data-qa=''resume-edit-employment-forms'']'
     criticality: write
@@ -3414,18 +3358,19 @@ selectors:
     live_matches:
     - resume-edit-employment-forms
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:85
+      note: 'Live-подтверждено 2026-08-29: Блок типа занятости [data-qa=''resume-edit-employment-forms''] найден ровно 1 раз
+        на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout. SAVE-кнопка
+        существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.FORM:
     value: '[data-qa=''resume-edit-position-form'']'
     criticality: write
@@ -3435,18 +3380,20 @@ selectors:
     live_matches:
     - resume-edit-position-form
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:79
+      note: 'Live-подтверждено 2026-08-29: Контейнер формы редактирования позиции [data-qa=''resume-edit-position-form'']
+        найден ровно 1 раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'')
+        + settle timeout. SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного
+        разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.SALARY:
     value: '[data-qa=''resume-salary-amount'']'
     criticality: write
@@ -3456,18 +3403,19 @@ selectors:
     live_matches:
     - resume-salary-amount
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:82
+      note: 'Live-подтверждено 2026-08-29: Поле зарплаты [data-qa=''resume-salary-amount''] найден ровно 1 раз на /resume/edit/<id>/position
+        после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout. SAVE-кнопка существует и уникальна,
+        но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.SAVE:
     value: '[data-qa=''resume-partial-edit-save'']'
     criticality: write
@@ -3477,18 +3425,20 @@ selectors:
     live_matches:
     - resume-partial-edit-save
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:90
+      note: 'Live-подтверждено 2026-08-29: Кнопка сохранения позиции (НЕ нажималась) [data-qa=''resume-partial-edit-save'']
+        найден ровно 1 раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'')
+        + settle timeout. SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного
+        разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.TITLE:
     value: '[data-qa=''resume-edit-title-suggest'']'
     criticality: write
@@ -3498,18 +3448,19 @@ selectors:
     live_matches:
     - resume-edit-title-suggest
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:81
+      note: 'Live-подтверждено 2026-08-29: Поле желаемой должности [data-qa=''resume-edit-title-suggest''] найден ровно 1
+        раз на /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout.
+        SAVE-кнопка существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.TRAVEL:
     value: '[data-qa=''resume-edit-travel-time'']'
     criticality: write
@@ -3519,18 +3470,19 @@ selectors:
     live_matches:
     - resume-edit-travel-time
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:87
+      note: 'Live-подтверждено 2026-08-29: Блок времени в пути [data-qa=''resume-edit-travel-time''] найден ровно 1 раз на
+        /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout. SAVE-кнопка
+        существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_position.WORK_FORMAT:
     value: '[data-qa=''resume-edit-work-formats'']'
     criticality: write
@@ -3540,18 +3492,19 @@ selectors:
     live_matches:
     - resume-edit-work-formats
     active: true
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: browser_dom
-    verification: unverified
+    verification: browser_observed
     evidence:
-      source: src/hhru_bot/resume_position.py
-      note: Selector is a local resume-position contract identified from the runtime declaration and reference-map DOM inventory;
-        authenticated live-DOM confirmation is unavailable in this run and is required before treating it as browser-observed.
-    last_verified_at: '2026-08-25'
-    verified_flow: authenticated_resume_position_editor_read_only
-    verified_by: codex
+      source: src/hhru_bot/resume_position.py:86
+      note: 'Live-подтверждено 2026-08-29: Блок формата работы [data-qa=''resume-edit-work-formats''] найден ровно 1 раз на
+        /resume/edit/<id>/position после клика по EDIT и явного wait_for_url(wait_until=''commit'') + settle timeout. SAVE-кнопка
+        существует и уникальна, но НЕ была нажата (write-critical, WRITE запрещён без отдельного разрешения).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
+    verified_by: human
   resume_sections.ATTESTATION_SELECTOR.0:
     value: '[data-qa=''profile-education-attestation-name'']'
     active: true
@@ -3564,13 +3517,16 @@ selectors:
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
+        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
+        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
+        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
     coverage_status: needs_live_evidence
     origin: browser_dom
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verified_by: human
   resume_sections.ATTESTATION_SELECTOR.1:
     value: '[data-qa=''profile-education-attestation-organization'']'
     active: true
@@ -3583,13 +3539,16 @@ selectors:
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
+        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
+        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
+        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
     coverage_status: needs_live_evidence
     origin: browser_dom
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verified_by: human
   resume_sections.ATTESTATION_SELECTOR.2:
     value: '[data-qa=''profile-education-attestation-specialty'']'
     active: true
@@ -3602,13 +3561,16 @@ selectors:
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
+        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
+        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
+        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
     coverage_status: needs_live_evidence
     origin: browser_dom
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verified_by: human
   resume_sections.ATTESTATION_SELECTOR.3:
     value: '[data-qa=''profile-education-year-input'']'
     active: true
@@ -3621,13 +3583,16 @@ selectors:
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
+      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
+        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
+        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
+        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
     coverage_status: needs_live_evidence
     origin: browser_dom
     verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verified_by: human
   resume_sections.RESUME_EDIT_BUTTON.attestations:
     value: '[data-qa^=''resume-edit-button-attestationEducation-'']'
     criticality: write
@@ -3636,24 +3601,22 @@ selectors:
     sources: {}
     live_matches:
     - resume-edit-button-attestationEducation-0
-    - resume-edit-button-attestationEducation-0-svg
     - resume-edit-button-attestationEducation-1
-    - resume-edit-button-attestationEducation-1-svg
     - resume-edit-button-attestationEducation-2
-    - resume-edit-button-attestationEducation-2-svg
     - resume-edit-button-attestationEducation-3
-    - resume-edit-button-attestationEducation-3-svg
     active: true
     bindings: {}
     evidence:
-      source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
-    coverage_status: needs_live_evidence
+      source: src/hhru_bot/resume_sections.py:32
+      note: 'Live-подтверждено 2026-08-29: [data-qa^=''resume-edit-button-attestationEducation-''] найден 8 раз (4 записи
+        повышения квалификации x 2 узла свойства кнопка+svg) на резюме с реальными записями курсов.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/584926d4ff10f8b2870039ed1f707779623239)
+    verified_by: human
+    status: intentionally local
   resume_sections.RESUME_EDIT_BUTTON.recommendations:
     value: '[data-qa^=''resume-edit-button-recommendation-'']'
     criticality: write
@@ -3662,22 +3625,21 @@ selectors:
     sources: {}
     live_matches:
     - resume-edit-button-recommendation-0
-    - resume-edit-button-recommendation-0-svg
     - resume-edit-button-recommendation-1
-    - resume-edit-button-recommendation-1-svg
     - resume-edit-button-recommendation-2
-    - resume-edit-button-recommendation-2-svg
     active: true
     bindings: {}
     evidence:
-      source: selectors/reference-map.yaml
-      note: Selector contract is classified conservatively; no approved live evidence was collected for this audit.
-    coverage_status: needs_live_evidence
+      source: src/hhru_bot/resume_sections.py:32
+      note: 'Live-подтверждено 2026-08-29: [data-qa^=''resume-edit-button-recommendation-''] найден 6 раз (3 рекомендации
+        x 2 узла свойства кнопка+svg) на резюме с реальными записями рекомендаций.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-25'
-    verified_flow: read_only_selector_contract_audit (live evidence not collected)
-    verified_by: codex
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_page_read_only (hh.ru/resume/584926d4ff10f8b2870039ed1f707779623239)
+    verified_by: human
+    status: intentionally local
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
     criticality: write
@@ -4148,16 +4110,19 @@ selectors:
     live_matches: []
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:51
-      note: The anonymous dump did not expose this authenticated-only marker; the local history path does not depend on it.
-        A live authenticated recheck is still required. Existing active runtime is preserved; this does not upgrade verification.
+      note: 'Live-проверено 2026-08-29: перепробовано 5+ поисковых запросов (включая точный текст заголовка недавно откликнутой
+        вакансии), [data-qa=''vacancy-serp__vacancy_response_status''] не встретился ни разу (count=0 во всех выдачах); карточки
+        уже откликнутых вакансий (vacancy_id из истории) не попали в текущую выдачу поиска (обычная нестабильность ранжирования
+        hh.ru). Кнопка отклика на карточках без статуса — отдельный data-qa=''vacancy-serp__vacancy_response'' (подтверждена,
+        но это не искомый _status маркер). Остаётся needs_live_evidence — не додумываем совпадение без факта наблюдения.'
       runtime_authoritative: true
     active: true
     bindings: {}
     coverage_status: needs_live_evidence
     origin: manual
     verification: unverified
-    last_verified_at: '2026-07-27'
-    verified_flow: selector_contract_audit_only
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_search_read_only (multiple queries, incl. titles of already-applied vacancies)
     verified_by: human
   search_page.VACANCY_CARD_SIDE_JOB:
     value: '[data-qa=''vacancy-label-side-job'']'
@@ -4261,22 +4226,24 @@ selectors:
     value: '[data-qa=''empty-vacancy-search-block'']'
     criticality: read
     declared_at: src/hhru_bot/selector_groups/search_page.py:9
-    decision: documented_live
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - empty-vacancy-search-block
     evidence:
       source: src/hhru_bot/selector_groups/search_page.py:9
-      note: Observed in an anonymous curl dump for an empty search; this audit did not repeat a live browser check. Existing
-        active runtime is preserved; this does not upgrade verification.
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''empty-vacancy-search-block''] найден ровно 1 раз при поиске по заведомо
+        несуществующему запросу (нулевая выдача).'
       runtime_authoritative: true
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    origin: manual
-    verification: unverified
-    last_verified_at: '2026-08-11'
-    verified_flow: selector_contract_audit_only
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_search_read_only (hh.ru/search/vacancy?text=<заведомо пустой запрос>)
     verified_by: human
+    status: intentionally local
   selectors.LOGIN_CODE_INPUT:
     value: '[data-qa=''magritte-pincode-input-field'']'
     criticality: write
@@ -4472,22 +4439,25 @@ selectors:
     value: '[data-qa=''vacancy-response-link-top-again'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/vacancy_page.py:8
-    decision: documented_live
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - vacancy-response-link-top-again
     evidence:
       source: src/hhru_bot/selector_groups/vacancy_page.py:8
-      note: Legacy vacancy-page curl evidence; no approved reference match and no current live apply-flow verification. Existing
-        active runtime is preserved; this does not upgrade verification.
+      note: 'Live-подтверждено 2026-08-29: [data-qa=''vacancy-response-link-top-again''] найден 2 раза на странице реальной
+        вакансии (136705272), на которую ранее уже был подан успешный отклик (подтверждено по локальной истории actions).
+        Write-critical селектор: используется только для детекции состояния "уже откликались", клик по нему не выполнялся.'
       runtime_authoritative: true
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    origin: manual
-    verification: unverified
-    last_verified_at: '2026-07-27'
-    verified_flow: selector_contract_audit_only
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_vacancy_page_read_only (hh.ru/vacancy/136705272, уже откликнулись ранее)
     verified_by: human
+    status: intentionally local
   vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT:
     value: '[data-qa=''vacancy-response-link-view-topic'']'
     criticality: write

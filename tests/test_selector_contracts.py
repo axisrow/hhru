@@ -633,6 +633,14 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
         "vacancy_page.VACANCY_TITLE",
     }
     assert set(logical_ids) >= target_ids
+    # #703 re-ran a read-only live check on these two rows specifically (still
+    # unavailable/fail-closed — no candidate control was found in the live DOM
+    # either) and stamped that with a fresher date/human reviewer than the
+    # rest of this #702 snapshot.
+    reverified_in_703 = {
+        "resume_experience.EXPERIENCE_ADD_BUTTON",
+        "resume_page.RESUME_PUBLISH_BUTTON_DATA_QA",
+    }
     for logical_id in target_ids:
         row = catalog["selectors"][logical_id]
         assert row["origin"] in {
@@ -651,9 +659,13 @@ def test_issue_609_resume_search_rows_have_explicit_evidence_resolution():
         assert row["evidence"]["source"]
         if row["bindings"]:
             assert row["evidence"].get("references")
-        assert row["last_verified_at"] == "2026-08-25"
         assert row["verified_flow"]
-        assert row["verified_by"] == "codex"
+        if logical_id in reverified_in_703:
+            assert row["last_verified_at"] == "2026-08-29"
+            assert row["verified_by"] == "human"
+        else:
+            assert row["last_verified_at"] == "2026-08-25"
+            assert row["verified_by"] == "codex"
 
     for logical_id in {
         "apply.success.APPLY_SUCCESS_MARKER",

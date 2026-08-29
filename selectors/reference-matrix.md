@@ -43,7 +43,7 @@
 | create_resume.TREE_ITEM_TEXT | `[data-qa*='tree-selector-item-text-']` | — | — | — | workflow_live |
 | negotiations.CHAT_AUTHOR_HINT | `[data-qa*='author'], [class*='author'], [aria-label], [title]` | — | — | — | documented_live |
 | negotiations.CHAT_MESSAGE_INPUT | `textarea[data-qa='chatik-chat-message-input']` | — | — | [data-qa="chatik-new-message-text"] | documented_live |
-| negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | documented_live |
+| negotiations.CHAT_MESSAGE_ROOT | `[data-qa^='chatik-chat-message-']` | — | — | — | live_dom |
 | negotiations.CHAT_MESSAGE_SEND | `button[data-qa='chatik-chat-message-send']` | — | — | [data-qa="chatik-do-send-message"] | documented_live |
 | negotiations.CHAT_MESSAGE_TEXT | `[data-qa^="chatik-chat-message-"][data-qa$="-text"]:not([data-qa="chatik-chat-message-applicant-action-text"])` | — | — | — | live_dom |
 | negotiations.LEGACY_NEGOTIATION_CHAT_LINK | `[data-qa='negotiations-item__messages-link']` | — | — | — | documented_live |
@@ -64,8 +64,8 @@
 | negotiations.NEGOTIATION_WITHDRAW_CONFIRM | `[data-qa='negotiations-withdraw-confirm']` | — | — | — | unavailable |
 | negotiations.NEGOTIATION_WITHDRAW_SUCCESS | `[data-qa='negotiations-item-withdrawn']` | — | — | — | unavailable |
 | professional_roles.FILTER_TRIGGER | `[data-qa='search-filter-professional-role-trigger']` | — | — | — | workflow_live |
-| professional_roles.TREE_CATEGORY_INPUT | `input[data-qa*='tree-selector-input-category-']` | — | — | — | workflow_live |
-| professional_roles.TREE_CHEVRON | `[data-qa~='tree-selector-chevron-category-{category_id}']` | — | — | — | workflow_live |
+| professional_roles.TREE_CATEGORY_INPUT | `input[data-qa*='tree-selector-input-category-']` | — | — | — | live_dom |
+| professional_roles.TREE_CHEVRON | `[data-qa~='tree-selector-chevron-category-{category_id}']` | — | — | — | live_dom |
 | professional_roles.TREE_INPUT | `[data-qa~='tree-selector-input-{}']` | — | — | — | workflow_live |
 | professional_roles.TREE_INPUT_ANY | `input[data-qa*='tree-selector-input-']` | — | — | — | workflow_live |
 | professional_roles.TREE_LABEL | `[data-qa='cell-text-content']` | — | — | — | live_dom |
@@ -190,7 +190,7 @@
 | search_page.VACANCY_CARD_SNIPPET_REQUIREMENT | `[data-qa='vacancy-serp__vacancy_snippet_requirement']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY | `[data-qa='vacancy-serp__vacancy_snippet_responsibility']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_TITLE_LINK | `[data-qa='serp-item__title']` | — | a[data-qa="serp-item__title"] | [data-qa="serp-item__title"] | live_dom |
-| search_page.VACANCY_SEARCH_EMPTY | `[data-qa='empty-vacancy-search-block']` | — | — | — | documented_live |
+| search_page.VACANCY_SEARCH_EMPTY | `[data-qa='empty-vacancy-search-block']` | — | — | — | live_dom |
 | selectors.LOGIN_CODE_INPUT | `[data-qa='magritte-pincode-input-field']` | — | — | input[data-qa="magritte-pincode-input-field"] | documented_live |
 | selectors.LOGIN_CODE_REQUEST_BUTTON | `[data-qa='submit-button']` | — | — | — | live_dom |
 | selectors.LOGIN_EMAIL_INPUT | `[data-qa='applicant-login-input-email']` | — | — | input[data-qa="login-input-username"] | documented_live |
@@ -201,7 +201,7 @@
 | transient_overlays.NOTIFICATION | `[data-qa^='notification']` | — | — | — | live_dom |
 | transient_overlays.NOTIFICATION_DISMISS | `[data-qa='notification-close'] button[aria-label='Удалить']` | — | — | — | live_dom |
 | transient_overlays.RESUME_DELIVERED | `` | — | — | — | needs_live_evidence |
-| vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | documented_live |
+| vacancy_page.VACANCY_ALREADY_RESPONDED_AGAIN | `[data-qa='vacancy-response-link-top-again']` | — | — | — | live_dom |
 | vacancy_page.VACANCY_ALREADY_RESPONDED_CHAT | `[data-qa='vacancy-response-link-view-topic']` | — | [data-qa="vacancy-response-link-view-topic"] | [data-qa="vacancy-response-link-view-topic"] | consensus |
 | vacancy_page.VACANCY_APPLY_BUTTON | `[data-qa='vacancy-response-link-top']` | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | [data-qa="vacancy-response-link-top"] | consensus |
 | vacancy_page.VACANCY_COMPANY_NAME | `[data-qa='vacancy-company-name']` | [data-qa="vacancy-company-name"] | [data-qa="vacancy-company-name"] | — | consensus |
