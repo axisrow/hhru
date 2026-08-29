@@ -554,7 +554,23 @@ def fetch_responses(
                     )
         except ResponsesIndeterminate:
             raise
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            AttributeError,
+            json.JSONDecodeError,
+            PlaywrightError,
+        ):
+            # AttributeError: topic_refs() (вызывается на строке выше, ДО
+            # raw_topics-валидации) обращается к .get() на каждом элементе
+            # topicList и на самом applicantNegotiations без проверки типа —
+            # applicantNegotiations=null или non-dict запись в topicList
+            # ловятся здесь, а не raw_topics-проверкой ниже по коду (Codex
+            # review, #742 round 2): без AttributeError в этом tuple такая
+            # форма пробивала бы необработанный traceback вместо
+            # ResponsesIndeterminate, тот самый fail-open, который
+            # strict_scrape должен исключать.
             if strict_empty or strict_scrape:
                 # #742: отсутствующий/битый HH-Lux-InitialState — тот же
                 # неопределённый page-state, что и не появившиеся карточки

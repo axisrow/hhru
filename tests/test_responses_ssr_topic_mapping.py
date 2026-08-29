@@ -468,6 +468,48 @@ def test_strict_scrape_rejects_incomplete_topic_dropped_by_topic_refs(monkeypatc
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
 
 
+# #742 round 2 (Codex adversarial review of PR #768): topic_refs() is called
+# BEFORE the raw_topics shape validation, and its .get() calls raise
+# AttributeError on a null applicantNegotiations or a non-dict topicList
+# entry — a shape neither the original except-tuple nor the new
+# raw_topics-based checks could catch, since the crash happens one line
+# earlier. Without AttributeError in the except-tuple, this shape escaped as
+# an unhandled traceback instead of ResponsesIndeterminate — fail-open
+# despite the #742 fix.
+
+
+def test_strict_scrape_rejects_null_applicant_negotiations(monkeypatch):
+    """applicantNegotiations: null must not crash topic_refs() uncaught."""
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    null_html = '<template id="HH-Lux-InitialState">{"applicantNegotiations":null}</template>'
+    page = _SSRPage(pages_cards=[[item]], pages_html=[null_html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
+def test_strict_scrape_rejects_non_dict_topic_entry(monkeypatch):
+    """A non-dict entry in topicList must not crash topic_refs() uncaught."""
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    non_dict_html = (
+        '<template id="HH-Lux-InitialState">'
+        '{"applicantNegotiations":{"topicList":[123]}}'
+        "</template>"
+    )
+    page = _SSRPage(pages_cards=[[item]], pages_html=[non_dict_html])
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="SSR topic/resume mapping"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
 def test_strict_scrape_preserves_chatless_card_allowance(monkeypatch):
     """A card genuinely without a chat is fine alongside a fully covered one.
 
