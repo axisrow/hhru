@@ -16,6 +16,10 @@ PAGINATION_LINK = "main a[href*='/search/resume'][href*='page=']"
 
 DETAIL_MAIN = "main"
 DETAIL_HEADING = "main h2"
+# Confirmed live DOM 2026-08-29 (issue #792, docs/research/issue-792-live-probe.md):
+# the desired-role title renders as the page's h1, never as a `main h2` —
+# `main h2` only ever contains the salary line and standard section headings.
+DETAIL_TITLE_POSITION = _selector("competitor_resume.DETAIL_TITLE_POSITION")
 DETAIL_PERSONAL_ADDRESS = _selector("competitor_resume.DETAIL_PERSONAL_ADDRESS")
 DETAIL_RELOCATION = _selector("competitor_resume.DETAIL_RELOCATION")
 DETAIL_PERSONAL_INFO = _selector("competitor_resume.DETAIL_PERSONAL_INFO")
