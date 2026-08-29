@@ -8,6 +8,7 @@ DDoS-Guard грузится 33с+ против дефолта Playwright 30с, �
 
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -22,6 +23,7 @@ from hhru_bot.browser import (
     ThrottledChannelDetected,
     goto_hh,
     open_confirmed_resume,
+    open_hydrated_resume_editor,
     require_authenticated_page,
 )
 
@@ -570,3 +572,80 @@ def test_goto_hh_removes_response_listener_after_each_attempt(monkeypatch):
 
     assert len(listeners) == 1
     assert removed == listeners
+
+
+def test_open_hydrated_resume_editor_accepts_matching_path_and_query(monkeypatch):
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/profile/edit/primaryEducation?resumeFrom=abc123&hhtmFrom=resume"
+    editor = MagicMock(name="editor")
+    editor.count.return_value = 1
+    page.locator.return_value = editor
+
+    result = open_hydrated_resume_editor(
+        page,
+        trigger_selector="[data-qa='x']",
+        editor_selector="[data-qa='y']",
+        profile_path="/resume/abc123",
+        edit_path=re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)"),
+        expected_query={"resumeFrom": "abc123"},
+        click_trigger=False,
+    )
+
+    assert result is editor
+
+
+def test_open_hydrated_resume_editor_rejects_mismatched_query(monkeypatch):
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/profile/edit/primaryEducation?resumeFrom=wrong&hhtmFrom=resume"
+    editor = MagicMock(name="editor")
+    editor.count.return_value = 1
+    page.locator.return_value = editor
+
+    with pytest.raises(RuntimeError, match="открыта не для того резюме"):
+        open_hydrated_resume_editor(
+            page,
+            trigger_selector="[data-qa='x']",
+            editor_selector="[data-qa='y']",
+            profile_path="/resume/abc123",
+            edit_path=re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)"),
+            expected_query={"resumeFrom": "abc123"},
+            click_trigger=False,
+        )
+
+
+def test_open_hydrated_resume_editor_rejects_mismatched_path_with_query(monkeypatch):
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/profile/edit/additionalEducation?resumeFrom=abc123&hhtmFrom=resume"
+    editor = MagicMock(name="editor")
+    editor.count.return_value = 1
+    page.locator.return_value = editor
+
+    with pytest.raises(RuntimeError, match="открыта не для того резюме"):
+        open_hydrated_resume_editor(
+            page,
+            trigger_selector="[data-qa='x']",
+            editor_selector="[data-qa='y']",
+            profile_path="/resume/abc123",
+            edit_path=re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)"),
+            expected_query={"resumeFrom": "abc123"},
+            click_trigger=False,
+        )
+
+
+def test_open_hydrated_resume_editor_omits_query_check_when_not_expected(monkeypatch):
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/edit/resume-id/keySkills?foo=bar"
+    editor = MagicMock(name="editor")
+    editor.count.return_value = 1
+    page.locator.return_value = editor
+
+    result = open_hydrated_resume_editor(
+        page,
+        trigger_selector="[data-qa='x']",
+        editor_selector="[data-qa='y']",
+        profile_path="/resume/resume-id",
+        edit_path="/resume/edit/resume-id/keySkills",
+        click_trigger=False,
+    )
+
+    assert result is editor

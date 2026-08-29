@@ -108,3 +108,28 @@ def test_hydration_runtime_error_after_prior_save_is_reported_not_raised(monkeyp
     assert result.saved == 1
     assert result.uncertain is True
     assert "ошибка UI" in result.reason
+
+
+def test_edit_block_passes_expected_query_to_open_hydrated_resume_editor(monkeypatch):
+    """#788: the education editor must bind the opened form to the requested
+    resume_id via the `resumeFrom` query parameter, not only via the path."""
+    page = FakePage(trigger_count=1, resume_id="resume-id")
+    captured: dict = {}
+
+    def fake_open_hydrated_resume_editor(page_arg, **kwargs):  # noqa: ARG001
+        captured.update(kwargs)
+        return page.locator(next(iter(kwargs.get("editor_selector", "") or "x")))
+
+    monkeypatch.setattr(
+        resume_education, "open_hydrated_resume_editor", fake_open_hydrated_resume_editor
+    )
+
+    records = [
+        EducationRecord(
+            institution="A", level="", faculty="", organization="", specialty="", year="2020"
+        ),
+    ]
+
+    _edit_block(page, records, additional=False, dry_run=False, resume_id="resume-id")
+
+    assert captured.get("expected_query") == {"resumeFrom": "resume-id"}

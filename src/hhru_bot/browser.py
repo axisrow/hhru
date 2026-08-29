@@ -12,7 +12,7 @@ import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Browser, BrowserContext, Locator, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
@@ -151,6 +151,7 @@ def open_hydrated_resume_editor(
     trigger_error: str = "кнопка редактирования не подтверждена",
     open_error: str = "форма редактирования не открылась",
     wrong_route_error: str = "форма редактирования открыта не для того резюме",
+    expected_query: dict[str, str] | None = None,
 ):
     """Open a resume editor only after its hydrated DOM marker appears.
 
@@ -158,7 +159,7 @@ def open_hydrated_resume_editor(
     click can therefore succeed at the DOM level while doing nothing. Retry
     only while still on the profile page and require the editor marker as the
     positive result; callers may additionally bind the editor to a dedicated
-    edit route.
+    edit route and/or expected query parameters.
     """
     editor = page.locator(editor_selector)
 
@@ -196,6 +197,15 @@ def open_hydrated_resume_editor(
     )
     if not route_matches:
         raise RuntimeError(wrong_route_error)
+    if expected_query is not None:
+        page_url = page.url
+        if not isinstance(page_url, str):
+            raise RuntimeError(wrong_route_error)
+        current_query = parse_qs(urlsplit(page_url).query)
+        for key, expected_value in expected_query.items():
+            actual_values = current_query.get(key, [])
+            if expected_value not in actual_values:
+                raise RuntimeError(wrong_route_error)
     return editor
 
 
