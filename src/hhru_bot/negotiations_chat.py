@@ -136,6 +136,26 @@ def needs_reply(chat: ChatMessage | None) -> ReplyDecision:
     return ReplyDecision(False, "author_unknown")
 
 
+def needs_follow_up(chat: ChatMessage | None) -> ReplyDecision:
+    """Decide whether a follow-up reminder may be sent (#710).
+
+    Mirror image of :func:`needs_reply`: a follow-up is due only when the
+    LAST word in the chat is already ours (``author == "me"``) — sending one
+    while the employer's message is unread would be a duplicate reply, not a
+    reminder. Same fail-closed contract as ``needs_reply``: a missing
+    message, author, or marker never permits sending.
+    """
+    if chat is None:
+        return ReplyDecision(False, "empty_chat")
+    if not chat.inbound_marker:
+        return ReplyDecision(False, "inbound_marker_unknown")
+    if chat.author == "me":
+        return ReplyDecision(True, "last_message_from_us")
+    if chat.author == "employer":
+        return ReplyDecision(False, "last_message_from_employer")
+    return ReplyDecision(False, "author_unknown")
+
+
 def _message_id(data_qa: str | None) -> str | None:
     if not data_qa or not data_qa.startswith("chatik-chat-message-"):
         return None
@@ -285,6 +305,18 @@ def read_employer_messages(page: Page, chat_id: str) -> list[str]:
     return texts
 
 
+def count_visible_messages(page: Page) -> int:
+    """Number of message DOM nodes currently rendered on an already-open chat.
+
+    Read-only, no navigation. Used by callers of :func:`wait_reply_confirmation`
+    (#710) to capture the pre-click message count for its ``min_count`` guard —
+    for ``--follow-up``, "last message is ours" is already true before the
+    click (that's the ``needs_follow_up`` precondition), so a strictly higher
+    count is the only signal that a NEW message actually rendered.
+    """
+    return page.locator(CHAT_MESSAGE_TEXT).count()
+
+
 def send_reply_current(page: Page, text: str) -> None:
     """Submit on the chat page already opened by :func:`read_last_message`."""
     input_loc = page.locator(CHAT_MESSAGE_INPUT)
@@ -306,7 +338,7 @@ def _sleep(page: Page, ms: float) -> None:
         time.sleep(ms / 1000)
 
 
-def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
+def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000, *, min_count: int = 1) -> bool:
     """Подтверждает, что клик отправки реально доставил сообщение (Codex #198).
 
     ``send_reply_current`` только кликает — клик мог не дойти (отклонение
@@ -317,15 +349,32 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000) -> bool:
     ``read_last_message``). Опрашиваем union «последнее сообщение наше» в цикле
     до таймаута — hh.ru может отрисовать новое сообщение в DOM асинхронно.
 
+    ``min_count`` (#710, cycle-review round 2): для обычного ответа последнее
+    сообщение ДО клика — от работодателя (``needs_reply`` требует
+    ``author == "employer"``), поэтому «последнее — наше» само по себе уже
+    доказывает новое сообщение. Для ``--follow-up`` это неверно:
+    ``needs_follow_up`` требует, чтобы последнее сообщение уже БЫЛО нашим ДО
+    клика — тот же сигнал истинен ещё до отправки и не отличает реальную
+    доставку напоминания от сетевого сбоя, тихо провалившегося без exception.
+    Вызывающий код передаёт число сообщений чата, прочитанное непосредственно
+    перед кликом (``len(chat.conversation)`` или ``messages.count()``);
+    подтверждение засчитывается, только когда число сообщений СТРОГО
+    превышает это значение — то есть в DOM реально появилось новое сообщение,
+    а не просто осталось прежнее.
+
     Как и ``apply/success.wait_success_confirmation`` (#7): таймаут даёт
     false-negative (status='failed', разрешает повторную попытку), а не
     false-positive success — постоянная дедупликация по success опаснее.
     """
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
+        # cycle-review (PR #761, round 2): переиспользуем count_visible_messages()
+        # вместо повторного инлайна того же локатора+count -- тот же locator
+        # нужен ниже для messages.nth(), поэтому оставляем page.locator()
+        # отдельно, но сам подсчёт делегируем общему хелперу.
         messages = page.locator(CHAT_MESSAGE_TEXT)
-        count = messages.count()
-        if count:
+        count = count_visible_messages(page)
+        if count >= min_count:
             message = messages.nth(count - 1)
             author = message.evaluate(
                 """(el, marker) => {

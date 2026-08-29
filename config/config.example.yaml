@@ -81,6 +81,16 @@ cover_letter_default: |
 
   С уважением
 
+# Шаблон напоминания для `reply-employers --follow-up` (#710): используется,
+# когда работодатель прочитал наш ответ, но не написал сам за --after-days N.
+follow_up_letter: |
+  Здравствуйте!
+
+  Хотел бы уточнить, актуальна ли ещё вакансия "{vacancy_title}" в компании
+  {company_name} и рассматриваете ли вы мою кандидатуру.
+
+  С уважением
+
 resumes:
   - id: "resume-name-1"
     resume_url: "https://hh.ru/resume/XXXXXXXXXXXXXXXXXXXXXXXX"

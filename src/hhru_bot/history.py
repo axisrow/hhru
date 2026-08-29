@@ -3909,6 +3909,13 @@ class History:
         (#208). ``dry_run`` также не дедуплицирует отклик: иначе холостой прогон
         навсегда заблокировал бы боевой ответ на живое входящее.
 
+        Тот же ``uncertain``-компромисс относится и к ``--follow-up`` (#710,
+        cycle-review PR #761): для напоминаний ``inbound_marker`` — не живой
+        marker чата, а синтетический маркер затишья ``follow_up:<status_changed_at>``
+        (см. ``reply_employers.py``), но он проходит через тот же ``has_replied``
+        и наследует то же поведение — повторный запуск при статусе ``uncertain``
+        отправит ещё одно напоминание по тому же затишью, а не будет заблокирован.
+
         НЕ финальная проверка перед отправкой — см. границу ответственности выше:
         False здесь не значит «в чате нет нашего ответа».
         """
@@ -3960,6 +3967,44 @@ class History:
              ORDER BY MAX(r.last_seen_at) DESC, r.id DESC
         """
         params: list[object] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def follow_up_candidates(self, after_days: int, limit: int | None = None) -> list[dict]:
+        """Account-wide chats whose status has been stale for at least N days (#710).
+
+        ``status IN ('response', 'read')`` и с тех пор ничего не изменилось:
+        ``status_changed_at`` старше ``after_days``. ``read`` здесь — не строго
+        «работодатель прочитал»: ``responses.normalize_status(None)`` тоже даёт
+        ``read`` (свежий отклик вовсе без бейджа hh.ru), поэтому в выборку
+        попадает и «прочитано и молчит», и «реакции не было совсем» — общий
+        случай «работодатель ничего не ответил». ``status_changed_at`` (не
+        ``last_seen_at``) — момент реальной смены статуса, а не последней
+        проверки нашей стороной; иначе частый ``responses`` polling бесконечно
+        откладывал бы порог напоминания. ``invitation``/``discard`` сюда не
+        попадают: напоминать не о чем — либо работодатель уже ответил, либо
+        отказал.
+
+        Как и :meth:`reply_candidates`, живой маркер входящего сообщения здесь
+        недоступен — финальную проверку (последнее слово за нами, hh.ru
+        явно разрешает напоминание) делает вызывающий код после открытия чата.
+        """
+        cutoff = (datetime.now() - timedelta(days=after_days)).isoformat()
+        sql = """
+            SELECT r.vacancy_id, r.topic, COALESCE(v.title, r.vacancy_id) AS title,
+                   COALESCE(r.employer, '') AS employer, r.status_changed_at
+              FROM responses AS r
+              LEFT JOIN vacancies_seen AS v ON v.vacancy_id = r.vacancy_id
+             WHERE r.topic IS NOT NULL
+               AND r.status IN ('response', 'read')
+               AND r.status_changed_at <= ?
+             GROUP BY r.vacancy_id, r.topic
+             ORDER BY r.status_changed_at ASC, r.id ASC
+        """
+        params: list[object] = [cutoff]
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)

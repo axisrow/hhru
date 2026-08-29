@@ -9,6 +9,7 @@ from hhru_bot.negotiations_chat import (
     ChatMessage,
     extract_external_test_link,
     is_robot_questionnaire,
+    needs_follow_up,
     needs_reply,
     read_chat,
     wait_reply_confirmation,
@@ -36,6 +37,30 @@ def test_needs_reply_is_fail_closed_for_empty_chat():
 def test_needs_reply_is_fail_closed_for_unknown_author_or_marker():
     assert needs_reply(ChatMessage(None, "message-1")).should_reply is False
     assert needs_reply(ChatMessage("employer", None)).reason == "inbound_marker_unknown"
+
+
+# --- needs_follow_up (#710): mirror image of needs_reply --------------------
+
+
+def test_needs_follow_up_when_last_message_is_ours():
+    decision = needs_follow_up(ChatMessage("me", "message-1"))
+    assert decision.should_reply is True
+    assert decision.reason == "last_message_from_us"
+
+
+def test_needs_follow_up_skips_when_employer_already_answered():
+    decision = needs_follow_up(ChatMessage("employer", "message-1"))
+    assert decision.should_reply is False
+    assert decision.reason == "last_message_from_employer"
+
+
+def test_needs_follow_up_is_fail_closed_for_empty_chat():
+    assert needs_follow_up(None).reason == "empty_chat"
+
+
+def test_needs_follow_up_is_fail_closed_for_unknown_author_or_marker():
+    assert needs_follow_up(ChatMessage(None, "message-1")).should_reply is False
+    assert needs_follow_up(ChatMessage("me", None)).reason == "inbound_marker_unknown"
 
 
 def test_robot_questionnaire_detects_two_employer_questions():
@@ -246,3 +271,29 @@ def test_confirmation_timeout_logs_page_url(caplog):
         result = wait_reply_confirmation(cast(Page, page), timeout_ms=0)
     assert result is False
     assert any("https://hh.ru/chat/42" in record.message for record in caplog.records)
+
+
+# --- min_count (#710, cycle-review round 2) ---------------------------------
+#
+# For --follow-up, "last message is ours" is already TRUE before the send
+# click (needs_follow_up's precondition) -- unlike a plain reply, where the
+# pre-click last message is the employer's. Without min_count, a silently
+# failed follow-up click (network drop, no exception) would still pass this
+# check on the very first poll and be journaled as a false 'success'.
+
+
+def test_min_count_rejects_unchanged_message_list():
+    """The message that is 'ours' pre-existed the click -- not new evidence."""
+    page = _FakeChatPage(authors=[True])  # same single "our" message as before
+    assert wait_reply_confirmation(cast(Page, page), timeout_ms=0, min_count=2) is False
+
+
+def test_min_count_confirms_once_a_new_message_renders():
+    page = _FakeChatPage(authors=[True, True])  # a second "our" message appeared
+    assert wait_reply_confirmation(cast(Page, page), timeout_ms=0, min_count=2) is True
+
+
+def test_min_count_default_preserves_plain_reply_behaviour():
+    """min_count=1 (default) is exactly the pre-existing contract."""
+    page = _FakeChatPage(authors=[True])
+    assert wait_reply_confirmation(cast(Page, page)) is True

@@ -34,6 +34,19 @@ def register(subparsers) -> None:
         action="store_true",
         help="Сгенерировать и сохранить draft по входящему сообщению (без отправки)",
     )
+    parser.add_argument(
+        "--follow-up",
+        action="store_true",
+        help=(
+            "Режим напоминания (#710): вместо ответа на входящее — напомнить о себе "
+            "там, где последнее слово уже за нами и работодатель молчит --after-days N"
+        ),
+    )
+    parser.add_argument(
+        "--after-days",
+        type=int,
+        help="Порог молчания работодателя в днях для --follow-up (обязателен вместе с ним)",
+    )
     parser.add_argument("--force", action="store_true", help="Подтвердить боевой запуск")
     parser.set_defaults(func=run)
 
@@ -55,21 +68,38 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
     from ..browser import launch_context
     from ..negotiations_chat import (
         NoReplyForm,
+        count_visible_messages,
         is_robot_questionnaire,
+        needs_follow_up,
         needs_reply,
         read_chat,
         send_reply_current,
         wait_reply_confirmation,
     )
-    from ..negotiations_probe import paginated_topic_refs
+    from ..negotiations_probe import paginated_topic_and_remindable_refs, paginated_topic_refs
     from ..responses import NotAuthenticated, ResponsesIndeterminate
     from ..throttle import LimitReached, Throttle
 
+    follow_up = getattr(args, "follow_up", False)
     max_pages = getattr(args, "max_pages", 5)
     throttle = Throttle(config.throttle, history)
-    candidates = history.reply_candidates(args.limit or None)
-    template = args.template if args.template is not None else config.cover_letter_default
-    print("=== Ответы работодателям (account-wide) ===")
+    if follow_up:
+        candidates = history.follow_up_candidates(args.after_days, args.limit or None)
+        template = args.template if args.template is not None else config.follow_up_letter
+        heading = (
+            f"=== Напоминания работодателям (account-wide, --after-days {args.after_days}) ==="
+        )
+        decide = needs_follow_up
+    else:
+        candidates = history.reply_candidates(args.limit or None)
+        template = args.template if args.template is not None else config.cover_letter_default
+        heading = "=== Ответы работодателям (account-wide) ==="
+        decide = needs_reply
+    print(heading)
+    if not template:
+        template_flag = "follow_up_letter" if follow_up else "cover_letter_default"
+        print(f"[FAIL] Пустой шаблон письма (--template или config.{template_flag}).")
+        return True
     if not candidates:
         print("[INFO] В локальной истории нет чатов для проверки.")
         return False
@@ -86,9 +116,36 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
         # исключений, что и у fetch_responses (её собственный вызывающий код
         # в responses.py ловит их так же): истёкшая сессия или не
         # подтверждённая пагинация не должны крашить команду с traceback.
+        remindable_topics: set[str] | None = None
         try:
-            topic_list = paginated_topic_refs(page, max_pages=max_pages)
-        except (NotAuthenticated, ResponsesIndeterminate) as exc:
+            if follow_up:
+                # #710: локальная история говорит «работодатель молчит N дней»,
+                # но финальное разрешение на напоминание — прерогатива hh.ru
+                # (responseReminderState.allowed), а не эвристика по возрасту.
+                # Один обход даёт ОБА SSR-представления одного и того же HTML
+                # (topic→chat mapping + remindable-флаги) — раздельные вызовы
+                # paginated_topic_refs()+paginated_remindable_topic_refs()
+                # удвоили бы реальные браузерные переходы по тем же страницам
+                # negotiations без всякой новой информации.
+                topic_list, remindable_refs = paginated_topic_and_remindable_refs(
+                    page, max_pages=max_pages
+                )
+                remindable_topics = {ref.topic_id for ref in remindable_refs}
+            else:
+                # #201: пагинируем SSR chat mapping по всем страницам
+                # negotiations (аналогично --max-pages в других командах),
+                # иначе чат, ушедший за пределы первой страницы, тихо
+                # выглядит как empty_chat.
+                topic_list = paginated_topic_refs(page, max_pages=max_pages)
+        except (NotAuthenticated, ResponsesIndeterminate, ValueError) as exc:
+            # ValueError (#710, cycle-review round 2): remindable_topic_refs()
+            # -- в отличие от topic_refs(), который молча дропает битые
+            # записи -- намеренно строгий и бросает ValueError на дрейфе
+            # SSR-схемы (см. negotiations_probe.py). Без этого класса в except
+            # дрейф разметки hh.ru печатал бы голый traceback вместо [FAIL]
+            # (тот же дефект, что #747/#748 чинил для goto_hh). Тот же except
+            # покрывает обе ветки: ResponsesIndeterminate/NotAuthenticated
+            # остаются достижимы и для обычного пути через topic_refs().
             print(f"[FAIL] не удалось прочитать SSR chat mapping: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
         refs = {ref.topic_id: ref.chat_id for ref in topic_list}
@@ -104,6 +161,16 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             topic = str(candidate["topic"])
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
             live_resume_id = resume_by_topic.get(topic)
+            if remindable_topics is not None and topic not in remindable_topics:
+                # cycle-review (PR #761): этот гейт стоит ДО read_chat/decide
+                # намеренно (дешёвый ранний выход без лишнего браузерного
+                # чтения на заведомо запрещённые hh.ru чаты), поэтому здесь
+                # ещё не известно, ждёт ли чат ответа или уже полностью
+                # обработан (работодатель уже ответил и т.п.) -- формулировка
+                # это отражает, а не утверждает "нужно было напомнить".
+                print(f"[skip] {label} — hh.ru не разрешает/не требует напоминания для этого чата")
+                progress.skipped_count += 1
+                continue
             if getattr(args, "suggest", False):
                 live_refs = [
                     ref
@@ -127,7 +194,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 print(f"[skip] {label} — robot-questionnaire (ручная очередь)")
                 progress.skipped_count += 1
                 continue
-            decision = needs_reply(chat)
+            decision = decide(chat)
             if not decision.should_reply:
                 # /code-review high: "last_message_from_us" is the routine
                 # state of an already-answered chat waiting on the employer,
@@ -139,8 +206,14 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # Keeping it a routine skip preserves that behaviour; only
                 # genuine DOM-read uncertainty (empty_chat/inbound_marker_
                 # unknown/author_unknown) is a real failure worth failing the
-                # run and a nonzero exit code for.
-                if decision.reason == "last_message_from_us":
+                # run and a nonzero exit code for. --follow-up mirrors this:
+                # "last_message_from_employer" (they already answered, or we
+                # already sent the reminder and they replied) is the routine
+                # skip there instead.
+                routine_reason = (
+                    "last_message_from_employer" if follow_up else "last_message_from_us"
+                )
+                if decision.reason == routine_reason:
                     print(f"[skip] {label} — {decision.reason}")
                     progress.skipped_count += 1
                 else:
@@ -149,10 +222,47 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     failed = True
                 continue
             assert chat is not None
-            if history.has_replied(topic, chat.inbound_marker or ""):
-                print(f"[skip] {label} — уже отвечали на это сообщение")
+            # #710: для follow-up нет нового входящего сообщения, дедуплицируем
+            # по marker'у самого затишья (status_changed_at кандидата), а не по
+            # chat.inbound_marker (это marker НАШЕГО последнего сообщения и не
+            # меняется, пока работодатель молчит — has_replied() иначе увидел
+            # бы точно тот же marker после каждой отправки и заблокировал бы
+            # даже первое напоминание). Переиспользует has_replied как просил
+            # issue #710 — тот же дедуп-барьер, свой namespace marker'а.
+            #
+            # cycle-review round 3: needs_follow_up (chat.author == "me") не
+            # отличает "мы уже отправили напоминание" от "пользователь вручную
+            # ответил в браузере вне CLI" -- в обоих случаях последнее сообщение
+            # становится "нашим", а dedup_marker завязан на history.status_changed_at,
+            # который не меняется от ручного ответа. Полагаемся на remindable_topics
+            # (responseReminderState.allowed с hh.ru) как на внешний источник
+            # истины: ручной ответ пользователя -- это то же самое "последнее
+            # слово уже за нами", из-за которого hh.ru в принципе не предлагает
+            # напоминание (см. #710/остальные комментарии в этом файле про
+            # "финальное разрешение -- прерогатива hh.ru, а не эвристика по
+            # возрасту"), так что hh.ru должен снять allowed для этого чата
+            # раньше, чем locally-stale candidate до него дойдёт. Это НЕ
+            # подтверждено живым прогоном (недостижимо без мутации аккаунта
+            # соперничающим ручным ответом в момент выполнения --follow-up) --
+            # если после боевого прогона обнаружится дублирующее напоминание
+            # поверх ручного ответа, первый подозреваемый -- это предположение.
+            dedup_marker = (
+                f"follow_up:{candidate['status_changed_at']}"
+                if follow_up
+                else (chat.inbound_marker or "")
+            )
+            if history.has_replied(topic, dedup_marker):
+                skip_reason = (
+                    "уже напоминали об этом молчании"
+                    if follow_up
+                    else "уже отвечали на это сообщение"
+                )
+                print(f"[skip] {label} — {skip_reason}")
                 progress.skipped_count += 1
                 continue
+            # --follow-up/--suggest несовместимость проверена в run() до входа
+            # сюда (sys.exit(1)); эта ветка её не дублирует, чтобы не оставлять
+            # недостижимый код на случай прямого вызова _run() в обход run().
             if getattr(args, "suggest", False):
                 from ..ai.llm_client import LLMClient
                 from ..reply_suggestions import ReplyContext, suggest
@@ -190,7 +300,7 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     continue
             letter = _letter(template, candidate)
             progress.begin_attempt()
-            inbound_marker = chat.inbound_marker or ""
+            inbound_marker = dedup_marker
             status = "dry_run" if args.dry_run else "failed"
             reason = "dry-run" if args.dry_run else None
             action_id = None
@@ -209,8 +319,19 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # чат перечитываем непосредственно перед кликом, чтобы
                 # TOCTOU-окно не пропустило входящее от работодателя или наш
                 # собственный ответ с другого устройства между этими шагами.
+                # #710 (cycle-review round 2): remindable_topics — снимок ДО
+                # цикла кандидатов, не перепроверяется здесь. hh.ru теоретически
+                # может отозвать разрешение на напоминание в этом узком окне
+                # (throttle-задержка предыдущего кандидата + рендер письма),
+                # но повторная проверка стоила бы ещё одной навигации на
+                # /applicant/negotiations на каждого кандидата — тот же
+                # анти-фрод trade-off, из-за которого reply/remindable читаются
+                # ОДНИМ обходом, а не двумя (см. paginated_topic_and_remindable_
+                # refs). Окно уже сужено содержательной TOCTOU-проверкой чата
+                # ниже (decide(live_chat)): реальный новый ответ работодателя
+                # по-прежнему блокирует отправку.
                 live_chat = read_chat(page, topic, refs)
-                live_decision = needs_reply(live_chat)
+                live_decision = decide(live_chat)
                 if not live_decision.should_reply:
                     reason = f"чат изменился перед отправкой: {live_decision.reason}"
                     print(f"[FAIL] {label} — {reason}")
@@ -234,7 +355,11 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                 # отсёк выше), отвечаем фактически на него; журналирование
                 # старого marker'а оставило бы новое входящее выглядящим
                 # неотвеченным, и следующий запуск отправил бы дубликат.
-                inbound_marker = live_chat.inbound_marker or ""
+                # #710: для follow-up живой inbound_marker — это marker НАШЕГО
+                # собственного последнего сообщения (он не меняется, пока
+                # работодатель молчит), поэтому дедуп-идентичность follow-up
+                # остаётся синтетическим marker'ом затишья, а не живым чтением.
+                inbound_marker = dedup_marker if follow_up else (live_chat.inbound_marker or "")
                 # Codex adversarial review (cycle-review PR #471, round 1): the
                 # durable action row must exist BEFORE the send click, mirroring
                 # apply's before_submit / clear-negotiations' begin_action
@@ -251,6 +376,16 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     search_query=None,
                     run_id=progress.run_id,
                 )
+                # #710 (cycle-review round 2): for a plain reply, the message
+                # BEFORE the click is the employer's -- "last message is ours"
+                # after the click is itself new evidence. For --follow-up the
+                # precondition (needs_follow_up) is the mirror: the last
+                # message is ALREADY ours before the click, so that same
+                # signal is true regardless of whether the click delivered
+                # anything. min_count anchors wait_reply_confirmation() to a
+                # strictly higher message count, the only signal a follow-up
+                # actually rendered a new message.
+                pre_click_count = count_visible_messages(page) if follow_up else 0
                 try:
                     send_reply_current(page, letter)
                 except NoReplyForm as exc:
@@ -280,7 +415,8 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
                     # apply/success.py (#7): таймаут не даёт false-positive
                     # success, но после состоявшегося клика фиксируется как
                     # uncertain, а не как безопасный для retry failed.
-                    if wait_reply_confirmation(page):
+                    min_count = pre_click_count + 1 if follow_up else 1
+                    if wait_reply_confirmation(page, min_count=min_count):
                         status = "success"
                         reason = None
                         sent += 1
@@ -367,10 +503,29 @@ def run(args: argparse.Namespace):
     if max_pages < 1:
         print(f"[FAIL] --max-pages должен быть >= 1 (получено {max_pages}).", file=sys.stderr)
         sys.exit(1)
+    follow_up = getattr(args, "follow_up", False)
+    after_days = getattr(args, "after_days", None)
+    if follow_up and after_days is None:
+        print("[FAIL] --follow-up требует --after-days N", file=sys.stderr)
+        sys.exit(1)
+    if not follow_up and after_days is not None:
+        print("[FAIL] --after-days действует только вместе с --follow-up", file=sys.stderr)
+        sys.exit(1)
+    if after_days is not None and after_days < 1:
+        print(f"[FAIL] --after-days должен быть >= 1 (получено {after_days}).", file=sys.stderr)
+        sys.exit(1)
+    if follow_up and getattr(args, "suggest", False):
+        print("[FAIL] --suggest несовместим с --follow-up", file=sys.stderr)
+        sys.exit(1)
+    prompt = (
+        "Напомнить о себе работодателям в выбранных чатах?"
+        if follow_up
+        else "Ответить работодателям в выбранных чатах?"
+    )
     if (
         not args.dry_run
         and not getattr(args, "suggest", False)
-        and not confirm_write(args.force, prompt="Ответить работодателям в выбранных чатах?")
+        and not confirm_write(args.force, prompt=prompt)
     ):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
