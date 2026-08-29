@@ -25,7 +25,12 @@ from .selector_groups.resume_page import (
 )
 
 CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
-_RESUME_ID_RE = re.compile(r"/resume/([0-9a-f]{32,40})(?:[/?#]|$)")
+# hh.ru подтверждает сохранение ДВУМЯ формами URL: прямой страницей резюме
+# (/resume/{id}) и следующим шагом визарда, где id уходит в query-параметр
+# (/profile/resume/educations?resume={id}&hhtmFrom=...). Боевой прогон #778
+# наблюдал вторую: резюме создавалось, но ожидание первой формы падало по
+# таймауту и давало uncertain при фактическом успехе.
+_RESUME_ID_RE = re.compile(r"(?:/resume/|[?&]resume=)([0-9a-f]{32,40})(?:[/?#&]|$)")
 
 
 @dataclass
