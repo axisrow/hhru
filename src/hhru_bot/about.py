@@ -126,9 +126,19 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     The trigger button is absent on empty resumes. Navigate without
     ``ready_selector`` so the command does not hang for 2+ minutes when
     the selector is missing; verify the button explicitly afterwards.
+
+    ``goto_hh`` only guarantees URL commit, not rendered DOM, so wait for
+    the trigger to become visible before the strict count check.
     """
     goto_hh(page, resume.resume_url)
     trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
+    try:
+        trigger.wait_for(state="visible", timeout=10_000)
+    except PlaywrightError as exc:
+        raise AboutGenerationError(
+            "кнопка редактирования «Обо мне» не появилась после навигации "
+            f"(резюме, вероятно, пустое — раздел ещё не создан): {exc}"
+        ) from exc
     if trigger.count() != 1:
         raise AboutGenerationError(
             "кнопка редактирования «Обо мне» не найдена однозначно "

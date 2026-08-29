@@ -200,16 +200,20 @@ def test_open_about_editor_fails_fast_when_button_missing(monkeypatch):
     page.url = "https://hh.ru/resume/resume-id"
     trigger = MagicMock(name="trigger")
     trigger.count.return_value = 0
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    trigger.wait_for.side_effect = PlaywrightTimeoutError("not visible")
 
     page.locator.side_effect = lambda selector: {
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
 
-    with pytest.raises(AboutGenerationError, match="не найдена однозначно"):
+    with pytest.raises(AboutGenerationError, match="не появилась после навигации"):
         open_about_editor(page, bare_resume("resume-id"))
 
-    trigger.count.assert_called_once()
+    trigger.wait_for.assert_called_once()
+    trigger.count.assert_not_called()
     trigger.click.assert_not_called()
 
 
@@ -219,6 +223,7 @@ def test_open_about_editor_fails_fast_when_button_ambiguous(monkeypatch):
     page.url = "https://hh.ru/resume/resume-id"
     trigger = MagicMock(name="trigger")
     trigger.count.return_value = 2
+    trigger.wait_for.return_value = None
 
     page.locator.side_effect = lambda selector: {
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
@@ -228,5 +233,6 @@ def test_open_about_editor_fails_fast_when_button_ambiguous(monkeypatch):
     with pytest.raises(AboutGenerationError, match="не найдена однозначно"):
         open_about_editor(page, bare_resume("resume-id"))
 
+    trigger.wait_for.assert_called_once()
     trigger.count.assert_called_once()
     trigger.click.assert_not_called()
