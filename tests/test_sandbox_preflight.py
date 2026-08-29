@@ -39,6 +39,7 @@ def test_browser_command_registry_is_complete() -> None:
         "responses",
         "resume-position",
         "resume-sections",
+        "resume-pool",
         "resume-visibility",
         "resume-views",
         "run",

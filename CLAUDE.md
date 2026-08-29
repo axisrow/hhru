@@ -522,7 +522,9 @@ config/
   который запрашивает отдельное подтверждение harness на каждый вызов.
 - По границе команд: `copy-resume` относится к `live_write`; `publish-resume`,
   `apply`, `bump`, `run`, `reply-employers` и `clear-negotiations` — к
-  `live_write_danger`.
+  `live_write_danger`. `resume-pool` (#754) выполняет ту же мутацию, что и
+  `copy-resume`, несколько раз подряд за один запуск — выше blast radius
+  одиночной команды, поэтому классифицируется как `live_write_danger`.
 - Не создавай новые live-тесты для проверки обычной логики: используй моки и
   HTML-фикстуры. Перед изменением тестовой инфраструктуры проверь
   `pytest --collect-only -q` и убедись, что live-категории не собраны.

@@ -79,6 +79,12 @@ class ResumeConfig:
     # новая секция не должна тащить тот же дефект типизации; потребителям не
     # нужен cast(), см. commands/about.py:73-76 для контраста).
     candidate_facts: CandidateFacts | None = None
+    # #754: ключ ResumeCluster (resume_clusters.py) — связывает резюме конфига
+    # с кластером вакансий. None = резюме не привязано ни к одному кластеру
+    # (дефолт для резюме, заведённых до #754). Валидируется на загрузке
+    # конфига (config_sections/cluster.py), поэтому здесь — уже проверенный
+    # ключ, не произвольная строка.
+    cluster: str | None = None
 
     @property
     def resume_id(self) -> str:

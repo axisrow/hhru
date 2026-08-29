@@ -72,6 +72,7 @@ BROWSER_COMMANDS = frozenset(
         "responses",
         "resume-position",
         "resume-sections",
+        "resume-pool",
         "resume-visibility",
         "resume-views",
         "run",
@@ -100,6 +101,7 @@ WRITE_COMMANDS = frozenset(
         "create-resume",
         "resume-position",
         "resume-sections",
+        "resume-pool",
         "edit-skills",
         "edit-languages",
         "settings",
@@ -290,7 +292,9 @@ def _write_lock_path(args: argparse.Namespace) -> Path:
     # history-scoped lock would let two processes clone the same source at once;
     # both new cards have the same parentResumeId, so either process could then
     # apply --title to the other's clone and persist the wrong resume id.
-    mutates_external_resume_list = args.command == "copy-resume"
+    # resume-pool (#754) performs the identical copy_resume_on_hh reconciliation
+    # in a loop, once per missing cluster -- same account-wide race, same fix.
+    mutates_external_resume_list = args.command in ("copy-resume", "resume-pool")
     lock_root = Path(args.config if writes_config or mutates_external_resume_list else args.history)
     return lock_root.expanduser().resolve().parent / ".hhru.lock"
 
