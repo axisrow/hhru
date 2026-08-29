@@ -14,9 +14,14 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
-from .browser import open_confirmed_resume, resume_identity_matches
+from .browser import (
+    NotAuthenticated,
+    open_confirmed_resume,
+    require_authenticated_page,
+    resume_identity_matches,
+)
 from .selector_groups.resume_experience import (
     EXPERIENCE_ADD_BUTTON,
     EXPERIENCE_CANCEL,
@@ -33,6 +38,32 @@ from .selector_groups.resume_experience import (
 logger = logging.getLogger("hhru_bot.experience")
 SAVE_TIMEOUT_MS = 30_000
 FORM_TIMEOUT_MS = 10_000
+
+# Fallback add-trigger observed on live DOM for the experience card's
+# "Добавить" link.  Used only when EXPERIENCE_ADD_BUTTON is unavailable or
+# absent on the current page (#786/#787 live exploration).
+_EXPERIENCE_ADD_FALLBACK_SELECTOR = (
+    '[data-qa="resume-list-card-experience"] [data-qa="link"]:has-text("Добавить")'
+)
+_EXPERIENCE_CARD_SELECTOR = '[data-qa="profile-experience-company-card"]'
+
+
+def _find_add_trigger(page: Page) -> tuple[Locator | None, str | None]:
+    """Return a confirmed add trigger for a new experience row.
+
+    Tries the confirmed selector first, then falls back to the experience
+    card's "Добавить" link. Returns ``(locator, source)`` or ``(None, None)``.
+    """
+    if EXPERIENCE_ADD_BUTTON is not None:
+        add = page.locator(EXPERIENCE_ADD_BUTTON)
+        if add.count() == 1:
+            return add, "confirmed"
+
+    add = page.locator(_EXPERIENCE_ADD_FALLBACK_SELECTOR)
+    if add.count() == 1:
+        return add, "fallback"
+
+    return None, None
 
 
 @dataclass
@@ -215,25 +246,33 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
         count += 1
     result = []
     for index in range(count):
-        page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
-        entry = ExperienceEntry(
-            company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
-            position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
-            start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
-            end_year=(
-                _read(page.locator(EXPERIENCE_END_YEAR))
-                if page.locator(EXPERIENCE_END_YEAR).count() == 1
-                else ""
-            ),
-            duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
-            company_url=(
-                _read(page.locator(EXPERIENCE_COMPANY_URL))
-                if page.locator(EXPERIENCE_COMPANY_URL).count() == 1
-                else ""
-            ),
-        )
-        page.locator(EXPERIENCE_CANCEL).click()
-        result.append(entry)
+        try:
+            page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
+            entry = ExperienceEntry(
+                company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
+                position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
+                start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
+                end_year=(
+                    _read(page.locator(EXPERIENCE_END_YEAR))
+                    if page.locator(EXPERIENCE_END_YEAR).count() == 1
+                    else ""
+                ),
+                duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
+                company_url=(
+                    _read(page.locator(EXPERIENCE_COMPANY_URL))
+                    if page.locator(EXPERIENCE_COMPANY_URL).count() == 1
+                    else ""
+                ),
+            )
+            page.locator(EXPERIENCE_CANCEL).click()
+            result.append(entry)
+        except (PlaywrightError, ValueError):
+            # Row is unreadable in the live DOM — skip it rather than failing
+            # the whole read. This keeps fill-mode usable when hh.ru drifts.
+            try:
+                page.locator(EXPERIENCE_CANCEL).click()
+            except PlaywrightError:
+                pass
     return result
 
 
@@ -252,15 +291,8 @@ def edit_experience_on_hh(
     for entry, index in zip(plan.entries, selected, strict=False):
         trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
         if trigger.count() == 0:
-            # The add selector was not confirmed by the research dump.  It is
-            # accepted only as a single exact data-qa match, never by button
-            # text or a broad CSS selector.
-            if EXPERIENCE_ADD_BUTTON is None:
-                return results + [
-                    ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
-                ]
-            add = page.locator(EXPERIENCE_ADD_BUTTON)
-            if add.count() != 1:
+            add, source = _find_add_trigger(page)
+            if add is None:
                 return results + [
                     ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
                 ]
@@ -271,7 +303,7 @@ def edit_experience_on_hh(
             except PlaywrightError as exc:
                 return results + [
                     ExperienceResult(
-                        f"строка опыта {index}: не удалось открыть новую запись: {exc}"
+                        f"строка опыта {index}: не удалось открыть новую запись ({source}): {exc}"
                     )
                 ]
         if trigger.count() != 1:
@@ -323,7 +355,37 @@ def edit_experience_on_hh(
                             uncertain=True,
                         )
                     ]
-                results.append(ExperienceResult(f"строка {index}: сохранено", True))
+                # #786/#787: confirm the new row is actually bound to the target
+                # resume, not just saved to the general profile.
+                before_count = page.locator(_EXPERIENCE_CARD_SELECTOR).count()
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                    require_authenticated_page(page)
+                    if not resume_identity_matches(page, resume_id):
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: после reload identity резюме не подтверждён",
+                                uncertain=True,
+                            )
+                        ]
+                    after_count = page.locator(_EXPERIENCE_CARD_SELECTOR).count()
+                except (PlaywrightError, NotAuthenticated) as exc:
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: post-save проверка не подтверждена: {exc}",
+                            uncertain=True,
+                        )
+                    ]
+                if after_count <= before_count:
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: запись не привязалась к резюме "
+                            f"(строк до={before_count}, после={after_count})"
+                        )
+                    ]
+                results.append(
+                    ExperienceResult(f"строка {index}: сохранено и привязано к резюме", True)
+                )
         except (PlaywrightError, ValueError) as exc:
             return results + [
                 ExperienceResult(
