@@ -3639,6 +3639,345 @@ selectors:
     last_verified_at: '2026-08-29'
     verified_flow: authenticated_resume_page_read_only (hh.ru/resume/584926d4ff10f8b2870039ed1f707779623239)
     verified_by: human
+  resume_visibility.RESUME_VISIBILITY_CANCEL:
+    value: '[data-qa=''resume-partial-edit-cancel'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:95
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:95
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST:
+    value: '[data-qa=''applicant-employers-list-activator-blacklist'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:46
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:46
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_WHITELIST:
+    value: '[data-qa=''applicant-employers-list-activator-whitelist'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:43
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:43
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_DELETE:
+    value: '[data-qa=''resume-employer-list-item-delete'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:83
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:83
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX:
+    value: '[data-qa^=''resume-editor-employer-list-item-'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:77
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:77
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT:
+    value: '[data-qa=''resume-editor-employer-list-search-input'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:55
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:55
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_CHECKBOX:
+    value: '[data-qa=''checkbox'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:72
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:72
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_PREFIX:
+    value: '[data-qa^=''resume-employer-search-result-item-'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:63
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:63
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_NAME:
+    value: '[data-qa=''resume-employer-search-result-item-name'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:69
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:69
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODAL_CLOSE:
+    value: '[data-qa=''editor-modal-close-icon'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:90
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:90
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODAL_CONFIRM:
+    value: '[data-qa=''resume-modal-button-save'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:89
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:89
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODE_BLACKLIST:
+    value: '[data-qa=''resume-visibility-card-access-type-blacklist'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:32
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:32
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODE_EVERYONE:
+    value: '[data-qa=''resume-visibility-card-access-type-clients'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:28
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:28
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODE_LINK_ONLY:
+    value: '[data-qa=''resume-visibility-card-access-type-direct'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:35
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:35
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODE_NO_ONE:
+    value: '[data-qa=''resume-visibility-card-access-type-no_one'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:38
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:38
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_MODE_WHITELIST:
+    value: '[data-qa=''resume-visibility-card-access-type-whitelist'']'
+    active: true
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:29
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:29
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
+    status: intentionally local
+  resume_visibility.RESUME_VISIBILITY_SAVE:
+    value: '[data-qa=''resume-partial-edit-save'']'
+    active: true
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_visibility.py:94
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_visibility.py:94
+      note: 'Подтверждено живым DOM залогиненного аккаунта 2026-08-29 (issue #746): экран /resume/edit/{resume_id}/visibility
+        и модалка выбора работодателя, разведка через Claude-in-Chrome (document.querySelectorAll data-qa + контролируемое
+        переключение radio-режима, боевой клик Сохранить не выполнялся).'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_resume_edit_visibility_screen
+    verified_by: human
     status: intentionally local
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'

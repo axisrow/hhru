@@ -166,7 +166,9 @@ def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
     }
 
     assert set(contracts.AUDITED_SELECTOR_GROUP_PREFIXES) == expected_prefixes
-    assert len(catalog["selectors"]) == 215
+    # #746: +17 resume_visibility.* contracts (radio modes, employer-list
+    # modal, search/checkbox/save/cancel) confirmed on live authenticated DOM.
+    assert len(catalog["selectors"]) == 232
     assert all(
         row.get("coverage_status") in contracts.AUDIT_STATUSES
         for row in catalog["selectors"].values()
@@ -1000,7 +1002,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 215" in output
+    assert "local selector contracts: 232" in output
     assert "Semantic mismatches:" in output
 
 
