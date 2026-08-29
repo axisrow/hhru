@@ -99,7 +99,7 @@ class Page:
         self.filled: list[tuple[str, str]] = []
         self.url = "https://hh.ru/profile/resume/professional_role"
 
-    def goto(self, url, **kwargs):  # noqa: ARG002
+    def goto(self, url, *, timeout=None, wait_until=None, referer=None):  # noqa: ARG002
         self.url = url
 
     def locator(self, selector):
@@ -107,7 +107,7 @@ class Page:
         count = 0 if selector == RESUME_LIST_CARD else 1
         return Locator(self, selector, count)
 
-    def wait_for_url(self, *args, **kwargs):  # noqa: ARG002
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         return None
 
     def wait_for_timeout(self, timeout):  # noqa: ARG002
@@ -185,7 +185,7 @@ def test_failure_after_point_of_no_return_stays_uncertain(monkeypatch):
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
 
     class UrlFailPage(Page):
-        def wait_for_url(self, url, **kwargs):  # noqa: ARG002
+        def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
             # Первый вызов открывает визард по строковому шаблону; падать
             # должен только финальный — ожидание URL нового резюме (regex).
             if isinstance(url, str):
