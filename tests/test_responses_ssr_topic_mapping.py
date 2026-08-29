@@ -376,6 +376,31 @@ def test_strict_scrape_matches_ssr_topics_to_dom_vacancies(monkeypatch):
         responses.fetch_responses(page, max_pages=1, strict_scrape=True)
 
 
+def test_strict_scrape_rejects_two_ssr_topics_for_one_rendered_card(monkeypatch):
+    """Two SSR negotiations for one vacancy, only one rendered card, is indeterminate.
+
+    Codex review round 2 of PR #768 claimed this shape ("more SSR candidates
+    than rendered cards for one vacancy") slips past the coverage check and
+    reaches the ambiguity-resolution branch as a silently accepted
+    topic_ambiguous=True card. It does not: rendered(1) < candidates(2) makes
+    missing_vacancies non-empty, so the coverage check above raises
+    ResponsesIndeterminate before ambiguity resolution ever runs. This test
+    pins that behavior (verified the Codex claim was a false positive).
+    """
+    item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)
+    page = _SSRPage(
+        pages_cards=[[item]],
+        pages_html=[_ssr_html([("222", "333", "700"), ("444", "555", "700")])],
+    )
+    monkeypatch.setattr(responses, "goto_hh", lambda page, url: page.goto_page(0))
+    monkeypatch.setattr(responses, "has_auth_cookie", lambda page: True)
+    monkeypatch.setattr(responses, "parse_response_card", lambda card: card)
+    monkeypatch.setattr(responses, "_has_next_page", lambda *args: False)
+
+    with pytest.raises(responses.ResponsesIndeterminate, match="не покрывает SSR topicList"):
+        responses.fetch_responses(page, max_pages=1, strict_scrape=True)
+
+
 def test_strict_sync_rejects_unattributed_dom_card(monkeypatch):
     """A rendered card without SSR resume/topic identity is not importable."""
     item = responses.ResponseItem(vacancy_id="700", status=responses.ResponseStatus.READ)

@@ -431,7 +431,22 @@ def fetch_responses(
             if not hasattr(page, "content"):
                 raise ValueError("page.content unavailable")
             html = page.content()
-            refs = topic_refs(html)
+            try:
+                refs = topic_refs(html)
+            except AttributeError as exc:
+                # #742 round 2 (Codex review): topic_refs() runs before the
+                # raw_topics shape validation below and assumes
+                # applicantNegotiations/each topicList entry is a dict — a
+                # null applicantNegotiations or a non-dict entry raises
+                # AttributeError here. Narrowly re-raise as ValueError (already
+                # in the except-tuple below) so this SSR-shape failure is
+                # handled the same way as the other malformed-SSR cases,
+                # WITHOUT widening AttributeError to the rest of this try
+                # block — the ambiguity-resolution/strict_empty logic below
+                # (#186 round 4) uses attribute access on our own dataclasses
+                # and a stray AttributeError there should surface as a real
+                # bug, not be swallowed as "SSR unavailable" (/review finding).
+                raise ValueError(f"SSR topicList shape unexpected: {exc}") from exc
             # topic_refs() молча дропает неполные записи (id/chatId/vacancyId
             # отсутствуют) — приемлемо для non-strict пути (лучшее из
             # доступного), но означает, что refs может оказаться короче
@@ -554,23 +569,7 @@ def fetch_responses(
                     )
         except ResponsesIndeterminate:
             raise
-        except (
-            TypeError,
-            ValueError,
-            KeyError,
-            AttributeError,
-            json.JSONDecodeError,
-            PlaywrightError,
-        ):
-            # AttributeError: topic_refs() (вызывается на строке выше, ДО
-            # raw_topics-валидации) обращается к .get() на каждом элементе
-            # topicList и на самом applicantNegotiations без проверки типа —
-            # applicantNegotiations=null или non-dict запись в topicList
-            # ловятся здесь, а не raw_topics-проверкой ниже по коду (Codex
-            # review, #742 round 2): без AttributeError в этом tuple такая
-            # форма пробивала бы необработанный traceback вместо
-            # ResponsesIndeterminate, тот самый fail-open, который
-            # strict_scrape должен исключать.
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError, PlaywrightError):
             if strict_empty or strict_scrape:
                 # #742: отсутствующий/битый HH-Lux-InitialState — тот же
                 # неопределённый page-state, что и не появившиеся карточки
