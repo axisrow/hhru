@@ -320,7 +320,20 @@ def goto_hh(page: Page, url: str, *, ready_selector: str | None = None) -> None:
                     # её таймаут НЕ должен попадать в эту ветку: это дрейф
                     # селектора/анти-бот на уже докачанной странице, канал
                     # тут ни при чём.
-                    if response_observed and "net::ERR_" not in str(exc):
+                    #
+                    # Cycle-review PR #760, Codex finding: ThrottledChannelDetected
+                    # документирован как "timed out AFTER" (docstring выше) — узкое
+                    # место строго в скорости докачки тела. Не-timeout PlaywrightError
+                    # (напр. "Navigation interrupted by another navigation" —
+                    # конкурирующая JS-навигация) с наблюдённым response — не
+                    # throttling, а другая причина; переквалификация тут была бы
+                    # недостоверной диагностикой. Поэтому isinstance проверяем ДО
+                    # response_observed, а не полагаемся на общий PlaywrightError.
+                    if (
+                        isinstance(exc, PlaywrightTimeoutError)
+                        and response_observed
+                        and "net::ERR_" not in str(exc)
+                    ):
                         raise ThrottledChannelDetected(str(exc)) from exc
                     raise
                 if ready_selector:

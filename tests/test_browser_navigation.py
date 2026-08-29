@@ -468,6 +468,32 @@ def test_goto_hh_net_err_not_reclassified_as_throttled(monkeypatch):
     assert "net::ERR_" in str(excinfo.value)
 
 
+def test_goto_hh_non_timeout_error_not_reclassified_as_throttled(monkeypatch):
+    """Cycle-review PR #760, Codex finding: throttled-классификация обёрнута
+    вокруг ЛЮБОГО ``PlaywrightError`` без ``net::ERR_*``, а не только вокруг
+    ``PlaywrightTimeoutError``, хотя ``ThrottledChannelDetected`` документирован
+    именно как "timed out AFTER" (docstring, browser.py). Не-timeout ошибка
+    (напр. "Navigation interrupted by another navigation" — конкурирующая
+    JS-навигация, а не throttling) с наблюдённым response не должна
+    переквалифицироваться в throttled: это меняет смысл диагностики на
+    неверный без всякого основания.
+    """
+    url = "https://hh.ru/search/vacancy"
+    page, listeners = _page_with_response_listener(monkeypatch)
+
+    def _goto(_url, **_kwargs):
+        for handler in listeners:
+            handler(_fake_response(url, 200))
+        raise PlaywrightError("Navigation interrupted by another navigation")
+
+    page.goto.side_effect = _goto
+
+    with pytest.raises(PlaywrightError) as excinfo:
+        goto_hh(page, url)
+
+    assert not isinstance(excinfo.value, ThrottledChannelDetected)
+
+
 def test_goto_hh_response_for_unrelated_url_ignored(monkeypatch):
     """Response для другого URL (напр. аналитика/трекер) не должен
     засчитываться как подтверждение навигационного запроса.
