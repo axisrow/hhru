@@ -360,7 +360,11 @@ def edit_experience_on_hh(
                             )
                         ]
                     checkbox.click()
-                    end_year_locator.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+                    # No wait_for(state=...) covers "enabled" specifically —
+                    # the field is already visible while disabled, so that
+                    # would be a no-op. fill()'s own actionability check
+                    # already waits for enabled (with its own timeout), so
+                    # nothing further is needed here.
                     _fill(end_year_locator, entry.end_year)
                 else:
                     # Indexed row editor: no confirmed checkbox selector for
