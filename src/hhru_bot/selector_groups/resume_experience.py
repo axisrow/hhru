@@ -41,3 +41,12 @@ FIRST_EXPERIENCE_COMPANY = _selector("resume_experience.FIRST_EXPERIENCE_COMPANY
 FIRST_EXPERIENCE_POSITION = _selector("resume_experience.FIRST_EXPERIENCE_POSITION")
 FIRST_EXPERIENCE_SAVE = _selector("resume_experience.FIRST_EXPERIENCE_SAVE")
 FIRST_EXPERIENCE_CANCEL = _selector("resume_experience.FIRST_EXPERIENCE_CANCEL")
+
+# #800: "Работаю сейчас" checkbox above the end-date fields (confirmed live
+# 2026-08-30 on /resume/edit/{resume_id}/experience, draft resume). Checked
+# by default on a new entry — while checked, the end-year/end-month controls
+# are disabled. The underlying magritte checkbox component's own data-qa
+# ("checkbox") is a generic, non-unique token; it was confirmed to resolve to
+# exactly one match on this form (count()==1), so it is used as-is rather
+# than scoped further.
+FIRST_EXPERIENCE_CURRENT_CHECKBOX = _selector("resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX")

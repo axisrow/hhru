@@ -74,8 +74,9 @@ def test_fill_plan_rejects_identity_or_count_changes():
 
 
 class _Locator:
-    def __init__(self, count=0):
+    def __init__(self, count=0, *, enabled=True):
         self._count = count
+        self._enabled = enabled
 
     def count(self):
         return self._count
@@ -94,6 +95,9 @@ class _Locator:
 
     def input_value(self):
         return ""
+
+    def is_enabled(self):
+        return self._enabled
 
 
 class _Page:
@@ -250,6 +254,75 @@ def test_edit_experience_existing_row_edit_does_not_require_count_growth(monkeyp
         dry_run=False,
     )
 
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+class _DisabledEndYearSavePage(_SavePage):
+    """#800: end-year is disabled by default (checkbox "Работаю сейчас"
+    checked) on a fresh first-entry form — the fixture that reproduces the
+    original timeout bug (fill() retried against a disabled field)."""
+
+    def __init__(self, *args, uncheck_enables=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._uncheck_enables = uncheck_enables
+        self.checkbox_clicked = False
+
+    def locator(self, selector):
+        if selector == "[data-qa='resume-editor-experience-end-year-input']":
+            enabled = self._uncheck_enables and self.checkbox_clicked
+            return _Locator(count=1, enabled=enabled)
+        if selector == "[data-qa='checkbox']":
+            page = self
+
+            class _CheckboxLocator(_Locator):
+                def click(self):
+                    page.checkbox_clicked = True
+
+            return _CheckboxLocator(count=1)
+        return super().locator(selector)
+
+
+def test_edit_experience_current_true_skips_disabled_end_year(monkeypatch):
+    """#800: entry.current=True on a form whose end-year is already disabled
+    (default state of a fresh entry) must not call fill() on it — that used
+    to retry until Playwright's 30s timeout."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _DisabledEndYearSavePage(rows=0, grow_on_reload_by=1)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer", current=True)]),
+        dry_run=False,
+    )
+
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+    assert page.checkbox_clicked is False
+
+
+def test_edit_experience_current_false_unchecks_checkbox_to_unlock_end_year(monkeypatch):
+    """#800: entry.current=False but the end-year field is still disabled
+    (checkbox defaults to checked on a new entry) — the checkbox must be
+    unchecked before filling end_year, not left blocking the field."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _DisabledEndYearSavePage(rows=0, grow_on_reload_by=1, uncheck_enables=True)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", current=False, end_year="2024")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.checkbox_clicked is True
     assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
 
 

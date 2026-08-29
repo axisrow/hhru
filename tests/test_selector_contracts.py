@@ -172,7 +172,10 @@ def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
     # #792: +1 competitor_resume.DETAIL_TITLE_POSITION (desired-role h1 fix).
     # #786/#787: +4 resume_experience.FIRST_EXPERIENCE_* contracts (first-row
     # editor at /resume/edit/{id}/experience, live write-confirmed).
-    assert len(catalog["selectors"]) == 247
+    # #800: +1 resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX ("Работаю
+    # сейчас" checkbox that gates the disabled end-date fields, confirmed
+    # live read-only on the same first-row editor).
+    assert len(catalog["selectors"]) == 248
     assert all(
         row.get("coverage_status") in contracts.AUDIT_STATUSES
         for row in catalog["selectors"].values()
@@ -1006,7 +1009,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 247" in output
+    assert "local selector contracts: 248" in output
     assert "Semantic mismatches:" in output
 
 
