@@ -215,3 +215,82 @@ def test_missing_resume_id_after_save_stays_uncertain(monkeypatch):
     assert reserved == ["clicked"]
     assert result.uncertain
     assert "не подтверждён" in result.reason
+
+
+class HydrationRacePage(Page):
+    """Карточка визарда отрисована SSR, но React привязывает обработчик позже.
+
+    Живая разведка #778: ``[data-qa='resume-profile-card-select-job']`` — это
+    ``<div role="button">``, видимый сразу, но без ``__react*`` ключей ещё
+    несколько секунд. Клик по нему проходит без ошибки и молча не даёт
+    эффекта: экран не переключается, поле ввода должности не появляется.
+    """
+
+    def __init__(self, clicks_until_hydrated=1):
+        super().__init__(fail_on_wait=None)
+        self.clicks_until_hydrated = clicks_until_hydrated
+        self.select_job_clicks = 0
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+        if not isinstance(url, str):
+            # Финальное ожидание URL нового резюме — сохранение прошло.
+            self.url = f"https://hh.ru/resume/{'b' * 38}"
+        return None
+
+    @property
+    def _screen_switched(self):
+        return self.select_job_clicks > self.clicks_until_hydrated
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if selector == RESUME_CREATION_POSITION and not self._screen_switched:
+            count = 0  # экран не переключился — поля на странице нет
+        return HydrationLocator(self, selector, count)
+
+
+class HydrationLocator(Locator):
+    def wait_for(self, *, state, timeout):  # noqa: ARG002
+        if self.count() != 1:
+            raise PlaywrightError(f"Timeout {timeout}ms exceeded waiting for {self.selector}")
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        self.page.clicks.append(self.selector)
+        if self.selector == RESUME_CREATION_SELECT_JOB:
+            self.page.select_job_clicks += 1
+
+
+def test_click_on_unhydrated_card_is_retried(monkeypatch):
+    """Клик по ещё не гидратированной карточке должен быть повторён.
+
+    Живой прогон 2026-08-29: 3/3 попытки кликнуть сразу после
+    ``state="visible"`` не переключали экран (POSITION=0), 3/3 попытки после
+    ожидания гидратации срабатывали (POSITION=1). Видимость SSR-разметки не
+    означает готовность React-обработчика, поэтому одного ``wait_for`` мало.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HydrationRacePage(clicks_until_hydrated=1)
+    reserved: list[str] = []
+
+    result = _run(page, before_click=lambda: reserved.append("clicked"))
+
+    assert page.select_job_clicks >= 2, "первый клик ушёл в пустоту — нужен повтор"
+    assert result.success, f"визард должен пройти после повторного клика: {result.reason}"
+
+
+def test_permanently_unhydrated_card_fails_without_uncertain(monkeypatch):
+    """Ретрай ограничен: экран так и не переключился — честный failed.
+
+    Бесконечный повтор превратил бы сломанный визард в зависание, а
+    ``uncertain`` здесь недопустим: сохраняющий клик не выполнялся (#777).
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HydrationRacePage(clicks_until_hydrated=99)
+    reserved: list[str] = []
+
+    result = _run(page, before_click=lambda: reserved.append("clicked"))
+
+    assert not result.success
+    assert not result.uncertain
+    assert not reserved, "сохраняющий клик не должен быть достигнут"
+    assert "не переключился" in result.reason
+    assert page.select_job_clicks == 3, "ровно три попытки, без бесконечного цикла"

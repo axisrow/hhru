@@ -118,6 +118,42 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
 
 
+def _click_until_screen_switches(
+    page: Page,
+    card: Locator,
+    next_selector: str,
+    *,
+    attempts: int = 3,
+    timeout: int = 7000,
+) -> str:
+    """Кликать карточку визарда, пока не отрисуется следующий экран.
+
+    ``wait_for(state="visible")`` карточку не страхует: hh.ru отдаёт её
+    SSR-разметкой (``<div role="button">``), которая видима сразу, а React
+    привязывает обработчик лишь через несколько секунд. Клик в этом окне
+    проходит без ошибки и молча не даёт эффекта (живая разведка #778: 3/3
+    провала при клике сразу после ``visible``, 3/3 успеха после ожидания
+    гидратации).
+
+    Ждать ``__react*`` ключ на элементе было бы прямой проверкой причины, но
+    завязало бы код на внутреннее устройство React. Вместо этого проверяется
+    наблюдаемый результат — появление следующего экрана. Повтор безопасен:
+    карточка выбора профессии ничего не мутирует, а лишний клик по уже
+    переключённому экрану невозможен, так как цикл прерывается по первому
+    успеху.
+    """
+    last_error = ""
+    for _ in range(attempts):
+        card.click()
+        try:
+            page.locator(next_selector).first.wait_for(state="visible", timeout=timeout)
+        except PlaywrightError as exc:
+            last_error = str(exc)
+            continue
+        return ""
+    return f"экран визарда не переключился после {attempts} попыток: {last_error}"
+
+
 def _existing_title_reason(card_count: int, titles: list[str], title: str) -> str:
     """Fail-closed duplicate check from a confirmed card count and read titles.
 
@@ -210,8 +246,9 @@ def create_resume_on_hh(
     # PlaywrightError остаётся обычным failed и не блокирует повтор (#777,
     # тот же принцип, что у before_click-seam в CLAUDE.md, раздел 6).
     try:
-        select_job.click()
-        page.locator(RESUME_CREATION_POSITION).first.wait_for(state="visible", timeout=15000)
+        switch_reason = _click_until_screen_switches(page, select_job, RESUME_CREATION_POSITION)
+        if switch_reason:
+            return CreateResumeResult(False, reason=switch_reason)
         position, reason = _one(page, RESUME_CREATION_POSITION, "поле поиска профессии")
         if reason:
             return CreateResumeResult(False, reason=reason)
