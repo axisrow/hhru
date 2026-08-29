@@ -143,6 +143,42 @@ def test_resume_all_iterates_every_configured_resume(tmp_path, monkeypatch, caps
     assert out.count("[DRY-RUN]") == 2
 
 
+def test_resume_all_skips_only_blocked_resume_not_whole_batch(tmp_path, monkeypatch, capsys):
+    """Regression for #746 review round 3: has_unresolved_uncertain must not
+    abort the whole --resume all batch for one blocked resume_id — it should
+    exclude that resume and still process the rest (matches the per-resume
+    [OK]/[FAIL] reporting _body already uses)."""
+    resumes = [_resume("python", RESUME_ID), _resume("marketing", OTHER_RESUME_ID)]
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit", lambda path: _config(tmp_path, resumes)
+    )
+    monkeypatch.setattr(hhru_bot.browser, "launch_context", lambda *a, **kw: _context())
+
+    history = History(tmp_path / "h.db")
+    history.begin_action(RESUME_ID, RESUME_ID, "resume_visibility")  # leaves it "uncertain"
+
+    calls = []
+
+    def fake_set_visibility(page, resume, mode, dry_run, *, before_click=None, **kwargs):
+        del page, mode, dry_run, kwargs
+        calls.append(resume.resume_id)
+        if before_click is not None:
+            before_click()
+        return rv.ResumeVisibilityResult(resume.resume_id, True, "видимость сохранена")
+
+    monkeypatch.setattr(rv, "set_resume_visibility_on_hh", fake_set_visibility)
+
+    result = cmd.run(_args(tmp_path, resume="all", force=True))
+
+    # OTHER_RESUME_ID (not blocked) was processed; RESUME_ID (blocked) was not.
+    assert calls == [OTHER_RESUME_ID]
+    out = capsys.readouterr().out
+    assert "не подтверждено (uncertain)" in out
+    assert "[OK]" in out
+    # Partial success: one resume was blocked, so the run is not a clean success.
+    assert result is True
+
+
 def test_employer_flags_reject_incompatible_explicit_mode(tmp_path, monkeypatch):
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: _config(tmp_path))
     result = cmd.run(_args(tmp_path, mode="everyone", add_employer=["Ксамата"], dry_run=True))

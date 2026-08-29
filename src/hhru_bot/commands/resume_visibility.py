@@ -128,22 +128,38 @@ def run(args: argparse.Namespace):
 
     history = History(args.history)
     action = "resume_visibility"
+    runnable_resumes = resumes
     if not args.dry_run:
-        blocked = [r.id for r in resumes if history.has_unresolved_uncertain(r.resume_id, action)]
+        blocked = [r for r in resumes if history.has_unresolved_uncertain(r.resume_id, action)]
         if blocked:
+            blocked_ids = ", ".join(r.id for r in blocked)
             print(
-                f"[FAIL] {', '.join(blocked)} — предыдущее изменение видимости не "
+                f"[FAIL] {blocked_ids} — предыдущее изменение видимости не "
                 "подтверждено (uncertain). Проверьте видимость на hh.ru вручную перед повтором."
             )
-            return True
+            # #746 review round 3: для одиночного --resume заблокированное резюме —
+            # единственная цель запуска, аборт всей команды здесь корректен (#566
+            # поведение сохранено). Для --resume all это НЕ так: один заблокированный
+            # resume_id в batch не должен молча блокировать смену видимости для ВСЕХ
+            # остальных резюме аккаунта — они обрабатываются per-resume (`[OK]`/`[FAIL]`
+            # ниже) независимо друг от друга, и блокировка должна быть такой же
+            # гранулярности. Заблокированные резюме исключаются из batch, остальные
+            # выполняются как обычно.
+            if args.resume != "all":
+                return True
+            runnable_resumes = [r for r in resumes if r not in blocked]
+            if not runnable_resumes:
+                return True
+
+    partially_blocked = not args.dry_run and runnable_resumes != resumes
 
     def _body(progress: ApplyProgress) -> bool:
-        failed = False
+        failed = partially_blocked
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            for resume in resumes:
+            for resume in runnable_resumes:
                 attempt = (
                     None
                     if args.dry_run

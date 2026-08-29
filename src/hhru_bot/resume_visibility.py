@@ -107,12 +107,27 @@ def _one(page: Page, selector: str, label: str) -> tuple[Locator | None, str]:
 
 
 def _click_mode(page: Page, mode: str) -> str:
-    """Click the outer access-type label; inputs share value='on'/blank name."""
+    """Click the outer access-type label; inputs share value='on'/blank name.
+
+    #746 review round 3: a fire-and-forget .click() with no post-click check
+    would let a stale locator or a click that silently misses its target (DOM
+    drift, an intercepting overlay) leave the actual hh.ru-selected mode
+    different from what the caller asked for — everything downstream (the
+    employer-list-mode detection when --mode is explicit, per its own comment
+    above) would then trust the wrong mode. Verify the nested radio input is
+    checked afterwards, fail-closed otherwise — the same discipline the rest
+    of this module already applies to every other click.
+    """
     locator, reason = _one(page, _MODE_SELECTORS[mode], f"режим видимости «{mode}»")
     if reason:
         return reason
     assert locator is not None
     locator.click()
+    radio = locator.locator("input[type='radio']")
+    if radio.count() != 1:
+        return f"radio-инпут режима «{mode}» не подтверждён однозначно после клика"
+    if not radio.first.is_checked():
+        return f"клик по режиму «{mode}» не подтверждён — radio не отмечен после клика"
     return ""
 
 
@@ -230,7 +245,15 @@ def _remove_employer(page: Page, name: str) -> tuple[bool, str]:
     if not matches:
         return False, f"работодатель «{name}» не найден в текущем списке"
     if len(matches) > 1:
-        return False, f"в списке {len(matches)} записей, содержащих «{name}» — уточните точное имя"
+        # #746 review round 3: matches здесь строго по exact normalize()-совпадению
+        # (строка 227), а не по substring — >1 означает несколько разных карточек
+        # списка с буквально одинаковым нормализованным именем (напр. два разных
+        # employer_id под одинаковым отображаемым названием), а не то, что "name"
+        # является подстрокой нескольких записей. Формулировка отражает это.
+        return False, (
+            f"в списке {len(matches)} записей с именем «{name}» — совпадение "
+            "неоднозначно, уточните вручную на hh.ru"
+        )
     delete_button = matches[0].locator(RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_DELETE)
     if delete_button.count() != 1:
         return False, f"кнопка удаления работодателя «{name}» не подтверждена однозначно"
@@ -352,6 +375,21 @@ def set_resume_visibility_on_hh(
         save.click()
         # hh.ru пересобирает форму после сохранения; ждём исчезновения кнопки
         # или редиректа как позитивного сигнала вместо фиксированного sleep.
+        #
+        # #746 review round 3: это ТОЛЬКО позитивный сигнал — нет проверки
+        # негативного маркера (validation-ошибка/toast), который отличал бы
+        # реальный успех сохранения от React-формы, скрывшей кнопку во время
+        # отображения ошибки. Аналогичный многоселекторный fail-closed паттерн
+        # для "серой зоны" уже есть в apply/pipeline.py (внешний источник
+        # истины — /applicant/negotiations, CLAUDE.md §3), но здесь для него
+        # нет ни подтверждённого селектора ошибки, ни read-only способа
+        # перепроверить итоговый список компаний без повторного открытия
+        # модалки (сама модалка не идентична "источнику истины" apply).
+        # Селектор ошибки НЕ подтверждён живым DOM (разведка #746 не покрывала
+        # сценарий реальной ошибки сохранения) — гадать его здесь означало бы
+        # нарушить тот же принцип, которым обоснован весь этот модуль (CLAUDE.md:
+        # "Селекторы — статус проверки"). Известное ограничение, не забытый шаг;
+        # требует отдельной живой разведки сценария ошибки прежде чем закрывать.
         page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="hidden", timeout=15000)
     except PlaywrightError as exc:
         return ResumeVisibilityResult(

@@ -24,10 +24,18 @@ def _resume():
     return bare_resume(RESUME_ID)
 
 
-def _mock_locator(count: int = 1):
+def _mock_locator(count: int = 1, *, radio_checked: bool = True):
+    """A generic locator mock; also stands in for a mode label whose nested
+    radio input is checked by default (the post-#746-round-3 verification in
+    _click_mode reads `.locator("input[type='radio']")` after every click)."""
     loc = MagicMock()
     loc.count.return_value = count
     loc.first = loc
+    radio = MagicMock()
+    radio.count.return_value = 1
+    radio.first = radio
+    radio.is_checked.return_value = radio_checked
+    loc.locator.return_value = radio
     return loc
 
 
@@ -80,6 +88,27 @@ def test_mode_only_change_clicks_label_and_save(monkeypatch):
     mode_label.click.assert_called_once_with()
     before_click.assert_called_once_with()
     save.click.assert_called_once_with()
+
+
+def test_mode_click_not_reflected_in_radio_fails_closed(monkeypatch):
+    """Regression for #746 review round 3: a click that silently misses its
+    target (stale locator, intercepting overlay) must not be trusted — the
+    radio's .checked state is the source of truth, not "the click happened"."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_label = _mock_locator(radio_checked=False)
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        sel.RESUME_VISIBILITY_MODE_LINK_ONLY: mode_label,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "link-only", dry_run=False)
+
+    assert not result.success
+    assert "не подтверждён" in result.reason
+    mode_label.click.assert_called_once_with()
+    save.click.assert_not_called()
 
 
 def test_employer_list_edit_requires_active_list_mode(monkeypatch):
