@@ -9,6 +9,7 @@ from hhru_bot.experience import (
     edit_experience_on_hh,
     parse_plan,
     plan_experience,
+    read_experience_on_hh,
 )
 
 pytestmark = pytest.mark.unit
@@ -157,3 +158,123 @@ def test_edit_experience_first_entry_fails_closed_on_route_mismatch(monkeypatch)
     assert len(results) == 1
     assert not results[0].success
     assert "форма открыта не для того резюме" in results[0].reason
+
+
+class _SavePage:
+    """Fake page for the non-dry-run save path with a mutable row count
+    (#796/#787): edit-experience-button/{index} locators reflect ``rows``,
+    letting a test simulate the count growing (bound save) or staying flat
+    (silent no-op — save landed on the shared profile, not this resume)."""
+
+    def __init__(self, rows: int, *, grow_on_reload_by: int = 0):
+        self.url = "https://hh.ru/resume/resume-1"
+        self.rows = rows
+        self._grow_on_reload_by = grow_on_reload_by
+        self._reloaded = False
+
+    def locator(self, selector):
+        if "edit-experience-button" in selector:
+            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
+            return _Locator(count=1 if index < self.rows else 0)
+        return _Locator(count=1)
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        return None
+
+    def reload(self, *, timeout=None, wait_until=None):
+        self._reloaded = True
+        self.rows += self._grow_on_reload_by
+
+
+def _fake_goto_to_edit_path(page, url):
+    page.url = url.replace("https://hh.ru", "")
+
+
+def test_edit_experience_first_entry_verifies_binding_after_reload(monkeypatch):
+    """#796: a successful save is only reported once a post-save reload
+    shows the row count actually grew on THIS resume — not just that the
+    save click and URL landed without error."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _SavePage(rows=0, grow_on_reload_by=1)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert page._reloaded is True
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_first_entry_fails_closed_when_row_count_does_not_grow(monkeypatch):
+    """#796/#787: save succeeded and identity matched, but the row count did
+    not grow after reload — the entry silently landed elsewhere. Report
+    failure rather than a false [OK]."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _SavePage(rows=0, grow_on_reload_by=0)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "не привязалась к резюме" in results[0].reason
+
+
+def test_edit_experience_existing_row_edit_does_not_require_count_growth(monkeypatch):
+    """Fill mode re-saves an EXISTING row in place (same index) — the row
+    count staying flat after reload must not be flagged as a binding
+    failure; that check only applies to a genuinely new first_entry row."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _SavePage(rows=1, grow_on_reload_by=0)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+class _UnreadableRowLocator(_Locator):
+    def input_value(self):
+        raise ValueError("поле определяется неоднозначно (0)")
+
+
+class _ReadPage:
+    """Two experience rows; row 0 is confirmed unreadable (drifted field),
+    row 1 reads normally — #796's resilience fix must skip row 0, not fail
+    the whole read."""
+
+    def locator(self, selector):
+        if "edit-experience-button" in selector:
+            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
+            return _Locator(count=1 if index < 2 else 0)
+        if "specific-company-input-0" in selector:
+            return _UnreadableRowLocator(count=1)
+        return _Locator(count=1)
+
+
+def test_read_experience_skips_unreadable_row_instead_of_failing_whole_read(monkeypatch):
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+
+    result = read_experience_on_hh(_ReadPage(), "resume-1")
+
+    assert len(result) == 1

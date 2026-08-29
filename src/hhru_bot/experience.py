@@ -17,7 +17,14 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, open_confirmed_resume, resume_identity_matches
+from .browser import (
+    HH_BASE_URL,
+    NotAuthenticated,
+    goto_hh,
+    open_confirmed_resume,
+    require_authenticated_page,
+    resume_identity_matches,
+)
 from .selector_groups.resume_experience import (
     EXPERIENCE_CANCEL,
     EXPERIENCE_COMPANY,
@@ -211,33 +218,49 @@ def _read(locator) -> str:
     return locator.input_value()
 
 
-def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
-    """Read existing rows through their confirmed editor fields, without save."""
-    open_confirmed_resume(page, resume_id)
+def _count_experience_rows(page: Page) -> int:
+    """Count existing rows via the confirmed indexed edit-trigger selector."""
     count = 0
     while page.locator(EXPERIENCE_EDIT_BUTTON.format(index=count)).count() == 1:
         count += 1
+    return count
+
+
+def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
+    """Read existing rows through their confirmed editor fields, without save."""
+    open_confirmed_resume(page, resume_id)
+    count = _count_experience_rows(page)
     result = []
     for index in range(count):
-        page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
-        entry = ExperienceEntry(
-            company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
-            position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
-            start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
-            end_year=(
-                _read(page.locator(EXPERIENCE_END_YEAR))
-                if page.locator(EXPERIENCE_END_YEAR).count() == 1
-                else ""
-            ),
-            duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
-            company_url=(
-                _read(page.locator(EXPERIENCE_COMPANY_URL))
-                if page.locator(EXPERIENCE_COMPANY_URL).count() == 1
-                else ""
-            ),
-        )
-        page.locator(EXPERIENCE_CANCEL).click()
-        result.append(entry)
+        try:
+            page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
+            entry = ExperienceEntry(
+                company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
+                position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
+                start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
+                end_year=(
+                    _read(page.locator(EXPERIENCE_END_YEAR))
+                    if page.locator(EXPERIENCE_END_YEAR).count() == 1
+                    else ""
+                ),
+                duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
+                company_url=(
+                    _read(page.locator(EXPERIENCE_COMPANY_URL))
+                    if page.locator(EXPERIENCE_COMPANY_URL).count() == 1
+                    else ""
+                ),
+            )
+            page.locator(EXPERIENCE_CANCEL).click()
+            result.append(entry)
+        except (PlaywrightError, ValueError):
+            # #796: a row can be unreadable in live DOM (drifted field, stray
+            # non-experience card matching the indexed selector). Skip it
+            # rather than failing the whole read — fill-mode stays usable
+            # for the remaining rows instead of blocking on one bad row.
+            try:
+                page.locator(EXPERIENCE_CANCEL).click()
+            except PlaywrightError:
+                pass
     return result
 
 
@@ -256,6 +279,10 @@ def edit_experience_on_hh(
     for entry, index in zip(plan.entries, selected, strict=False):
         trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
         first_entry = trigger.count() == 0
+        # #796: snapshot the row count BEFORE opening the form for this entry
+        # — taking it after save cannot distinguish a bound save from a
+        # silent no-op, since both leave the count read at the same time.
+        before_count = _count_experience_rows(page)
         if first_entry:
             # #786/#787: no in-page "add" trigger for the first experience row
             # was ever confirmed by a research dump — the visible suggestion
@@ -341,7 +368,42 @@ def edit_experience_on_hh(
                             uncertain=True,
                         )
                     ]
-                results.append(ExperienceResult(f"строка {index}: сохранено", True))
+                # #796/#787: a click succeeding and landing back on the resume
+                # page is not proof the row is bound to THIS resume — #787
+                # found saves that silently went to the shared profile
+                # instead. Reload and recount rather than trusting the
+                # in-memory DOM state right after save. The count-growth
+                # check only applies to a genuinely new row (first_entry):
+                # editing an EXISTING row in place (fill mode re-saves the
+                # same index) never grows the count and must not be flagged.
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                    require_authenticated_page(page)
+                    if not resume_identity_matches(page, resume_id):
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: после reload identity резюме не подтверждён",
+                                uncertain=True,
+                            )
+                        ]
+                    after_count = _count_experience_rows(page)
+                except (PlaywrightError, NotAuthenticated) as exc:
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: post-save проверка не подтверждена: {exc}",
+                            uncertain=True,
+                        )
+                    ]
+                if first_entry and after_count <= before_count:
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: запись не привязалась к резюме "
+                            f"(строк до={before_count}, после={after_count})"
+                        )
+                    ]
+                results.append(
+                    ExperienceResult(f"строка {index}: сохранено и привязано к резюме", True)
+                )
         except (PlaywrightError, ValueError) as exc:
             return results + [
                 ExperienceResult(
