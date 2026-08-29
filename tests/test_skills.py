@@ -206,6 +206,7 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     """A closed editor is not enough: the saved chip set must match the plan."""
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     editor = MagicMock()
     editor.wait_for.return_value = None
     input_ = MagicMock()
@@ -213,7 +214,10 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = _mock_chip_locator()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
@@ -244,13 +248,17 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     """A successful save click with a missing chip must not produce [OK]."""
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     editor = MagicMock()
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
     save = MagicMock()
     save.count.return_value = 1
+    trigger = MagicMock()
+    trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
@@ -279,6 +287,7 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
 
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     editor = MagicMock()
     editor.wait_for.return_value = None
     input_ = MagicMock()
@@ -287,7 +296,10 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     save.count.return_value = 1
     chip_locator = MagicMock()
     chip_locator.nth.return_value.wait_for.side_effect = PlaywrightError("timeout")
+    trigger = MagicMock()
+    trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
@@ -320,13 +332,17 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     """
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     editor = MagicMock()
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
     save = MagicMock()
     save.count.return_value = 1
+    trigger = MagicMock()
+    trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
@@ -418,19 +434,23 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     same skill from the plan, not be treated as a new addition.
 
     Without normalizing the existing-chip key (line 162), "Python  Dev" (double
-    space) would not match the plan's "Python Dev" (single space), the skill would
+    space) would not match the plan's "Python Dev" (single space); the skill would
     be re-added as a duplicate, the post-save Counter would mismatch, and the
     resume would lock via has_unresolved_uncertain (#536 round 2).
     """
     resume = bare_resume("resume-id")
     page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
     editor = MagicMock()
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
     save = MagicMock()
     save.count.return_value = 1
+    trigger = MagicMock()
+    trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
@@ -454,3 +474,127 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     assert result.success is True
     assert result.acted is True
     assert result.added == ()
+
+
+def test_edit_skills_opens_editor_via_resume_scoped_route_on_empty_resume(monkeypatch) -> None:
+    """#789/#787: when the regular skills-add button is absent, the code must
+    navigate directly to /resume/edit/{id}/keySkills instead of clicking a
+    fallback suggest-item."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    cancel = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+    }[selector]
+    goto_calls = []
+
+    def fake_goto(p, url):
+        goto_calls.append(url)
+        page.url = url
+
+    monkeypatch.setattr(skills_module, "goto_hh", fake_goto)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "read_skills", lambda _page: ())
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is True
+    assert len(goto_calls) == 2
+    assert goto_calls[0].endswith("/resume/resume-id")
+    assert goto_calls[1].endswith("/resume/edit/resume-id/keySkills")
+    trigger.click.assert_not_called()
+
+
+def test_edit_skills_navigation_timeout_on_empty_resume_returns_failure(monkeypatch) -> None:
+    """#789/#787: a PlaywrightError during direct navigation must fail closed."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+    }[selector]
+    goto_attempt = 0
+
+    def fake_goto(_page, url):
+        nonlocal goto_attempt
+        goto_attempt += 1
+        if goto_attempt == 2:
+            raise PlaywrightError("navigation failed")
+
+    monkeypatch.setattr(skills_module, "goto_hh", fake_goto)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert "форма навыков не открылась" in result.reason
+
+
+def test_edit_skills_wrong_route_after_navigation_on_empty_resume_returns_failure(
+    monkeypatch,
+) -> None:
+    """#789/#787: if the committed URL does not match the resume-scoped path,
+    the command must fail closed instead of operating on an unrelated editor."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/edit/keySkills"
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert "форма навыков открыта не для того резюме" in result.reason
+
+
+def test_edit_skills_editor_wait_timeout_on_empty_resume_returns_failure(monkeypatch) -> None:
+    """#789/#787: if the editor never becomes visible after direct navigation,
+    the command must fail closed."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/keySkills"
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    editor = MagicMock()
+    editor.wait_for.side_effect = PlaywrightTimeoutError("editor hidden")
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert "форма навыков не открылась" in result.reason
