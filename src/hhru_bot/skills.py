@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +28,16 @@ logger = logging.getLogger("hhru_bot.skills")
 
 LEVELS = frozenset(("basic", "intermediate", "advanced"))
 EDITOR_MOUNT_TIMEOUT_MS = 30_000
+# #801: the skill chip input is an autocomplete combobox. A blind fill+Enter
+# for the next skill can race the browser's handling of the previous one and
+# concatenate two skill names into a single chip instead of creating two
+# separate chips. CHIP_COMMIT_TIMEOUT_MS bounds how long each iteration waits
+# for a positive signal (an exact-text chip appeared AND the input cleared)
+# before moving on; CHIP_COMMIT_POLL_MS is the poll interval, matching the
+# poll-loop pattern already used for a similar input-clear wait in
+# resume_position.py.
+CHIP_COMMIT_TIMEOUT_MS = 5_000
+CHIP_COMMIT_POLL_MS = 100
 
 
 @dataclass(frozen=True)
@@ -217,9 +229,33 @@ def edit_skills_on_hh(
         return SkillsResult(
             False, existing, skills, reason="поле ввода навыка не найдено однозначно"
         )
+    chips = page.locator(resume_page.RESUME_SKILLS_CHIP)
     for skill in additions:
         input_.fill(skill.name)
         input_.press("Enter")
+        # #801: wait for a positive commit signal before the next iteration's
+        # fill() — a blind fill+Enter pair for consecutive skills can race the
+        # combobox's autocomplete handling and concatenate two names into one
+        # chip (e.g. "FastAPI" + "LangChain" -> "FastAPILangChain"). Checking
+        # only that the chip count grew would not catch this: a merged chip
+        # still increments the count by one. The positive signal is a chip
+        # whose text exactly equals this skill's name AND the input cleared
+        # back to empty — a timeout does not roll back (the Enter may already
+        # have reached hh.ru), so it stops issuing further input and lets the
+        # existing post-save Counter check fail-closed on the resulting
+        # mismatch (same principle as "commit не значит отрисовано" elsewhere
+        # in this codebase).
+        expected_chip = chips.filter(has_text=re.compile(rf"^{re.escape(skill.name)}$"))
+        deadline = time.monotonic() + CHIP_COMMIT_TIMEOUT_MS / 1000
+        while time.monotonic() < deadline and (expected_chip.count() == 0 or input_.input_value()):
+            page.wait_for_timeout(CHIP_COMMIT_POLL_MS)
+        if expected_chip.count() == 0 or input_.input_value():
+            logger.warning(
+                "чип навыка %r не подтверждён за %dмс, дальнейший ввод остановлен",
+                skill.name,
+                CHIP_COMMIT_TIMEOUT_MS,
+            )
+            break
     save = page.locator(resume_page.RESUME_PARTIAL_EDIT_SAVE)
     if save.count() != 1:
         return SkillsResult(
