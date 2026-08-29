@@ -125,6 +125,15 @@ def run(args: argparse.Namespace):
                 # entry_id sees a resolving 'success' row and stops blocking
                 # retries -- without this, a resolved retry would silently
                 # never clear the uncertain marker.
+                #
+                # AO reviewer PR #806: progress.finish() is a silent no-op
+                # unless a matching begin_attempt() ran first (it guards on
+                # `_finished_attempts >= attempted_count`) -- before_click()
+                # is the usual caller and this branch never reaches it, so
+                # without this call command_runs stayed at attempted=0
+                # success=0 for the exact retry path this PR's #480 write-up
+                # claims to resolve, even though actions/stdout were correct.
+                progress.begin_attempt()
                 progress.finish(result)
                 history.record_action(
                     args.entry_id,
@@ -141,7 +150,10 @@ def run(args: argparse.Namespace):
                 # CLAUDE.md's principle for the whole project: no trace was
                 # left on hh.ru, so it is not recorded in actions, matching
                 # apply/bump's "early exits before the click do not write
-                # failed" convention. progress still needs the counter.
+                # failed" convention. progress still needs begin_attempt()
+                # for the same reason as the not_found branch above, so this
+                # attempt is counted in command_runs (attempted/failed).
+                progress.begin_attempt()
                 progress.finish(result)
         if not result.success:
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"

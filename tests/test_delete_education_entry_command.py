@@ -115,6 +115,29 @@ def test_not_found_result_is_reported_as_ok_success(env, tmp_path, capsys):
     assert row["status"] == "success"
 
 
+def test_not_found_result_is_counted_in_command_runs(env, tmp_path):
+    """AO reviewer PR #806: progress.finish() without a matching
+    begin_attempt() is a silent no-op (guarded by
+    ``_finished_attempts >= attempted_count``) -- the not_found branch must
+    call begin_attempt() itself since it never reaches
+    DurableMutationAttempt.before_click(). Without it, command_runs stayed at
+    attempted=0 success=0 for exactly the retry path #802/#480 claims to
+    resolve, even though the actions table and stdout were both correct.
+    """
+    env.result = EducationDeleteResult(
+        ENTRY_ID, "primary", True, "запись не найдена; уже отсутствует", not_found=True
+    )
+    assert cmd.run(_args(tmp_path, force=True)) is False
+    run = History(tmp_path / "history.db").command_runs()[-1]
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "delete-education-entry",
+        "completed",
+        1,
+        1,
+        0,
+    )
+
+
 def test_ambiguous_button_pre_click_failure_writes_nothing_to_history(env, tmp_path, capsys):
     """CLAUDE.md #3: an early exit before any click leaves no trace on hh.ru,
     so it must not be recorded in actions -- same convention apply/bump
@@ -129,6 +152,28 @@ def test_ambiguous_button_pre_click_failure_writes_nothing_to_history(env, tmp_p
     with History(tmp_path / "history.db")._connect() as conn:
         row = conn.execute("SELECT action FROM actions WHERE resume_id = ?", (ENTRY_ID,)).fetchone()
     assert row is None
+
+
+def test_ambiguous_button_pre_click_failure_is_counted_in_command_runs(env, tmp_path):
+    """Same begin_attempt() gap as not_found, but on the failed branch:
+    command_runs must still count this as one failed attempt, not
+    attempted=0.
+    """
+    env.result = EducationDeleteResult(
+        ENTRY_ID, "primary", False, "кнопка удаления записи не подтверждена однозначно"
+    )
+    assert cmd.run(_args(tmp_path, force=True)) is True
+    run = History(tmp_path / "history.db").command_runs()[-1]
+    # run_supervised_command classifies a failed body as "partial" (not
+    # "failed") whenever attempted_count > 0 -- see its docstring. That is
+    # exactly the signal this test protects: attempted must be 1, not 0.
+    assert (run["command"], run["status"], run["attempted"], run["success"], run["failed"]) == (
+        "delete-education-entry",
+        "partial",
+        1,
+        0,
+        1,
+    )
 
 
 def test_not_found_retry_clears_a_prior_unresolved_uncertain_marker(env, tmp_path):
