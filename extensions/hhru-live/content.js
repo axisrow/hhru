@@ -6,6 +6,10 @@ const OVERLAY_SELECTORS = [
   '[class*="notification"]', '[class*="cookie"]'
 ];
 
+function isVisible(element) {
+  return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+}
+
 function classify(element) {
   const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 500);
   const role = element.getAttribute('role');
@@ -13,16 +17,12 @@ function classify(element) {
   const type = /cookie/i.test(className + text)
     ? 'cookie_banner' : role === 'dialog' || role === 'alertdialog' || /modal|popup/i.test(className)
     ? 'modal' : /toast|notification/i.test(className) ? 'notification' : 'overlay';
-  return { type, text, role, className: className.slice(0, 200), visible: !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length) };
+  return { type, text, role, className: className.slice(0, 200), visible: isVisible(element) };
 }
 
 function report(element) {
   const report = { kind: 'overlay_detected', observedAt: new Date().toISOString(), overlay: classify(element) };
   chrome.runtime.sendMessage(report);
-}
-
-function isVisible(element) {
-  return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
 }
 
 // `seen` gates a report only while the element stays visible: once it goes
