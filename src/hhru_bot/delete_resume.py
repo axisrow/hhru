@@ -113,6 +113,20 @@ def delete_resume_on_hh(
         try:
             card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
         except PlaywrightError:
+            # Различаем два исхода, которые раньше сливались в одну причину
+            # «не появилась после загрузки списка». Если в списке есть ДРУГИЕ
+            # карточки, значит он отрисован полностью и резюме просто не
+            # существует (удалено вручную или чужой id) — сообщаем это прямо.
+            # Пустой список по-прежнему неоднозначен: подтверждённого
+            # empty-state селектора в исследованном DOM нет (см. _wait_list_ready),
+            # поэтому там сохраняется прежняя формулировка про загрузку.
+            if page.locator(RESUME_LIST_CARD).count() > 0:
+                return DeleteResumeResult(
+                    resume_id,
+                    False,
+                    f"резюме resume_id={resume_id} не найдено в списке; возможно, оно уже удалено",
+                    False,
+                )
             return DeleteResumeResult(
                 resume_id,
                 False,
