@@ -27,6 +27,51 @@ def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool
             os.close(fd)
 
 
+def _mkdir_and_harden_new_components(path: Path, mode: int) -> None:
+    """Create the missing suffix of ``path`` and chmod only what we created.
+
+    ``Path.mkdir(parents=True)`` followed by a path-based ``os.chmod`` leaves a
+    TOCTOU window: between a directory being created and the mode change, any
+    path component -- not only the final one -- can be replaced with a
+    symlink, redirecting the hardening to an unrelated target (#741). This
+    walks up from ``path`` to find the nearest already-existing ancestor, then
+    walks back down creating each missing component with ``os.mkdir(...,
+    dir_fd=...)`` and hardening it with an ``O_NOFOLLOW``-opened descriptor
+    (``os.fchmod``) before descending further -- so no step ever re-resolves a
+    mutable pathname, and an ancestor that already existed before this call
+    (which may be shared with other processes) is never touched.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    o_directory = getattr(os, "O_DIRECTORY", 0)
+    resolved = path.absolute()
+
+    # Find the nearest already-existing ancestor; only components below it
+    # are ours to create and harden.
+    existing = resolved
+    missing: list[str] = []
+    while not existing.exists():
+        missing.append(existing.name)
+        parent = existing.parent
+        if parent == existing:
+            break
+        existing = parent
+    missing.reverse()
+
+    dir_fd = _open_without_follow(existing, os.O_RDONLY | o_directory)
+    try:
+        for component in missing:
+            try:
+                os.mkdir(component, mode, dir_fd=dir_fd)
+            except FileExistsError:
+                pass
+            next_fd = os.open(component, os.O_RDONLY | o_directory | nofollow, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+            os.fchmod(dir_fd, mode)
+    finally:
+        os.close(dir_fd)
+
+
 def _open_without_follow(path: Path, flags: int) -> int:
     """Open a filesystem path without following a symlink on POSIX."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -54,9 +99,10 @@ def secure_storage_state_parent(
     # into a private directory.  A missing parent is ours to create, so it can
     # safely start private; the standard account directory is tightened below.
     parent_exists = destination.parent.exists()
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=ACCOUNT_DIR_MODE)
-    if not parent_exists and permissions_are_posix():
-        os.chmod(destination.parent, ACCOUNT_DIR_MODE)
+    if permissions_are_posix() and not parent_exists:
+        _mkdir_and_harden_new_components(destination.parent, ACCOUNT_DIR_MODE)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=ACCOUNT_DIR_MODE)
     return destination
 
 

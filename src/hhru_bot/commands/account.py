@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..accounts import AccountError
+from ..accounts import AccountError, validate_account_name
 from ..report import _ascii_table
 from ..session_security import secure_directory
 
@@ -182,8 +182,7 @@ def create_account(
     The directory is created without ``exist_ok`` so a repeated command cannot
     silently overwrite an existing account.
     """
-    if not name or name in {".", ".."} or Path(name).name != name:
-        raise AccountError(f"недопустимое имя аккаунта: {name!r}")
+    validate_account_name(name)
     if not template_path.is_file():
         raise AccountError(f"шаблон конфигурации не найден: {template_path}")
 
