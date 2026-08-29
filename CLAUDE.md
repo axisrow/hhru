@@ -194,8 +194,15 @@ python3 -m playwright install chromium
         ```sql
         INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at)
         VALUES ('<resume_id>', '<resume_id>', 'delete_resume', 'success',
-                'manual reconciliation: confirmed via hh.ru UI', datetime('now'));
+                'manual reconciliation: confirmed via hh.ru UI',
+                strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime'));
         ```
+     `created_at` пишется в том же формате, что и код (`datetime.now().isoformat()`):
+     локальное время с разделителем `T`. Голый `datetime('now')` даёт UTC с пробелом —
+     `_parse_recorded_at` такую строку понимает, но однородность формата в таблице
+     дешевле, чем разбор разнобоя. Порядок «резолюция позже uncertain» определяется
+     по `id` (см. `has_unresolved_uncertain`), а не по `created_at`, поэтому опечатка
+     в дате не заблокирует команду навсегда.
      Писать `success` вручную можно **только** после подтверждения на hh.ru —
      тот же fail-closed принцип, что и у самого `uncertain`: ложный `success`
      хуже постоянной блокировки.
