@@ -136,6 +136,7 @@ def test_all_commands_registered():
         "diagnostics",
         "blacklist",
         "update",
+        "report-vacancy",
     }
 
 
@@ -207,6 +208,7 @@ def test_register_commands_returns_names():
         "diagnostics",
         "blacklist",
         "update",
+        "report_vacancy",
     }
 
 

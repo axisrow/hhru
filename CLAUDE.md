@@ -207,6 +207,28 @@ python3 -m playwright install chromium
      тот же fail-closed принцип, что и у самого `uncertain`: ложный `success`
      хуже постоянной блокировки.
 
+     **`report-vacancy` (#745) — тот же паттерн, но с другим инвариантом.**
+     `report_vacancy_on_hh` по дизайну **никогда** не возвращает `success=True`
+     ни при каких обстоятельствах (шаг 3 wizard'а — финальная отправка жалобы —
+     не реализован и не будет, см. `report_vacancy.py`). Значит `uncertain`-
+     строка, записанная `attempt.interrupt()` при исключении ПОСЛЕ
+     `before_click()` (клик по кнопке «Ещё» в шапке вакансии), заблокирует
+     повторный `report-vacancy` для этого `vacancy_id` **навсегда** — не
+     «пока клик не подтверждён», а структурно, поскольку `success`-строка для
+     этого action-имени в принципе недостижима. Reconciliation здесь ПРОЩЕ,
+     чем у `delete-resume`: ни один клик до (не включая) неисследованного
+     шага 3 не мутирует hh.ru (подтверждено разведкой — вся форма до
+     заполненного комментария рендерится чисто на клиенте), поэтому нет
+     ложноположительного риска, который решает проверка «на hh.ru» у
+     `delete-resume`/`copy-resume`. Резолюция — та же ручная вставка
+     `success`-строки в `actions`, но подтверждать на hh.ru нечего:
+     ```sql
+     INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at)
+     VALUES ('<vacancy_id>', '<vacancy_id>', 'report_vacancy', 'success',
+             'manual reconciliation: no hh.ru mutation occurred before step 3',
+             datetime('now'));
+     ```
+
 7. **Анкеты отвечаются обучаемыми шаблонами, а LLM — только последняя ступень**
    (#482, пакет `questionnaires/`). Цепочка: подтверждённая формулировка →
    ключевые слова → (пустой ML-слот) → LLM → очередь вопросов пользователю.
