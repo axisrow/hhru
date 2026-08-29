@@ -2048,6 +2048,106 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.FIRST_EXPERIENCE_CANCEL:
+    value: '[data-qa=''resume-partial-edit-cancel'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:43
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-cancel
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:43
+      note: 'Live write-confirmed 2026-08-29 (#786/#787): navigated directly to /resume/edit/{resume_id}/experience on a resume
+        with zero existing experience entries (draft resume, ID redacted in this note). The form opened pre-bound to that
+        resume with no click required, using a distinct data-qa namespace from the indexed row editor (resume-editor-experience-*
+        fields, resume-partial-edit-* buttons, not resume-profile-experience-specific-*-input-{index} or profile-layout-*-button).
+        Saving created the experience row immediately on that resume, confirmed by re-reading the resume page; the test entry
+        was deleted afterwards via its edit form''s Delete button.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
+    verified_by: human
+  resume_experience.FIRST_EXPERIENCE_COMPANY:
+    value: '[data-qa=''resume-editor-experience-company-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:40
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-company-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:40
+      note: 'Live write-confirmed 2026-08-29 (#786/#787): navigated directly to /resume/edit/{resume_id}/experience on a resume
+        with zero existing experience entries (draft resume, ID redacted in this note). The form opened pre-bound to that
+        resume with no click required, using a distinct data-qa namespace from the indexed row editor (resume-editor-experience-*
+        fields, resume-partial-edit-* buttons, not resume-profile-experience-specific-*-input-{index} or profile-layout-*-button).
+        Saving created the experience row immediately on that resume, confirmed by re-reading the resume page; the test entry
+        was deleted afterwards via its edit form''s Delete button.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
+    verified_by: human
+  resume_experience.FIRST_EXPERIENCE_POSITION:
+    value: '[data-qa=''resume-editor-experience-position-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:41
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-position-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:41
+      note: 'Live write-confirmed 2026-08-29 (#786/#787): navigated directly to /resume/edit/{resume_id}/experience on a resume
+        with zero existing experience entries (draft resume, ID redacted in this note). The form opened pre-bound to that
+        resume with no click required, using a distinct data-qa namespace from the indexed row editor (resume-editor-experience-*
+        fields, resume-partial-edit-* buttons, not resume-profile-experience-specific-*-input-{index} or profile-layout-*-button).
+        Saving created the experience row immediately on that resume, confirmed by re-reading the resume page; the test entry
+        was deleted afterwards via its edit form''s Delete button.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
+    verified_by: human
+  resume_experience.FIRST_EXPERIENCE_SAVE:
+    value: '[data-qa=''resume-partial-edit-save'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:42
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-partial-edit-save
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:42
+      note: 'Live write-confirmed 2026-08-29 (#786/#787): navigated directly to /resume/edit/{resume_id}/experience on a resume
+        with zero existing experience entries (draft resume, ID redacted in this note). The form opened pre-bound to that
+        resume with no click required, using a distinct data-qa namespace from the indexed row editor (resume-editor-experience-*
+        fields, resume-partial-edit-* buttons, not resume-profile-experience-specific-*-input-{index} or profile-layout-*-button).
+        Saving created the experience row immediately on that resume, confirmed by re-reading the resume page; the test entry
+        was deleted afterwards via its edit form''s Delete button.'
+    last_verified_at: '2026-08-29'
+    verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
+    verified_by: human
   resume_list.RESUME_DUPLICATE_INLINE:
     value: '[data-qa=''resume-dublicate'']'
     criticality: write

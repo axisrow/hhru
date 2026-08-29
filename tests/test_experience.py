@@ -73,19 +73,79 @@ def test_fill_plan_rejects_identity_or_count_changes():
 
 
 class _Locator:
+    def __init__(self, count=0):
+        self._count = count
+
     def count(self):
-        return 0
+        return self._count
+
+    def format(self, **_kwargs):
+        return self
+
+    def wait_for(self, *, timeout=None, state=None):
+        return None
+
+    def fill(self, _value):
+        return None
+
+    def click(self):
+        return None
+
+    def input_value(self):
+        return ""
 
 
 class _Page:
+    """First-row form is a distinct data-qa namespace (#786/#787): every
+    field/button locator here is unconditionally count()==1, matching the
+    live-confirmed /resume/edit/{id}/experience shape, except the row editor
+    locators (edit-experience-button/EXPERIENCE_COMPANY/POSITION), which stay
+    at count()==0 to force the first-entry branch.
+    """
+
+    def __init__(self):
+        self.url = "https://hh.ru/resume/resume-1"
+
     def locator(self, selector):
         assert selector is not None
-        return _Locator()
+        if "edit-experience-button" in selector or "specific-" in selector:
+            return _Locator(count=0)
+        return _Locator(count=1)
 
 
-def test_edit_experience_fails_closed_when_add_selector_is_unavailable(monkeypatch):
+def test_edit_experience_first_entry_uses_resume_scoped_route(monkeypatch):
+    """#786/#787: an empty resume has no in-page add trigger; the first row
+    is created by navigating straight to /resume/edit/{id}/experience, which
+    live testing confirmed opens pre-bound to that resume_id."""
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
-    monkeypatch.setattr("hhru_bot.experience.EXPERIENCE_ADD_BUTTON", None)
+    seen_urls = []
+
+    def fake_goto(page, url):
+        seen_urls.append(url)
+        page.url = "https://hh.ru/resume/edit/resume-1/experience"
+
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", fake_goto)
+
+    results = edit_experience_on_hh(
+        _Page(),
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=True,
+    )
+
+    assert seen_urls == ["https://hh.ru/resume/edit/resume-1/experience"]
+    assert results == [ExperienceResult("строка 0: предложено, save не нажат", True)]
+
+
+def test_edit_experience_first_entry_fails_closed_on_route_mismatch(monkeypatch):
+    """If hh.ru does not land on the expected resume-scoped route (drifted
+    selector/redirect), fail closed instead of filling an unconfirmed form."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+
+    def fake_goto(page, url):
+        page.url = "https://hh.ru/profile/edit/experience"
+
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", fake_goto)
 
     results = edit_experience_on_hh(
         _Page(),
@@ -94,4 +154,6 @@ def test_edit_experience_fails_closed_when_add_selector_is_unavailable(monkeypat
         dry_run=True,
     )
 
-    assert results == [ExperienceResult("строка опыта 0: add-триггер не подтверждён однозначно")]
+    assert len(results) == 1
+    assert not results[0].success
+    assert "форма открыта не для того резюме" in results[0].reason

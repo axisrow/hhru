@@ -12,13 +12,13 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import open_confirmed_resume, resume_identity_matches
+from .browser import HH_BASE_URL, goto_hh, open_confirmed_resume, resume_identity_matches
 from .selector_groups.resume_experience import (
-    EXPERIENCE_ADD_BUTTON,
     EXPERIENCE_CANCEL,
     EXPERIENCE_COMPANY,
     EXPERIENCE_COMPANY_URL,
@@ -28,6 +28,10 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_POSITION,
     EXPERIENCE_SAVE,
     EXPERIENCE_START_YEAR,
+    FIRST_EXPERIENCE_CANCEL,
+    FIRST_EXPERIENCE_COMPANY,
+    FIRST_EXPERIENCE_POSITION,
+    FIRST_EXPERIENCE_SAVE,
 )
 
 logger = logging.getLogger("hhru_bot.experience")
@@ -251,41 +255,55 @@ def edit_experience_on_hh(
     results = []
     for entry, index in zip(plan.entries, selected, strict=False):
         trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
-        if trigger.count() == 0:
-            # The add selector was not confirmed by the research dump.  It is
-            # accepted only as a single exact data-qa match, never by button
-            # text or a broad CSS selector.
-            if EXPERIENCE_ADD_BUTTON is None:
-                return results + [
-                    ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
-                ]
-            add = page.locator(EXPERIENCE_ADD_BUTTON)
-            if add.count() != 1:
-                return results + [
-                    ExperienceResult(f"строка опыта {index}: add-триггер не подтверждён однозначно")
-                ]
+        first_entry = trigger.count() == 0
+        if first_entry:
+            # #786/#787: no in-page "add" trigger for the first experience row
+            # was ever confirmed by a research dump — the visible suggestion
+            # chip (`suitable-vacancies-suggest-item-experience`) navigates to
+            # the *shared* profile editor (`/profile/edit/experience`) without
+            # a reliable `resumeFrom` binding on an incomplete resume (#787
+            # live confirmation: the query param was dropped entirely). The
+            # resume-scoped route below was confirmed live (#787 write test)
+            # to open the form directly, pre-bound to this resume_id, with no
+            # click or checkbox panel involved.
+            edit_path = f"/resume/edit/{resume_id}/experience"
             try:
-                add.click()
-                trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
-                trigger.first.wait_for(state="visible", timeout=SAVE_TIMEOUT_MS)
+                goto_hh(page, f"{HH_BASE_URL}{edit_path}")
             except PlaywrightError as exc:
                 return results + [
                     ExperienceResult(
                         f"строка опыта {index}: не удалось открыть новую запись: {exc}"
                     )
                 ]
-        if trigger.count() != 1:
+            if urlsplit(page.url).path.rstrip("/") != edit_path:
+                return results + [
+                    ExperienceResult(
+                        f"строка опыта {index}: форма открыта не для того резюме ({page.url})"
+                    )
+                ]
+        elif trigger.count() != 1:
             return results + [
                 ExperienceResult(f"строка опыта {index}: триггер не найден однозначно")
             ]
+        # #786/#787: the first-row editor at /resume/edit/{id}/experience is a
+        # distinct DOM shape from the indexed row editor — separate company/
+        # position/save/cancel data-qa values (start/end year and description
+        # are the same non-indexed selectors on both shapes, confirmed live).
+        company_selector = (
+            FIRST_EXPERIENCE_COMPANY if first_entry else EXPERIENCE_COMPANY.format(index=index)
+        )
+        position_selector = (
+            FIRST_EXPERIENCE_POSITION if first_entry else EXPERIENCE_POSITION.format(index=index)
+        )
+        save_selector = FIRST_EXPERIENCE_SAVE if first_entry else EXPERIENCE_SAVE
+        cancel_selector = FIRST_EXPERIENCE_CANCEL if first_entry else EXPERIENCE_CANCEL
         save_attempted = False
         try:
-            trigger.click()
-            page.locator(EXPERIENCE_COMPANY.format(index=index)).wait_for(
-                state="visible", timeout=FORM_TIMEOUT_MS
-            )
-            _fill(page.locator(EXPERIENCE_COMPANY.format(index=index)), entry.company)
-            _fill(page.locator(EXPERIENCE_POSITION.format(index=index)), entry.position)
+            if not first_entry:
+                trigger.click()
+            page.locator(company_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            _fill(page.locator(company_selector), entry.company)
+            _fill(page.locator(position_selector), entry.position)
             _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
             if page.locator(EXPERIENCE_END_YEAR).count() == 1:
                 _fill(page.locator(EXPERIENCE_END_YEAR), "" if entry.current else entry.end_year)
@@ -294,9 +312,9 @@ def edit_experience_on_hh(
                 _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
             if dry_run:
                 results.append(ExperienceResult(f"строка {index}: предложено, save не нажат", True))
-                page.locator(EXPERIENCE_CANCEL).click()
+                page.locator(cancel_selector).click()
             else:
-                save = page.locator(EXPERIENCE_SAVE)
+                save = page.locator(save_selector)
                 if save.count() != 1:
                     return results + [
                         ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
