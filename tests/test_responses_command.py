@@ -145,6 +145,23 @@ def test_calendar_hint_collapses_newlines_in_employer(capsys, tmp_path):
     assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
 
 
+def test_calendar_hint_rejects_alert_new_combination(capsys, tmp_path):
+    """--calendar-hint + --alert-new: явная ошибка, а не молчаливый no-op.
+
+    --alert-new возвращается из run() раньше точки, где печатается calendar-hint
+    (после _print_responses_table) — без явной проверки комбинация была бы тихим
+    no-op с exit 0 и без диагностики, тем же классом ловушки, что уже закрыт для
+    --sync-applied/--remindable/--detect-external-tests выше по функции.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+
+    with pytest.raises(SystemExit) as exc_info:
+        responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True, alert_new=True))
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--calendar-hint" in err and "--alert-new" in err
+
+
 def test_calendar_hint_off_by_default(capsys, tmp_path):
     """Без флага --calendar-hint вывод не содержит подсказку календаря."""
     config = _write_config(tmp_path, _minimal_config())

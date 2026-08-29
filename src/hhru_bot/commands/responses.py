@@ -214,6 +214,18 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
             file=sys.stderr,
         )
         sys.exit(2)
+    # --calendar-hint печатает подсказку в конце run() (после _print_responses_table);
+    # --alert-new/--remindable/--sync-applied все возвращаются раньше этой точки,
+    # так что совмещение с ними — тихий no-op без диагностики. Явный отказ вместо
+    # молчаливого игнорирования, тем же паттерном, что и проверки выше (#759 review).
+    if calendar_hint and (alert_new or remindable_only or sync_applied):
+        print(
+            "Ошибка: --calendar-hint нельзя совмещать с --alert-new, --remindable "
+            "или --sync-applied — эти режимы завершаются раньше, чем печатается "
+            "подсказка календаря",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if args.max_pages < 1:
         print("Ошибка: --max-pages должен быть положительным", file=sys.stderr)
         sys.exit(2)
