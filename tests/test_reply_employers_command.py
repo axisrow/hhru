@@ -926,7 +926,10 @@ def test_follow_up_is_not_offered_when_reminder_not_allowed(tmp_path, monkeypatc
     command.run(_args(follow_up=True, after_days=7, dry_run=True))
     out = capsys.readouterr().out
     assert "[DRY-RUN]" not in out
-    assert "не разрешает напоминание" in out
+    # cycle-review (PR #761): формулировка обобщена -- этот гейт стоит ДО
+    # decide()/has_replied и не может отличить "нужно было напомнить" от
+    # "чат уже полностью обработан", поэтому текст лога говорит и то, и то.
+    assert "не разрешает/не требует напоминания" in out
 
 
 def test_follow_up_skips_when_employer_already_replied(tmp_path, monkeypatch, capsys):

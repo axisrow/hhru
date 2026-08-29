@@ -162,7 +162,13 @@ def _run(args: argparse.Namespace, config, history, progress: ApplyProgress) -> 
             label = f"{candidate['vacancy_id']} «{candidate['title']}» @ {candidate['employer']}"
             live_resume_id = resume_by_topic.get(topic)
             if remindable_topics is not None and topic not in remindable_topics:
-                print(f"[skip] {label} — hh.ru не разрешает напоминание для этого чата")
+                # cycle-review (PR #761): этот гейт стоит ДО read_chat/decide
+                # намеренно (дешёвый ранний выход без лишнего браузерного
+                # чтения на заведомо запрещённые hh.ru чаты), поэтому здесь
+                # ещё не известно, ждёт ли чат ответа или уже полностью
+                # обработан (работодатель уже ответил и т.п.) -- формулировка
+                # это отражает, а не утверждает "нужно было напомнить".
+                print(f"[skip] {label} — hh.ru не разрешает/не требует напоминания для этого чата")
                 progress.skipped_count += 1
                 continue
             if getattr(args, "suggest", False):
