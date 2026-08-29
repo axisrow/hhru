@@ -449,9 +449,9 @@ def _has_next_search_link(links, page_num: int) -> bool:
 # заполняют в основном международные ИТ-специалисты.
 #
 # Каждая секция описана парой подписей RU/EN. Ключ разбора — русская подпись:
-# она остаётся каноническим именем внутри парсера, а `_canonical_heading`
-# приводит к нему английский вариант. Так двуязычность не расползается по коду
-# отдельными ветками if/else на каждую секцию.
+# она остаётся каноническим именем внутри парсера, а `_section()` через
+# `_SECTION_ALIASES` сопоставляет ей английский вариант. Так двуязычность
+# не расползается по коду отдельными ветками if/else на каждую секцию.
 _SECTION_ALIASES = {
     "Skills": "Навыки",
     "Driving experience": "Опыт вождения",
@@ -517,11 +517,6 @@ def _months(text: str) -> int | None:
     return (int(years.group(1)) * 12 if years else 0) + (int(months.group(1)) if months else 0)
 
 
-def _canonical_heading(line: str) -> str:
-    """Привести английскую подпись раздела к русской — канонической в парсере."""
-    return _SECTION_ALIASES.get(line, line)
-
-
 def _csv_tail(line: str) -> list[str]:
     _, _, tail = line.partition(":")
     return [part.strip() for part in tail.split(",") if part.strip()]
@@ -550,6 +545,7 @@ def parse_competitor_resume_text(
     resume_id: str,
     resume_url: str,
     headings: list[str],
+    desired_role: str,
 ) -> CompetitorResume:
     """Parse the applicant-visible main section, excluding header identity fields."""
 
@@ -564,17 +560,9 @@ def parse_competitor_resume_text(
     def is_salary_heading(value: str) -> bool:
         return bool(_SALARY_HEADING_RE.search(normalize(value)))
 
-    desired_candidates = [
-        value.strip()
-        for value in normalized_headings
-        if value.strip()
-        and _canonical_heading(value.strip()) not in _SECTION_HEADINGS
-        and not value.strip().startswith(_EXPERIENCE_PREFIXES)
-        and not is_salary_heading(value.strip())
-    ]
-    if not desired_candidates:
+    desired_role = normalize(desired_role)
+    if not desired_role:
         raise CompetitorResumeIndeterminate("desired_role не подтверждён")
-    desired_role = desired_candidates[0]
 
     salary_heading = next(
         (value for value in normalized_headings if is_salary_heading(value)), None
@@ -666,11 +654,21 @@ def fetch_competitor_resume(
     except PlaywrightError:
         raise CompetitorResumeIndeterminate("основной блок резюме не появился") from None
     headings = [value.strip() for value in page.locator(sel.DETAIL_HEADING).all_inner_texts()]
+    # card.desired_role is already confirmed from the search-results listing
+    # (parse_search_links) — same trust model as card.area below. Only fall
+    # back to re-reading the detail page's h1 when the card did not carry it.
+    desired_role = card.desired_role
+    if not desired_role:
+        title_locator = page.locator(sel.DETAIL_TITLE_POSITION)
+        if title_locator.count() != 1:
+            raise CompetitorResumeIndeterminate("desired_role не подтверждён")
+        desired_role = title_locator.inner_text()
     snapshot = parse_competitor_resume_text(
         main.inner_text(),
         resume_id=card.resume_id,
         resume_url=card.resume_url,
         headings=headings,
+        desired_role=desired_role,
     )
     address_locator = page.locator(sel.DETAIL_PERSONAL_ADDRESS)
     relocation_locator = page.locator(sel.DETAIL_RELOCATION)

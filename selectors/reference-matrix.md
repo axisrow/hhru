@@ -33,6 +33,7 @@
 | competitor_resume.DETAIL_PERSONAL_ADDRESS | `[data-qa='resume-personal-address']` | — | — | — | live_dom |
 | competitor_resume.DETAIL_PERSONAL_INFO | `main p:has([data-qa^='relocation_'])` | — | — | — | live_dom |
 | competitor_resume.DETAIL_RELOCATION | `[data-qa^='relocation_']` | — | — | — | live_dom |
+| competitor_resume.DETAIL_TITLE_POSITION | `[data-qa='resume-block-title-position']` | — | — | — | live_dom |
 | competitor_resume.PAGINATION_BLOCK | `[data-qa*='pager-block'], [data-qa*='pagination']` | — | — | — | structural_read_fallback |
 | competitor_resume.PAGINATION_NEXT | `[data-qa*='pager-next'], [data-qa*='pagination-next'], a[rel='next']` | — | — | — | structural_read_fallback |
 | competitor_resume.PAGINATION_PAGE | `[data-qa*='pager-page'], [data-qa*='pagination-page']` | — | — | — | structural_read_fallback |

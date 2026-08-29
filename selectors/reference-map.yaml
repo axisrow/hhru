@@ -722,6 +722,25 @@ selectors:
     last_verified_at: '2026-08-27T00:00:00Z'
     verified_flow: public_resume_detail_read_only
     verified_by: codex
+  competitor_resume.DETAIL_TITLE_POSITION:
+    value: '[data-qa=''resume-block-title-position'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:22
+    decision: live_dom
+    status: intentionally local
+    sources: {}
+    live_matches:
+    - resume-block-title-position
+    evidence:
+      source: docs/research/issue-792-live-probe.md
+      note: Read-only Chrome observation of the public resume desired-role h1 on 2026-08-29.
+    active: true
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-08-29T00:00:00Z'
+    verified_flow: public_resume_detail_read_only
+    verified_by: claude
   competitor_resume.PAGINATION_BLOCK:
     value: '[data-qa*=''pager-block''], [data-qa*=''pagination'']'
     criticality: read

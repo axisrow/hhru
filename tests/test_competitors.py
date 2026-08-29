@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+import hhru_bot.competitors as competitors_module
 from hhru_bot.commands.competitors import _collection_status, _page_cap_reached
 from hhru_bot.competitors import (
     CompetitorResumeIndeterminate,
+    CompetitorSearchCard,
     CompetitorSearchCoverage,
     CompetitorSearchIndeterminate,
     _months,
     available_search_page_count,
     build_competitor_search_url,
     coverage_warning,
+    fetch_competitor_resume,
     has_next_search_page,
     parse_competitor_resume_text,
     parse_detail_business_trips_and_metro,
@@ -104,13 +107,13 @@ def test_parse_detail_reads_english_resume_sections():
         resume_id="en",
         resume_url="https://hh.ru/resume/en",
         headings=[
-            "Machine Learning Engineer",
             "250 000 ₽ in hand",
             "Work experience 9 years 11 months",
             "Skills",
             "Education",
             "Languages",
         ],
+        desired_role="Machine Learning Engineer",
     )
     assert snapshot.desired_role == "Machine Learning Engineer"
     assert snapshot.experience_months == 119
@@ -127,17 +130,6 @@ def test_parse_detail_reads_english_resume_sections():
         ("Shell Scripting", "Средний уровень"),
         ("Linux", "Уровень не указан"),
     ]
-
-
-def test_parse_detail_english_headings_are_not_mistaken_for_desired_role():
-    """«Work experience …» — подпись раздела, а не должность."""
-    snapshot = parse_competitor_resume_text(
-        DETAIL_EN,
-        resume_id="en",
-        resume_url="https://hh.ru/resume/en",
-        headings=["Skills", "Machine Learning Engineer", "Work experience 9 years 11 months"],
-    )
-    assert snapshot.desired_role == "Machine Learning Engineer"
 
 
 @pytest.mark.parametrize(
@@ -274,13 +266,13 @@ def test_parse_detail_extracts_only_competitor_fields():
         resume_id="abc",
         resume_url="https://hh.ru/resume/abc",
         headings=[
-            "AI Engineer / AI Infrastructure Engineer",
             "200 000 ₽ на руки",
             "Опыт работы 5 лет 3 месяца",
             "Навыки",
             "Образование",
             "Знание языков",
         ],
+        desired_role="AI Engineer / AI Infrastructure Engineer",
     )
     assert snapshot.desired_role == "AI Engineer / AI Infrastructure Engineer"
     assert snapshot.salary_from == 200_000
@@ -303,12 +295,14 @@ def test_parse_detail_extracts_only_competitor_fields():
 
 
 def test_detail_without_confirmed_role_fails_closed():
+    """A blank desired_role (e.g. an empty h1) must fail closed."""
     with pytest.raises(CompetitorResumeIndeterminate, match="desired_role"):
         parse_competitor_resume_text(
             "Навыки\nPython",
             resume_id="abc",
             resume_url="https://hh.ru/resume/abc",
-            headings=["Навыки"],
+            headings=[],
+            desired_role="  ",
         )
 
 
@@ -317,7 +311,8 @@ def test_skill_values_are_persisted_without_privacy_filter():
         "AI Engineer\nНавыки\nPython\ntest@example.com\n+7 999 123-45-67\nhttps://example.com",
         resume_id="skill-contact",
         resume_url="https://hh.ru/resume/skill-contact",
-        headings=["AI Engineer", "Навыки"],
+        headings=["Навыки"],
+        desired_role="AI Engineer",
     )
     assert [skill.name for skill in snapshot.skills] == [
         "Python",
@@ -332,7 +327,8 @@ def test_numeric_role_title_is_not_misparsed_as_salary():
         "3D Generalist - AI Generalist\nОпыт работы 4 года\nНавыки\nCinema 4D",
         resume_id="3d",
         resume_url="https://hh.ru/resume/3d",
-        headings=["3D Generalist - AI Generalist", "Опыт работы 4 года", "Навыки"],
+        headings=["Опыт работы 4 года", "Навыки"],
+        desired_role="3D Generalist - AI Generalist",
     )
     assert snapshot.desired_role == "3D Generalist - AI Generalist"
     assert snapshot.salary_from is None
@@ -344,7 +340,8 @@ def test_thin_space_salary_and_dashless_specialization_are_normalized():
         "Тип занятости: полная занятость\nОпыт работы 1\u00a0год",
         resume_id="thin",
         resume_url="https://hh.ru/resume/thin",
-        headings=["AI Engineer", "2\u2009500\u00a0€ на\u00a0руки", "Опыт работы 1\u00a0год"],
+        headings=["2\u2009500\u00a0€ на\u00a0руки", "Опыт работы 1\u00a0год"],
+        desired_role="AI Engineer",
     )
     assert snapshot.salary_from == 2500
     assert snapshot.salary_currency == "EUR"
@@ -371,10 +368,88 @@ def test_parse_detail_preserves_free_text_sections():
         "Ключевые достижения\nСократил расходы на 20%",
         resume_id="free-text",
         resume_url="https://hh.ru/resume/free-text",
-        headings=["AI Engineer"],
+        headings=[],
+        desired_role="AI Engineer",
     )
     assert snapshot.experience_summary == "Живу в Москве, мне 35 лет"
     assert snapshot.achievements == "Сократил расходы на 20%"
+
+
+def _detail_card(*, desired_role: str = "GPT") -> CompetitorSearchCard:
+    return CompetitorSearchCard(
+        resume_id="abc", resume_url="https://hh.ru/resume/abc", desired_role=desired_role, rank=1
+    )
+
+
+def _fake_detail_page(*, title_count: int, title_text: str = "GPT"):
+    """A Playwright Page double for fetch_competitor_resume (#792 regression).
+
+    Confirmed live DOM 2026-08-29 (docs/research/issue-792-live-probe.md):
+    ``main h2`` never contains the desired-role title — it lives in
+    ``h1[data-qa='resume-block-title-position']``. This double reproduces
+    exactly that shape: DETAIL_HEADING yields only section/salary headings,
+    DETAIL_TITLE_POSITION is the sole source of the title. Built from the
+    same _Locator/_Text doubles as _PaginationPage below, not a bespoke
+    mock — this is fetch_competitor_resume's page.locator(selector) shape.
+    """
+    empty = _Locator([])
+    locators = {
+        selectors.DETAIL_MAIN: _Locator([f"{title_text}\nНавыки\nPython"]),
+        selectors.DETAIL_HEADING: _Locator(["Навыки"]),
+        selectors.DETAIL_TITLE_POSITION: _Locator([title_text] * title_count),
+        selectors.DETAIL_PERSONAL_ADDRESS: empty,
+        selectors.DETAIL_RELOCATION: empty,
+        selectors.DETAIL_PERSONAL_INFO: empty,
+    }
+
+    class _DetailPage:
+        def locator(self, selector):
+            return locators[selector]
+
+    return _DetailPage()
+
+
+def _patch_fetch_prerequisites(monkeypatch):
+    monkeypatch.setattr(competitors_module, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(competitors_module, "raise_for_antibot", lambda *_a, **_k: None)
+    monkeypatch.setattr(competitors_module, "require_authenticated_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(competitors_module, "resume_identity_matches", lambda *_a, **_k: True)
+
+
+def test_fetch_competitor_resume_prefers_card_desired_role_over_detail_h1(monkeypatch):
+    """card.desired_role is already confirmed from the search listing (same
+    trust model as card.area) — it must win over a fresh detail-page scrape."""
+    _patch_fetch_prerequisites(monkeypatch)
+    page = _fake_detail_page(title_count=1, title_text="Prompt Engineer")
+
+    snapshot = fetch_competitor_resume(
+        page, _detail_card(desired_role="GPT"), require_authentication=False
+    )
+
+    assert snapshot.desired_role == "GPT"
+
+
+def test_fetch_competitor_resume_falls_back_to_h1_when_card_role_missing(monkeypatch):
+    """Regression for #792: DETAIL_HEADING (main h2) never carries the
+    desired-role title, only DETAIL_TITLE_POSITION (h1) does. Exercised via
+    the fallback path, since a normally-parsed card always has desired_role."""
+    _patch_fetch_prerequisites(monkeypatch)
+    page = _fake_detail_page(title_count=1, title_text="GPT")
+
+    snapshot = fetch_competitor_resume(
+        page, _detail_card(desired_role=""), require_authentication=False
+    )
+
+    assert snapshot.desired_role == "GPT"
+
+
+def test_fetch_competitor_resume_fails_closed_when_title_missing(monkeypatch):
+    """No card role and no confirmed h1 title -> fail closed."""
+    _patch_fetch_prerequisites(monkeypatch)
+    page = _fake_detail_page(title_count=0)
+
+    with pytest.raises(CompetitorResumeIndeterminate, match="desired_role"):
+        fetch_competitor_resume(page, _detail_card(desired_role=""), require_authentication=False)
 
 
 class _Locator:
@@ -400,6 +475,9 @@ class _Locator:
 
     def inner_text(self):
         return self.values[0]
+
+    def all_inner_texts(self):
+        return list(self.values)
 
     def get_attribute(self, name):
         assert self.links and name == "href"
