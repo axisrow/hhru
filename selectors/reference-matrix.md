@@ -94,6 +94,10 @@
 | resume_experience.EXPERIENCE_POSITION | `[data-qa='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_START_YEAR | `[data-qa='resume-editor-experience-start-year-input']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_COMPANY | `[data-qa='resume-editor-experience-company-input']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_POSITION | `[data-qa='resume-editor-experience-position-input']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | live_dom |
 | resume_list.RESUME_DUPLICATE_INLINE | `[data-qa='resume-dublicate']` | — | — | — | live_dom |
 | resume_list.RESUME_DUPLICATE_MENU_ITEM | `[data-qa='operations-list-duplicate-resume']` | — | — | — | documented_live |
 | resume_list.RESUME_LIST_ACTION_MORE | `[data-qa='resume-list-action-more']` | — | — | — | live_dom |
