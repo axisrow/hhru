@@ -368,8 +368,12 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000, *, min_count: 
     """
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
+        # cycle-review (PR #761, round 2): переиспользуем count_visible_messages()
+        # вместо повторного инлайна того же локатора+count -- тот же locator
+        # нужен ниже для messages.nth(), поэтому оставляем page.locator()
+        # отдельно, но сам подсчёт делегируем общему хелперу.
         messages = page.locator(CHAT_MESSAGE_TEXT)
-        count = messages.count()
+        count = count_visible_messages(page)
         if count >= min_count:
             message = messages.nth(count - 1)
             author = message.evaluate(
