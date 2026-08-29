@@ -253,7 +253,13 @@ def set_resume_visibility_on_hh(
     wants_employer_edit = bool(add_employers or remove_employers)
     if wants_employer_edit:
         # Determine the active list mode: explicit --mode wins; otherwise read
-        # which whitelist/blacklist radio is currently checked on hh.ru.
+        # which whitelist/blacklist radio is currently checked on hh.ru. Nested
+        # <input type="radio"> под каждым label — ровно один на label, `.checked`
+        # читаемо (подтверждено разведкой #746: живой JS-дамп `input.checked`
+        # для всех пяти radio дал true ровно на активном режиме, false на
+        # остальных — см. `resume_visibility_probe_2026-08-29.md`). count()!=1
+        # здесь — фактический дрейф DOM, не отсутствие поддержки; такой случай
+        # оставляет list_mode=None и уходит в fail-closed отказ ниже.
         list_mode = mode if mode in _EMPLOYER_LIST_MODES else None
         if list_mode is None:
             for candidate in _EMPLOYER_LIST_MODES:
@@ -298,6 +304,13 @@ def set_resume_visibility_on_hh(
     if reason:
         return ResumeVisibilityResult(resume_id, False, reason)
     assert save is not None
+    # before_click зарезервирован ровно здесь, а не раньше (клики по radio-режиму,
+    # "Добавить"/крестику удаления в модалке списка) — все эти промежуточные клики
+    # меняют только клиентское состояние формы React-SPA, подтверждено живой
+    # разведкой #746 (переключение radio без клика «Сохранить» не изменило
+    # состояние резюме на сервере, проверено повторной навигацией). Реальная
+    # мутация hh.ru — единственный клик ниже; "серая зона" (CLAUDE.md §3)
+    # начинается именно с него, не раньше.
     try:
         if before_click is not None:
             before_click()

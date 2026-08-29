@@ -107,8 +107,11 @@ def run(args: argparse.Namespace):
         plan_bits.append(f"добавить «{name}»")
     for name in remove_employers:
         plan_bits.append(f"убрать «{name}»")
-    target = "all" if args.resume == "all" else resumes[0].id
-    prompt = f"Изменить видимость резюме '{target}' на hh.ru ({'; '.join(plan_bits)})?"
+    # #746 review: --resume all затрагивает несколько резюме одним подтверждением —
+    # prompt обязан перечислить их поимённо, иначе "да" на batch-действие визуально
+    # неотличимо от "да" на одно резюме (пользователь мог не осознавать масштаб).
+    target = ", ".join(r.id for r in resumes) if args.resume == "all" else resumes[0].id
+    prompt = f"Изменить видимость резюме [{target}] на hh.ru ({'; '.join(plan_bits)})?"
     if not args.dry_run and not confirm_write(args.force, prompt=prompt):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
