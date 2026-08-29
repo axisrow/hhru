@@ -206,6 +206,9 @@ def create_resume_on_hh(
     if dry_run:
         return CreateResumeResult(True, reason="dry-run; визард найден, клики не выполнены")
 
+    # Шаги ДО точки невозврата: мутация здесь физически невозможна, поэтому
+    # PlaywrightError остаётся обычным failed и не блокирует повтор (#777,
+    # тот же принцип, что у before_click-seam в CLAUDE.md, раздел 6).
     try:
         select_job.click()
         page.locator(RESUME_CREATION_POSITION).first.wait_for(state="visible", timeout=15000)
@@ -224,6 +227,12 @@ def create_resume_on_hh(
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return CreateResumeResult(False, reason=f"ошибка до сохранения резюме: {exc}")
+
+    # Точка невозврата: клик ниже создаёт резюме, поэтому ЛЮБОЙ сбой начиная
+    # отсюда — uncertain (fail-closed, #176): результат клика не наблюдаем.
+    try:
         reason = _click_one(
             page,
             RESUME_CREATION_NEXT,
