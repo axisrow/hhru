@@ -54,6 +54,126 @@ def _args(config_path, history_path, **overrides) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+def test_calendar_hint_prints_placeholder_not_response_date(capsys, tmp_path):
+    """#711: --calendar-hint печатает готовую команду calendar event.
+
+    Контракт (docs/calendar.py:3-5): время — ВСЕГДА плейсхолдер. Тест обязан
+    падать, если кто-то попытается подставить дату из responses (response_date/
+    status_changed_at) вместо плейсхолдера.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response(
+        "v1",
+        "ACME Corp",
+        "invitation",
+        "/c1",
+        response_date="27 июля, 14:05",
+    )
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" in out
+    calendar_line = next(line for line in out.splitlines() if "hhru calendar event" in line)
+    import shlex
+
+    tokens = shlex.split(calendar_line)
+    assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
+    # Плейсхолдер присутствует (в кавычках — символы `<`/`>` иначе читаются
+    # оболочкой как redirection)...
+    assert tokens[tokens.index("--start") + 1] == "<YYYY-MM-DDTHH:MM:SS+TZ>"
+    assert tokens[tokens.index("--end") + 1] == "<YYYY-MM-DDTHH:MM:SS+TZ>"
+    # ...а фактическая дата ответа с hh.ru в calendar-строку НЕ попадает
+    # (ASCII-таблица выше её печатает — контракт только про саму calendar-строку).
+    assert "27 июля" not in calendar_line
+
+
+def test_calendar_hint_skips_non_invitation_statuses(capsys, tmp_path):
+    """Calendar hint печатается только для приглашений, не для отказов/ответов."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "Beta LLC", "discard", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" not in out
+
+
+def test_calendar_hint_escapes_quotes_in_employer(capsys, tmp_path):
+    """Работодатель с кавычками (ООО "Ромашка") не должен ломать copy-paste."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response('ООО "Ромашка"', 'ООО "Ромашка"', "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+    calendar_line = next(line for line in out.splitlines() if "hhru calendar event" in line)
+
+    import shlex
+
+    tokens = shlex.split(calendar_line)
+    summary = tokens[tokens.index("--summary") + 1]
+    assert summary == 'ООО "Ромашка" - ООО "Ромашка"'
+
+
+def test_calendar_hint_collapses_newlines_in_employer(capsys, tmp_path):
+    """Работодатель с переводом строки не должен разбивать hint на две строки.
+
+    ``shlex.quote`` экранирует ``\\n`` для shell (кавычки безопасны), но не
+    убирает сам символ новой строки из вывода — при печати через один
+    ``print()`` строка физически разъезжается на две, и copy-paste в терминале
+    подхватывает только первую половину с незакрытой кавычкой (зависший shell
+    в ожидании продолжения). ``employer`` — недоверенный текст с hh.ru, поэтому
+    перевод строки в нём должен схлопываться в пробел до экранирования.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "ACME\nCorp", "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    lines = [line for line in out.splitlines() if "hhru calendar event" in line]
+    assert len(lines) == 1, (
+        f"calendar-hint строка разъехалась на несколько физических строк: {out!r}"
+    )
+    import shlex
+
+    tokens = shlex.split(lines[0])
+    assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
+
+
+def test_calendar_hint_rejects_alert_new_combination(capsys, tmp_path):
+    """--calendar-hint + --alert-new: явная ошибка, а не молчаливый no-op.
+
+    --alert-new возвращается из run() раньше точки, где печатается calendar-hint
+    (после _print_responses_table) — без явной проверки комбинация была бы тихим
+    no-op с exit 0 и без диагностики, тем же классом ловушки, что уже закрыт для
+    --sync-applied/--remindable/--detect-external-tests выше по функции.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+
+    with pytest.raises(SystemExit) as exc_info:
+        responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True, alert_new=True))
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--calendar-hint" in err and "--alert-new" in err
+
+
+def test_calendar_hint_off_by_default(capsys, tmp_path):
+    """Без флага --calendar-hint вывод не содержит подсказку календаря."""
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "ACME Corp", "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db"))
+    out = capsys.readouterr().out
+
+    assert "hhru calendar event" not in out
+
+
 def test_responses_run_history_only_prints_ascii_table(capsys, tmp_path):
     """--since-hours 0: нет обхода hh.ru, выводится ASCII-таблица из истории."""
     config = _write_config(tmp_path, _minimal_config())

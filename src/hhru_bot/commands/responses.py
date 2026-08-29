@@ -66,7 +66,70 @@ def register(subparsers) -> None:
         action="store_true",
         help="Сообщить о новых приглашениях и вернуть специальный exit-код",
     )
+    p.add_argument(
+        "--calendar-hint",
+        action="store_true",
+        help="Для каждого нового приглашения напечатать готовую команду "
+        "`hhru calendar event` с плейсхолдерами времени (#711)",
+    )
     p.set_defaults(func=run)
+
+
+def _response_employer_label(row: dict) -> str:
+    """Человекочитаемый работодатель из строки responses, тот же, что в таблице."""
+    return (row.get("employer") or "").strip() or "(скрыт)"
+
+
+def _calendar_hint_employer_label(row: dict) -> str:
+    """Работодатель для calendar-hint строки: без переводов строк (#711 review).
+
+    ``employer`` приходит с hh.ru как недоверенный текст. ``_response_employer_label``
+    только ``strip()``-ает края, оставляя внутренние ``\\n``/``\\r``/табы как есть —
+    для ASCII-таблицы это не проблема (значение выводится одной ячейкой), но
+    calendar-hint печатается через один ``print()``, и внутренний перевод строки
+    физически разрывает готовую команду на две строки: копирование в терминале
+    подхватывает только первую половину с незакрытой кавычкой. Схлопываем любые
+    пробельные последовательности (включая переводы строк) в один пробел ДО
+    экранирования через ``shlex.quote``.
+    """
+    return " ".join(_response_employer_label(row).split())
+
+
+def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
+    """Готовая к копированию строка вызова ``calendar event`` для приглашения.
+
+    Время — ВСЕГДА плейсхолдер (#711): hh.ru не сообщает время собеседования в
+    статусе приглашения, а вывести его из ``response_date``/``status_changed_at``
+    значило бы догадаться — догадка в календаре означает пропущенное интервью
+    (см. контракт в ``commands/calendar.py:3-5``). Пользователь подставляет
+    реальное время сам.
+
+    ``summary`` экранируется через ``shlex.quote`` — работодатель может
+    содержать кавычки (напр. `ООО "Ромашка"`), которые иначе сломали бы
+    copy-paste команды в shell.
+    """
+    import shlex
+
+    summary = f"{employer} - {vacancy_id or '(скрыт)'}"
+    return (
+        f"hhru calendar event --summary {shlex.quote(summary)} "
+        "--start '<YYYY-MM-DDTHH:MM:SS+TZ>' --end '<YYYY-MM-DDTHH:MM:SS+TZ>'"
+    )
+
+
+def _print_calendar_hints(rows: list[dict]) -> None:
+    """Печатает calendar-hint для каждого приглашения из ``rows`` (#711).
+
+    ``rows`` — уже отфильтрованная выборка «новых» ответов (см.
+    ``history.new_responses_since``); функция сама отбирает только
+    ``status == 'invitation'``, не трогая остальные статусы.
+    """
+    invitations = [r for r in rows if r.get("status") == "invitation"]
+    if not invitations:
+        return
+    print(f"\n[INFO] Calendar hint для новых приглашений: {len(invitations)}")
+    for row in invitations:
+        print(_calendar_hint_line(_calendar_hint_employer_label(row), row.get("vacancy_id", "")))
 
 
 def _print_responses_table(rows: list[dict], title: str) -> None:
@@ -89,7 +152,7 @@ def _print_responses_table(rows: list[dict], title: str) -> None:
     body = []
     for r in rows:
         vac = r.get("vacancy_id", "")
-        emp = (r.get("employer") or "").strip() or "(скрыт)"
+        emp = _response_employer_label(r)
         st = status_label.get(r.get("status", ""), r.get("status", "") or "?")
         # Дата ответа с hh.ru как есть (текстовый блок карточки); «-» если hh.ru
         # не отдал блок даты.
@@ -137,6 +200,7 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     sync_applied = getattr(args, "sync_applied", False)
     alert_new = getattr(args, "alert_new", False)
     detect_external_tests = getattr(args, "detect_external_tests", False)
+    calendar_hint = getattr(args, "calendar_hint", False)
     if sync_applied and (remindable_only or detect_external_tests):
         print(
             "Ошибка: --sync-applied нельзя совмещать с --remindable или --detect-external-tests",
@@ -147,6 +211,18 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
         print(
             "Ошибка: --alert-new нельзя совмещать с --sync-applied, --remindable "
             "или --detect-external-tests",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    # --calendar-hint печатает подсказку в конце run() (после _print_responses_table);
+    # --alert-new/--remindable/--sync-applied все возвращаются раньше этой точки,
+    # так что совмещение с ними — тихий no-op без диагностики. Явный отказ вместо
+    # молчаливого игнорирования, тем же паттерном, что и проверки выше (#759 review).
+    if calendar_hint and (alert_new or remindable_only or sync_applied):
+        print(
+            "Ошибка: --calendar-hint нельзя совмещать с --alert-new, --remindable "
+            "или --sync-applied — эти режимы завершаются раньше, чем печатается "
+            "подсказка календаря",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -368,3 +444,5 @@ def run(args: argparse.Namespace) -> CommandExitCode | None:
     # Сводка «что нового» по истории (account-scope — без фильтра по resume_id).
     rows = history.new_responses_since(since_summary)
     _print_responses_table(rows, "Новые ответы работодателей")
+    if calendar_hint:
+        _print_calendar_hints(rows)
