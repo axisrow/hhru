@@ -386,20 +386,28 @@ def test_apply_position_rejects_multiple_work_format_values():
     page.locator.assert_not_called()
 
 
-def test_apply_position_clicks_visible_currency_button_not_hidden_input():
+def test_apply_position_clicks_currency_chip_label_not_radio_input():
+    # #785: the data-qa element is a visible role="radio" input whose click
+    # target is intercepted by its chip <span>; the real hit target is the
+    # wrapping <label> chip, resolved from the confirmed radio via xpath.
     page = MagicMock()
     currency_input = MagicMock()
     currency_input.count.return_value = 1
-    currency_button = MagicMock()
-    currency_button.count.return_value = 1
+    currency_radio = MagicMock()
+    currency_radio.count.return_value = 1
+    currency_chip = MagicMock()
+    currency_chip.count.return_value = 1
+    currency_radio.locator.return_value = currency_chip
     page.locator.return_value = currency_input
-    page.get_by_role.return_value = currency_button
+    page.get_by_role.return_value = currency_radio
 
     resume_position.apply_position(page, PositionValues(currency="RUR"))
 
     currency_input.click.assert_not_called()
-    page.get_by_role.assert_called_once_with("button", name="Рубли", exact=True)
-    currency_button.click.assert_called_once_with()
+    currency_radio.click.assert_not_called()
+    page.get_by_role.assert_called_once_with("radio", name="Рубли", exact=True)
+    currency_radio.locator.assert_called_once_with("xpath=ancestor::label[1]")
+    currency_chip.click.assert_called_once_with()
 
 
 def test_set_control_reopens_dropdown_for_each_value():

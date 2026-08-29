@@ -761,19 +761,26 @@ def apply_position(page: Page, plan: PositionValues) -> None:
     if plan.salary is not None:
         page.locator(SALARY).fill(str(plan.salary))
     if plan.currency is not None:
-        # The data-qa input is a hidden radio behind the visible Magritte
-        # button. Clicking it directly is intercepted by the button content.
-        # Use the confirmed accessible button instead of force-clicking the
-        # hidden input (which would bypass Playwright's hit-target checks).
+        # The data-qa element is a visible (not hidden) radio input inside a
+        # Magritte chip <label>; its accessible name comes from the label's
+        # Russian text (#785 live probe), not from the currency code, and the
+        # role is "radio", not "button" — matching against role="button" or
+        # against the currency code always misses. The radio is absolutely
+        # positioned under the chip's <span> content, so clicking the radio
+        # itself is intercepted by that span (confirmed live, #785); the
+        # actual hit target is the wrapping <label> chip, which is the same
+        # element get_by_role("radio", ...) resolves its accessible name
+        # from, so its bounding box is used to click through the label.
         currency_input = page.locator(CURRENCY[plan.currency])
         if currency_input.count() != 1:
             raise RuntimeError(f"селектор валюты не подтверждён: {plan.currency}")
-        currency_button = page.get_by_role(
-            "button", name=CURRENCY_LABELS[plan.currency], exact=True
-        )
-        if currency_button.count() != 1:
-            raise RuntimeError(f"кнопка валюты не подтверждена: {plan.currency}")
-        currency_button.click()
+        currency_radio = page.get_by_role("radio", name=CURRENCY_LABELS[plan.currency], exact=True)
+        if currency_radio.count() != 1:
+            raise RuntimeError(f"переключатель валюты не подтверждён: {plan.currency}")
+        currency_chip = currency_radio.locator("xpath=ancestor::label[1]")
+        if currency_chip.count() != 1:
+            raise RuntimeError(f"чип валюты не подтверждён: {plan.currency}")
+        currency_chip.click()
     if plan.employment:
         for value in plan.employment:
             _set_control(page, EMPLOYMENT, value, EMPLOYMENT_LABELS)
