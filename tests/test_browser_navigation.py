@@ -649,3 +649,30 @@ def test_open_hydrated_resume_editor_omits_query_check_when_not_expected(monkeyp
     )
 
     assert result is editor
+
+
+def test_labelled_field_requires_one_exact_match() -> None:
+    """#773: Magritte forms drop data-qa from some inputs, leaving the visible
+    label as the only handle. Exactness matters — a partial match would address
+    a different field, and on a write form that means writing to the wrong
+    control."""
+    page = MagicMock()
+    field = MagicMock()
+    field.count.return_value = 1
+    page.get_by_label.return_value = field
+
+    assert browser.labelled_field(page, "Название") is field
+    page.get_by_label.assert_called_once_with("Название", exact=True)
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_labelled_field_fails_closed_on_ambiguity(count: int) -> None:
+    """Zero or several matches must stop the caller the same way an
+    unconfirmed data-qa does, never silently pick one."""
+    page = MagicMock()
+    field = MagicMock()
+    field.count.return_value = count
+    page.get_by_label.return_value = field
+
+    with pytest.raises(browser.PageStateIndeterminate):
+        browser.labelled_field(page, "Название")

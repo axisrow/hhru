@@ -13,9 +13,11 @@ from playwright.sync_api import Locator, Page
 
 from .browser import (
     HH_BASE_URL,
+    PageStateIndeterminate,
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    labelled_field,
     open_hydrated_resume_editor,
 )
 
@@ -48,11 +50,18 @@ def _recommendation_route(resume_id: str) -> re.Pattern[str]:
     return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation/[^/?#]+")
 
 
+# Live-confirmed 2026-08-30 on draft resume a1d75539… at
+# /resume/edit/<id>/attestationEducation: the form DOES expose data-qa on every
+# input, but under a different family than the historical candidates
+# (``profile-education-attestation-*`` / ``profile-education-year-input``, all
+# count=0 there).  Note the third field: hh.ru labels it "Специализация" but
+# names the attribute ``-result``; keep the code's field order aligned with
+# Attestation, not with the attribute wording.
 ATTESTATION_FIELDS = (
-    "profile-education-attestation-name",
-    "profile-education-attestation-organization",
-    "profile-education-attestation-specialty",
-    "profile-education-year-input",
+    "resume-attestation-education-input-name",
+    "resume-attestation-education-input-organization",
+    "resume-attestation-education-input-result",
+    "resume-attestation-education-input-year",
 )
 
 
@@ -167,7 +176,10 @@ def _fill(locator, value: str) -> None:
 def _fill_attestation_row(page: Page, item: Attestation) -> Locator:
     for qa_field, value in zip(ATTESTATION_FIELDS, item.__dict__.values(), strict=True):
         _fill(page.locator(f"[data-qa='{qa_field}']"), value)
-    return page.locator("[data-qa='profile-layout-save-button']")
+    # The attestation editor is a resume-scoped partial edit, not the profile
+    # layout: live probe 2026-08-30 found resume-partial-edit-save (count=1)
+    # and no profile-layout-save-button on this screen.
+    return page.locator("[data-qa='resume-partial-edit-save']")
 
 
 def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
@@ -177,10 +189,10 @@ def _fill_recommendation_row(page: Page, item: Recommendation) -> Locator:
         )
 
     def labelled(label: str):
-        field = page.get_by_label(label, exact=True)
-        if field.count() != 1:
-            raise PlaywrightError(f"поле рекомендации {label!r} не найдено однозначно")
-        return field
+        try:
+            return labelled_field(page, label)
+        except PageStateIndeterminate as exc:
+            raise PlaywrightError(f"поле рекомендации {label!r} не найдено однозначно") from exc
 
     _fill(labelled("Имя человека"), item.name)
     _fill(labelled("Должность"), item.position)
@@ -283,12 +295,11 @@ def _apply_rows(
             else:
                 # Leave the row editor before moving to the next row.  Otherwise
                 # the next trigger is queried while the previous form is still open.
-                cancel_qa = (
-                    "resume-partial-edit-cancel"
-                    if block == "recommendations"
-                    else "profile-layout-cancel-button"
-                )
-                cancel = page.locator(f"[data-qa='{cancel_qa}']")
+                # Both supported blocks render the resume-scoped partial editor,
+                # so the cancel control is the same for each (live probe
+                # 2026-08-30: resume-partial-edit-cancel count=1 on the
+                # attestation form, profile-layout-cancel-button count=0).
+                cancel = page.locator("[data-qa='resume-partial-edit-cancel']")
                 if cancel.count() != 1:
                     errors.append(f"{block}: неоднозначная кнопка отмены")
                     # Same reasoning as the save branch: the editor stays open,

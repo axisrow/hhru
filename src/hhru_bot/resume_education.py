@@ -18,9 +18,11 @@ from playwright.sync_api import Error as PlaywrightError
 
 from .browser import (
     HH_BASE_URL,
+    PageStateIndeterminate,
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    labelled_field,
     open_hydrated_resume_editor,
     require_authenticated_page,
     resume_identity_matches,
@@ -39,8 +41,16 @@ PRIMARY_ADD = "[data-qa='resume-list-card-education'] [data-qa='link']"
 ADDITIONAL_ADD = "[data-qa='resume-list-card-additionalEducation'] [data-qa='link']"
 PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)")
 ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
+# The two education editors are DIFFERENT screens with different controls, so a
+# single pair of buttons cannot serve both (live probe 2026-08-30):
+#   primary    -> /profile/edit/primaryEducation      -> profile-layout-*
+#   additional -> /resume/edit/<id>/additionalEducation -> resume-partial-edit-*
+# Each candidate is count=0 on the other screen; keep them separate rather than
+# guessing one shared id.
 CANCEL_BUTTON = "[data-qa='profile-layout-cancel-button']"
 SAVE_BUTTON = "[data-qa='profile-layout-save-button']"
+ADDITIONAL_CANCEL_BUTTON = "[data-qa='resume-partial-edit-cancel']"
+ADDITIONAL_SAVE_BUTTON = "[data-qa='resume-partial-edit-save']"
 
 # #802: deletion by hh.ru entry id (the numeric hash from
 # /profile/edit/{kind}Education/{id}, e.g. from URL after a manual entry).
@@ -70,11 +80,16 @@ _PRIMARY_FIELDS = {
     "specialty": "[data-qa='profile-education-specialty-input']",
     "year": "[data-qa='profile-education-year-input']",
 }
-_ADDITIONAL_FIELDS = {
-    "institution": "[data-qa='profile-education-additional-name']",
-    "organization": "[data-qa='profile-education-additional-organization']",
-    "specialty": "[data-qa='profile-education-additional-specialty']",
-    "year": "[data-qa='profile-education-year-input']",
+# The additional-education form carries NO data-qa on any of its inputs — they
+# are bound only through aria-labelledby + <label> (Magritte, live probe
+# 2026-08-30; every profile-education-additional-* candidate is count=0 there).
+# The visible label is the only stable handle, addressed through
+# browser.labelled_field, which requires one exact match and fails closed.
+_ADDITIONAL_LABELS = {
+    "institution": "Название",
+    "organization": "Проводившая организация",
+    "specialty": "Специализация",
+    "year": "Год окончания",
 }
 FORM_TIMEOUT_MS = 15_000
 
@@ -178,6 +193,21 @@ def generate_education_plan(
         )
 
 
+def _field_locator(page, name: str, *, additional: bool):
+    """Resolve one education field on whichever of the two forms is open.
+
+    Both paths require exactly one match and raise otherwise, so a drifted
+    selector or an ambiguous label stops the write instead of filling the
+    wrong control.
+    """
+    if additional:
+        return labelled_field(page, _ADDITIONAL_LABELS[name])
+    locator = page.locator(_PRIMARY_FIELDS[name])
+    if locator.count() != 1:
+        raise PageStateIndeterminate(f"поле {_PRIMARY_FIELDS[name]} не найдено однозначно")
+    return locator
+
+
 def _edit_block(
     page,
     records: list[EducationRecord],
@@ -188,8 +218,12 @@ def _edit_block(
 ) -> EducationResult:
     trigger = ADDITIONAL_TRIGGER if additional else PRIMARY_TRIGGER
     add_selector = ADDITIONAL_ADD if additional else PRIMARY_ADD
-    fields = _ADDITIONAL_FIELDS if additional else _PRIMARY_FIELDS
     route = ADDITIONAL_ROUTE if additional else PRIMARY_ROUTE
+    save_selector = ADDITIONAL_SAVE_BUTTON if additional else SAVE_BUTTON
+    cancel_selector = ADDITIONAL_CANCEL_BUTTON if additional else CANCEL_BUTTON
+    # Field names are identical for both blocks; only the way a field is
+    # addressed differs (data-qa on primary, visible label on additional).
+    field_names = tuple(_ADDITIONAL_LABELS if additional else _PRIMARY_FIELDS)
     kind = "additional" if additional else "primary"
     saved_count = 0
     if not records:
@@ -225,7 +259,12 @@ def _edit_block(
                 trigger_selector=(
                     trigger.format(index=index) if button_count == 1 else add_selector
                 ),
-                editor_selector=next(iter(fields.values())),
+                # The additional form exposes no data-qa on its inputs, so its
+                # hydration marker is the editor's own save control (live probe
+                # 2026-08-30: present on the rendered form, absent before it).
+                editor_selector=(
+                    ADDITIONAL_SAVE_BUTTON if additional else _PRIMARY_FIELDS["institution"]
+                ),
                 profile_path=f"/resume/{resume_id}",
                 edit_path=route,
                 timeout=FORM_TIMEOUT_MS,
@@ -234,27 +273,28 @@ def _edit_block(
                 wrong_route_error=f"форма образования {index} открыта не для того резюме",
                 expected_query={"resumeFrom": resume_id} if not additional else None,
             )
-            for name, selector in fields.items():
+            for name in field_names:
                 value = getattr(record, name)
                 # Empty LLM fields mean "unknown", not "erase the current value".
                 # This protects prefill and also makes a partial from-scratch plan
                 # fail closed rather than destroy data already on hh.ru.
                 if not value:
                     continue
-                locator = page.locator(selector)
-                if locator.count() != 1:
+                try:
+                    locator = _field_locator(page, name, additional=additional)
+                except PageStateIndeterminate as exc:
                     return EducationResult(
                         kind,
                         False,
-                        f"поле {selector} не найдено однозначно",
+                        str(exc),
                         uncertain=saved_count > 0,
                         saved=saved_count,
                     )
                 locator.fill(value)
             if dry_run:
-                page.locator(CANCEL_BUTTON).first.click()
+                page.locator(cancel_selector).first.click()
             else:
-                save = page.locator(SAVE_BUTTON)
+                save = page.locator(save_selector)
                 if save.count() != 1:
                     return EducationResult(
                         kind,

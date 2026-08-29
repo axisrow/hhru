@@ -246,6 +246,28 @@ def open_confirmed_resume(page: Page, resume_id: str) -> None:
         raise ValueError("identity резюме не подтверждён")
 
 
+def labelled_field(page: Page, label: str) -> Locator:
+    """Address a form field by its visible label, requiring one exact match.
+
+    hh.ru's Magritte forms render some editors with no ``data-qa`` on the
+    ``<input>`` at all — the additional-education editor
+    (``/resume/edit/<id>/additionalEducation``) binds its four fields only
+    through ``aria-labelledby`` plus a ``<label>`` (live probe 2026-08-30).
+    Playwright's ``get_by_label`` resolves exactly that binding, so the visible
+    label is the only stable handle those fields have.
+
+    The label is matched exactly and must resolve to a single element: a
+    partial match would silently address a different field, which on a write
+    form means writing a value into the wrong place.  Ambiguity therefore
+    fails closed the same way an unconfirmed ``data-qa`` does.
+    """
+    field = page.get_by_label(label, exact=True)
+    count = field.count()
+    if count != 1:
+        raise PageStateIndeterminate(f"поле {label!r} не найдено однозначно (совпадений: {count})")
+    return field
+
+
 def resume_identity_matches(page: Page, resume_id: str) -> bool:
     """Return whether the current URL is exactly the requested resume page."""
     path = urlsplit(page.url).path.rstrip("/")

@@ -238,24 +238,28 @@ EXTRA_CONTRACTS: dict[str, dict[str, str]] = {
         "declared_at": "src/hhru_bot/resume_position.py:1",
     },
     "resume_sections.ATTESTATION_SELECTOR.0": {
-        "value": "[data-qa='profile-education-attestation-name']",
+        "value": "[data-qa='resume-attestation-education-input-name']",
         "criticality": "write",
         "declared_at": "src/hhru_bot/resume_sections.py:1",
+        "decision": "live_dom",
     },
     "resume_sections.ATTESTATION_SELECTOR.1": {
-        "value": "[data-qa='profile-education-attestation-organization']",
+        "value": "[data-qa='resume-attestation-education-input-organization']",
         "criticality": "write",
         "declared_at": "src/hhru_bot/resume_sections.py:1",
+        "decision": "live_dom",
     },
     "resume_sections.ATTESTATION_SELECTOR.2": {
-        "value": "[data-qa='profile-education-attestation-specialty']",
+        "value": "[data-qa='resume-attestation-education-input-result']",
         "criticality": "write",
         "declared_at": "src/hhru_bot/resume_sections.py:1",
+        "decision": "live_dom",
     },
     "resume_sections.ATTESTATION_SELECTOR.3": {
-        "value": "[data-qa='profile-education-year-input']",
+        "value": "[data-qa='resume-attestation-education-input-year']",
         "criticality": "write",
         "declared_at": "src/hhru_bot/resume_sections.py:1",
+        "decision": "live_dom",
     },
 }
 
