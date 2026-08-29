@@ -27,7 +27,7 @@ def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool
     own no-follow open + fchmod is needed, since no new component is created.
     """
     if permissions_are_posix() and not path.exists():
-        _mkdir_and_harden_new_components(path, mode)
+        _mkdir_and_harden_new_components(path, mode, exist_ok=exist_ok)
         return
     path.mkdir(parents=True, exist_ok=exist_ok, mode=mode)
     if permissions_are_posix():
@@ -38,7 +38,7 @@ def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool
             os.close(fd)
 
 
-def _mkdir_and_harden_new_components(path: Path, mode: int) -> None:
+def _mkdir_and_harden_new_components(path: Path, mode: int, *, exist_ok: bool = True) -> None:
     """Create the missing suffix of ``path`` and chmod only what we created.
 
     ``Path.mkdir(parents=True)`` followed by a path-based ``os.chmod`` leaves a
@@ -51,6 +51,23 @@ def _mkdir_and_harden_new_components(path: Path, mode: int) -> None:
     (``os.fchmod``) before descending further -- so no step ever re-resolves a
     mutable pathname, and an ancestor that already existed before this call
     (which may be shared with other processes) is never touched.
+
+    ``exist_ok`` mirrors ``Path.mkdir``'s parameter of the same name: when
+    ``False``, the final component turning out to already exist by the time
+    this walk reaches it (created by a racing process between the caller's
+    existence check and this call) raises ``FileExistsError`` instead of
+    being silently accepted -- otherwise ``secure_directory(..., exist_ok=False)``
+    (account creation's rewrite-protection, ``create_account``) would lose its
+    create-only guarantee purely because the target was fully missing when
+    checked (cycle-review round 2 finding).
+
+    Every *non-final* component racing into existence between the ancestor
+    walk above and this loop's own ``os.mkdir`` call is rejected unconditionally
+    (``exist_ok`` does not extend to it): silently descending into a directory
+    this call did not create -- even one merely raced into place by another
+    local process, not necessarily a symlink -- would mean hardening and
+    building the rest of the tree inside a directory this function does not
+    control, defeating "only components we created are ours to harden."
     """
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     o_directory = getattr(os, "O_DIRECTORY", 0)
@@ -70,11 +87,13 @@ def _mkdir_and_harden_new_components(path: Path, mode: int) -> None:
 
     dir_fd = _open_without_follow(existing, os.O_RDONLY | o_directory)
     try:
-        for component in missing:
+        for index, component in enumerate(missing):
+            is_final = index == len(missing) - 1
             try:
                 os.mkdir(component, mode, dir_fd=dir_fd)
             except FileExistsError:
-                pass
+                if not is_final or not exist_ok:
+                    raise
             next_fd = os.open(component, os.O_RDONLY | o_directory | nofollow, dir_fd=dir_fd)
             os.close(dir_fd)
             dir_fd = next_fd

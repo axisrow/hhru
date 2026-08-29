@@ -141,6 +141,47 @@ def test_secure_directory_rejects_symlinked_target(tmp_path):
 
 
 @POSIX_ONLY
+def test_secure_directory_exist_ok_false_rejects_target_created_during_race(tmp_path):
+    """Cycle-review round 2 regression: when the target is missing at the
+    caller's initial exists() check, but the final component is created by a
+    racing process before this call's own os.mkdir(), exist_ok=False must
+    still raise -- account creation's rewrite-protection (create_account)
+    must not silently degrade into an overwrite just because the target was
+    fully absent when checked."""
+    account_dir = tmp_path / "accounts" / "acme"
+    account_dir.mkdir(parents=True)  # simulates the race: created after the caller's check
+
+    with pytest.raises(FileExistsError):
+        secure_directory(account_dir, exist_ok=False)
+
+
+@POSIX_ONLY
+def test_secure_directory_rejects_non_final_component_created_during_race(tmp_path, monkeypatch):
+    """A non-final path component that races into existence as a real
+    directory (not a symlink -- O_NOFOLLOW alone would not catch this) between
+    the ancestor walk and this call's own os.mkdir() must not be silently
+    descended into: hardening and building the rest of the tree inside a
+    directory this call did not create defeats "only what we created is
+    ours to harden," even without a symlink involved."""
+    import hhru_bot.session_security as session_security
+
+    account_dir = tmp_path / "data" / "accounts" / "acme"
+    real_mkdir = os.mkdir
+
+    def racing_mkdir(component, mode, *, dir_fd=None):
+        # Simulate a concurrent process creating "accounts" as a real
+        # directory right before this call's own os.mkdir("accounts", ...).
+        if component == "accounts":
+            real_mkdir("accounts", 0o755, dir_fd=dir_fd)
+        real_mkdir(component, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(session_security.os, "mkdir", racing_mkdir)
+
+    with pytest.raises(FileExistsError):
+        secure_directory(account_dir)
+
+
+@POSIX_ONLY
 def test_secure_directory_hardens_every_missing_intermediate_component(tmp_path):
     """Regression for the cycle-review finding: secure_directory() must not
     fall back to Path.mkdir(parents=True) + final-only fchmod when several
