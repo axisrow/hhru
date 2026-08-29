@@ -76,15 +76,15 @@
 | resume_education.PRIMARY_ADD | `[data-qa='resume-list-card-education'] [data-qa='link']` | — | — | — | live_dom |
 | resume_education.PRIMARY_TRIGGER | `[data-qa='resume-edit-button-education-{index}']` | — | — | — | live_dom |
 | resume_education.SAVE_BUTTON | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
-| resume_education._ADDITIONAL_FIELDS.institution | `[data-qa='profile-education-additional-name']` | — | — | — | live_dom |
-| resume_education._ADDITIONAL_FIELDS.organization | `[data-qa='profile-education-additional-organization']` | — | — | — | live_dom |
-| resume_education._ADDITIONAL_FIELDS.specialty | `[data-qa='profile-education-additional-specialty']` | — | — | — | live_dom |
-| resume_education._ADDITIONAL_FIELDS.year | `[data-qa='profile-education-year-input']` | — | — | — | live_dom |
+| resume_education._ADDITIONAL_FIELDS.institution | `get_by_label('Название', exact=True)` | — | — | — | documented_live |
+| resume_education._ADDITIONAL_FIELDS.organization | `get_by_label('Проводившая организация', exact=True)` | — | — | — | documented_live |
+| resume_education._ADDITIONAL_FIELDS.specialty | `get_by_label('Специализация', exact=True)` | — | — | — | documented_live |
+| resume_education._ADDITIONAL_FIELDS.year | `get_by_label('Год окончания', exact=True)` | — | — | — | documented_live |
 | resume_education._PRIMARY_FIELDS.faculty | `[data-qa='profile-education-faculty-input']` | — | — | — | live_dom |
 | resume_education._PRIMARY_FIELDS.institution | `[data-qa='profile-education-university-input']` | — | — | — | live_dom |
 | resume_education._PRIMARY_FIELDS.specialty | `[data-qa='profile-education-specialty-input']` | — | — | — | live_dom |
 | resume_education._PRIMARY_FIELDS.year | `[data-qa='profile-education-year-input']` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_ADD_BUTTON | `[data-qa='resume-profile-experience-add-button']` | — | — | — | unavailable |
+| resume_experience.EXPERIENCE_ADD_BUTTON | `[data-qa='resume-list-card-experience'] [data-qa='link']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_CANCEL | `[data-qa='profile-layout-cancel-button']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_COMPANY | `[data-qa='resume-profile-experience-specific-company-input-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_COMPANY_URL | `[data-qa='resume-editor-experience-company-url-input']` | — | — | — | live_dom |
@@ -166,10 +166,10 @@
 | resume_position.TITLE | `[data-qa='resume-edit-title-suggest']` | — | — | — | live_dom |
 | resume_position.TRAVEL | `[data-qa='resume-edit-travel-time']` | — | — | — | live_dom |
 | resume_position.WORK_FORMAT | `[data-qa='resume-edit-work-formats']` | — | — | — | live_dom |
-| resume_sections.ATTESTATION_SELECTOR.0 | `[data-qa='profile-education-attestation-name']` | — | — | — | live_dom |
-| resume_sections.ATTESTATION_SELECTOR.1 | `[data-qa='profile-education-attestation-organization']` | — | — | — | live_dom |
-| resume_sections.ATTESTATION_SELECTOR.2 | `[data-qa='profile-education-attestation-specialty']` | — | — | — | live_dom |
-| resume_sections.ATTESTATION_SELECTOR.3 | `[data-qa='profile-education-year-input']` | — | — | — | live_dom |
+| resume_sections.ATTESTATION_SELECTOR.0 | `[data-qa='resume-attestation-education-input-name']` | — | — | — | live_dom |
+| resume_sections.ATTESTATION_SELECTOR.1 | `[data-qa='resume-attestation-education-input-organization']` | — | — | — | live_dom |
+| resume_sections.ATTESTATION_SELECTOR.2 | `[data-qa='resume-attestation-education-input-result']` | — | — | — | live_dom |
+| resume_sections.ATTESTATION_SELECTOR.3 | `[data-qa='resume-attestation-education-input-year']` | — | — | — | live_dom |
 | resume_sections.RESUME_EDIT_BUTTON.attestations | `[data-qa^='resume-edit-button-attestationEducation-']` | — | — | — | live_dom |
 | resume_sections.RESUME_EDIT_BUTTON.recommendations | `[data-qa^='resume-edit-button-recommendation-']` | — | — | — | live_dom |
 | resume_visibility.RESUME_VISIBILITY_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | documented_live |

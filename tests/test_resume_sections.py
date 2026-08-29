@@ -348,3 +348,40 @@ def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkey
 
     assert len(errors) == 1
     assert trigger.nth.call_count == 1
+
+
+def test_attestation_form_uses_live_confirmed_selectors() -> None:
+    """#773: the historical ``profile-education-attestation-*`` candidates do not
+    exist on hh.ru (count=0). The live form at
+    /resume/edit/<id>/attestationEducation exposes its own namespace instead
+    (live probe 2026-08-30 on a draft resume).
+
+    The third field is pinned deliberately: hh.ru labels it "Специализация" but
+    names the attribute ``-result``, so field order follows the Attestation
+    dataclass, not the attribute wording.
+    """
+    assert resume_sections.ATTESTATION_FIELDS == (
+        "resume-attestation-education-input-name",
+        "resume-attestation-education-input-organization",
+        "resume-attestation-education-input-result",
+        "resume-attestation-education-input-year",
+    )
+    assert not any(
+        field.startswith("profile-education-") for field in resume_sections.ATTESTATION_FIELDS
+    )
+
+
+def test_attestation_row_saves_through_partial_edit_button() -> None:
+    """#773: the attestation editor is a resume-scoped partial edit, so it uses
+    ``resume-partial-edit-save`` — ``profile-layout-save-button`` is count=0 there
+    and belongs to the profile-scoped primary-education form instead."""
+    page = MagicMock()
+    save = MagicMock()
+    page.locator.return_value = save
+
+    returned = resume_sections._fill_attestation_row(
+        page, resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024")
+    )
+
+    assert returned is save
+    assert page.locator.call_args_list[-1].args[0] == "[data-qa='resume-partial-edit-save']"

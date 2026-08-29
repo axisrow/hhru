@@ -30,9 +30,14 @@ EXPERIENCE_DESCRIPTION = _selector("resume_experience.EXPERIENCE_DESCRIPTION")
 EXPERIENCE_CANCEL = _selector("resume_experience.EXPERIENCE_CANCEL")
 EXPERIENCE_SAVE = _selector("resume_experience.EXPERIENCE_SAVE")
 
-# The add trigger is intentionally a candidate: unlike the row/editor fields,
-# it was not present in the read-only research dump.  Code must require one
-# unambiguous match and fail closed rather than click a text button by guess.
+# The historical candidate ``resume-profile-experience-add-button`` does not
+# exist on hh.ru (live probe 2026-08-29 and 2026-08-30, count=0 on resumes with
+# and without experience).  The real "Добавить" control is scoped inside the
+# experience card and carries the shared ``data-qa='link'`` — the same shape as
+# ``resume_education.PRIMARY_ADD``/``ADDITIONAL_ADD``.  It stays optional and is
+# not used yet — the first row is created by direct navigation (see above) — and
+# any future caller must still require one unambiguous match, because the
+# generic ``link`` value is only meaningful together with the card scope.
 EXPERIENCE_ADD_BUTTON = _optional_selector("resume_experience.EXPERIENCE_ADD_BUTTON")
 
 # First-row editor at /resume/edit/{resume_id}/experience (#786/#787, live

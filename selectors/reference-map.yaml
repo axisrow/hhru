@@ -881,20 +881,25 @@ selectors:
     declared_at: src/hhru_bot/create_resume.py:1
     decision: workflow_live
     sources: {}
-    live_matches: []
+    live_matches:
+    - tree-selector-item-text-category-19
+    - tree-selector-item-text-96
     evidence:
       source: src/hhru_bot/create_resume.py:1
-      note: 'Live-проверено 2026-08-29: реальный wizard создания резюме (/profile/resume/professional_role -> "Укажу профессию")
-        НЕ использует tree-selector dialog. Кандидат [data-qa*=''tree-selector-item-text-''] не найден (count=0); вместо этого
-        экран — плоский radio-список профессий с data-qa=''cell'' / ''cell-text-content'' / ''radio'' / ''resume-profile-position-chip-popular''
-        (37 совпадений каждый). Не используется нигде в create_resume.py (dead alias). Остаётся needs_live_evidence — устаревшее
-        предположение о структуре этого экрана, не подтверждается реальным DOM.'
+      note: 'Live-подтверждено 2026-08-30; вывод #773 ОПРОВЕРГНУТ — кандидат существует и реально используется. Разбор расхождения:
+        /profile/resume/professional_role это МНОГОЭКРАННЫЙ визард, и tree-selector живёт не на первом экране. Экран 1 несёт
+        только resume-profile-card-select-job; после клика по нему открывается экран 2 с плоским списком из 37 chips (resume-profile-position-chip-popular)
+        — именно его read-only проверка приняла за «весь визард»; и лишь после resume-profile-next-screen отрисовывается КАТАЛОГ
+        с tree-selector-search-input (count=1) и 12 узлами tree-selector-item-text-category-* (count=12). После фильтра «Программист,
+        разработчик» остаётся ровно один leaf с data-qa ''tree-selector-item-text tree-selector-item-text-96'' и парный чекбокс
+        tree-selector-input-96 — то есть и регэксп -(\d+)$ в create_resume.py, и RESUME_CREATION_CATEGORY_INPUT совпадают
+        с реальным DOM. Замер сделан без создания резюме: визард пройден только до экрана каталога.'
     bindings: {}
-    coverage_status: needs_live_evidence
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_create_resume_wizard_read_only (/profile/resume/professional_role)
+    verification: browser_observed
+    last_verified_at: '2026-08-30'
+    verified_flow: 'authenticated_create_resume_wizard_read_only (screen 3: profession catalog)'
     verified_by: human
   negotiations.CHAT_AUTHOR_HINT:
     value: '[data-qa*=''author''], [class*=''author''], [aria-label], [title]'
@@ -1560,26 +1565,26 @@ selectors:
   resume_education.CANCEL_BUTTON:
     value: '[data-qa=''profile-layout-cancel-button'']'
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:40
+    declared_at: src/hhru_bot/resume_education.py:47
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-layout-cancel-button
+    - '''profile-layout-cancel-button'
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: [data-qa=''profile-layout-cancel-button''] ПОДТВЕРЖДЁН (count=1) на форме PRIMARY
-        education (/profile/edit/primaryEducation) — но на форме ADDITIONAL education (/resume/edit/<id>/additionalEducation)
-        count=0; там реальный control — [data-qa=''resume-partial-edit-cancel''] (count=1, другой data-qa). Этот логический
-        ID общий для двух разных flow с разными кнопками — честно оставлен needs_live_evidence, т.к. одна запись не может
-        покрыть оба наблюдения без введения путаницы. См. также SAVE_BUTTON.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_education_forms_read_only (primaryEducation vs additionalEducation)
+      note: 'Live-подтверждено 2026-08-30: кнопка отмены формы PRIMARY education (/profile/edit/primaryEducation?resumeFrom=a1d75539ff1106985b0039ed1f377079695358)
+        — [data-qa=''profile-layout-cancel-button''], count=1. Расхождение из #773 снято не переопределением, а разделением:
+        этот логический ID теперь описывает ТОЛЬКО primary-форму, а additionalEducation получила собственную пару ADDITIONAL_SAVE_BUTTON/ADDITIONAL_CANCEL_BUTTON
+        (resume-partial-edit-*, count=1 там и count=0 здесь, и наоборот). Один общий ID для двух разных экранов был структурно
+        неверен, а не просто недоподтверждён.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_primary_education_form_read_only
     verified_by: human
   resume_education.PRIMARY_ADD:
     value: '[data-qa=''resume-list-card-education''] [data-qa=''link'']'
@@ -1627,121 +1632,126 @@ selectors:
   resume_education.SAVE_BUTTON:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:41
+    declared_at: src/hhru_bot/resume_education.py:47
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-layout-save-button
+    - '''profile-layout-save-button'
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: [data-qa=''profile-layout-save-button''] ПОДТВЕРЖДЁН (count=1) на форме PRIMARY education
-        (/profile/edit/primaryEducation) — но на форме ADDITIONAL education (/resume/edit/<id>/additionalEducation) count=0;
-        там реальный control — [data-qa=''resume-partial-edit-save''] (count=1, другой data-qa, идентичен SAVE control в resume_position).
-        Общий логический ID для двух разных flow — честно оставлен needs_live_evidence вместо ложного подтверждения.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_education_forms_read_only (primaryEducation vs additionalEducation)
+      note: 'Live-подтверждено 2026-08-30: кнопка сохранения формы PRIMARY education (/profile/edit/primaryEducation?resumeFrom=a1d75539ff1106985b0039ed1f377079695358)
+        — [data-qa=''profile-layout-save-button''], count=1. Расхождение из #773 снято не переопределением, а разделением:
+        этот логический ID теперь описывает ТОЛЬКО primary-форму, а additionalEducation получила собственную пару ADDITIONAL_SAVE_BUTTON/ADDITIONAL_CANCEL_BUTTON
+        (resume-partial-edit-*, count=1 там и count=0 здесь, и наоборот). Один общий ID для двух разных экранов был структурно
+        неверен, а не просто недоподтверждён.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_primary_education_form_read_only
     verified_by: human
   resume_education._ADDITIONAL_FIELDS.institution:
-    value: '[data-qa=''profile-education-additional-name'']'
+    value: get_by_label('Название', exact=True)
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:49
-    decision: live_dom
+    declared_at: src/hhru_bot/resume_education.py:62
+    decision: documented_live
     sources: {}
-    live_matches:
-    - profile-education-additional-name
+    live_matches: []
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Название" (подтверждено скриншотом),
-        но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских элементов —
-        поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых полях
-        этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся needs_live_evidence
-        — устаревший селектор, а не проверочная недостаточность.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+      note: 'Live-подтверждено 2026-08-30 на пустом черновике a1d75539ff1106985b0039ed1f377079695358 и на заполненной записи
+        584926d4ff10f8b2870039ed1f707779623239 (/resume/edit/<id>/additionalEducation/0): у input поля «Название» НЕТ data-qa
+        ни на самом элементе, ни на 8 уровнях предков — Magritte связывает его только через aria-labelledby + <label>. Кандидат
+        profile-education-additional-* даёт count=0. Поле адресуется по видимому лейблу через browser.labelled_field (Playwright
+        get_by_label, exact=True): хелпер требует ровно одно совпадение и иначе бросает PageStateIndeterminate, то есть неоднозначность
+        останавливает запись так же, как неподтверждённый data-qa. Замер на живой форме: каждый из четырёх лейблов резолвится
+        в count=1 по всему документу, коллизий нет.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_additional_education_form_read_only (empty draft + filled row)
     verified_by: human
   resume_education._ADDITIONAL_FIELDS.organization:
-    value: '[data-qa=''profile-education-additional-organization'']'
+    value: get_by_label('Проводившая организация', exact=True)
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:49
-    decision: live_dom
+    declared_at: src/hhru_bot/resume_education.py:62
+    decision: documented_live
     sources: {}
-    live_matches:
-    - profile-education-additional-organization
+    live_matches: []
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Проводившая организация" (подтверждено
-        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
-        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
-        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
-        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+      note: 'Live-подтверждено 2026-08-30 на пустом черновике a1d75539ff1106985b0039ed1f377079695358 и на заполненной записи
+        584926d4ff10f8b2870039ed1f707779623239 (/resume/edit/<id>/additionalEducation/0): у input поля «Проводившая организация»
+        НЕТ data-qa ни на самом элементе, ни на 8 уровнях предков — Magritte связывает его только через aria-labelledby +
+        <label>. Кандидат profile-education-additional-* даёт count=0. Поле адресуется по видимому лейблу через browser.labelled_field
+        (Playwright get_by_label, exact=True): хелпер требует ровно одно совпадение и иначе бросает PageStateIndeterminate,
+        то есть неоднозначность останавливает запись так же, как неподтверждённый data-qa. Замер на живой форме: каждый из
+        четырёх лейблов резолвится в count=1 по всему документу, коллизий нет.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_additional_education_form_read_only (empty draft + filled row)
     verified_by: human
   resume_education._ADDITIONAL_FIELDS.specialty:
-    value: '[data-qa=''profile-education-additional-specialty'']'
+    value: get_by_label('Специализация', exact=True)
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:49
-    decision: live_dom
+    declared_at: src/hhru_bot/resume_education.py:62
+    decision: documented_live
     sources: {}
-    live_matches:
-    - profile-education-additional-specialty
+    live_matches: []
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Специализация" (подтверждено
-        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
-        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
-        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
-        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+      note: 'Live-подтверждено 2026-08-30 на пустом черновике a1d75539ff1106985b0039ed1f377079695358 и на заполненной записи
+        584926d4ff10f8b2870039ed1f707779623239 (/resume/edit/<id>/additionalEducation/0): у input поля «Специализация» НЕТ
+        data-qa ни на самом элементе, ни на 8 уровнях предков — Magritte связывает его только через aria-labelledby + <label>.
+        Кандидат profile-education-additional-* даёт count=0. Поле адресуется по видимому лейблу через browser.labelled_field
+        (Playwright get_by_label, exact=True): хелпер требует ровно одно совпадение и иначе бросает PageStateIndeterminate,
+        то есть неоднозначность останавливает запись так же, как неподтверждённый data-qa. Замер на живой форме: каждый из
+        четырёх лейблов резолвится в count=1 по всему документу, коллизий нет.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_additional_education_form_read_only (empty draft + filled row)
     verified_by: human
   resume_education._ADDITIONAL_FIELDS.year:
-    value: '[data-qa=''profile-education-year-input'']'
+    value: get_by_label('Год окончания', exact=True)
     criticality: write
-    declared_at: src/hhru_bot/resume_education.py:49
-    decision: live_dom
+    declared_at: src/hhru_bot/resume_education.py:62
+    decision: documented_live
     sources: {}
-    live_matches:
-    - profile-education-year-input
+    live_matches: []
     active: true
     bindings: {}
-    coverage_status: needs_live_evidence
-    status: needs-live-evidence
+    coverage_status: intentionally_local
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/resume_education.py
-      note: 'Live-проверено 2026-08-29: форма ADDITIONAL education реально отрисовывает поле "Год окончания" (подтверждено
-        скриншотом), но соответствующий <input> не имеет НИКАКОГО data-qa атрибута ни на себе, ни в 6 уровнях родительских
-        элементов — поле идентифицируется только через <label> + aria-labelledby (Magritte design system без data-qa на текстовых
-        полях этой формы). Кандидатный селектор [data-qa=''profile-education-additional-*''] не найден (count=0). Остаётся
-        needs_live_evidence — устаревший селектор, а не проверочная недостаточность.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_additional_education_form_read_only (/resume/edit/<id>/additionalEducation)
+      note: 'Live-подтверждено 2026-08-30 на пустом черновике a1d75539ff1106985b0039ed1f377079695358 и на заполненной записи
+        584926d4ff10f8b2870039ed1f707779623239 (/resume/edit/<id>/additionalEducation/0): у input поля «Год окончания» НЕТ
+        data-qa ни на самом элементе, ни на 8 уровнях предков — Magritte связывает его только через aria-labelledby + <label>.
+        Кандидат profile-education-additional-* даёт count=0. Поле адресуется по видимому лейблу через browser.labelled_field
+        (Playwright get_by_label, exact=True): хелпер требует ровно одно совпадение и иначе бросает PageStateIndeterminate,
+        то есть неоднозначность останавливает запись так же, как неподтверждённый data-qa. Замер на живой форме: каждый из
+        четырёх лейблов резолвится в count=1 по всему документу, коллизий нет.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_additional_education_form_read_only (empty draft + filled row)
     verified_by: human
   resume_education._PRIMARY_FIELDS.faculty:
     value: '[data-qa=''profile-education-faculty-input'']'
@@ -1828,26 +1838,30 @@ selectors:
     verified_flow: authenticated_education_editor_read_only
     verified_by: codex
   resume_experience.EXPERIENCE_ADD_BUTTON:
-    value: '[data-qa=''resume-profile-experience-add-button'']'
+    value: '[data-qa=''resume-list-card-experience''] [data-qa=''link'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:22
-    decision: unavailable
+    decision: live_dom
     sources: {}
-    live_matches: []
-    active: false
-    coverage_status: needs_live_evidence
+    live_matches:
+    - link
+    active: true
+    coverage_status: intentionally_local
     bindings: {}
-    status: needs-live-evidence
+    status: intentionally local
     origin: manual
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:22
-      note: 'Live-проверено 2026-08-29 на двух резюме с уже заполненным опытом работы: [data-qa=''resume-profile-experience-add-button'']
-        не найден (count=0). Контейнер [data-qa=''resume-list-card-experience''] существует, но его "Добавить" использует
-        общий data-qa=''link'' (тот же паттерн, что и в resume_education.PRIMARY_ADD/ADDITIONAL_ADD), а не выделенный add-button
-        data-qa. Остаётся needs_live_evidence — кандидат не подтверждён в наблюдаемой разметке.'
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_page_read_only (2 resumes with existing experience)
+      note: 'Live-подтверждено 2026-08-30 на 584926d4ff10f8b2870039ed1f707779623239 (3 записи опыта): внутри карточки [data-qa=''resume-list-card-experience'']
+        ссылка «Добавить» несёт общий data-qa=''link'' (count=1 в скоупе карточки). Прежний кандидат resume-profile-experience-add-button
+        даёт count=0 на резюме и с опытом, и без него (замеры 2026-08-29 и 2026-08-30). Значение приведено к подтверждённой
+        форме и повторяет уже работающий паттерн resume_education.PRIMARY_ADD/ADDITIONAL_ADD: общий data-qa=''link'' осмыслен
+        только вместе со скоупом карточки. Остаётся optional — в коде пока не используется: первая запись опыта создаётся
+        прямой навигацией на /resume/edit/<id>/experience (#786/#787), а будущий вызывающий обязан требовать ровно одно совпадение
+        и падать закрыто.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_resume_page_read_only (resume with existing experience)
     verified_by: human
   resume_experience.EXPERIENCE_CANCEL:
     value: '[data-qa=''profile-layout-cancel-button'']'
@@ -3649,92 +3663,100 @@ selectors:
     verified_flow: authenticated_resume_position_editor_read_only (hh.ru/resume/edit/<id>/position)
     verified_by: human
   resume_sections.ATTESTATION_SELECTOR.0:
-    value: '[data-qa=''profile-education-attestation-name'']'
+    value: '[data-qa=''resume-attestation-education-input-name'']'
     active: true
     criticality: write
     declared_at: src/hhru_bot/resume_sections.py:1
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-education-attestation-name
+    - resume-attestation-education-input-name
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
-        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
-        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
-        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
-    coverage_status: needs_live_evidence
+      note: 'Live-подтверждено 2026-08-30 на черновике a1d75539ff1106985b0039ed1f377079695358 (/resume/edit/<id>/attestationEducation):
+        реальный input поля «Название» несёт data-qa=''resume-attestation-education-input-name'' (count=1). Прежний кандидат
+        profile-education-attestation-* / profile-education-year-input даёт count=0. Предположение #773 «у этой формы вовсе
+        нет data-qa» опровергнуто: атрибуты есть, но в другом namespace. Внимание: hh.ru подписывает третье поле как «Специализация»,
+        а атрибут называет -result — порядок полей в ATTESTATION_FIELDS соответствует датаклассу Attestation, а не словам
+        в атрибутах.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verification: browser_observed
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation, draft resume)
     verified_by: human
   resume_sections.ATTESTATION_SELECTOR.1:
-    value: '[data-qa=''profile-education-attestation-organization'']'
+    value: '[data-qa=''resume-attestation-education-input-organization'']'
     active: true
     criticality: write
     declared_at: src/hhru_bot/resume_sections.py:1
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-education-attestation-organization
+    - resume-attestation-education-input-organization
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
-        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
-        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
-        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
-    coverage_status: needs_live_evidence
+      note: 'Live-подтверждено 2026-08-30 на черновике a1d75539ff1106985b0039ed1f377079695358 (/resume/edit/<id>/attestationEducation):
+        реальный input поля «Проводившая организация» несёт data-qa=''resume-attestation-education-input-organization'' (count=1).
+        Прежний кандидат profile-education-attestation-* / profile-education-year-input даёт count=0. Предположение #773 «у
+        этой формы вовсе нет data-qa» опровергнуто: атрибуты есть, но в другом namespace. Внимание: hh.ru подписывает третье
+        поле как «Специализация», а атрибут называет -result — порядок полей в ATTESTATION_FIELDS соответствует датаклассу
+        Attestation, а не словам в атрибутах.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verification: browser_observed
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation, draft resume)
     verified_by: human
   resume_sections.ATTESTATION_SELECTOR.2:
-    value: '[data-qa=''profile-education-attestation-specialty'']'
+    value: '[data-qa=''resume-attestation-education-input-result'']'
     active: true
     criticality: write
     declared_at: src/hhru_bot/resume_sections.py:1
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-education-attestation-specialty
+    - resume-attestation-education-input-result
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
-        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
-        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
-        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
-    coverage_status: needs_live_evidence
+      note: 'Live-подтверждено 2026-08-30 на черновике a1d75539ff1106985b0039ed1f377079695358 (/resume/edit/<id>/attestationEducation):
+        реальный input поля «Специализация» несёт data-qa=''resume-attestation-education-input-result'' (count=1). Прежний
+        кандидат profile-education-attestation-* / profile-education-year-input даёт count=0. Предположение #773 «у этой формы
+        вовсе нет data-qa» опровергнуто: атрибуты есть, но в другом namespace. Внимание: hh.ru подписывает третье поле как
+        «Специализация», а атрибут называет -result — порядок полей в ATTESTATION_FIELDS соответствует датаклассу Attestation,
+        а не словам в атрибутах.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verification: browser_observed
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation, draft resume)
     verified_by: human
   resume_sections.ATTESTATION_SELECTOR.3:
-    value: '[data-qa=''profile-education-year-input'']'
+    value: '[data-qa=''resume-attestation-education-input-year'']'
     active: true
     criticality: write
     declared_at: src/hhru_bot/resume_sections.py:1
     decision: live_dom
     sources: {}
     live_matches:
-    - profile-education-year-input
+    - resume-attestation-education-input-year
     bindings: {}
     evidence:
       source: selectors/reference-map.yaml
-      note: 'Live-проверено 2026-08-29: после клика по [data-qa^=''resume-edit-button-attestationEducation-''] (подтверждён,
-        см. RESUME_EDIT_BUTTON.attestations) страница переходит на /resume/edit/<id>/attestationEducation/0, но кандидатный
-        селектор [data-qa=''profile-education-attestation-*''] / [data-qa=''profile-education-year-input''] не найден (count=0)
-        — тот же паттерн отсутствия data-qa на input-полях, что и в resume_education._ADDITIONAL_FIELDS. Остаётся needs_live_evidence.'
-    coverage_status: needs_live_evidence
+      note: 'Live-подтверждено 2026-08-30 на черновике a1d75539ff1106985b0039ed1f377079695358 (/resume/edit/<id>/attestationEducation):
+        реальный input поля «Год окончания» несёт data-qa=''resume-attestation-education-input-year'' (count=1). Прежний кандидат
+        profile-education-attestation-* / profile-education-year-input даёт count=0. Предположение #773 «у этой формы вовсе
+        нет data-qa» опровергнуто: атрибуты есть, но в другом namespace. Внимание: hh.ru подписывает третье поле как «Специализация»,
+        а атрибут называет -result — порядок полей в ATTESTATION_FIELDS соответствует датаклассу Attestation, а не словам
+        в атрибутах.'
+    coverage_status: intentionally_local
     origin: browser_dom
-    verification: unverified
-    last_verified_at: '2026-08-29'
-    verified_flow: authenticated_resume_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation/0)
+    verification: browser_observed
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_attestation_education_form_read_only (/resume/edit/<id>/attestationEducation, draft resume)
     verified_by: human
   resume_sections.RESUME_EDIT_BUTTON.attestations:
     value: '[data-qa^=''resume-edit-button-attestationEducation-'']'
