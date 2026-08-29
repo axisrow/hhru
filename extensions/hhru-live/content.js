@@ -21,23 +21,38 @@ function report(element) {
   chrome.runtime.sendMessage(report);
 }
 
+function isVisible(element) {
+  return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+}
+
+// `seen` gates a report only while the element stays visible: once it goes
+// hidden it is dropped from the set, so a later show (same DOM node, same
+// attribute toggle) is treated as a fresh detection instead of being
+// permanently blocked. This is what makes the `attributes: true` observer
+// (added for hide/show toggles) actually useful across repeat show events.
+function reportIfNewlyVisible(node, seen) {
+  if (!isVisible(node)) {
+    seen.delete(node);
+    return;
+  }
+  if (seen.has(node)) return;
+  seen.add(node);
+  report(node);
+}
+
 function inspect(node, seen) {
   if (!(node instanceof Element)) return;
-  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector)) && !seen.has(node)) {
-    seen.add(node);
-    report(node);
+  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector))) {
+    reportIfNewlyVisible(node, seen);
   }
   node.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
-    if (seen.has(el)) return;
-    seen.add(el);
-    report(el);
+    reportIfNewlyVisible(el, seen);
   });
 }
 
 const seen = new WeakSet();
 document.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
-  seen.add(el);
-  report(el);
+  reportIfNewlyVisible(el, seen);
 });
 const observer = new MutationObserver((mutations) => {
   mutations.forEach(({ type, target, addedNodes }) => {
