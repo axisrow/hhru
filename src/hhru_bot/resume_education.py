@@ -17,10 +17,12 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Error as PlaywrightError
 
 from .browser import (
+    HH_BASE_URL,
     goto_hh,
     has_auth_cookie,
     has_login_form,
     open_hydrated_resume_editor,
+    require_authenticated_page,
     resume_identity_matches,
 )
 from .config_sections.education import EducationRecord
@@ -39,6 +41,28 @@ PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)")
 ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
 CANCEL_BUTTON = "[data-qa='profile-layout-cancel-button']"
 SAVE_BUTTON = "[data-qa='profile-layout-save-button']"
+
+# #802: deletion by hh.ru entry id (the numeric hash from
+# /profile/edit/{kind}Education/{id}, e.g. from URL after a manual entry).
+# The id-scoped edit route is distinct from PRIMARY_ROUTE/ADDITIONAL_ROUTE
+# above (those bind by resumeFrom+index for add/prefill, not by entry id) and
+# was confirmed by a live authenticated read-only probe of a real profile
+# record (2026-08-18/29, data/logs/resume-edit*-resume-edit-button-*Education-*.html):
+# the canonical link on both the primary and additional education forms is
+# https://hh.ru/profile/edit/{kind}Education/{id}. The delete button's data-qa
+# is confirmed the same way, in the same dumps -- oddly reusing the
+# "experience" name on the PRIMARY education form (hh.ru shares one row-editor
+# React component between education and experience blocks); this is the real
+# observed value, not a guess.
+_ENTRY_ROUTE = {
+    "primary": "primaryEducation",
+    "additional": "additionalEducation",
+}
+_ENTRY_DELETE_TRIGGER = {
+    "primary": "[data-qa='resume-partial-edit-experience-delete']",
+    "additional": "[data-qa='resume-partial-edit-additional-education-delete']",
+}
+ENTRY_DELETE_VERIFY_TIMEOUT_MS = 15_000
 
 _PRIMARY_FIELDS = {
     "institution": "[data-qa='profile-education-university-input']",
@@ -304,3 +328,142 @@ def edit_education_on_hh(
             )
         )
     return results
+
+
+@dataclass(frozen=True)
+class EducationDeleteResult:
+    """Result of deleting one education entry by its hh.ru entry id (#802).
+
+    ``not_found`` (True) means the id-scoped edit route did not render the
+    entry's delete control and hh.ru's visible error boundary
+    (``_ENTRY_NOT_FOUND_TEXT``) confirms it is not a mere hydration/selector
+    miss -- the entry does not exist. This is checked both before the click
+    (a stale/wrong id is a plain, resolvable failure) and, structurally, is
+    also what a resolved retry after an ``uncertain`` outcome hits on its
+    next run (the entry the earlier click removed is now equally "not
+    found"). That is what makes retrying a durable
+    ``delete_education_entry`` attempt after an ``uncertain`` outcome
+    structurally resolvable to ``success`` -- unlike delete-resume's #480
+    trap, a repeat run does not need the click to fire again: the entry is
+    either still there (retry the click) or already gone (report success).
+    Note hh.ru's page.url does NOT change for a missing entry (live-confirmed
+    2026-08-30) -- do not reintroduce a route-based check here.
+    """
+
+    entry_id: str
+    kind: str
+    success: bool
+    reason: str
+    uncertain: bool = False
+    not_found: bool = False
+
+
+# #802 live read-only probe (2026-08-30, https://hh.ru/profile/edit/primaryEducation/1
+# against a real authenticated session): a nonexistent entry id does NOT
+# redirect the URL away from the id-scoped route (confirmed: page.url stays
+# exactly on /profile/edit/primaryEducation/1). hh.ru instead renders a
+# React error boundary with this exact visible text inside <div
+# class="row-content">, replacing the whole form -- no data-qa attribute is
+# attached to it, so the visible text is the only confirmed signal. This
+# supersedes an earlier draft of this module that assumed a route mismatch
+# was the not-found signal; that assumption was live-disproven before merge.
+_ENTRY_NOT_FOUND_TEXT = "Problem fetching content"
+
+
+def delete_education_entry_on_hh(
+    page,
+    kind: str,
+    entry_id: str,
+    dry_run: bool,
+    *,
+    before_click=None,
+) -> EducationDeleteResult:
+    """Delete exactly one education entry, addressed by its hh.ru id (#802).
+
+    ``kind`` is ``"primary"`` or ``"additional"`` -- the two forms live on
+    distinct routes with distinct delete-button data-qa (see
+    ``_ENTRY_ROUTE``/``_ENTRY_DELETE_TRIGGER`` above). The entry is not
+    scoped to a resume_id: hh.ru's profile-level education records can be
+    orphaned (belong to no resume, or to a resume already deleted), matching
+    the exact scenario in #802's motivating cleanup case.
+    """
+    if kind not in _ENTRY_ROUTE:
+        raise ValueError(f"kind должен быть 'primary' или 'additional', получено: {kind!r}")
+
+    goto_hh(page, f"{HH_BASE_URL}/profile/edit/{_ENTRY_ROUTE[kind]}/{entry_id}")
+    require_authenticated_page(page)
+    button = page.locator(_ENTRY_DELETE_TRIGGER[kind])
+    if button.count() != 1:
+        if page.get_by_text(_ENTRY_NOT_FOUND_TEXT).count() > 0:
+            # #802 vs #480: the id-scoped edit route rendered hh.ru's error
+            # boundary instead of the form -- confirmed live (2026-08-30) to
+            # NOT change page.url, so a route check alone cannot see this;
+            # the visible error text is the only signal. Both a first attempt
+            # on a bad/stale id and a retry after a resolved deletion look
+            # identical here -- structurally indistinguishable without a
+            # second, independent read of the entry, which does not exist
+            # for a profile-level record. Report success: the caller only
+            # ever invokes this to make the entry not exist, and it does not.
+            return EducationDeleteResult(
+                entry_id,
+                kind,
+                True,
+                f"запись {entry_id} не найдена; уже отсутствует",
+                not_found=True,
+            )
+        return EducationDeleteResult(
+            entry_id, kind, False, "кнопка удаления записи не подтверждена однозначно"
+        )
+
+    if dry_run:
+        return EducationDeleteResult(entry_id, kind, True, "dry-run; кнопка удаления не нажата")
+
+    try:
+        if before_click is not None:
+            before_click()
+        button.first.click()
+    except PlaywrightError as exc:
+        return EducationDeleteResult(
+            entry_id, kind, False, f"ошибка destructive-клика: {exc}", uncertain=True
+        )
+
+    # No confirmation dialog was observed in the read-only research dumps
+    # (CLAUDE.md selector-status note): the delete control sits directly in
+    # the form's action bar next to Save/Cancel, unlike delete-resume's
+    # separate confirm step. The positive signal is therefore the delete
+    # button itself detaching -- hh.ru tears down the whole form once the
+    # entry is gone, whether or not page.url changes (live-confirmed it does
+    # NOT for the not-found case, see _ENTRY_NOT_FOUND_TEXT above; the
+    # post-delete render was not separately observed, so this code does not
+    # assume either way). Any exception during this wait keeps the result
+    # uncertain -- the click may have already reached hh.ru. The button
+    # re-check below (same selector-absence check used pre-click above,
+    # generalized to "no longer exactly one match") is the authoritative
+    # proof; detachment is only the transition signal (same two-signal
+    # pattern as delete_resume.py).
+    try:
+        button.first.wait_for(state="detached", timeout=ENTRY_DELETE_VERIFY_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        return EducationDeleteResult(
+            entry_id,
+            kind,
+            False,
+            f"не удалось подтвердить результат удаления: {exc}",
+            uncertain=True,
+        )
+    if page.locator(_ENTRY_DELETE_TRIGGER[kind]).count() != 0:
+        # The button detached (transition signal, checked above) but a fresh
+        # count() still finds one -- most likely hh.ru re-rendered the same
+        # form (SPA re-mount), so the delete did not actually go through.
+        # page.url is not usable here: live-confirmed (see
+        # _ENTRY_NOT_FOUND_TEXT) that it does not change even when the
+        # entry is genuinely gone, so it cannot distinguish "still open" from
+        # "closed".
+        return EducationDeleteResult(
+            entry_id,
+            kind,
+            False,
+            "кнопка удаления всё ещё присутствует после клика",
+            uncertain=True,
+        )
+    return EducationDeleteResult(entry_id, kind, True, "запись удалена; форма закрыта")

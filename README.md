@@ -817,6 +817,15 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--dry-run` — Показать план без создания
 - `--force` — Подтвердить боевое создание
 
+### `delete-education-entry`
+
+Удаляет ровно одну запись основного/дополнительного образования через UI hh.ru, адресуя её реальным id из /profile/edit/{kind}Education/{id}. --entry-id и --kind обязательны; по умолчанию выполняется только dry-run.
+
+- `--entry-id` — Числовой id записи из URL /profile/edit/{kind}Education/{id}
+- `--kind` — Основное (primary) или дополнительное (additional) образование
+- `--dry-run` — Показать план без удаления (по умолчанию; --force включает боевой режим) (по умолчанию: True)
+- `--force` — Подтвердить необратимое удаление
+
 ### `delete-resume`
 
 Удаляет ровно одно резюме через UI hh.ru. --resume обязателен; по умолчанию выполняется только dry-run.
