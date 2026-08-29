@@ -161,14 +161,15 @@ read-only синка он печатает `[INFO] Новых приглашен
 
 ```
 hhru calendar event --summary "<работодатель> - <vacancy_id>" \
-    --start <YYYY-MM-DDTHH:MM:SS+TZ> --end <YYYY-MM-DDTHH:MM:SS+TZ>
+    --start '<YYYY-MM-DDTHH:MM:SS+TZ>' --end '<YYYY-MM-DDTHH:MM:SS+TZ>'
 ```
 
 Время — ВСЕГДА плейсхолдер: hh.ru не сообщает время собеседования в статусе
 приглашения, автоподстановка из `response_date`/`status_changed_at` запрещена
 (тот же контракт, что у самой команды `calendar`, см. `commands/calendar.py:3-5`).
 Пользователь подставляет реальное время сам и создаёт событие через `calendar
-event`.
+event`. Плейсхолдеры `<...>` заключены в кавычки — без них `<`/`>` читаются
+оболочкой как операторы redirection.
 
 `schedule --action run` генерирует запуск полного цикла `run` (apply + bump)
 через внешний планировщик. Для plist используется `StartInterval`, а для cron —

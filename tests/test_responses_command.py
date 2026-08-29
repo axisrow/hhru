@@ -80,8 +80,10 @@ def test_calendar_hint_prints_placeholder_not_response_date(capsys, tmp_path):
 
     tokens = shlex.split(calendar_line)
     assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
-    # Плейсхолдер присутствует...
-    assert "--start <" in calendar_line and "--end <" in calendar_line
+    # Плейсхолдер присутствует (в кавычках — символы `<`/`>` иначе читаются
+    # оболочкой как redirection)...
+    assert tokens[tokens.index("--start") + 1] == "<YYYY-MM-DDTHH:MM:SS+TZ>"
+    assert tokens[tokens.index("--end") + 1] == "<YYYY-MM-DDTHH:MM:SS+TZ>"
     # ...а фактическая дата ответа с hh.ru в calendar-строку НЕ попадает
     # (ASCII-таблица выше её печатает — контракт только про саму calendar-строку).
     assert "27 июля" not in calendar_line
@@ -114,6 +116,33 @@ def test_calendar_hint_escapes_quotes_in_employer(capsys, tmp_path):
     tokens = shlex.split(calendar_line)
     summary = tokens[tokens.index("--summary") + 1]
     assert summary == 'ООО "Ромашка" - ООО "Ромашка"'
+
+
+def test_calendar_hint_collapses_newlines_in_employer(capsys, tmp_path):
+    """Работодатель с переводом строки не должен разбивать hint на две строки.
+
+    ``shlex.quote`` экранирует ``\\n`` для shell (кавычки безопасны), но не
+    убирает сам символ новой строки из вывода — при печати через один
+    ``print()`` строка физически разъезжается на две, и copy-paste в терминале
+    подхватывает только первую половину с незакрытой кавычкой (зависший shell
+    в ожидании продолжения). ``employer`` — недоверенный текст с hh.ru, поэтому
+    перевод строки в нём должен схлопываться в пробел до экранирования.
+    """
+    config = _write_config(tmp_path, _minimal_config())
+    h = History(tmp_path / "h.db")
+    h.upsert_response("v1", "ACME\nCorp", "invitation", "/c1")
+
+    responses_cmd.run(_args(config, tmp_path / "h.db", calendar_hint=True))
+    out = capsys.readouterr().out
+
+    lines = [line for line in out.splitlines() if "hhru calendar event" in line]
+    assert len(lines) == 1, (
+        f"calendar-hint строка разъехалась на несколько физических строк: {out!r}"
+    )
+    import shlex
+
+    tokens = shlex.split(lines[0])
+    assert tokens[tokens.index("--summary") + 1] == "ACME Corp - v1"
 
 
 def test_calendar_hint_off_by_default(capsys, tmp_path):

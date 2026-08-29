@@ -80,6 +80,21 @@ def _response_employer_label(row: dict) -> str:
     return (row.get("employer") or "").strip() or "(скрыт)"
 
 
+def _calendar_hint_employer_label(row: dict) -> str:
+    """Работодатель для calendar-hint строки: без переводов строк (#711 review).
+
+    ``employer`` приходит с hh.ru как недоверенный текст. ``_response_employer_label``
+    только ``strip()``-ает края, оставляя внутренние ``\\n``/``\\r``/табы как есть —
+    для ASCII-таблицы это не проблема (значение выводится одной ячейкой), но
+    calendar-hint печатается через один ``print()``, и внутренний перевод строки
+    физически разрывает готовую команду на две строки: копирование в терминале
+    подхватывает только первую половину с незакрытой кавычкой. Схлопываем любые
+    пробельные последовательности (включая переводы строк) в один пробел ДО
+    экранирования через ``shlex.quote``.
+    """
+    return " ".join(_response_employer_label(row).split())
+
+
 def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
     """Готовая к копированию строка вызова ``calendar event`` для приглашения.
 
@@ -98,7 +113,7 @@ def _calendar_hint_line(employer: str, vacancy_id: str) -> str:
     summary = f"{employer} - {vacancy_id or '(скрыт)'}"
     return (
         f"hhru calendar event --summary {shlex.quote(summary)} "
-        "--start <YYYY-MM-DDTHH:MM:SS+TZ> --end <YYYY-MM-DDTHH:MM:SS+TZ>"
+        "--start '<YYYY-MM-DDTHH:MM:SS+TZ>' --end '<YYYY-MM-DDTHH:MM:SS+TZ>'"
     )
 
 
@@ -114,7 +129,7 @@ def _print_calendar_hints(rows: list[dict]) -> None:
         return
     print(f"\n[INFO] Calendar hint для новых приглашений: {len(invitations)}")
     for row in invitations:
-        print(_calendar_hint_line(_response_employer_label(row), row.get("vacancy_id", "")))
+        print(_calendar_hint_line(_calendar_hint_employer_label(row), row.get("vacancy_id", "")))
 
 
 def _print_responses_table(rows: list[dict], title: str) -> None:
