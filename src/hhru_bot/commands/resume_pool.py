@@ -117,9 +117,16 @@ def run(args: argparse.Namespace):
     except ConfigError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
-    reject_bare_source(source)
 
     write_config = bool(getattr(args, "write_config", False))
+    if write_config:
+        # Тот же гейт, что у copy-resume (commands/copy_resume.py:392-393):
+        # reject_bare_source отказывает на пустом search.text, который нужен
+        # только для СОЗДАВАЕМОЙ секции в config.yaml. Без --write-config
+        # ничего не пишется, поэтому проверка здесь избыточна и раньше
+        # безусловно ломала --dry-run на bare-резюме (cycle-review PR #770).
+        reject_bare_source(source)
+
     plan = build_pool_plan(config.resumes, source, limit=args.limit)
 
     if not plan.items:
@@ -132,6 +139,22 @@ def run(args: argparse.Namespace):
     if args.dry_run:
         _print_plan(source, plan)
         return
+
+    if write_config:
+        # Отказ до записи (#520, тот же принцип, что у copy-resume:386-389):
+        # коллизия slug должна остановить batch ДО первого клика "Дублировать",
+        # иначе она обнаруживается только внутри write_resume_config -- уже
+        # ПОСЛЕ необратимой копии на hh.ru (cycle-review PR #770, AO reviewer
+        # finding). Проверяем весь план разом, не по одному элементу за раз.
+        existing_ids = {r.id for r in config.resumes} | {r.resume_id for r in config.resumes}
+        clashing = [item.slug for item in plan.items if item.slug in existing_ids]
+        if clashing:
+            print(
+                "[FAIL] Slug уже есть в config.yaml: "
+                + ", ".join(clashing)
+                + ". Ничего не отправлено."
+            )
+            sys.exit(1)
 
     if not confirm_write(
         args.force,

@@ -250,7 +250,53 @@ def test_run_refuses_bare_source_before_touching_browser(env, capsys, tmp_path, 
         ),
     )
     with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True, source=SOURCE_ID))
+        cmd.run(_args(tmp_path, force=True, source=SOURCE_ID, write_config=True))
+    assert env.calls == []
+
+
+def test_run_allows_bare_source_without_write_config(env, capsys, tmp_path, monkeypatch):
+    """cycle-review PR #770: reject_bare_source гейтится write_config, как у
+    copy-resume (commands/copy_resume.py:392-393) -- bare-резюме без --write-config
+    не требует search.text, т.к. ничего не записывается в config.yaml."""
+    bare = SimpleNamespace(
+        id=SOURCE_ID, resume_id=SOURCE_ID, search=SimpleNamespace(text=""), cluster=None
+    )
+    monkeypatch.setattr(
+        "hhru_bot.config.load_config_or_exit",
+        lambda path: SimpleNamespace(
+            get_resume=lambda rid: bare,
+            resumes=[bare],
+            storage_state_file=tmp_path / "session.json",
+            user_agent=None,
+        ),
+    )
+    cmd.run(_args(tmp_path, force=True, source=SOURCE_ID, write_config=False))
+    out = capsys.readouterr().out
+    assert "[FAIL]" not in out
+    assert len(env.calls) == len(CLUSTERS)
+
+
+def test_run_refuses_slug_collision_before_touching_browser(env, capsys, tmp_path, monkeypatch):
+    """cycle-review PR #770 (AO reviewer, blocking): коллизия slug должна
+    отсекаться до launch_context -- та же логика 'отказ до записи', что у
+    copy-resume (commands/copy_resume.py:386-389), иначе первый клик
+    'Дублировать' в batch создаёт неоткатываемый дубль на hh.ru, который
+    write_resume_config потом откажется записать в config.yaml."""
+    clashing_key = CLUSTERS[0].key
+    clashing = ResumeConfig(
+        id=f"backend-{clashing_key}",  # тот же slug, что build_pool_plan сгенерирует
+        resume_url="https://hh.ru/resume/" + "e" * 38,
+        search=SearchFilters(text="python"),
+        cluster=None,  # не привязан к кластеру -> build_pool_plan сочтёт кластер непокрытым
+    )
+    config = _fake_config(tmp_path, resumes=[_source_resume(), clashing])
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda path: config)
+
+    with pytest.raises(SystemExit) as exc:
+        cmd.run(_args(tmp_path, force=True, write_config=True))
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert clashing.id in out
     assert env.calls == []
 
 
