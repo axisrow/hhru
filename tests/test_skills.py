@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -196,9 +196,15 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
 
 
 def _mock_chip_locator() -> MagicMock:
-    """A RESUME_SKILLS_CHIP locator stub whose .nth().wait_for() no-ops."""
+    """A RESUME_SKILLS_CHIP locator stub whose .nth().wait_for() no-ops.
+
+    #801: .filter(has_text=...) also resolves immediately with one match, so
+    the post-fill+Enter commit-wait loop in edit_skills_on_hh does not poll
+    until CHIP_COMMIT_TIMEOUT_MS on every addition.
+    """
     chip_locator = MagicMock()
     chip_locator.nth.return_value.wait_for.return_value = None
+    chip_locator.filter.return_value.count.return_value = 1
     return chip_locator
 
 
@@ -211,6 +217,7 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
+    input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = _mock_chip_locator()
@@ -244,6 +251,104 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     chip_locator.nth.return_value.wait_for.assert_called_once_with(state="visible", timeout=5_000)
 
 
+def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> None:
+    """#801: consecutive additions must each be confirmed by an exact-text chip
+    (and a cleared input) before the next fill+Enter — a blind fill+Enter pair
+    is what let "FastAPI" + "LangChain" merge into "FastAPILangChain"."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    input_.input_value.return_value = ""
+    save = MagicMock()
+    save.count.return_value = 1
+    chip_locator = _mock_chip_locator()
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    read_skills = MagicMock(side_effect=[(), ("FastAPI", "LangChain")])
+    monkeypatch.setattr(skills_module, "read_skills", read_skills)
+
+    result = edit_skills_on_hh(
+        page,
+        resume,
+        (Skill("FastAPI", "intermediate"), Skill("LangChain", "intermediate")),
+        dry_run=False,
+        mode="append",
+    )
+
+    assert result.success is True
+    assert result.added == ("FastAPI", "LangChain")
+    assert input_.fill.call_args_list == [call("FastAPI"), call("LangChain")]
+    assert input_.press.call_count == 2
+    # Each addition is confirmed by its own exact-text filter, not a shared
+    # chip-count check that a merged chip would also satisfy.
+    filter_calls = [c.kwargs["has_text"].pattern for c in chip_locator.filter.call_args_list]
+    assert filter_calls == ["^FastAPI$", "^LangChain$"]
+
+
+def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
+    """#801: if a chip never confirms, further additions must not be typed —
+    the resulting mismatch is left for the post-save Counter check to catch."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    input_.input_value.return_value = ""
+    save = MagicMock()
+    save.count.return_value = 1
+    chip_locator = MagicMock()
+    chip_locator.nth.return_value.wait_for.return_value = None
+    # The expected chip never appears — simulates a merged/rejected chip.
+    chip_locator.filter.return_value.count.return_value = 0
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(
+        skills_module, "read_skills", MagicMock(side_effect=[(), ("FastAPILangChain",)])
+    )
+    monkeypatch.setattr(skills_module.time, "monotonic", MagicMock(side_effect=range(10_000)))
+    monkeypatch.setattr(page, "wait_for_timeout", MagicMock())
+
+    result = edit_skills_on_hh(
+        page,
+        resume,
+        (Skill("FastAPI", "intermediate"), Skill("LangChain", "intermediate")),
+        dry_run=False,
+        mode="append",
+    )
+
+    assert result.success is False
+    assert result.acted is True
+    # Only the first skill was typed; the timeout stopped the loop before the
+    # second fill+Enter could race the still-unsettled first one.
+    assert input_.fill.call_args_list == [call("FastAPI")]
+
+
 def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     """A successful save click with a missing chip must not produce [OK]."""
     resume = bare_resume("resume-id")
@@ -253,6 +358,7 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
+    input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
     trigger = MagicMock()
@@ -292,6 +398,7 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
+    input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = MagicMock()
@@ -337,6 +444,7 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
+    input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
     trigger = MagicMock()
@@ -445,6 +553,7 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     editor.wait_for.return_value = None
     input_ = MagicMock()
     input_.count.return_value = 1
+    input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
     trigger = MagicMock()
