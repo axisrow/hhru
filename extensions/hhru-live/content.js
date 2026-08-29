@@ -6,6 +6,22 @@ const OVERLAY_SELECTORS = [
   '[class*="notification"]', '[class*="cookie"]'
 ];
 
+function isVisible(element) {
+  // offsetWidth/offsetHeight/getClientRects() only react to display:none —
+  // a visibility:hidden element still reports non-zero layout metrics, so it
+  // would be treated as "visible" here (Codex round-3 review of #767: this
+  // silently defeats the hide->show re-detect gate for that CSS pattern).
+  // checkVisibility() (Chrome 105+) covers visibility/display/content-visibility
+  // in one call; fall back to the layout check + an explicit visibility read
+  // for older Chrome (MV3's floor is Chrome 88).
+  if (typeof element.checkVisibility === 'function') {
+    return element.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true });
+  }
+  const hasLayout = !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+  if (!hasLayout) return false;
+  return getComputedStyle(element).visibility !== 'hidden';
+}
+
 function classify(element) {
   const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 500);
   const role = element.getAttribute('role');
@@ -13,7 +29,7 @@ function classify(element) {
   const type = /cookie/i.test(className + text)
     ? 'cookie_banner' : role === 'dialog' || role === 'alertdialog' || /modal|popup/i.test(className)
     ? 'modal' : /toast|notification/i.test(className) ? 'notification' : 'overlay';
-  return { type, text, role, className: className.slice(0, 200), visible: !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length) };
+  return { type, text, role, className: className.slice(0, 200), visible: isVisible(element) };
 }
 
 function report(element) {
@@ -21,23 +37,34 @@ function report(element) {
   chrome.runtime.sendMessage(report);
 }
 
+// `seen` gates a report only while the element stays visible: once it goes
+// hidden it is dropped from the set, so a later show (same DOM node, same
+// attribute toggle) is treated as a fresh detection instead of being
+// permanently blocked. This is what makes the `attributes: true` observer
+// (added for hide/show toggles) actually useful across repeat show events.
+function reportIfNewlyVisible(node, seen) {
+  if (!isVisible(node)) {
+    seen.delete(node);
+    return;
+  }
+  if (seen.has(node)) return;
+  seen.add(node);
+  report(node);
+}
+
 function inspect(node, seen) {
   if (!(node instanceof Element)) return;
-  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector)) && !seen.has(node)) {
-    seen.add(node);
-    report(node);
+  if (OVERLAY_SELECTORS.some((selector) => node.matches(selector))) {
+    reportIfNewlyVisible(node, seen);
   }
   node.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
-    if (seen.has(el)) return;
-    seen.add(el);
-    report(el);
+    reportIfNewlyVisible(el, seen);
   });
 }
 
 const seen = new WeakSet();
 document.querySelectorAll(OVERLAY_SELECTORS.join(',')).forEach((el) => {
-  seen.add(el);
-  report(el);
+  reportIfNewlyVisible(el, seen);
 });
 const observer = new MutationObserver((mutations) => {
   mutations.forEach(({ type, target, addedNodes }) => {
