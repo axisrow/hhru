@@ -17,7 +17,18 @@ def permissions_are_posix() -> bool:
 
 
 def secure_directory(path: Path, mode: int = ACCOUNT_DIR_MODE, *, exist_ok: bool = True) -> None:
-    """Create a directory and tighten its mode where Unix modes are supported."""
+    """Create a directory and tighten its mode where Unix modes are supported.
+
+    When any part of ``path`` is missing, creation and hardening of every new
+    component go through ``_mkdir_and_harden_new_components`` (descriptor-relative,
+    no-follow) rather than ``Path.mkdir(parents=True)`` -- the latter leaves the
+    same TOCTOU window on intermediate components that this module's other
+    callers are hardened against (#741). When ``path`` already exists, only its
+    own no-follow open + fchmod is needed, since no new component is created.
+    """
+    if permissions_are_posix() and not path.exists():
+        _mkdir_and_harden_new_components(path, mode)
+        return
     path.mkdir(parents=True, exist_ok=exist_ok, mode=mode)
     if permissions_are_posix():
         fd = _open_without_follow(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

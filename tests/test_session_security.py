@@ -140,6 +140,41 @@ def test_secure_directory_rejects_symlinked_target(tmp_path):
     assert _mode(real_target) == 0o755
 
 
+@POSIX_ONLY
+def test_secure_directory_hardens_every_missing_intermediate_component(tmp_path):
+    """Regression for the cycle-review finding: secure_directory() must not
+    fall back to Path.mkdir(parents=True) + final-only fchmod when several
+    levels are missing -- that leaves every intermediate component's creation
+    unprotected against a symlink swap, exactly the TOCTOU class this module
+    exists to close (mirrors secure_storage_state_parent's own coverage
+    above, applied to the account-directory call path in
+    secure_storage_state_parent -> secure_directory(account_dir))."""
+    account_dir = tmp_path / "data" / "accounts" / "acme"
+
+    secure_directory(account_dir)
+
+    assert _mode(tmp_path / "data") == ACCOUNT_DIR_MODE
+    assert _mode(tmp_path / "data" / "accounts") == ACCOUNT_DIR_MODE
+    assert _mode(account_dir) == ACCOUNT_DIR_MODE
+
+
+@POSIX_ONLY
+def test_secure_storage_state_parent_hardens_missing_account_dir_chain(tmp_path):
+    """End-to-end regression at the call site the review flagged: when
+    account_dir is passed to secure_storage_state_parent and several of its
+    levels are missing, every new component must be hardened, not only the
+    leaf -- previously secure_directory(account_dir) used the vulnerable
+    Path.mkdir(parents=True) + final-only-fchmod path here."""
+    account_dir = tmp_path / "data" / "accounts" / "acme"
+    destination = account_dir / "hh_session.json"
+
+    secure_storage_state_parent(destination, account_dir=account_dir)
+
+    assert _mode(tmp_path / "data") == ACCOUNT_DIR_MODE
+    assert _mode(tmp_path / "data" / "accounts") == ACCOUNT_DIR_MODE
+    assert _mode(account_dir) == ACCOUNT_DIR_MODE
+
+
 # -- Finding 3: regression only, secure_storage_state_file() already rejects
 # non-regular destinations before any mode change. --------------------------
 
