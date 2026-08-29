@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import HH_BASE_URL, goto_hh, open_hydrated_resume_editor
 from .selector_groups import resume_page
@@ -136,14 +137,19 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
     try:
         trigger.wait_for(state="visible", timeout=10_000)
-    except PlaywrightError:
+    except PlaywrightTimeoutError:
         # #790: on a resume with no "Обо мне" section yet, the trigger never
-        # appears. Live confirmation (2026-08-30, same resume-scoped route
-        # already accepted below as a valid edit route per #527): navigating
-        # straight to /resume/edit/{resume_id}/about opens the editor
-        # directly, pre-bound to this resume_id — same pattern as #787/#797
-        # (experience) and #787/#798 (skills) for the shared "no in-page
-        # add-trigger for an empty section" failure mode.
+        # becomes visible — this is the specific "not visible within timeout"
+        # signal, not any Playwright failure. Live confirmation (2026-08-30,
+        # same resume-scoped route already accepted below as a valid edit
+        # route per #527): navigating straight to
+        # /resume/edit/{resume_id}/about opens the editor directly, pre-bound
+        # to this resume_id — same pattern as #787/#797 (experience) and
+        # #787/#798 (skills) for the shared "no in-page add-trigger for an
+        # empty section" failure mode. A non-timeout PlaywrightError (closed
+        # context, navigation failure, etc.) is a different, unrelated
+        # failure and must not be silently reinterpreted as "empty resume" —
+        # it propagates unguarded so the real cause stays visible.
         return _open_about_editor_via_edit_route(page, resume)
     if trigger.count() != 1:
         raise AboutGenerationError(

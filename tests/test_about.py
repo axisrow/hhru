@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.about as about_module
 from hhru_bot.about import (
@@ -274,6 +275,30 @@ def test_open_about_editor_uses_edit_route_when_button_missing(monkeypatch):
     trigger.count.assert_not_called()
     trigger.click.assert_not_called()
     assert page.url == "https://hh.ru/resume/edit/resume-id/about"
+
+
+def test_open_about_editor_propagates_non_timeout_error(monkeypatch):
+    """A non-timeout PlaywrightError (closed context, navigation failure, etc.)
+    from the trigger wait must NOT be silently reinterpreted as "empty resume"
+    and redirected to the edit-route fallback — it is a different, unrelated
+    failure and should propagate so the real cause stays visible."""
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock(name="trigger")
+    trigger.wait_for.side_effect = PlaywrightError(
+        "Target page, context or browser has been closed"
+    )
+
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(PlaywrightError, match="closed"):
+        open_about_editor(page, bare_resume("resume-id"))
+
+    trigger.count.assert_not_called()
+    trigger.click.assert_not_called()
 
 
 def test_open_about_editor_edit_route_rejects_wrong_resume(monkeypatch):
