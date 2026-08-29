@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -66,7 +67,7 @@ def _click_one(
     return ""
 
 
-def _select_catalog_leaf(page: Page, area: str) -> str:
+def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0) -> str:
     """Select one exact leaf from hh.ru's full profession tree."""
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
@@ -80,23 +81,29 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     if reason:
         return reason
     _require(search).fill(area)
-    # The filtered tree re-renders asynchronously (React) after typing; .all()
-    # right after fill() can observe the stale/blank tree (the same commit-vs-
-    # hydration race guarded for SELECT_JOB/POSITION in #304), which would
-    # surface as a false "профессия «…» не найдена однозначно (совпадений: 0)".
-    page.locator("[data-qa*='tree-selector-item-text-']").first.wait_for(
-        state="visible", timeout=15000
-    )
+    # The filtered tree re-renders asynchronously (React) after typing, and the
+    # PRE-filter tree is already populated — so waiting for "a first node" is
+    # satisfied instantly by the stale full catalog (живой замер #778: 14 узлов
+    # до fill, те же 14 сразу после wait_for, и лишь через ~500 мс остаётся 1).
+    # Reading .all() at that moment collects other professions and surfaces as a
+    # false "профессия «…» не найдена однозначно (совпадений: 0)". Poll the tree
+    # until the exact match appears instead of trusting a single read.
     # get_by_text() resolves to the inner ``cell-text-content`` span on the
     # current hh.ru DOM, while the identifier we need is on its wrapper.
     # Match the wrapper by its own rendered text instead of assuming the
     # attribute is attached to the text node.
-    candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
-    matches = [
-        candidate
-        for candidate in candidates
-        if normalize(candidate.text_content() or "") == normalize(area)
-    ]
+    deadline = time.monotonic() + filter_timeout
+    matches: list[Locator] = []
+    while True:
+        candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
+        matches = [
+            candidate
+            for candidate in candidates
+            if normalize(candidate.text_content() or "") == normalize(area)
+        ]
+        if len(matches) == 1 or time.monotonic() >= deadline:
+            break
+        page.wait_for_timeout(250)
     if len(matches) != 1:
         return f"профессия «{area}» не найдена однозначно в каталоге (совпадений: {len(matches)})"
     qa = matches[0].get_attribute("data-qa") or ""
