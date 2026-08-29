@@ -1569,7 +1569,7 @@ selectors:
     decision: live_dom
     sources: {}
     live_matches:
-    - '''profile-layout-cancel-button'
+    - profile-layout-cancel-button
     active: true
     bindings: {}
     coverage_status: intentionally_local
@@ -1636,7 +1636,7 @@ selectors:
     decision: live_dom
     sources: {}
     live_matches:
-    - '''profile-layout-save-button'
+    - profile-layout-save-button
     active: true
     bindings: {}
     coverage_status: intentionally_local
