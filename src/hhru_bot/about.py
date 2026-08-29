@@ -121,8 +121,19 @@ def _fallback_about(existing: str, profile: AIProfile | None, mode: str) -> Abou
 
 
 def open_about_editor(page: Page, resume: ResumeConfig) -> str:
-    """Open the confirmed inline editor and return its current textarea value."""
-    goto_hh(page, resume.resume_url, ready_selector=resume_page.RESUME_EDIT_ABOUT_BUTTON)
+    """Open the confirmed inline editor and return its current textarea value.
+
+    The trigger button is absent on empty resumes. Navigate without
+    ``ready_selector`` so the command does not hang for 2+ minutes when
+    the selector is missing; verify the button explicitly afterwards.
+    """
+    goto_hh(page, resume.resume_url)
+    trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
+    if trigger.count() != 1:
+        raise AboutGenerationError(
+            "кнопка редактирования «Обо мне» не найдена однозначно "
+            "(резюме, вероятно, пустое — раздел ещё не создан)"
+        )
     try:
         field = open_hydrated_resume_editor(
             page,
