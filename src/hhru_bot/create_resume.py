@@ -121,7 +121,14 @@ def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0)
     checkbox, reason = _one(page, checkbox_selector, f"чекбокс профессии «{area}»")
     if reason:
         return reason
-    _require(checkbox).check()
+    # ``check()`` по самому <input> не работает: hh.ru прячет его за
+    # стилизованной обёрткой (``magritte-checkbox-container``), у input
+    # ``tabindex="-1"``, и Playwright падает с «Clicking the checkbox did not
+    # change its state» (живой прогон #778). Кликается видимая строка
+    # профессии — тот же узел, по которому выше определён leaf.
+    matches[0].click()
+    if not _require(checkbox).is_checked():
+        return f"профессия «{area}» не отмечена после клика по строке каталога"
     return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
 
 
