@@ -10,6 +10,15 @@
 своим списком работодателей — команда может редактировать этот список
 независимо от того, меняется ли режим в этом же вызове (issue #746: стоп-лист
 обычно общий для всех резюме аккаунта, а смена режима — отдельное решение).
+
+Ранний ``return`` (например неоднозначный поиск работодателя) может оставить
+модалку списка открытой в DOM — намеренно не закрывается явно. Следующий вызов
+этой функции для другого резюме (``--resume all`` в ``commands/resume_visibility.py``)
+начинается с ``goto_hh``, то есть с полной навигации браузера (``page.goto``),
+а не SPA push-state — она полностью уничтожает предыдущий DOM независимо от
+того, была ли модалка открыта; React-модалка hh.ru не является нативным
+browser-диалогом (`alert`/`confirm`/`beforeunload`) и не блокирует навигацию
+(#746 review round 2).
 """
 
 from __future__ import annotations
@@ -120,9 +129,19 @@ def _read_employer_search_results(page: Page) -> list[EmployerCandidate]:
 
 
 def _open_employer_list_modal(page: Page, list_mode: str) -> str:
-    activator, reason = _one(
-        page, _ACTIVATOR_SELECTORS[list_mode], f"блок списка работодателей «{list_mode}»"
-    )
+    # commit != отрисовано (CLAUDE.md): если этому вызову предшествовал клик по
+    # radio-режиму (_click_mode), активатор списка — условный React-рендер, а не
+    # уже присутствующий в DOM элемент. Строгая _one() сразу после клика может
+    # увидеть count()=0 на ещё не отрисованном экране и ошибочно списать это на
+    # "селектор не подтверждён" вместо реальной причины — race condition. Явный
+    # wait_for(state="visible") перед строгой проверкой — тот же паттерн, что уже
+    # в resume_position.py/skills.py/apply/steps.py и др. (#746 review round 2).
+    activator_selector = _ACTIVATOR_SELECTORS[list_mode]
+    try:
+        page.locator(activator_selector).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return f"блок списка работодателей «{list_mode}» не отрисовался: {exc}"
+    activator, reason = _one(page, activator_selector, f"блок списка работодателей «{list_mode}»")
     if reason:
         return reason
     assert activator is not None
@@ -182,14 +201,30 @@ def _add_employer(page: Page, name: str) -> tuple[bool, str, list[EmployerCandid
 
 
 def _remove_employer(page: Page, name: str) -> tuple[bool, str]:
-    """Remove an already-added employer by exact name match from the list view."""
+    """Remove an already-added employer by exact name match from the list view.
+
+    #746 review round 2: an earlier revision matched by substring on the whole
+    row's text_content() — that both silently over-matched (a substring hit on
+    a longer employer name would remove the wrong company with no ambiguity
+    warning) and was inconsistent with ``_add_employer``'s exact-match contract.
+    A row's raw text_content() also concatenates the name twice (the visible
+    "Кто видит"-list span and its wrapping ``<a>`` link render the same name,
+    per the #746 probe dump), so exact-matching that combined string would
+    never equal a single-name query either — the name is read from the row's
+    single ``cell-text-content`` span instead, mirroring how the search-result
+    name is read in ``_read_employer_search_results``.
+    """
     items = page.locator(RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX)
     matches: list[Locator] = []
     for item in items.all():
         qa = item.get_attribute("data-qa") or ""
         if not qa.startswith(RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_DATA_QA_PREFIX):
             continue
-        if normalize(item.text_content() or "").find(normalize(name)) == -1:
+        name_locator = item.locator("[data-qa='cell-text-content']")
+        if name_locator.count() < 1:
+            continue
+        row_name = name_locator.first.text_content() or ""
+        if normalize(row_name) != normalize(name):
             continue
         matches.append(item)
     if not matches:

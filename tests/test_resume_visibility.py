@@ -251,6 +251,97 @@ def test_remove_employer_not_found_fails_closed(monkeypatch):
     assert "не найден в текущем списке" in result.reason
 
 
+def _list_item(employer_id: str, name: str):
+    """A row of an already-added employer, per the #746 probe: `cell-text-content`
+    holds the clean name, while item.text_content() would concatenate it twice
+    (span + wrapping <a> render the same name) — the fix reads only the span."""
+    item = MagicMock()
+    item.get_attribute.side_effect = lambda attr: (
+        f"{sel.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_DATA_QA_PREFIX}{employer_id}"
+        if attr == "data-qa"
+        else None
+    )
+    item.text_content.return_value = name + name  # span + <a> duplicate the name
+    name_locator = MagicMock()
+    name_locator.count.return_value = 1
+    name_locator.first.text_content.return_value = name
+    item.locator.return_value = name_locator
+    delete_button = MagicMock()
+    delete_button.count.return_value = 1
+    delete_button.first = delete_button
+    item.locator.side_effect = lambda sel_: (
+        name_locator if sel_ == "[data-qa='cell-text-content']" else delete_button
+    )
+    return item, delete_button
+
+
+def test_remove_employer_requires_exact_name_not_substring(monkeypatch):
+    """Regression for #746 review round 2: a substring match on the raw row text
+    could silently remove the wrong company (e.g. "Сбер" matching "Сбербанк")."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    activator = _mock_locator()
+    search_input = _mock_locator()
+
+    sberbank_item, sberbank_delete = _list_item("1", "Сбербанк")
+
+    list_items = MagicMock()
+    list_items.all.return_value = [sberbank_item]
+
+    def _by_selector(selector):
+        return {
+            sel.RESUME_VISIBILITY_SAVE: save,
+            sel.RESUME_VISIBILITY_MODE_BLACKLIST: _mock_locator(),
+            sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST: activator,
+            sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
+            sel.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX: list_items,
+        }[selector]
+
+    page = MagicMock()
+    page.locator.side_effect = _by_selector
+
+    result = rv.set_resume_visibility_on_hh(
+        page, _resume(), "blacklist", dry_run=False, remove_employers=("Сбер",)
+    )
+
+    assert not result.success
+    assert "не найден в текущем списке" in result.reason
+    sberbank_delete.click.assert_not_called()
+
+
+def test_remove_employer_exact_name_match_clicks_delete(monkeypatch):
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    activator = _mock_locator()
+    search_input = _mock_locator()
+    close = _mock_locator()
+
+    yumoney_item, yumoney_delete = _list_item("655542", "ЮMoney")
+
+    list_items = MagicMock()
+    list_items.all.return_value = [yumoney_item]
+
+    def _by_selector(selector):
+        return {
+            sel.RESUME_VISIBILITY_SAVE: save,
+            sel.RESUME_VISIBILITY_MODE_BLACKLIST: _mock_locator(),
+            sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST: activator,
+            sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
+            sel.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX: list_items,
+            sel.RESUME_VISIBILITY_MODAL_CLOSE: close,
+        }[selector]
+
+    page = MagicMock()
+    page.locator.side_effect = _by_selector
+
+    result = rv.set_resume_visibility_on_hh(
+        page, _resume(), "blacklist", dry_run=False, remove_employers=("ЮMoney",)
+    )
+
+    assert result.success
+    yumoney_delete.click.assert_called_once_with()
+
+
 def test_click_failure_after_save_is_uncertain_not_failed(monkeypatch):
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     from playwright.sync_api import Error as PlaywrightError

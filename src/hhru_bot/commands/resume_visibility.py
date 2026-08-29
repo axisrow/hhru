@@ -83,6 +83,13 @@ def run(args: argparse.Namespace):
     if args.mode is None and not add_employers and not remove_employers:
         print("[FAIL] Укажите --mode и/или --add-employer/--remove-employer.")
         return True
+    # #746 review round 2: эта проверка — только ранний отказ от явно несовместимого
+    # --mode (например --mode everyone --add-employer X), общего для ВСЕХ резюме
+    # запуска (в т.ч. --resume all). Она НЕ гарантирует, что список применится к
+    # каждому резюме — при --mode=None у разных резюме аккаунта может быть разный
+    # активный режим на hh.ru; окончательная per-resume проверка (чтение checked
+    # radio) — в set_resume_visibility_on_hh (resume_visibility.py), она и есть
+    # настоящий fail-closed барьер. Defense-in-depth: два уровня, не дублирование.
     if (add_employers or remove_employers) and args.mode not in (None, *(_EMPLOYER_LIST_MODES)):
         print(
             f"[FAIL] --add-employer/--remove-employer требуют --mode whitelist или "
