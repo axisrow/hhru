@@ -773,8 +773,11 @@ def _parse_recorded_at(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is not None:
         return parsed.astimezone().replace(tzinfo=None)
-    if "T" not in value:
-        # Форма SQLite ``datetime('now')``: UTC без указания зоны.
+    if " " in value:
+        # Форма SQLite ``datetime('now')``: UTC без указания зоны. Проверяется
+        # именно пробел-разделитель, а не отсутствие ``'T'``: под второе условие
+        # попала бы и date-only строка (``date('now')``), для которой полночь
+        # сдвинулась бы на величину смещения зоны вместо начала суток.
         return parsed.replace(tzinfo=UTC).astimezone().replace(tzinfo=None)
     return parsed
 

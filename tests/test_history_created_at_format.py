@@ -176,3 +176,14 @@ def test_documented_sql_snippet_matches_code_format(tmp_path):
     assert abs(_parse_recorded_at(doc_written) - _parse_recorded_at(code_written)) < timedelta(
         minutes=5
     )
+
+
+def test_date_only_value_is_not_shifted_by_timezone(tmp_path):
+    """Date-only строка — полночь локального дня, а не полночь UTC.
+
+    ``_parse_recorded_at`` распознаёт UTC по форме SQLite ``datetime('now')``
+    ('YYYY-MM-DD HH:MM:SS'). Более широкая эвристика «нет 'T' — значит UTC»
+    сдвигала бы и ``date('now')`` на смещение зоны, превращая начало суток в
+    произвольный час (для UTC+8 — 08:00 того же дня).
+    """
+    assert _parse_recorded_at("2026-08-29") == datetime(2026, 8, 29, 0, 0, 0)
