@@ -11,11 +11,12 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import goto_hh, open_hydrated_resume_editor
+from .browser import HH_BASE_URL, goto_hh, open_hydrated_resume_editor
 from .selector_groups import resume_page
 
 if TYPE_CHECKING:
@@ -123,9 +124,10 @@ def _fallback_about(existing: str, profile: AIProfile | None, mode: str) -> Abou
 def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     """Open the confirmed inline editor and return its current textarea value.
 
-    The trigger button is absent on empty resumes. Navigate without
-    ``ready_selector`` so the command does not hang for 2+ minutes when
-    the selector is missing; verify the button explicitly afterwards.
+    The trigger button is absent on empty resumes (#790). Navigate without
+    ``ready_selector`` so the command does not hang for 2+ minutes when the
+    selector is missing; the trigger's visibility is checked explicitly with a
+    short timeout instead.
 
     ``goto_hh`` only guarantees URL commit, not rendered DOM, so wait for
     the trigger to become visible before the strict count check.
@@ -134,11 +136,15 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
     try:
         trigger.wait_for(state="visible", timeout=10_000)
-    except PlaywrightError as exc:
-        raise AboutGenerationError(
-            "кнопка редактирования «Обо мне» не появилась после навигации "
-            f"(резюме, вероятно, пустое — раздел ещё не создан): {exc}"
-        ) from exc
+    except PlaywrightError:
+        # #790: on a resume with no "Обо мне" section yet, the trigger never
+        # appears. Live confirmation (2026-08-30, same resume-scoped route
+        # already accepted below as a valid edit route per #527): navigating
+        # straight to /resume/edit/{resume_id}/about opens the editor
+        # directly, pre-bound to this resume_id — same pattern as #787/#797
+        # (experience) and #787/#798 (skills) for the shared "no in-page
+        # add-trigger for an empty section" failure mode.
+        return _open_about_editor_via_edit_route(page, resume)
     if trigger.count() != 1:
         raise AboutGenerationError(
             "кнопка редактирования «Обо мне» не найдена однозначно "
@@ -166,6 +172,29 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
         )
     except RuntimeError as exc:
         raise AboutGenerationError(str(exc)) from exc
+    return field.input_value()
+
+
+def _open_about_editor_via_edit_route(page: Page, resume: ResumeConfig) -> str:
+    """Open the about editor directly via its resume-scoped edit route.
+
+    Used when the in-page trigger is absent (empty resume, #790). Confirmed
+    live (2026-08-30): navigating straight to this route opens the editor
+    pre-bound to ``resume.resume_id``, with no trigger click involved — same
+    resume-scoped-route pattern as #797 (experience) and #798 (skills).
+    """
+    edit_path = f"/resume/edit/{resume.resume_id}/about"
+    try:
+        goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+    except PlaywrightError as exc:
+        raise AboutGenerationError(f"форма «Обо мне» не открылась: {exc}") from exc
+    if urlsplit(page.url).path.rstrip("/") != edit_path:
+        raise AboutGenerationError(f"форма «Обо мне» открыта не для того резюме ({page.url})")
+    field = page.locator(resume_page.RESUME_ABOUT_EDITOR)
+    try:
+        field.wait_for(state="visible", timeout=10_000)
+    except PlaywrightError as exc:
+        raise AboutGenerationError(f"форма «Обо мне» не открылась: {exc}") from exc
     return field.input_value()
 
 
