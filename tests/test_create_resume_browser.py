@@ -17,6 +17,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.create_resume as create
+from hhru_bot.create_resume import _select_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -34,15 +35,21 @@ AREA = "Программист, разработчик"
 class TreeItem:
     """Пункт каталога профессий: ``.all()`` отдаёт обёртку с data-qa leaf."""
 
-    def __init__(self, text, qa):
+    def __init__(self, text, qa, page=None):
         self._text = text
         self._qa = qa
+        self.page = page
 
     def text_content(self):
         return self._text
 
     def get_attribute(self, name):
         return self._qa if name == "data-qa" else None
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        # Клик по строке профессии переключает скрытый за обёрткой чекбокс.
+        if self.page is not None:
+            self.page.checked = True
 
 
 class Locator:
@@ -64,7 +71,7 @@ class Locator:
     def all(self):
         # Дерево каталога профессий: ровно одна leaf, совпадающая с AREA.
         if "tree-selector-item-text-" in self.selector:
-            return [TreeItem(AREA, "tree-selector-item-text-96")]
+            return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
         return [self]
 
     def text_content(self):
@@ -75,6 +82,10 @@ class Locator:
 
     def check(self):
         self.page.clicks.append(f"check:{self.selector}")
+
+    def is_checked(self):
+        # По умолчанию клик по строке отмечает чекбокс; страж переопределяет.
+        return getattr(self.page, "checked", True)
 
     def locator(self, selector):
         return Locator(self.page, selector, 0)
@@ -215,3 +226,256 @@ def test_missing_resume_id_after_save_stays_uncertain(monkeypatch):
     assert reserved == ["clicked"]
     assert result.uncertain
     assert "не подтверждён" in result.reason
+
+
+class HydrationRacePage(Page):
+    """Карточка визарда отрисована SSR, но React привязывает обработчик позже.
+
+    Живая разведка #778: ``[data-qa='resume-profile-card-select-job']`` — это
+    ``<div role="button">``, видимый сразу, но без ``__react*`` ключей ещё
+    несколько секунд. Клик по нему проходит без ошибки и молча не даёт
+    эффекта: экран не переключается, поле ввода должности не появляется.
+    """
+
+    def __init__(self, clicks_until_hydrated=1):
+        super().__init__(fail_on_wait=None)
+        self.clicks_until_hydrated = clicks_until_hydrated
+        self.select_job_clicks = 0
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+        if not isinstance(url, str):
+            # Финальное ожидание URL нового резюме — сохранение прошло.
+            self.url = f"https://hh.ru/resume/{'b' * 38}"
+        return None
+
+    @property
+    def _screen_switched(self):
+        return self.select_job_clicks > self.clicks_until_hydrated
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if selector == RESUME_CREATION_POSITION and not self._screen_switched:
+            count = 0  # экран не переключился — поля на странице нет
+        return HydrationLocator(self, selector, count)
+
+
+class HydrationLocator(Locator):
+    def wait_for(self, *, state, timeout):  # noqa: ARG002
+        if self.count() != 1:
+            raise PlaywrightError(f"Timeout {timeout}ms exceeded waiting for {self.selector}")
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        self.page.clicks.append(self.selector)
+        if self.selector == RESUME_CREATION_SELECT_JOB:
+            self.page.select_job_clicks += 1
+
+
+def test_click_on_unhydrated_card_is_retried(monkeypatch):
+    """Клик по ещё не гидратированной карточке должен быть повторён.
+
+    Живой прогон 2026-08-29: 3/3 попытки кликнуть сразу после
+    ``state="visible"`` не переключали экран (POSITION=0), 3/3 попытки после
+    ожидания гидратации срабатывали (POSITION=1). Видимость SSR-разметки не
+    означает готовность React-обработчика, поэтому одного ``wait_for`` мало.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HydrationRacePage(clicks_until_hydrated=1)
+    reserved: list[str] = []
+
+    result = _run(page, before_click=lambda: reserved.append("clicked"))
+
+    assert page.select_job_clicks >= 2, "первый клик ушёл в пустоту — нужен повтор"
+    assert result.success, f"визард должен пройти после повторного клика: {result.reason}"
+
+
+def test_permanently_unhydrated_card_fails_without_uncertain(monkeypatch):
+    """Ретрай ограничен: экран так и не переключился — честный failed.
+
+    Бесконечный повтор превратил бы сломанный визард в зависание, а
+    ``uncertain`` здесь недопустим: сохраняющий клик не выполнялся (#777).
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HydrationRacePage(clicks_until_hydrated=99)
+    reserved: list[str] = []
+
+    result = _run(page, before_click=lambda: reserved.append("clicked"))
+
+    assert not result.success
+    assert not result.uncertain
+    assert not reserved, "сохраняющий клик не должен быть достигнут"
+    assert "не переключился" in result.reason
+    assert page.select_job_clicks == 3, "ровно три попытки, без бесконечного цикла"
+
+
+class CatalogFilterPage(HydrationRacePage):
+    """Дерево каталога фильтруется асинхронно: до применения фильтра в нём
+    остаётся полный список, где точного совпадения с ``AREA`` нет.
+
+    Живой замер #778: до ``fill`` — 14 узлов, сразу после ``wait_for`` первого
+    узла — те же 14 (старый список), и лишь через ~500 мс React оставляет 1.
+    """
+
+    TREE = "tree-selector-item-text-"
+
+    def __init__(self, reads_until_filtered=1):
+        super().__init__(clicks_until_hydrated=0)
+        self.reads_until_filtered = reads_until_filtered
+        self.tree_reads = 0
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return CatalogLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class CatalogLocator(HydrationLocator):
+    def all(self):
+        self.page.tree_reads += 1
+        if self.page.reads_until_filtered is None:
+            # Профессии нет в каталоге: фильтр не даст совпадения никогда.
+            return [TreeItem("Аналитик", "tree-selector-item-text-10", self.page)]
+        if self.page.tree_reads <= self.page.reads_until_filtered:
+            # Ещё не отфильтровано: чужие профессии, точного совпадения нет.
+            return [
+                TreeItem("Аналитик", "tree-selector-item-text-10", self.page),
+                TreeItem("Тестировщик", "tree-selector-item-text-11", self.page),
+            ]
+        return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
+
+
+def test_catalog_tree_is_read_after_filter_applies(monkeypatch):
+    """Дерево читается после применения фильтра, а не на старом списке.
+
+    Боевой прогон 2026-08-29 падал с «профессия не найдена однозначно
+    (совпадений: 0)»: ``wait_for`` первого узла проходил мгновенно на ещё
+    нефильтрованном дереве, и ``.all()`` собирал чужие профессии.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CatalogFilterPage(reads_until_filtered=1)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"каталог должен дождаться фильтрации: {result.reason}"
+
+
+def test_absent_profession_still_fails_without_hanging(monkeypatch):
+    """Профессии нет в каталоге — честный failed, а не бесконечный опрос."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    # Дерево НИКОГДА не отдаёт совпадение: опрос должен упереться в дедлайн.
+    page = CatalogFilterPage(reads_until_filtered=None)
+    # Короткий дедлайн: проверяется факт опроса и выхода, а не длительность.
+    monkeypatch.setattr(
+        create,
+        "_select_catalog_leaf",
+        lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
+    )
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена однозначно" in result.reason
+    assert page.tree_reads > 1, "дерево должно перечитываться, а не читаться один раз"
+
+
+def test_polling_stops_as_soon_as_match_appears(monkeypatch):
+    """Найдя совпадение, опрос прекращается сразу, а не крутится до дедлайна.
+
+    Без раннего выхода результат тот же, но каждая профессия стоила бы полного
+    таймаута фильтрации на боевом прогоне.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CatalogFilterPage(reads_until_filtered=1)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success
+    # 1 чтение нефильтрованного дерева + 1 чтение с совпадением = выход.
+    assert page.tree_reads == 2, f"лишние чтения после совпадения: {page.tree_reads}"
+
+
+class CheckboxWrapperPage(CatalogFilterPage):
+    """hh.ru оборачивает <input type=checkbox> в стилизованный контейнер.
+
+    Живая разведка #778: ``Locator.check()`` по самому input падает с
+    «Clicking the checkbox did not change its state» (у него ``tabindex="-1"``
+    и оформление на родительском ``magritte-checkbox-container``), а клик по
+    текстовой строке профессии переключает его штатно.
+    """
+
+    def __init__(self):
+        super().__init__(reads_until_filtered=0)
+        self.checked = False
+
+    def locator(self, selector):
+        if "tree-selector-input-" in selector:
+            return CheckboxLocator(self, selector, 1)
+        return super().locator(selector)
+
+
+class CheckboxLocator(HydrationLocator):
+    def check(self):
+        raise PlaywrightError("Locator.check: Clicking the checkbox did not change its state")
+
+
+def test_profession_is_selected_by_clicking_the_row(monkeypatch):
+    """Профессия отмечается кликом по строке, а не check() по input."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CheckboxWrapperPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"строка профессии должна кликаться: {result.reason}"
+
+
+def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
+    """Клик по строке не отметил профессию — отказ до submit (fail-closed).
+
+    Молчаливое продолжение отправило бы каталог без выбранной профессии и
+    создало бы резюме не с той специализацией.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    class NeverChecksPage(CheckboxWrapperPage):
+        def locator(self, selector):
+            loc = super().locator(selector)
+            if "tree-selector-input-" in selector:
+                loc.is_checked = lambda: False  # type: ignore[method-assign]
+            return loc
+
+    page = NeverChecksPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не отмечена" in result.reason
+
+
+def test_resume_id_is_read_from_wizard_query_url(monkeypatch):
+    """После сохранения hh.ru ведёт на следующий шаг визарда, id — в query.
+
+    Боевой прогон 2026-08-29: резюме создано, но код ждал путь
+    ``/resume/{id}`` и упирался в таймаут на
+    ``/profile/resume/educations?resume={id}&hhtmFrom=...`` — исход
+    ``uncertain`` при фактическом успехе.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    new_id = "3805d2e4ff11065aaa0039ed1f554f657a6b41"
+
+    class WizardNextStepPage(CheckboxWrapperPage):
+        def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+            if not isinstance(url, str):
+                self.url = (
+                    f"https://hh.ru/profile/resume/educations?resume={new_id}"
+                    "&hhtmFrom=my_resumes&hhtmFromLabel=create_resume_header"
+                )
+            return None
+
+    page = WizardNextStepPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"id из query должен распознаваться: {result.reason}"
+    assert result.new_resume_id == new_id

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -24,7 +25,12 @@ from .selector_groups.resume_page import (
 )
 
 CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
-_RESUME_ID_RE = re.compile(r"/resume/([0-9a-f]{32,40})(?:[/?#]|$)")
+# hh.ru подтверждает сохранение ДВУМЯ формами URL: прямой страницей резюме
+# (/resume/{id}) и следующим шагом визарда, где id уходит в query-параметр
+# (/profile/resume/educations?resume={id}&hhtmFrom=...). Боевой прогон #778
+# наблюдал вторую: резюме создавалось, но ожидание первой формы падало по
+# таймауту и давало uncertain при фактическом успехе.
+_RESUME_ID_RE = re.compile(r"(?:/resume/|[?&]resume=)([0-9a-f]{32,40})(?:[/?#&]|$)")
 
 
 @dataclass
@@ -66,7 +72,7 @@ def _click_one(
     return ""
 
 
-def _select_catalog_leaf(page: Page, area: str) -> str:
+def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0) -> str:
     """Select one exact leaf from hh.ru's full profession tree."""
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
@@ -80,23 +86,29 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     if reason:
         return reason
     _require(search).fill(area)
-    # The filtered tree re-renders asynchronously (React) after typing; .all()
-    # right after fill() can observe the stale/blank tree (the same commit-vs-
-    # hydration race guarded for SELECT_JOB/POSITION in #304), which would
-    # surface as a false "профессия «…» не найдена однозначно (совпадений: 0)".
-    page.locator("[data-qa*='tree-selector-item-text-']").first.wait_for(
-        state="visible", timeout=15000
-    )
+    # The filtered tree re-renders asynchronously (React) after typing, and the
+    # PRE-filter tree is already populated — so waiting for "a first node" is
+    # satisfied instantly by the stale full catalog (живой замер #778: 14 узлов
+    # до fill, те же 14 сразу после wait_for, и лишь через ~500 мс остаётся 1).
+    # Reading .all() at that moment collects other professions and surfaces as a
+    # false "профессия «…» не найдена однозначно (совпадений: 0)". Poll the tree
+    # until the exact match appears instead of trusting a single read.
     # get_by_text() resolves to the inner ``cell-text-content`` span on the
     # current hh.ru DOM, while the identifier we need is on its wrapper.
     # Match the wrapper by its own rendered text instead of assuming the
     # attribute is attached to the text node.
-    candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
-    matches = [
-        candidate
-        for candidate in candidates
-        if normalize(candidate.text_content() or "") == normalize(area)
-    ]
+    deadline = time.monotonic() + filter_timeout
+    matches: list[Locator] = []
+    while True:
+        candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
+        matches = [
+            candidate
+            for candidate in candidates
+            if normalize(candidate.text_content() or "") == normalize(area)
+        ]
+        if len(matches) == 1 or time.monotonic() >= deadline:
+            break
+        page.wait_for_timeout(250)
     if len(matches) != 1:
         return f"профессия «{area}» не найдена однозначно в каталоге (совпадений: {len(matches)})"
     qa = matches[0].get_attribute("data-qa") or ""
@@ -114,8 +126,51 @@ def _select_catalog_leaf(page: Page, area: str) -> str:
     checkbox, reason = _one(page, checkbox_selector, f"чекбокс профессии «{area}»")
     if reason:
         return reason
-    _require(checkbox).check()
+    # ``check()`` по самому <input> не работает: hh.ru прячет его за
+    # стилизованной обёрткой (``magritte-checkbox-container``), у input
+    # ``tabindex="-1"``, и Playwright падает с «Clicking the checkbox did not
+    # change its state» (живой прогон #778). Кликается видимая строка
+    # профессии — тот же узел, по которому выше определён leaf.
+    matches[0].click()
+    if not _require(checkbox).is_checked():
+        return f"профессия «{area}» не отмечена после клика по строке каталога"
     return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
+
+
+def _click_until_screen_switches(
+    page: Page,
+    card: Locator,
+    next_selector: str,
+    *,
+    attempts: int = 3,
+    timeout: int = 7000,
+) -> str:
+    """Кликать карточку визарда, пока не отрисуется следующий экран.
+
+    ``wait_for(state="visible")`` карточку не страхует: hh.ru отдаёт её
+    SSR-разметкой (``<div role="button">``), которая видима сразу, а React
+    привязывает обработчик лишь через несколько секунд. Клик в этом окне
+    проходит без ошибки и молча не даёт эффекта (живая разведка #778: 3/3
+    провала при клике сразу после ``visible``, 3/3 успеха после ожидания
+    гидратации).
+
+    Ждать ``__react*`` ключ на элементе было бы прямой проверкой причины, но
+    завязало бы код на внутреннее устройство React. Вместо этого проверяется
+    наблюдаемый результат — появление следующего экрана. Повтор безопасен:
+    карточка выбора профессии ничего не мутирует, а лишний клик по уже
+    переключённому экрану невозможен, так как цикл прерывается по первому
+    успеху.
+    """
+    last_error = ""
+    for _ in range(attempts):
+        card.click()
+        try:
+            page.locator(next_selector).first.wait_for(state="visible", timeout=timeout)
+        except PlaywrightError as exc:
+            last_error = str(exc)
+            continue
+        return ""
+    return f"экран визарда не переключился после {attempts} попыток: {last_error}"
 
 
 def _existing_title_reason(card_count: int, titles: list[str], title: str) -> str:
@@ -210,8 +265,9 @@ def create_resume_on_hh(
     # PlaywrightError остаётся обычным failed и не блокирует повтор (#777,
     # тот же принцип, что у before_click-seam в CLAUDE.md, раздел 6).
     try:
-        select_job.click()
-        page.locator(RESUME_CREATION_POSITION).first.wait_for(state="visible", timeout=15000)
+        switch_reason = _click_until_screen_switches(page, select_job, RESUME_CREATION_POSITION)
+        if switch_reason:
+            return CreateResumeResult(False, reason=switch_reason)
         position, reason = _one(page, RESUME_CREATION_POSITION, "поле поиска профессии")
         if reason:
             return CreateResumeResult(False, reason=reason)
