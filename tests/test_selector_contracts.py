@@ -175,7 +175,12 @@ def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
     # #800: +1 resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX ("Работаю
     # сейчас" checkbox that gates the disabled end-date fields, confirmed
     # live read-only on the same first-row editor).
-    assert len(catalog["selectors"]) == 248
+    # #703: -1 search_page.VACANCY_CARD_RESPONSE_STATUS — hh.ru does not mark
+    # already-applied cards with this data-qa (checked on the card of a vacancy
+    # whose response is proven by both the local history and
+    # /applicant/negotiations), and the selector was dead code, so the
+    # declaration was dropped together with its contract.
+    assert len(catalog["selectors"]) == 247
     assert all(
         row.get("coverage_status") in contracts.AUDIT_STATUSES
         for row in catalog["selectors"].values()
@@ -1020,7 +1025,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 248" in output
+    assert "local selector contracts: 247" in output
     assert "Semantic mismatches:" in output
 
 

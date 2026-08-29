@@ -35,19 +35,31 @@ RESUME_EDIT_BUTTON = {
     "attestations": "[data-qa^='resume-edit-button-attestationEducation-']",
     "recommendations": "[data-qa^='resume-edit-button-recommendation-']",
 }
-SECTION_ROUTES = {
-    "attestations": re.compile(r"/profile/edit/attestationEducation/[^/?#]+"),
-    # The attestation route has no resume id in it (only an attestation id),
-    # so its pattern is static. The recommendations route embeds the resume id
-    # itself — bind it per-call via _recommendation_route() so a stale or
-    # misdirected edit link for a DIFFERENT resume cannot pass the route guard
-    # (#368 cycle-review round 1, codex finding: the previous static pattern
-    # matched any resume id here despite wrong_route_error's identity claim).
-}
+# Both section editors embed the resume id in their route, so both patterns are
+# bound per-call rather than kept static: a stale or misdirected edit link for a
+# DIFFERENT resume must not pass the route guard (#368 cycle-review round 1,
+# codex finding).
+#
+# The attestation entry used to be static and pointed at /profile/edit/... — the
+# same live read-only probe that renamed ATTESTATION_FIELDS below (#703,
+# 2026-08-30) showed the real route is /resume/edit/<resume_id>/
+# attestationEducation/<n>. The guard therefore never matched, and opening an
+# attestation editor always failed with wrong_route_error; fixing the field
+# names alone would not have made this path work.
+
+
+def _attestation_route(resume_id: str) -> re.Pattern[str]:
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/attestationEducation/[^/?#]+")
 
 
 def _recommendation_route(resume_id: str) -> re.Pattern[str]:
     return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation/[^/?#]+")
+
+
+SECTION_ROUTES = {
+    "attestations": _attestation_route,
+    "recommendations": _recommendation_route,
+}
 
 
 # Live-confirmed 2026-08-30 on draft resume a1d75539… at
@@ -242,11 +254,7 @@ def _apply_rows(
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
             if resume_id:
-                edit_path = (
-                    _recommendation_route(resume_id)
-                    if block == "recommendations"
-                    else SECTION_ROUTES[block]
-                )
+                edit_path = SECTION_ROUTES[block](resume_id)
                 open_hydrated_resume_editor(
                     page,
                     trigger_selector=trigger.nth(index),

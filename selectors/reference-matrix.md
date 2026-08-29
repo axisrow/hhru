@@ -208,7 +208,6 @@
 | search_page.VACANCY_CARD_PUBLICATION_TIME | `[data-qa='vacancy-serp__vacancy-date']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_REMOTE_LABEL | `[data-qa='vacancy-label-work-schedule-remote']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_RESPONSE_BUTTON | `[data-qa='vacancy-serp__vacancy_response']` | — | [data-qa="vacancy-serp__vacancy_response"] | — | live_dom |
-| search_page.VACANCY_CARD_RESPONSE_STATUS | `[data-qa='vacancy-serp__vacancy_response_status']` | — | — | — | documented_live |
 | search_page.VACANCY_CARD_SIDE_JOB | `[data-qa='vacancy-label-side-job']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_SNIPPET_REQUIREMENT | `[data-qa='vacancy-serp__vacancy_snippet_requirement']` | — | — | — | live_dom |
 | search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY | `[data-qa='vacancy-serp__vacancy_snippet_responsibility']` | — | — | — | live_dom |

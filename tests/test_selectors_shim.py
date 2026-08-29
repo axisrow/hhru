@@ -22,7 +22,6 @@ def test_shim_reexports_all_old_names():
         "VACANCY_CARD_COMPANY",
         "VACANCY_CARD_RESPONSE_BUTTON",
         "PAGINATION_NEXT",
-        "VACANCY_CARD_RESPONSE_STATUS",
         # vacancy_page
         "VACANCY_APPLY_BUTTON",
         "VACANCY_ALREADY_RESPONDED_AGAIN",
