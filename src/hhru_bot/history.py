@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -760,6 +760,25 @@ def _row_is_live(row: sqlite3.Row, *, now: datetime) -> bool:
     return started_at > now - LEGACY_LEASE_GRACE
 
 
+def _parse_recorded_at(value: str) -> datetime:
+    """Разобрать ``created_at`` из ``actions``, приведя его к локальному времени.
+
+    Код пишет ``datetime.now().isoformat()`` — локальное время с разделителем
+    ``'T'``. Но ручная reconciliation (CLAUDE.md, раздел 6) вставляет строку
+    напрямую через SQL ``datetime('now')``, а SQLite отдаёт для него UTC с
+    пробелом-разделителем. Naive-разбор такой строки выглядел бы старше на
+    величину смещения таймзоны и обходил кулдаун (``bump`` — 4 часа), поэтому
+    UTC-форма распознаётся по разделителю и переводится в локальное время.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is not None:
+        return parsed.astimezone().replace(tzinfo=None)
+    if "T" not in value:
+        # Форма SQLite ``datetime('now')``: UTC без указания зоны.
+        return parsed.replace(tzinfo=UTC).astimezone().replace(tzinfo=None)
+    return parsed
+
+
 class History:
     # Feedback is deliberately bounded: it is prompt context, not an archive
     # of potentially sensitive letters.
@@ -1499,7 +1518,7 @@ class History:
                 """,
                 (resume_id, action),
             ).fetchone()
-            return datetime.fromisoformat(row["created_at"]) if row else None
+            return _parse_recorded_at(row["created_at"]) if row else None
 
     def time_since_last(self, resume_id: str, action: str) -> timedelta | None:
         last = self.last_action_at(resume_id, action)
@@ -1519,20 +1538,28 @@ class History:
         "the earlier uncertain was resolved".
         """
         with self._connect() as conn:
+            # Порядок берётся по ``id`` (монотонный rowid), а НЕ по ``created_at``.
+            # Форматы ``created_at`` в таблице смешаны: код пишет
+            # ``datetime.now().isoformat()`` (локальное время, разделитель 'T'),
+            # а ручная reconciliation (CLAUDE.md, раздел 6) — SQL
+            # ``datetime('now')`` (UTC, разделитель ' '). Строковое сравнение
+            # ``created_at > ?`` считало документированную резолюцию НЕ более
+            # поздней (0x20 < 0x54) и не снимало блокировку никогда; сравнение
+            # же разобранными датами спотыкалось о секундную точность
+            # ``datetime('now')``. ``id`` свободен от обеих проблем: он отражает
+            # фактический порядок вставки и не зависит от формата и таймзоны.
             last_success = conn.execute(
                 """
-                SELECT created_at FROM actions
+                SELECT MAX(id) AS id FROM actions
                 WHERE resume_id = ? AND action = ? AND status = 'success'
-                ORDER BY created_at DESC
-                LIMIT 1
                 """,
                 (resume_id, action),
             ).fetchone()
             params: tuple = (resume_id, action)
             since_clause = ""
-            if last_success:
-                since_clause = "AND created_at > ?"
-                params = (*params, last_success["created_at"])
+            if last_success and last_success["id"] is not None:
+                since_clause = "AND id > ?"
+                params = (*params, last_success["id"])
             row = conn.execute(
                 f"""
                 SELECT 1 FROM actions
