@@ -47,9 +47,9 @@ def register(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
-def _print_content(resume_id: str, content) -> None:
+def _print_content(resume_id: str, cluster_title: str, content) -> None:
     print(
-        f"[DRY-RUN] Адаптивное резюме '{resume_id}' под кластер «{content.cluster_key}» "
+        f"[DRY-RUN] Адаптивное резюме '{resume_id}' под кластер «{cluster_title}» "
         f"(источник: {content.source}):"
     )
     print(f"  Заголовок: {content.title}")
@@ -96,4 +96,4 @@ def run(args: argparse.Namespace) -> None:
     # детерминированный fallback, а не отказ команды (fail-closed).
     content = generate_adaptive_resume(llm, resume.candidate_facts, cluster)
 
-    _print_content(resume.id, content)
+    _print_content(resume.id, cluster.title, content)

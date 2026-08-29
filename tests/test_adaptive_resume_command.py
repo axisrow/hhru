@@ -85,3 +85,7 @@ def test_dry_run_without_ai_uses_fallback_and_prints_plan(monkeypatch, capsys):
     assert "fallback" in output
     assert "Ничего не сохранено на hh.ru" in output
     assert "Django" in output or "django" in output.lower()
+    # cycle-review round 1 (/review): вывод обязан показывать читаемое имя
+    # кластера ("Python-бэкенд"), а не внутренний слаг ("python_backend").
+    assert "Python-бэкенд" in output
+    assert "python_backend»" not in output

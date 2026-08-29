@@ -89,6 +89,13 @@ def test_shorten_to_one_line_empty() -> None:
     assert _shorten_to_one_line("") == ""
 
 
+def test_shorten_to_one_line_does_not_split_on_abbreviation_dot() -> None:
+    """Codex cycle-review round 1: точка внутри 'v1.0.' не должна считаться
+    границей предложения — реальная граница только после неё."""
+    text = "Использовал API v1.0. Оптимизировал отклик."
+    assert _shorten_to_one_line(text) == "Использовал API v1.0."
+
+
 # --- политика отбора: сокращение, а не скрытие ---
 
 

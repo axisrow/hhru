@@ -30,6 +30,20 @@
 уже есть в ``CandidateFacts``). Промпт получает уже урезанный по политике выше
 набор фактов — LLM не решает, что скрывать, только переписывает формулировки.
 
+**Граница гарантии «не выдумывает факты» (Codex cycle-review round 1):**
+``_parse_response`` проверяет только СТРУКТУРУ ответа модели (типы, число
+записей work_experience/projects совпадает со входом) — это тот же уровень
+контроля, что и у соседних генераторов проекта (``experience.py::_entry``,
+``resume_sections.py::parse_plan``). СОДЕРЖАНИЕ переформулировки (реально ли
+модель не добавила метрики/детали, которых не было в исходном description)
+не сверяется программно с исходным текстом — «не выдумывай» здесь инструкция
+модели в промпте, а не runtime-инвариант, как и во всех остальных генераторах
+резюме проекта. Полная семантическая проверка (например, diff по сущностям
+между исходным и переформулированным текстом) — самостоятельная фича с
+нетривиальными false positive/negative и не входит в PR-1 (issue #753
+ограничивает объём: детерминированный отбор фактов + одна LLM-ступень
+переформулировки, по образцу существующих модулей).
+
 Эта команда/модуль намеренно НЕ пишет ничего на hh.ru (issue #753 — PR-1 среза
 "генерация + --dry-run"; применение существующими ``edit_*_on_hh`` — отдельный
 follow-up PR-2, см. тело issue "Оценка"/"Риск превышения лимита").
@@ -92,14 +106,21 @@ def _shorten_to_one_line(description: str) -> str:
     """Первое предложение исходного описания — политика 'сократить, не скрыть'.
 
     Не выдумывает новый текст (запрет issue #750): берёт только префикс уже
-    существующего ``description``. Ищет первую границу предложения среди
-    '.', '!', '?', перевода строки; если границы нет — весь текст короткий
-    сам по себе и возвращается как есть (не обрезаем на произвольном месте).
+    существующего ``description``. Ищет первую границу предложения — '.'/'!'/
+    '?', за которым следует пробел и заглавная буква, либо конец текста —
+    или перевод строки; если границы нет — весь текст короткий сам по себе
+    и возвращается как есть (не обрезаем на произвольном месте).
+
+    Граница НЕ распознаётся по одиночной точке без такого продолжения —
+    иначе "Использовал API v1.0. Оптимизировал отклик." резалось бы на
+    "Использовал API v1." (точка внутри номера версии/аббревиатуры приняла
+    бы участие в отсечении описания), теряя реальный конец предложения
+    (Codex cycle-review round 1).
     """
     text = description.strip()
     if not text:
         return ""
-    match = re.search(r"[.!?\n]", text)
+    match = re.search(r"[.!?](?=\s+[А-ЯA-Z]|\s*$)|\n", text)
     if match is None:
         return text
     return text[: match.start() + 1].strip()
@@ -148,12 +169,15 @@ def _ordered_skills(
             seen.setdefault(skill, None)
     keyword_set = {k.casefold() for k in cluster.keywords}
 
-    def _rank(skill: str) -> tuple[int, int]:
+    def _rank(skill: str) -> int:
         matched = skill.casefold() in keyword_set or any(
             kw.casefold() in skill.casefold() for kw in cluster.keywords
         )
-        return (0 if matched else 1, 0)
+        return 0 if matched else 1
 
+    # sorted() — стабильная сортировка: при равном _rank порядок появления
+    # (порядок вставки в seen) сохраняется сам по себе, отдельный
+    # tie-breaker в ключе не нужен.
     ordered = sorted(seen.keys(), key=_rank)
     return ordered
 
@@ -181,10 +205,22 @@ def _facts_summary(facts: CandidateFacts, cluster: ResumeCluster) -> dict[str, A
     }
 
 
-def build_prompt(facts: CandidateFacts, cluster: ResumeCluster) -> list[dict[str, str]]:
+def build_prompt(
+    facts: CandidateFacts,
+    cluster: ResumeCluster,
+    facts_summary: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     """Строгий JSON-only промпт. Факты уже отобраны/урезаны до вызова LLM —
     модель только переписывает формулировки, не решает, что показать (#750:
-    отбор фактов — детерминированная логика проекта, а не решение модели)."""
+    отбор фактов — детерминированная логика проекта, а не решение модели).
+
+    ``facts_summary`` опционален: вызывающая сторона (generate_adaptive_resume)
+    уже вычислила его для валидации ответа и передаёт готовым, чтобы не гонять
+    _select_experience/_select_projects/_ordered_skills дважды за один вызов
+    (cycle-review round 1, /review). Прямые вызовы build_prompt() (тесты,
+    будущие потребители) пересчитывают его сами — сигнатура остаётся
+    обратно совместимой.
+    """
     system = (
         "Ты адаптируешь содержимое резюме кандидата под конкретный кластер вакансий "
         "на hh.ru. Отвечай только JSON-объектом с ключами title, about, work_experience, "
@@ -194,7 +230,7 @@ def build_prompt(facts: CandidateFacts, cluster: ResumeCluster) -> list[dict[str
         "Не выдумывай факты, компании, даты, метрики или навыки, которых нет во входных "
         "данных. Пиши по-русски, профессионально, без эмодзи."
     )
-    summary = _facts_summary(facts, cluster)
+    summary = facts_summary if facts_summary is not None else _facts_summary(facts, cluster)
     user = (
         f"Кластер: {cluster.title}. Характерные термины кластера: "
         f"{', '.join(cluster.keywords)}.\n"
@@ -277,7 +313,9 @@ def generate_adaptive_resume(
         return _fallback_content(facts, cluster)
     try:
         response = llm_client.chat(
-            build_prompt(facts, cluster), temperature=TEMPERATURE, max_tokens=MAX_TOKENS
+            build_prompt(facts, cluster, facts_summary),
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
         )
     except Exception as exc:  # noqa: BLE001 - fail closed, must not crash a dry-run
         logger.warning("Adaptive resume generation failed: %s", exc)
