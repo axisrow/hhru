@@ -211,6 +211,32 @@ def test_copy_resume_different_history_files_share_account_lock(tmp_path):
     assert lock_paths == {(tmp_path / "account" / ".hhru.lock").resolve()}
 
 
+def test_resume_pool_different_history_files_share_account_lock(tmp_path):
+    """resume-pool делает ту же account-wide reconciliation, что и copy-resume,
+    несколько раз подряд (по разу на кластер) — тот же race (#558/a52306c),
+    только intra-process вместо inter-process, требует того же lock-root."""
+    parser = cli.build_parser()
+    config = tmp_path / "account" / "config.yaml"
+    lock_paths = set()
+
+    for history_name in ("first.db", "isolated-live-test.db"):
+        args = parser.parse_args(
+            [
+                "--config",
+                str(config),
+                "--history",
+                str(tmp_path / "history" / history_name),
+                "resume-pool",
+                "--source",
+                "backend",
+            ]
+        )
+        cli._resolve_paths(args)
+        lock_paths.add(_write_lock_path(args))
+
+    assert lock_paths == {(tmp_path / "account" / ".hhru.lock").resolve()}
+
+
 def test_account_list_is_read_only_and_bypasses_lock_and_logging(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
 
