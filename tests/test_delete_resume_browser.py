@@ -270,3 +270,64 @@ def test_ambiguous_direct_action_does_not_fall_back_to_profile(monkeypatch):
     assert "неоднозначно" in result.reason
     assert page.profile_opened is False
     assert page.clicked is False
+
+
+class MissingResumePage(Page):
+    """Список резюме отрисован, но карточки с нужным resume_id в нём нет.
+
+    Живой прогон 2026-08-29: пользователь удалил черновик вручную, и
+    ``delete-resume`` по его id сообщил «карточка … не появилась после
+    загрузки списка» — формулировка про загрузку, хотя список загрузился
+    полностью, а резюме просто не существует. Страница такого резюме на
+    hh.ru отдаёт «Произошла ошибка» вместо 404 (проверено в Chrome), так что
+    отличить «не прогрузилось» от «удалено» пользователь по выводу не может.
+    """
+
+    def locator(self, selector):
+        if selector == RESUME_LIST_CARD:
+            # Список ЕСТЬ: другие резюме на странице отрисованы.
+            return Locator(self, selector, 5)
+        if ":has(" in selector:
+            # Карточки искомого резюме нет и не появится.
+            return Locator(self, selector, 0, detached_error=PlaywrightError("not attached"))
+        return super().locator(selector)
+
+
+def test_absent_resume_is_reported_as_missing_not_as_load_failure(monkeypatch):
+    """Отсутствующее резюме — отдельная причина, а не «список не загрузился»."""
+    _patch_navigation(monkeypatch)
+    page = MissingResumePage()
+
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
+
+    assert result.success is False
+    assert result.uncertain is False
+    assert "не появилась после загрузки списка" not in result.reason, (
+        f"причина вводит в заблуждение: список загружен, резюме не существует — {result.reason}"
+    )
+    assert "не найдено" in result.reason or "не существует" in result.reason
+
+
+class EmptyListPage(Page):
+    """Список не отрисовался вовсе: ни одной карточки."""
+
+    def locator(self, selector):
+        if selector == RESUME_LIST_CARD or ":has(" in selector:
+            return Locator(self, selector, 0, detached_error=PlaywrightError("not attached"))
+        return super().locator(selector)
+
+
+def test_empty_list_keeps_load_failure_wording(monkeypatch):
+    """Пустой список остаётся неоднозначным — прежняя причина про загрузку.
+
+    Подтверждённого empty-state селектора в DOM нет (см. ``_wait_list_ready``),
+    поэтому «резюме не существует» здесь утверждать нельзя: список мог просто
+    не прогрузиться.
+    """
+    _patch_navigation(monkeypatch)
+    page = EmptyListPage()
+
+    result = delete.delete_resume_on_hh(cast(PlaywrightPage, page), RESUME, dry_run=False)
+
+    assert result.success is False
+    assert "не появилась после загрузки списка" in result.reason
