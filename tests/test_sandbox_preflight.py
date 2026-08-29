@@ -22,6 +22,7 @@ def test_browser_command_registry_is_complete() -> None:
         "competitors",
         "copy-resume",
         "create-resume",
+        "delete-education-entry",
         "delete-resume",
         "edit-education",
         "edit-experience",
