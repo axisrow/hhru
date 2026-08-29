@@ -654,15 +654,21 @@ def fetch_competitor_resume(
     except PlaywrightError:
         raise CompetitorResumeIndeterminate("основной блок резюме не появился") from None
     headings = [value.strip() for value in page.locator(sel.DETAIL_HEADING).all_inner_texts()]
-    title_locator = page.locator(sel.DETAIL_TITLE_POSITION)
-    if title_locator.count() != 1:
-        raise CompetitorResumeIndeterminate("desired_role не подтверждён")
+    # card.desired_role is already confirmed from the search-results listing
+    # (parse_search_links) — same trust model as card.area below. Only fall
+    # back to re-reading the detail page's h1 when the card did not carry it.
+    desired_role = card.desired_role
+    if not desired_role:
+        title_locator = page.locator(sel.DETAIL_TITLE_POSITION)
+        if title_locator.count() != 1:
+            raise CompetitorResumeIndeterminate("desired_role не подтверждён")
+        desired_role = title_locator.inner_text()
     snapshot = parse_competitor_resume_text(
         main.inner_text(),
         resume_id=card.resume_id,
         resume_url=card.resume_url,
         headings=headings,
-        desired_role=title_locator.inner_text(),
+        desired_role=desired_role,
     )
     address_locator = page.locator(sel.DETAIL_PERSONAL_ADDRESS)
     relocation_locator = page.locator(sel.DETAIL_RELOCATION)

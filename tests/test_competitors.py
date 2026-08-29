@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 import hhru_bot.competitors as competitors_module
@@ -297,12 +295,13 @@ def test_parse_detail_extracts_only_competitor_fields():
 
 
 def test_detail_without_confirmed_role_fails_closed():
+    """A blank desired_role (e.g. an empty h1) must fail closed."""
     with pytest.raises(CompetitorResumeIndeterminate, match="desired_role"):
         parse_competitor_resume_text(
             "Навыки\nPython",
             resume_id="abc",
             resume_url="https://hh.ru/resume/abc",
-            headings=["Навыки"],
+            headings=[],
             desired_role="  ",
         )
 
@@ -376,6 +375,12 @@ def test_parse_detail_preserves_free_text_sections():
     assert snapshot.achievements == "Сократил расходы на 20%"
 
 
+def _detail_card(*, desired_role: str = "GPT") -> CompetitorSearchCard:
+    return CompetitorSearchCard(
+        resume_id="abc", resume_url="https://hh.ru/resume/abc", desired_role=desired_role, rank=1
+    )
+
+
 def _fake_detail_page(*, title_count: int, title_text: str = "GPT"):
     """A Playwright Page double for fetch_competitor_resume (#792 regression).
 
@@ -383,28 +388,25 @@ def _fake_detail_page(*, title_count: int, title_text: str = "GPT"):
     ``main h2`` never contains the desired-role title — it lives in
     ``h1[data-qa='resume-block-title-position']``. This double reproduces
     exactly that shape: DETAIL_HEADING yields only section/salary headings,
-    DETAIL_TITLE_POSITION is the sole source of the title.
+    DETAIL_TITLE_POSITION is the sole source of the title. Built from the
+    same _Locator/_Text doubles as _PaginationPage below, not a bespoke
+    mock — this is fetch_competitor_resume's page.locator(selector) shape.
     """
-    main_locator = MagicMock(name="main")
-    main_locator.inner_text.return_value = f"{title_text}\nНавыки\nPython"
-    heading_locator = MagicMock(name="headings")
-    heading_locator.all_inner_texts.return_value = ["Навыки"]
-    title_locator = MagicMock(name="title")
-    title_locator.count.return_value = title_count
-    title_locator.inner_text.return_value = title_text
-    empty_locator = MagicMock(name="empty")
-    empty_locator.count.return_value = 0
+    empty = _Locator([])
+    locators = {
+        selectors.DETAIL_MAIN: _Locator([f"{title_text}\nНавыки\nPython"]),
+        selectors.DETAIL_HEADING: _Locator(["Навыки"]),
+        selectors.DETAIL_TITLE_POSITION: _Locator([title_text] * title_count),
+        selectors.DETAIL_PERSONAL_ADDRESS: empty,
+        selectors.DETAIL_RELOCATION: empty,
+        selectors.DETAIL_PERSONAL_INFO: empty,
+    }
 
-    page = MagicMock(name="page")
-    page.locator.side_effect = lambda selector: {
-        selectors.DETAIL_MAIN: main_locator,
-        selectors.DETAIL_HEADING: heading_locator,
-        selectors.DETAIL_TITLE_POSITION: title_locator,
-        selectors.DETAIL_PERSONAL_ADDRESS: empty_locator,
-        selectors.DETAIL_RELOCATION: empty_locator,
-        selectors.DETAIL_PERSONAL_INFO: empty_locator,
-    }[selector]
-    return page
+    class _DetailPage:
+        def locator(self, selector):
+            return locators[selector]
+
+    return _DetailPage()
 
 
 def _patch_fetch_prerequisites(monkeypatch):
@@ -414,30 +416,40 @@ def _patch_fetch_prerequisites(monkeypatch):
     monkeypatch.setattr(competitors_module, "resume_identity_matches", lambda *_a, **_k: True)
 
 
-def test_fetch_competitor_resume_reads_title_from_h1_not_h2(monkeypatch):
-    """Regression for #792: DETAIL_HEADING (main h2) never carries the
-    desired-role title, only DETAIL_TITLE_POSITION (h1) does."""
+def test_fetch_competitor_resume_prefers_card_desired_role_over_detail_h1(monkeypatch):
+    """card.desired_role is already confirmed from the search listing (same
+    trust model as card.area) — it must win over a fresh detail-page scrape."""
     _patch_fetch_prerequisites(monkeypatch)
-    page = _fake_detail_page(title_count=1, title_text="GPT")
-    card = CompetitorSearchCard(
-        resume_id="abc", resume_url="https://hh.ru/resume/abc", desired_role="GPT", rank=1
+    page = _fake_detail_page(title_count=1, title_text="Prompt Engineer")
+
+    snapshot = fetch_competitor_resume(
+        page, _detail_card(desired_role="GPT"), require_authentication=False
     )
 
-    snapshot = fetch_competitor_resume(page, card, require_authentication=False)
+    assert snapshot.desired_role == "GPT"
+
+
+def test_fetch_competitor_resume_falls_back_to_h1_when_card_role_missing(monkeypatch):
+    """Regression for #792: DETAIL_HEADING (main h2) never carries the
+    desired-role title, only DETAIL_TITLE_POSITION (h1) does. Exercised via
+    the fallback path, since a normally-parsed card always has desired_role."""
+    _patch_fetch_prerequisites(monkeypatch)
+    page = _fake_detail_page(title_count=1, title_text="GPT")
+
+    snapshot = fetch_competitor_resume(
+        page, _detail_card(desired_role=""), require_authentication=False
+    )
 
     assert snapshot.desired_role == "GPT"
 
 
 def test_fetch_competitor_resume_fails_closed_when_title_missing(monkeypatch):
-    """No confirmed h1 title -> fail closed, never silently skip desired_role."""
+    """No card role and no confirmed h1 title -> fail closed."""
     _patch_fetch_prerequisites(monkeypatch)
     page = _fake_detail_page(title_count=0)
-    card = CompetitorSearchCard(
-        resume_id="abc", resume_url="https://hh.ru/resume/abc", desired_role="GPT", rank=1
-    )
 
     with pytest.raises(CompetitorResumeIndeterminate, match="desired_role"):
-        fetch_competitor_resume(page, card, require_authentication=False)
+        fetch_competitor_resume(page, _detail_card(desired_role=""), require_authentication=False)
 
 
 class _Locator:
@@ -463,6 +475,9 @@ class _Locator:
 
     def inner_text(self):
         return self.values[0]
+
+    def all_inner_texts(self):
+        return list(self.values)
 
     def get_attribute(self, name):
         assert self.links and name == "href"
