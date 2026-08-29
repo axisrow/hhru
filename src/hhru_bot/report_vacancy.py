@@ -15,6 +15,23 @@
 контракт, что у `clear_negotiations`/`apply` для непроверенных терминальных
 кликов: нет подтверждённого элемента дальше этой точки, значит команда не
 идёт дальше сама.
+
+**Постоянная блокировка `has_unresolved_uncertain` (CLAUDE.md, раздел 6,
+паттерн #480/delete-resume, но с другим инвариантом).** Поскольку `success`
+здесь никогда не бывает `True`, `uncertain`-строка, записанная
+`DurableMutationAttempt.interrupt()` при исключении ПОСЛЕ `before_click()`
+(клик по кнопке «Ещё»), заблокирует `report-vacancy` для этого `vacancy_id`
+навсегда — не «пока не подтверждён», а структурно недостижимо. В отличие от
+`delete-resume`, здесь reconciliation не требует проверки состояния на hh.ru:
+ни один клик до (не включая) неисследованного шага 3 не мутирует hh.ru
+(вся форма до заполненного комментария — чисто клиентский рендер), поэтому
+можно безусловно вставить резолюцию:
+```sql
+INSERT INTO actions (resume_id, vacancy_id, action, status, reason, created_at)
+VALUES ('<vacancy_id>', '<vacancy_id>', 'report_vacancy', 'success',
+        'manual reconciliation: no hh.ru mutation occurred before step 3',
+        datetime('now'));
+```
 """
 
 from __future__ import annotations
