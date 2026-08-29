@@ -451,3 +451,31 @@ def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
     assert not result.success
     assert not result.uncertain, "выбор профессии — до точки невозврата"
     assert "не отмечена" in result.reason
+
+
+def test_resume_id_is_read_from_wizard_query_url(monkeypatch):
+    """После сохранения hh.ru ведёт на следующий шаг визарда, id — в query.
+
+    Боевой прогон 2026-08-29: резюме создано, но код ждал путь
+    ``/resume/{id}`` и упирался в таймаут на
+    ``/profile/resume/educations?resume={id}&hhtmFrom=...`` — исход
+    ``uncertain`` при фактическом успехе.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    new_id = "3805d2e4ff11065aaa0039ed1f554f657a6b41"
+
+    class WizardNextStepPage(CheckboxWrapperPage):
+        def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+            if not isinstance(url, str):
+                self.url = (
+                    f"https://hh.ru/profile/resume/educations?resume={new_id}"
+                    "&hhtmFrom=my_resumes&hhtmFromLabel=create_resume_header"
+                )
+            return None
+
+    page = WizardNextStepPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"id из query должен распознаваться: {result.reason}"
+    assert result.new_resume_id == new_id
