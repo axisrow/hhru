@@ -173,6 +173,44 @@ resumes:
     #       organization: "Школа данных"
     #       specialty: "SQL"
     #       year: "2020"
+    # Опционально (#751): машинно-читаемые факты о кандидате — фундамент
+    # адаптивных резюме под кластеры вакансий (#750). Пока НЕ подключено ни к
+    # одному генератору разделов (about/experience/skills/...) — это #753/#754.
+    # Каждый факт несёт tags: список тегов релевантности, по которым будущий
+    # отбор решит, показывать ли факт под конкретный кластер. Пустой tags =
+    # факт релевантен всем кластерам (или кластеризация ещё не проведена).
+    # Правдивость обязательна (#750): даты/компании/образование не выдумываются,
+    # только отбираются/скрываются под кластер.
+    # candidate_facts:
+    #   work_experience:
+    #     - company: "ООО Пример"
+    #       position: "Backend-разработчик"
+    #       period_from: "2021-03"
+    #       period_to: "2024-06"
+    #       description: "Разработка высоконагруженного API на Python/Django."
+    #       skills: ["python", "django", "postgresql"]
+    #       tags: ["backend", "python"]
+    #     - company: "ИП Пример"
+    #       position: "Data Analyst"
+    #       period_from: "2019-01"
+    #       period_to: "2021-02"
+    #       description: "Аналитика продаж, дашборды в Superset."
+    #       skills: ["sql", "python", "superset"]
+    #       tags: ["analytics", "sql"]
+    #   education:
+    #     - institution: "МГУ"
+    #       specialty: "Физика"
+    #       year: "2015"
+    #       tags: ["general"]
+    #   languages:
+    #     - name: "Английский"
+    #       level: "B2"
+    #       tags: ["general"]
+    #   projects:
+    #     - name: "Пет-проект: трекер вакансий"
+    #       description: "CLI на Playwright для автопоиска вакансий."
+    #       skills: ["python", "playwright"]
+    #       tags: ["backend", "automation"]
     cover_letter: null
 
   - id: "resume-name-2"

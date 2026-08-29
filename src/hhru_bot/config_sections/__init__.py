@@ -11,6 +11,7 @@ from __future__ import annotations
 from . import (  # noqa: F401
     account,
     ai_profile,
+    candidate_facts,
     education,
     resume_sections,
     scoring,

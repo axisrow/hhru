@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     # Только для статического анализа; реальный импорт был бы циклическим
     # (config_sections.ai импортирует ConfigError из config).
     from .config_sections.ai import AiConfig
+    from .config_sections.candidate_facts import CandidateFacts
     from .config_sections.questionnaires import QuestionnairesConfig
 
 
@@ -72,6 +73,12 @@ class ResumeConfig:
     ai_profile: object | None = None
     resume_sections: object | None = None
     education: object | None = None
+    # #751: структурированные факты о кандидате (места работы/образование/языки/
+    # проекты) под отбор в адаптивных резюме (#750). В отличие от полей выше —
+    # типизировано явно, а не через object|None (issue #751 "Заодно исправить":
+    # новая секция не должна тащить тот же дефект типизации; потребителям не
+    # нужен cast(), см. commands/about.py:73-76 для контраста).
+    candidate_facts: CandidateFacts | None = None
 
     @property
     def resume_id(self) -> str:
