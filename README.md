@@ -152,8 +152,8 @@ hhru account create marketing
 
 ```bash
 ./scripts/run.sh --account marketing login
-# либо, если сессия уже сохранена в файле cookies:
-./scripts/run.sh --account marketing import-cookies cookies.txt
+# либо, если куки hh.ru уже есть в профиле Chrome:
+./scripts/run.sh --account marketing import-cookies --profile Default
 ```
 
 `login`/`import-cookies` пишут сессию и историю строго в аккаунт, указанный
