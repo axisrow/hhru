@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.about as about_module
 from hhru_bot.about import (
@@ -242,9 +243,11 @@ def test_open_about_editor_still_fails_closed_on_unexpected_route(monkeypatch):
         open_about_editor(page, bare_resume("resume-id"))
 
 
-def test_open_about_editor_fails_fast_when_button_missing(monkeypatch):
-    """An empty resume has no about button; the command must fail immediately
-    instead of hanging for 2+ minutes on ready_selector timeout (#790)."""
+def test_open_about_editor_uses_edit_route_when_button_missing(monkeypatch):
+    """An empty resume has no about button (#790): instead of hanging for 2+
+    minutes on ready_selector timeout, or failing fast, navigate straight to
+    the resume-scoped edit route (live-confirmed #790, same pattern as
+    #797/#798) and open the editor from there."""
     page = MagicMock(name="Page")
     page.url = "https://hh.ru/resume/resume-id"
     trigger = MagicMock(name="trigger")
@@ -253,17 +256,98 @@ def test_open_about_editor_fails_fast_when_button_missing(monkeypatch):
 
     trigger.wait_for.side_effect = PlaywrightTimeoutError("not visible")
 
+    field = MagicMock(name="field")
+    field.input_value.return_value = ""
+    field.wait_for.return_value = None
+
+    def goto_side_effect(_page, url, **_kwargs):
+        page.url = url
+
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", goto_side_effect)
+
+    assert open_about_editor(page, bare_resume("resume-id")) == ""
+
+    trigger.wait_for.assert_called_once()
+    trigger.count.assert_not_called()
+    trigger.click.assert_not_called()
+    assert page.url == "https://hh.ru/resume/edit/resume-id/about"
+
+
+def test_open_about_editor_propagates_non_timeout_error(monkeypatch):
+    """A non-timeout PlaywrightError (closed context, navigation failure, etc.)
+    from the trigger wait must NOT be silently reinterpreted as "empty resume"
+    and redirected to the edit-route fallback — it is a different, unrelated
+    failure and should propagate so the real cause stays visible."""
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock(name="trigger")
+    trigger.wait_for.side_effect = PlaywrightError(
+        "Target page, context or browser has been closed"
+    )
+
     page.locator.side_effect = lambda selector: {
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
 
-    with pytest.raises(AboutGenerationError, match="не появилась после навигации"):
+    with pytest.raises(PlaywrightError, match="closed"):
         open_about_editor(page, bare_resume("resume-id"))
 
-    trigger.wait_for.assert_called_once()
     trigger.count.assert_not_called()
     trigger.click.assert_not_called()
+
+
+def test_open_about_editor_edit_route_rejects_wrong_resume(monkeypatch):
+    """The edit-route fallback must fail closed if it lands on another resume."""
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock(name="trigger")
+    trigger.count.return_value = 0
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    trigger.wait_for.side_effect = PlaywrightTimeoutError("not visible")
+
+    def goto_side_effect(_page, url, **_kwargs):
+        page.url = "https://hh.ru/resume/edit/other-id/about"
+
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", goto_side_effect)
+
+    with pytest.raises(AboutGenerationError, match="не для того резюме"):
+        open_about_editor(page, bare_resume("resume-id"))
+
+
+def test_open_about_editor_edit_route_fails_closed_when_editor_absent(monkeypatch):
+    """If the edit route opens but the editor field never renders, fail closed
+    instead of silently reading an empty/wrong value."""
+    page = MagicMock(name="Page")
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock(name="trigger")
+    trigger.count.return_value = 0
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    trigger.wait_for.side_effect = PlaywrightTimeoutError("not visible")
+
+    field = MagicMock(name="field")
+    field.wait_for.side_effect = PlaywrightTimeoutError("not visible")
+
+    def goto_side_effect(_page, url, **_kwargs):
+        page.url = url
+
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", goto_side_effect)
+
+    with pytest.raises(AboutGenerationError, match="не открылась"):
+        open_about_editor(page, bare_resume("resume-id"))
 
 
 def test_open_about_editor_fails_fast_when_button_ambiguous(monkeypatch):
