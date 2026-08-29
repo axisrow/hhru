@@ -18,6 +18,23 @@ from hhru_bot.resume_state import ResumeProfessionalRole, ResumeState
 pytestmark = pytest.mark.unit
 
 
+def test_employment_labels_match_confirmed_live_panel():
+    # Confirmed live DOM (#799, 2026-08-30): the "Тип занятости" panel shows
+    # exactly these 4 options with these texts — no separate "Частичная
+    # занятость"/"Проектная работа". A future hh.ru text drift should fail
+    # here first, not as a live "вариант формы не найден".
+    assert resume_position.EMPLOYMENT_LABELS == {
+        "full_time": "Постоянная работа",
+        "part_time": "Подработка",
+        "internship": "Стажировка",
+        "volunteer": "Волонтёрство",
+    }
+    # DISPLAY_EMPLOYMENT must stay the same object/mapping as EMPLOYMENT_LABELS
+    # (#799 root cause): two divergent dicts for click vs. display is exactly
+    # what broke --employment full_time.
+    assert resume_position.DISPLAY_EMPLOYMENT == resume_position.EMPLOYMENT_LABELS
+
+
 def test_position_response_accepts_structured_values_without_inventing_salary():
     plan = parse_position_response(
         '{"title":"Backend engineer","salary":null,"currency":null,'

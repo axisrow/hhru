@@ -94,10 +94,15 @@ WIZARD_TRANSITION_POLL_MS = 1_000
 WIZARD_VERIFY_TIMEOUT_MS = 30_000
 WIZARD_VERIFY_POLL_MS = 500
 
+# Панель "Тип занятости" на hh.ru показывает ровно эти 4 опции (confirmed live
+# DOM, #799): нет отдельных "Частичная занятость"/"Проектная работа" — hh.ru
+# объединил их в общую панель, а "full_time" отображается и кликается как
+# "Постоянная работа", не "Полная занятость". Единый словарь используется и
+# для клика по опции (_set_control), и для read_display_position — расхождение
+# между ними (#799) было первопричиной "вариант формы не найден".
 EMPLOYMENT_LABELS = {
-    "full_time": "Полная занятость",
-    "part_time": "Частичная занятость",
-    "project": "Проектная работа",
+    "full_time": "Постоянная работа",
+    "part_time": "Подработка",
     "internship": "Стажировка",
     "volunteer": "Волонтёрство",
 }
@@ -108,7 +113,7 @@ TRAVEL_LABELS = {
     "up_to_2_hours": "Не дольше 2 часов",
     "up_to_3_hours": "Не дольше 3 часов",
 }
-DISPLAY_EMPLOYMENT = {**EMPLOYMENT_LABELS, "full_time": "Постоянная работа"}
+DISPLAY_EMPLOYMENT = EMPLOYMENT_LABELS
 DISPLAY_WORK = {**WORK_LABELS, "office": "На месте работодателя", "remote": "Удалённо"}
 
 
@@ -154,7 +159,7 @@ def build_position_prompt(profile: Any, current: PositionValues, mode: str) -> l
         "Ответь только JSON без markdown с ключами title, salary, currency, "
         "specializations, employment, work_format, commute, business_trips. "
         "employment и work_format — массивы enum. Допустимые employment: "
-        "full_time, part_time, project, internship, volunteer. Допустимые "
+        "full_time, part_time, internship, volunteer. Допустимые "
         "work_format: office, hybrid, remote. Допустимые commute: no_limit, "
         "up_to_1_hour, up_to_2_hours, up_to_3_hours. salary — целое число или null. "
         "Никогда не выдумывай salary, currency или условия. В режиме fill не меняй "
@@ -691,7 +696,7 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         # deliberately avoided because it can close the whole editor form.
         el.click()
         panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
-    except PlaywrightError as exc:
+    except (PlaywrightError, RuntimeError) as exc:
         _dump_control_failure(page, selector, exc)
         raise
 

@@ -47,7 +47,7 @@ def register(subparsers) -> None:
     p.add_argument(
         "--employment",
         action="append",
-        choices=("full_time", "part_time", "project", "internship", "volunteer"),
+        choices=("full_time", "part_time", "internship", "volunteer"),
         help="Тип занятости (пока только одно значение — #526)",
     )
     p.add_argument(
