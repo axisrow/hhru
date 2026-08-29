@@ -167,6 +167,55 @@ def test_open_about_editor_accepts_draft_edit_route(monkeypatch):
     assert open_about_editor(page, bare_resume("resume-id")) == ""
 
 
+def test_open_about_editor_accepts_draft_edit_route_with_query(monkeypatch):
+    """Query parameters on the edit route must not break the route guard (#788 follow-up)."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    field = MagicMock()
+    field.count.return_value = 0
+    field.input_value.return_value = ""
+    field.wait_for.return_value = None
+
+    def click_side_effect():
+        page.url = "https://hh.ru/resume/edit/resume-id/about?foo=bar"
+
+    trigger.click.side_effect = click_side_effect
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    assert open_about_editor(page, bare_resume("resume-id")) == ""
+
+
+def test_open_about_editor_rejects_wrong_route_with_empty_resume_id(monkeypatch):
+    """An empty resume_id must not accidentally match a different edit route."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    field = MagicMock()
+    field.count.return_value = 0
+    field.input_value.return_value = ""
+    field.wait_for.return_value = None
+
+    def click_side_effect():
+        page.url = "https://hh.ru/resume/edit/other-id/about"
+
+    trigger.click.side_effect = click_side_effect
+    page.locator.side_effect = lambda selector: {
+        about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
+        about_module.resume_page.RESUME_ABOUT_EDITOR: field,
+    }[selector]
+    monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(AboutGenerationError):
+        open_about_editor(page, bare_resume(""))
+
+
 def test_open_about_editor_still_fails_closed_on_unexpected_route(monkeypatch):
     """The route guard must not be weakened: an unexpected editor route still
     fails closed instead of silently editing the wrong resume (#527)."""

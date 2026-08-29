@@ -761,6 +761,71 @@ def test_verify_wizard_save_polls_until_resume_card_title_matches(monkeypatch):
     page.wait_for_timeout.assert_called_once_with(resume_position.WIZARD_VERIFY_POLL_MS)
 
 
+def test_open_position_form_accepts_edit_route_with_query(monkeypatch):
+    """Query parameters on the edit route must not break the route guard."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/position?foo=bar"
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    form.wait_for.return_value = None
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
+    monkeypatch.setattr(
+        resume_position,
+        "parse_resume_state",
+        lambda *_args: ResumeState(status="new", is_searchable=True),
+    )
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", lambda _page: PositionValues())
+
+    flow = resume_position.open_position_form(page, resume)
+
+    assert flow.kind == "editor"
+    assert edit.click.call_count == 1
+    assert form.wait_for.call_count == 1
+
+
+def test_open_position_form_rejects_wrong_route_with_empty_resume_id(monkeypatch):
+    """An empty resume_id must not accidentally match a different edit route."""
+    resume = bare_resume("")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/other-resume-id/position"
+    edit = MagicMock()
+    edit.count.return_value = 1
+    form = MagicMock()
+    form.count.return_value = 0
+    form.wait_for.return_value = None
+    page.locator.side_effect = lambda selector: {
+        resume_position.EDIT: edit,
+        resume_position.FORM: form,
+    }[selector]
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
+    monkeypatch.setattr(
+        resume_position,
+        "parse_resume_state",
+        lambda *_args: ResumeState(status="new", is_searchable=True),
+    )
+    monkeypatch.setattr(resume_position, "read_display_position", lambda _page: PositionValues())
+    read_position = MagicMock(return_value=PositionValues())
+    monkeypatch.setattr(resume_position, "read_position", read_position)
+
+    with pytest.raises(
+        RuntimeError, match="форма редактирования позиции открыта не для того резюме"
+    ):
+        resume_position.open_position_form(page, resume)
+    read_position.assert_not_called()
+
+
 def test_verify_wizard_save_never_accepts_persistent_professional_role(monkeypatch):
     resume = bare_resume("resume-id")
     page = MagicMock()

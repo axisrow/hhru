@@ -35,7 +35,7 @@ ADDITIONAL_TRIGGER = "[data-qa='resume-edit-button-additionalEducation-{index}']
 # the form; they do not persist anything until SAVE_BUTTON is clicked.
 PRIMARY_ADD = "[data-qa='resume-list-card-education'] [data-qa='link']"
 ADDITIONAL_ADD = "[data-qa='resume-list-card-additionalEducation'] [data-qa='link']"
-PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation/[^/?#]+")
+PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)")
 ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
 CANCEL_BUTTON = "[data-qa='profile-layout-cancel-button']"
 SAVE_BUTTON = "[data-qa='profile-layout-save-button']"
@@ -208,6 +208,7 @@ def _edit_block(
                 trigger_error=f"триггер образования {index} не найден однозначно",
                 open_error=f"форма образования {index} не открылась",
                 wrong_route_error=f"форма образования {index} открыта не для того резюме",
+                expected_query={"resumeFrom": resume_id} if not additional else None,
             )
             for name, selector in fields.items():
                 value = getattr(record, name)

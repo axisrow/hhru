@@ -353,6 +353,66 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     assert result.added == ("Machine  Learning",)
 
 
+def test_edit_skills_accepts_edit_route_with_query(monkeypatch) -> None:
+    """Query parameters on the edit route must not break the route guard."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/keySkills?foo=bar"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    cancel = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "read_skills", lambda _page: ())
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is True
+    assert trigger.click.call_count == 1
+    assert editor.wait_for.call_count == 1
+
+
+def test_edit_skills_rejects_wrong_route_with_empty_resume_id(monkeypatch) -> None:
+    """An empty resume_id must not accidentally match a different edit route."""
+    resume = bare_resume("")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/other-resume-id/keySkills"
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    cancel = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    read_skills = MagicMock(return_value=())
+    monkeypatch.setattr(skills_module, "read_skills", read_skills)
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Python", "advanced"),), dry_run=True, mode="append"
+    )
+
+    assert result.success is False
+    assert result.reason == "форма навыков открыта не для того резюме"
+    read_skills.assert_not_called()
+    cancel.click.assert_not_called()
+
+
 def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) -> None:
     """An existing chip rendered with double internal whitespace must dedup the
     same skill from the plan, not be treated as a new addition.
