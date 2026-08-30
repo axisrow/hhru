@@ -40,6 +40,16 @@ class FakeFieldLocator:
     def fill(self, value):  # noqa: ARG002
         pass
 
+    def or_(self, other):  # noqa: ARG002
+        return self
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
+        pass
+
 
 class FakeTrigger:
     def __init__(self, count):
@@ -47,6 +57,16 @@ class FakeTrigger:
 
     def count(self):
         return self._count
+
+    def or_(self, other):  # noqa: ARG002
+        return self
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
+        pass
 
 
 class FakePage:

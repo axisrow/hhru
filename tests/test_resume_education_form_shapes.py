@@ -42,6 +42,12 @@ class RecordingLocator:
     def click(self):
         self._page.clicked.append(self._selector)
 
+    def or_(self, other):  # noqa: ARG002
+        return self
+
+    def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
+        pass
+
 
 class LabelPage:
     """Fake page that only resolves fields the live additional form exposes.
