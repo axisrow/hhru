@@ -3350,6 +3350,34 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SKILLS_LEVEL_TITLE:
+    value: '[data-qa^=''skill-level-title-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:68
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - skill-level-title-0
+    - skill-level-title-3
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:68
+      note: 'Issue #820: RESUME_SKILLS_DISPLAY_TAG (#813) reads only skill tag names, not their level, so the post-save Counter
+        check in edit_skills_on_hh cannot distinguish "level confirmed as planned" from "skill saved without a level because
+        its skillsLevels radio was not found". Confirmed live 2026-08-30 (read-only Playwright DOM dump, authenticated session)
+        on a test draft resume: the resume card groups its skill-tag-* tags under one data-qa=''skill-level-title-{n}'' heading
+        per distinct level, plus one heading with the fixed text "Уровень не\xa0указан" for skills saved with no level. The
+        heading''s own parent element wraps both the title and that group''s tags container, so an xpath=.. from the title
+        scoped to [data-qa^=''skill-tag-''] reads that group''s tags without depending on the tags container''s own hashed
+        CSS class.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_resume_card_read_only
+    verified_by: claude
   resume_page.RESUME_SKILLS_RECOMMENDED:
     value: '[data-qa^=''resume-editor-skills-recommended-'']'
     criticality: write
@@ -3435,6 +3463,30 @@ selectors:
         in both cases; read-only DOM/click confirmation only, no save performed on either resume.'
     last_verified_at: '2026-08-30'
     verified_flow: authenticated_resume_editor_read_only
+    verified_by: claude
+  resume_page.RESUME_SKILLS_TAG_IN_GROUP:
+    value: '[data-qa^=''skill-tag-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:75
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - skill-tag-1114
+    - skill-tag-6338
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:75
+      note: 'Issue #820: the bare data-qa fragment for a skill tag, scoped inside one skill-level-title group via title.locator(...)
+        — see RESUME_SKILLS_LEVEL_TITLE above (the shared xpath=.. anchoring the group is documented there). Confirmed live
+        2026-08-30 on the same DOM dump: identical fragment as RESUME_SKILLS_DISPLAY_TAG''s own tail (data-qa^=''skill-tag-''),
+        kept as its own contract because it is used unscoped by RESUME_SKILLS_DISPLAY_TAG''s skills-card ancestor prefix.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_resume_card_read_only
     verified_by: claude
   resume_page.RESUME_SPECIALIZATION_ADD:
     value: '[data-qa=''resume-position-professional-role-add-button'']'

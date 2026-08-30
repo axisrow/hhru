@@ -267,7 +267,12 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
-    read_display_skills = MagicMock(return_value=("Python", "Docker"))
+    read_display_skills = MagicMock(
+        return_value=(
+            Skill("Python", "Продвинутый уровень"),
+            Skill("Docker", "Средний уровень"),
+        )
+    )
     monkeypatch.setattr(skills_module, "read_display_skills", read_display_skills)
 
     result = edit_skills_on_hh(
@@ -317,7 +322,14 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
     monkeypatch.setattr(
-        skills_module, "read_display_skills", MagicMock(return_value=("FastAPI", "LangChain"))
+        skills_module,
+        "read_display_skills",
+        MagicMock(
+            return_value=(
+                Skill("FastAPI", "Средний уровень"),
+                Skill("LangChain", "Средний уровень"),
+            )
+        ),
     )
 
     result = edit_skills_on_hh(
@@ -374,7 +386,9 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
     monkeypatch.setattr(
-        skills_module, "read_display_skills", MagicMock(return_value=("FastAPILangChain",))
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("FastAPILangChain", "Средний уровень"),)),
     )
     monkeypatch.setattr(skills_module.time, "monotonic", MagicMock(side_effect=range(10_000)))
     monkeypatch.setattr(page, "wait_for_timeout", MagicMock())
@@ -421,7 +435,11 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
-    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Python",)))
+    monkeypatch.setattr(
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("Python", "Продвинутый уровень"),)),
+    )
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
@@ -464,7 +482,11 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
-    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Python",)))
+    monkeypatch.setattr(
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("Python", "Продвинутый уровень"),)),
+    )
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
@@ -514,7 +536,12 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     monkeypatch.setattr(
         skills_module,
         "read_display_skills",
-        MagicMock(return_value=("Python", "Machine  Learning")),
+        MagicMock(
+            return_value=(
+                Skill("Python", "Продвинутый уровень"),
+                Skill("Machine  Learning", "Средний уровень"),
+            )
+        ),
     )
 
     result = edit_skills_on_hh(
@@ -624,7 +651,9 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     # skill with a single space — it must be deduped, not re-added.
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python  Dev",)))
     monkeypatch.setattr(
-        skills_module, "read_display_skills", MagicMock(return_value=("Python  Dev",))
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("Python  Dev", "Продвинутый уровень"),)),
     )
 
     result = edit_skills_on_hh(
@@ -818,6 +847,35 @@ def test_confirm_skill_levels_skips_missing_radio_without_failing() -> None:
     save.click.assert_called_once()
 
 
+def test_confirm_skill_levels_skips_radio_when_count_raises() -> None:
+    """#820 live write test: a skill name with an unescaped CSS metacharacter
+    (e.g. a single quote) makes the formatted attribute selector invalid, and
+    .count() itself raises instead of returning 0. This must be treated the
+    same as a missing radio (best-effort skip), not abort the whole step and
+    skip the post-save level check downstream (confirmed live on resume
+    24b16b4aff1106ca100039ed1f726766334230: skill "Ruby'Quote820" landed with
+    no level, and the pre-fix code raised uncaught instead of reporting the
+    mismatch)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
+    broken_radio = MagicMock()
+    broken_radio.count.side_effect = PlaywrightError("Unexpected token while parsing css selector")
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        'input[name="Ruby\'QuoteСредний"]': broken_radio,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+    }.get(selector, broken_radio)
+
+    error = _confirm_skill_levels(page, (Skill("Ruby'Quote", "intermediate"),))
+
+    assert error is None
+    broken_radio.click.assert_not_called()
+    save.click.assert_called_once()
+
+
 def test_confirm_skill_levels_reports_missing_save_button() -> None:
     page = MagicMock()
     page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
@@ -875,7 +933,11 @@ def test_edit_skills_handles_levels_wizard_step_for_new_skill(monkeypatch) -> No
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
-    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Selenium",)))
+    monkeypatch.setattr(
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("Selenium", "Средний уровень"),)),
+    )
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Selenium", "intermediate"),), dry_run=False, mode="append"
@@ -889,3 +951,52 @@ def test_edit_skills_handles_levels_wizard_step_for_new_skill(monkeypatch) -> No
     # Save is clicked twice: once for the keySkills editor, once for the
     # levels step this test exercises.
     assert save.click.call_count == 2
+
+
+def test_edit_skills_marks_level_mismatch_as_uncertain_not_ok(monkeypatch) -> None:
+    """#820: a matching tag NAME alone must not be reported as [OK] if the
+    radio in _confirm_skill_levels was skipped (missing/ambiguous) and the
+    skill actually landed on the resume with no level — the pre-fix Counter
+    compared names only and could not tell this apart from a confirmed level."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    editor = MagicMock()
+    editor.wait_for.return_value = None
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    input_.input_value.return_value = ""
+    save = MagicMock()
+    save.count.return_value = 1
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+        skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
+    }[selector]
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
+    # The name matched the plan (Selenium landed), but with NO level — as if
+    # its skillsLevels radio was never found/clicked. Same shape the old
+    # (pre-#820) Counter check would have reported [OK] for.
+    monkeypatch.setattr(
+        skills_module,
+        "read_display_skills",
+        MagicMock(return_value=(Skill("Selenium", "Уровень не указан"),)),
+    )
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Selenium", "intermediate"),), dry_run=False, mode="append"
+    )
+
+    assert result.success is False
+    assert result.acted is True
+    assert "Selenium" in result.reason
+    assert "Средний" in result.reason

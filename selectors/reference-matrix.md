@@ -151,8 +151,10 @@
 | resume_page.RESUME_SKILLS_DISPLAY_TAG | `[data-qa='skills-card'] [data-qa^='skill-tag-']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_EDIT_BUTTON | `[data-qa='skills-add']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_INPUT | `[data-qa='resume-editor-skills-input']` | — | — | — | live_dom |
+| resume_page.RESUME_SKILLS_LEVEL_TITLE | `[data-qa^='skill-level-title-']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_RECOMMENDED | `[data-qa^='resume-editor-skills-recommended-']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT | `[data-qa='suggest-item-user-input']` | — | — | — | live_dom |
+| resume_page.RESUME_SKILLS_TAG_IN_GROUP | `[data-qa^='skill-tag-']` | — | — | — | live_dom |
 | resume_page.RESUME_SPECIALIZATION_ADD | `[data-qa='resume-position-professional-role-add-button']` | — | — | — | live_dom |
 | resume_page.RESUME_SPECIALIZATION_DELETE | `[data-qa='resume-position-professional-role-card-delete']` | — | — | — | live_dom |
 | resume_page.RESUME_SPECIALIZATION_MODAL | `[data-qa='professional-roles-modal']` | — | — | — | documented_live |
