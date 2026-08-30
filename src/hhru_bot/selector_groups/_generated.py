@@ -141,6 +141,7 @@ VALUES: dict[str, str] = {
     "resume_page.RESUME_POSITION_DROPDOWN": "[data-qa='drop-base']",
     "resume_page.RESUME_SKILLS_CHIP": "[data-qa^='chips-trigger-chip-']",
     "resume_page.RESUME_SKILLS_CHIP_INPUT": "[data-qa='chips-trigger-input']",
+    "resume_page.RESUME_SKILLS_DISPLAY_TAG": "[data-qa='skills-card'] [data-qa^='skill-tag-']",
     "resume_page.RESUME_SKILLS_EDIT_BUTTON": "[data-qa='skills-add']",
     "resume_page.RESUME_SKILLS_INPUT": "[data-qa='resume-editor-skills-input']",
     "resume_page.RESUME_SKILLS_RECOMMENDED": "[data-qa^='resume-editor-skills-recommended-']",

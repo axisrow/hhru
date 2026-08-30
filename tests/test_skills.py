@@ -10,6 +10,7 @@ import hhru_bot.skills as skills_module
 from hhru_bot.config import bare_resume
 from hhru_bot.skills import (
     Skill,
+    _confirm_skill_levels,
     build_skills_prompt,
     edit_skills_on_hh,
     parse_manual_skills,
@@ -196,16 +197,28 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
 
 
 def _mock_chip_locator() -> MagicMock:
-    """A RESUME_SKILLS_CHIP locator stub whose .nth().wait_for() no-ops.
+    """A RESUME_SKILLS_CHIP (editor combobox) locator stub for the fill+Enter loop.
 
-    #801: .filter(has_text=...) also resolves immediately with one match, so
-    the post-fill+Enter commit-wait loop in edit_skills_on_hh does not poll
-    until CHIP_COMMIT_TIMEOUT_MS on every addition.
+    #801: .filter(has_text=...) resolves immediately with one match, so the
+    post-fill+Enter commit-wait loop in edit_skills_on_hh does not poll until
+    CHIP_COMMIT_TIMEOUT_MS on every addition. #813: the post-save settle-wait
+    now targets RESUME_SKILLS_DISPLAY_TAG instead (see _mock_display_tag_locator),
+    not this locator's .nth().wait_for().
     """
     chip_locator = MagicMock()
-    chip_locator.nth.return_value.wait_for.return_value = None
     chip_locator.filter.return_value.count.return_value = 1
     return chip_locator
+
+
+def _mock_display_tag_locator() -> MagicMock:
+    """A RESUME_SKILLS_DISPLAY_TAG locator stub whose .nth().wait_for() no-ops.
+
+    #813: the post-save settle-wait reads the resume card's own skill tags,
+    not the editor's chip widget (which no longer exists once the editor closes).
+    """
+    tag_locator = MagicMock()
+    tag_locator.nth.return_value.wait_for.return_value = None
+    return tag_locator
 
 
 def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None:
@@ -221,6 +234,7 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = _mock_chip_locator()
+    tag_locator = _mock_display_tag_locator()
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
@@ -228,13 +242,15 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
-    read_skills = MagicMock(side_effect=[("Python",), ("Python", "Docker")])
-    monkeypatch.setattr(skills_module, "read_skills", read_skills)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
+    read_display_skills = MagicMock(return_value=("Python", "Docker"))
+    monkeypatch.setattr(skills_module, "read_display_skills", read_display_skills)
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
@@ -243,12 +259,12 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     assert result.success is True
     assert result.added == ("Docker",)
     assert result.acted is True
-    assert read_skills.call_count == 2
-    # #536 round 1: the post-save read must wait for the chip container to
-    # settle instead of racing the React re-render right after the editor
-    # (a separate overlay) reports hidden.
-    chip_locator.nth.assert_called_once_with(1)
-    chip_locator.nth.return_value.wait_for.assert_called_once_with(state="visible", timeout=5_000)
+    read_display_skills.assert_called_once()
+    # #536 round 1 / #813: the post-save read must wait for the resume card's
+    # own skill tags to settle instead of racing the React re-render right
+    # after the editor (a separate overlay) reports hidden.
+    tag_locator.nth.assert_called_once_with(1)
+    tag_locator.nth.return_value.wait_for.assert_called_once_with(state="visible", timeout=5_000)
 
 
 def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> None:
@@ -273,13 +289,16 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
-    read_skills = MagicMock(side_effect=[(), ("FastAPI", "LangChain")])
-    monkeypatch.setattr(skills_module, "read_skills", read_skills)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
+    monkeypatch.setattr(
+        skills_module, "read_display_skills", MagicMock(return_value=("FastAPI", "LangChain"))
+    )
 
     result = edit_skills_on_hh(
         page,
@@ -313,7 +332,6 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = MagicMock()
-    chip_locator.nth.return_value.wait_for.return_value = None
     # The expected chip never appears — simulates a merged/rejected chip.
     chip_locator.filter.return_value.count.return_value = 0
     trigger = MagicMock()
@@ -323,13 +341,15 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
     monkeypatch.setattr(
-        skills_module, "read_skills", MagicMock(side_effect=[(), ("FastAPILangChain",)])
+        skills_module, "read_display_skills", MagicMock(return_value=("FastAPILangChain",))
     )
     monkeypatch.setattr(skills_module.time, "monotonic", MagicMock(side_effect=range(10_000)))
     monkeypatch.setattr(page, "wait_for_timeout", MagicMock())
@@ -368,14 +388,14 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
-    monkeypatch.setattr(
-        skills_module, "read_skills", MagicMock(side_effect=[("Python",), ("Python",)])
-    )
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
+    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Python",)))
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
@@ -401,23 +421,23 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     input_.input_value.return_value = ""
     save = MagicMock()
     save.count.return_value = 1
-    chip_locator = MagicMock()
-    chip_locator.nth.return_value.wait_for.side_effect = PlaywrightError("timeout")
+    tag_locator = MagicMock()
+    tag_locator.nth.return_value.wait_for.side_effect = PlaywrightError("timeout")
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
-        skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+        skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
-    monkeypatch.setattr(
-        skills_module, "read_skills", MagicMock(side_effect=[("Python",), ("Python",)])
-    )
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
+    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Python",)))
 
     result = edit_skills_on_hh(
         page, resume, (Skill("Docker", "intermediate"),), dry_run=False, mode="append"
@@ -454,6 +474,7 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
@@ -461,10 +482,11 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     # hh.ru rendered the added chip with a double internal space; the plan carries
     # a single space (parse_skill_plan normalized it).
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python",)))
     monkeypatch.setattr(
         skills_module,
-        "read_skills",
-        MagicMock(side_effect=[("Python",), ("Python", "Machine  Learning")]),
+        "read_display_skills",
+        MagicMock(return_value=("Python", "Machine  Learning")),
     )
 
     result = edit_skills_on_hh(
@@ -563,6 +585,7 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
+        skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
@@ -570,10 +593,9 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
     # Existing chip already carries a double space; the plan re-offers the same
     # skill with a single space — it must be deduped, not re-added.
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=("Python  Dev",)))
     monkeypatch.setattr(
-        skills_module,
-        "read_skills",
-        MagicMock(side_effect=[("Python  Dev",), ("Python  Dev",)]),
+        skills_module, "read_display_skills", MagicMock(return_value=("Python  Dev",))
     )
 
     result = edit_skills_on_hh(
@@ -707,3 +729,133 @@ def test_edit_skills_editor_wait_timeout_on_empty_resume_returns_failure(monkeyp
 
     assert result.success is False
     assert "форма навыков не открылась" in result.reason
+
+
+def test_confirm_skill_levels_noop_when_not_on_levels_step() -> None:
+    """The first save can return straight to the resume card (no pending
+    levels) — this must be a silent no-op, not a false failure (#813)."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+
+    assert _confirm_skill_levels(page, (Skill("Docker", "intermediate"),)) is None
+    page.locator.assert_not_called()
+
+
+def test_confirm_skill_levels_clicks_matching_radio_and_saves() -> None:
+    """#813: each addition's level radio (name={skill}{Russian label}) is
+    clicked, then the step's own Save is clicked and awaited hidden."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
+    radio = MagicMock()
+    radio.count.return_value = 1
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        "input[name='SeleniumСредний']": radio,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+    }[selector]
+
+    error = _confirm_skill_levels(page, (Skill("Selenium", "intermediate"),))
+
+    assert error is None
+    radio.click.assert_called_once_with(
+        force=True, timeout=skills_module.SKILLS_LEVELS_STEP_TIMEOUT_MS
+    )
+    save.click.assert_called_once()
+    save.wait_for.assert_called_once_with(
+        state="hidden", timeout=skills_module.SKILLS_LEVELS_STEP_TIMEOUT_MS
+    )
+
+
+def test_confirm_skill_levels_skips_missing_radio_without_failing() -> None:
+    """A name hh.ru silently absorbed elsewhere may have no radio group here —
+    that alone must not fail the step; the caller's Counter check still
+    catches a skill that never actually landed."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
+    missing_radio = MagicMock()
+    missing_radio.count.return_value = 0
+    save = MagicMock()
+    save.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        "input[name='SeleniumСредний']": missing_radio,
+        skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+    }[selector]
+
+    error = _confirm_skill_levels(page, (Skill("Selenium", "intermediate"),))
+
+    assert error is None
+    missing_radio.click.assert_not_called()
+    save.click.assert_called_once()
+
+
+def test_confirm_skill_levels_reports_missing_save_button() -> None:
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
+    save = MagicMock()
+    save.count.return_value = 0
+    page.locator.return_value = save
+
+    error = _confirm_skill_levels(page, ())
+
+    assert error == "кнопка сохранения уровней навыков не найдена однозначно"
+
+
+def test_edit_skills_handles_levels_wizard_step_for_new_skill(monkeypatch) -> None:
+    """End-to-end #813 regression: a brand-new skill routes through the
+    skillsLevels step, and the post-save read must see it once that step's
+    own Save completes — not the zero the pre-fix code observed."""
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    editor = MagicMock()
+    input_ = MagicMock()
+    input_.count.return_value = 1
+    input_.input_value.return_value = ""
+    save = MagicMock()
+    save.count.return_value = 1
+    chip_locator = _mock_chip_locator()
+    tag_locator = _mock_display_tag_locator()
+    levels_radio = MagicMock()
+    levels_radio.count.return_value = 1
+    trigger = MagicMock()
+    trigger.count.return_value = 1
+
+    # editor.wait_for(state="hidden") succeeds (first save closed the editor);
+    # the URL only flips to the levels step once that click actually happens.
+    def save_click_side_effect():
+        page.url = "https://hh.ru/resume/edit/resume-id/skillsLevels?fromBlock=keySkills"
+
+    save.click.side_effect = save_click_side_effect
+
+    def locate(selector):
+        if selector == "input[name='SeleniumСредний']":
+            return levels_radio
+        return {
+            skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
+            skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+            skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
+            skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
+            skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
+        }[selector]
+
+    page.locator.side_effect = locate
+    monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(skills_module, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(skills_module, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(skills_module, "open_hydrated_resume_editor", lambda *_a, **_kw: editor)
+    monkeypatch.setattr(skills_module, "read_skills", MagicMock(return_value=()))
+    monkeypatch.setattr(skills_module, "read_display_skills", MagicMock(return_value=("Selenium",)))
+
+    result = edit_skills_on_hh(
+        page, resume, (Skill("Selenium", "intermediate"),), dry_run=False, mode="append"
+    )
+
+    assert result.success is True
+    assert result.added == ("Selenium",)
+    levels_radio.click.assert_called_once_with(
+        force=True, timeout=skills_module.SKILLS_LEVELS_STEP_TIMEOUT_MS
+    )
+    # Save is clicked twice: once for the keySkills editor, once for the
+    # levels step this test exercises.
+    assert save.click.call_count == 2
