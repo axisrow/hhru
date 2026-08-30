@@ -67,11 +67,19 @@ FIRST_EXPERIENCE_POSITION = _selector("resume_experience.FIRST_EXPERIENCE_POSITI
 FIRST_EXPERIENCE_SAVE = _selector("resume_experience.FIRST_EXPERIENCE_SAVE")
 FIRST_EXPERIENCE_CANCEL = _selector("resume_experience.FIRST_EXPERIENCE_CANCEL")
 
-# #800: "Работаю сейчас" checkbox above the end-date fields (confirmed live
-# 2026-08-30 on /resume/edit/{resume_id}/experience, draft resume). Checked
-# by default on a new entry — while checked, the end-year/end-month controls
-# are disabled. The underlying magritte checkbox component's own data-qa
-# ("checkbox") is a generic, non-unique token; it was confirmed to resolve to
-# exactly one match on this form (count()==1), so it is used as-is rather
-# than scoped further.
+# #800/#824: "Работаю сейчас" checkbox above the end-date fields (confirmed
+# live 2026-08-30 on /resume/edit/{resume_id}/experience, draft resume).
+# Checked by default on a new entry — while checked, the end-year/end-month
+# controls are disabled. This is a Magritte custom-checkbox triple: a bare
+# physical <input type="checkbox"> (no data-qa of its own) plus a purely
+# visual <span data-qa="checkbox"> sibling that paints the glyph, both inside
+# <span data-qa="checkbox-container">. The visual span sits in front of the
+# input in DOM order, so a click on `[data-qa='checkbox']` (the pre-#824
+# value) is intercepted by the physical <input> underneath — the exact
+# Locator.click timeout in #824's call log. Scoping into the container and
+# targeting its `input` descendant clicks the real control; both
+# `[data-qa='checkbox-container']` and its `input` descendant were confirmed
+# to resolve to exactly one match on this form (count()==1), and clicking it
+# was live write-confirmed to toggle the checkbox and re-enable the end-date
+# fields (form not saved, no mutation reached hh.ru).
 FIRST_EXPERIENCE_CURRENT_CHECKBOX = _selector("resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX")
