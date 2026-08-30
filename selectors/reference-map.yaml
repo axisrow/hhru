@@ -2153,6 +2153,64 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND:
+    value: xpath=//button[contains(., 'Развернуть')]
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:253
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:253
+      note: 'Live WRITE test 2026-08-30 (#782/#787/PR #856, 17-resume account, draft target resume): on an account with more
+        than 2 resumes the "Резюме с этим местом работы" panel collapses to 2 visible rows behind a "Развернуть<span>ещё N</span>"
+        button. Live DOM trace found the button''s lowest common ancestor with the panel''s <h3> heading is 6 DIV levels up
+        (a different, deeper container than the 2-level ancestor that holds the checkboxes themselves), so it is addressed
+        as a page-wide control rather than scoped through the h3 — confirmed unique (count()==1) on the live shared-editor
+        screen, where it is the only "Развернуть"-labeled button. **Known live instability, NOT fully resolved by this PR**:
+        a plain Locator.click() on this button was confirmed to NOT expand the list on several live attempts despite elementFromPoint
+        confirming the click lands on the correct <span> (no #824-style interception) — the button IS visible/enabled/not
+        disabled. A focus()+keyboard.press("Space") sequence expanded the list successfully on ONE live attempt (cell count
+        2->8) but FAILED to expand it on a later attempt with the same sequence — the underlying activation mechanism for
+        this specific Magritte button variant remains unconfirmed and is tracked as a follow-up (see experience.py''s _reconcile_experience_resume_panel
+        docstring). The selector match itself (finding the button) is reliable; only its activation is not.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_live_write_confirmed (17-resume account, draft target resume, expand activation
+      unreliable)
+    verified_by: human
+  resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE:
+    value: xpath=//h3[contains(text(), 'этим местом работы')]/ancestor::div[2]
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:252
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:252
+      note: 'Live WRITE test 2026-08-30 (#782/#787/PR #856, 17-resume account, draft target resume): the "Резюме с этим местом
+        работы" checkbox panel has no data-qa of its own. Its <h3> heading text is the only stable anchor, but the checkboxes
+        are NOT inside its immediate parent <div> (ancestor::div[1], which contains only the heading text itself, 0 checkboxes,
+        confirmed live) — they live two DIV levels up (ancestor::div[2], confirmed live: 2 [data-qa=''checkbox-container'']
+        before expanding, matching the panel''s default-collapsed 2-visible-rows state). PR #856 LIVE WRITE test also found
+        the heading''s real text contains a NON-BREAKING SPACE (U+00A0) between "с" and "этим" (``Резюме с\xa0этим местом
+        работы``), which XPath 1.0''s normalize-space() does NOT fold into a plain space — an exact-match ``normalize-space(text())=''Резюме
+        с этим местом работы''`` never matched live. Switched to contains(text(), ''этим местом работы'') — a substring entirely
+        after the NBSP, confirmed unique (h3 count()==1) on the live page.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_live_write_confirmed (17-resume account, draft target resume)
+    verified_by: human
   resume_experience.EXPERIENCE_SAVE:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -2174,6 +2232,55 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY:
+    value: '[data-qa^=''resume-profile-experience-specific-company-input-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:180
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-company-input-1
+    - resume-profile-experience-specific-company-input-2
+    - resume-profile-experience-specific-company-input-3
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:180
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840), reused for #782/#787 integration: same data-qa pattern as EXPERIENCE_COMPANY
+        but prefix-scoped (no {index} substitution) — on the shared-editor-add shape the row''s index is a fresh React counter
+        (observed 24) unrelated to any requested row index, so the caller cannot format the indexed selector ahead of opening
+        the form. A freshly opened add-form exposes exactly one such field; callers must require count()==1 rather than assume
+        it (same fail-closed pattern as EXPERIENCE_EDIT_BUTTONS_ALL''s prefix scoping).'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
+  resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION:
+    value: '[data-qa^=''resume-profile-experience-specific-position-input-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:181
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-position-input-1
+    - resume-profile-experience-specific-position-input-2
+    - resume-profile-experience-specific-position-input-3
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:181
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840), reused for #782/#787 integration: same data-qa pattern as EXPERIENCE_POSITION
+        but prefix-scoped (no {index} substitution) — same reasoning as EXPERIENCE_SHARED_NEW_ROW_COMPANY above.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_START_MONTH:
     value: '[data-qa=''resume-editor-experience-start-month-input'']'
     criticality: write

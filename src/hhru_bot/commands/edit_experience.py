@@ -1,4 +1,15 @@
-"""Command for proposing and optionally saving LLM-generated experience."""
+"""Command for proposing and optionally saving LLM-generated experience.
+
+#782: опыт работы живёт в общем профиле соискателя, а не на конкретном
+резюме — он общий для всех резюме аккаунта. ``--resume`` поэтому задаёт не
+"куда записать", а какое резюме должно остаться отмеченным в панели hh.ru
+"Резюме с этим местом работы": при добавлении новой записи к резюме, где
+опыт уже есть, hh.ru по умолчанию предчекивает ВСЕ резюме аккаунта, и без
+явного снятия лишних чекбоксов запись молча привязалась бы ко всем сразу,
+включая опубликованные. ``edit_experience_on_hh`` (``experience.py``) снимает
+эти чекбоксы перед save; при редактировании существующей строки, наоборот,
+только гарантирует, что чекбокс целевого резюме отмечен, не трогая остальные.
+"""
 
 from __future__ import annotations
 
@@ -13,13 +24,19 @@ def register(subparsers) -> None:
         help="Заполнить опыт работы с помощью LLM",
         description=(
             "Предлагает записи опыта через LLM и показывает их в dry-run. "
-            "WRITE-hh-ru: боевой режим требует --force или подтверждения TTY."
+            "WRITE-hh-ru: боевой режим требует --force или подтверждения TTY. "
+            "Опыт работы общий для всех резюме аккаунта (#782): --resume "
+            "задаёт не 'куда писать', а какое резюме останется отмеченным "
+            "в панели привязки hh.ru."
         ),
     )
     parser.add_argument(
         "--resume",
         required=True,
-        help="Slug из конфига или реальный resume_id HH.ru (#319)",
+        help=(
+            "Slug из конфига или реальный resume_id HH.ru (#319). Опыт общий "
+            "для профиля (#782) — резюме определяет привязку, не место записи."
+        ),
     )
     parser.add_argument("--mode", choices=("create", "fill"), default="fill")
     parser.add_argument(
@@ -230,13 +247,29 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
                     return True
                 indexes = list(range(len(plan.entries)))
+            # #782: the "Резюме с этим местом работы" binding panel needs
+            # every account resume's display title up front — it must be
+            # read BEFORE the experience form is opened, since fetching it
+            # mid-form means navigating away from an unsaved form. Read
+            # unconditionally (not just when a new row is expected): a fill-
+            # mode edit of an existing row also lands on the shared panel
+            # screen and needs the same reconciliation (see
+            # experience.py::edit_experience_on_hh docstring).
+            from ..copy_resume import list_resume_cards
+
+            resume_titles = {card.resume_id: card.title for card in list_resume_cards(page)}
             # begin_attempt() right before the real mutation, after the page/
             # context are already open (#465 review): counting the attempt
             # before launch_context succeeded would misreport a browser-launch
             # or auth failure as a real (but failed) mutation attempt.
             progress.begin_attempt()
             results = edit_experience_on_hh(
-                page, resume.resume_id, plan, dry_run=False, indexes=indexes
+                page,
+                resume.resume_id,
+                plan,
+                dry_run=False,
+                indexes=indexes,
+                resume_titles=resume_titles,
             )
     except BrowserLaunchError:
         # #465 review round 3: re-raise so cli.py's dedicated handler

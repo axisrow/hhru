@@ -36,16 +36,30 @@ checkbox panel showed only this account's resumes, this one pre-checked).
 The form opened genuinely blank (no unrelated row silently loaded, unlike
 #815's finding for the other route) and uses a third data-qa namespace for
 its save/cancel controls (``SHARED_EXPERIENCE_SAVE``/``SHARED_EXPERIENCE_CANCEL``,
-``profile-layout-*-button``) while reusing ``EXPERIENCE_COMPANY``/
-``EXPERIENCE_POSITION``/the month-combobox constants unchanged for its other
-fields. Not yet wired into ``edit_experience_on_hh`` — this shape's
-selectors are confirmed but the integration (choosing this route for a
-first-write on a non-empty resume) is left to a follow-up.
+``profile-layout-*-button``) while reusing the month-combobox constants
+unchanged for its other fields. Its company/position fields use the SAME
+``resume-profile-experience-specific-{company,position}-input-{index}``
+data-qa pattern as the indexed row editor above, but the ``{index}`` is a
+fresh React counter unrelated to any requested row index (#840 observed
+``24`` on a form opened for a brand-new row) — ``edit_experience_on_hh``
+therefore cannot format ``EXPERIENCE_COMPANY``/``EXPERIENCE_POSITION`` with
+its own loop index for this shape; it uses the prefix-scoped
+``EXPERIENCE_SHARED_NEW_ROW_COMPANY``/``EXPERIENCE_SHARED_NEW_ROW_POSITION``
+below instead and requires exactly one match, the same fail-closed pattern
+as ``EXPERIENCE_EDIT_BUTTONS_ALL``.
+
+**#782/#787: this shape's "Резюме с этим местом работы" binding panel
+defaults to pre-checking EVERY resume in the account for a brand-new row**
+(not just the ``resumeFrom`` one, live-confirmed on 7 resumes) — saving
+without reconciling it silently binds the new row to every resume, published
+ones included. ``edit_experience_on_hh`` now wires this shape in for the
+"add a new row to a non-empty resume" case and always reconciles the panel
+(via ``_reconcile_experience_resume_panel`` in ``experience.py``) before
+clicking save — see ``EXPERIENCE_RESUME_PANEL_*`` below.
 """
 
 from __future__ import annotations
 
-from ._generated import optional_selector as _optional_selector
 from ._generated import selector as _selector
 
 EXPERIENCE_EDIT_BUTTON = _selector("resume_experience.EXPERIENCE_EDIT_BUTTON")
@@ -106,11 +120,12 @@ EXPERIENCE_SAVE = _selector("resume_experience.EXPERIENCE_SAVE")
 # exist on hh.ru (live probe 2026-08-29 and 2026-08-30, count=0 on resumes with
 # and without experience).  The real "Добавить" control is scoped inside the
 # experience card and carries the shared ``data-qa='link'`` — the same shape as
-# ``resume_education.PRIMARY_ADD``/``ADDITIONAL_ADD``.  It stays optional and is
-# not used yet — the first row is created by direct navigation (see above) — and
-# any future caller must still require one unambiguous match, because the
-# generic ``link`` value is only meaningful together with the card scope.
-EXPERIENCE_ADD_BUTTON = _optional_selector("resume_experience.EXPERIENCE_ADD_BUTTON")
+# ``resume_education.PRIMARY_ADD``/``ADDITIONAL_ADD``.  #782/#840: confirmed
+# live and wired into ``edit_experience_on_hh`` as the third (shared-profile-
+# editor) shape's entry point for adding a row to a resume that already has
+# experience — every caller must still require one unambiguous match, because
+# the generic ``link`` value is only meaningful together with the card scope.
+EXPERIENCE_ADD_BUTTON = _selector("resume_experience.EXPERIENCE_ADD_BUTTON")
 
 # First-row editor at /resume/edit/{resume_id}/experience (#786/#787, live
 # write-confirmed 2026-08-25/29 on a resume with zero experience entries).
@@ -154,6 +169,19 @@ FIRST_EXPERIENCE_CURRENT_CHECKBOX = _selector("resume_experience.FIRST_EXPERIENC
 SHARED_EXPERIENCE_SAVE = _selector("resume_experience.SHARED_EXPERIENCE_SAVE")
 SHARED_EXPERIENCE_CANCEL = _selector("resume_experience.SHARED_EXPERIENCE_CANCEL")
 
+# #782: company/position for a row created on THIS shape via
+# EXPERIENCE_ADD_BUTTON — same data-qa pattern as EXPERIENCE_COMPANY/
+# EXPERIENCE_POSITION but prefix-scoped (no {index} substitution), because
+# the row's index is a fresh React counter the caller cannot predict ahead
+# of opening the form (see module docstring). A freshly opened add-form has
+# exactly one such field; callers must still require count()==1 rather than
+# assume it, the same fail-closed pattern as EXPERIENCE_EDIT_BUTTONS_ALL's
+# prefix scoping above.
+EXPERIENCE_SHARED_NEW_ROW_COMPANY = _selector("resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY")
+EXPERIENCE_SHARED_NEW_ROW_POSITION = _selector(
+    "resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION"
+)
+
 # #840 blocker investigation: the issue's first-candidate hypothesis was a
 # #824-style visual-element interception (a decorative span sitting in front
 # of the real control in DOM order, absorbing the click). CONFIRMED FALSE on
@@ -182,3 +210,59 @@ SHARED_EXPERIENCE_CANCEL = _selector("resume_experience.SHARED_EXPERIENCE_CANCEL
 # сейчас" plus one per resume in the "Резюме с этим местом работы" list), so
 # count() is 3 here vs. 1 on the first-entry shape; a narrower scope will be
 # needed before this control can be driven safely.
+
+# #782/#787 live read-only recon (2026-08-30): the "Резюме с этим местом
+# работы" checkbox panel on the shared-editor shape (both EXPERIENCE_ADD_BUTTON
+# for a NEW row and EXPERIENCE_EDIT_BUTTON for an EXISTING one navigate here —
+# same compose screen). Confirmed structure:
+#   <h3>Резюме с этим местом работы</h3>
+#   <label data-qa="cell"><span data-qa="checkbox-container">
+#     <input type="checkbox" aria-label="{resume title}">
+#     <span data-qa="checkbox"></span></span>...</label>...
+#   <button>Развернуть<span>ещё N</span></button>  (only when the account has
+#     more than 2 resumes — collapsed by default, remaining checkboxes are not
+#     in the DOM at all until this is clicked, same collapse pattern as
+#     EXPERIENCE_EXPAND_BUTTON above but a DIFFERENT control/container).
+# The <input> carries no data-qa of its own; aria-label + the label[data-qa=
+# 'cell'] scope is what makes it addressable. The panel itself has no data-qa
+# either, so it is scoped by its unique <h3> text via xpath (same
+# ancestor-lookup pattern already used by apply/questions.py's
+# `xpath=ancestor::form[1]` form-scoping) rather than guessing a
+# class-based container. **Confirmed by default checkbox state, NOT
+# clicked/saved**: on a NEW row (via EXPERIENCE_ADD_BUTTON) every resume in
+# the account is pre-checked, including the target one — saving unmodified
+# silently binds the new entry to ALL resumes, not just the target
+# (#782 "silent over-binding" finding). On an EXISTING row (via
+# EXPERIENCE_EDIT_BUTTON) the panel instead reflects that row's actual
+# current binding (some checked, some not) — the caller must not blindly
+# uncheck non-target resumes there, only ensure the target one is checked.
+#
+# #782 PR review: the individual checkbox is deliberately NOT a
+# _selector()-registered CSS string here. A resume title is untrusted free
+# text a user can name however they like (an apostrophe is a plausible
+# Russian title, e.g. "Data Engineer's..."), and interpolating it into a
+# hand-built `input[aria-label='{title}']` CSS attribute selector breaks the
+# selector's quoting for every OTHER title looked up in the same pass, not
+# just the offending one — experience.py's
+# ``_reconcile_experience_resume_panel`` instead resolves each checkbox via
+# ``scope.get_by_role("checkbox", name=title, exact=True)``, the same
+# accessible-name-matching pattern already used for other free-text labels
+# in this codebase (professional_roles.py, resume_position.py) — Playwright
+# handles the string safely internally, no manual CSS construction at all.
+#
+# #782 PR #856 LIVE WRITE test (2026-08-30, 17-resume account, draft target
+# resume): the panel's own <h3> heading is NOT the plain string it appears
+# to be — its real text is "Резюме с\xa0этим местом работы", with a
+# NON-BREAKING SPACE (U+00A0) between "с" and "этим", not a regular space.
+# XPath 1.0's normalize-space() does NOT fold NBSP into a plain space (it
+# only collapses/trims ASCII whitespace), so an exact-match
+# normalize-space(text())='Резюме с этим местом работы' NEVER matched live —
+# every attempt timed out as "panel not found", even though the panel was
+# genuinely present. Both selectors below use contains(text(), 'этим местом
+# работы') instead: a substring entirely after the NBSP, immune to this
+# specific encoding mismatch, and confirmed unique on the live page (h3
+# count()==1). Any future selector built from this heading's text must
+# avoid the "с " prefix or re-verify against the live NBSP byte, not just a
+# copy-pasted string from a design doc/screenshot.
+EXPERIENCE_RESUME_PANEL_SCOPE = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE")
+EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND")

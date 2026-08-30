@@ -26,6 +26,7 @@ from .browser import (
     resume_identity_matches,
 )
 from .selector_groups.resume_experience import (
+    EXPERIENCE_ADD_BUTTON,
     EXPERIENCE_CANCEL,
     EXPERIENCE_COMPANY,
     EXPERIENCE_COMPANY_URL,
@@ -38,7 +39,11 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_MONTH_LISTBOX,
     EXPERIENCE_MONTH_OPTION,
     EXPERIENCE_POSITION,
+    EXPERIENCE_RESUME_PANEL_EXPAND,
+    EXPERIENCE_RESUME_PANEL_SCOPE,
     EXPERIENCE_SAVE,
+    EXPERIENCE_SHARED_NEW_ROW_COMPANY,
+    EXPERIENCE_SHARED_NEW_ROW_POSITION,
     EXPERIENCE_START_MONTH,
     EXPERIENCE_START_YEAR,
     FIRST_EXPERIENCE_CANCEL,
@@ -438,6 +443,146 @@ def _experience_row_indexes(page: Page) -> list[int]:
     return sorted(indexes)
 
 
+PANEL_TIMEOUT_MS = 5_000
+
+
+class ResumePanelReconciliationError(ValueError):
+    """Raised when the "Резюме с этим местом работы" panel cannot be
+    reconciled safely before save (#782). Never caught to fall through to a
+    save — the caller must treat this the same as any other pre-save
+    ValueError: fail closed, no click on the save button."""
+
+
+def _reconcile_experience_resume_panel(
+    page: Page, *, target_title: str, other_titles: list[str], is_new_row: bool
+) -> None:
+    """Reconcile the "Резюме с этим местом работы" checkbox panel before save.
+
+    #782/#787 live recon: the shared-profile editor screen (reached both by
+    EXPERIENCE_ADD_BUTTON for a brand-new row and by EXPERIENCE_EDIT_BUTTON
+    for an existing one — same URL family, same profile-layout-* save/cancel
+    namespace, confirmed live) shows a panel listing every resume in the
+    account with a checkbox each. On a NEW row every resume is pre-checked
+    by default, including unrelated published ones — saving unmodified would
+    silently bind the new entry to ALL of them (#782's "silent over-binding"
+    finding: ai-engineer/ai-teamlead/python/marketing resumes could each
+    gain an unwanted row). On an EXISTING row the panel instead reflects
+    that row's real current binding and must not be reset wholesale.
+
+    ``is_new_row=True``: uncheck every checkbox whose resume title is not
+    ``target_title`` (the panel starts all-checked; the target one is left
+    as-is since it is already checked).
+    ``is_new_row=False``: only ensure ``target_title``'s checkbox is
+    checked; every other resume's checkbox is left untouched (its state is
+    that row's actual existing binding, not a default to discard).
+
+    Fails closed (raises ``ResumePanelReconciliationError``, never proceeds
+    to save) when the panel is not found, the "Развернуть" expand step does
+    not confirm, or the number of checkboxes resolved by title does not
+    match the expected resume count — a partial reconciliation is worse
+    than no save at all, the same fail-closed principle already used
+    throughout this module for save-binding verification.
+
+    PR #856 LIVE WRITE test (2026-08-30, 17-resume account): the expand
+    button's ACTIVATION was found unreliable — a plain ``.click()`` did not
+    expand the list on several live attempts even though the click target
+    was confirmed correct (no #824-style interception: elementFromPoint
+    resolves to the button's own label span). A ``focus()`` +
+    ``keyboard.press("Space")`` sequence expanded the list on one live
+    attempt but failed to on a later one with the identical sequence — the
+    underlying activation mechanism for this specific Magritte button
+    variant is not yet understood. Both are attempted below (click first,
+    then the keyboard sequence as a second attempt) since either narrows the
+    failure window even without explaining it; this remains a known,
+    tracked instability (follow-up needed), not a silently-accepted gap —
+    the fail-closed error below still fires if BOTH attempts leave the
+    button in place.
+    """
+    scope = page.locator(EXPERIENCE_RESUME_PANEL_SCOPE)
+    if scope.count() != 1:
+        raise ResumePanelReconciliationError(
+            f"панель 'Резюме с этим местом работы' не найдена однозначно ({scope.count()})"
+        )
+    expand = page.locator(EXPERIENCE_RESUME_PANEL_EXPAND)
+    if expand.count() == 1:
+        # #782: with more than 2 resumes on the account the panel collapses
+        # to 2 visible rows and the rest are absent from the DOM entirely —
+        # same "commit is not painted"-adjacent collapse pattern already
+        # documented for EXPERIENCE_EXPAND_BUTTON, but this is a distinct
+        # control scoped to this panel.
+        try:
+            expand.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
+            expand.click()
+            try:
+                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+            except PlaywrightError:
+                # #782/#856 live trace: plain click() confirmed unreliable
+                # for this specific control (see docstring above) — a
+                # keyboard-activation retry via focus()+Space was live-
+                # confirmed to succeed at least once where click() alone did
+                # not. Only attempted once as a second line of defence, not
+                # looped: the fail-closed error below still fires if this
+                # also does not hide the button.
+                expand.focus()
+                page.keyboard.press("Space")
+                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            raise ResumePanelReconciliationError(
+                f"не удалось развернуть панель 'Резюме с этим местом работы': {exc}"
+            ) from exc
+    elif expand.count() > 1:
+        raise ResumePanelReconciliationError(
+            f"кнопка 'Развернуть' панели резюме определяется неоднозначно ({expand.count()})"
+        )
+
+    all_titles = [target_title, *other_titles]
+    checkboxes = {}
+    for title in all_titles:
+        # #782 PR review: a resume title is untrusted free text (can contain
+        # an apostrophe, e.g. Russian "Data Engineer's..."), so it must never
+        # be interpolated into a hand-built CSS attribute selector string —
+        # one bad title would break the checkbox lookup for EVERY resume in
+        # the account, not just the one with the quote. get_by_role() uses
+        # Playwright's accessible-name matching internally instead of string
+        # concatenation, the same pattern already used for other free-text
+        # labels in this codebase (professional_roles.py, resume_position.py).
+        box = scope.get_by_role("checkbox", name=title, exact=True)
+        if box.count() != 1:
+            raise ResumePanelReconciliationError(
+                f"чекбокс резюме {title!r} в панели не найден однозначно ({box.count()})"
+            )
+        checkboxes[title] = box
+    # Fail-closed count check (#782): the panel must expose exactly one
+    # checkbox per account resume title resolved above — anything else means
+    # the list did not actually expand, a title collided, or the panel
+    # otherwise drifted from what the caller expected, and reconciling a
+    # partial set is unsafe (an unaccounted-for resume's checkbox would be
+    # left in its default/unknown state).
+    if len(checkboxes) != len(all_titles):
+        raise ResumePanelReconciliationError(
+            f"число чекбоксов панели ({len(checkboxes)}) не совпало с числом резюме "
+            f"аккаунта ({len(all_titles)})"
+        )
+
+    if is_new_row:
+        for title in other_titles:
+            box = checkboxes[title]
+            if box.is_checked():
+                box.click()
+                if box.is_checked():
+                    raise ResumePanelReconciliationError(
+                        f"не удалось снять чекбокс резюме {title!r} перед сохранением"
+                    )
+    else:
+        box = checkboxes[target_title]
+        if not box.is_checked():
+            box.click()
+            if not box.is_checked():
+                raise ResumePanelReconciliationError(
+                    "не удалось отметить чекбокс целевого резюме перед сохранением"
+                )
+
+
 def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
     """Read existing rows through their confirmed editor fields, without save."""
     open_confirmed_resume(page, resume_id)
@@ -539,15 +684,45 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
 
 
 def edit_experience_on_hh(
-    page: Page, resume_id: str, plan: ExperiencePlan, *, dry_run: bool, indexes=None
+    page: Page,
+    resume_id: str,
+    plan: ExperiencePlan,
+    *,
+    dry_run: bool,
+    indexes=None,
+    resume_titles: dict[str, str] | None = None,
 ):
-    """Apply a plan to one or more rows; return structural row outcomes."""
+    """Apply a plan to one or more rows; return structural row outcomes.
+
+    #782: experience lives in the shared applicant profile, not on any one
+    resume — ``resume_id`` therefore does not mean "where to write" the way
+    it does for resume-specific sections (skills, position). It means
+    "which resume stays checked" in the "Резюме с этим местом работы"
+    binding panel that the shared-profile editor screen shows for every
+    experience row, new or existing. Every other resume in the account is
+    reachable through that same panel and, on a brand-new row, starts
+    pre-checked by default — saving unmodified binds the new row to ALL of
+    them, not just ``resume_id`` (see ``_reconcile_experience_resume_panel``).
+
+    ``resume_titles`` maps every account resume_id to its display title (as
+    shown on the "Резюме с этим местом работы" panel, i.e. the same string
+    ``list_resume_cards`` reads) and is required whenever a row goes through
+    the shared-profile save path (any row except a first_entry created via
+    the dedicated ``/resume/edit/{id}/experience`` route, which has no panel
+    at all) — callers must supply it up front rather than have this function
+    guess or fetch it mid-form, since fetching it requires navigating away
+    from an already-open, unsaved form.
+    """
     try:
         open_confirmed_resume(page, resume_id)
     except ValueError:
         return [ExperienceResult("identity резюме не подтверждён")]
     if plan.used_fallback and not plan.entries:
         return [ExperienceResult(plan.reason or "LLM не предложил безопасных изменений")]
+    target_title = (resume_titles or {}).get(resume_id)
+    other_titles = [
+        title for rid, title in (resume_titles or {}).items() if rid != resume_id and title
+    ]
     selected = list(indexes if indexes is not None else range(len(plan.entries)))
     results = []
     for entry, index in zip(plan.entries, selected, strict=False):
@@ -563,30 +738,80 @@ def edit_experience_on_hh(
         # the resume genuinely has zero rows.
         existing_indexes = _experience_row_indexes(page)
         first_entry = not existing_indexes
-        if not first_entry and trigger.count() == 0:
-            # A non-empty resume was asked to address an index that does not
-            # exist among the current rows. #815 live testing found
-            # /resume/edit/{resume_id}/experience — the only route this
-            # module ever used for "no trigger found" — does NOT reliably
-            # create a new row on a resume that already has entries: it can
-            # open blank, or it can silently rebind to and overwrite an
-            # unrelated existing row matched by some other identity (start
-            # date, in the observed case). Neither outcome is safe to walk
-            # into automatically, so this fails closed rather than reusing
-            # the first-entry route on a resume where it was never confirmed
-            # safe.
+        # #782/#787/#840: a non-empty resume being asked to CREATE a new row
+        # (requested index not among the current ones) goes through the
+        # third, shared-profile-editor shape via EXPERIENCE_ADD_BUTTON — the
+        # #815 fail-closed guard used to stop here unconditionally because
+        # that shape was unresearched; #840/#787 have since confirmed its
+        # selectors and its checkbox-binding panel, so it is now used
+        # instead of refusing outright. It still fails closed below if the
+        # add trigger, the target title, or the panel itself cannot be
+        # confirmed.
+        via_add_button = not first_entry and trigger.count() == 0
+        if via_add_button and target_title is None:
             return results + [
                 ExperienceResult(
                     f"строка опыта {index}: индекс не найден среди существующих строк "
-                    f"({existing_indexes}) — добавление новой записи к резюме, где опыт "
-                    "уже есть, не подтверждено безопасным (#815)"
+                    f"({existing_indexes}), а название целевого резюме для панели "
+                    "привязки не передано — добавление новой записи отклонено (#782)"
                 )
             ]
         # #796: snapshot the row count BEFORE opening the form for this entry
         # — taking it after save cannot distinguish a bound save from a
         # silent no-op, since both leave the count read at the same time.
         before_indexes = set(existing_indexes)
-        if first_entry:
+        if via_add_button:
+            add_trigger = page.locator(EXPERIENCE_ADD_BUTTON)
+            if add_trigger.count() != 1:
+                return results + [
+                    ExperienceResult(
+                        f"строка опыта {index}: add-триггер не подтверждён однозначно "
+                        f"({add_trigger.count()})"
+                    )
+                ]
+            try:
+                # #782 live trace (2026-08-30): _experience_row_indexes()
+                # just above expands the collapsed row list
+                # (_expand_experience_list), which reflows the page and can
+                # leave EXPERIENCE_ADD_BUTTON's bounding box above the
+                # current viewport (negative Y, confirmed live) — a
+                # different failure shape from the usual "visible !=
+                # hydrated" render race documented in CLAUDE.md.
+                # Locator.click()'s own actionability check scrolls the
+                # element into view too, but live testing found that
+                # auto-scroll intermittently loses the race against the
+                # reflow anyway (repeated 10-30s click timeouts observed
+                # live) — an explicit scroll_into_view_if_needed() before
+                # the click is a stronger, independent guarantee that does
+                # not depend on click()'s internal timing. An explicit
+                # finite click timeout is still set so a genuine
+                # actionability failure surfaces as a normal
+                # PlaywrightError here rather than the ambient 30s default.
+                add_trigger.scroll_into_view_if_needed(timeout=FORM_TIMEOUT_MS)
+                add_trigger.click(timeout=FORM_TIMEOUT_MS)
+                # #782 live trace (2026-08-30): a blind retry click here is
+                # unsafe — the first click above can succeed and already
+                # navigate the page to the shared-editor URL while the panel
+                # itself is still rendering (ordinary "commit is not
+                # painted" React race, just a slower one on this specific
+                # screen than PANEL_TIMEOUT_MS alone covers). Retrying
+                # add_trigger.click() at that point waits on a control that
+                # no longer exists on the NEW page (add_trigger was scoped
+                # to the old resume page's DOM) and only ever times out —
+                # confirmed live: this was the actual cause of every
+                # "не удалось открыть форму" failure observed while
+                # developing this fix, not a genuinely missed first click.
+                # A longer single wait for the panel is the correct fix;
+                # FORM_TIMEOUT_MS (10s) already covers the same class of
+                # slow-render race used everywhere else in this module.
+                page.locator(EXPERIENCE_RESUME_PANEL_SCOPE).wait_for(
+                    state="visible", timeout=FORM_TIMEOUT_MS
+                )
+            except PlaywrightError as exc:
+                return results + [
+                    ExperienceResult(f"строка опыта {index}: не удалось открыть форму: {exc}")
+                ]
+        elif first_entry:
             # #786/#787: no in-page "add" trigger for the first experience row
             # was ever confirmed by a research dump — the visible suggestion
             # chip (`suitable-vacancies-suggest-item-experience`) navigates to
@@ -615,23 +840,37 @@ def edit_experience_on_hh(
             return results + [
                 ExperienceResult(f"строка опыта {index}: триггер не найден однозначно")
             ]
-        # #786/#787: the first-row editor at /resume/edit/{id}/experience is a
-        # distinct DOM shape from the indexed row editor — separate company/
-        # position/save/cancel data-qa values (start/end year and description
-        # are the same non-indexed selectors on both shapes, confirmed live).
-        company_selector = (
-            FIRST_EXPERIENCE_COMPANY if first_entry else EXPERIENCE_COMPANY.format(index=index)
-        )
-        position_selector = (
-            FIRST_EXPERIENCE_POSITION if first_entry else EXPERIENCE_POSITION.format(index=index)
-        )
+        # #786/#787/#840/#782: three distinct DOM shapes share this loop —
+        # the first-row editor (separate company/position/save/cancel data-
+        # qa), the indexed row editor (indexed company/position, shared
+        # profile-layout-*-button save/cancel), and the shared-add shape for
+        # a new row on a non-empty resume (SAME profile-layout-*-button
+        # save/cancel as the indexed editor, but PREFIX-scoped company/
+        # position selectors — its row index is a fresh React counter the
+        # caller cannot predict, see EXPERIENCE_SHARED_NEW_ROW_* provenance).
+        if first_entry:
+            company_selector = FIRST_EXPERIENCE_COMPANY
+            position_selector = FIRST_EXPERIENCE_POSITION
+        elif via_add_button:
+            company_selector = EXPERIENCE_SHARED_NEW_ROW_COMPANY
+            position_selector = EXPERIENCE_SHARED_NEW_ROW_POSITION
+        else:
+            company_selector = EXPERIENCE_COMPANY.format(index=index)
+            position_selector = EXPERIENCE_POSITION.format(index=index)
         save_selector = FIRST_EXPERIENCE_SAVE if first_entry else EXPERIENCE_SAVE
         cancel_selector = FIRST_EXPERIENCE_CANCEL if first_entry else EXPERIENCE_CANCEL
         save_attempted = False
         try:
-            if not first_entry:
+            if not first_entry and not via_add_button:
                 trigger.click()
             page.locator(company_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            if via_add_button and page.locator(company_selector).count() != 1:
+                return results + [
+                    ExperienceResult(
+                        f"строка опыта {index}: поле компании новой строки определяется "
+                        f"неоднозначно ({page.locator(company_selector).count()})"
+                    )
+                ]
             _fill(page.locator(company_selector), entry.company)
             _fill(page.locator(position_selector), entry.position)
             _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
@@ -694,6 +933,31 @@ def edit_experience_on_hh(
                 results.append(ExperienceResult(f"строка {index}: предложено, save не нажат", True))
                 page.locator(cancel_selector).click()
             else:
+                if not first_entry:
+                    # #782: both the indexed row editor (existing row) and
+                    # the shared-add shape (via_add_button, new row) land on
+                    # the same profile-layout-*-button screen with the
+                    # "Резюме с этим местом работы" binding panel — reconcile
+                    # it before every save on this shape, not just the new-
+                    # row case, since the panel is present either way and an
+                    # unreconciled save on an EXISTING row would silently
+                    # trust whatever hh.ru's own default state happens to be.
+                    if target_title is None:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: название целевого резюме для панели "
+                                "привязки не передано — сохранение отклонено (#782)"
+                            )
+                        ]
+                    try:
+                        _reconcile_experience_resume_panel(
+                            page,
+                            target_title=target_title,
+                            other_titles=other_titles,
+                            is_new_row=via_add_button,
+                        )
+                    except ResumePanelReconciliationError as exc:
+                        return results + [ExperienceResult(f"строка {index}: {exc}")]
                 save = page.locator(save_selector)
                 if save.count() != 1:
                     return results + [

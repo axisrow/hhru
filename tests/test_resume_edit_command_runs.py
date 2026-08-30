@@ -265,6 +265,7 @@ def test_edit_experience_uncertain_outcome_is_not_counted_as_failed(
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda *_a, **_kw: [])
     monkeypatch.setattr(
         "hhru_bot.experience.edit_experience_on_hh",
         lambda *_a, **_kw: [ExperienceResult("строка 1: не подтверждено", uncertain=True)],
@@ -685,6 +686,7 @@ def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda *_a, **_kw: [])
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda *_a, **_kw: [])
     monkeypatch.setattr(
         "hhru_bot.experience.edit_experience_on_hh",
         lambda *_a, **_kw: [
