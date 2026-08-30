@@ -92,6 +92,7 @@ def test_lock_covers_all_hhru_write_commands():
         "responses",
         "edit-education",
         "clear-negotiations",
+        "common",
         "delete-education-entry",
         "delete-resume",
         "create-resume",
@@ -110,6 +111,11 @@ def test_lock_covers_all_hhru_write_commands():
         "update",
         "report-vacancy",
     }
+
+
+def test_common_is_write_locked():
+    args = cli.build_parser().parse_args(["common", "--resume", "00001", "--dry-run"])
+    assert _is_write_command(args)
 
 
 def test_config_read_commands_are_not_write_locked():

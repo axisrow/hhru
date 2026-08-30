@@ -101,6 +101,7 @@ WRITE_COMMANDS = frozenset(
         "responses",
         "edit-education",
         "clear-negotiations",
+        "common",
         "delete-education-entry",
         "delete-resume",
         "create-resume",
