@@ -23,36 +23,37 @@ TIMEOUT="${CHECK_HH_TIMEOUT:-10}"
 SLOW_THRESHOLD="${CHECK_HH_SLOW_THRESHOLD:-5}"
 
 # probe: печатает сырые метрики пробы (как раньше) и возвращает через stdout
-# последней строкой "ok <time_total>" или "fail" — источник для классификации.
+# последней строкой "transport_fail" (таймаут/сеть недоступна) или
+# "<http_code> <time_total>" (транспорт отработал, независимо от статуса) —
+# источник для классификации. HTTP-ошибка (4xx/5xx) — это не то же самое,
+# что медленный транспорт, и is_slow() ниже судит только по time_total,
+# не по http_code (#852 code review: быстрый 403 у baseline-хоста не должен
+# читаться как "сеть медленная").
 probe() {
     label="$1"
     url="$2"
     echo "=== ${label} (${url}) ==="
     result=$(curl -sS -o /dev/null --max-time "$TIMEOUT" \
         -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n%{http_code} %{time_total}" \
-        "$url" 2>&1) || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "fail"; return; }
+        "$url" 2>&1) || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "transport_fail"; return; }
     metrics_line=$(echo "$result" | sed -n '1p')
     status_line=$(echo "$result" | sed -n '2p')
     echo "$metrics_line"
-    http_code=$(echo "$status_line" | cut -d' ' -f1)
-    time_total=$(echo "$status_line" | cut -d' ' -f2)
-    case "$http_code" in
-        2??|3??) echo "ok $time_total" ;;
-        *) echo "fail" ;;
-    esac
+    echo "$status_line"
 }
 
-# is_slow <probe-result-line>: "true" если проба провалилась или её
-# time_total >= SLOW_THRESHOLD.
+# is_slow <probe-result-line>: "true" если транспорт не отработал (таймаут/
+# ошибка соединения) или time_total >= SLOW_THRESHOLD. HTTP-код ответа
+# (даже 4xx/5xx) не делает пробу "медленной" сам по себе — сервер мог
+# ответить быстро с кодом ошибки, это отдельный сигнал.
 is_slow() {
     line="$1"
     case "$line" in
-        fail) return 0 ;;
-        ok\ *)
-            t="${line#ok }"
+        transport_fail) return 0 ;;
+        *)
+            t=$(echo "$line" | cut -d' ' -f2)
             awk -v t="$t" -v thr="$SLOW_THRESHOLD" 'BEGIN { exit !(t+0 >= thr+0) }'
             ;;
-        *) return 0 ;;
     esac
 }
 
