@@ -1,17 +1,21 @@
-"""The two education editors are different screens (#773).
+"""The education editors are different screens (#773, #857).
 
-Live probe 2026-08-30 showed the additional-education form shares neither its
-buttons nor its field addressing with the primary one:
+Live probes 2026-08-30 showed the additional-education form shares neither its
+buttons nor its field addressing with the primary one, AND renders two shapes
+of its own depending on the entry point (#857 live drill):
 
 * primary    -> /profile/edit/primaryEducation        -> ``profile-layout-*``
   buttons, ``profile-education-*-input`` fields;
-* additional -> /resume/edit/<id>/additionalEducation -> ``resume-partial-edit-*``
-  buttons, and inputs with NO ``data-qa`` at all, bound only through
-  ``aria-labelledby`` + ``<label>`` (Magritte).
+* additional, direct route /resume/edit/<id>/additionalEducation ->
+  ``resume-partial-edit-*`` buttons, inputs with NO ``data-qa`` bound only
+  through ``aria-labelledby`` + ``<label>`` (Magritte);
+* additional, opened through the resume card row trigger ->
+  ``profile-layout-*`` buttons (same as primary) and data-qa
+  ``profile-education-additional-*`` fields whose <label> bindings are EMPTY.
 
-These tests pin that split so a future edit cannot collapse the two shapes back
-into one set of selectors, and pin the fail-closed behaviour of the
-label-addressed path.
+These tests pin that split so a future edit cannot collapse the shapes back
+into one set of selectors, and pin the fail-closed behaviour of each
+addressing path.
 """
 
 from __future__ import annotations
@@ -55,15 +59,15 @@ class RecordingLocator:
 
 
 class LabelPage:
-    """Fake page that only resolves fields the live additional form exposes.
+    """Fake page modeling the trigger-opened additional form (#857).
 
-    ``locator`` deliberately reports count=0 for every ``data-qa`` field
-    selector: on the real additional-education form those attributes do not
-    exist, so a fake that answered count=1 would hide exactly the drift this
-    change fixes.
+    The additional ``profile-education-additional-*`` data-qa resolve (live
+    dump of that shape); every other ``profile-education-*`` data-qa stays
+    count=0 so a fake cannot silently answer for the primary editor fields.
+    The direct-route label bindings stay available through ``get_by_label``.
     """
 
-    def __init__(self, *, labels=None, label_count=1, resume_id="RID"):
+    def __init__(self, *, labels=None, label_count=1, resume_id="RID", qa_count=1):
         self.filled: list[tuple[str, str]] = []
         self.clicked: list[str] = []
         self.url = f"https://hh.ru/resume/{resume_id}"
@@ -71,10 +75,13 @@ class LabelPage:
             labels if labels is not None else set(resume_education._ADDITIONAL_LABELS.values())
         )
         self._label_count = label_count
+        self._qa_count = qa_count
 
     def locator(self, selector: str):
         if selector.startswith("[data-qa='resume-edit-button-"):
             return RecordingLocator(self, selector, count=1)
+        if selector in resume_education._ADDITIONAL_TRIGGER_SHAPE_FIELDS.values():
+            return RecordingLocator(self, selector, count=self._qa_count)
         if selector.startswith("[data-qa='profile-education-"):
             return RecordingLocator(self, selector, count=0)
         return RecordingLocator(self, selector, count=1)
@@ -123,7 +130,7 @@ def test_ambiguous_label_fails_closed(label_count):
         _field_locator(page, "institution", additional=True)
 
 
-def test_additional_block_dry_run_fills_by_label_and_cancels_partial_editor(monkeypatch):
+def test_additional_block_trigger_shape_fills_by_data_qa(monkeypatch):
     monkeypatch.setattr(resume_education, "open_hydrated_resume_editor", lambda *a, **k: None)
     page = LabelPage()
     record = EducationRecord(
@@ -138,20 +145,24 @@ def test_additional_block_dry_run_fills_by_label_and_cancels_partial_editor(monk
     result = _edit_block(page, [record], additional=True, dry_run=True, resume_id="RID")
 
     assert result.success, result.reason
-    # Filled through labels, not through any data-qa selector.
+    # Trigger shape: filled through the confirmed data-qa, never through
+    # get_by_label (empty label bindings, live-dumped #857).
     assert page.filled == [
-        ("label:Название", "Курсы"),
-        ("label:Проводившая организация", "Организация"),
-        ("label:Специализация", "Специализация"),
-        ("label:Год окончания", "2020"),
+        ("[data-qa='profile-education-additional-name']", "Курсы"),
+        ("[data-qa='profile-education-additional-organization']", "Организация"),
+        ("[data-qa='profile-education-additional-specialty']", "Специализация"),
+        ("[data-qa='profile-education-year-input']", "2020"),
     ]
-    # Dry run must leave the editor through the partial-edit cancel button.
-    assert page.clicked == [resume_education.ADDITIONAL_CANCEL_BUTTON]
+    # Dry run must leave the editor through its cancel button. #857 live
+    # finding: the trigger-opened additional form renders the SAME
+    # profile-layout controls as the primary editor, not the
+    # resume-partial-edit pair (those belong to the direct-route shape).
+    assert page.clicked == [resume_education.CANCEL_BUTTON]
 
 
-def test_additional_block_reports_unresolvable_label_without_saving(monkeypatch):
+def test_additional_block_reports_unresolvable_field_without_saving(monkeypatch):
     monkeypatch.setattr(resume_education, "open_hydrated_resume_editor", lambda *a, **k: None)
-    page = LabelPage(labels={"Название"})
+    page = LabelPage(qa_count=0)
     record = EducationRecord(
         institution="Курсы",
         level="",
@@ -164,7 +175,7 @@ def test_additional_block_reports_unresolvable_label_without_saving(monkeypatch)
     result = _edit_block(page, [record], additional=True, dry_run=False, resume_id="RID")
 
     assert not result.success
-    assert "Проводившая организация" in result.reason
+    assert "не найдено однозначно" in result.reason
     assert result.saved == 0
     assert not result.uncertain
-    assert resume_education.ADDITIONAL_SAVE_BUTTON not in page.clicked
+    assert resume_education.SAVE_BUTTON not in page.clicked

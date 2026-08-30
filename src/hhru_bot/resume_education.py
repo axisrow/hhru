@@ -59,6 +59,19 @@ ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
 #   additional -> /resume/edit/<id>/additionalEducation -> resume-partial-edit-*
 # Each candidate is count=0 on the other screen; keep them separate rather than
 # guessing one shared id.
+# #857 (live probe 2026-08-30): the additionalEducation CARD on the resume page
+# renders ONLY when at least one additional entry is already attached to the
+# resume (entries are profile-level and are attached on the wizard's educations
+# screen). A resume with zero attached additional entries has neither the card
+# nor the Add link -- but the resume-scoped direct route below still renders
+# the full resume-partial-edit form (confirmed live on such a resume). It is
+# the only confirmed way in for that case, so _edit_block falls back to it.
+ADDITIONAL_DIRECT_PATH = "/resume/edit/{resume_id}/additionalEducation"
+# The primary education card is the always-present hydration marker used for
+# the additional block's pre-loop wait (see _edit_block): #812's invariant
+# ("Уровень образования" field always exists) means the card renders on every
+# resume page even when the additional card legitimately does not.
+PRIMARY_EDUCATION_CARD = "[data-qa='resume-list-card-education']"
 CANCEL_BUTTON = "[data-qa='profile-layout-cancel-button']"
 SAVE_BUTTON = "[data-qa='profile-layout-save-button']"
 ADDITIONAL_CANCEL_BUTTON = "[data-qa='resume-partial-edit-cancel']"
@@ -92,16 +105,32 @@ _PRIMARY_FIELDS = {
     "specialty": "[data-qa='profile-education-specialty-input']",
     "year": "[data-qa='profile-education-year-input']",
 }
-# The additional-education form carries NO data-qa on any of its inputs — they
-# are bound only through aria-labelledby + <label> (Magritte, live probe
-# 2026-08-30; every profile-education-additional-* candidate is count=0 there).
-# The visible label is the only stable handle, addressed through
-# browser.labelled_field, which requires one exact match and fails closed.
+# The additional-education form opened through the DIRECT route carries NO
+# data-qa on any of its inputs — they are bound only through aria-labelledby +
+# <label> (Magritte, live probe 2026-08-30; every profile-education-additional-*
+# candidate is count=0 there). The visible label is the only stable handle,
+# addressed through browser.labelled_field, which requires one exact match and
+# fails closed.
 _ADDITIONAL_LABELS = {
     "institution": "Название",
     "organization": "Проводившая организация",
     "specialty": "Специализация",
     "year": "Год окончания",
+}
+# #857 (live drill, 2026-08-30): the SAME semantic form opened through the
+# resume card's row trigger is a DIFFERENT shape -- its inputs carry data-qa
+# and their <label> elements bind with EMPTY text (dumped live on the trigger-
+# opened form), so get_by_label is unreliable there: it resolved and verified
+# an institution fill that hh.ru then did not persist (2 of 3 trigger-shape
+# saves took the value, one silently reverted -- same fill-then-reset race
+# class as #825, but the address itself is the weak link). These data-qa were
+# confirmed by dumping the opened form; year reuses the primary editor's year
+# input.
+_ADDITIONAL_TRIGGER_SHAPE_FIELDS = {
+    "institution": "[data-qa='profile-education-additional-name']",
+    "organization": "[data-qa='profile-education-additional-organization']",
+    "specialty": "[data-qa='profile-education-additional-specialty']",
+    "year": "[data-qa='profile-education-year-input']",
 }
 FORM_TIMEOUT_MS = 15_000
 # #825: было отсутствие явного timeout у wait_for_url после клика Save, из-за
@@ -230,14 +259,22 @@ def generate_education_plan(
         )
 
 
-def _field_locator(page, name: str, *, additional: bool):
-    """Resolve one education field on whichever of the two forms is open.
+def _field_locator(page, name: str, *, additional: bool, trigger_shape: bool = False):
+    """Resolve one education field on whichever of the additional shapes is open.
 
-    Both paths require exactly one match and raise otherwise, so a drifted
+    All paths require exactly one match and raise otherwise, so a drifted
     selector or an ambiguous label stops the write instead of filling the
-    wrong control.
+    wrong control. #857: the additional block has TWO shapes -- direct-route
+    (label-addressed) and trigger-opened (data-qa, see
+    _ADDITIONAL_TRIGGER_SHAPE_FIELDS); primary stays data-qa.
     """
     if additional:
+        if trigger_shape:
+            selector = _ADDITIONAL_TRIGGER_SHAPE_FIELDS[name]
+            locator = page.locator(selector)
+            if locator.count() != 1:
+                raise PageStateIndeterminate(f"поле {selector} не найдено однозначно")
+            return locator
         return labelled_field(page, _ADDITIONAL_LABELS[name])
     locator = page.locator(_PRIMARY_FIELDS[name])
     if locator.count() != 1:
@@ -329,14 +366,17 @@ def _edit_block(
     # education card asynchronously, and a strict count() right after goto_hh
     # can race it and see 0 even though the card renders moments later. The
     # "Уровень образования" field always exists on hh.ru (unlike about/skills,
-    # this section is never legitimately absent), so exactly one of the two
-    # possible markers -- the first row's edit trigger (records already
-    # present) or the confirmed Add link (section empty) -- must eventually
-    # appear; wait for either before the first strict check below.
+    # this section is never legitimately absent), so exactly one of the
+    # possible markers must eventually appear. #857: for the additional block
+    # the card and Add link may BOTH legitimately never render (no attached
+    # entries), so the always-present primary education card completes the
+    # marker set there; the per-row logic below reaches the form through the
+    # direct route in that case.
+    pre_loop = page.locator(trigger.format(index=0)).or_(page.locator(add_selector))
+    if additional:
+        pre_loop = pre_loop.or_(page.locator(PRIMARY_EDUCATION_CARD))
     try:
-        page.locator(trigger.format(index=0)).or_(page.locator(add_selector)).first.wait_for(
-            state="visible", timeout=FORM_TIMEOUT_MS
-        )
+        pre_loop.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
     except PlaywrightTimeoutError as exc:
         return EducationResult(
             kind,
@@ -358,7 +398,7 @@ def _edit_block(
             # The confirmed Add link is the only safe way to create a missing
             # row. Never guess an unverified route or API endpoint.
             button = page.locator(add_selector)
-            if button.count() != 1:
+            if button.count() != 1 and not additional:
                 return EducationResult(
                     kind,
                     False,
@@ -367,27 +407,62 @@ def _edit_block(
                     uncertain=saved_count > 0,
                     saved=saved_count,
                 )
+        # #857: additional with neither an existing row trigger nor the Add
+        # link (no card at all -- zero attached profile entries) opens the
+        # form through its resume-scoped direct route instead. The resume_id
+        # is part of the URL, so the identity check below binds the form to
+        # the right resume; nothing is scoped to a clickable trigger that
+        # does not exist.
+        direct_route = additional and button_count == 0 and button.count() != 1
+        # #857 (live drill): the additional form renders TWO control shapes
+        # depending on how it was opened. Opened through the direct route it
+        # carries resume-partial-edit-save/cancel (as the 2026-08-30 probe
+        # that picked these selectors saw); opened through the resume card's
+        # row trigger it renders profile-layout-save-button/cancel-button --
+        # the SAME controls as the primary editor -- and the
+        # resume-partial-edit buttons are count=0 there (confirmed live by
+        # clicking the trigger and dumping the controls, no save pressed).
+        # The editor hydration marker follows the same choice.
+        if additional and not direct_route:
+            row_save_selector = SAVE_BUTTON
+            row_cancel_selector = CANCEL_BUTTON
+        else:
+            row_save_selector = save_selector
+            row_cancel_selector = cancel_selector
         save_clicked = False
         try:
-            open_hydrated_resume_editor(
-                page,
-                trigger_selector=(
-                    trigger.format(index=index) if button_count == 1 else add_selector
-                ),
-                # The additional form exposes no data-qa on its inputs, so its
-                # hydration marker is the editor's own save control (live probe
-                # 2026-08-30: present on the rendered form, absent before it).
-                editor_selector=(
-                    ADDITIONAL_SAVE_BUTTON if additional else _PRIMARY_FIELDS["institution"]
-                ),
-                profile_path=f"/resume/{resume_id}",
-                edit_path=route,
-                timeout=FORM_TIMEOUT_MS,
-                trigger_error=f"триггер образования {index} не найден однозначно",
-                open_error=f"форма образования {index} не открылась",
-                wrong_route_error=f"форма образования {index} открыта не для того резюме",
-                expected_query={"resumeFrom": resume_id} if not additional else None,
-            )
+            if direct_route:
+                goto_hh(page, f"{HH_BASE_URL}{ADDITIONAL_DIRECT_PATH.format(resume_id=resume_id)}")
+                editor_marker = page.locator(row_save_selector)
+                editor_marker.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+                current_path = urlsplit(page.url).path
+                if (
+                    not current_path.endswith("/additionalEducation")
+                    or resume_id not in current_path
+                ):
+                    raise RuntimeError(
+                        f"форма доп. образования открыта не для того резюме: {page.url}"
+                    )
+            else:
+                open_hydrated_resume_editor(
+                    page,
+                    trigger_selector=(
+                        trigger.format(index=index) if button_count == 1 else add_selector
+                    ),
+                    # The additional form exposes no data-qa on its inputs, so its
+                    # hydration marker is the editor's own save control (live probe
+                    # 2026-08-30: present on the rendered form, absent before it).
+                    editor_selector=(
+                        row_save_selector if additional else _PRIMARY_FIELDS["institution"]
+                    ),
+                    profile_path=f"/resume/{resume_id}",
+                    edit_path=route,
+                    timeout=FORM_TIMEOUT_MS,
+                    trigger_error=f"триггер образования {index} не найден однозначно",
+                    open_error=f"форма образования {index} не открылась",
+                    wrong_route_error=f"форма образования {index} открыта не для того резюме",
+                    expected_query={"resumeFrom": resume_id} if not additional else None,
+                )
             for name in field_names:
                 value = getattr(record, name)
                 # Empty LLM fields mean "unknown", not "erase the current value".
@@ -396,7 +471,12 @@ def _edit_block(
                 if not value:
                     continue
                 try:
-                    locator = _field_locator(page, name, additional=additional)
+                    locator = _field_locator(
+                        page,
+                        name,
+                        additional=additional,
+                        trigger_shape=additional and not direct_route,
+                    )
                 except PageStateIndeterminate as exc:
                     return EducationResult(
                         kind,
@@ -428,9 +508,9 @@ def _edit_block(
                         saved=saved_count,
                     )
             if dry_run:
-                page.locator(cancel_selector).first.click()
+                page.locator(row_cancel_selector).first.click()
             else:
-                save = page.locator(save_selector)
+                save = page.locator(row_save_selector)
                 if save.count() != 1:
                     return EducationResult(
                         kind,
@@ -529,21 +609,38 @@ def _edit_block(
                         uncertain=True,
                         saved=saved_count,
                     )
-                if page.get_by_text(institution_value).count() == 0:
-                    _dump_save_failure(
-                        page,
-                        index,
-                        kind,
-                        RuntimeError(f"{institution_value!r} не найден на резюме после сохранения"),
-                    )
-                    return EducationResult(
-                        kind,
-                        False,
-                        f"строка {index}: запись не отображается на резюме после сохранения "
-                        f"({institution_value!r} не найден)",
-                        uncertain=True,
-                        saved=saved_count,
-                    )
+                # #857 (live drill): the text check races the SPA's hydration
+                # of the resume page -- wait_for_url(commit) confirms the URL,
+                # not the rendered card, so an immediate get_by_text().count()
+                # saw 0 for a record hh.ru had genuinely saved (the record
+                # appeared once hydration finished, confirmed by a follow-up
+                # read-only probe). Poll for the text within a bounded budget
+                # (same "commit не значит отрисовано" class as the pre-loop
+                # wait above; FORM_TIMEOUT_MS, not FIELD_VERIFY_TIMEOUT_MS --
+                # the live drill's card rendered well after 3s) instead of
+                # trusting a single immediate read.
+                text_deadline = time.monotonic() + FORM_TIMEOUT_MS / 1000
+                while True:
+                    if page.get_by_text(institution_value).count() > 0:
+                        break
+                    if time.monotonic() >= text_deadline:
+                        _dump_save_failure(
+                            page,
+                            index,
+                            kind,
+                            RuntimeError(
+                                f"{institution_value!r} не найден на резюме после сохранения"
+                            ),
+                        )
+                        return EducationResult(
+                            kind,
+                            False,
+                            f"строка {index}: запись не отображается на резюме после сохранения "
+                            f"({institution_value!r} не найден)",
+                            uncertain=True,
+                            saved=saved_count,
+                        )
+                    page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
                 saved_count += 1
         except (PlaywrightError, RuntimeError) as exc:
             # open_hydrated_resume_editor raises RuntimeError (not PlaywrightError)
