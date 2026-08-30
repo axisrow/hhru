@@ -135,6 +135,186 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
+  account_profile.RESUME_COMMON_BIRTHDAY_DAY:
+    value: '[data-qa=''resume-profile-common-birthday-day-input'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:32
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-common-birthday-day-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:32
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_FIRST_NAME:
+    value: '[data-qa=''resume-profile-common-name-input'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:30
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-common-name-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:30
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_FORM:
+    value: '[data-qa=''resume-profile-screen resume-profile-screen_common'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:29
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-screen_common
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:29
+      note: Authenticated live DOM of the common resume profile wizard on 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_GENDER_FEMALE:
+    value: '[data-qa=''resume-profile-common-gender-female-chip'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:34
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-common-gender-female-chip
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:34
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_GENDER_MALE:
+    value: '[data-qa=''resume-profile-common-gender-male-chip'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:33
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-common-gender-male-chip
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:33
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_LAST_NAME:
+    value: '[data-qa=''resume-profile-common-surname-input'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:31
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-common-surname-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:31
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_NEXT:
+    value: '[data-qa=''resume-profile-next-screen'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:36
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-next-screen
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:36
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_PHONE:
+    value: '[data-qa=''resume-phone-cell_phone'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:35
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-phone-cell_phone
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:35
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
+  account_profile.RESUME_COMMON_PREV:
+    value: '[data-qa=''resume-profile-prev-screen'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-prev-screen
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:37
+      note: Authenticated common wizard DOM 2026-08-31.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_common_resume_wizard_read_only
+    verified_by: codex
   account_profile.RESUME_CONTACT_EMAIL:
     value: '[data-qa=''resume-contact-email-value'']'
     criticality: read
