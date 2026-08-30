@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<body>
+  <main data-qa="resume-position-editor" data-resume-id="00001">
+    <button type="button" data-qa="resume-position-professional-role-add-button">
+      Добавить специализацию
+    </button>
+    <section data-qa="professional-roles-modal" role="dialog" hidden>
+      <input data-qa="tree-selector-search-input" aria-label="Поиск специализации">
+      <div data-qa="tree-selector-category">Финансы</div>
+      <div data-qa="tree-selector-item tree-selector-item-1 tree-selector-child-96"><span data-qa="cell-text-content">Бухгалтер</span></div>
+      <div data-qa="tree-selector-category">Образование</div>
+      <div data-qa="tree-selector-item tree-selector-item-2 tree-selector-child-101"><span data-qa="cell-text-content">Учитель, преподаватель, педагог</span></div>
+      <div data-qa="tree-selector-category">Продажи</div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-category">Маркетинг</div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-category">Сервис</div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-category">Торговля</div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-category">Искусство</div>
+      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
+      <div data-qa="tree-selector-category">Транспорт</div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <button type="button" data-qa="professional-roles-submit">Готово</button>
+    </section>
+  </main>
+  <script>
+    const modal = document.querySelector("[data-qa='professional-roles-modal']");
+    document.querySelector("[data-qa='resume-position-professional-role-add-button']")
+      .addEventListener("click", () => modal.hidden = false);
+    document.querySelector("[data-qa='professional-roles-submit']")
+      .addEventListener("click", () => modal.hidden = true);
+  </script>
+</body>
+</html>
