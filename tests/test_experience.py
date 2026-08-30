@@ -12,6 +12,15 @@ from hhru_bot.experience import (
     plan_experience,
     read_experience_on_hh,
 )
+from hhru_bot.selector_groups.resume_experience import (
+    EXPERIENCE_COMPANY,
+    EXPERIENCE_MONTH_LISTBOX,
+    EXPERIENCE_MONTH_OPTION,
+    EXPERIENCE_POSITION,
+    FIRST_EXPERIENCE_CURRENT_CHECKBOX,
+    SHARED_EXPERIENCE_CANCEL,
+    SHARED_EXPERIENCE_SAVE,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -711,3 +720,39 @@ def test_edit_experience_fails_closed_on_nonexistent_index_for_nonempty_resume(m
     assert not results[0].success
     assert not results[0].uncertain
     assert "не найден среди существующих строк" in results[0].reason
+
+
+def test_shared_experience_save_cancel_use_distinct_profile_layout_namespace():
+    """#840: the third (shared-profile-editor) shape's save/cancel controls
+    live in a THIRD data-qa namespace (profile-layout-*-button), distinct
+    from both the indexed row editor (resume-*) and the first-entry editor
+    (resume-partial-edit-*) — a regression here would silently point a
+    future integration at the wrong shape's buttons."""
+    assert SHARED_EXPERIENCE_SAVE == "[data-qa='profile-layout-save-button']"
+    assert SHARED_EXPERIENCE_CANCEL == "[data-qa='profile-layout-cancel-button']"
+    save_and_cancel_from_other_shapes = {
+        EXPERIENCE_COMPANY,
+        EXPERIENCE_POSITION,
+        FIRST_EXPERIENCE_CURRENT_CHECKBOX,
+    }
+    assert SHARED_EXPERIENCE_SAVE not in save_and_cancel_from_other_shapes
+    assert SHARED_EXPERIENCE_CANCEL not in save_and_cancel_from_other_shapes
+
+
+def test_shared_experience_reuses_indexed_company_position_and_month_selectors():
+    """#840 live finding: the third shape's company/position fields use the
+    exact same indexed data-qa pattern as the indexed row editor
+    (resume-profile-experience-specific-{company,position}-input-{index}),
+    and its month combobox popup was JS-confirmed to render the same
+    magritte-select-option-{NN} / role=listbox structure as the already
+    working EXPERIENCE_START_MONTH/END_MONTH — so no new constants were
+    needed for those fields, only for save/cancel."""
+    assert (
+        EXPERIENCE_COMPANY == "[data-qa='resume-profile-experience-specific-company-input-{index}']"
+    )
+    assert (
+        EXPERIENCE_POSITION
+        == "[data-qa='resume-profile-experience-specific-position-input-{index}']"
+    )
+    assert EXPERIENCE_MONTH_OPTION == "[data-qa='magritte-select-option-{month}']"
+    assert EXPERIENCE_MONTH_LISTBOX == "[role='listbox']"

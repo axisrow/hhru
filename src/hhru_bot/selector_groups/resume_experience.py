@@ -24,6 +24,23 @@ only for the one shape confirmed safe: a resume with genuinely zero
 experience rows. ``edit_experience_on_hh`` fails closed rather than falling
 back to this route when asked to address a row index that does not exist on
 a resume that already has other rows.
+
+**A THIRD shape exists (#840, read-only + JS-confirmed 2026-08-30) for "add
+a new row on a resume that already has entries" — the case #815 above fails
+closed on.** Clicking ``EXPERIENCE_ADD_BUTTON`` on such a resume lands on
+``/profile/edit/experience?resumeFrom={resume_id}``: the same shared-profile
+URL as the unreliable suggestion-chip route above, but reached via a
+different in-page control and, unlike that chip, WITH a ``resumeFrom``
+binding that was confirmed correct (its "Резюме с этим местом работы"
+checkbox panel showed only this account's resumes, this one pre-checked).
+The form opened genuinely blank (no unrelated row silently loaded, unlike
+#815's finding for the other route) and uses a third data-qa namespace for
+its save/cancel controls (``SHARED_EXPERIENCE_SAVE``/``SHARED_EXPERIENCE_CANCEL``,
+``profile-layout-*-button``) while reusing ``EXPERIENCE_COMPANY``/
+``EXPERIENCE_POSITION``/the month-combobox constants unchanged for its other
+fields. Not yet wired into ``edit_experience_on_hh`` — this shape's
+selectors are confirmed but the integration (choosing this route for a
+first-write on a non-empty resume) is left to a follow-up.
 """
 
 from __future__ import annotations
@@ -118,3 +135,50 @@ FIRST_EXPERIENCE_CANCEL = _selector("resume_experience.FIRST_EXPERIENCE_CANCEL")
 # was live write-confirmed to toggle the checkbox and re-enable the end-date
 # fields (form not saved, no mutation reached hh.ru).
 FIRST_EXPERIENCE_CURRENT_CHECKBOX = _selector("resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX")
+
+# Third DOM shape (#840, read-only + JS-confirmed 2026-08-30): clicking
+# EXPERIENCE_ADD_BUTTON ("Добавить" inside the experience card) on a resume
+# that ALREADY has experience entries lands on
+# /profile/edit/experience?resumeFrom={resume_id} — the shared-profile
+# editor, not /resume/edit/{resume_id}/experience (that route is confirmed
+# safe only for the zero-rows case, see FIRST_EXPERIENCE_* above and #815).
+# This shape's save/cancel controls use a THIRD data-qa namespace
+# (profile-layout-*-button), distinct from both EXPERIENCE_SAVE/CANCEL
+# (indexed row editor) and FIRST_EXPERIENCE_SAVE/CANCEL (resume-partial-edit-*).
+# Company/position fields on this shape were confirmed to reuse the exact
+# same indexed data-qa pattern as EXPERIENCE_COMPANY/EXPERIENCE_POSITION
+# (resume-profile-experience-specific-{company,position}-input-{index},
+# observed index=24 — a fresh React counter unrelated to any existing row
+# index) — no new constant needed for those, or for the month comboboxes
+# (see below).
+SHARED_EXPERIENCE_SAVE = _selector("resume_experience.SHARED_EXPERIENCE_SAVE")
+SHARED_EXPERIENCE_CANCEL = _selector("resume_experience.SHARED_EXPERIENCE_CANCEL")
+
+# #840 blocker investigation: the issue's first-candidate hypothesis was a
+# #824-style visual-element interception (a decorative span sitting in front
+# of the real control in DOM order, absorbing the click). CONFIRMED FALSE on
+# this shape: document.elementFromPoint() at the activator's bounding-box
+# center returned the [data-qa='magritte-select-activator'] element itself,
+# not an overlapping sibling — there is no interception here, the DOM around
+# the month combobox is structurally IDENTICAL to the already-working
+# EXPERIENCE_START_MONTH/END_MONTH triggers (same magritte-trigger markup, no
+# extra wrapper). A plain JS `.click()` on the activator opened the listbox
+# normally (aria-expanded flipped false -> true), and EXPERIENCE_MONTH_OPTION
+# / EXPERIENCE_MONTH_LISTBOX matched the resulting popup unchanged
+# (magritte-select-option-{01..12} / role=listbox with data-qa='drop-base'),
+# confirming `_select_month()` (experience.py) needs no shape-specific
+# variant for this control. The originally reported non-opening Playwright
+# click is more likely explained by a click landing before this specific
+# screen finished hydrating after the EXPERIENCE_ADD_BUTTON navigation (the
+# general "commit is not painted" pattern already documented in CLAUDE.md) —
+# not confirmed by a live write test in this issue's scope, left for the
+# follow-up that wires this shape into edit_experience_on_hh to verify with
+# an explicit wait_for(state="visible") before the first click, the same
+# pattern already used by _select_month's own caller.
+#
+# Also note for that follow-up: FIRST_EXPERIENCE_CURRENT_CHECKBOX's
+# `[data-qa='checkbox-container'] input` scoping is NOT reusable as-is on
+# this shape — the form has three checkbox-container elements ("Работаю
+# сейчас" plus one per resume in the "Резюме с этим местом работы" list), so
+# count() is 3 here vs. 1 on the first-entry shape; a narrower scope will be
+# needed before this control can be driven safely.
