@@ -546,6 +546,93 @@ def test_apply_position_sets_confirmed_specializations(monkeypatch):
     set_specializations.assert_called_once_with(page, ["Аналитик"])
 
 
+def _mock_specialization_locators(page, *, option_data_qa):
+    """Common scaffolding for _set_specializations tests below.
+
+    Mocks every locator _set_specializations touches; option_data_qa controls
+    what the filtered SPECIALIZATION_OPTION locator resolves to (its .first
+    is what option.first.wait_for()/click() operate on).
+    """
+    add = MagicMock()
+    add.count.return_value = 1
+    cards = MagicMock()
+    cards.count.return_value = 0
+    modal = MagicMock()
+    modal.count.return_value = 1
+    search = MagicMock()
+    search.count.return_value = 1
+    submit = MagicMock()
+    submit.count.return_value = 1
+    option_tree = MagicMock()
+    option = MagicMock()
+    option.count.return_value = len(option_data_qa)
+    option.nth.side_effect = lambda i: SimpleNamespace(
+        get_attribute=lambda _name: option_data_qa[i]
+    )
+    option_tree.filter.return_value = option
+
+    def locate(selector):
+        return {
+            resume_position.SPECIALIZATION_ADD: add,
+            resume_position.SPECIALIZATION_DELETE: cards,
+            resume_position.SPECIALIZATION_MODAL: modal,
+            resume_position.SPECIALIZATION_SEARCH: search,
+            resume_position.SPECIALIZATION_SUBMIT: submit,
+            resume_position.SPECIALIZATION_OPTION: option_tree,
+        }[selector]
+
+    page.locator.side_effect = locate
+    return option
+
+
+def test_set_specializations_waits_out_the_filter_render_race():
+    """#822 live repro: search.fill() starts an async React re-render, so a
+    leaf genuinely present in the tree can read as 0 matches immediately
+    after fill(). option.first.wait_for() must absorb that race instead of
+    the stale read failing with "не найден однозначно"."""
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=["tree-selector-item tree-selector-item-96"]
+    )
+
+    resume_position._set_specializations(page, ["Программист, разработчик"])
+
+    option.first.wait_for.assert_called_once_with(
+        state="visible", timeout=resume_position._CONTROL_WAIT_TIMEOUT_MS
+    )
+    option.first.click.assert_called_once()
+
+
+def test_set_specializations_reports_missing_leaf_after_timeout():
+    """No match ever renders (not a race) — a distinct, honest message from
+    the ambiguous-match case below."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(page, option_data_qa=[])
+    option.first.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):
+        resume_position._set_specializations(page, ["Несуществующая специальность"])
+
+
+def test_set_specializations_still_rejects_genuine_ambiguity():
+    """Two distinct data-qa ids for the same label is real ambiguity, not the
+    render race — the wait succeeds (>=1 match) but the count check must
+    still fail it."""
+    page = MagicMock()
+    _mock_specialization_locators(
+        page,
+        option_data_qa=[
+            "tree-selector-item tree-selector-item-10",
+            "tree-selector-item tree-selector-item-20",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="не найден однозначно"):
+        resume_position._set_specializations(page, ["Аналитик"])
+
+
 def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     """#337: an SSR anchor has no handler until hydration, and URL stays put."""
     resume = bare_resume("resume-id")
