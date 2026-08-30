@@ -67,6 +67,15 @@ RESUME_SKILLS_DISPLAY_TAG = _selector("resume_page.RESUME_SKILLS_DISPLAY_TAG")
 # post-save chip/tag read observed zero: the skill never reached the resume
 # card at all.
 RESUME_SKILLS_LEVEL_RADIO_TEMPLATE = "input[name='{skill_and_level}']"
+# #826: the keySkills combobox's Enter key never commits a chip, on an empty
+# section or a non-empty one alike — confirmed live 2026-08-30 on both a
+# resume with zero existing skills and one with six. Typing opens a
+# `role='listbox'` autocomplete; the entered text is echoed back as its own
+# `role='option'` item with `data-qa='suggest-item-user-input'` (distinct from
+# the `resume-editor-skills-recommended-*` suggestion chips below the input,
+# which match a *different*, pre-existing skill name and are not addressed
+# here). Only clicking this option — never Enter — creates the chip.
+RESUME_SKILLS_SUGGEST_USER_INPUT = _selector("resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT")
 RESUME_PARTIAL_EDIT_CANCEL = _selector("resume_page.RESUME_PARTIAL_EDIT_CANCEL")
 RESUME_PARTIAL_EDIT_SAVE = _selector("resume_page.RESUME_PARTIAL_EDIT_SAVE")
 

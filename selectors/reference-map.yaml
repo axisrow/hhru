@@ -3301,6 +3301,32 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT:
+    value: '[data-qa=''suggest-item-user-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:78
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - suggest-item-user-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:78
+      note: 'Issue #826: pressing Enter in the keySkills chip input never commits a chip, confirmed live 2026-08-30 on both
+        an empty-skills draft and a non-empty one (two distinct test-account resumes, ids withheld per project policy — never
+        commit real resume ids) — same outcome on both, so this is not specific to a first-skill/empty-section shape. Typing
+        opens a role=''listbox'' autocomplete; the entered text is echoed as its own role=''option'' item with data-qa=''suggest-item-user-input''
+        (distinct from resume-editor-skills-recommended-* chips, which are pre-existing skill suggestions, not an echo of
+        what was typed). Only clicking this option was observed to create the chip (data-qa=''chips-trigger-chip-{name}'')
+        in both cases; read-only DOM/click confirmation only, no save performed on either resume.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_resume_editor_read_only
+    verified_by: claude
   resume_page.RESUME_SPECIALIZATION_ADD:
     value: '[data-qa=''resume-position-professional-role-add-button'']'
     criticality: write

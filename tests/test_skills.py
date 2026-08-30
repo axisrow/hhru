@@ -197,10 +197,10 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
 
 
 def _mock_chip_locator() -> MagicMock:
-    """A RESUME_SKILLS_CHIP (editor combobox) locator stub for the fill+Enter loop.
+    """A RESUME_SKILLS_CHIP (editor combobox) locator stub for the fill+click loop.
 
     #801: .filter(has_text=...) resolves immediately with one match, so the
-    post-fill+Enter commit-wait loop in edit_skills_on_hh does not poll until
+    post-fill+click commit-wait loop in edit_skills_on_hh does not poll until
     CHIP_COMMIT_TIMEOUT_MS on every addition. #813: the post-save settle-wait
     now targets RESUME_SKILLS_DISPLAY_TAG instead (see _mock_display_tag_locator),
     not this locator's .nth().wait_for().
@@ -208,6 +208,19 @@ def _mock_chip_locator() -> MagicMock:
     chip_locator = MagicMock()
     chip_locator.filter.return_value.count.return_value = 1
     return chip_locator
+
+
+def _mock_suggest_locator() -> MagicMock:
+    """A RESUME_SKILLS_SUGGEST_USER_INPUT locator stub for the fill+click loop.
+
+    #826: Enter never commits a chip in this combobox; the code clicks the
+    autocomplete option that echoes the typed text instead. .wait_for()
+    resolving immediately keeps this a no-op for tests that only care about
+    the eventual chip outcome, not the click mechanics themselves.
+    """
+    suggestion = MagicMock()
+    suggestion.wait_for.return_value = None
+    return suggestion
 
 
 def _mock_display_tag_locator() -> MagicMock:
@@ -240,6 +253,7 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
@@ -282,11 +296,13 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
     save = MagicMock()
     save.count.return_value = 1
     chip_locator = _mock_chip_locator()
+    suggestion = _mock_suggest_locator()
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: suggestion,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
@@ -311,7 +327,9 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
     assert result.success is True
     assert result.added == ("FastAPI", "LangChain")
     assert input_.fill.call_args_list == [call("FastAPI"), call("LangChain")]
-    assert input_.press.call_count == 2
+    # #826: each addition is committed by clicking the autocomplete option
+    # that echoes the typed text, not by pressing Enter.
+    assert suggestion.click.call_count == 2
     # Each addition is confirmed by its own exact-text filter, not a shared
     # chip-count check that a merged chip would also satisfy.
     filter_calls = [c.kwargs["has_text"].pattern for c in chip_locator.filter.call_args_list]
@@ -339,6 +357,7 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
@@ -386,6 +405,7 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
@@ -428,6 +448,7 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
@@ -472,6 +493,7 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
@@ -583,6 +605,7 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     page.locator.side_effect = lambda selector: {
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+        skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
         skills_module.resume_page.RESUME_SKILLS_CHIP: _mock_chip_locator(),
         skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: _mock_display_tag_locator(),
@@ -834,6 +857,7 @@ def test_edit_skills_handles_levels_wizard_step_for_new_skill(monkeypatch) -> No
         return {
             skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
             skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
+            skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
             skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
             skills_module.resume_page.RESUME_SKILLS_CHIP: chip_locator,
             skills_module.resume_page.RESUME_SKILLS_DISPLAY_TAG: tag_locator,
