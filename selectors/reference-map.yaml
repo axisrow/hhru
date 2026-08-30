@@ -2174,13 +2174,13 @@ selectors:
         (a different, deeper container than the 2-level ancestor that holds the checkboxes themselves), so it is addressed
         as a page-wide control rather than scoped through the h3 — confirmed unique (count()==1) on the live shared-editor
         screen, where it is the only "Развернуть"-labeled button. **#858 RESOLVED (live drill 2026-08-30, no save)**: the
-        PR #856 activation instability is a React HYDRATION WINDOW — the server-rendered button is visible/enabled ~1.5s
-        before React attaches its listeners; during that window the element carries no __reactFiber/__reactProps instance
-        keys and every click (Playwright actionability all pass, elementFromPoint on the button''s own label) is silently
-        swallowed. Measured on repeated live loads: clicks at 1.6-2.3s after load failed, the first click after both keys
-        appeared (~2.5s) succeeded every time. EXPERIENCE_RESUME_PANEL_EXPAND selector itself was correct all along;
-        _reconcile_experience_resume_panel now waits for the fiber+props readiness signal before clicking and retries
-        with confirmation (button must disappear) as defence in depth.'
+        PR #856 activation instability is a React HYDRATION WINDOW — the server-rendered button is visible/enabled ~1.5s before
+        React attaches its listeners; during that window the element carries no __reactFiber/__reactProps instance keys and
+        every click (Playwright actionability all pass, elementFromPoint on the button''s own label) is silently swallowed.
+        Measured on repeated live loads: clicks at 1.6-2.3s after load failed, the first click after both keys appeared (~2.5s)
+        succeeded every time. EXPERIENCE_RESUME_PANEL_EXPAND selector itself was correct all along; _reconcile_experience_resume_panel
+        now waits for the fiber+props readiness signal before clicking and retries with confirmation (button must disappear)
+        as defence in depth.'
     last_verified_at: '2026-08-30'
     verified_flow: authenticated_experience_editor_live_write_confirmed (17-resume account, draft target resume, expand activation
       unreliable)
@@ -2875,6 +2875,27 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_CREATION_POSITION_CHIP_POPULAR:
+    value: '[data-qa=''resume-profile-position-chip-popular'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:175
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-position-chip-popular
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:175
+      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
+        provide a semantic counterpart.
+    last_verified_at: '2026-08-31'
+    verified_flow: authenticated_resume_editor_write_dry_run
+    verified_by: claude
   resume_page.RESUME_CREATION_POSITION_CLEAR:
     value: '[data-qa=''input-clearable-button'']'
     criticality: write
