@@ -679,6 +679,9 @@ def test_set_specializations_waits_out_the_filter_render_race():
 
     resume_position._set_specializations(page, ["Программист, разработчик"])
 
+    page.locator(resume_position.SPECIALIZATION_MODAL).first.wait_for.assert_called_once_with(
+        state="visible", timeout=resume_position._CONTROL_WAIT_TIMEOUT_MS
+    )
     option.first.wait_for.assert_called_once_with(
         state="visible", timeout=resume_position._CONTROL_WAIT_TIMEOUT_MS
     )

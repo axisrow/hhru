@@ -719,6 +719,13 @@ def _set_specializations(page: Page, values: list[str]) -> None:
 
     page.locator(SPECIALIZATION_ADD).click()
     modal = page.locator(SPECIALIZATION_MODAL)
+    try:
+        # With no inherited profession cards, the add click starts the modal
+        # render directly.  The locator can already exist in the DOM while
+        # still being hidden, so count() alone races React hydration.
+        modal.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError("панель выбора специализаций не открылась") from exc
     if modal.count() != 1:
         raise RuntimeError("панель выбора специализаций не открылась")
     search = page.locator(SPECIALIZATION_SEARCH)
