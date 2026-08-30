@@ -117,7 +117,7 @@ def test_apply_daily_limit_is_account_wide_across_resumes():
     history = _History(account_count=limit - 1)
     throttle = Throttle(_Config(), history)
 
-    resumes = ["6b85a5a1", "b3236ebb", "a6c9aec0"]
+    resumes = ["00001", "00002", "00003"]
     for resume_id in resumes:
         # Every resume consults the same account-wide counter.
         throttle.check_apply_limit(resume_id, dry_run=False)

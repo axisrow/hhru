@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 # Слаг конфига ("python") и реальный resume_id — РАЗНЫЕ значения, иначе двойник
 # резюме прячет расхождение ключей (#486 п.1): probe обязан ключевать сканы
 # hex-хвостом resume_url, как apply-путь и questionnaire._scope().
-REAL_RESUME_ID = "b3236ebbff10f60ff30039ed1f6d5876645331"
+REAL_RESUME_ID = "00001111ff10f60ff30039ed1f6d5876645331"
 
 
 def _card(vacancy_id: str) -> VacancyCard:
