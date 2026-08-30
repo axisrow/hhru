@@ -35,14 +35,15 @@ EDITOR_MOUNT_TIMEOUT_MS = 30_000
 # not a CSS selector fragment, just a string this module concatenates into one.
 _LEVEL_LABELS = {"basic": "Базовый", "intermediate": "Средний", "advanced": "Продвинутый"}
 SKILLS_LEVELS_STEP_TIMEOUT_MS = 15_000
-# #801: the skill chip input is an autocomplete combobox. A blind fill+Enter
+# #801: the skill chip input is an autocomplete combobox. A blind fill+commit
 # for the next skill can race the browser's handling of the previous one and
 # concatenate two skill names into a single chip instead of creating two
 # separate chips. CHIP_COMMIT_TIMEOUT_MS bounds how long each iteration waits
 # for a positive signal (an exact-text chip appeared AND the input cleared)
 # before moving on; CHIP_COMMIT_POLL_MS is the poll interval, matching the
 # poll-loop pattern already used for a similar input-clear wait in
-# resume_position.py.
+# resume_position.py. #826: "commit" here is a click on the autocomplete
+# option, not Enter — see RESUME_SKILLS_SUGGEST_USER_INPUT below.
 CHIP_COMMIT_TIMEOUT_MS = 5_000
 CHIP_COMMIT_POLL_MS = 100
 
@@ -327,15 +328,42 @@ def edit_skills_on_hh(
     chips = page.locator(resume_page.RESUME_SKILLS_CHIP)
     for skill in additions:
         input_.fill(skill.name)
-        input_.press("Enter")
+        # #826: pressing Enter never commits a chip in this combobox — confirmed
+        # live on both an empty skills section and a non-empty one, so this is
+        # not specific to the first-skill/empty-section shape. Typing opens a
+        # `role='listbox'` autocomplete; the entered text is echoed back as its
+        # own option, `RESUME_SKILLS_SUGGEST_USER_INPUT`
+        # (`data-qa='suggest-item-user-input'`), distinct from the
+        # RESUME_SKILLS_RECOMMENDED suggestion chips (pre-existing skill names,
+        # not an echo of what was typed). Clicking that option is the only
+        # observed way to create the chip. The option renders asynchronously
+        # after fill() (CLAUDE.md: "commit не значит отрисовано"), so wait for
+        # it before clicking rather than assuming it is already there.
+        # Filtered by exact text, matching the expected_chip pattern below —
+        # a stale option from the previous iteration must not be clicked if
+        # this iteration's option has not rendered yet (review #830).
+        suggestion = (
+            page.locator(resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT)
+            .filter(has_text=re.compile(rf"^{re.escape(skill.name)}$"))
+            .first
+        )
+        try:
+            suggestion.wait_for(state="visible", timeout=CHIP_COMMIT_TIMEOUT_MS)
+            suggestion.click()
+        except PlaywrightError:
+            # No positive signal that the click landed — do not retry blindly.
+            # The poll below still runs and, finding no chip, breaks and lets
+            # the existing post-save Counter check fail-closed on the result
+            # (same principle as the timeout branch below).
+            pass
         # #801: wait for a positive commit signal before the next iteration's
-        # fill() — a blind fill+Enter pair for consecutive skills can race the
+        # fill() — a blind fill+click pair for consecutive skills can race the
         # combobox's autocomplete handling and concatenate two names into one
         # chip (e.g. "FastAPI" + "LangChain" -> "FastAPILangChain"). Checking
         # only that the chip count grew would not catch this: a merged chip
         # still increments the count by one. The positive signal is a chip
         # whose text exactly equals this skill's name AND the input cleared
-        # back to empty — a timeout does not roll back (the Enter may already
+        # back to empty — a timeout does not roll back (the click may already
         # have reached hh.ru), so it stops issuing further input and lets the
         # existing post-save Counter check fail-closed on the resulting
         # mismatch (same principle as "commit не значит отрисовано" elsewhere
