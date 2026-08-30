@@ -31,6 +31,11 @@ CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
 # наблюдал вторую: резюме создавалось, но ожидание первой формы падало по
 # таймауту и давало uncertain при фактическом успехе.
 _RESUME_ID_RE = re.compile(r"(?:/resume/|[?&]resume=)([0-9a-f]{32,40})(?:[/?#&]|$)")
+# #837: живой замер показал checked=True уже на первой проверке спустя
+# +100мс после клика — секундный запас на порядок больше наблюдавшейся
+# задержки, но честный (не бесконечный) дедлайн на случай, если чекбокс
+# реально не переключился.
+_CHECKBOX_CONFIRM_TIMEOUT = 5.0
 
 
 @dataclass
@@ -72,7 +77,13 @@ def _click_one(
     return ""
 
 
-def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0) -> str:
+def _select_catalog_leaf(
+    page: Page,
+    area: str,
+    *,
+    filter_timeout: float = 15.0,
+    checkbox_confirm_timeout: float = _CHECKBOX_CONFIRM_TIMEOUT,
+) -> str:
     """Select one exact leaf from hh.ru's full profession tree."""
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
@@ -99,17 +110,72 @@ def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0)
     # attribute is attached to the text node.
     deadline = time.monotonic() + filter_timeout
     matches: list[Locator] = []
+    candidates: list[Locator] = []
     while True:
-        candidates = page.locator("[data-qa*='tree-selector-item-text-']").all()
-        matches = [
-            candidate
-            for candidate in candidates
-            if normalize(candidate.text_content() or "") == normalize(area)
-        ]
+        tree = page.locator("[data-qa*='tree-selector-item-text-']")
+        try:
+            # #837 (боевой прогон 2026-08-30): читать candidates=.all() один
+            # раз, а затем построчно candidate.text_content() каждого элемента
+            # — race. Между .all() (снимок handle-ов) и последним .text_content()
+            # в цикле React успевает перерендерить дерево (переход от
+            # нефильтрованного списка категорий к отфильтрованному leaf), и
+            # .text_content() на уже отсоединённом handle висит полный
+            # дефолтный таймаут Playwright (30с), не пойман никаким try/except
+            # внутри цикла — падает наружу как generic "ошибка до сохранения
+            # резюме". all_text_contents() читает тексты ВСЕХ текущих
+            # совпадений селектора одним batch-вызовом Playwright, а не по
+            # одному хэндлу — устраняет основной источник race. candidates
+            # снимается сразу следом на том же (ещё живом на момент вызова)
+            # locator; любой PlaywrightError из обоих вызовов — тот же сигнал
+            # "дерево перерендерилось", не финальная ошибка.
+            texts = [normalize(text) for text in tree.all_text_contents()]
+            candidates = tree.all()
+        except PlaywrightError:
+            # Не финальная ошибка, а сигнал повторить опрос — тот же принцип,
+            # что уже применяется ниже к нулю/множеству совпадений: решение
+            # только после того, как список стабилизируется или истечёт
+            # дедлайн.
+            texts = []
+            candidates = []
+        if len(candidates) != len(texts):
+            # all_text_contents() и .all() — два отдельных Playwright-вызова;
+            # React мог перерендерить дерево МЕЖДУ ними тоже (более узкое, но
+            # то же семейство окно, что и построчное чтение выше). Разная
+            # длина — надёжный сигнал рассинхрона: доверять индексному
+            # сопоставлению candidates[i]/texts[i] в этом случае нельзя,
+            # правильнее считать итерацию неудачной и повторить опрос, чем
+            # молча сопоставить чужой текст чужому элементу.
+            matches = []
+        else:
+            matches = [
+                candidate
+                for candidate, text in zip(candidates, texts, strict=True)
+                if text == normalize(area)
+            ]
         if len(matches) == 1 or time.monotonic() >= deadline:
             break
         page.wait_for_timeout(250)
-    if len(matches) != 1:
+    if not matches:
+        # #836: «не найдена однозначно (совпадений: 0)» не различало опечатку
+        # и пропажу значения из каталога hh.ru (боевой кейс — "Программист,
+        # разработчик" исчез из каталога создания резюме). Показать, что
+        # каталог реально предлагает по этому запросу, — тот же принцип, что
+        # #822/PR #832 закрепил для дерева специализаций резюме (сообщение
+        # различает «нет совпадений» и «неоднозначность»). Текст берётся из
+        # живого каталога как есть (не normalize(), который лоуеркейсит) —
+        # правило проекта "перечень профессий брать из живого каталога, не
+        # вшивать литералом".
+        seen: dict[str, None] = {}
+        for candidate in candidates:
+            text = (candidate.text_content() or "").strip()
+            if text:
+                seen.setdefault(text, None)
+        offered = list(seen)
+        if offered:
+            options = "; ".join(offered)
+            return f"профессия «{area}» не найдена в каталоге; каталог предлагает: {options}"
+        return f"профессия «{area}» не найдена в каталоге (список пуст)"
+    if len(matches) > 1:
         return f"профессия «{area}» не найдена однозначно в каталоге (совпадений: {len(matches)})"
     qa = matches[0].get_attribute("data-qa") or ""
     match = re.search(r"tree-selector-item-text-(\d+)$", qa)
@@ -132,6 +198,20 @@ def _select_catalog_leaf(page: Page, area: str, *, filter_timeout: float = 15.0)
     # change its state» (живой прогон #778). Кликается видимая строка
     # профессии — тот же узел, по которому выше определён leaf.
     matches[0].click()
+    # #837 (боевой прогон 2026-08-30, 2 из 3 живых фейлов): клик запускает
+    # асинхронное React-обновление checked-состояния, а is_checked() сразу
+    # после click() — синхронное чтение без ожидания. Живой замер: 2 из 6
+    # прогонов ловили checked=False непосредственно после click(), при этом
+    # checked=True уже на первой же проверке спустя +100мс — не редкий
+    # edge case, воспроизводится стабильно в ~33% случаев. Playwright не даёт
+    # wait_for(state="checked") — checked не входит в поддерживаемые состояния
+    # Locator.wait_for(). Фиксированная пауза замаскировала бы гонку, а не
+    # устранила: на медленном хосте/загруженном hh.ru та же гонка вернулась
+    # бы. Поэтому — тот же polling-до-дедлайна, что уже применяется выше для
+    # дерева, а не sleep().
+    checkbox_deadline = time.monotonic() + checkbox_confirm_timeout
+    while not _require(checkbox).is_checked() and time.monotonic() < checkbox_deadline:
+        page.wait_for_timeout(100)
     if not _require(checkbox).is_checked():
         return f"профессия «{area}» не отмечена после клика по строке каталога"
     return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")

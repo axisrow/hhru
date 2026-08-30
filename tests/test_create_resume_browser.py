@@ -66,7 +66,11 @@ class Locator:
         return self
 
     def all_text_contents(self):
-        return []
+        # #837: реальный Playwright читает тексты одним batch-вызовом,
+        # независимым от .all() (снимок handle-ов) — мок опирается на тот же
+        # .all(), которое переопределяют производные классы, так что оба
+        # вызова остаются согласованными без дублирования фикстур per-class.
+        return [item.text_content() for item in self.all()]
 
     def all(self):
         # Дерево каталога профессий: ровно одна leaf, совпадающая с AREA.
@@ -330,8 +334,7 @@ class CatalogFilterPage(HydrationRacePage):
 
 
 class CatalogLocator(HydrationLocator):
-    def all(self):
-        self.page.tree_reads += 1
+    def _current_items(self):
         if self.page.reads_until_filtered is None:
             # Профессии нет в каталоге: фильтр не даст совпадения никогда.
             return [TreeItem("Аналитик", "tree-selector-item-text-10", self.page)]
@@ -342,6 +345,18 @@ class CatalogLocator(HydrationLocator):
                 TreeItem("Тестировщик", "tree-selector-item-text-11", self.page),
             ]
         return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
+
+    def all_text_contents(self):
+        # #837: боевой код читает all_text_contents() один раз за итерацию
+        # (используется для решения "нашли/не нашли"), затем .all() отдельным
+        # вызовом на том же (уже стабилизированном для этой итерации) снимке.
+        # tree_reads считает итерации опроса, а не количество вызовов метода —
+        # ровно то, что боевой код измеряет одним logical "poll".
+        self.page.tree_reads += 1
+        return [item.text_content() for item in self._current_items()]
+
+    def all(self):
+        return self._current_items()
 
 
 def test_catalog_tree_is_read_after_filter_applies(monkeypatch):
@@ -359,8 +374,94 @@ def test_catalog_tree_is_read_after_filter_applies(monkeypatch):
     assert result.success, f"каталог должен дождаться фильтрации: {result.reason}"
 
 
+class StaleHandleTreeItem(TreeItem):
+    """Элемент дерева, чей ``.text_content()`` кидает detached-ошибку (#837).
+
+    Живой прогон 2026-08-30 воспроизвёл ровно это: между ``.all()`` (снимок
+    handle-ов) и построчным ``.text_content()`` React успевает перерендерить
+    дерево, и чтение на уже отсоединённом handle висит полный таймаут
+    Playwright. ``all_text_contents()`` — batch-вызов на самом селекторе,
+    а не по хэндлу — этой проблеме не подвержен, что и моделирует разница
+    между ``self.all()`` (возвращает эти "хрупкие" объекты) и
+    ``self.all_text_contents()`` (batch, всегда успешен) ниже.
+    """
+
+    def text_content(self):
+        raise PlaywrightError("Locator.text_content: Timeout 30000ms exceeded waiting for element")
+
+
+class StaleSnapshotLocator(HydrationLocator):
+    """Первая итерация опроса отдаёт handle, ЧТЕНИЕ КОТОРОГО падает (#837);
+    вторая — уже стабилизированный единственный leaf.
+
+    Только ``.all()`` (снимок хэндлов, как в старом коде) уязвим:
+    ``StaleHandleTreeItem.text_content()`` кидает исключение при построчном
+    чтении. ``all_text_contents()`` (batch, как в новом коде) читает текст
+    напрямую из ``TreeItem`` без похода через уязвимый ``.text_content()``
+    хэндла — эта гонка для него структурно недостижима, а не просто "не
+    воспроизвелась в этом прогоне". Детерминированно: ВСЕГДА падает на
+    построчном чтении, ВСЕГДА проходит на batch-чтении.
+
+    Счётчик читок живёт на ``page``, а не на этом locator'е: боевой код
+    вызывает ``page.locator(selector)`` заново на каждой итерации опроса
+    (свежий объект locator), поэтому состояние "какая по счёту итерация"
+    обязано пережить пересоздание locator'а — тот же паттерн, что уже
+    использует ``CatalogLocator`` через ``self.page.tree_reads``.
+    """
+
+    def _stale_first_read(self):
+        return [
+            StaleHandleTreeItem("Аналитик", "tree-selector-item-text-10", self.page),
+            TreeItem(AREA, "tree-selector-item-text-96", self.page),
+        ]
+
+    def _stable_read(self):
+        return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
+
+    def _current_items(self):
+        return self._stale_first_read() if self.page.stale_reads == 0 else self._stable_read()
+
+    def all(self):
+        # Боевой код вызывает all_text_contents() и .all() в одной и той же
+        # логической итерации опроса — счётчик увеличивается только в
+        # all_text_contents(), чтобы .all() внутри той же итерации видел то
+        # же самое состояние (иначе он "перескочил" бы вперёд).
+        return self._current_items()
+
+    def all_text_contents(self):
+        # Batch-чтение — не по хэндлу, значит StaleHandleTreeItem.text_content()
+        # здесь никогда не вызывается: читаем прямо готовый текст элемента.
+        items = self._current_items()
+        self.page.stale_reads += 1
+        return [item._text for item in items]  # noqa: SLF001 — тестовый двойник, не production API
+
+
+class StaleSnapshotPage(CatalogFilterPage):
+    def __init__(self):
+        super().__init__(reads_until_filtered=0)
+        self.stale_reads = 0
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return StaleSnapshotLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+def test_stale_handle_during_row_by_row_read_does_not_crash_polling(monkeypatch):
+    """#837: построчное чтение .text_content() на снимке .all() падает на
+    устаревшем handle — опрос обязан пережить это и продолжить, не
+    пробрасывать исключение наружу как "ошибка до сохранения резюме"."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = StaleSnapshotPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"batch-чтение не должно падать на устаревшем handle: {result.reason}"
+
+
 def test_absent_profession_still_fails_without_hanging(monkeypatch):
-    """Профессии нет в каталоге — честный failed, а не бесконечный опрос."""
+    """Профессии нет в каталоге — честный failed, с перечнем предложенного (#836)."""
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
     # Дерево НИКОГДА не отдаёт совпадение: опрос должен упереться в дедлайн.
     page = CatalogFilterPage(reads_until_filtered=None)
@@ -375,8 +476,52 @@ def test_absent_profession_still_fails_without_hanging(monkeypatch):
 
     assert not result.success
     assert not result.uncertain, "выбор профессии — до точки невозврата"
-    assert "не найдена однозначно" in result.reason
+    # #836: "не найдена однозначно (совпадений: 0)" не различала опечатку и
+    # исчезновение значения из каталога. При нуле совпадений сообщение теперь
+    # перечисляет, что каталог реально предлагает (CatalogFilterPage без
+    # фильтрации отдаёт "Аналитик" — то, что live-каталог показал бы).
+    assert "не найдена в каталоге" in result.reason
+    assert "Аналитик" in result.reason
     assert page.tree_reads > 1, "дерево должно перечитываться, а не читаться один раз"
+
+
+class AmbiguousCatalogLocator(HydrationLocator):
+    """Дерево стабильно отдаёт ДВА разных leaf с одинаковым текстом (#836)."""
+
+    def all(self):
+        self.page.tree_reads += 1
+        return [
+            TreeItem(AREA, "tree-selector-item-text-96", self.page),
+            TreeItem(AREA, "tree-selector-item-text-97", self.page),
+        ]
+
+
+class AmbiguousCatalogPage(CatalogFilterPage):
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return AmbiguousCatalogLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+def test_genuine_ambiguity_is_not_confused_with_absence(monkeypatch):
+    """Два разных leaf под одним текстом — отдельное сообщение о неоднозначности,
+    не смешанное с "не найдена в каталоге" (#836: 0 и >1 совпадений — разные причины)."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = AmbiguousCatalogPage()
+    monkeypatch.setattr(
+        create,
+        "_select_catalog_leaf",
+        lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
+    )
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена однозначно" in result.reason
+    assert "совпадений: 2" in result.reason
+    assert "предлагает" not in result.reason, "неоднозначность — не то же самое, что отсутствие"
 
 
 def test_polling_stops_as_soon_as_match_appears(monkeypatch):
@@ -445,6 +590,107 @@ def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
             return loc
 
     page = NeverChecksPage()
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не отмечена" in result.reason
+
+
+class DelayedCheckLocator(HydrationLocator):
+    """Чекбокс переключается React'ом АСИНХРОННО после клика по строке (#837).
+
+    Живой замер 2026-08-30: сразу после ``Locator.click()`` на строке
+    профессии ``checkbox.checked`` синхронно всё ещё ``False`` — React
+    обновляет DOM только на следующем тике event loop. Статистика по 6
+    успешным живым прогонам: ``checked=False`` непосредственно после клика в
+    2 из 6 (~33%) случаев, при этом ``checked=True`` уже на первой же
+    проверке спустя минимальную задержку — не редкий edge case.
+
+    Детерминированно (не через реальное время): ``is_checked()`` считает
+    СОБСТВЕННЫЕ обращения и возвращает ``False`` для первых
+    ``reads_until_checked`` вызовов, затем ``True`` навсегда — старый код
+    (один синхронный read сразу после click()) видит вызов №1 и падает
+    ВСЕГДА при ``reads_until_checked >= 1``; новый код (polling до
+    подтверждённого состояния) переживает произвольное число ложных ``False``
+    и проходит ВСЕГДА, пока дедлайн не исчерпан.
+
+    Счётчик читок живёт на ``page``, а не на этом locator'е: боевой код
+    вызывает ``page.locator(checkbox_selector)`` ДВАЖДЫ на один и тот же
+    чекбокс (сначала для ``wait_for(state="visible")``, затем через
+    ``_one()``) — каждый вызов создаёт свежий объект locator, поэтому
+    "сколько раз уже спросили is_checked()" обязано пережить пересоздание
+    locator'а, тот же паттерн, что уже применяется в ``CatalogLocator`` и
+    ``StaleSnapshotLocator`` выше.
+    """
+
+    def __init__(self, page, selector, count):
+        super().__init__(page, selector, count)
+
+    def is_checked(self):
+        self.page.checkbox_reads += 1
+        return self.page.checkbox_reads > self.page.reads_until_checked
+
+
+class DelayedCheckPage(CatalogFilterPage):
+    """Строка каталога кликается штатно; чекбокс отмечается с задержкой."""
+
+    def __init__(self, *, reads_until_checked):
+        super().__init__(reads_until_filtered=0)
+        self.reads_until_checked = reads_until_checked
+        self.checkbox_reads = 0
+
+    def locator(self, selector):
+        if "tree-selector-input-" in selector:
+            return DelayedCheckLocator(self, selector, 1)
+        return super().locator(selector)
+
+
+def test_checkbox_race_after_row_click_is_not_reported_as_unchecked(monkeypatch):
+    """#837: клик отметил строку, но React обновляет checked асинхронно —
+    один немедленный синхронный read ловит гонку и ложно фейлит валидный
+    выбор. Polling до подтверждённого состояния обязан пережить это."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = DelayedCheckPage(reads_until_checked=3)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, f"гонка чекбокса не должна фейлить валидный выбор: {result.reason}"
+
+
+def test_permanently_unchecked_checkbox_still_refuses_to_continue(monkeypatch):
+    """Контроль: чекбокс, который НИКОГДА не переключается, — честный failed.
+
+    Polling за подтверждённым состоянием не должен превращать fail-closed
+    #837 в бесконечный опрос или в молчаливое продолжение без реально
+    выбранной профессии — как только polling-дедлайн исчерпан, это тот же
+    отказ, что и в test_unchecked_after_row_click_refuses_to_continue.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    # Мок page.wait_for_timeout() — no-op (не спит реально), поэтому цикл
+    # опроса без монотонных часов, привязанных к количеству итераций, мог бы
+    # сделать сколько угодно проверок за доли секунды реального времени —
+    # число итераций и скорость машины не должны решать исход теста.
+    # Подменяем time.monotonic() детерминированной последовательностью: она
+    # растёт на фиксированный шаг с КАЖДЫМ вызовом (polling читает её дважды
+    # за итерацию — для проверки дедлайна и, до и после цикла, снаружи), так
+    # что дедлайн гарантированно исчерпывается после конечного, заранее
+    # известного числа итераций, независимо от скорости CPU.
+    call_count = 0
+
+    def fake_monotonic():
+        nonlocal call_count
+        call_count += 1
+        return call_count * 0.1
+
+    monkeypatch.setattr(create.time, "monotonic", fake_monotonic)
+    page = DelayedCheckPage(reads_until_checked=1_000_000)
+    monkeypatch.setattr(
+        create,
+        "_select_catalog_leaf",
+        lambda p, area, **_: _real_select(p, area, checkbox_confirm_timeout=0.3),
+    )
 
     result = _run(page, before_click=lambda: None)
 
