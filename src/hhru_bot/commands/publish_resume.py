@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
+from ._common_resume_guidance import print_common_resume_guidance
 from ._professional_role_guidance import print_professional_role_guidance
 
 
@@ -91,6 +92,8 @@ def run(args: argparse.Namespace):
             print(f"{prefix} {resume.id} — {result.reason}")
             if result.next_incomplete_screen_id == "professional_role":
                 print_professional_role_guidance(resume, include_publish=True)
+            elif result.next_incomplete_screen_id == "common":
+                print_common_resume_guidance(resume, include_publish=True)
             return True
         if args.dry_run:
             print(f"[DRY-RUN] Резюме {resume.id}: {result.reason}")
