@@ -67,8 +67,11 @@ class _HydratingLocator:
     def first(self):
         return self
 
-    def fill(self, value):  # noqa: ARG002
-        pass
+    def fill(self, value):
+        self._value = value
+
+    def input_value(self):
+        return getattr(self, "_value", "")
 
     def click(self):
         pass
@@ -97,6 +100,9 @@ class _RacyPage:
         return _HydratingLocator(ready_after=0)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+        pass
+
+    def wait_for_timeout(self, timeout):  # noqa: ARG002
         pass
 
 

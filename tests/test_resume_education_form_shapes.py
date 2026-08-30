@@ -31,6 +31,7 @@ class RecordingLocator:
         self._page = page
         self._selector = selector
         self._count = count
+        self._value = ""
         self.first = self
 
     def count(self):
@@ -38,6 +39,10 @@ class RecordingLocator:
 
     def fill(self, value):
         self._page.filled.append((self._selector, value))
+        self._value = value
+
+    def input_value(self):
+        return self._value
 
     def click(self):
         self._page.clicked.append(self._selector)
@@ -79,6 +84,9 @@ class LabelPage:
         return RecordingLocator(self, f"label:{text}", count=count)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+        pass
+
+    def wait_for_timeout(self, timeout):  # noqa: ARG002
         pass
 
 

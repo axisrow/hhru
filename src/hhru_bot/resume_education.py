@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -112,6 +113,22 @@ FORM_TIMEOUT_MS = 15_000
 # сохранения (навигация происходит за секунды по всем живым прогонам), но не
 # держит CLI минуты на заведомо неуспешном пути.
 SAVE_TIMEOUT_MS = 20_000
+# #825: `open_hydrated_resume_editor`'s hydration marker is the primary form's
+# own institution INPUT becoming visible (see editor_selector below) -- but
+# "visible" only proves the empty <input> node exists in the DOM, not that
+# hh.ru's Magritte controlled component has finished initializing its React
+# state. A live dump caught the exact race: institution/year were filled,
+# Save was clicked, and hh.ru's own client-side validation rejected the
+# submit because the fields were empty on the DOM at click time -- the
+# `.fill()` calls landed, but a subsequent React re-render (still settling
+# right after the editor "became visible") reset the controlled inputs back
+# to their initial empty value, wiping out the just-typed text before Save
+# ever read it. This is the same "commit не значит отрисовано" class already
+# fixed for resume_position.py's wizard title field (WIZARD_VERIFY_POLL_MS) --
+# poll input_value() after fill() and retry rather than trust a single
+# best-effort `.fill()`.
+FIELD_VERIFY_TIMEOUT_MS = 3_000
+FIELD_VERIFY_POLL_MS = 200
 
 
 @dataclass(frozen=True)
@@ -226,6 +243,30 @@ def _field_locator(page, name: str, *, additional: bool):
     if locator.count() != 1:
         raise PageStateIndeterminate(f"поле {_PRIMARY_FIELDS[name]} не найдено однозначно")
     return locator
+
+
+def _fill_and_verify(page, locator, value: str) -> bool:
+    """Fill a field and confirm the value actually stuck (#825).
+
+    ``.fill()`` succeeding is not proof the value survives -- a Magritte
+    controlled input can reset itself to its initial (often empty) state in
+    an async React re-render that lands moments after the editor's hydration
+    marker became visible (see FIELD_VERIFY_TIMEOUT_MS comment above). Retry
+    the fill within a short budget instead of trusting a single attempt;
+    return False (never raise) so the caller can fail the row closed with a
+    clear reason rather than clicking Save on a field the DOM disagrees with.
+    Uses page.wait_for_timeout (not time.sleep) to match the polling idiom
+    already used for this same class of race elsewhere in the project
+    (resume_position.py's WIZARD_VERIFY_POLL_MS, skills.py's CHIP_COMMIT_POLL_MS).
+    """
+    deadline = time.monotonic() + FIELD_VERIFY_TIMEOUT_MS / 1000
+    while True:
+        locator.fill(value)
+        if locator.input_value() == value:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
 
 
 def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:
@@ -354,7 +395,28 @@ def _edit_block(
                         uncertain=saved_count > 0,
                         saved=saved_count,
                     )
-                locator.fill(value)
+                if not _fill_and_verify(page, locator, value):
+                    # #825: the field accepted fill() but the DOM value did not
+                    # stick within FIELD_VERIFY_TIMEOUT_MS -- clicking Save on a
+                    # field the form itself disagrees with only reproduces the
+                    # observed live failure (hh.ru's client-side validation
+                    # rejects the empty field, Save no-ops, wait_for_url times
+                    # out). No click has happened yet on this row, so this is a
+                    # clean pre-click failure, not uncertain.
+                    _dump_save_failure(
+                        page,
+                        index,
+                        kind,
+                        RuntimeError(f"поле {name!r} не сохранило значение после fill()"),
+                    )
+                    return EducationResult(
+                        kind,
+                        False,
+                        f"строка {index}: поле {name!r} не приняло значение "
+                        f"(осталось {locator.input_value()!r} вместо {value!r})",
+                        uncertain=saved_count > 0,
+                        saved=saved_count,
+                    )
             if dry_run:
                 page.locator(cancel_selector).first.click()
             else:
