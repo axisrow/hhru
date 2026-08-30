@@ -42,7 +42,15 @@ ADDITIONAL_TRIGGER = "[data-qa='resume-edit-button-additionalEducation-{index}']
 # the form; they do not persist anything until SAVE_BUTTON is clicked.
 PRIMARY_ADD = "[data-qa='resume-list-card-education'] [data-qa='link']"
 ADDITIONAL_ADD = "[data-qa='resume-list-card-additionalEducation'] [data-qa='link']"
-PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation(?=[?#]|$)")
+# #814: у уже существующей записи (index=0 присутствует) hh.ru открывает
+# /profile/edit/primaryEducation/{entry_id}?resumeFrom=... -- с id-хвостом,
+# а не /profile/edit/primaryEducation без хвоста (тот путь — только для
+# пустой секции через PRIMARY_ADD, см. живой DOM issue #814). Опциональный
+# `(?:/[^/?#]+)?` покрывает обе ветки. Guard от чужого резюме держится не на
+# этом regex (он проверяет только экран), а на отдельной проверке
+# `expected_query={"resumeFrom": resume_id}` в вызове ниже -- расширение
+# хвоста id записи её не ослабляет.
+PRIMARY_ROUTE = re.compile(r"/profile/edit/primaryEducation(?:/[^/?#]+)?(?=[?#]|$)")
 ADDITIONAL_ROUTE = re.compile(r"/profile/edit/additionalEducation/[^/?#]+")
 # The two education editors are DIFFERENT screens with different controls, so a
 # single pair of buttons cannot serve both (live probe 2026-08-30):
