@@ -35,11 +35,21 @@ class FakeSaveButton:
 
 
 class FakeFieldLocator:
+    """Models a field that keeps whatever ``fill()`` last wrote (the normal,
+    successfully-hydrated case). ``FakeRevertingFieldLocator`` below models
+    the #825 defect this file's new test targets."""
+
+    def __init__(self):
+        self._value = ""
+
     def count(self):
         return 1
 
-    def fill(self, value):  # noqa: ARG002
-        pass
+    def fill(self, value):
+        self._value = value
+
+    def input_value(self):
+        return self._value
 
     def click(self, *, timeout=None):  # noqa: ARG002
         pass
@@ -53,6 +63,20 @@ class FakeFieldLocator:
 
     def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
         pass
+
+
+class FakeRevertingFieldLocator(FakeFieldLocator):
+    """Models the #825 defect: fill() lands on the DOM node, but an async
+    React re-render (a Magritte controlled input settling right after the
+    editor's hydration marker became visible) resets the field back to empty
+    before the value is ever read again -- input_value() always reports "",
+    regardless of what fill() just wrote."""
+
+    def fill(self, value):  # noqa: ARG002
+        pass
+
+    def input_value(self):
+        return ""
 
 
 class FakeAbsentLocator:
@@ -94,6 +118,7 @@ class FakePage:
         resume_id: str = "RID",
         wait_for_url_error: Exception | None = None,
         institution_found: bool = True,
+        reverting_field_selector: str | None = None,
     ):
         self._trigger_count = trigger_count
         self.saved_rows: list[int] = []
@@ -104,6 +129,10 @@ class FakePage:
         # though the navigation (and save) already happened for real.
         self._wait_for_url_error = wait_for_url_error
         self._institution_found = institution_found
+        # #825: names the one field selector that should behave like the live
+        # defect (fill() lands, input_value() keeps reporting "") -- every
+        # other field keeps the normal FakeFieldLocator behavior.
+        self._reverting_field_selector = reverting_field_selector
 
     def locator(self, selector: str):
         if selector.startswith("[data-qa='resume-edit-button-"):
@@ -112,7 +141,12 @@ class FakePage:
             return FakeSaveButton(self)
         if selector == "[data-qa='cookies-policy-informer-accept']":
             return FakeAbsentLocator()
+        if selector == self._reverting_field_selector:
+            return FakeRevertingFieldLocator()
         return FakeFieldLocator()
+
+    def wait_for_timeout(self, timeout):  # noqa: ARG002
+        pass
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         if self._wait_for_url_error is not None:
@@ -271,3 +305,52 @@ def test_wait_for_url_timeout_with_confirmed_identity_but_missing_text_is_uncert
     assert result.uncertain is True
     assert result.saved == 0
     assert "не отображается" in result.reason
+
+
+def test_field_that_reverts_after_fill_fails_before_save_click(monkeypatch):
+    """#825: live root cause -- institution/year were passed correctly but the
+    saved screenshot showed both fields EMPTY and flagged by hh.ru's own
+    "Пожалуйста, укажите" validation. save.click() had already fired, so the
+    old code (a bare locator.fill(value) with no readback) sent Save on a form
+    it never actually filled, then timed out waiting for a navigation that
+    hh.ru's client-side validation was never going to allow.
+
+    This models the exact mechanism: the institution field's fill() lands on
+    the DOM node but never survives (a Magritte controlled input resetting
+    itself in an async re-render). The fix must catch this BEFORE clicking
+    Save -- not just report a better-diagnosed uncertain after the fact.
+    """
+    page = FakePage(
+        trigger_count=1,
+        resume_id="RID",
+        reverting_field_selector="[data-qa='profile-education-university-input']",
+    )
+
+    def fake_open_hydrated_resume_editor(page_arg, **kwargs):  # noqa: ARG001
+        page.current_index = 0
+        return page.locator(next(iter(kwargs.get("editor_selector", "") or "x")))
+
+    monkeypatch.setattr(
+        resume_education, "open_hydrated_resume_editor", fake_open_hydrated_resume_editor
+    )
+
+    records = [
+        EducationRecord(
+            institution="МГУ им. М.В. Ломоносова",
+            level="",
+            faculty="",
+            organization="",
+            specialty="",
+            year="2022",
+        ),
+    ]
+
+    result = _edit_block(page, records, additional=False, dry_run=False, resume_id="RID")
+
+    # Save must never be clicked on a field the DOM disagrees with.
+    assert page.saved_rows == []
+    assert result.success is False
+    assert result.uncertain is False
+    assert result.saved == 0
+    assert "institution" in result.reason
+    assert "не приняло значение" in result.reason
