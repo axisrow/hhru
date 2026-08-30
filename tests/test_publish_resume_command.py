@@ -214,6 +214,27 @@ def test_professional_role_blocker_prints_actionable_cached_catalog_workflow(env
     assert "publish-resume --resume python --dry-run" in out
 
 
+def test_common_blocker_prints_actionable_manual_workflow(env, capsys, tmp_path):
+    env.result = PublishResumeResult(
+        "python",
+        False,
+        "незавершённый шаг nextIncompleteScreenId=common; клик запрещён",
+        status="not_finished",
+        is_searchable=False,
+        next_incomplete_screen_id="common",
+    )
+
+    assert cmd.run(_args(tmp_path, dry_run=True)) is True
+
+    out = capsys.readouterr().out
+    assert "Экран common не заполнен" in out
+    assert "birthday" in out
+    assert "firstName" in out
+    assert "work_format" in out
+    assert "заполните экран «Основное» вручную" in out
+    assert "publish-resume --resume python --dry-run" in out
+
+
 def test_run_not_authenticated_is_not_recorded_and_exits(env, capsys, tmp_path):
     env.exc = NotAuthenticated("сессия истекла")
     assert cmd.run(_args(tmp_path, force=True)) is True
