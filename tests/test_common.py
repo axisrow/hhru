@@ -133,3 +133,46 @@ def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
     )
     with pytest.raises(browser.NotAuthenticated, match="expired"):
         command._run(args, MagicMock())
+
+
+def test_common_values_exposes_work_conditions():
+    values = CommonValues(
+        work_ticket="true",
+        relocation="ready",
+        schedule=["full_day"],
+        employment=["full_time"],
+        work_format=["remote"],
+        business_trip="false",
+    )
+    assert values.provided() == {
+        "workTicket": "true",
+        "relocation": "ready",
+        "schedule": ["full_day"],
+        "employment": ["full_time"],
+        "work_format": ["remote"],
+        "businessTrip": "false",
+    }
+
+
+def test_apply_common_uses_exact_visible_labels_for_conditions():
+    page = MagicMock()
+    fields = {}
+    for label in (
+        common.WORK_TICKET,
+        common.RELOCATION,
+        common.SCHEDULE,
+        common.EMPLOYMENT,
+        common.WORK_FORMAT,
+        common.BUSINESS_TRIP,
+    ):
+        field = MagicMock()
+        field.count.return_value = 1
+        field.evaluate.return_value = "SELECT"
+        fields[label] = field
+    page.get_by_label.side_effect = lambda label, exact: fields[label]
+    apply_common(
+        page, CommonValues(schedule=["full_day"], employment=["full_time"], work_format=["remote"])
+    )
+    fields[common.SCHEDULE].select_option.assert_called_once_with(["full_day"])
+    fields[common.EMPLOYMENT].select_option.assert_called_once_with(["full_time"])
+    fields[common.WORK_FORMAT].select_option.assert_called_once_with(["remote"])
