@@ -2209,7 +2209,7 @@ selectors:
     verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
     verified_by: human
   resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX:
-    value: '[data-qa=''checkbox'']'
+    value: '[data-qa=''checkbox-container''] input'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:52
     decision: documented_live
@@ -2223,14 +2223,17 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:52
-      note: 'Live read-only confirmed 2026-08-30 (#800): opened /resume/edit/{resume_id}/experience on a draft resume (same
-        page as #786/#787). The "Работаю сейчас" checkbox above the end-date fields is checked by default on a new entry;
-        while checked, resume-editor-experience-end-year-input and resume-editor-experience-end-month-input are disabled (input.disabled
-        / [aria-disabled="true"]). document.querySelectorAll("[data-qa=''checkbox'']") resolved to exactly one match on this
-        form. Toggling the checkbox off (read-only DOM probe, form not saved) re-enabled both end-date controls, confirming
-        the causal link.'
+      note: 'Live write-confirmed 2026-08-30 (#824): opened /resume/edit/{resume_id}/experience on a draft resume (same page
+        as #786/#787/#800). The Magritte checkbox is a custom-control triple — a bare physical <input type="checkbox"> plus
+        a visual <span data-qa="checkbox"> sibling, both wrapped in <span data-qa="checkbox-container">. The <span data-qa="checkbox">
+        paints the checkbox glyph but sits in front of the <input> in DOM order, so Playwright''s click on it is intercepted
+        by the real <input> underneath (the exact failure in the issue''s call log). The physical <input> has no data-qa of
+        its own but is the sole input[type=checkbox] on the form and the sole descendant of the one [data-qa=''checkbox-container''];
+        clicking it directly (confirmed via accessibility-tree ref, not the intercepted span) unchecked the box and re-enabled
+        resume-editor-experience-end-year-input/-end-month-input in the same click, with no interception retry. Form was not
+        saved; no mutation reached hh.ru.'
     last_verified_at: '2026-08-30'
-    verified_flow: authenticated_experience_editor_read_only
+    verified_flow: authenticated_experience_editor_write_confirmed (draft resume, checkbox toggle only, not saved)
     verified_by: human
   resume_experience.FIRST_EXPERIENCE_POSITION:
     value: '[data-qa=''resume-editor-experience-position-input'']'

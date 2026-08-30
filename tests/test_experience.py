@@ -336,7 +336,7 @@ class _DisabledEndYearSavePage(_SavePage):
         if selector == "[data-qa='resume-editor-experience-end-year-input']":
             enabled = self._uncheck_enables and self.checkbox_clicked
             return _Locator(count=1, enabled=enabled)
-        if selector == "[data-qa='checkbox']":
+        if selector == "[data-qa='checkbox-container'] input":
             page = self
 
             class _CheckboxLocator(_Locator):
