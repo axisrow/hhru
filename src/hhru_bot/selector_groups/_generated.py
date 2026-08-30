@@ -204,7 +204,6 @@ VALUES: dict[str, str] = {
     "search_page.VACANCY_CARD_PUBLICATION_TIME": "[data-qa='vacancy-serp__vacancy-date']",
     "search_page.VACANCY_CARD_REMOTE_LABEL": "[data-qa='vacancy-label-work-schedule-remote']",
     "search_page.VACANCY_CARD_RESPONSE_BUTTON": "[data-qa='vacancy-serp__vacancy_response']",
-    "search_page.VACANCY_CARD_RESPONSE_STATUS": "[data-qa='vacancy-serp__vacancy_response_status']",
     "search_page.VACANCY_CARD_SIDE_JOB": "[data-qa='vacancy-label-side-job']",
     "search_page.VACANCY_CARD_SNIPPET_REQUIREMENT": "[data-qa='vacancy-serp__vacancy_snippet_requirement']",
     "search_page.VACANCY_CARD_SNIPPET_RESPONSIBILITY": "[data-qa='vacancy-serp__vacancy_snippet_responsibility']",
