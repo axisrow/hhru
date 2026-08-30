@@ -17,6 +17,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.create_resume as create
+from _fakes import _parse_root
 from hhru_bot.create_resume import _select_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
@@ -84,6 +85,9 @@ class Locator:
     def get_attribute(self, name):  # noqa: ARG002
         return None
 
+    def is_disabled(self):
+        return False
+
     def check(self):
         self.page.clicks.append(f"check:{self.selector}")
 
@@ -103,6 +107,27 @@ class Locator:
 
     def fill(self, value):
         self.page.filled.append((self.selector, value))
+
+
+CREATE_BUTTON_HTML = "<button data-qa='mainmenu_createResume'>{label}</button>"
+
+
+class HtmlCreateButtonLocator(Locator):
+    def __init__(self, page, selector, *, count, disabled):
+        super().__init__(page, selector, count=count)
+        self._disabled = disabled
+
+    def wait_for(self, *, state, timeout):  # noqa: ARG002
+        if self._count == 0:
+            raise PlaywrightError(f"not visible: {self.selector}")
+
+    def is_disabled(self):
+        return self._disabled
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        if self._disabled:
+            raise PlaywrightError("ERR_CONNECTION_RESET")
+        super().click()
 
 
 class Page:
@@ -129,6 +154,28 @@ class Page:
         return None
 
 
+class HtmlCreateButtonPage(Page):
+    """Existing create-resume fake with the list button sourced from HTML."""
+
+    def __init__(self, html):
+        super().__init__(fail_on_wait=None)
+        buttons = _parse_root(html).find_all(
+            tag=None, qa_match=lambda qa: qa == "mainmenu_createResume"
+        )
+        self.create_button_present = bool(buttons)
+        self.create_button_disabled = bool(buttons and "disabled" in buttons[0].attrs)
+
+    def locator(self, selector):
+        if selector == RESUME_CREATE_BUTTON:
+            return HtmlCreateButtonLocator(
+                self,
+                selector,
+                count=int(self.create_button_present),
+                disabled=self.create_button_disabled,
+            )
+        return super().locator(selector)
+
+
 def _run(page, before_click=None):
     return create.create_resume_on_hh(
         cast(PlaywrightPage, cast(object, page)),
@@ -137,6 +184,38 @@ def _run(page, before_click=None):
         dry_run=False,
         before_click=before_click,
     )
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<button data-qa='mainmenu_createResume' disabled>Создать</button>",
+        "<main>список резюме</main>",
+    ],
+)
+def test_resume_limit_is_reported_before_create_click(monkeypatch, html):
+    """The list HTML exposes the hh.ru resume limit as disabled/missing button."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HtmlCreateButtonPage(html)
+
+    result = _run(page)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "лимит" in result.reason.lower()
+    assert "удал" in result.reason.lower()
+    assert RESUME_CREATE_BUTTON not in page.clicks
+
+
+def test_active_create_button_keeps_existing_behavior(monkeypatch):
+    """An enabled button still enters the existing wizard flow."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HtmlCreateButtonPage(CREATE_BUTTON_HTML.format(label="Создать"))
+
+    result = _run(page)
+
+    assert RESUME_CREATE_BUTTON in page.clicks
+    assert "лимит" not in result.reason.lower()
 
 
 @pytest.mark.parametrize(
