@@ -135,6 +135,17 @@ def _set_tree(page: Page, trigger_selector: str, values: list[str], label: str) 
     if modal.count() != 1 or search.count() != 1 or submit.count() != 1:
         raise RuntimeError(f"панель выбора {label} не подтверждена")
     modal.first.wait_for(state="visible", timeout=_WAIT_MS)
+    # The picker is multi-select and keeps its previous state between opens.
+    # Clear each selected leaf by its stable id, not once per category row:
+    # hh.ru may render the same leaf under several parent categories.
+    selected = modal.locator(f"{TREE_OPTION}[aria-selected='true']")
+    selected_ids = {
+        selected.nth(index).get_attribute("data-qa") for index in range(selected.count())
+    }
+    for selected_id in selected_ids:
+        if selected_id:
+            modal.locator(f"[data-qa='{selected_id}']").first.click()
+
     for value in values:
         search.first.fill(value)
         option = modal.locator(TREE_OPTION).filter(has_text=re.compile(rf"^{re.escape(value)}$"))

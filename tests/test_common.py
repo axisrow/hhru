@@ -70,6 +70,8 @@ def test_apply_common_uses_exact_tree_leaf_identity(tmp_path):
         )
         assert page.locator(common.TREE_MODAL).is_hidden()
         assert page.locator("#selected").inner_text() == "Москва|Маяковская|Россия"
+        apply_common(page, CommonValues(metro=[]))
+        assert page.locator(f"{common.TREE_OPTION}[aria-selected='true']").count() == 0
     finally:
         browser.close()
         playwright.stop()
