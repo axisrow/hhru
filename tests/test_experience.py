@@ -74,9 +74,10 @@ def test_fill_plan_rejects_identity_or_count_changes():
 
 
 class _Locator:
-    def __init__(self, count=0, *, enabled=True):
+    def __init__(self, count=0, *, enabled=True, text="Месяц"):
         self._count = count
         self._enabled = enabled
+        self._text = text
 
     def count(self):
         return self._count
@@ -95,6 +96,9 @@ class _Locator:
 
     def input_value(self):
         return ""
+
+    def inner_text(self):
+        return self._text
 
     def is_enabled(self):
         return self._enabled
@@ -351,3 +355,166 @@ def test_read_experience_skips_unreadable_row_instead_of_failing_whole_read(monk
     result = read_experience_on_hh(_ReadPage(), "resume-1")
 
     assert len(result) == 1
+
+
+def test_read_month_parses_selected_label_confirmed_live():
+    """#811: the trigger is not an <input> — inner_text() is "Месяц" (unset)
+    or "Месяц\\nМарт" (selected), confirmed live 2026-08-30."""
+    from hhru_bot.experience import _read_month
+
+    assert _read_month(_Locator(count=1, text="Месяц")) == ""
+    assert _read_month(_Locator(count=1, text="Месяц\nМарт")) == "3"
+    assert _read_month(_Locator(count=1, text="Месяц\nДекабрь")) == "12"
+
+
+class _MonthOptionLocator(_Locator):
+    """Simulates the month listbox option addressed by EXPERIENCE_MONTH_OPTION."""
+
+    def __init__(self, page, month, *, count=1):
+        super().__init__(count=count)
+        self._page = page
+        self._month = month
+
+    def click(self):
+        self._page.selected_month = self._month
+        self._page.listbox_open = False
+
+
+class _MonthComboboxPage:
+    """Minimal page fake for _select_month: tracks whether the listbox popup
+    is open and which month option was clicked (confirmed live shape: click
+    opens role='listbox' with 12 role='option' items keyed by
+    magritte-select-option-{01..12})."""
+
+    def __init__(self, *, option_count=1):
+        self.listbox_open = False
+        self.selected_month = None
+        self._option_count = option_count
+
+    def locator(self, selector):
+        if "magritte-select-option-" in selector:
+            month = selector.rsplit("-", 1)[-1].rstrip("]").strip("'")
+            return _MonthOptionLocator(self, month, count=self._option_count)
+        if selector == "[role='listbox']":
+            page = self
+
+            class _ListboxLocator(_Locator):
+                def wait_for(self, *, timeout=None, state=None):
+                    assert state == "hidden"
+                    assert page.listbox_open is False
+
+            return _ListboxLocator(count=0)
+        raise AssertionError(f"unexpected selector: {selector}")
+
+
+def test_select_month_clicks_confirmed_option_by_two_digit_number():
+    from hhru_bot.experience import EXPERIENCE_MONTH_OPTION, _select_month
+
+    page = _MonthComboboxPage()
+    trigger = _Locator(count=1)
+    _select_month(page, trigger, "3")
+
+    assert page.selected_month == "03"
+    assert EXPERIENCE_MONTH_OPTION.format(month="03") == "[data-qa='magritte-select-option-03']"
+
+
+def test_select_month_rejects_invalid_month_number():
+    from hhru_bot.experience import _select_month
+
+    page = _MonthComboboxPage()
+    trigger = _Locator(count=1)
+    with pytest.raises(ValueError, match="1-12"):
+        _select_month(page, trigger, "13")
+    with pytest.raises(ValueError, match="1-12"):
+        _select_month(page, trigger, "not-a-number")
+
+
+def test_select_month_fails_closed_on_ambiguous_option():
+    """Fail-closed (project invariant): more than one match after visibility
+    is an anomaly, not "option not found" — must not click blindly."""
+    from hhru_bot.experience import _select_month
+
+    page = _MonthComboboxPage(option_count=2)
+    trigger = _Locator(count=1)
+    with pytest.raises(ValueError, match="неоднозначно"):
+        _select_month(page, trigger, "3")
+
+
+class _MonthSavePage(_SavePage):
+    """#811: adds working start/end-month comboboxes on top of _SavePage's
+    row-count tracking, so a save-path test can assert the month was
+    actually selected before save is clicked."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_month_selected = None
+
+    def locator(self, selector):
+        if selector == "[data-qa='resume-editor-experience-start-month-input']":
+            page = self
+
+            class _StartMonthLocator(_Locator):
+                def click(self):
+                    pass
+
+            return _StartMonthLocator(count=1)
+        if "magritte-select-option-" in selector:
+            page = self
+            month = selector.rsplit("-", 1)[-1].rstrip("]").strip("'")
+
+            class _OptionLocator(_Locator):
+                def click(self):
+                    page.start_month_selected = month
+
+            return _OptionLocator(count=1)
+        if selector == "[role='listbox']":
+            return _Locator(count=0)
+        return super().locator(selector)
+
+
+def test_edit_experience_selects_start_month_when_provided(monkeypatch):
+    """#811 end-to-end: a plan entry with start_month set must drive a real
+    click through the confirmed EXPERIENCE_MONTH_OPTION selector before
+    save, not just carry the value in the dataclass."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _MonthSavePage(rows=0, grow_on_reload_by=1)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [
+                ExperienceEntry(
+                    company="Acme", position="Engineer", start_year="2020", start_month="3"
+                )
+            ]
+        ),
+        dry_run=False,
+    )
+
+    assert page.start_month_selected == "03"
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+def test_cli_entry_requires_start_month():
+    """#811: hh.ru's form will not save without a start month — --entry must
+    fail closed at parse time with a clear reason, not silently drop the
+    field and let the save land in `uncertain` further downstream."""
+    from hhru_bot.commands.edit_experience import _load_entries
+
+    with pytest.raises(ValueError, match="start_month"):
+        _load_entries(
+            ['{"company":"Acme","position":"Engineer","start_year":"2020"}'],
+        )
+
+
+def test_cli_entry_accepts_explicit_start_month():
+    from hhru_bot.commands.edit_experience import _load_entries
+
+    entries = _load_entries(
+        ['{"company":"Acme","position":"Engineer","start_year":"2020","start_month":"3"}'],
+    )
+    assert entries[0].start_month == "3"

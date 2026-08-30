@@ -26,6 +26,26 @@ EXPERIENCE_POSITION = _selector("resume_experience.EXPERIENCE_POSITION")
 EXPERIENCE_COMPANY_URL = _selector("resume_experience.EXPERIENCE_COMPANY_URL")
 EXPERIENCE_START_YEAR = _selector("resume_experience.EXPERIENCE_START_YEAR")
 EXPERIENCE_END_YEAR = _selector("resume_experience.EXPERIENCE_END_YEAR")
+# #811: month comboboxes on the same first-row/full-page shape (confirmed
+# live 2026-08-30 on a draft resume, /resume/edit/{resume_id}/experience).
+# Both are magritte `role="combobox"` triggers; clicking one opens a
+# `role="listbox"` popup with 12 `role="option"` items whose data-qa is
+# `magritte-select-option-{01..12}` (confirmed live, see EXPERIENCE_MONTH_OPTION
+# below). start-month has no confirmed default; end-month starts disabled
+# (its "Работаю сейчас" checkbox is checked by default, same shape as
+# EXPERIENCE_END_YEAR/#800) — is_enabled() must be checked the same way.
+EXPERIENCE_START_MONTH = _selector("resume_experience.EXPERIENCE_START_MONTH")
+EXPERIENCE_END_MONTH = _selector("resume_experience.EXPERIENCE_END_MONTH")
+# Month option inside the opened listbox popup, addressed directly by its
+# 2-digit month number (01..12) — same identity-bound pattern as
+# apply_form.APPLY_RESUME_OPTION (data-qa already carries the value, no
+# separate label/index lookup needed). Confirmed live 2026-08-30: exactly 12
+# `role="option"` items, `magritte-select-option-01`=Январь .. `-12`=Декабрь.
+EXPERIENCE_MONTH_OPTION = _selector("resume_experience.EXPERIENCE_MONTH_OPTION")
+# The popup itself, used to confirm it closed after picking an option (same
+# role as apply_form.APPLY_RESUME_DROPDOWN) — `role="listbox"` count drops to
+# 0 once a month is selected (confirmed live 2026-08-30).
+EXPERIENCE_MONTH_LISTBOX = _selector("resume_experience.EXPERIENCE_MONTH_LISTBOX")
 EXPERIENCE_DESCRIPTION = _selector("resume_experience.EXPERIENCE_DESCRIPTION")
 EXPERIENCE_CANCEL = _selector("resume_experience.EXPERIENCE_CANCEL")
 EXPERIENCE_SAVE = _selector("resume_experience.EXPERIENCE_SAVE")

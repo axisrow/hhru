@@ -99,7 +99,10 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
             mode="fill",
             career=None,
             existing=None,
-            entry=['{"company": "ООО Тест", "position": "Инженер", "duties": "Делал дело"}'],
+            entry=[
+                '{"company": "ООО Тест", "position": "Инженер", "start_month": "3", '
+                '"duties": "Делал дело"}'
+            ],
         )
     )
     out = capsys.readouterr().out
@@ -178,7 +181,9 @@ def test_edit_experience_manual_entry_appends_after_existing_rows(tmp_path, caps
             force=True,
             career=None,
             existing=None,
-            entry=['{"company": "Новая компания", "position": "Новая должность"}'],
+            entry=[
+                '{"company": "Новая компания", "position": "Новая должность", "start_month": "5"}'
+            ],
         )
     )
     assert captured["indexes"] == [1]
