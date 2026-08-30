@@ -179,3 +179,20 @@ def test_direct_route_redirect_away_fails_closed(monkeypatch):
 
     assert result.success is False
     assert result.uncertain is False
+
+
+def test_direct_route_substring_resume_id_fails_closed(monkeypatch):
+    """Guard must match resume_id as an exact path segment, not a substring.
+
+    "234" is a Python substring of "1234", so a resume_id/URL pair like this
+    would pass a naive ``resume_id in current_path`` check even though the
+    form is open for a different resume (#862 review finding).
+    """
+    page = _FakePage(direct_url="https://hh.ru/resume/edit/1234/additionalEducation")
+    _patch_common(monkeypatch, page)
+
+    result = _edit_block(page, [_RECORD], additional=True, dry_run=False, resume_id="234")
+
+    assert result.success is False
+    assert result.uncertain is False
+    assert "не для того резюме" in result.reason
