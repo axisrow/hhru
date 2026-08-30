@@ -199,22 +199,37 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 # existing row's index would silently blank any field the manual
                 # JSON omitted. Always append after the live row count instead.
                 #
-                # #815: this index range is only ever REACHABLE (not merely
-                # correct) when the resume has zero existing rows — hh.ru's
-                # edit-trigger index is an internal React counter, not a row
-                # position, so existing_count is never a real, addressable
-                # index once other rows exist. edit_experience_on_hh() fails
-                # closed on a non-existent index rather than silently
-                # reusing the one confirmed-safe "create" route
-                # (/resume/edit/{id}/experience) on a resume it was never
-                # confirmed safe for — live testing found that route can
-                # overwrite an unrelated existing row instead of appending
-                # (see resume_experience.py's module docstring). Adding a
-                # second/third row via --entry to a non-empty resume is
-                # therefore not yet supported; this stays a clear [FAIL]
-                # rather than a guessed, potentially destructive write.
+                # #815 review round 2: this used to build `indexes` as
+                # range(existing_count, existing_count + N) — an arithmetic
+                # GUESS at a free index, based on the same contiguous-from-0
+                # assumption this PR disproves everywhere else. hh.ru's
+                # edit-trigger index is an internal React counter that can
+                # equal existing_count by coincidence (e.g. a resume with
+                # exactly one row whose real index happens to be 1):
+                # edit_experience_on_hh()'s fail-closed check only fires when
+                # the guessed index is NOT among the existing ones
+                # (trigger.count()==0) — a coincidental collision instead
+                # silently lands on the ordinary edit-existing-row path and
+                # OVERWRITES that row's content as if it were a fresh entry,
+                # the exact class of data loss the fail-closed guard exists
+                # to prevent for the other route. There is no reliable way
+                # to predict a free index from client-side arithmetic, so
+                # rather than gamble on a guess, fail closed explicitly here
+                # whenever the resume already has ANY row — this is a
+                # confirmed, not merely a suspected, unsafe path (see
+                # resume_experience.py's module docstring for the CREATE
+                # route this would otherwise fall through to).
                 existing_count = len(read_experience_on_hh(page, resume.resume_id))
-                indexes = list(range(existing_count, existing_count + len(plan.entries)))
+                if existing_count > 0:
+                    print(
+                        "[FAIL] --entry не поддерживает добавление записи к резюме, "
+                        f"где опыт уже есть (существующих строк: {existing_count}) — "
+                        "hh.ru не даёт клиенту предсказать свободный индекс новой "
+                        "строки, а угаданный индекс может случайно совпасть с "
+                        "существующей строкой и перезаписать её (#815)"
+                    )
+                    return True
+                indexes = list(range(len(plan.entries)))
             # begin_attempt() right before the real mutation, after the page/
             # context are already open (#465 review): counting the attempt
             # before launch_context succeeded would misreport a browser-launch
