@@ -295,6 +295,32 @@ def test_hydration_lag_retries_click_until_dialog_appears(monkeypatch):
     assert page.dialog_confirm_clicked is True
 
 
+def test_before_click_hook_runs_exactly_once_across_hydration_retries(monkeypatch):
+    """#809 (AO review on PR #816): the reservation happens once, before the
+    loop's first click -- not per retry attempt. Multiple non-landing clicks
+    while hydration catches up must not reserve (or double-reserve) anything.
+    """
+    page = Page(
+        dialog_shown=True,
+        dialog_button_count=1,
+        button_count_after_confirm=0,
+        hydrate_after_clicks=3,
+    )
+    _patch_navigation(monkeypatch, page)
+    calls = []
+
+    education.delete_education_entry_on_hh(
+        cast(PlaywrightPage, page),
+        "primary",
+        ENTRY_ID,
+        dry_run=False,
+        before_click=lambda: calls.append("before_click"),
+    )
+
+    assert calls == ["before_click"]
+    assert page.click_count == 3
+
+
 def test_hydration_lag_exhausting_retries_is_uncertain(monkeypatch):
     """#809: if hydration never completes within the retry budget, the
     outcome must still fail closed as uncertain rather than loop forever or
@@ -384,10 +410,13 @@ def test_button_still_present_after_dialog_confirm_is_uncertain(monkeypatch):
     assert "всё ещё присутствует" in result.reason
 
 
-def test_before_click_hook_runs_immediately_before_the_destructive_confirm_click(monkeypatch):
-    """#809: before_click must fire immediately before the dialog's confirm
-    click -- the actually destructive one -- not before the first click that
-    only opens the dialog.
+def test_before_click_hook_runs_before_the_first_click_with_dialog(monkeypatch):
+    """#809 (AO review on PR #816): before_click must reserve the durable
+    intent BEFORE the first click, not after any click -- a crash between a
+    possibly-destructive click and a retroactive before_click() call would
+    otherwise leave no recorded row at all despite a real hh.ru mutation.
+    kind="primary" confirms the first click only opens the dialog, but the
+    reservation must not depend on that per-kind knowledge.
     """
     page = Page(dialog_shown=True, dialog_button_count=1, button_count_after_confirm=0)
     _patch_navigation(monkeypatch, page)
@@ -411,12 +440,13 @@ def test_before_click_hook_runs_immediately_before_the_destructive_confirm_click
         before_click=lambda: calls.append("before_click"),
     )
 
-    assert calls == ["outer_click", "before_click", "confirm_click"]
+    assert calls == ["before_click", "outer_click", "confirm_click"]
 
 
-def test_before_click_hook_runs_after_direct_delete_click_without_dialog(monkeypatch):
-    """#809: no dialog -- before_click still must be reserved, right after
-    the (only, destructive) click since there is no later hook point.
+def test_before_click_hook_runs_before_the_first_click_without_dialog(monkeypatch):
+    """#809 (AO review on PR #816): same early reservation for the no-dialog
+    path (kind="additional", unconfirmed whether the first click itself is
+    destructive) -- reserving before the click is strictly safer than after.
     """
     page = Page(button_count=1, button_count_after_click=0, dialog_shown=False)
     _patch_navigation(monkeypatch, page)
@@ -435,7 +465,7 @@ def test_before_click_hook_runs_after_direct_delete_click_without_dialog(monkeyp
         before_click=lambda: calls.append("before_click"),
     )
 
-    assert calls == ["click", "before_click"]
+    assert calls == ["before_click", "click"]
 
 
 def test_invalid_kind_raises_value_error(monkeypatch):

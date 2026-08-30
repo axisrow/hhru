@@ -497,9 +497,23 @@ def delete_education_entry_on_hh(
     # this specific route/bundle, `profile_primaryEducation-route.*.js`).
     # Playwright's `.click()` succeeds either way (the plain DOM node exists
     # and is actionable) but is a silent no-op before hydration: neither the
-    # confirm dialog nor any network request follows. The first click is not
-    # itself destructive (see below), so retrying it is safe -- this loop
-    # bounds that wait instead of guessing a fixed sleep.
+    # confirm dialog nor any network request follows. The first click is
+    # confirmed non-destructive for kind="primary" (it only opens the second
+    # dialog); for kind="additional" it is UNCONFIRMED whether the click
+    # itself is what tears the row down (see the no-dialog branch below). The
+    # reservation below is therefore made ONCE, before this loop's first
+    # click, rather than after any click or per retry iteration: for
+    # "primary" that is provably safe (the click is not destructive), and for
+    # "additional" it is strictly safer than reserving after the click --
+    # reserving early can only cost a spurious ``uncertain`` row on a click
+    # that never lands (the project's existing fail-closed trade-off, #476),
+    # while reserving after a possibly-destructive click leaves a real crash
+    # window with NO recorded row at all (AO review on PR #816, action_id
+    # stays None if the process dies before this call, and interrupt() is a
+    # no-op for that state -- silently diverging the audit trail from
+    # hh.ru's real state, worse than delete-resume's #480 lockout).
+    if before_click is not None:
+        before_click()
     click_attempts = 0
     dialog = page.locator(_DELETE_CONFIRM_DIALOG)
     trigger = page.locator(_ENTRY_DELETE_TRIGGER[kind])
@@ -507,13 +521,6 @@ def delete_education_entry_on_hh(
     last_exc: PlaywrightError | None = None
     while click_attempts < DELETE_CLICK_MAX_ATTEMPTS:
         click_attempts += 1
-        # #809: the first click only OPENS the confirm dialog (kind="primary",
-        # live-confirmed) or -- unconfirmed for "additional" -- may tear the
-        # row down directly. It does not itself mutate hh.ru in the primary
-        # case, so before_click() (the DurableMutationAttempt seam) is
-        # deliberately NOT called here; it must fire immediately before
-        # whichever click actually is the destructive one, exactly like
-        # delete_resume.py's confirm step.
         try:
             button.first.click()
         except PlaywrightError as exc:
@@ -565,7 +572,10 @@ def delete_education_entry_on_hh(
         # so the button is addressed by its exact visible text, scoped
         # strictly inside the dialog role to avoid matching unrelated
         # "Удалить" controls elsewhere on the page (e.g. the form's own
-        # trigger, which is still mounted underneath the dialog).
+        # trigger, which is still mounted underneath the dialog). The
+        # reservation already happened before the loop above (see comment
+        # there) -- this click is the confirmed-destructive one for
+        # kind="primary", so no further before_click() call belongs here.
         confirm_button = dialog.get_by_text(_DELETE_CONFIRM_BUTTON_TEXT, exact=True)
         if confirm_button.count() != 1:
             return EducationDeleteResult(
@@ -576,19 +586,15 @@ def delete_education_entry_on_hh(
                 uncertain=True,
             )
         try:
-            if before_click is not None:
-                before_click()
             confirm_button.first.click()
         except PlaywrightError as exc:
             return EducationDeleteResult(
                 entry_id, kind, False, f"ошибка destructive-клика: {exc}", uncertain=True
             )
-    elif before_click is not None:
-        # No dialog appeared -- the first click above was itself the
-        # destructive one (matches the #809 report's unconfirmed claim for
-        # "additional"). The reservation must still happen, just retroactively
-        # relative to that click, since there is no later point to hook it to.
-        before_click()
+    # No dialog appeared -- the first click above was itself the destructive
+    # one (matches the #809 report's unconfirmed claim for "additional").
+    # The reservation already happened before the loop, so there is nothing
+    # further to do here.
 
     # The positive signal is the delete button itself detaching -- hh.ru
     # tears down the whole form once the entry is gone, whether or not
