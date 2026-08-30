@@ -152,6 +152,12 @@ def _apply_skills(
 
     if not skills:
         return StepResult("skills", skipped=True, reason="кластер не предложил навыков")
+    # AdaptiveResumeContent.skills — плоский список имён без уровня (только
+    # порядок приоритета, см. adaptive_resume.py::_ordered_skills), поэтому
+    # уровень навыка здесь ЗАХАРДКОЖЕН в "intermediate" — разумный нейтральный
+    # дефолт, а не решение, выведенное из данных кандидата. Если понадобится
+    # более точный уровень — это отдельное расширение AdaptiveResumeContent
+    # (нести уровень вместе с именем навыка), не локальная правка этой строки.
     proposed = tuple(Skill(name, "intermediate") for name in skills)
     result = edit_skills_on_hh(page, resume, proposed, dry_run=dry_run, mode="append")
     if not result.success:
