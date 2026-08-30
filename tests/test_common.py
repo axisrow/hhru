@@ -52,6 +52,29 @@ def test_apply_common_fills_inputs_and_selects_gender():
     locators[common.GENDER].first.select_option.assert_called_once_with("female")
 
 
+@pytest.mark.browser_unit
+def test_apply_common_uses_exact_tree_leaf_identity(tmp_path):
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    fixture = Path(__file__).parent / "fixtures" / "common_catalogs.html"
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch()
+    page = browser.new_page()
+    page.set_content(fixture.read_text(encoding="utf-8"))
+    try:
+        apply_common(
+            page,
+            CommonValues(area="Москва", metro=["Маяковская"], citizenship=["Россия"]),
+        )
+        assert page.locator(common.TREE_MODAL).is_hidden()
+        assert page.locator("#selected").inner_text() == "Москва|Маяковская|Россия"
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def test_read_common_fails_closed_on_ambiguous_selector():
     page = MagicMock()
     field = MagicMock()

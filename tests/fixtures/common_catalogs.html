@@ -1,0 +1,30 @@
+<!doctype html>
+<html><body>
+<input data-qa="resume-edit-area"><button data-qa="resume-edit-metro">metro</button>
+<button data-qa="resume-edit-citizenship">citizenship</button>
+<section data-qa="tree-selector-modal" role="dialog" hidden>
+  <input data-qa="tree-selector-search-input">
+  <div id="options">
+    <div data-qa="tree-selector-item tree-selector-item-1 tree-selector-child-1"><span>Москва</span></div>
+    <div data-qa="tree-selector-item tree-selector-item-2 tree-selector-child-2"><span>Маяковская</span></div>
+    <div data-qa="tree-selector-item tree-selector-item-3 tree-selector-child-3"><span>Россия</span></div>
+  </div>
+  <button data-qa="tree-selector-submit">Готово</button>
+</section>
+<output id="selected"></output>
+<script>
+const modal = document.querySelector('[data-qa="tree-selector-modal"]');
+const search = modal.querySelector('[data-qa="tree-selector-search-input"]');
+const all = [...modal.querySelectorAll('[data-qa^="tree-selector-item"]')];
+let selected = [];
+function open(trigger) { trigger.onclick = () => { modal.hidden = false; modal.dataset.trigger = trigger.dataset.qa; }; }
+open(document.querySelector('[data-qa="resume-edit-area"]'));
+open(document.querySelector('[data-qa="resume-edit-metro"]'));
+open(document.querySelector('[data-qa="resume-edit-citizenship"]'));
+search.oninput = () => setTimeout(() => all.forEach(x => x.style.display = x.innerText === search.value ? '' : 'none'), 10);
+modal.querySelector('[data-qa="tree-selector-submit"]').onclick = () => {
+  const x = all.find(x => x.innerText === search.value);
+  if (x) selected.push(x.innerText);
+  document.querySelector('#selected').innerText = selected.join('|'); modal.hidden = true;
+};
+</script></body></html>
