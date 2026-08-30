@@ -54,6 +54,67 @@ def test_prompt_contains_fill_context_and_fact_guard():
     assert '"existing"' in prompt[1]["content"]
 
 
+def test_plan_create_falls_back_when_llm_omits_start_month():
+    """PR #818 review: build_prompt() asks the LLM for start_month, but
+    nothing enforced it before this fix — a plan with company/position but a
+    blank start_month would reach edit_experience_on_hh and only fail once
+    hh.ru itself rejects the save (unclear uncertain/failed), instead of a
+    clear reason up front like the CLI --entry path already gives."""
+
+    class Returning:
+        def __init__(self, content):
+            self._content = content
+
+        def chat(self, *args, **kwargs):
+            return type("R", (), {"content": self._content})()
+
+    content = (
+        '[{"company":"Acme","position":"Engineer","start_year":"2020",'
+        '"start_month":"","end_year":"","current":true,"duties":"API",'
+        '"achievements":[],"company_url":""}]'
+    )
+    plan = plan_experience(Returning(content), mode="create", career="facts", existing=None)
+    assert plan.used_fallback is True
+    assert "start_month" in plan.reason
+
+
+def test_plan_fill_falls_back_when_existing_start_month_is_blank():
+    """Same guard applies in fill mode: _merge_fill_plan only protects
+    start_month from being *changed*, not from being blank on both sides
+    (e.g. rows read from hh.ru before this fix had no start_month at all)."""
+    existing = [
+        ExperienceEntry(company="Acme", position="Engineer", start_year="2020", current=True)
+    ]
+
+    class Returning:
+        def chat(self, *args, **kwargs):
+            content = (
+                '[{"company":"Acme","position":"Engineer","start_year":"2020",'
+                '"start_month":"","end_year":"","current":true,"duties":"new",'
+                '"achievements":[],"company_url":""}]'
+            )
+            return type("R", (), {"content": content})()
+
+    plan = plan_experience(Returning(), mode="fill", career="facts", existing=existing)
+    assert plan.used_fallback is True
+    assert "start_month" in plan.reason
+
+
+def test_plan_accepts_llm_entry_with_start_month():
+    class Returning:
+        def chat(self, *args, **kwargs):
+            content = (
+                '[{"company":"Acme","position":"Engineer","start_year":"2020",'
+                '"start_month":"3","end_year":"","current":true,"duties":"API",'
+                '"achievements":[],"company_url":""}]'
+            )
+            return type("R", (), {"content": content})()
+
+    plan = plan_experience(Returning(), mode="create", career="facts", existing=None)
+    assert plan.used_fallback is False
+    assert plan.entries[0].start_month == "3"
+
+
 def test_fill_plan_preserves_existing_fields_and_text():
     old = ExperienceEntry(company="Acme", position="Engineer", duties="existing")
     proposed = ExperienceEntry(

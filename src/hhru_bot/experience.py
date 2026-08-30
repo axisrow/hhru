@@ -222,6 +222,30 @@ def plan_experience(llm_client, *, mode: str, career: str, existing=None) -> Exp
         # In fill mode preserving existing data is safe.  In create mode an empty
         # plan is safer than writing fabricated content or a guessed fallback.
         return ExperiencePlan(list(existing or []), used_fallback=True, reason=reason)
+    # #811 review: build_prompt() asks the LLM for start_month, but nothing
+    # upstream enforces it — parse_plan()/_entry() accept an empty string like
+    # any other optional field, and _merge_fill_plan only protects start_month
+    # from being *changed*, not from being blank on both sides (e.g. existing
+    # rows read from hh.ru before this fix). Without this check a plan with a
+    # real company/position but blank start_month reaches edit_experience_on_hh
+    # and only fails once the hh.ru form itself rejects the save — same failure
+    # mode the CLI --entry path already prevents via _load_entries. Skip rows
+    # with no identity at all (LLM legitimately proposing nothing to fill).
+    missing_month = [
+        entry
+        for entry in entries
+        if (entry.company.strip() or entry.position.strip()) and not entry.start_month.strip()
+    ]
+    if missing_month:
+        return ExperiencePlan(
+            list(existing or []),
+            used_fallback=True,
+            reason=(
+                "LLM не указал start_month для "
+                f"{len(missing_month)} записи(ей) — форма опыта hh.ru не "
+                "сохраняется без месяца начала работы (#811)"
+            ),
+        )
     return ExperiencePlan(entries)
 
 
