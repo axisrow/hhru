@@ -20,6 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from .browser import (
     HH_BASE_URL,
     PageStateIndeterminate,
+    dismiss_cookie_banner,
     goto_hh,
     has_auth_cookie,
     has_login_form,
@@ -29,6 +30,7 @@ from .browser import (
     resume_identity_matches,
 )
 from .config_sections.education import EducationRecord
+from .logging_setup import LOG_DIR
 from .responses import NotAuthenticated
 
 logger = logging.getLogger("hhru_bot.resume_education")
@@ -93,6 +95,15 @@ _ADDITIONAL_LABELS = {
     "year": "Год окончания",
 }
 FORM_TIMEOUT_MS = 15_000
+# #825: было отсутствие явного timeout у wait_for_url после клика Save, из-за
+# чего неудача проявлялась только после дефолтных 90с Playwright
+# (browser.GOTO_TIMEOUT_MS, установленных context-wide) -- задержка сама по
+# себе ничего не доказывала и маскировала настоящую причину (см. комментарий
+# у save.click() ниже). 20с — тот же порядок, что SAVE_TIMEOUT_MS в
+# experience.py (#811): достаточно для медленного hh.ru после реального
+# сохранения (навигация происходит за секунды по всем живым прогонам), но не
+# держит CLI минуты на заведомо неуспешном пути.
+SAVE_TIMEOUT_MS = 20_000
 
 
 @dataclass(frozen=True)
@@ -209,6 +220,31 @@ def _field_locator(page, name: str, *, additional: bool):
     return locator
 
 
+def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:
+    """Best-effort DOM/screenshot dump on a post-save-click failure (#825).
+
+    A live failure (`save.click()` followed by a timed-out `wait_for_url`)
+    previously left no trace to diagnose beyond reproducing it live by hand.
+    Mirrors ``resume_position._dump_control_failure`` -- same pattern, applied
+    to this module's own failure point.
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"resume_education_{kind}_{index}_save_failure"
+    try:
+        (LOG_DIR / f"{stem}.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(LOG_DIR / f"{stem}.png"), full_page=True)
+        logger.warning("resume_education: %s строка %d — дамп сохранён (%s)", kind, index, exc)
+    except Exception as dump_exc:  # noqa: BLE001 - диагностика best-effort не должна ронять команду
+        # #825 review: page.content()/page.screenshot() могут бросить не только
+        # PlaywrightError (например TargetClosedError на уже закрытом контексте
+        # в отдельных версиях Playwright) -- этот хелпер существует только ради
+        # диагностики, поэтому любая его собственная ошибка должна логироваться
+        # и глушиться, а не всплывать наружу вместо настоящего результата команды.
+        logger.warning(
+            "resume_education: %s строка %d — дамп недоступен: %s", kind, index, dump_exc
+        )
+
+
 def _edit_block(
     page,
     records: list[EducationRecord],
@@ -323,14 +359,108 @@ def _edit_block(
                         uncertain=saved_count > 0,
                         saved=saved_count,
                     )
+                # #825: живой прогон подтвердил, что hh.ru показывает информер
+                # cookie-политики fixed внизу экрана на свежей навигации, и он
+                # может оставаться в DOM 40+ секунд -- всё это время он
+                # физически перекрывает кнопку Save, и клик по перекрытому
+                # узлу молча не долетает до формы (см. комментарий у
+                # dismiss_cookie_banner в browser.py). Дисмисс — best-effort
+                # прямо перед кликом, а не один раз при открытии страницы: то
+                # же самое расследование увидело баннер как до, так и после
+                # открытия формы редактирования.
+                dismiss_cookie_banner(page)
                 save_clicked = True
                 save.click()
-                page.wait_for_url(f"**/resume/{resume_id}", wait_until="commit")
-                if not resume_identity_matches(page, resume_id):
+                try:
+                    page.wait_for_url(
+                        f"**/resume/{resume_id}", wait_until="commit", timeout=SAVE_TIMEOUT_MS
+                    )
+                except PlaywrightError as exc:
+                    # #825: раньше здесь не было явного timeout -- Playwright
+                    # дефолтился на context-wide GOTO_TIMEOUT_MS (90с), так что
+                    # неудача проявлялась только через полторы минуты и без
+                    # единой зацепки, почему save не сработал. Короткий явный
+                    # SAVE_TIMEOUT_MS делает отказ быстрым, а дамп страницы
+                    # прямо в момент отказа делает следующее расследование
+                    # воспроизводимым без повторного похода в live-браузер.
+                    #
+                    # Живой прогон нашёл конкретный случай (аналог #179 из
+                    # CLAUDE.md для формы отклика): hh.ru сменил page.url на
+                    # адрес резюме и запись реально появилась в DOM, но
+                    # wait_for_url(wait_until="commit") всё равно истёк по
+                    # таймауту -- SPA/pushState-навигация не обязана поднимать
+                    # то же lifecycle-событие документа, которого ждёт
+                    # Playwright. Таймаут здесь -- НЕ доказательство неудачи
+                    # (то же рассуждение, что и для "коммит не значит
+                    # отрисовано" в CLAUDE.md, только в обратную сторону):
+                    # если identity и текст записи всё же подтверждаются,
+                    # результат success, а не ложный uncertain.
+                    if not resume_identity_matches(page, resume_id):
+                        _dump_save_failure(page, index, kind, exc)
+                        return EducationResult(
+                            kind,
+                            False,
+                            f"сохранение не подтверждено после клика: {exc}",
+                            uncertain=True,
+                            saved=saved_count,
+                        )
+                    # identity подтверждён несмотря на таймаут -- проваливаемся
+                    # дальше к позитивной проверке текста записи ниже, а не
+                    # повторяем ту же самую проверку identity.
+                else:
+                    if not resume_identity_matches(page, resume_id):
+                        # #825 review: дамп нужен и здесь -- этот путь такой же
+                        # непрозрачный без него, как и путь после таймаута выше.
+                        _dump_save_failure(
+                            page, index, kind, RuntimeError("identity резюме не подтверждён")
+                        )
+                        return EducationResult(
+                            kind,
+                            False,
+                            "после сохранения identity резюме не подтверждён",
+                            uncertain=True,
+                            saved=saved_count,
+                        )
+                # #825: navigation back to the resume page is not itself proof
+                # the record was written -- live investigation found a case
+                # where a field silently reverted to empty (Magritte combobox
+                # race, unrelated to this click) with the URL still changing
+                # normally. The positive signal is the record's own institution
+                # text now visible on the resume page, mirroring the
+                # reload-and-recount check already used for experience rows
+                # (#787/experience.py) -- proportional here to one text() read
+                # rather than a full recount, since education entries are
+                # addressed by index, not by a growing count of new rows.
+                #
+                # #825 review: an empty institution_value (both institution and
+                # organization blank) must not silently skip this check --
+                # _record()/CLI manual-entry parsing already require a non-empty
+                # institution before a plan reaches this function, so an empty
+                # value here means the record itself is malformed in a way that
+                # earlier validation should have caught. Fail closed rather than
+                # treat "nothing to check" as "verified".
+                institution_value = record.institution or record.organization
+                if not institution_value:
                     return EducationResult(
                         kind,
                         False,
-                        "после сохранения identity резюме не подтверждён",
+                        f"строка {index}: запись без institution/organization -- "
+                        "результат сохранения не проверяем",
+                        uncertain=True,
+                        saved=saved_count,
+                    )
+                if page.get_by_text(institution_value).count() == 0:
+                    _dump_save_failure(
+                        page,
+                        index,
+                        kind,
+                        RuntimeError(f"{institution_value!r} не найден на резюме после сохранения"),
+                    )
+                    return EducationResult(
+                        kind,
+                        False,
+                        f"строка {index}: запись не отображается на резюме после сохранения "
+                        f"({institution_value!r} не найден)",
                         uncertain=True,
                         saved=saved_count,
                     )
