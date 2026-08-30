@@ -53,6 +53,7 @@ BROWSER_COMMANDS = frozenset(
         "bump",
         "call-api",
         "clear-negotiations",
+        "common",
         "competitors",
         "copy-resume",
         "create-resume",

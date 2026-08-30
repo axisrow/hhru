@@ -20,6 +20,7 @@ def test_browser_command_registry_is_complete() -> None:
         "bump",
         "call-api",
         "clear-negotiations",
+        "common",
         "competitors",
         "copy-resume",
         "create-resume",
