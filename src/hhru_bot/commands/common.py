@@ -99,6 +99,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
     if not values.provided():
         print("[FAIL] Укажите хотя бы одно поле common")
         return True
+    print(
+        "[WARN] common — это общие данные профиля аккаунта; сохранение затронет "
+        "все резюме аккаунта, включая опубликованные боевые резюме."
+    )
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Сохранить простые поля common резюме '{resume.id}' на hh.ru?"
     ):
