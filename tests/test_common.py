@@ -66,8 +66,9 @@ def test_apply_common_uses_exact_tree_leaf_identity(tmp_path):
     try:
         apply_common(
             page,
-            CommonValues(area="Москва", metro=["Маяковская"], citizenship=["Россия"]),
+            CommonValues(metro=["Маяковская"]),
         )
+        apply_common(page, CommonValues(area="Москва", citizenship=["Россия"]))
         assert page.locator(common.TREE_MODAL).is_hidden()
         assert page.locator("#selected").inner_text() == "Москва|Маяковская|Россия"
         apply_common(page, CommonValues(metro=[]))

@@ -138,7 +138,10 @@ def _set_tree(page: Page, trigger_selector: str, values: list[str], label: str) 
     # The picker is multi-select and keeps its previous state between opens.
     # Clear each selected leaf by its stable id, not once per category row:
     # hh.ru may render the same leaf under several parent categories.
-    selected = modal.locator(f"{TREE_OPTION}[aria-selected='true']")
+    # Keep the state probe independent from the option's compound data-qa
+    # selector; hh.ru has used both a plain item class and the tree-item class
+    # on selected rows across these pickers.
+    selected = modal.locator("[aria-selected='true'][data-qa*='tree-selector-child-']")
     selected_ids = {
         selected.nth(index).get_attribute("data-qa") for index in range(selected.count())
     }
