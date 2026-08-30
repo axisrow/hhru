@@ -90,9 +90,13 @@
 | resume_experience.EXPERIENCE_COMPANY_URL | `[data-qa='resume-editor-experience-company-url-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_DESCRIPTION | `[data-qa='resume-editor-experience-description-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_EDIT_BUTTON | `[data-qa='edit-experience-button-{index}']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_END_MONTH | `[data-qa='resume-editor-experience-end-month-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_END_YEAR | `[data-qa='resume-editor-experience-end-year-input']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_MONTH_LISTBOX | `[role='listbox']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_MONTH_OPTION | `[data-qa='magritte-select-option-{month}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_POSITION | `[data-qa='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_START_MONTH | `[data-qa='resume-editor-experience-start-month-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_START_YEAR | `[data-qa='resume-editor-experience-start-year-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_COMPANY | `[data-qa='resume-editor-experience-company-input']` | — | — | — | live_dom |

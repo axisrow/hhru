@@ -1976,6 +1976,27 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_END_MONTH:
+    value: '[data-qa=''resume-editor-experience-end-month-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:38
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-end-month-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:38
+      note: 'Issue #811 live confirmation (draft resume, /resume/edit/{resume_id}/experience): disabled by default while "Работаю
+        сейчас" is checked, enabled after unchecking it — same shape as EXPERIENCE_END_YEAR/#800.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_END_YEAR:
     value: '[data-qa=''resume-editor-experience-end-year-input'']'
     criticality: write
@@ -1997,6 +2018,60 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_MONTH_LISTBOX:
+    value: '[role=''listbox'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:48
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - role=listbox (generic ARIA role attribute, not data-qa; confirmed live 2026-08-30 as the month combobox popup, count
+      drops to 0 after picking an option)
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:48
+      note: 'Issue #811 live confirmation: month combobox popup uses role="listbox"; count() drops to 0 once an option is
+        picked, used the same way as apply_form.APPLY_RESUME_DROPDOWN closes.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
+  resume_experience.EXPERIENCE_MONTH_OPTION:
+    value: '[data-qa=''magritte-select-option-{month}'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:44
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - magritte-select-option-01
+    - magritte-select-option-02
+    - magritte-select-option-03
+    - magritte-select-option-04
+    - magritte-select-option-05
+    - magritte-select-option-06
+    - magritte-select-option-07
+    - magritte-select-option-08
+    - magritte-select-option-09
+    - magritte-select-option-10
+    - magritte-select-option-11
+    - magritte-select-option-12
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:44
+      note: 'Issue #811 live confirmation (draft resume): opening either month combobox renders exactly 12 role="option" items,
+        data-qa magritte-select-option-01=Январь .. -12=Декабрь; same identity-bound pattern as apply_form.APPLY_RESUME_OPTION.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_POSITION:
     value: '[data-qa=''resume-profile-experience-specific-position-input-{index}'']'
     criticality: write
@@ -2041,6 +2116,27 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_START_MONTH:
+    value: '[data-qa=''resume-editor-experience-start-month-input'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-editor-experience-start-month-input
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:37
+      note: 'Issue #811 live confirmation (draft resume, /resume/edit/{resume_id}/experience): magritte role="combobox" trigger,
+        enabled by default, opens the same 12-option month listbox as EXPERIENCE_END_MONTH.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_START_YEAR:
     value: '[data-qa=''resume-editor-experience-start-year-input'']'
     criticality: write

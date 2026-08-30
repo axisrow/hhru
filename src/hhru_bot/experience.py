@@ -31,9 +31,13 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_COMPANY_URL,
     EXPERIENCE_DESCRIPTION,
     EXPERIENCE_EDIT_BUTTON,
+    EXPERIENCE_END_MONTH,
     EXPERIENCE_END_YEAR,
+    EXPERIENCE_MONTH_LISTBOX,
+    EXPERIENCE_MONTH_OPTION,
     EXPERIENCE_POSITION,
     EXPERIENCE_SAVE,
+    EXPERIENCE_START_MONTH,
     EXPERIENCE_START_YEAR,
     FIRST_EXPERIENCE_CANCEL,
     FIRST_EXPERIENCE_COMPANY,
@@ -45,6 +49,32 @@ from .selector_groups.resume_experience import (
 logger = logging.getLogger("hhru_bot.experience")
 SAVE_TIMEOUT_MS = 30_000
 FORM_TIMEOUT_MS = 10_000
+# #811: the month combobox popup is a React-rendered dialog opened by a click
+# on the trigger — CLAUDE.md pattern requires an explicit wait_for(visible)
+# after that click, not just count()==1, or a slow render reads as "option
+# not found" (see EXPERIENCE_MONTH_OPTION provenance comment for the
+# live-confirmed shape).
+MONTH_OPTION_TIMEOUT_MS = 5_000
+
+# Confirmed live 2026-08-30 (draft resume): each combobox's 12 options carry
+# these exact labels in this order — Январь=01 .. Декабрь=12. Used both to
+# build the click target (_select_month) and to parse the trigger's
+# inner_text() back into a "1".."12" string when reading (the trigger is not
+# an <input>/<select>, input_value() raises on it — confirmed live).
+MONTH_NAMES = (
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+)
 
 
 @dataclass
@@ -52,7 +82,9 @@ class ExperienceEntry:
     company: str = ""
     position: str = ""
     start_year: str = ""
+    start_month: str = ""
     end_year: str = ""
+    end_month: str = ""
     current: bool = False
     duties: str = ""
     achievements: list[str] | str = ""
@@ -98,7 +130,16 @@ def _entry(raw: Any) -> ExperienceEntry | None:
         return None
     values = {
         key: raw.get(key, "")
-        for key in ("company", "position", "start_year", "end_year", "duties", "company_url")
+        for key in (
+            "company",
+            "position",
+            "start_year",
+            "start_month",
+            "end_year",
+            "end_month",
+            "duties",
+            "company_url",
+        )
     }
     if not all(isinstance(v, str) for v in values.values()):
         return None
@@ -131,10 +172,13 @@ def build_prompt(mode: str, career: str, existing: list[ExperienceEntry] | None 
     """Build a fact-preserving prompt.  ``existing`` is the do-fill context."""
     system = (
         "Ты помогаешь заполнить опыт работы в резюме. Отвечай только JSON-массивом "
-        "объектов с полями company, position, start_year, end_year, current, duties, "
-        "achievements, company_url. Не выдумывай факты, даты, метрики или URL: "
-        "используй только сведения пользователя. achievements — список строк. "
-        "current=true означает работу по настоящее время."
+        "объектов с полями company, position, start_year, start_month, end_year, "
+        "end_month, current, duties, achievements, company_url. Не выдумывай факты, "
+        "даты, метрики или URL: используй только сведения пользователя. "
+        'start_month/end_month — число месяца от 1 до 12 строкой (например, "3"); '
+        "start_month обязателен, форма резюме hh.ru не сохранится без него. "
+        "achievements — список строк. current=true означает работу по настоящее время "
+        "(end_year/end_month в этом случае оставь пустыми)."
     )
     context: dict[str, Any] = {"career": career, "mode": mode}
     if existing is not None:
@@ -178,6 +222,30 @@ def plan_experience(llm_client, *, mode: str, career: str, existing=None) -> Exp
         # In fill mode preserving existing data is safe.  In create mode an empty
         # plan is safer than writing fabricated content or a guessed fallback.
         return ExperiencePlan(list(existing or []), used_fallback=True, reason=reason)
+    # #811 review: build_prompt() asks the LLM for start_month, but nothing
+    # upstream enforces it — parse_plan()/_entry() accept an empty string like
+    # any other optional field, and _merge_fill_plan only protects start_month
+    # from being *changed*, not from being blank on both sides (e.g. existing
+    # rows read from hh.ru before this fix). Without this check a plan with a
+    # real company/position but blank start_month reaches edit_experience_on_hh
+    # and only fails once the hh.ru form itself rejects the save — same failure
+    # mode the CLI --entry path already prevents via _load_entries. Skip rows
+    # with no identity at all (LLM legitimately proposing nothing to fill).
+    missing_month = [
+        entry
+        for entry in entries
+        if (entry.company.strip() or entry.position.strip()) and not entry.start_month.strip()
+    ]
+    if missing_month:
+        return ExperiencePlan(
+            list(existing or []),
+            used_fallback=True,
+            reason=(
+                "LLM не указал start_month для "
+                f"{len(missing_month)} записи(ей) — форма опыта hh.ru не "
+                "сохраняется без месяца начала работы (#811)"
+            ),
+        )
     return ExperiencePlan(entries)
 
 
@@ -189,7 +257,16 @@ def _merge_fill_plan(
         return None
     merged = []
     for old, new in zip(existing, proposed, strict=True):
-        protected = ("company", "position", "start_year", "end_year", "current", "company_url")
+        protected = (
+            "company",
+            "position",
+            "start_year",
+            "start_month",
+            "end_year",
+            "end_month",
+            "current",
+            "company_url",
+        )
         if any(getattr(old, key) != getattr(new, key) for key in protected):
             return None
         merged.append(
@@ -197,7 +274,9 @@ def _merge_fill_plan(
                 company=old.company,
                 position=old.position,
                 start_year=old.start_year,
+                start_month=old.start_month,
                 end_year=old.end_year,
+                end_month=old.end_month,
                 current=old.current,
                 company_url=old.company_url,
                 duties=old.duties or new.duties,
@@ -217,6 +296,55 @@ def _read(locator) -> str:
     if locator.count() != 1:
         raise ValueError(f"поле определяется неоднозначно ({locator.count()})")
     return locator.input_value()
+
+
+def _read_month(locator) -> str:
+    """Read a month combobox's current selection as "1".."12", "" if unset.
+
+    The trigger is a ``role="combobox"`` <div>, not an <input>/<select> —
+    ``input_value()`` raises on it (confirmed live 2026-08-30). The rendered
+    label is "Месяц" when nothing is chosen, "Месяц\\n<Название>" once a
+    month is picked (confirmed live) — parse the second line against
+    MONTH_NAMES rather than trusting an untyped free-text match.
+    """
+    if locator.count() != 1:
+        raise ValueError(f"поле определяется неоднозначно ({locator.count()})")
+    lines = locator.inner_text().splitlines()
+    if len(lines) < 2:
+        return ""
+    label = lines[1].strip()
+    try:
+        return str(MONTH_NAMES.index(label) + 1)
+    except ValueError:
+        return ""
+
+
+def _select_month(page: Page, locator, month: str) -> None:
+    """Open a month combobox and click the option matching ``month`` ("1".."12").
+
+    Mirrors apply/steps.py::_select_resume_in_form: identity-bound click via
+    EXPERIENCE_MONTH_OPTION (data-qa already carries the 2-digit month), fail
+    on ambiguity rather than falling back to a guess. The click opens a
+    React-rendered popup (CLAUDE.md pattern) — wait_for(state="visible") on
+    the option before asserting count()==1, then wait for the listbox itself
+    to close (confirmed live: count drops to 0 after a normal option click,
+    no extra toggle-close step needed, unlike the resume dropdown in apply).
+    """
+    if locator.count() != 1:
+        raise ValueError(f"поле месяца определяется неоднозначно ({locator.count()})")
+    try:
+        month_number = int(month)
+    except ValueError as exc:
+        raise ValueError(f"месяц должен быть числом 1-12: {month!r}") from exc
+    if not 1 <= month_number <= 12:
+        raise ValueError(f"месяц должен быть числом 1-12: {month!r}")
+    locator.click()
+    option = page.locator(EXPERIENCE_MONTH_OPTION.format(month=f"{month_number:02d}"))
+    option.wait_for(state="visible", timeout=MONTH_OPTION_TIMEOUT_MS)
+    if option.count() != 1:
+        raise ValueError(f"опция месяца {month_number:02d} определяется неоднозначно")
+    option.click()
+    page.locator(EXPERIENCE_MONTH_LISTBOX).wait_for(state="hidden", timeout=MONTH_OPTION_TIMEOUT_MS)
 
 
 def _count_experience_rows(page: Page) -> int:
@@ -239,9 +367,19 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
                 company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
                 position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
                 start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
+                start_month=(
+                    _read_month(page.locator(EXPERIENCE_START_MONTH))
+                    if page.locator(EXPERIENCE_START_MONTH).count() == 1
+                    else ""
+                ),
                 end_year=(
                     _read(page.locator(EXPERIENCE_END_YEAR))
                     if page.locator(EXPERIENCE_END_YEAR).count() == 1
+                    else ""
+                ),
+                end_month=(
+                    _read_month(page.locator(EXPERIENCE_END_MONTH))
+                    if page.locator(EXPERIENCE_END_MONTH).count() == 1
                     else ""
                 ),
                 duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
@@ -333,13 +471,19 @@ def edit_experience_on_hh(
             _fill(page.locator(company_selector), entry.company)
             _fill(page.locator(position_selector), entry.position)
             _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
+            start_month_locator = page.locator(EXPERIENCE_START_MONTH)
+            if start_month_locator.count() == 1 and entry.start_month:
+                _select_month(page, start_month_locator, entry.start_month)
             end_year_locator = page.locator(EXPERIENCE_END_YEAR)
+            end_month_locator = page.locator(EXPERIENCE_END_MONTH)
             if end_year_locator.count() == 1:
                 # #800: the end-year field is disabled while the "Работаю
                 # сейчас" checkbox is checked (checked by default on a new
                 # entry). Filling a disabled field just retries fill() until
                 # Playwright's timeout — check is_enabled() first rather than
-                # attempting the fill unconditionally.
+                # attempting the fill unconditionally. #811: end-month shares
+                # the exact same disabled/enabled gating (confirmed live), so
+                # it is filled right alongside end-year in each branch below.
                 end_year_enabled = end_year_locator.is_enabled()
                 if entry.current:
                     if end_year_enabled:
@@ -347,6 +491,8 @@ def edit_experience_on_hh(
                     # else: already disabled/blank — nothing to do.
                 elif end_year_enabled:
                     _fill(end_year_locator, entry.end_year)
+                    if end_month_locator.count() == 1 and entry.end_month:
+                        _select_month(page, end_month_locator, entry.end_month)
                 elif first_entry:
                     # Checkbox selector is confirmed only on the first-row
                     # editor's distinct DOM shape (#800) — uncheck it to
@@ -366,6 +512,8 @@ def edit_experience_on_hh(
                     # already waits for enabled (with its own timeout), so
                     # nothing further is needed here.
                     _fill(end_year_locator, entry.end_year)
+                    if end_month_locator.count() == 1 and entry.end_month:
+                        _select_month(page, end_month_locator, entry.end_month)
                 else:
                     # Indexed row editor: no confirmed checkbox selector for
                     # this DOM shape — fail closed rather than guess.

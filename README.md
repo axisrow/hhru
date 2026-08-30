@@ -876,7 +876,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--resume` — Slug из конфига или реальный resume_id HH.ru (#319)
 - `--mode` —  (по умолчанию: 'fill')
 - `--career` — Факты карьеры для LLM (обязательно без --entry)
-- `--entry` — Готовая запись опыта JSON без LLM (#326), можно несколько: '{"company":..., "position":..., "start_year":..., "end_year":..., "current":..., "duties":..., "achievements":[...], "company_url":...}'
+- `--entry` — Готовая запись опыта JSON без LLM (#326), можно несколько: '{"company":..., "position":..., "start_year":..., "start_month":..., "end_year":..., "end_month":..., "current":..., "duties":..., "achievements":[...], "company_url":...}'. start_month обязателен (число 1-12 строкой) — форма опыта hh.ru не сохраняется без месяца начала работы (#811).
 - `--existing EXISTING` — JSON-массив существующих записей для режима fill
 - `--dry-run` — Показать план, не нажимая save
 - `--force` — Разрешить запись без TTY prompt

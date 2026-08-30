@@ -32,8 +32,11 @@ def register(subparsers) -> None:
         metavar="JSON",
         help=(
             "Готовая запись опыта JSON без LLM (#326), можно несколько: "
-            '\'{"company":..., "position":..., "start_year":..., "end_year":..., '
-            '"current":..., "duties":..., "achievements":[...], "company_url":...}\''
+            '\'{"company":..., "position":..., "start_year":..., "start_month":..., '
+            '"end_year":..., "end_month":..., "current":..., "duties":..., '
+            '"achievements":[...], "company_url":...}\'. '
+            "start_month обязателен (число 1-12 строкой) — форма опыта hh.ru "
+            "не сохраняется без месяца начала работы (#811)."
         ),
     )
     parser.add_argument(
@@ -79,11 +82,22 @@ def _load_entries(raw_entries: list[str] | None):
         if entry is None:
             raise ValueError(
                 "--entry содержит запись с неверной схемой "
-                "(company, position, start_year, end_year, duties, company_url — строки; "
-                "achievements — строка или список строк; current — bool)"
+                "(company, position, start_year, start_month, end_year, end_month, "
+                "duties, company_url — строки; achievements — строка или список строк; "
+                "current — bool)"
             )
         if not entry.company.strip() or not entry.position.strip():
             raise ValueError("--entry требует непустые company и position")
+        # #811: hh.ru отказывается сохранять форму опыта без выбранного месяца
+        # начала работы (форма показывает "Пожалуйста, укажите" под полем
+        # "Месяц" и save не проходит валидацию). start_year без start_month
+        # раньше молча отбрасывался — теперь это гарантированный uncertain
+        # ниже по пайплайну; лучше провалиться сразу с понятной причиной.
+        if not entry.start_month.strip():
+            raise ValueError(
+                "--entry требует непустой start_month — форма опыта hh.ru не "
+                "сохраняется без выбранного месяца начала работы (#811)"
+            )
         entries.append(entry)
     return entries
 
