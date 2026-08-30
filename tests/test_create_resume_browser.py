@@ -591,6 +591,25 @@ def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
 
     page = NeverChecksPage()
 
+    # Тест проверяет отказ ПОСЛЕ исчерпания дедлайна, а не сам дедлайн. С
+    # реальным `_CHECKBOX_CONFIRM_TIMEOUT` (5с) и no-op `wait_for_timeout` фейка
+    # цикл подтверждения крутил CPU 5 секунд wall-clock — самый долгий тест
+    # сьюта. Тот же приём, что в test_checkbox_never_confirmed_* ниже:
+    # детерминированные часы + короткий дедлайн.
+    call_count = 0
+
+    def fake_monotonic():
+        nonlocal call_count
+        call_count += 1
+        return call_count * 0.1
+
+    monkeypatch.setattr(create.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(
+        create,
+        "_select_catalog_leaf",
+        lambda p, area, **_: _real_select(p, area, checkbox_confirm_timeout=0.3),
+    )
+
     result = _run(page, before_click=lambda: None)
 
     assert not result.success

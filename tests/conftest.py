@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 
 import playwright._impl._driver
 import playwright._impl._transport
@@ -57,6 +58,37 @@ def _guarded_sync_context_enter(self):
     return _real_sync_context_enter(self)
 
 
+_real_sqlite_connect = sqlite3.connect
+
+
+def _sqlite_connect_without_journal_file(*args, **kwargs):
+    """SQLite без файла журнала: на него уходило ~40% времени прогона.
+
+    Дефолтный `journal_mode=DELETE` создаёт и удаляет файл `-journal` на КАЖДУЮ
+    транзакцию. Сьют открывает `History(tmp_path / ...)` ~690 раз и делает
+    тысячи commit'ов, и на APFS это давало 25.7с system time из 82с wall
+    (замер 2026-08-30). Журнал в памяти + `synchronous=OFF` убирают файловые
+    операции: 82с → 64с однопоточно, system 25.7с → 8.2с — тот же движок, та
+    же схема, тот же отдельный файл БД на тест (изоляция не меняется).
+
+    Что при этом не теряется: ни один тест не проверяет устойчивость БД к
+    обрыву питания — проверяется логика `history.py` (UNIQUE-индексы, lease,
+    dedup), а она работает на той же реальной SQLite. Тесты обрыва процесса
+    (`test_history_competitors`) убивают процесс между транзакциями, а не
+    посреди записи, и на журнал не опираются.
+
+    Ошибка PRAGMA глотается per-connection: read-only соединение (`mode=ro`,
+    `commands/query.py`) может отказать, и это не повод ронять тест.
+    """
+    conn = _real_sqlite_connect(*args, **kwargs)
+    try:
+        conn.execute("PRAGMA journal_mode=MEMORY")
+        conn.execute("PRAGMA synchronous=OFF")
+    except sqlite3.Error:
+        pass
+    return conn
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Ставит защиту ДО сбора тестов (#217).
 
@@ -80,6 +112,9 @@ def pytest_configure(config: pytest.Config) -> None:
     for module in _DRIVER_MODULES:
         module.compute_driver_executable = _guarded_compute_driver_executable
     PlaywrightContextManager.__enter__ = _guarded_sync_context_enter
+    # Под xdist pytest_configure выполняется в каждом воркере — патч доезжает
+    # до всех процессов, где реально открываются соединения.
+    sqlite3.connect = _sqlite_connect_without_journal_file
 
 
 @pytest.fixture(autouse=True)
