@@ -228,6 +228,11 @@ def _confirm_skill_levels(page: Page, additions: tuple[Skill, ...]) -> str | Non
             # (e.g. a name hh.ru folded into an existing skill) — skip rather
             # than fail-closed on a single missing one; the final Counter
             # check downstream still catches a skill that never landed.
+            # #820: that Counter check only compares chip NAMES, not levels —
+            # a skill that lands on the resume without a level because its
+            # radio was missing here still reports [OK]. Narrowing this skip
+            # is not the fix; #820 tracks reading the level back off the
+            # resume card and comparing it too.
             continue
         try:
             radio.click(force=True, timeout=SKILLS_LEVELS_STEP_TIMEOUT_MS)
