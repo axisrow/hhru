@@ -566,7 +566,10 @@ def _edit_block(
                 # an actually missing/incorrect resume route.  In particular,
                 # this also gives the URL a chance to settle after a SPA
                 # pushState navigation that timed out in Playwright.
-                resume_marker = page.locator(trigger.format(index=index)).first
+                post_save_marker_selector = (
+                    PRIMARY_EDUCATION_CARD if direct_route else trigger.format(index=index)
+                )
+                resume_marker = page.locator(post_save_marker_selector).first
                 try:
                     resume_marker.wait_for(
                         state="visible", timeout=POST_SAVE_RESUME_WAIT_TIMEOUT_MS
@@ -576,7 +579,7 @@ def _edit_block(
                         "resume_education: post-save marker unavailable; url=%s marker_count=%s "
                         "navigation_error=%s marker_error=%s",
                         page.url,
-                        page.locator(trigger.format(index)).count(),
+                        page.locator(post_save_marker_selector).count(),
                         navigation_error,
                         marker_exc,
                     )
@@ -593,7 +596,7 @@ def _edit_block(
                     "resume_education: post-save marker visible; url=%s marker_count=%s "
                     "navigation_error=%s",
                     page.url,
-                    page.locator(trigger.format(index=index)).count(),
+                    page.locator(post_save_marker_selector).count(),
                     navigation_error,
                 )
                 if not resume_identity_matches(page, resume_id):
