@@ -451,12 +451,36 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
     # cancel it — the same full set comes back unchanged, see
     # `_experience_row_indexes()`), so one snapshot taken before the loop is
     # safe to iterate directly; it does not need to be re-queried per row.
+    #
+    # #844 live trace (2026-08-30): EXPERIENCE_EDIT_BUTTON's click is a full
+    # SPA navigation to a separate page, /profile/edit/experience/{rowId}
+    # ?resumeFrom=..., not an in-page modal on /resume/{resume_id} — the
+    # third, previously unresearched experience-form DOM shape flagged as a
+    # follow-up in PR #843. Two things follow from that:
+    #   1. The company/position fields render only after that navigation
+    #      completes, which is not instant — a bare _read() right after the
+    #      click intermittently hit count()==0 (CLAUDE.md "commit is not
+    #      painted" race). An explicit wait_for(visible) closes that race.
+    #   2. On this page shape, clicking EXPERIENCE_CANCEL
+    #      (data-qa='profile-layout-cancel-button', the same layout button
+    #      reused by resume_education) was confirmed live to have NO effect
+    #      at all: no frame navigation, no network request, no DOM change,
+    #      tested via Playwright .click(), a native el.click() bypassing
+    #      Playwright's actionability pipeline, and keyboard activation —
+    #      the form and its unsaved company value stayed on screen for 30s+.
+    #      Every row after the first therefore found its edit button gone
+    #      (still parked on the unclosed form page) and read as empty. The
+    #      only confirmed way back to the row list is the same navigation
+    #      used to open it in the first place — open_confirmed_resume(),
+    #      not the cancel button.
     result = []
     for index in _experience_row_indexes(page):
         try:
             page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
+            company_locator = page.locator(EXPERIENCE_COMPANY.format(index=index))
+            company_locator.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
             entry = ExperienceEntry(
-                company=_read(page.locator(EXPERIENCE_COMPANY.format(index=index))),
+                company=_read(company_locator),
                 position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
                 start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
                 start_month=(
@@ -481,17 +505,21 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
                     else ""
                 ),
             )
-            page.locator(EXPERIENCE_CANCEL).click()
             result.append(entry)
         except (PlaywrightError, ValueError):
             # #796: a row can be unreadable in live DOM (drifted field, stray
             # non-experience card matching the indexed selector). Skip it
             # rather than failing the whole read — fill-mode stays usable
             # for the remaining rows instead of blocking on one bad row.
-            try:
-                page.locator(EXPERIENCE_CANCEL).click()
-            except PlaywrightError:
-                pass
+            pass
+        # #844: EXPERIENCE_CANCEL does not work on this page shape (see
+        # above) — navigate back to the resume page directly instead,
+        # whether or not this row was read successfully, so the next
+        # iteration's edit button is present in the DOM.
+        try:
+            open_confirmed_resume(page, resume_id)
+        except (PlaywrightError, ValueError):
+            break
     return result
 
 
