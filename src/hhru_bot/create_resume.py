@@ -36,6 +36,10 @@ _RESUME_ID_RE = re.compile(r"(?:/resume/|[?&]resume=)([0-9a-f]{32,40})(?:[/?#&]|
 # задержки, но честный (не бесконечный) дедлайн на случай, если чекбокс
 # реально не переключился.
 _CHECKBOX_CONFIRM_TIMEOUT = 5.0
+_RESUME_LIMIT_REASON = (
+    "лимит резюме hh.ru (~20) достигнут или кнопка создания недоступна; "
+    "удалите ненужные резюме и повторите попытку"
+)
 
 
 @dataclass
@@ -305,6 +309,11 @@ def create_resume_on_hh(
     try:
         page.locator(RESUME_CREATE_BUTTON).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
+        # На лимите hh.ru кнопку не рендерит вовсе. Не маскировать этот
+        # наблюдаемый отказ под проблему гидрации/сети: создание без кнопки
+        # невозможно, поэтому остаёмся fail-closed.
+        if page.locator(RESUME_CREATE_BUTTON).count() == 0:
+            return CreateResumeResult(False, reason=_RESUME_LIMIT_REASON)
         return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
     duplicate_reason = _existing_resume_reason(page, title)
     if duplicate_reason:
@@ -312,6 +321,11 @@ def create_resume_on_hh(
     create_button, reason = _one(page, RESUME_CREATE_BUTTON, "кнопка создания резюме")
     if reason:
         return CreateResumeResult(False, reason=reason)
+    # count() подтверждает только наличие узла. При исчерпанном лимите hh.ru
+    # узел остаётся в DOM, но становится disabled; клик по нему даёт сетевую
+    # ошибку и скрывает настоящую причину.
+    if _require(create_button).is_disabled():
+        return CreateResumeResult(False, reason=_RESUME_LIMIT_REASON)
 
     if dry_run:
         goto_hh(page, CREATION_URL)
