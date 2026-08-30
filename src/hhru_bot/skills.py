@@ -35,6 +35,24 @@ EDITOR_MOUNT_TIMEOUT_MS = 30_000
 # not a CSS selector fragment, just a string this module concatenates into one.
 _LEVEL_LABELS = {"basic": "Базовый", "intermediate": "Средний", "advanced": "Продвинутый"}
 SKILLS_LEVELS_STEP_TIMEOUT_MS = 15_000
+
+
+def _display_level_label(level: str) -> str | None:
+    """The exact heading text the resume card renders for a confirmed level.
+
+    #820: distinct from ``_LEVEL_LABELS`` above, which holds the bare word
+    used as the tail half of a skillsLevels radio's ``name`` attribute
+    (``input[name='Selenium{label}']``, no separator). The resume card's own
+    ``RESUME_SKILLS_LEVEL_TITLE`` heading instead reads "{label} уровень"
+    (confirmed live 2026-08-30, e.g. "Продвинутый уровень" — see
+    selector_groups/resume_page.py). Deriving it here from the same
+    ``_LEVEL_LABELS`` keeps the two forms from drifting apart rather than
+    hardcoding the full phrase a second time.
+    """
+    label = _LEVEL_LABELS.get(level)
+    return None if label is None else f"{label} уровень"
+
+
 # #801: the skill chip input is an autocomplete combobox. A blind fill+commit
 # for the next skill can race the browser's handling of the previous one and
 # concatenate two skill names into a single chip instead of creating two
@@ -160,23 +178,47 @@ def read_skills(page: Page) -> tuple[str, ...]:
     return tuple(values)
 
 
-def read_display_skills(page: Page) -> tuple[str, ...]:
-    """Read the saved skill tags from the resume card (post-editor, #813).
+def read_display_skills(page: Page) -> tuple[Skill, ...]:
+    """Read the saved skill tags AND their level from the resume card (#813, #820).
 
     ``RESUME_SKILLS_DISPLAY_TAG`` targets the Magritte tags hh.ru renders on
     the resume itself, independent of the editor's own chip widget. This is
     the only selector that reflects what actually landed on hh.ru once the
     editor has closed.
+
+    #820: the resume card also groups those tags under one
+    ``RESUME_SKILLS_LEVEL_TITLE`` heading per distinct level (plus one fixed
+    "Уровень не указан" heading for skills saved without a level, see
+    selector_groups/resume_page.py). Reading only the tag names — the pre-fix
+    behaviour — cannot tell a skill whose level was confirmed as planned
+    apart from one that landed with no level because its
+    ``_confirm_skill_levels`` radio was not found; both looked like the same
+    tag name to the old Counter. This reads each heading's group and attaches
+    its (Russian) level label to every tag inside, using an ``xpath=..`` from
+    the title to that group's own parent — the level groups are unordered
+    relative to each other, so a tag is only ever identified by which
+    heading's subtree it appears under, never by position.
     """
     tags = page.locator(resume_page.RESUME_SKILLS_DISPLAY_TAG)
-    count = tags.count()
-    if count == 0:
+    if tags.count() == 0:
         return ()
-    values = []
-    for i in range(count):
-        value = tags.nth(i).inner_text().strip()
-        if value:
-            values.append(value)
+    # Fail-closed by construction, not by an explicit check: if hh.ru ever
+    # stopped grouping tags under RESUME_SKILLS_LEVEL_TITLE headings, the loop
+    # below would read zero titles and return an empty tuple despite
+    # tags.count() > 0 above — the caller's Counter check against the
+    # non-empty expected plan then reports a mismatch rather than a
+    # false [OK], the same principle as the rest of this module.
+    titles = page.locator(resume_page.RESUME_SKILLS_LEVEL_TITLE)
+    values: list[Skill] = []
+    for i in range(titles.count()):
+        title = titles.nth(i)
+        level_label = title.inner_text().strip()
+        group = title.locator("xpath=..")
+        group_tags = group.locator(resume_page.RESUME_SKILLS_TAG_IN_GROUP)
+        for j in range(group_tags.count()):
+            name = group_tags.nth(j).inner_text().strip()
+            if name:
+                values.append(Skill(name, level_label))
     return tuple(values)
 
 
@@ -224,16 +266,27 @@ def _confirm_skill_levels(page: Page, additions: tuple[Skill, ...]) -> str | Non
                 skill_and_level=f"{skill.name}{label}"
             )
         )
-        if radio.count() != 1:
+        try:
+            radio_count = radio.count()
+        except PlaywrightError:
+            # #820 live write test: a skill name containing an unescaped CSS
+            # metacharacter (e.g. a single quote) makes the formatted
+            # attribute selector syntactically invalid, and .count() itself
+            # raises instead of returning 0. This is the same "radio not
+            # found uniquely" case as count() != 1 below — treat it the same
+            # way (best-effort skip), not as an unrecoverable error that
+            # aborts the whole step and skips the post-save level check that
+            # is this issue's actual fix.
+            continue
+        if radio_count != 1:
             # Not every addition necessarily gets its own radio group here
             # (e.g. a name hh.ru folded into an existing skill) — skip rather
             # than fail-closed on a single missing one; the final Counter
             # check downstream still catches a skill that never landed.
-            # #820: that Counter check only compares chip NAMES, not levels —
-            # a skill that lands on the resume without a level because its
-            # radio was missing here still reports [OK]. Narrowing this skip
-            # is not the fix; #820 tracks reading the level back off the
-            # resume card and comparing it too.
+            # #820: the post-save Counter check now also compares the
+            # observed level against the plan (read_display_skills), so a
+            # skill that lands here without a level because its radio was
+            # missing is caught there instead of reported as [OK].
             continue
         try:
             radio.click(force=True, timeout=SKILLS_LEVELS_STEP_TIMEOUT_MS)
@@ -454,7 +507,7 @@ def edit_skills_on_hh(
     # chip cannot be reported as a successful addition.
     existing_keys = [_skill_key(skill) for skill in existing]
     expected_keys = existing_keys + [_skill_key(skill.name) for skill in additions]
-    observed_keys = [_skill_key(skill) for skill in observed]
+    observed_keys = [_skill_key(skill.name) for skill in observed]
     if Counter(observed_keys) != Counter(expected_keys):
         return SkillsResult(
             False,
@@ -468,14 +521,45 @@ def edit_skills_on_hh(
             acted=True,
         )
 
+    # #820: a matching NAME alone is not enough — a skill can land on the
+    # resume with no level ("Уровень не указан") because its
+    # _confirm_skill_levels radio was not found, and the Counter check above
+    # cannot tell that apart from a level confirmed as planned (both are the
+    # same tag name). Only ``additions`` carry a planned level to check
+    # against — ``existing`` skills were not touched by this run, so their
+    # level (whatever it already was) is not part of this plan and is not
+    # verified here. Matched by name against the just-verified multiset, so a
+    # missing/renamed observed skill was already caught above and this loop
+    # only runs once names are known to line up.
+    observed_levels: dict[str, list[str]] = {}
+    for skill in observed:
+        observed_levels.setdefault(_skill_key(skill.name), []).append(skill.level)
+    for addition in additions:
+        expected_label = _display_level_label(addition.level)
+        if expected_label is None:
+            continue
+        candidates = observed_levels.get(_skill_key(addition.name), [])
+        if expected_label not in candidates:
+            return SkillsResult(
+                False,
+                existing,
+                skills,
+                reason=(
+                    f"сохранение навыков не подтверждено: навык {addition.name!r} "
+                    f"сохранён без ожидаемого уровня {expected_label!r} "
+                    f"(наблюдалось: {candidates})"
+                ),
+                acted=True,
+            )
+
     # Preserve the spelling observed on hh.ru in the success report while
     # keeping ``existing`` as the pre-write snapshot used for the "было" count.
     remaining_existing = Counter(existing_keys)
     observed_added: list[str] = []
     for skill in observed:
-        key = _skill_key(skill)
+        key = _skill_key(skill.name)
         if remaining_existing[key]:
             remaining_existing[key] -= 1
         else:
-            observed_added.append(skill)
+            observed_added.append(skill.name)
     return SkillsResult(True, existing, skills, tuple(observed_added), acted=True)

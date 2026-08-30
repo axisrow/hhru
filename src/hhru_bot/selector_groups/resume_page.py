@@ -51,6 +51,28 @@ RESUME_SKILLS_CHIP = _selector("resume_page.RESUME_SKILLS_CHIP")
 # `chips-trigger-chip-*` markup above. This is the only selector that reflects
 # what actually landed on hh.ru after the editor closes.
 RESUME_SKILLS_DISPLAY_TAG = _selector("resume_page.RESUME_SKILLS_DISPLAY_TAG")
+# #820: the resume card groups its skill tags under a level heading —
+# `data-qa='skill-level-title-{n}'` — confirmed live 2026-08-30 (Playwright DOM
+# dump, authenticated session, resume 24b16b4aff1106ca100039ed1f726766334230):
+# `<div data-qa='skill-level-title-3'>Продвинутый уровень</div>` immediately
+# followed by a sibling `<div>` wrapping that group's `skill-tag-*` tags — one
+# heading per distinct level PLUS one heading with the fixed text
+# "Уровень не указан" grouping every skill saved without a level. The heading's
+# own parent element wraps both the title and its tags container, so
+# `xpath=..` from the title, scoped to `[data-qa^='skill-tag-']` inside it,
+# reads that group's tags without depending on the tags container's own
+# (hashed, build-specific) CSS class. Used by read_display_skills to attach a
+# level to each observed tag — #820: the pre-fix post-save Counter compared
+# tag NAMES only, so a skill saved without a level because its
+# _confirm_skill_levels radio was not found still reported [OK].
+RESUME_SKILLS_LEVEL_TITLE = _selector("resume_page.RESUME_SKILLS_LEVEL_TITLE")
+# The bare tag fragment (no `skills-card` scope prefix), reused to scope a
+# search to one level group's own subtree via `title.locator(...)` — a
+# locator method call is already scoped to its own element, so re-applying
+# the `[data-qa='skills-card']` ancestor prefix from RESUME_SKILLS_DISPLAY_TAG
+# would be redundant, not incorrect, but is kept as a separate constant here
+# rather than derived from that selector by string-splitting it.
+RESUME_SKILLS_TAG_IN_GROUP = _selector("resume_page.RESUME_SKILLS_TAG_IN_GROUP")
 # Saving the keySkills editor with at least one skill that has no confirmed
 # level (a brand-new skill, or an existing skill hh.ru could not carry a level
 # for) does not return to the resume card directly — it navigates to a second
