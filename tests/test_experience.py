@@ -145,10 +145,11 @@ def test_fill_plan_rejects_identity_or_count_changes():
 
 
 class _Locator:
-    def __init__(self, count=0, *, enabled=True, text="Месяц"):
+    def __init__(self, count=0, *, enabled=True, text="Месяц", checked=False):
         self._count = count
         self._enabled = enabled
         self._text = text
+        self._checked = checked
 
     def count(self):
         return self._count
@@ -173,6 +174,9 @@ class _Locator:
 
     def is_enabled(self):
         return self._enabled
+
+    def is_checked(self):
+        return self._checked
 
     @property
     def first(self):
@@ -272,6 +276,15 @@ def test_edit_experience_first_entry_fails_closed_on_route_mismatch(monkeypatch)
     assert "форма открыта не для того резюме" in results[0].reason
 
 
+class _PanelCheckbox(_Locator):
+    """Fake for EXPERIENCE_RESUME_PANEL_CHECKBOX.format(title=...): click()
+    actually toggles ``_checked`` (base _Locator.click() is a no-op), so a
+    test can assert reconciliation logic really changed the panel state."""
+
+    def click(self):
+        self._checked = not self._checked
+
+
 class _SavePage:
     """Fake page for the non-dry-run save path with a mutable set of row
     indexes (#796/#787/#815): edit-experience-button locators reflect
@@ -280,17 +293,58 @@ class _SavePage:
     shared profile, not this resume). Indexes are deliberately non-
     contiguous-friendly (any int, not just 0..N-1) to match #815's live
     finding that hh.ru's row index is an internal counter, not a position.
+
+    #782: also models the "Резюме с этим местом работы" binding panel.
+    ``panel_titles`` maps each account resume's title to its initial checked
+    state; omitted/None disables the panel entirely (scope count()==0),
+    matching a page where the panel was never confirmed. ``panel_expand``
+    controls whether an expand control is present (count()==1) or absent.
     """
 
-    def __init__(self, indexes, *, grow_indexes_on_reload=()):
+    def __init__(
+        self,
+        indexes,
+        *,
+        grow_indexes_on_reload=(),
+        panel_titles: dict[str, bool] | None = None,
+        panel_expand: bool = False,
+    ):
         self.url = "https://hh.ru/resume/resume-1"
         self.indexes = list(indexes)
         self._grow_indexes_on_reload = list(grow_indexes_on_reload)
         self._reloaded = False
+        self._panel_titles = panel_titles
+        self._panel_expand = panel_expand
+        self._panel_checkboxes: dict[str, _PanelCheckbox] = (
+            {
+                title: _PanelCheckbox(count=1, checked=checked)
+                for title, checked in panel_titles.items()
+            }
+            if panel_titles is not None
+            else {}
+        )
+        self.expand_clicked = False
 
     def locator(self, selector):
         if selector.startswith("[data-qa^='edit-experience-button-']"):
             return _RowButtonsLocator(self.indexes)
+        if selector.startswith("input[type=checkbox][aria-label="):
+            title = selector.split("aria-label='", 1)[-1].rstrip("']")
+            return self._panel_checkboxes.get(title, _Locator(count=0))
+        if selector.startswith("xpath=") and "Развернуть" in selector:
+            if self._panel_titles is None:
+                return _Locator(count=0)
+            if not self._panel_expand:
+                return _Locator(count=0)
+            page = self
+
+            class _ExpandLocator(_Locator):
+                def click(self):
+                    page.expand_clicked = True
+
+            return _ExpandLocator(count=1)
+        if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
+            return _Locator(count=1 if self._panel_titles is not None else 0)
         if "Развернуть" in selector:
             return _Locator(count=0)
         if "edit-experience-button" in selector:
@@ -364,7 +418,26 @@ def test_edit_experience_existing_row_edit_does_not_require_count_growth(monkeyp
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _SavePage(indexes=[3])
+    page = _SavePage(indexes=[3], panel_titles={"Target Resume": True})
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[3],
+        resume_titles={"resume-1": "Target Resume"},
+    )
+
+    assert results == [ExperienceResult("строка 3: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_existing_row_edit_requires_target_title(monkeypatch):
+    """#782: an existing-row save also lands on the shared panel screen and
+    must be reconciled — a caller that omits resume_titles is refused before
+    any save click, not just the new-row (via_add_button) case."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+
+    page = _SavePage(indexes=[3], panel_titles={"Target Resume": True})
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -373,7 +446,9 @@ def test_edit_experience_existing_row_edit_does_not_require_count_growth(monkeyp
         indexes=[3],
     )
 
-    assert results == [ExperienceResult("строка 3: сохранено и привязано к резюме", True)]
+    assert len(results) == 1
+    assert not results[0].success
+    assert "название целевого резюме" in results[0].reason
 
 
 class _DisabledEndYearSavePage(_SavePage):
@@ -801,12 +876,12 @@ def test_experience_row_indexes_expands_collapsed_list():
     assert page.expand_clicked is True
 
 
-def test_edit_experience_fails_closed_on_nonexistent_index_for_nonempty_resume(monkeypatch):
-    """#815: a resume that already has rows must never fall back to the
-    first-entry route (/resume/edit/{id}/experience) just because the
-    requested index is not currently in use — live testing found that route
-    can silently overwrite an unrelated existing row instead of creating a
-    new one on a non-empty resume. Fail closed instead."""
+def test_edit_experience_fails_closed_on_nonexistent_index_without_titles(monkeypatch):
+    """#782/#787/#840: a resume that already has rows and is asked to CREATE
+    a new one (requested index not currently in use) now goes through the
+    shared-add shape (via_add_button) instead of the old unconditional
+    #815 refusal — but it must still fail closed, before any click, when the
+    caller has not supplied resume_titles for the binding panel."""
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
     page = _NonContiguousRowsPage([2, 3, 4])
 
@@ -822,6 +897,190 @@ def test_edit_experience_fails_closed_on_nonexistent_index_for_nonempty_resume(m
     assert not results[0].success
     assert not results[0].uncertain
     assert "не найден среди существующих строк" in results[0].reason
+    assert "не передано" in results[0].reason
+
+
+class _AddButtonPage:
+    """#782: fake for the shared-add shape (EXPERIENCE_ADD_BUTTON on a
+    resume that already has rows). Starts with ``initial_indexes`` rows (all
+    considered "not the requested one", forcing via_add_button); the panel
+    starts fully checked, mirroring the live-confirmed default for a NEW
+    row (#782 comment 5) — reconciliation must uncheck every non-target
+    title. ``panel_titles`` is required for a working test; the "expand"
+    control is present whenever there are more than 2 titles, matching the
+    live-confirmed collapse threshold.
+    """
+
+    def __init__(self, initial_indexes, panel_titles: dict[str, bool], *, has_expand=None):
+        self.url = "https://hh.ru/resume/resume-1"
+        self.indexes = list(initial_indexes)
+        self._reloaded = False
+        self._panel_checkboxes = {
+            title: _PanelCheckbox(count=1, checked=checked)
+            for title, checked in panel_titles.items()
+        }
+        self._has_expand = has_expand if has_expand is not None else len(panel_titles) > 2
+        self.expand_clicked = False
+        self.add_clicked = False
+
+    def locator(self, selector):
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            return _RowButtonsLocator(self.indexes)
+        if "Развернуть" in selector and "resume-list-card-experience" in selector:
+            # The experience-card row-list expand control (EXPERIENCE_EXPAND_BUTTON) —
+            # distinct from the panel's own expand, never present in these fixtures.
+            return _Locator(count=0)
+        if "edit-experience-button" in selector:
+            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
+            return _Locator(count=1 if index in self.indexes else 0)
+        if selector == "[data-qa='resume-list-card-experience'] [data-qa='link']":
+            page = self
+
+            class _AddTriggerLocator(_Locator):
+                def click(self):
+                    page.add_clicked = True
+
+            return _AddTriggerLocator(count=1)
+        if selector.startswith("input[type=checkbox][aria-label="):
+            title = selector.split("aria-label='", 1)[-1].rstrip("']")
+            return self._panel_checkboxes.get(title, _Locator(count=0))
+        if selector.startswith("xpath=") and "Развернуть" in selector:
+            if not self._has_expand:
+                return _Locator(count=0)
+            page = self
+
+            class _ExpandLocator(_Locator):
+                def click(self):
+                    page.expand_clicked = True
+
+            return _ExpandLocator(count=1)
+        if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
+            return _Locator(count=1)
+        return _Locator(count=1)
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        return None
+
+    def reload(self, *, timeout=None, wait_until=None):
+        self._reloaded = True
+        self.indexes.append(99)  # simulate hh.ru creating the new row
+
+
+def _add_button_fixture(monkeypatch, page):
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+
+def test_edit_experience_via_add_button_unchecks_other_resumes_before_save(monkeypatch):
+    """#782: the core silent-over-binding fix — a new row on a non-empty
+    resume must have every OTHER account resume's checkbox unchecked before
+    save, leaving only the target resume checked."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={
+            "Target Resume": True,
+            "ai-engineer": True,
+            "ai-teamlead": True,
+            "python": True,
+        },
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={
+            "resume-1": "Target Resume",
+            "other-1": "ai-engineer",
+            "other-2": "ai-teamlead",
+            "other-3": "python",
+        },
+    )
+
+    assert page.add_clicked is True
+    assert page._panel_checkboxes["Target Resume"].is_checked() is True
+    assert page._panel_checkboxes["ai-engineer"].is_checked() is False
+    assert page._panel_checkboxes["ai-teamlead"].is_checked() is False
+    assert page._panel_checkboxes["python"].is_checked() is False
+    assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_expands_collapsed_panel(monkeypatch):
+    """#782: with more than 2 account resumes the panel starts collapsed —
+    reconciliation must click "Развернуть" before touching any checkbox, or
+    the non-visible ones could never be found/unchecked."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True, "ai-engineer": True, "python": True},
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "o1": "ai-engineer", "o2": "python"},
+    )
+
+    assert page.expand_clicked is True
+    assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_fails_closed_when_checkbox_count_mismatches(monkeypatch):
+    """#782 fail-closed guard: if the panel does not expose exactly one
+    checkbox per expected account resume title (e.g. the list never
+    actually expanded), reconciliation must refuse before any save click —
+    a partial reconciliation is worse than none."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage([2, 3], panel_titles={"Target Resume": True})
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "o1": "missing-from-panel"},
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert "не найден однозначно" in results[0].reason
+
+
+def test_edit_experience_via_add_button_fails_closed_when_expand_missing_before_save(monkeypatch):
+    """#782: a panel that should have collapsed extra rows (>2 account
+    resumes) but exposes no expand control at all is an unconfirmed/drifted
+    state — reconciliation must refuse rather than silently accept whatever
+    subset of checkboxes happens to be present."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True, "ai-engineer": True, "python": True},
+        has_expand=False,
+    )
+    # Without expand, only 2 of the 3 titles are "visible" in this fixture —
+    # simulate the drifted state by leaving one checkbox entirely absent.
+    del page._panel_checkboxes["python"]
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "o1": "ai-engineer", "o2": "python"},
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert "не найден однозначно" in results[0].reason
 
 
 def test_shared_experience_save_cancel_use_distinct_profile_layout_namespace():

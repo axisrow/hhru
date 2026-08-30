@@ -206,9 +206,12 @@ def test_edit_experience_manual_entry_creates_first_row_on_empty_resume(
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda page, resume_id: [])
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: [])
     captured = {}
 
-    def fake_edit_experience_on_hh(page, resume_id, plan, *, dry_run, indexes=None):
+    def fake_edit_experience_on_hh(
+        page, resume_id, plan, *, dry_run, indexes=None, resume_titles=None
+    ):
         captured["indexes"] = indexes
         return [ExperienceResult("строка 0: сохранено", success=True)]
 

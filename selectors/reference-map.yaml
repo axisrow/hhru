@@ -2153,6 +2153,79 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_RESUME_PANEL_CHECKBOX:
+    value: input[type=checkbox][aria-label='{title}']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:213
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:213
+      note: 'Live read-only recon 2026-08-30 (#782/#787), account with 7 resumes, shared-editor shape reached via EXPERIENCE_ADD_BUTTON
+        (/profile/edit/experience?resumeFrom=...): the "Резюме с этим местом работы" panel renders one <label data-qa=''cell''>
+        per account resume, each wrapping <span data-qa=''checkbox-container''><input type="checkbox" aria-label="{resume
+        title}">. The <input> carries no data-qa of its own; aria-label is the only per-resume-unique handle, scoped further
+        by label[data-qa=''cell''] being its unique ancestor cell. Clicking one input toggled its checked state true<->false
+        in a visual/JS check (form not saved, no mutation reached hh.ru). Confirmed on both a NEW row (all 7 resumes pre-checked
+        by default) and an EXISTING row opened via EXPERIENCE_EDIT_BUTTON (mixed checked/unchecked reflecting real bindings,
+        5 of 7 checked).'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only (7 resumes, checkbox toggle visually confirmed, not saved)
+    verified_by: human
+  resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND:
+    value: xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]//button[contains(., 'Развернуть')]
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:212
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:212
+      note: 'Live read-only recon 2026-08-30 (#782/#787): on an account with more than 2 resumes the "Резюме с этим местом
+        работы" panel collapses to 2 visible rows behind a "Развернуть<span>ещё N</span>" button (same collapse pattern as
+        EXPERIENCE_EXPAND_BUTTON above, but a distinct control/container scoped to this panel, not the experience-card row
+        list) — the remaining checkboxes are absent from the DOM entirely until this control is clicked. No data-qa of its
+        own; scoped via the panel''s unique <h3> heading text through xpath, the same ancestor-lookup pattern already used
+        by apply/questions.py''s form-scoping (xpath=ancestor::form[1]).'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only (7 resumes, panel expand observed, not saved)
+    verified_by: human
+  resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE:
+    value: xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:211
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:211
+      note: 'Live read-only recon 2026-08-30 (#782/#787): the "Резюме с этим местом работы" checkbox panel has no data-qa
+        of its own on either the shared-editor-add shape or the shared-editor-edit-existing-row shape (both reached through
+        the same /profile/edit/experience... URL). Its <h3> heading text is the only stable anchor, so the panel container
+        is scoped via xpath ancestor lookup from that heading — the same pattern already used by apply/questions.py''s `xpath=ancestor::form[1]`
+        form-scoping, not a guessed class name.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only (7 resumes, panel located, not saved)
+    verified_by: human
   resume_experience.EXPERIENCE_SAVE:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -2174,6 +2247,55 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY:
+    value: '[data-qa^=''resume-profile-experience-specific-company-input-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:180
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-company-input-1
+    - resume-profile-experience-specific-company-input-2
+    - resume-profile-experience-specific-company-input-3
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:180
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840), reused for #782/#787 integration: same data-qa pattern as EXPERIENCE_COMPANY
+        but prefix-scoped (no {index} substitution) — on the shared-editor-add shape the row''s index is a fresh React counter
+        (observed 24) unrelated to any requested row index, so the caller cannot format the indexed selector ahead of opening
+        the form. A freshly opened add-form exposes exactly one such field; callers must require count()==1 rather than assume
+        it (same fail-closed pattern as EXPERIENCE_EDIT_BUTTONS_ALL''s prefix scoping).'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
+  resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION:
+    value: '[data-qa^=''resume-profile-experience-specific-position-input-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:181
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-profile-experience-specific-position-input-1
+    - resume-profile-experience-specific-position-input-2
+    - resume-profile-experience-specific-position-input-3
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:181
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840), reused for #782/#787 integration: same data-qa pattern as EXPERIENCE_POSITION
+        but prefix-scoped (no {index} substitution) — same reasoning as EXPERIENCE_SHARED_NEW_ROW_COMPANY above.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_START_MONTH:
     value: '[data-qa=''resume-editor-experience-start-month-input'']'
     criticality: write
