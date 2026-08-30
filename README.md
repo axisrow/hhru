@@ -488,6 +488,19 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 - `--reason` — Очистить только эту причину (по умолчанию — все причины)
 - `--dry-run` — Показать, сколько записей будет удалено, без реального удаления
 
+### `common`
+
+Заполняет через UI только firstName, lastName, birthday, gender и phone. Поля area, metro и условия работы пока не входят в команду.
+
+- `--resume` — Slug из конфига или resume_id HH.ru
+- `--first-name` — Имя
+- `--last-name` — Фамилия
+- `--birthday` — Дата в формате, который принимает форма hh.ru
+- `--gender` — Пол
+- `--phone` — Телефон
+- `--dry-run` — Показать план без сохранения
+- `--force` — Подтвердить запись без prompt
+
 ### `competitors`
 
 READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]; локальный отчёт: competitors report [--text QUERY] [--search-in SCOPE] [--auth-mode MODE] [--top N].
