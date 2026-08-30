@@ -23,7 +23,7 @@ def register(subparsers) -> None:
     parser.add_argument("--gender", choices=("male", "female"), help="Пол")
     parser.add_argument("--phone", help="Телефон")
     parser.add_argument("--area", help="Точный leaf города из live-каталога hh.ru")
-    parser.add_argument("--metro", action="append", help="Точная станция метро; можно повторять")
+    parser.add_argument("--metro", help="Точная станция метро")
     parser.add_argument(
         "--citizenship",
         action="append",
@@ -54,7 +54,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         gender=args.gender,
         phone=args.phone,
         area=getattr(args, "area", None),
-        metro=getattr(args, "metro", None),
+        metro=[args.metro] if getattr(args, "metro", None) is not None else None,
         citizenship=getattr(args, "citizenship", None),
     )
     if not values.provided():
