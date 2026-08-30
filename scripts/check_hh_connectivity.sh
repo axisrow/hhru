@@ -1,12 +1,15 @@
 #!/bin/sh
 # Диагностика "сеть тормозит" vs "hh.ru троттлит" перед тем, как списывать
 # зависший goto_hh()/ThrottledChannelDetected на анти-фрод hh.ru. Минимум
-# трафика (HEAD-запросы), не требует storage_state/аккаунта — безопасно
-# гонять вручную в любой момент, в т.ч. параллельно с боевой командой.
+# трафика (GET без данных аккаунта), не требует storage_state/аккаунта —
+# безопасно гонять вручную в любой момент, в т.ч. параллельно с боевой
+# командой.
 #
 # Логика: если baseline (не hh.ru) хост отвечает быстро, а hh.ru — нет,
 # узкое место специфично для hh.ru (DDoS-Guard/анти-фрод троттлинг), а не
-# общая деградация сети/VPN на этой машине.
+# общая деградация сети/VPN на этой машине. Вердикт считается по
+# фактическим time_total проб относительно $SLOW_THRESHOLD, а не печатается
+# безусловно (#852 code review).
 set -eu
 
 # Два baseline-хоста на разных континентах/маршрутах — если тормозит
@@ -14,21 +17,68 @@ set -eu
 BASELINE_HOSTS="https://www.google.com/ https://www.baidu.com/"
 HH_HOST="https://hh.ru/"
 TIMEOUT="${CHECK_HH_TIMEOUT:-10}"
+# Проба медленнее этого порога (секунды) считается "зависшей" для целей
+# классификации ниже. Не привязан к анти-фрод эвристикам самого бота —
+# это чисто диагностический скрипт для человека.
+SLOW_THRESHOLD="${CHECK_HH_SLOW_THRESHOLD:-5}"
 
+# probe: печатает сырые метрики пробы (как раньше) и возвращает через stdout
+# последней строкой "ok <time_total>" или "fail" — источник для классификации.
 probe() {
     label="$1"
     url="$2"
     echo "=== ${label} (${url}) ==="
-    curl -sS -o /dev/null --max-time "$TIMEOUT" \
-        -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n" \
-        "$url" 2>&1 || echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"
+    result=$(curl -sS -o /dev/null --max-time "$TIMEOUT" \
+        -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n%{http_code} %{time_total}" \
+        "$url" 2>&1) || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "fail"; return; }
+    metrics_line=$(echo "$result" | sed -n '1p')
+    status_line=$(echo "$result" | sed -n '2p')
+    echo "$metrics_line"
+    http_code=$(echo "$status_line" | cut -d' ' -f1)
+    time_total=$(echo "$status_line" | cut -d' ' -f2)
+    case "$http_code" in
+        2??|3??) echo "ok $time_total" ;;
+        *) echo "fail" ;;
+    esac
 }
 
+# is_slow <probe-result-line>: "true" если проба провалилась или её
+# time_total >= SLOW_THRESHOLD.
+is_slow() {
+    line="$1"
+    case "$line" in
+        fail) return 0 ;;
+        ok\ *)
+            t="${line#ok }"
+            awk -v t="$t" -v thr="$SLOW_THRESHOLD" 'BEGIN { exit !(t+0 >= thr+0) }'
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+baseline_all_fast=true
 for host in $BASELINE_HOSTS; do
-    probe "baseline" "$host"
+    probe_output=$(probe "baseline" "$host")
+    echo "$probe_output" | sed '$d'
+    result_line=$(echo "$probe_output" | tail -1)
+    if is_slow "$result_line"; then
+        baseline_all_fast=false
+    fi
 done
-probe "hh.ru" "$HH_HOST"
+
+hh_probe_output=$(probe "hh.ru" "$HH_HOST")
+echo "$hh_probe_output" | sed '$d'
+hh_result_line=$(echo "$hh_probe_output" | tail -1)
+hh_is_slow=false
+if is_slow "$hh_result_line"; then
+    hh_is_slow=true
+fi
 
 echo
-echo "Baseline-хосты быстрые + hh.ru медленный/зависает -> узкое место у hh.ru (DDoS-Guard/троттлинг), не общая сеть."
-echo "Baseline-хосты тоже медленные -> проблема в сети/маршруте (VPN, провайдер), не специфична для hh.ru."
+if [ "$baseline_all_fast" = true ] && [ "$hh_is_slow" = true ]; then
+    echo "ВЕРДИКТ: baseline-хосты быстрые, hh.ru медленный/зависает -> узкое место у hh.ru (DDoS-Guard/троттлинг), не общая сеть."
+elif [ "$baseline_all_fast" = false ]; then
+    echo "ВЕРДИКТ: baseline-хосты тоже медленные -> проблема в сети/маршруте (VPN, провайдер), не специфична для hh.ru."
+else
+    echo "ВЕРДИКТ: inconclusive -> baseline быстрые, hh.ru тоже уложился в порог ${SLOW_THRESHOLD}s. Троттлинга сейчас не наблюдается."
+fi
