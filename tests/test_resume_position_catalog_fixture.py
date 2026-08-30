@@ -49,6 +49,11 @@ def test_resume_catalog_reuses_one_leaf_id_across_categories():
             ],
         )
         assert page.locator(resume_position.SPECIALIZATION_MODAL).is_hidden()
+        filtered = page.locator(resume_position.SPECIALIZATION_OPTION)
+        assert filtered.count() == 3
+        assert {item.get_attribute("data-qa") for item in (filtered.nth(i) for i in range(3))} == {
+            "tree-selector-item tree-selector-item-404 tree-selector-child-404"
+        }
     finally:
         browser.close()
         playwright.stop()

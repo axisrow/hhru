@@ -7,29 +7,53 @@
     </button>
     <section data-qa="professional-roles-modal" role="dialog" hidden>
       <input data-qa="tree-selector-search-input" aria-label="Поиск специализации">
+      <div id="catalog-options">
       <div data-qa="tree-selector-category">Финансы</div>
-      <div data-qa="tree-selector-item tree-selector-item-1 tree-selector-child-96"><span data-qa="cell-text-content">Бухгалтер</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-1 tree-selector-child-96" data-label="Бухгалтер"><span data-qa="cell-text-content">Бухгалтер</span></div>
       <div data-qa="tree-selector-category">Образование</div>
-      <div data-qa="tree-selector-item tree-selector-item-2 tree-selector-child-101"><span data-qa="cell-text-content">Учитель, преподаватель, педагог</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-2 tree-selector-child-101" data-label="Учитель, преподаватель, педагог"><span data-qa="cell-text-content">Учитель, преподаватель, педагог</span></div>
       <div data-qa="tree-selector-category">Продажи</div>
-      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202" data-label="Менеджер по продажам, менеджер по работе с клиентами"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
       <div data-qa="tree-selector-category">Маркетинг</div>
-      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202" data-label="Менеджер по продажам, менеджер по работе с клиентами"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
       <div data-qa="tree-selector-category">Сервис</div>
-      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202" data-label="Менеджер по продажам, менеджер по работе с клиентами"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
       <div data-qa="tree-selector-category">Торговля</div>
-      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-202 tree-selector-child-202" data-label="Менеджер по продажам, менеджер по работе с клиентами"><span data-qa="cell-text-content">Менеджер по продажам, менеджер по работе с клиентами</span></div>
       <div data-qa="tree-selector-category">Искусство</div>
-      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
-      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303" data-label="Дизайнер, художник"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-303 tree-selector-child-303" data-label="Дизайнер, художник"><span data-qa="cell-text-content">Дизайнер, художник</span></div>
       <div data-qa="tree-selector-category">Транспорт</div>
-      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
-      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
-      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404" data-label="Водитель, экспедитор"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404" data-label="Водитель, экспедитор"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      <div data-qa="tree-selector-item tree-selector-item-404 tree-selector-child-404" data-label="Водитель, экспедитор"><span data-qa="cell-text-content">Водитель, экспедитор</span></div>
+      </div>
       <button type="button" data-qa="professional-roles-submit">Готово</button>
     </section>
   </main>
   <script>
+    const optionRoot = document.querySelector("#catalog-options");
+    const originalOptions = [...optionRoot.querySelectorAll("[data-qa^='tree-selector-item']")];
+    const selectedIds = new Set();
+    const renderOptions = (query) => {
+      const matches = originalOptions.filter((option) => option.dataset.label.includes(query));
+      optionRoot.replaceChildren(...matches.map((option) => {
+        const clone = option.cloneNode(true);
+        if (selectedIds.has(clone.getAttribute("data-qa"))) {
+          clone.setAttribute("aria-selected", "true");
+        }
+        return clone;
+      }));
+    };
+    optionRoot.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-qa^='tree-selector-item']");
+      if (option) selectedIds.add(option.getAttribute("data-qa"));
+    });
+    document.querySelector("[data-qa='tree-selector-search-input']")
+      .addEventListener("input", (event) => {
+        optionRoot.replaceChildren();
+        setTimeout(() => renderOptions(event.target.value), 20);
+      });
     const modal = document.querySelector("[data-qa='professional-roles-modal']");
     document.querySelector("[data-qa='resume-position-professional-role-add-button']")
       .addEventListener("click", () => modal.hidden = false);
