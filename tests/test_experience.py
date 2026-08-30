@@ -477,6 +477,108 @@ def test_read_experience_skips_unreadable_row_instead_of_failing_whole_read(monk
     assert len(result) == 1
 
 
+class _MultiRowReadPage:
+    """#844 live trace: EXPERIENCE_EDIT_BUTTON's click navigates to a
+    separate page (/profile/edit/experience/{rowId}), and EXPERIENCE_CANCEL
+    was confirmed live to have no effect there — the row list on
+    /resume/{resume_id} is only available again after a fresh navigation.
+    This fake never "closes" the form on cancel(); it only resets once
+    open_confirmed_resume() is called again, mirroring that finding.
+
+    #844 PR review: a fresh open_confirmed_resume() navigation was ALSO
+    confirmed live to re-collapse the row list to the first 3 buttons on
+    any resume with more than 3 rows (same as _expand_experience_list()'s
+    own documented reload-collapse behavior) — this fake models that too:
+    every open_confirmed_resume() call resets `_expanded` to False, and
+    only the first 3 indexes are visible until the "Развернуть" control is
+    clicked again.
+    """
+
+    COLLAPSE_THRESHOLD = 3
+
+    def __init__(self, indexes):
+        self._indexes = list(indexes)
+        self.open_confirmed_calls = 0
+        self._form_open_for: int | None = None
+        self._expanded = False
+
+    def _visible_indexes(self):
+        if self._expanded or len(self._indexes) <= self.COLLAPSE_THRESHOLD:
+            return self._indexes
+        return self._indexes[: self.COLLAPSE_THRESHOLD]
+
+    def open_confirmed_resume_hook(self):
+        """Called by the fake_open_confirmed_resume monkeypatch below."""
+        self._form_open_for = None
+        self._expanded = False
+
+    def locator(self, selector):
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            if self._form_open_for is not None:
+                return _RowButtonsLocator([])
+            return _RowButtonsLocator(self._visible_indexes())
+        if "Развернуть" in selector:
+            if self._form_open_for is not None or self._expanded:
+                return _Locator(count=0)
+            if len(self._indexes) > self.COLLAPSE_THRESHOLD:
+                page = self
+
+                class _ExpandLocator(_Locator):
+                    def click(self):
+                        page._expanded = True
+
+                return _ExpandLocator(count=1)
+            return _Locator(count=0)
+        if "edit-experience-button" in selector:
+            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
+            if self._form_open_for is not None:
+                return _Locator(count=0)
+            if index in self._visible_indexes():
+                page = self
+
+                class _EditButtonLocator(_Locator):
+                    def click(self):
+                        page._form_open_for = index
+
+                return _EditButtonLocator(count=1)
+            return _Locator(count=0)
+        if f"specific-company-input-{self._form_open_for}" in selector:
+            return _Locator(count=1)
+        if "specific-company-input" in selector:
+            # Company field for any OTHER index only exists once its own
+            # edit button was clicked (#844: it does not exist in the DOM
+            # ahead of that navigation).
+            return _Locator(count=0)
+        return _Locator(count=1)
+
+
+def test_read_experience_reads_all_rows_when_cancel_click_has_no_effect(monkeypatch):
+    """#844: EXPERIENCE_CANCEL's click was confirmed live to do nothing on
+    the row-editor page — read_experience_on_hh must not rely on it to get
+    back to the row list; every row must still be read, not just the first.
+
+    6 rows on a resume (over the 3-row collapse threshold, matching the
+    live-observed [1,6,7,8,12,17] from the issue) also exercises the #844
+    PR-review finding: a fresh open_confirmed_resume() re-collapses the row
+    list, so the fix must re-expand it on every iteration, not just once
+    before the loop."""
+    calls = {"count": 0}
+
+    def fake_open_confirmed_resume(page, resume_id):
+        calls["count"] += 1
+        page.open_confirmed_resume_hook()
+
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", fake_open_confirmed_resume)
+
+    page = _MultiRowReadPage([1, 6, 7, 8, 12, 17])
+    result = read_experience_on_hh(page, "resume-1")
+
+    assert len(result) == 6
+    # One open_confirmed_resume() call to enter + one per row to recover
+    # from the row editor page, since EXPERIENCE_CANCEL cannot be relied on.
+    assert calls["count"] == 1 + 6
+
+
 def test_read_month_parses_selected_label_confirmed_live():
     """#811: the trigger is not an <input> — inner_text() is "Месяц" (unset)
     or "Месяц\\nМарт" (selected), confirmed live 2026-08-30."""
