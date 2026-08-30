@@ -190,6 +190,11 @@ def edit_languages_on_hh(
             return LanguagesResult(
                 False, languages, "кнопка добавления языка не найдена однозначно"
             )
+        # The card can become visible before the profile controls finish
+        # hydrating.  Establish the trigger's visible state before the first
+        # strict count/click sequence; the modal itself is awaited below
+        # after the click because commit does not mean rendered.
+        add_button.first.wait_for(state="visible", timeout=15_000)
         existing = read_existing_languages(card)
         existing_keys = {value.casefold() for value in existing}
         if mode == "fresh" and existing:
@@ -219,8 +224,15 @@ def edit_languages_on_hh(
             # unconfirmed (above) already proved every item.level is non-None.
             assert item.level is not None
             add_button.click()
+            # The visible profile card may still be SSR-only when Add is
+            # clicked.  Wait for the hydrated form itself before inspecting
+            # the dialog or its fields; commit/visibility of the card does
+            # not prove that the React modal has rendered yet.
+            page.locator(resume_page.RESUME_LANGUAGE_ADD_FORM).first.wait_for(
+                state="visible", timeout=15_000
+            )
             dialog = page.get_by_role("dialog", name="Язык").last
-            dialog.wait_for(state="visible")
+            dialog.wait_for(state="visible", timeout=15_000)
             form = dialog.locator(resume_page.RESUME_LANGUAGE_ADD_FORM)
             form.wait_for(state="visible")
             _choose_language(page, form, item.name)
