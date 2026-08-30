@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import (
     HH_BASE_URL,
@@ -228,6 +229,25 @@ def _edit_block(
     saved_count = 0
     if not records:
         return EducationResult(kind, True, "нет записей для изменения")
+    # #812: goto_hh only guarantees URL commit, not rendered DOM (CLAUDE.md,
+    # "commit не значит отрисовано") -- the resume page hydrates the
+    # education card asynchronously, and a strict count() right after goto_hh
+    # can race it and see 0 even though the card renders moments later. The
+    # "Уровень образования" field always exists on hh.ru (unlike about/skills,
+    # this section is never legitimately absent), so exactly one of the two
+    # possible markers -- the first row's edit trigger (records already
+    # present) or the confirmed Add link (section empty) -- must eventually
+    # appear; wait for either before the first strict check below.
+    try:
+        page.locator(trigger.format(index=0)).or_(page.locator(add_selector)).first.wait_for(
+            state="visible", timeout=FORM_TIMEOUT_MS
+        )
+    except PlaywrightTimeoutError as exc:
+        return EducationResult(
+            kind,
+            False,
+            f"блок образования не отобразился за {FORM_TIMEOUT_MS}мс: {exc}",
+        )
     for index, record in enumerate(records):
         button = page.locator(trigger.format(index=index))
         button_count = button.count()
