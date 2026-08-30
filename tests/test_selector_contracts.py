@@ -183,7 +183,10 @@ def test_every_selector_has_canonical_coverage_and_all_groups_are_audited():
     # #811: +4 resume_experience.{EXPERIENCE_START_MONTH,EXPERIENCE_END_MONTH,
     # EXPERIENCE_MONTH_OPTION,EXPERIENCE_MONTH_LISTBOX} — the "Месяц" comboboxes
     # the experience form requires, confirmed live 2026-08-30.
-    assert len(catalog["selectors"]) == 251
+    # #813: +1 resume_page.RESUME_SKILLS_DISPLAY_TAG (resume card's own skill
+    # tags, used for the post-save verification instead of the editor's own
+    # chip widget which no longer exists once the editor closes).
+    assert len(catalog["selectors"]) == 252
     assert all(
         row.get("coverage_status") in contracts.AUDIT_STATUSES
         for row in catalog["selectors"].values()
@@ -1028,7 +1031,7 @@ def test_refresh_dry_run_reports_baseline_and_never_writes(monkeypatch, capsys, 
     output = capsys.readouterr().out
     assert "DRY-RUN" in output
     assert "no files, branches, or PRs were written" in output
-    assert "local selector contracts: 251" in output
+    assert "local selector contracts: 252" in output
     assert "Semantic mismatches:" in output
 
 

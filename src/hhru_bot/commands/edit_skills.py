@@ -90,6 +90,7 @@ def register(subparsers) -> None:
 def _run(args: argparse.Namespace, progress) -> bool:
     from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
+    from ..history import History
     from ..skills import (
         build_skills_prompt,
         edit_skills_on_hh,
@@ -179,13 +180,39 @@ def _run(args: argparse.Namespace, progress) -> bool:
         # (CLAUDE.md #163/#176, #465 review round 3): the click may already
         # have reached hh.ru, so this is not a definite failure.
         if not args.dry_run:
-            progress.finish(result)
+            status = progress.finish(result)
+            # #813: record_action was missing entirely for this command — an
+            # uncertain outcome here (a real click that could not be
+            # confirmed) never reached the actions table, so it was invisible
+            # to `uncertain list`/`stats` and could not be blocked or
+            # reconciled via has_unresolved_uncertain either (CLAUDE.md
+            # "попытка засчитывается ровно один раз, в ровно одном месте").
+            # Only the acted branch writes a row, matching edit_experience.py:
+            # a pre-click failure (form/session not found) leaves no trace on
+            # hh.ru and stays a plain retryable [FAIL], never uncertain.
+            if result.acted:
+                History(args.history).record_action(
+                    resume.resume_id,
+                    resume.resume_id,
+                    "edit_skills",
+                    status,
+                    result.reason,
+                    run_id=progress.run_id,
+                )
         prefix = "[FAIL] (uncertain)" if result.acted else "[FAIL]"
         print(f"{prefix} {resume.id} — {result.reason}")
         return True
     _print_success(resume.id, result, dry_run=args.dry_run)
     if not args.dry_run:
-        progress.finish(result)
+        status = progress.finish(result)
+        History(args.history).record_action(
+            resume.resume_id,
+            resume.resume_id,
+            "edit_skills",
+            status,
+            "; ".join(result.added) or "без изменений",
+            run_id=progress.run_id,
+        )
     return False
 
 

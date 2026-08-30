@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import hhru_bot.commands.edit_skills as command
+from hhru_bot.history import History
 from hhru_bot.skills import Skill, SkillsResult
 
 pytestmark = pytest.mark.unit
@@ -178,3 +179,105 @@ def test_ai_planning_rejects_wrong_resume_route_before_read_or_llm(monkeypatch, 
     # validation error itself is unchanged, only how the command reports it.
     assert command.run(args) is True
     assert "страница нужного резюме не подтверждена" in capsys.readouterr().out
+
+
+def _run_args(tmp_path, *, dry_run: bool, force: bool = True) -> argparse.Namespace:
+    return argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="requested",
+        mode="append",
+        skill=["Docker=intermediate"],
+        dry_run=dry_run,
+        force=force,
+        history=str(tmp_path / "history.db"),
+    )
+
+
+def _stub_common(monkeypatch, resume) -> None:
+    config = SimpleNamespace(ai=None, storage_state_file="session.json", user_agent=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_args: resume)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _launch_context)
+
+
+def test_uncertain_result_is_recorded_in_actions(monkeypatch, tmp_path):
+    """#813: an acted-but-unconfirmed save must land in the actions table —
+    previously edit-skills never called record_action at all, so `uncertain`
+    was invisible to `uncertain list`/`stats` and has_unresolved_uncertain
+    could never see (or block a retry on) it either."""
+    resume = SimpleNamespace(id="requested", resume_id="requested-id")
+    _stub_common(monkeypatch, resume)
+    result = SkillsResult(
+        success=False,
+        existing=(),
+        proposed=(Skill("Docker", "intermediate"),),
+        acted=True,
+        reason="сохранение навыков не подтверждено: наблюдаемое состояние чипов не совпало",
+    )
+    monkeypatch.setattr("hhru_bot.skills.edit_skills_on_hh", lambda *_a, **_kw: result)
+
+    args = _run_args(tmp_path, dry_run=False)
+    assert command.run(args) is True
+
+    rows = History(args.history).list_actions("requested-id", "all")
+    assert len(rows) == 1
+    assert rows[0]["action"] == "edit_skills"
+    assert rows[0]["status"] == "uncertain"
+
+
+def test_success_result_is_recorded_in_actions(monkeypatch, tmp_path):
+    resume = SimpleNamespace(id="requested", resume_id="requested-id")
+    _stub_common(monkeypatch, resume)
+    result = SkillsResult(
+        success=True,
+        existing=(),
+        proposed=(Skill("Docker", "intermediate"),),
+        added=("Docker",),
+        acted=True,
+    )
+    monkeypatch.setattr("hhru_bot.skills.edit_skills_on_hh", lambda *_a, **_kw: result)
+
+    args = _run_args(tmp_path, dry_run=False)
+    assert command.run(args) is False
+
+    rows = History(args.history).list_actions("requested-id", "all")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "success"
+
+
+def test_pre_click_failure_is_not_recorded_in_actions(monkeypatch, tmp_path):
+    """A failure with acted=False (form/session not found) leaves no trace on
+    hh.ru — same fail-closed distinction edit_experience.py already makes."""
+    resume = SimpleNamespace(id="requested", resume_id="requested-id")
+    _stub_common(monkeypatch, resume)
+    result = SkillsResult(
+        success=False,
+        existing=(),
+        proposed=(Skill("Docker", "intermediate"),),
+        acted=False,
+        reason="форма навыков не открылась",
+    )
+    monkeypatch.setattr("hhru_bot.skills.edit_skills_on_hh", lambda *_a, **_kw: result)
+
+    args = _run_args(tmp_path, dry_run=False)
+    assert command.run(args) is True
+
+    assert History(args.history).list_actions("requested-id", "all") == []
+
+
+def test_dry_run_does_not_record_actions(monkeypatch, tmp_path):
+    resume = SimpleNamespace(id="requested", resume_id="requested-id")
+    _stub_common(monkeypatch, resume)
+    result = SkillsResult(
+        success=True,
+        existing=(),
+        proposed=(Skill("Docker", "intermediate"),),
+        added=("Docker",),
+    )
+    monkeypatch.setattr("hhru_bot.skills.edit_skills_on_hh", lambda *_a, **_kw: result)
+
+    args = _run_args(tmp_path, dry_run=True)
+    assert command.run(args) is False
+
+    assert History(args.history).list_actions("requested-id", "all") == []

@@ -37,7 +37,36 @@ RESUME_SKILLS_EDIT_BUTTON = _selector("resume_page.RESUME_SKILLS_EDIT_BUTTON")
 RESUME_SKILLS_INPUT = _selector("resume_page.RESUME_SKILLS_INPUT")
 RESUME_SKILLS_CHIP_INPUT = _selector("resume_page.RESUME_SKILLS_CHIP_INPUT")
 RESUME_SKILLS_RECOMMENDED = _selector("resume_page.RESUME_SKILLS_RECOMMENDED")
+# RESUME_SKILLS_CHIP (`chips-trigger-chip-*`) is the combobox widget's own chip
+# markup, mounted only inside the keySkills editor. It is the right selector
+# while the editor is open (dry-run cancel path, mid-edit reads), but it does
+# not exist on the resume card the page returns to after save closes the
+# editor (#813) — reading it there always observes zero chips regardless of
+# what actually saved, a selector-scope bug rather than a render race.
 RESUME_SKILLS_CHIP = _selector("resume_page.RESUME_SKILLS_CHIP")
+# The published resume card renders each saved skill as a Magritte tag with
+# `data-qa='skill-tag-{id}'`, grouped under `data-qa='skills-card'` — confirmed
+# live 2026-08-30 (issue #813) via a Playwright DOM dump of a resume with
+# saved skills (`skill-tag-1114` etc.), independent of the editor's own
+# `chips-trigger-chip-*` markup above. This is the only selector that reflects
+# what actually landed on hh.ru after the editor closes.
+RESUME_SKILLS_DISPLAY_TAG = _selector("resume_page.RESUME_SKILLS_DISPLAY_TAG")
+# Saving the keySkills editor with at least one skill that has no confirmed
+# level (a brand-new skill, or an existing skill hh.ru could not carry a level
+# for) does not return to the resume card directly — it navigates to a second
+# wizard step, `/resume/edit/{id}/skillsLevels?fromBlock=keySkills`, with one
+# radio group per pending skill (confirmed live 2026-08-30, issue #813). Each
+# radio's `name` attribute is the skill name immediately followed by the
+# Russian level label with no separator (e.g. `name="SeleniumСредний"`); the
+# level cards render no `data-qa` of their own, and skill names can contain
+# arbitrary characters, so the selector below is a raw `name=` attribute
+# selector built by the caller per (skill, level), not a template constant
+# here. This step reuses RESUME_PARTIAL_EDIT_SAVE for its own Save button.
+# Skipping this step (as the pre-#813 code did) leaves the skill saved with no
+# level ("Уровень не указан") and the editor stuck here, which is why the
+# post-save chip/tag read observed zero: the skill never reached the resume
+# card at all.
+RESUME_SKILLS_LEVEL_RADIO_TEMPLATE = "input[name='{skill_and_level}']"
 RESUME_PARTIAL_EDIT_CANCEL = _selector("resume_page.RESUME_PARTIAL_EDIT_CANCEL")
 RESUME_PARTIAL_EDIT_SAVE = _selector("resume_page.RESUME_PARTIAL_EDIT_SAVE")
 

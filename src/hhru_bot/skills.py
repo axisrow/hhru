@@ -28,6 +28,13 @@ logger = logging.getLogger("hhru_bot.skills")
 
 LEVELS = frozenset(("basic", "intermediate", "advanced"))
 EDITOR_MOUNT_TIMEOUT_MS = 30_000
+# #813: the Russian labels hh.ru's skillsLevels wizard step uses as the tail
+# half of each level radio's `name` attribute (confirmed live 2026-08-30,
+# `input[name='SeleniumСредний']` etc.). This is UI text, not a data-qa value,
+# so it is kept local to this module rather than in selector_groups/ — it is
+# not a CSS selector fragment, just a string this module concatenates into one.
+_LEVEL_LABELS = {"basic": "Базовый", "intermediate": "Средний", "advanced": "Продвинутый"}
+SKILLS_LEVELS_STEP_TIMEOUT_MS = 15_000
 # #801: the skill chip input is an autocomplete combobox. A blind fill+Enter
 # for the next skill can race the browser's handling of the previous one and
 # concatenate two skill names into a single chip instead of creating two
@@ -131,6 +138,15 @@ def build_skills_prompt(
 
 
 def read_skills(page: Page) -> tuple[str, ...]:
+    """Read the chips inside the still-open keySkills editor (form scope only).
+
+    ``RESUME_SKILLS_CHIP`` (``chips-trigger-chip-*``) is the combobox widget's
+    own markup and only exists while the editor is mounted. Do not use this
+    for a post-save check: saving closes the editor and returns the page to
+    the resume card, where this selector always observes zero chips
+    regardless of what actually saved (#813). Use ``read_display_skills`` for
+    that.
+    """
     chips = page.locator(resume_page.RESUME_SKILLS_CHIP)
     count = chips.count()
     if count == 0:
@@ -138,6 +154,26 @@ def read_skills(page: Page) -> tuple[str, ...]:
     values = []
     for i in range(count):
         value = chips.nth(i).inner_text().strip()
+        if value:
+            values.append(value)
+    return tuple(values)
+
+
+def read_display_skills(page: Page) -> tuple[str, ...]:
+    """Read the saved skill tags from the resume card (post-editor, #813).
+
+    ``RESUME_SKILLS_DISPLAY_TAG`` targets the Magritte tags hh.ru renders on
+    the resume itself, independent of the editor's own chip widget. This is
+    the only selector that reflects what actually landed on hh.ru once the
+    editor has closed.
+    """
+    tags = page.locator(resume_page.RESUME_SKILLS_DISPLAY_TAG)
+    count = tags.count()
+    if count == 0:
+        return ()
+    values = []
+    for i in range(count):
+        value = tags.nth(i).inner_text().strip()
         if value:
             values.append(value)
     return tuple(values)
@@ -154,6 +190,60 @@ def _skill_key(name: str) -> str:
     preserved in the success report; this key is only for equality comparison.
     """
     return " ".join(name.split()).casefold()
+
+
+def _confirm_skill_levels(page: Page, additions: tuple[Skill, ...]) -> str | None:
+    """Confirm the levels wizard step hh.ru inserts after saving new skills.
+
+    Saving the keySkills editor with at least one skill lacking a confirmed
+    level does not return to the resume card directly: hh.ru navigates to a
+    second step, ``/resume/edit/{id}/skillsLevels?fromBlock=keySkills``, with
+    one radio group per pending skill (#813, confirmed live 2026-08-30). Not
+    every ``additions`` name is guaranteed to appear there — a duplicate
+    already-known-elsewhere skill can be silently absorbed — so each radio
+    click is best-effort and a missing one is not itself a failure; the
+    caller's post-save Counter check is what stays fail-closed on the result.
+
+    Returns an error string on an unrecoverable problem (radio not found
+    uniquely, second save not found/click failed), or ``None`` if this step
+    was not present (first save returned straight to the resume card) or was
+    handled.
+    """
+    edit_path_prefix = "/resume/edit/"
+    if not urlsplit(page.url).path.rstrip("/").endswith("/skillsLevels"):
+        return None
+    if not urlsplit(page.url).path.startswith(edit_path_prefix):
+        return None
+    for skill in additions:
+        label = _LEVEL_LABELS.get(skill.level)
+        if label is None:
+            continue
+        radio = page.locator(
+            resume_page.RESUME_SKILLS_LEVEL_RADIO_TEMPLATE.format(
+                skill_and_level=f"{skill.name}{label}"
+            )
+        )
+        if radio.count() != 1:
+            # Not every addition necessarily gets its own radio group here
+            # (e.g. a name hh.ru folded into an existing skill) — skip rather
+            # than fail-closed on a single missing one; the final Counter
+            # check downstream still catches a skill that never landed.
+            continue
+        try:
+            radio.click(force=True, timeout=SKILLS_LEVELS_STEP_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            return (
+                f"выбор уровня навыка {skill.name!r} на экране skillsLevels не подтверждён: {exc}"
+            )
+    save = page.locator(resume_page.RESUME_PARTIAL_EDIT_SAVE)
+    if save.count() != 1:
+        return "кнопка сохранения уровней навыков не найдена однозначно"
+    try:
+        save.click()
+        save.wait_for(state="hidden", timeout=SKILLS_LEVELS_STEP_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        return f"сохранение уровней навыков не подтверждено: {exc}"
+    return None
 
 
 def edit_skills_on_hh(
@@ -276,22 +366,46 @@ def edit_skills_on_hh(
             reason=f"сохранение навыков не подтверждено: {exc}",
             acted=True,
         )
+    # #813: a skill with no previously-confirmed level (any brand-new addition)
+    # routes through a second wizard step instead of returning to the resume
+    # card directly. Without handling it, the skill saves with no level at all
+    # ("Уровень не указан") and the editor never reaches the resume card, so
+    # the post-save Counter check below correctly — not falsely — observed a
+    # mismatch: the click already reached hh.ru (acted=True), so this is
+    # uncertain, not a plain failure.
+    levels_error = _confirm_skill_levels(page, additions)
+    if levels_error is not None:
+        return SkillsResult(
+            False,
+            existing,
+            skills,
+            tuple(s.name for s in additions),
+            reason=levels_error,
+            acted=True,
+        )
     # editor.wait_for(state="hidden") only confirms the overlay closed, not that
     # the underlying resume page has re-rendered the chip list (CLAUDE.md: "commit
-    # не значит отрисовано"). Give the chip count a short window to settle before
+    # не значит отрисовано"). Give the tag count a short window to settle before
     # the strict read below, matching the wait_for(state="visible") pattern used
     # after other mutating clicks (resume_position.py, bump.py, etc.) — a mismatch
     # is still fail-closed after the wait, this only avoids racing the re-render.
+    #
+    # #813: the wait (and the read below) target RESUME_SKILLS_DISPLAY_TAG, the
+    # resume card's own markup, NOT RESUME_SKILLS_CHIP — that selector is the
+    # editor's own combobox widget and no longer exists once the editor has
+    # closed, so waiting on it/reading it here always observed zero regardless
+    # of what actually saved (a selector-scope bug, not a render race: the
+    # wait above already gave the DOM time to settle, and it still read 0).
     expected_chip_count = len(existing) + len(additions)
     if expected_chip_count > 0:
         try:
-            page.locator(resume_page.RESUME_SKILLS_CHIP).nth(expected_chip_count - 1).wait_for(
-                state="visible", timeout=5_000
-            )
+            page.locator(resume_page.RESUME_SKILLS_DISPLAY_TAG).nth(
+                expected_chip_count - 1
+            ).wait_for(state="visible", timeout=5_000)
         except PlaywrightError:
             pass
     try:
-        observed = read_skills(page)
+        observed = read_display_skills(page)
     except PlaywrightError as exc:
         return SkillsResult(
             False,

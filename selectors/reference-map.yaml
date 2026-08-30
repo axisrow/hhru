@@ -3168,6 +3168,34 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SKILLS_DISPLAY_TAG:
+    value: '[data-qa=''skills-card''] [data-qa^=''skill-tag-'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:53
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - skills-card
+    - skill-tag-1114
+    - skill-tag-8941557
+    - skill-tag-21160118
+    - skill-tag-21827124
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:53
+      note: 'Issue #813: RESUME_SKILLS_CHIP (chips-trigger-chip-*) is the keySkills editor''s own combobox widget and does
+        not exist on the resume card once the editor closes after save, so the post-save verification always observed zero
+        chips there regardless of what actually saved. Confirmed live 2026-08-30 (read-only Playwright DOM dump, authenticated
+        session) on resume 9bb2b4d2ff10f96f1d0039ed1f323968737936: saved skills render as Magritte tags data-qa=''skill-tag-{id}''
+        grouped under data-qa=''skills-card'', independent of the editor''s chip markup.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_resume_card_read_only
+    verified_by: claude
   resume_page.RESUME_SKILLS_EDIT_BUTTON:
     value: '[data-qa=''skills-add'']'
     criticality: write
