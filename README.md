@@ -1045,6 +1045,10 @@ Account-wide ответы в чатах: план из локальной ист
   SQLite и троттлингу. README запрещает коммерческое использование —
   только как референс, код не брать.
 
+- [konard/hh-job-application-automation](https://github.com/konard/hh-job-application-automation)
+  — Bun, Playwright и Puppeteer, Unlicense. Q&A-файл с нечётким матчем
+  (Левенштейн + keyword overlap) для тест-вопросов формы.
+
 ### Поднятие резюме
 
 - [Vlad9572324/hh.ru-clicker](https://github.com/Vlad9572324/hh.ru-clicker) —
@@ -1052,6 +1056,22 @@ Account-wide ответы в чатах: план из локальной ист
   дек. 2025).
 - [rycln/hhraiser](https://github.com/rycln/hhraiser) — Go. Джиттер
   расписания против антифрода.
+
+### Изучены точечно (отдельные селекторы, не полный аудит)
+
+Разобраны по конкретным находкам (`docs/research/reference-selector-diff-audit.md`),
+не по всему функционалу — сравнивать их с остальными в таблице фич нечестно.
+
+- [Vadtop/hh-mcp-server](https://github.com/Vadtop/hh-mcp-server) — Python +
+  Playwright, MIT.
+- [AgentShekel/hh-bot](https://github.com/AgentShekel/hh-bot) — Python +
+  Playwright, лицензия не подтверждена (NOASSERTION).
+- [RumyantsevQa/hh-ai-auto-apply-assistant](https://github.com/RumyantsevQa/hh-ai-auto-apply-assistant)
+  — Python, MIT.
+- [kavotavochavo1-ctrl/hh-ai-job-bot](https://github.com/kavotavochavo1-ctrl/hh-ai-job-bot)
+  — Python + Playwright, MIT.
+- [lil-zon/hh-auto-apply](https://github.com/lil-zon/hh-auto-apply) — Python,
+  без LICENSE.
 
 ### Обход DDoS-Guard / антидетект браузера
 
