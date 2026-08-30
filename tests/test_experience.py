@@ -943,8 +943,14 @@ class _AddButtonPage:
     live-confirmed collapse threshold.
     """
 
-    def __init__(self, initial_indexes, panel_titles: dict[str, bool], *, has_expand=None,
-                 expand_swallowed_clicks: int = 0):
+    def __init__(
+        self,
+        initial_indexes,
+        panel_titles: dict[str, bool],
+        *,
+        has_expand=None,
+        expand_swallowed_clicks: int = 0,
+    ):
         self.url = "https://hh.ru/resume/resume-1"
         self.indexes = list(initial_indexes)
         self._reloaded = False
