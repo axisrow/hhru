@@ -15,6 +15,7 @@ pytestmark = pytest.mark.unit
 def test_browser_command_registry_is_complete() -> None:
     assert cli.BROWSER_COMMANDS == {
         "about",
+        "adaptive-resume",
         "apply",
         "bump",
         "call-api",
@@ -48,6 +49,7 @@ def test_browser_command_registry_is_complete() -> None:
         "search",
     }
     for command in cli.BROWSER_COMMANDS - {
+        "adaptive-resume",
         "clear-negotiations",
         "competitors",
         "professional-roles",
