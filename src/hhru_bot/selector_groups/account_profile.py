@@ -22,6 +22,19 @@ from ._generated import selector as _selector
 # non-empty h1 is the current name/readiness marker; it must not by itself
 # authorize absence-based cleanup of the older field schema below.
 ACCOUNT_PROFILE_PATH = "/profile/me"
+# Resume common is a profile wizard, not an inline editor on /resume/{hash}.
+# Confirmed in the authenticated live DOM on 2026-08-31: navigation through
+# /profile/resume?resume=<hash> lands on /profile/resume/common.
+RESUME_COMMON_PATH = "/profile/resume"
+RESUME_COMMON_FORM = _selector("account_profile.RESUME_COMMON_FORM")
+RESUME_COMMON_FIRST_NAME = _selector("account_profile.RESUME_COMMON_FIRST_NAME")
+RESUME_COMMON_LAST_NAME = _selector("account_profile.RESUME_COMMON_LAST_NAME")
+RESUME_COMMON_BIRTHDAY_DAY = _selector("account_profile.RESUME_COMMON_BIRTHDAY_DAY")
+RESUME_COMMON_GENDER_MALE = _selector("account_profile.RESUME_COMMON_GENDER_MALE")
+RESUME_COMMON_GENDER_FEMALE = _selector("account_profile.RESUME_COMMON_GENDER_FEMALE")
+RESUME_COMMON_PHONE = _selector("account_profile.RESUME_COMMON_PHONE")
+RESUME_COMMON_NEXT = _selector("account_profile.RESUME_COMMON_NEXT")
+RESUME_COMMON_PREV = _selector("account_profile.RESUME_COMMON_PREV")
 ACCOUNT_PROFILE_READY = _selector("account_profile.ACCOUNT_PROFILE_READY")
 
 # Account-level fields from the authenticated live DOM observed on 2026-08-18.
