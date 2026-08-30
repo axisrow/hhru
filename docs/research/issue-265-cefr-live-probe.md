@@ -72,10 +72,10 @@ this explicitly before any WRITE.
 
 ## Other allowed drafts (kept for history — irrelevant to the fix)
 
-- `00001111ff10f8b2870039ed1f707779623239`: same `professional_role` wizard
+- `11112222333344445555666677778888999900`: same `professional_role` wizard
   state and no languages block on the resume view (expected: that view was
   never the right page).
-- `00002222ff10f96f1d0039ed1f323968737936`: profile wizard reports
+- `22223333444455556666777788889999000011`: profile wizard reports
   `Problem fetching content` (unrelated to languages).
 
 ## Outcome
