@@ -343,7 +343,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
                 return False
             progress.begin_attempt()
-            apply_position(page, plan)
+            apply_position(page, plan, current=current)
             if page.locator(SAVE).count() != 1:
                 raise RuntimeError("кнопка сохранения формы не подтверждена")
             try:

@@ -405,7 +405,9 @@ def test_resume_position_write_success_does_not_double_count_on_exit_error(
             ResumeState(status="new", is_searchable=True),
         ),
     )
-    monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.apply_position", lambda page, plan, current=None: None
+    )
 
     history_path = tmp_path / "h.db"
     result = resume_position_cmd.run(

@@ -692,9 +692,14 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         if option.count() != 1:
             raise RuntimeError(f"вариант формы не найден: {labels[value]}")
         option.click()
-        # Selecting an option does not close this dropdown.  Escape is
+        # Re-clicking the trigger (the earlier approach) does not close this
+        # panel — confirmed live (#823): the panel re-opens/stays open even
+        # after a genuine value change, not just a no-op selection. This
+        # dropdown closes on an outside click instead, same as clicking away
+        # from any Magritte popup; (0, 0) is always outside the panel, which
+        # is positioned near the field, not the viewport corner. Escape is
         # deliberately avoided because it can close the whole editor form.
-        el.click()
+        page.mouse.click(0, 0)
         panel.wait_for(state="hidden", timeout=_CONTROL_WAIT_TIMEOUT_MS)
     except (PlaywrightError, RuntimeError) as exc:
         _dump_control_failure(page, selector, exc)
@@ -740,8 +745,17 @@ def _set_specializations(page: Page, values: list[str]) -> None:
     modal.wait_for(state="hidden", timeout=10_000)
 
 
-def apply_position(page: Page, plan: PositionValues) -> None:
-    """Fill fields only. Caller owns confirmation and must click SAVE explicitly."""
+def apply_position(page: Page, plan: PositionValues, current: PositionValues | None = None) -> None:
+    """Fill fields only. Caller owns confirmation and must click SAVE explicitly.
+
+    ``current`` is the value already on the draft (from the just-opened form/
+    display), used only to skip a no-op ``_set_control`` click (#823): a live
+    run requesting the value already on the resume hung the full 5s timeout
+    and failed a command that had nothing to change. Skipping keeps the
+    request an honest no-op instead of clicking an option that was already
+    selected. ``current=None`` (e.g. ``copy_resume``'s bare-title call)
+    preserves the previous unconditional behaviour.
+    """
     if plan.title == "":
         raise ValueError(
             "Пустой title отклоняется hh.ru. Укажите значение, например: "
@@ -786,15 +800,23 @@ def apply_position(page: Page, plan: PositionValues) -> None:
         if currency_chip.count() != 1:
             raise RuntimeError(f"чип валюты не подтверждён: {plan.currency}")
         currency_chip.click()
+    current_employment = current.employment if current else None
     if plan.employment:
         for value in plan.employment:
+            if current_employment == [value]:
+                continue
             _set_control(page, EMPLOYMENT, value, EMPLOYMENT_LABELS)
+    current_work_format = current.work_format if current else None
     if plan.work_format:
         for value in plan.work_format:
+            if current_work_format == [value]:
+                continue
             _set_control(page, WORK_FORMAT, value, WORK_LABELS)
-    if plan.commute:
+    if plan.commute and (current is None or current.commute != plan.commute):
         _set_control(page, TRAVEL, plan.commute, TRAVEL_LABELS)
-    if plan.business_trips is not None:
+    if plan.business_trips is not None and (
+        current is None or current.business_trips != plan.business_trips
+    ):
         _set_control(
             page,
             BUSINESS_TRIPS,
