@@ -1,4 +1,5 @@
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.experience import (
     ExperienceEntry,
@@ -180,6 +181,9 @@ class _Locator:
 
     def is_checked(self):
         return self._checked
+
+    def element_handle(self, *, timeout=None):
+        return object()
 
     @property
     def first(self):
@@ -375,6 +379,12 @@ class _SavePage:
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        return None
+
+    def wait_for_function(self, _fn, *, arg=None, timeout=None):
+        return None
+
+    def wait_for_timeout(self, _ms):
         return None
 
     def reload(self, *, timeout=None, wait_until=None):
@@ -933,7 +943,8 @@ class _AddButtonPage:
     live-confirmed collapse threshold.
     """
 
-    def __init__(self, initial_indexes, panel_titles: dict[str, bool], *, has_expand=None):
+    def __init__(self, initial_indexes, panel_titles: dict[str, bool], *, has_expand=None,
+                 expand_swallowed_clicks: int = 0):
         self.url = "https://hh.ru/resume/resume-1"
         self.indexes = list(initial_indexes)
         self._reloaded = False
@@ -942,6 +953,11 @@ class _AddButtonPage:
             for title, checked in panel_titles.items()
         }
         self._has_expand = has_expand if has_expand is not None else len(panel_titles) > 2
+        # #858: the first N clicks on the expand control are "swallowed" by
+        # the pre-hydration window — click() succeeds but the button stays
+        # visible (wait_for(state="hidden") raises), mirroring the live drill.
+        self._expand_swallowed_clicks = expand_swallowed_clicks
+        self.expand_attempts = 0
         self.expand_clicked = False
         self.add_clicked = False
 
@@ -970,7 +986,13 @@ class _AddButtonPage:
 
             class _ExpandLocator(_Locator):
                 def click(self, *, timeout=None, **_kwargs):
+                    page.expand_attempts += 1
                     page.expand_clicked = True
+
+                def wait_for(self, *, timeout=None, state=None):
+                    if state == "hidden" and page.expand_attempts <= page._expand_swallowed_clicks:
+                        raise PlaywrightError("swallowed by pre-hydration window (#858)")
+                    return None
 
             return _ExpandLocator(count=1)
         if selector.startswith("xpath=") and "этим местом работы" in selector:
@@ -978,6 +1000,14 @@ class _AddButtonPage:
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        return None
+
+    def wait_for_function(self, _fn, *, arg=None, timeout=None):
+        # #858: hydration readiness probe — the fake's expand control is
+        # treated as hydrated immediately.
+        return None
+
+    def wait_for_timeout(self, _ms):
         return None
 
     def reload(self, *, timeout=None, wait_until=None):
@@ -1110,6 +1140,58 @@ def test_edit_experience_via_add_button_expands_collapsed_panel(monkeypatch):
 
     assert page.expand_clicked is True
     assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_retries_swallowed_expand_clicks(monkeypatch):
+    """#858: hh.ru server-renders the expand button before React hydrates it
+    (live drill 2026-08-30: clicks at 1.6-2.3s after load were silently
+    swallowed, the first click after __reactFiber/__reactProps attached
+    worked). Reconciliation must retry the click — with post-click
+    confirmation — instead of failing on the first swallowed one."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True, "ai-engineer": True, "python": True},
+        expand_swallowed_clicks=2,
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "o1": "ai-engineer", "o2": "python"},
+    )
+
+    assert page.expand_attempts == 3  # two swallowed, third confirmed
+    assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_fails_closed_when_all_expand_clicks_swallowed(monkeypatch):
+    """#858 fail-closed: if every retry is swallowed (list never expands),
+    reconciliation must still refuse before any save click — the retry loop
+    narrows the failure window, it does not lower the confirmation bar."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True, "ai-engineer": True, "python": True},
+        expand_swallowed_clicks=99,
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "o1": "ai-engineer", "o2": "python"},
+    )
+
+    assert page.expand_attempts == 5  # EXPAND_RETRY_ATTEMPTS, then give up
+    assert len(results) == 1
+    assert not results[0].success
+    assert "не удалось развернуть панель" in results[0].reason
 
 
 def test_edit_experience_via_add_button_fails_closed_when_checkbox_count_mismatches(monkeypatch):

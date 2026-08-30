@@ -15,7 +15,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from .browser import (
     HH_BASE_URL,
@@ -445,6 +445,42 @@ def _experience_row_indexes(page: Page) -> list[int]:
 
 PANEL_TIMEOUT_MS = 5_000
 
+# #858: bounded retry around the panel expand click. Live drill 2026-08-30
+# measured the hydration window at ~1.5s after the button becomes visible;
+# 5 attempts x 400ms settle comfortably covers it with headroom for a slow
+# page, and any leftover failure still raises ResumePanelReconciliationError
+# (fail closed, no save).
+EXPAND_RETRY_ATTEMPTS = 5
+EXPAND_RETRY_DELAY_MS = 400
+
+
+def _wait_for_react_hydration(page: Page, locator: Locator, *, timeout_ms: int) -> None:
+    """Wait until ``locator``'s element carries React instance keys.
+
+    #858 root cause: hh.ru's Magritte buttons are server-rendered, so the
+    element is visible and enabled BEFORE React hydrates it — during that
+    window clicks are silently swallowed (no onClick listener is attached
+    yet). A hydrated element always carries the ``__reactFiber$…`` and
+    ``__reactProps$…`` instance keys, so their presence is a deterministic
+    readiness signal; polling it turns the previously nondeterministic
+    "click sometimes does nothing" into an explicit wait.
+    """
+    deadline = timeout_ms / 1000.0
+    try:
+        page.wait_for_function(
+            """(el) => {
+                const keys = Object.keys(el);
+                return keys.some((k) => k.startsWith('__reactFiber'))
+                    && keys.some((k) => k.startsWith('__reactProps'));
+            }""",
+            arg=locator.element_handle(timeout=timeout_ms),
+            timeout=deadline * 1000,
+        )
+    except PlaywrightError as exc:
+        raise ResumePanelReconciliationError(
+            f"кнопка панели резюме не гидрировалась за {timeout_ms}мс: {exc}"
+        ) from exc
+
 
 class ResumePanelReconciliationError(ValueError):
     """Raised when the "Резюме с этим местом работы" panel cannot be
@@ -483,20 +519,20 @@ def _reconcile_experience_resume_panel(
     than no save at all, the same fail-closed principle already used
     throughout this module for save-binding verification.
 
-    PR #856 LIVE WRITE test (2026-08-30, 17-resume account): the expand
-    button's ACTIVATION was found unreliable — a plain ``.click()`` did not
-    expand the list on several live attempts even though the click target
-    was confirmed correct (no #824-style interception: elementFromPoint
-    resolves to the button's own label span). A ``focus()`` +
-    ``keyboard.press("Space")`` sequence expanded the list on one live
-    attempt but failed to on a later one with the identical sequence — the
-    underlying activation mechanism for this specific Magritte button
-    variant is not yet understood. Both are attempted below (click first,
-    then the keyboard sequence as a second attempt) since either narrows the
-    failure window even without explaining it; this remains a known,
-    tracked instability (follow-up needed), not a silently-accepted gap —
-    the fail-closed error below still fires if BOTH attempts leave the
-    button in place.
+    #858 LIVE drill (2026-08-30, read-only UI drill on the draft resume, no
+    save): the PR #856 instability is a HYDRATION WINDOW, not a broken
+    activation mechanism. The button is server-rendered into the DOM early
+    and is visible/enabled for ~1.5s BEFORE React attaches its event
+    listeners — during that window it carries no ``__reactFiber``/
+    ``__reactProps`` instance keys and any click (Playwright's actionability
+    checks all pass) is silently swallowed. Once both keys appear, a plain
+    ``.click()`` expands the list on the first try, every time (confirmed on
+    repeated page loads: clicks at 1.6–2.3s after load all failed, the first
+    click after fiber+props attach succeeded). So: wait for hydration before
+    clicking, and keep a bounded retry-with-confirmation loop (issue #858
+    item 3) as defence in depth — each attempt is only counted as done when
+    the button actually disappears (replaced by "Свернуть"), never on click
+    success alone.
     """
     scope = page.locator(EXPERIENCE_RESUME_PANEL_SCOPE)
     if scope.count() != 1:
@@ -512,20 +548,22 @@ def _reconcile_experience_resume_panel(
         # control scoped to this panel.
         try:
             expand.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
-            expand.click()
-            try:
-                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
-            except PlaywrightError:
-                # #782/#856 live trace: plain click() confirmed unreliable
-                # for this specific control (see docstring above) — a
-                # keyboard-activation retry via focus()+Space was live-
-                # confirmed to succeed at least once where click() alone did
-                # not. Only attempted once as a second line of defence, not
-                # looped: the fail-closed error below still fires if this
-                # also does not hide the button.
-                expand.focus()
-                page.keyboard.press("Space")
-                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+            _wait_for_react_hydration(page, expand, timeout_ms=PANEL_TIMEOUT_MS)
+            last_exc: PlaywrightError | None = None
+            for _ in range(EXPAND_RETRY_ATTEMPTS):
+                try:
+                    expand.click()
+                    expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+                    last_exc = None
+                    break
+                except PlaywrightError as exc:
+                    last_exc = exc
+                    # A swallowed click still leaves the button visible; a
+                    # short settle before re-clicking avoids racing the very
+                    # re-render that is about to attach the handlers.
+                    page.wait_for_timeout(EXPAND_RETRY_DELAY_MS)
+            if last_exc is not None:
+                raise last_exc
         except PlaywrightError as exc:
             raise ResumePanelReconciliationError(
                 f"не удалось развернуть панель 'Резюме с этим местом работы': {exc}"
