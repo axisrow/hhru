@@ -558,7 +558,9 @@ def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
             ResumeState(status="new", is_searchable=True),
         ),
     )
-    monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda page, plan: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.apply_position", lambda page, plan, current=None: None
+    )
 
     history_path = tmp_path / "history.db"
     args = argparse.Namespace(

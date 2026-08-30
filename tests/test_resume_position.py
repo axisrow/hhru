@@ -427,7 +427,86 @@ def test_apply_position_clicks_currency_chip_label_not_radio_input():
     currency_chip.click.assert_called_once_with()
 
 
-def test_set_control_reopens_dropdown_for_each_value():
+def test_apply_position_skips_set_control_when_value_already_current(monkeypatch):
+    # #823: requesting a value already on the draft must not touch the
+    # dropdown at all — Magritte doesn't close it after a no-op selection.
+    calls = []
+    monkeypatch.setattr(
+        resume_position,
+        "_set_control",
+        lambda page, selector, value, labels: calls.append((selector, value)),
+    )
+    page = MagicMock()
+    current = PositionValues(
+        employment=["full_time"],
+        work_format=["remote"],
+        commute="no_limit",
+        business_trips=True,
+    )
+    plan = PositionValues(
+        employment=["full_time"],
+        work_format=["remote"],
+        commute="no_limit",
+        business_trips=True,
+    )
+
+    resume_position.apply_position(page, plan, current=current)
+
+    assert calls == []
+
+
+def test_apply_position_calls_set_control_when_value_differs_from_current(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        resume_position,
+        "_set_control",
+        lambda page, selector, value, labels: calls.append((selector, value)),
+    )
+    page = MagicMock()
+    current = PositionValues(
+        employment=["full_time"],
+        work_format=["remote"],
+        commute="no_limit",
+        business_trips=True,
+    )
+    plan = PositionValues(
+        employment=["part_time"],
+        work_format=["hybrid"],
+        commute="up_to_1_hour",
+        business_trips=False,
+    )
+
+    resume_position.apply_position(page, plan, current=current)
+
+    assert calls == [
+        (resume_position.EMPLOYMENT, "part_time"),
+        (resume_position.WORK_FORMAT, "hybrid"),
+        (resume_position.TRAVEL, "up_to_1_hour"),
+        (resume_position.BUSINESS_TRIPS, "false"),
+    ]
+
+
+def test_apply_position_calls_set_control_unconditionally_without_current(monkeypatch):
+    # current=None (e.g. copy_resume's bare-title call) preserves the
+    # previous unconditional behaviour.
+    calls = []
+    monkeypatch.setattr(
+        resume_position,
+        "_set_control",
+        lambda page, selector, value, labels: calls.append((selector, value)),
+    )
+    page = MagicMock()
+    plan = PositionValues(commute="no_limit", business_trips=True)
+
+    resume_position.apply_position(page, plan)
+
+    assert calls == [
+        (resume_position.TRAVEL, "no_limit"),
+        (resume_position.BUSINESS_TRIPS, "true"),
+    ]
+
+
+def test_set_control_closes_dropdown_via_outside_click_for_each_value():
     class FakeOption:
         def __init__(self, panel, label):
             self.panel = panel
@@ -465,7 +544,7 @@ def test_set_control_reopens_dropdown_for_each_value():
 
         def click(self):
             self.clicks += 1
-            self.panel.open = not self.panel.open
+            self.panel.open = True
 
     panel = FakePanel()
     control = FakeControl(panel)
@@ -473,6 +552,9 @@ def test_set_control_reopens_dropdown_for_each_value():
     page.locator.side_effect = lambda selector: (
         panel if selector == resume_position.RESUME_POSITION_DROPDOWN else control
     )
+    # An outside click closes this dropdown (#823 live probe) — re-clicking
+    # the trigger does not, even for a genuine value change.
+    page.mouse.click.side_effect = lambda *_args, **_kwargs: setattr(panel, "open", False)
 
     resume_position._set_control(
         page, resume_position.WORK_FORMAT, "remote", resume_position.WORK_LABELS
@@ -482,7 +564,7 @@ def test_set_control_reopens_dropdown_for_each_value():
     )
 
     assert panel.selected == ["Удалённо", "Гибрид"]
-    assert control.clicks == 4
+    assert control.clicks == 2
 
 
 def test_set_control_passes_explicit_timeout_to_panel_waits():
