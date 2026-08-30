@@ -33,9 +33,14 @@ probe() {
     label="$1"
     url="$2"
     echo "=== ${label} (${url}) ==="
+    # stderr НЕ сливаем в $result (не 2>&1) — curl -sS всё равно печатает
+    # ошибки в stderr при провале, но смешивание с захватываемым stdout
+    # сдвигало бы построчный разбор ниже при любом postороннем предупреждении
+    # curl (#852 code review). stderr curl'а виден пользователю напрямую,
+    # не через переменную.
     result=$(curl -sS -o /dev/null --max-time "$TIMEOUT" \
         -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n%{http_code} %{time_total}" \
-        "$url" 2>&1) || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "transport_fail"; return; }
+        "$url") || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "transport_fail"; return; }
     metrics_line=$(echo "$result" | sed -n '1p')
     status_line=$(echo "$result" | sed -n '2p')
     echo "$metrics_line"
