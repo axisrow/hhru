@@ -90,8 +90,10 @@
 | resume_experience.EXPERIENCE_COMPANY_URL | `[data-qa='resume-editor-experience-company-url-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_DESCRIPTION | `[data-qa='resume-editor-experience-description-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_EDIT_BUTTON | `[data-qa='edit-experience-button-{index}']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_EDIT_BUTTONS_ALL | `[data-qa^='edit-experience-button-']:not([data-qa$='-svg'])` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_END_MONTH | `[data-qa='resume-editor-experience-end-month-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_END_YEAR | `[data-qa='resume-editor-experience-end-year-input']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_EXPAND_BUTTON | `[data-qa='resume-list-card-experience'] button:has-text('Развернуть')` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_MONTH_LISTBOX | `[role='listbox']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_MONTH_OPTION | `[data-qa='magritte-select-option-{month}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_POSITION | `[data-qa='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |

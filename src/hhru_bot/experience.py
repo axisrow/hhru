@@ -31,8 +31,10 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_COMPANY_URL,
     EXPERIENCE_DESCRIPTION,
     EXPERIENCE_EDIT_BUTTON,
+    EXPERIENCE_EDIT_BUTTONS_ALL,
     EXPERIENCE_END_MONTH,
     EXPERIENCE_END_YEAR,
+    EXPERIENCE_EXPAND_BUTTON,
     EXPERIENCE_MONTH_LISTBOX,
     EXPERIENCE_MONTH_OPTION,
     EXPERIENCE_POSITION,
@@ -347,20 +349,110 @@ def _select_month(page: Page, locator, month: str) -> None:
     page.locator(EXPERIENCE_MONTH_LISTBOX).wait_for(state="hidden", timeout=MONTH_OPTION_TIMEOUT_MS)
 
 
-def _count_experience_rows(page: Page) -> int:
-    """Count existing rows via the confirmed indexed edit-trigger selector."""
-    count = 0
-    while page.locator(EXPERIENCE_EDIT_BUTTON.format(index=count)).count() == 1:
-        count += 1
-    return count
+ROW_HYDRATION_TIMEOUT_MS = 5_000
+
+
+def _expand_experience_list(page: Page) -> None:
+    """Click "Развернуть" if hh.ru collapsed the experience list (#815).
+
+    Confirmed live 2026-08-30: a resume with more than 3 experience entries
+    renders only 3 edit-trigger buttons until this control is clicked — the
+    remaining rows are not in the DOM at all, not just visually hidden, so
+    no amount of waiting on the existing buttons would reveal them.  Absent
+    on resumes with 3 or fewer entries (including empty drafts), so this is
+    a no-op there.
+    """
+    expand = page.locator(EXPERIENCE_EXPAND_BUTTON)
+    if expand.count() == 1:
+        try:
+            expand.wait_for(state="visible", timeout=ROW_HYDRATION_TIMEOUT_MS)
+            expand.click()
+            # The click removes the "Развернуть" control itself (replaced
+            # with "Свернуть") — waiting for it to disappear is the positive
+            # signal that the fuller row set has rendered, not just guessed
+            # at with a fixed sleep.
+            expand.wait_for(state="hidden", timeout=ROW_HYDRATION_TIMEOUT_MS)
+        except PlaywrightError:
+            # #815 review: a stray failed click here (element temporarily
+            # not interactable during a re-render, a slow network) must not
+            # crash the caller — every caller already handles an
+            # under-count as "read fewer rows than exist", the same
+            # fail-safe behavior as any other unreadable row. Retrying is
+            # deliberately NOT done here: the caller's own loop already
+            # re-invokes this function on its next pass.
+            pass
+
+
+def _experience_row_indexes(page: Page) -> list[int]:
+    """Return the indexes of currently rendered experience rows (#815/#833).
+
+    EXPERIENCE_EDIT_BUTTON's ``{index}`` is an internal React counter shared
+    across every editable block on the resume page, not the row's position:
+    confirmed live indices were sparse and did not start at 0 (e.g. observed
+    sets 2,3,4 and 1,6,7,8,12,17 on different resumes/reloads — no relation
+    to the number of rows or their on-page order). Counting via
+    ``range(0, N)`` and stopping at the first missing index (the pre-fix
+    approach) silently undercounts — or returns 0 — whenever index 0 happens
+    to be free, which is the common case once a resume has been edited a few
+    times.
+
+    Live testing also confirmed the set is STABLE across an open/cancel
+    cycle on the same page (open one row's form, cancel it — the full index
+    set returns unchanged): a snapshot taken once is safe to reuse for the
+    rest of that read/edit pass, it does not need to be re-queried after
+    every click. (An earlier draft of this fix assumed the set also shifts
+    after an unrelated save elsewhere on the page — that was never actually
+    observed and has been retracted; if a future reload/save DOES show the
+    set changing, that would be a new, separate finding, not this one.)
+
+    This enumerates the buttons that actually exist instead of guessing at
+    their numbering, expanding a collapsed list first (#815) and waiting for
+    the first row to hydrate after a fresh navigation/reload before reading
+    (#833 — ``domcontentloaded``/``commit`` do not guarantee the React list
+    has rendered yet, same "commit is not painted" pattern as elsewhere in
+    this codebase).
+    """
+    buttons = page.locator(EXPERIENCE_EDIT_BUTTONS_ALL)
+    if buttons.count() == 0:
+        # #833: right after a reload/navigation, a resume that DOES have
+        # experience rows may simply not have hydrated them into the DOM
+        # yet ("commit"/"domcontentloaded" only confirm the URL/HTML
+        # changed, not that the React list rendered — same pattern as
+        # resume_position.py/skills.py/bump.py). count()==0 cannot tell
+        # that apart from "this resume genuinely has zero experience rows",
+        # so wait briefly for the first button to appear rather than
+        # trusting an immediate read; a short, swallowed timeout here just
+        # means the zero-rows case, which every caller already handles.
+        try:
+            buttons.first.wait_for(state="visible", timeout=ROW_HYDRATION_TIMEOUT_MS)
+        except PlaywrightError:
+            pass
+    _expand_experience_list(page)
+    buttons = page.locator(EXPERIENCE_EDIT_BUTTONS_ALL)
+    indexes = []
+    for i in range(buttons.count()):
+        data_qa = buttons.nth(i).get_attribute("data-qa") or ""
+        suffix = data_qa.rsplit("-", 1)[-1]
+        if suffix.isdigit():
+            indexes.append(int(suffix))
+    return sorted(indexes)
 
 
 def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
     """Read existing rows through their confirmed editor fields, without save."""
     open_confirmed_resume(page, resume_id)
-    count = _count_experience_rows(page)
+    # #815: row indexes are a non-contiguous internal React counter, not a
+    # 0..N-1 range — iterate the actual indexes rather than range(count).
+    # The company/position fields only exist in the DOM once that row's form
+    # is open (count()==0 before the click), so a row's identity cannot be
+    # read ahead of clicking it — the loop below reads it right after the
+    # click instead. The index set itself was confirmed live to be STABLE
+    # across an open/cancel cycle on the same page (open one row's form,
+    # cancel it — the same full set comes back unchanged, see
+    # `_experience_row_indexes()`), so one snapshot taken before the loop is
+    # safe to iterate directly; it does not need to be re-queried per row.
     result = []
-    for index in range(count):
+    for index in _experience_row_indexes(page):
         try:
             page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
             entry = ExperienceEntry(
@@ -417,11 +509,40 @@ def edit_experience_on_hh(
     results = []
     for entry, index in zip(plan.entries, selected, strict=False):
         trigger = page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index))
-        first_entry = trigger.count() == 0
+        # #815: EXPERIENCE_EDIT_BUTTON's {index} is a non-contiguous internal
+        # React counter, not a 0..N-1 row position — trigger.count()==0 no
+        # longer means "this resume has no experience rows" the way it did
+        # when indexes were assumed contiguous from 0. It now only means
+        # "this particular index is not currently in use", which is true for
+        # MOST indexes on any resume that has been edited before. Query the
+        # actual set of existing rows instead: "first entry" (the only path
+        # ever confirmed safe to CREATE a row, #786/#787) applies only when
+        # the resume genuinely has zero rows.
+        existing_indexes = _experience_row_indexes(page)
+        first_entry = not existing_indexes
+        if not first_entry and trigger.count() == 0:
+            # A non-empty resume was asked to address an index that does not
+            # exist among the current rows. #815 live testing found
+            # /resume/edit/{resume_id}/experience — the only route this
+            # module ever used for "no trigger found" — does NOT reliably
+            # create a new row on a resume that already has entries: it can
+            # open blank, or it can silently rebind to and overwrite an
+            # unrelated existing row matched by some other identity (start
+            # date, in the observed case). Neither outcome is safe to walk
+            # into automatically, so this fails closed rather than reusing
+            # the first-entry route on a resume where it was never confirmed
+            # safe.
+            return results + [
+                ExperienceResult(
+                    f"строка опыта {index}: индекс не найден среди существующих строк "
+                    f"({existing_indexes}) — добавление новой записи к резюме, где опыт "
+                    "уже есть, не подтверждено безопасным (#815)"
+                )
+            ]
         # #796: snapshot the row count BEFORE opening the form for this entry
         # — taking it after save cannot distinguish a bound save from a
         # silent no-op, since both leave the count read at the same time.
-        before_count = _count_experience_rows(page)
+        before_indexes = set(existing_indexes)
         if first_entry:
             # #786/#787: no in-page "add" trigger for the first experience row
             # was ever confirmed by a research dump — the visible suggestion
@@ -560,11 +681,24 @@ def edit_experience_on_hh(
                 # #796/#787: a click succeeding and landing back on the resume
                 # page is not proof the row is bound to THIS resume — #787
                 # found saves that silently went to the shared profile
-                # instead. Reload and recount rather than trusting the
-                # in-memory DOM state right after save. The count-growth
-                # check only applies to a genuinely new row (first_entry):
-                # editing an EXISTING row in place (fill mode re-saves the
-                # same index) never grows the count and must not be flagged.
+                # instead. Reload and re-read the actual row set rather than
+                # trusting the in-memory DOM state right after save. This
+                # only applies to a genuinely new row (first_entry): editing
+                # an EXISTING row in place (fill mode re-saves the same
+                # index) must not be flagged just because the row set didn't
+                # change.
+                #
+                # #815 review: a bare count() comparison (before vs. after)
+                # is a weak positive signal — a resume that lost one row and
+                # gained a different one elsewhere on the same page (e.g. an
+                # unrelated concurrent edit) would show the same count and
+                # false-pass. The row set's *contents* is not directly
+                # comparable either — EXPERIENCE_EDIT_BUTTON's {index} is an
+                # internal React counter, so "a new index exists" is not the
+                # same claim as "our indexed one exists" if hh.ru is mid
+                # re-render across the reload. What IS decisive: at least one
+                # index present now that was not present before the save —
+                # that is only possible if hh.ru actually created a new row.
                 try:
                     page.reload(wait_until="domcontentloaded")
                     require_authenticated_page(page)
@@ -575,7 +709,7 @@ def edit_experience_on_hh(
                                 uncertain=True,
                             )
                         ]
-                    after_count = _count_experience_rows(page)
+                    after_indexes = set(_experience_row_indexes(page))
                 except (PlaywrightError, NotAuthenticated) as exc:
                     return results + [
                         ExperienceResult(
@@ -583,11 +717,12 @@ def edit_experience_on_hh(
                             uncertain=True,
                         )
                     ]
-                if first_entry and after_count <= before_count:
+                if first_entry and not (after_indexes - before_indexes):
                     return results + [
                         ExperienceResult(
                             f"строка {index}: запись не привязалась к резюме "
-                            f"(строк до={before_count}, после={after_count})"
+                            f"(строк до={sorted(before_indexes)}, "
+                            f"после={sorted(after_indexes)})"
                         )
                     ]
                 results.append(
