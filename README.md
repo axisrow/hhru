@@ -490,7 +490,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 
 ### `common`
 
-Заполняет через UI firstName, lastName, birthday, gender, phone, area, metro и citizenship.
+Заполняет через UI поля common, включая условия работы. area, metro и citizenship пока не входят в команду.
 
 - `--resume` — Slug из конфига или resume_id HH.ru
 - `--first-name` — Имя
@@ -498,9 +498,12 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 - `--birthday` — Дата в формате, который принимает форма hh.ru
 - `--gender` — Пол
 - `--phone` — Телефон
-- `--area` — Точный leaf города из live-каталога hh.ru
-- `--metro` — Точная станция метро
-- `--citizenship` — Точное гражданство из live-каталога; можно повторять
+- `--work-ticket` — Трудовая книжка
+- `--relocation` — Готовность к переезду
+- `--schedule` — График работы; можно указать несколько раз
+- `--employment` — Тип занятости; можно указать несколько раз
+- `--work-format` — Формат работы; можно указать несколько раз
+- `--business-trip, --business-trips` — Готовность к командировкам
 - `--dry-run` — Показать план без сохранения
 - `--force` — Подтвердить запись без prompt
 
