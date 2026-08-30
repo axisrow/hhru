@@ -731,6 +731,19 @@ def _set_specializations(page: Page, values: list[str]) -> None:
         option = page.locator(SPECIALIZATION_OPTION).filter(
             has_text=re.compile(rf"^{re.escape(value)}$")
         )
+        # search.fill() triggers an async React re-render of the filtered tree
+        # (#822 live repro): reading option.count() right after fill() is a
+        # race and can observe either the still-unfiltered default category
+        # rows or a not-yet-rendered empty list, in both cases 0 matches for
+        # a leaf that is genuinely present. Waiting for the first match (or a
+        # bounded timeout confirming it never renders) turns that race into a
+        # deterministic read, matching the wait_for(state="visible") pattern
+        # this project already uses after every action that starts a React
+        # render (CLAUDE.md, resume_position.py's own _set_control).
+        try:
+            option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            raise RuntimeError(f"специализация не найдена в дереве резюме: {value}") from exc
         option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
         # The same leaf is rendered once under every matching parent category;
         # its data-qa id is the stable identity.  Different ids with the same
