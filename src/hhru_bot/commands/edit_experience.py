@@ -198,6 +198,21 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 # Manual entries have no protected-field merge (#327): reusing an
                 # existing row's index would silently blank any field the manual
                 # JSON omitted. Always append after the live row count instead.
+                #
+                # #815: this index range is only ever REACHABLE (not merely
+                # correct) when the resume has zero existing rows — hh.ru's
+                # edit-trigger index is an internal React counter, not a row
+                # position, so existing_count is never a real, addressable
+                # index once other rows exist. edit_experience_on_hh() fails
+                # closed on a non-existent index rather than silently
+                # reusing the one confirmed-safe "create" route
+                # (/resume/edit/{id}/experience) on a resume it was never
+                # confirmed safe for — live testing found that route can
+                # overwrite an unrelated existing row instead of appending
+                # (see resume_experience.py's module docstring). Adding a
+                # second/third row via --entry to a non-empty resume is
+                # therefore not yet supported; this stays a clear [FAIL]
+                # rather than a guessed, potentially destructive write.
                 existing_count = len(read_experience_on_hh(page, resume.resume_id))
                 indexes = list(range(existing_count, existing_count + len(plan.entries)))
             # begin_attempt() right before the real mutation, after the page/

@@ -4,6 +4,7 @@ from hhru_bot.experience import (
     ExperienceEntry,
     ExperiencePlan,
     ExperienceResult,
+    _experience_row_indexes,
     _merge_fill_plan,
     build_prompt,
     edit_experience_on_hh,
@@ -164,13 +165,42 @@ class _Locator:
     def is_enabled(self):
         return self._enabled
 
+    @property
+    def first(self):
+        return self
+
+
+class _RowButtonsLocator(_Locator):
+    """Fake for EXPERIENCE_EDIT_BUTTONS_ALL (#815): a group locator over a
+    non-contiguous set of row indexes, supporting the .nth()/.get_attribute()
+    pair `_experience_row_indexes()` uses to enumerate real indexes instead
+    of assuming a 0..N-1 range."""
+
+    def __init__(self, indexes):
+        super().__init__(count=len(indexes))
+        self._indexes = list(indexes)
+
+    def nth(self, i):
+        index = self._indexes[i]
+        return _RowButtonLocator(index)
+
+
+class _RowButtonLocator(_Locator):
+    def __init__(self, index):
+        super().__init__(count=1)
+        self._index = index
+
+    def get_attribute(self, name):
+        assert name == "data-qa"
+        return f"edit-experience-button-{self._index}"
+
 
 class _Page:
     """First-row form is a distinct data-qa namespace (#786/#787): every
     field/button locator here is unconditionally count()==1, matching the
     live-confirmed /resume/edit/{id}/experience shape, except the row editor
     locators (edit-experience-button/EXPERIENCE_COMPANY/POSITION), which stay
-    at count()==0 to force the first-entry branch.
+    at count()==0 to force the first-entry branch (resume has zero rows).
     """
 
     def __init__(self):
@@ -178,6 +208,10 @@ class _Page:
 
     def locator(self, selector):
         assert selector is not None
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            return _RowButtonsLocator([])
+        if "Развернуть" in selector:
+            return _Locator(count=0)
         if "edit-experience-button" in selector or "specific-" in selector:
             return _Locator(count=0)
         return _Locator(count=1)
@@ -230,21 +264,29 @@ def test_edit_experience_first_entry_fails_closed_on_route_mismatch(monkeypatch)
 
 
 class _SavePage:
-    """Fake page for the non-dry-run save path with a mutable row count
-    (#796/#787): edit-experience-button/{index} locators reflect ``rows``,
-    letting a test simulate the count growing (bound save) or staying flat
-    (silent no-op — save landed on the shared profile, not this resume)."""
+    """Fake page for the non-dry-run save path with a mutable set of row
+    indexes (#796/#787/#815): edit-experience-button locators reflect
+    ``indexes``, letting a test simulate a new index appearing after reload
+    (bound save) or the set staying flat (silent no-op — save landed on the
+    shared profile, not this resume). Indexes are deliberately non-
+    contiguous-friendly (any int, not just 0..N-1) to match #815's live
+    finding that hh.ru's row index is an internal counter, not a position.
+    """
 
-    def __init__(self, rows: int, *, grow_on_reload_by: int = 0):
+    def __init__(self, indexes, *, grow_indexes_on_reload=()):
         self.url = "https://hh.ru/resume/resume-1"
-        self.rows = rows
-        self._grow_on_reload_by = grow_on_reload_by
+        self.indexes = list(indexes)
+        self._grow_indexes_on_reload = list(grow_indexes_on_reload)
         self._reloaded = False
 
     def locator(self, selector):
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            return _RowButtonsLocator(self.indexes)
+        if "Развернуть" in selector:
+            return _Locator(count=0)
         if "edit-experience-button" in selector:
             index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
-            return _Locator(count=1 if index < self.rows else 0)
+            return _Locator(count=1 if index in self.indexes else 0)
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
@@ -252,7 +294,7 @@ class _SavePage:
 
     def reload(self, *, timeout=None, wait_until=None):
         self._reloaded = True
-        self.rows += self._grow_on_reload_by
+        self.indexes.extend(self._grow_indexes_on_reload)
 
 
 def _fake_goto_to_edit_path(page, url):
@@ -268,7 +310,7 @@ def test_edit_experience_first_entry_verifies_binding_after_reload(monkeypatch):
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _SavePage(rows=0, grow_on_reload_by=1)
+    page = _SavePage(indexes=[], grow_indexes_on_reload=[2])
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -289,7 +331,7 @@ def test_edit_experience_first_entry_fails_closed_when_row_count_does_not_grow(m
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _SavePage(rows=0, grow_on_reload_by=0)
+    page = _SavePage(indexes=[])
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -305,21 +347,24 @@ def test_edit_experience_first_entry_fails_closed_when_row_count_does_not_grow(m
 
 def test_edit_experience_existing_row_edit_does_not_require_count_growth(monkeypatch):
     """Fill mode re-saves an EXISTING row in place (same index) — the row
-    count staying flat after reload must not be flagged as a binding
-    failure; that check only applies to a genuinely new first_entry row."""
+    set staying flat after reload must not be flagged as a binding failure;
+    that check only applies to a genuinely new first_entry row. Index is
+    deliberately non-zero (#815: a resume with one existing row does not
+    necessarily expose it at index 0)."""
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _SavePage(rows=1, grow_on_reload_by=0)
+    page = _SavePage(indexes=[3])
     results = edit_experience_on_hh(
         page,
         "resume-1",
         ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
         dry_run=False,
+        indexes=[3],
     )
 
-    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+    assert results == [ExperienceResult("строка 3: сохранено и привязано к резюме", True)]
 
 
 class _DisabledEndYearSavePage(_SavePage):
@@ -356,7 +401,7 @@ def test_edit_experience_current_true_skips_disabled_end_year(monkeypatch):
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _DisabledEndYearSavePage(rows=0, grow_on_reload_by=1)
+    page = _DisabledEndYearSavePage(indexes=[], grow_indexes_on_reload=[2])
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -377,7 +422,7 @@ def test_edit_experience_current_false_unchecks_checkbox_to_unlock_end_year(monk
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _DisabledEndYearSavePage(rows=0, grow_on_reload_by=1, uncheck_enables=True)
+    page = _DisabledEndYearSavePage(indexes=[], grow_indexes_on_reload=[2], uncheck_enables=True)
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -397,15 +442,20 @@ class _UnreadableRowLocator(_Locator):
 
 
 class _ReadPage:
-    """Two experience rows; row 0 is confirmed unreadable (drifted field),
-    row 1 reads normally — #796's resilience fix must skip row 0, not fail
-    the whole read."""
+    """Two experience rows at non-contiguous indexes 1 and 2 (#815: hh.ru's
+    row index is an internal counter, not a 0-based position). Row 1 is
+    confirmed unreadable (drifted field), row 2 reads normally — #796's
+    resilience fix must skip row 1, not fail the whole read."""
 
     def locator(self, selector):
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            return _RowButtonsLocator([1, 2])
+        if "Развернуть" in selector:
+            return _Locator(count=0)
         if "edit-experience-button" in selector:
             index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
-            return _Locator(count=1 if index < 2 else 0)
-        if "specific-company-input-0" in selector:
+            return _Locator(count=1 if index in (1, 2) else 0)
+        if "specific-company-input-1" in selector:
             return _UnreadableRowLocator(count=1)
         return _Locator(count=1)
 
@@ -542,7 +592,7 @@ def test_edit_experience_selects_start_month_when_provided(monkeypatch):
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
-    page = _MonthSavePage(rows=0, grow_on_reload_by=1)
+    page = _MonthSavePage(indexes=[], grow_indexes_on_reload=[2])
     results = edit_experience_on_hh(
         page,
         "resume-1",
@@ -579,3 +629,85 @@ def test_cli_entry_accepts_explicit_start_month():
         ['{"company":"Acme","position":"Engineer","start_year":"2020","start_month":"3"}'],
     )
     assert entries[0].start_month == "3"
+
+
+class _NonContiguousRowsPage:
+    """#815 live finding: hh.ru's row indexes are a non-contiguous internal
+    counter (confirmed live: 2,3,4 collapsed / 2,3,4,8,9 expanded — never
+    starting at 0). A resume with 3 rows can equally well expose them at
+    indexes 2/3/4 as at 0/1/2; range(0, count) silently returns 0 whenever
+    index 0 happens to be unused, which is the common case."""
+
+    def __init__(self, indexes, *, has_expand=False):
+        self.url = "https://hh.ru/resume/resume-1"
+        self._indexes = list(indexes)
+        self._has_expand = has_expand
+        self.expand_clicked = False
+
+    def locator(self, selector):
+        if selector.startswith("[data-qa^='edit-experience-button-']"):
+            return _RowButtonsLocator(self._indexes)
+        if "Развернуть" in selector:
+            if self._has_expand and not self.expand_clicked:
+                return _ExpandLocator(self)
+            return _Locator(count=0)
+        if "edit-experience-button" in selector:
+            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
+            return _Locator(count=1 if index in self._indexes else 0)
+        return _Locator(count=1)
+
+
+class _ExpandLocator(_Locator):
+    """#815: clicking "Развернуть" reveals the rows hidden behind hh.ru's
+    collapse threshold — modeled here as swapping in the full index set and
+    hiding the control itself, matching the live-confirmed behavior."""
+
+    def __init__(self, page):
+        super().__init__(count=1)
+        self._page = page
+
+    def click(self):
+        self._page.expand_clicked = True
+        self._page._indexes = [2, 3, 4, 8, 9]
+
+
+def test_experience_row_indexes_are_not_contiguous_from_zero():
+    """#815: range(0, N) undercounts (or returns 0) whenever a non-contiguous
+    index set does not start at 0 — the actual bug behind the false [FAIL]/
+    uncertain on a resume with real, saved experience rows."""
+    page = _NonContiguousRowsPage([2, 3, 4])
+
+    assert _experience_row_indexes(page) == [2, 3, 4]
+
+
+def test_experience_row_indexes_expands_collapsed_list():
+    """#815: hh.ru collapses the experience list to 3 visible cards behind a
+    "Развернуть" control once a resume has more than 3 entries — the real
+    row count is only visible after that control is clicked."""
+    page = _NonContiguousRowsPage([2, 3, 4], has_expand=True)
+
+    assert _experience_row_indexes(page) == [2, 3, 4, 8, 9]
+    assert page.expand_clicked is True
+
+
+def test_edit_experience_fails_closed_on_nonexistent_index_for_nonempty_resume(monkeypatch):
+    """#815: a resume that already has rows must never fall back to the
+    first-entry route (/resume/edit/{id}/experience) just because the
+    requested index is not currently in use — live testing found that route
+    can silently overwrite an unrelated existing row instead of creating a
+    new one on a non-empty resume. Fail closed instead."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    page = _NonContiguousRowsPage([2, 3, 4])
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "не найден среди существующих строк" in results[0].reason

@@ -13,6 +13,17 @@ to ``/resume/edit/{resume_id}/experience``, which opens the form pre-bound
 to that resume with no click needed — its field/button ``data-qa`` values
 are a separate namespace (``resume-editor-experience-*``,
 ``resume-partial-edit-*``) from the indexed row editor above.
+
+**#815 live write test (2026-08-30): this route is NOT a general "add a new
+row" mechanism on a resume that already has experience entries.** Live
+testing on a draft with 3 existing rows found it opened blank once, and on a
+separate attempt opened pre-filled with — and, on save, overwrote — an
+UNRELATED existing row (matched by some identity other than the row clicked,
+observed matching on start_year/start_month). It is used in ``experience.py``
+only for the one shape confirmed safe: a resume with genuinely zero
+experience rows. ``edit_experience_on_hh`` fails closed rather than falling
+back to this route when asked to address a row index that does not exist on
+a resume that already has other rows.
 """
 
 from __future__ import annotations
@@ -21,6 +32,30 @@ from ._generated import optional_selector as _optional_selector
 from ._generated import selector as _selector
 
 EXPERIENCE_EDIT_BUTTON = _selector("resume_experience.EXPERIENCE_EDIT_BUTTON")
+# #815/#833: EXPERIENCE_EDIT_BUTTON's {index} is an internal React counter
+# shared across the whole resume page (edit/add controls of every editable
+# block), not the row's position — confirmed live 2026-08-30: indices were
+# sparse and never started at 0 (observed sets 2,3,4 on one resume and
+# 1,6,7,8,12,17 on another), with no relation to row count or on-page order.
+# `_experience_row_indexes()` must therefore enumerate the actually-present
+# buttons rather than probe range(0, N) and stop at the first gap — that
+# undercounts (or returns 0) whenever index 0 happens to be free. The
+# trailing `-svg` sibling shares the same data-qa prefix (icon inside the
+# button) and must be excluded or it would double-count every row. The set
+# was also confirmed STABLE across an open/cancel cycle on the same page
+# (open one row's form, cancel it — the same full set comes back), so a
+# snapshot taken once is safe to reuse for the rest of a read/edit pass.
+EXPERIENCE_EDIT_BUTTONS_ALL = _selector("resume_experience.EXPERIENCE_EDIT_BUTTONS_ALL")
+# #815: hh.ru collapses the experience list to 3 visible cards (and their
+# edit buttons) behind a "Развернуть" control once a resume has more than 3
+# entries — confirmed live 2026-08-30 (5-entry draft: 3 buttons collapsed,
+# 5 after this control is clicked). No data-qa of its own; scoped by text
+# into the same resume-list-card-experience container as
+# EXPERIENCE_ADD_BUTTON. Confirmed absent (count=0) on resumes with 3 or
+# fewer entries, including empty drafts — `_experience_row_indexes()` must
+# expand before counting or it silently undercounts any resume past the
+# collapse threshold.
+EXPERIENCE_EXPAND_BUTTON = _selector("resume_experience.EXPERIENCE_EXPAND_BUTTON")
 EXPERIENCE_COMPANY = _selector("resume_experience.EXPERIENCE_COMPANY")
 EXPERIENCE_POSITION = _selector("resume_experience.EXPERIENCE_POSITION")
 EXPERIENCE_COMPANY_URL = _selector("resume_experience.EXPERIENCE_COMPANY_URL")

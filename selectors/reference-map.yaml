@@ -1976,6 +1976,39 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_EDIT_BUTTONS_ALL:
+    value: '[data-qa^=''edit-experience-button-'']:not([data-qa$=''-svg''])'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:24
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - edit-experience-button-2
+    - edit-experience-button-3
+    - edit-experience-button-4
+    - edit-experience-button-8
+    - edit-experience-button-9
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:24
+      note: '#815/#833 live confirmation (draft resumes with several experience entries): edit-experience-button-{index} is
+        keyed by an internal React counter shared across the whole resume page, not by the row''s position — confirmed sparse
+        index sets on different resumes/reloads (e.g. 2,3,4 and 1,6,7,8,12,17), never starting at 0, with no relation to row
+        count or on-page order. Counting rows via range(count) while count()==1 (the pre-fix approach) undercounts or returns
+        0 whenever index 0 is not currently in use. The prefix+exclude selector enumerates the actual live buttons regardless
+        of their numeric suffix; ``:not([data-qa$=''-svg''])`` excludes the sibling icon element sharing the same data-qa
+        prefix (``edit-experience-button-{index}-svg``), confirmed present alongside every button in the same live dump. The
+        full index set was also confirmed STABLE across an open/cancel cycle on the same page (opening one row''s form and
+        cancelling it returns the same set unchanged) — an earlier draft of this note claimed the set shifts after an unrelated
+        save elsewhere on the page; that was never actually observed and is retracted.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_END_MONTH:
     value: '[data-qa=''resume-editor-experience-end-month-input'']'
     criticality: write
@@ -2018,6 +2051,31 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_EXPAND_BUTTON:
+    value: '[data-qa=''resume-list-card-experience''] button:has-text(''Развернуть'')'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:25
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - resume-list-card-experience
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:25
+      note: '#815 live confirmation (draft resume, 5 experience entries): hh.ru collapses the experience list to 3 visible
+        cards behind a "Развернуть" (expand) button once there are more than 3 entries — confirmed via read-only DOM inspection
+        (button count went from 3 to 5 edit-experience-button-* elements after clicking it). The control has no data-qa of
+        its own (a bare <span> inside a <button>); scoping the text match into the existing resume-list-card-experience card
+        container (already used by EXPERIENCE_ADD_BUTTON) keeps it from matching an unrelated "Развернуть" control elsewhere
+        on the page. Confirmed absent (count=0) on resumes with 3 or fewer entries, including empty drafts.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.EXPERIENCE_MONTH_LISTBOX:
     value: '[role=''listbox'']'
     criticality: write
