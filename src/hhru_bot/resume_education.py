@@ -429,6 +429,34 @@ class EducationDeleteResult:
 # was the not-found signal; that assumption was live-disproven before merge.
 _ENTRY_NOT_FOUND_TEXT = "Problem fetching content"
 
+# #809 live read-only probe (2026-08-30, https://hh.ru/profile/edit/
+# primaryEducation/104505393, real authenticated session, cancelled via
+# "Отменить" -- no mutation performed): clicking the form's "Удалить" button
+# (_ENTRY_DELETE_TRIGGER above) does NOT delete the entry directly. It opens a
+# SECOND Magritte confirm dialog ("Учёба исчезнет из всех резюме, где она
+# есть. Всё равно удалить?") rendered as `[role="alertdialog"][aria-modal=
+# "true"]`. Neither the dialog nor its two buttons carry any `data-qa`
+# attribute (confirmed via page JS: both `outerHTML` dumps have `dataQa:
+# null`); their CSS classes are hashed build artifacts
+# (`magritte-button___Pubhr_7-2-26` etc.) and are NOT a stable selector across
+# hh.ru deploys. The only stable handle is the dialog's ARIA role plus its
+# buttons' exact visible text -- the same text-based, fail-closed pattern
+# already used by `_ENTRY_NOT_FOUND_TEXT` above and by
+# `labelled_field`/`get_by_text` elsewhere in this project. This was
+# confirmed only for kind="primary"; the #809 report notes "additional"
+# education/experience deletions were NOT observed to show this second
+# dialog, so the wait below treats it as OPTIONAL (either outcome -- dialog
+# shown, or the row torn down directly -- is accepted) rather than required.
+_DELETE_CONFIRM_DIALOG = "[role='alertdialog'][aria-modal='true']"
+_DELETE_CONFIRM_BUTTON_TEXT = "Удалить"
+# #809: bounds each attempt of the click-retry loop below that works around
+# this route's hydration lag (see the loop's own comment). 4 attempts x 5s =
+# 20s worst case before falling back to uncertain -- live-confirmed hydration
+# completed within ~10s in the investigation that found this race, so this
+# leaves headroom without picking an arbitrarily large single wait.
+DELETE_CONFIRM_DIALOG_TIMEOUT_MS = 5_000
+DELETE_CLICK_MAX_ATTEMPTS = 4
+
 
 def delete_education_entry_on_hh(
     page,
@@ -478,31 +506,128 @@ def delete_education_entry_on_hh(
     if dry_run:
         return EducationDeleteResult(entry_id, kind, True, "dry-run; кнопка удаления не нажата")
 
-    try:
-        if before_click is not None:
-            before_click()
-        button.first.click()
-    except PlaywrightError as exc:
+    # #809 live investigation (2026-08-30, real account, headless AND headed):
+    # the id-scoped edit route's SSR markup renders the delete button visible
+    # well before React finishes hydrating THIS node -- confirmed via
+    # `__reactFiber*`/`__reactProps*` presence-walk up the DOM tree, which
+    # showed 0 of 8 ancestor levels hydrated shortly after navigation and all
+    # 8 hydrated ~10s later. This is the same "visible != гидратирован" class
+    # of race already documented in CLAUDE.md for other hh.ru SSR screens, but
+    # here it hits an unusual extreme (single-digit-second hydration lag on
+    # this specific route/bundle, `profile_primaryEducation-route.*.js`).
+    # Playwright's `.click()` succeeds either way (the plain DOM node exists
+    # and is actionable) but is a silent no-op before hydration: neither the
+    # confirm dialog nor any network request follows. The first click is
+    # confirmed non-destructive for kind="primary" (it only opens the second
+    # dialog); for kind="additional" it is UNCONFIRMED whether the click
+    # itself is what tears the row down (see the no-dialog branch below). The
+    # reservation below is therefore made ONCE, before this loop's first
+    # click, rather than after any click or per retry iteration: for
+    # "primary" that is provably safe (the click is not destructive), and for
+    # "additional" it is strictly safer than reserving after the click --
+    # reserving early can only cost a spurious ``uncertain`` row on a click
+    # that never lands (the project's existing fail-closed trade-off, #476),
+    # while reserving after a possibly-destructive click leaves a real crash
+    # window with NO recorded row at all (AO review on PR #816, action_id
+    # stays None if the process dies before this call, and interrupt() is a
+    # no-op for that state -- silently diverging the audit trail from
+    # hh.ru's real state, worse than delete-resume's #480 lockout).
+    if before_click is not None:
+        before_click()
+    click_attempts = 0
+    dialog = page.locator(_DELETE_CONFIRM_DIALOG)
+    trigger = page.locator(_ENTRY_DELETE_TRIGGER[kind])
+    dialog_appeared = False
+    last_exc: PlaywrightError | None = None
+    while click_attempts < DELETE_CLICK_MAX_ATTEMPTS:
+        click_attempts += 1
+        try:
+            button.first.click()
+        except PlaywrightError as exc:
+            return EducationDeleteResult(
+                entry_id, kind, False, f"ошибка UI-клика: {exc}", uncertain=True
+            )
+        # Wait for either observed outcome -- the second confirm dialog
+        # renders (kind="primary", live-confirmed), or the row is torn down
+        # directly without one (the #809 report's unconfirmed claim for
+        # "additional"/experience deletions). ``trigger`` is already visible
+        # before this click (checked via ``button.count() == 1`` above), so
+        # racing a "visible" wait on it here would resolve immediately and
+        # never give the dialog time to render -- the row-torn-down outcome
+        # must be observed as ``trigger`` DETACHING instead, mirroring the
+        # wait used later in this function for the no-dialog case.
+        try:
+            dialog.first.wait_for(state="visible", timeout=DELETE_CONFIRM_DIALOG_TIMEOUT_MS)
+            dialog_appeared = True
+            last_exc = None
+            break
+        except PlaywrightError:
+            try:
+                trigger.first.wait_for(state="detached", timeout=DELETE_CONFIRM_DIALOG_TIMEOUT_MS)
+                last_exc = None
+                break
+            except PlaywrightError as exc:
+                # Neither outcome rendered -- most likely this attempt's
+                # click landed before hydration reached this node (see
+                # comment above). Retry the click rather than failing
+                # immediately; only exhausting all attempts is uncertain.
+                last_exc = exc
+                continue
+    if last_exc is not None:
+        # The click(s) already reached hh.ru (button.first.click() above did
+        # not raise) -- neither outcome rendered within the retry budget, so
+        # whether a mutation happened cannot be determined from here. Fail
+        # closed like every other post-click ambiguity in this module.
         return EducationDeleteResult(
-            entry_id, kind, False, f"ошибка destructive-клика: {exc}", uncertain=True
+            entry_id,
+            kind,
+            False,
+            f"после клика 'Удалить' не подтверждён ни диалог, ни результат: {last_exc}",
+            uncertain=True,
         )
 
-    # No confirmation dialog was observed in the read-only research dumps
-    # (CLAUDE.md selector-status note): the delete control sits directly in
-    # the form's action bar next to Save/Cancel, unlike delete-resume's
-    # separate confirm step. The positive signal is therefore the delete
-    # button itself detaching -- hh.ru tears down the whole form once the
-    # entry is gone, whether or not page.url changes (live-confirmed it does
-    # NOT for the not-found case, see _ENTRY_NOT_FOUND_TEXT above; the
-    # post-delete render was not separately observed, so this code does not
-    # assume either way). Any exception during this wait keeps the result
-    # uncertain -- the click may have already reached hh.ru. The button
-    # re-check below (same selector-absence check used pre-click above,
-    # generalized to "no longer exactly one match") is the authoritative
-    # proof; detachment is only the transition signal (same two-signal
-    # pattern as delete_resume.py).
+    if dialog_appeared:
+        # The second Magritte confirm dialog is up. Neither it nor its
+        # buttons carry a data-qa (see _DELETE_CONFIRM_DIALOG comment above),
+        # so the button is addressed by its exact visible text, scoped
+        # strictly inside the dialog role to avoid matching unrelated
+        # "Удалить" controls elsewhere on the page (e.g. the form's own
+        # trigger, which is still mounted underneath the dialog). The
+        # reservation already happened before the loop above (see comment
+        # there) -- this click is the confirmed-destructive one for
+        # kind="primary", so no further before_click() call belongs here.
+        confirm_button = dialog.get_by_text(_DELETE_CONFIRM_BUTTON_TEXT, exact=True)
+        if confirm_button.count() != 1:
+            return EducationDeleteResult(
+                entry_id,
+                kind,
+                False,
+                "кнопка подтверждения во втором диалоге не найдена однозначно",
+                uncertain=True,
+            )
+        try:
+            confirm_button.first.click()
+        except PlaywrightError as exc:
+            return EducationDeleteResult(
+                entry_id, kind, False, f"ошибка destructive-клика: {exc}", uncertain=True
+            )
+    # No dialog appeared -- the first click above was itself the destructive
+    # one (matches the #809 report's unconfirmed claim for "additional").
+    # The reservation already happened before the loop, so there is nothing
+    # further to do here.
+
+    # The positive signal is the delete button itself detaching -- hh.ru
+    # tears down the whole form once the entry is gone, whether or not
+    # page.url changes (live-confirmed it does NOT for the not-found case,
+    # see _ENTRY_NOT_FOUND_TEXT above; the post-delete render was not
+    # separately observed, so this code does not assume either way). Any
+    # exception during this wait keeps the result uncertain -- the click may
+    # have already reached hh.ru. The button re-check below (same
+    # selector-absence check used pre-click above, generalized to "no longer
+    # exactly one match") is the authoritative proof; detachment is only the
+    # transition signal (same two-signal pattern as delete_resume.py).
     try:
-        button.first.wait_for(state="detached", timeout=ENTRY_DELETE_VERIFY_TIMEOUT_MS)
+        trigger.first.wait_for(state="detached", timeout=ENTRY_DELETE_VERIFY_TIMEOUT_MS)
     except PlaywrightError as exc:
         return EducationDeleteResult(
             entry_id,
