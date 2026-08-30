@@ -333,6 +333,11 @@ def test_field_that_reverts_after_fill_fails_before_save_click(monkeypatch):
     monkeypatch.setattr(
         resume_education, "open_hydrated_resume_editor", fake_open_hydrated_resume_editor
     )
+    # Проверяется отказ после исчерпания бюджета readback'а, а не его величина:
+    # с боевыми 3000 мс и no-op wait_for_timeout фейка цикл `_fill_verified`
+    # крутил CPU 3 секунды wall-clock. Значение читается из модуля при вызове,
+    # поэтому monkeypatch достаточно.
+    monkeypatch.setattr(resume_education, "FIELD_VERIFY_TIMEOUT_MS", 50)
 
     records = [
         EducationRecord(
