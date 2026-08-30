@@ -48,6 +48,7 @@ DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 BROWSER_COMMANDS = frozenset(
     {
         "about",
+        "adaptive-resume",
         "apply",
         "bump",
         "call-api",
@@ -238,6 +239,12 @@ def _requires_browser(args: argparse.Namespace) -> bool:
         )
     if args.command == "professional-roles":
         return bool(getattr(args, "refresh", False))
+    if args.command == "adaptive-resume":
+        # Без --apply команда только генерирует и печатает план (PR-1, #753) —
+        # браузер не открывается вовсе. С --apply открывается для title/about/
+        # skills (#769), включая --apply --dry-run (формы открываются, чтобы
+        # показать план по каждому шагу, save не нажимается).
+        return bool(getattr(args, "apply", False))
     if args.command == "competitors":
         return getattr(args, "competitors_command", None) == "collect"
     return args.command in BROWSER_COMMANDS
@@ -274,6 +281,8 @@ def _is_write_command(args: argparse.Namespace) -> bool:
         return True
     if args.command == "professional-roles":
         return bool(getattr(args, "refresh", False))
+    if args.command == "adaptive-resume":
+        return bool(getattr(args, "apply", False)) and not getattr(args, "dry_run", False)
     subcommand_dest = SUBCOMMAND_DESTS.get(args.command)
     subcommand = getattr(args, subcommand_dest, None) if subcommand_dest else None
     return (
