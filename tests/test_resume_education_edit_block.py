@@ -40,6 +40,9 @@ class FakeFieldLocator:
     def fill(self, value):  # noqa: ARG002
         pass
 
+    def click(self, *, timeout=None):  # noqa: ARG002
+        pass
+
     def or_(self, other):  # noqa: ARG002
         return self
 
@@ -49,6 +52,15 @@ class FakeFieldLocator:
 
     def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
         pass
+
+
+class FakeAbsentLocator:
+    """Models a locator with no matches -- e.g. the cookie banner, which is
+    not present in these fakes' modeled DOM (#825: dismiss_cookie_banner is a
+    best-effort no-op here, same as on a real page with no banner shown)."""
+
+    def count(self):
+        return 0
 
 
 class FakeTrigger:
@@ -85,10 +97,20 @@ class FakePage:
             return FakeTrigger(self._trigger_count)
         if selector == "[data-qa='profile-layout-save-button']":
             return FakeSaveButton(self)
+        if selector == "[data-qa='cookies-policy-informer-accept']":
+            return FakeAbsentLocator()
         return FakeFieldLocator()
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         pass
+
+    def get_by_text(self, text):  # noqa: ARG002
+        # #825: the positive post-save check looks up the saved record's own
+        # text on the page -- these fakes model a page where every save
+        # trivially "shows up" (they don't render real DOM), matching every
+        # existing test's expectation that a successful FakeSaveButton.click()
+        # is a full, confirmed success.
+        return FakeFieldLocator()
 
 
 def test_hydration_runtime_error_after_prior_save_is_reported_not_raised(monkeypatch):
