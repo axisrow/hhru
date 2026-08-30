@@ -39,7 +39,6 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_MONTH_LISTBOX,
     EXPERIENCE_MONTH_OPTION,
     EXPERIENCE_POSITION,
-    EXPERIENCE_RESUME_PANEL_CHECKBOX,
     EXPERIENCE_RESUME_PANEL_EXPAND,
     EXPERIENCE_RESUME_PANEL_SCOPE,
     EXPERIENCE_SAVE,
@@ -512,7 +511,15 @@ def _reconcile_experience_resume_panel(
     all_titles = [target_title, *other_titles]
     checkboxes = {}
     for title in all_titles:
-        box = page.locator(EXPERIENCE_RESUME_PANEL_CHECKBOX.format(title=title))
+        # #782 PR review: a resume title is untrusted free text (can contain
+        # an apostrophe, e.g. Russian "Data Engineer's..."), so it must never
+        # be interpolated into a hand-built CSS attribute selector string —
+        # one bad title would break the checkbox lookup for EVERY resume in
+        # the account, not just the one with the quote. get_by_role() uses
+        # Playwright's accessible-name matching internally instead of string
+        # concatenation, the same pattern already used for other free-text
+        # labels in this codebase (professional_roles.py, resume_position.py).
+        box = scope.get_by_role("checkbox", name=title, exact=True)
         if box.count() != 1:
             raise ResumePanelReconciliationError(
                 f"чекбокс резюме {title!r} в панели не найден однозначно ({box.count()})"

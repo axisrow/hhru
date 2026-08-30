@@ -277,12 +277,32 @@ def test_edit_experience_first_entry_fails_closed_on_route_mismatch(monkeypatch)
 
 
 class _PanelCheckbox(_Locator):
-    """Fake for EXPERIENCE_RESUME_PANEL_CHECKBOX.format(title=...): click()
+    """Fake for scope.get_by_role("checkbox", name=title, exact=True)
+    (#782 PR review: no longer a hand-built CSS attribute selector). click()
     actually toggles ``_checked`` (base _Locator.click() is a no-op), so a
     test can assert reconciliation logic really changed the panel state."""
 
     def click(self):
         self._checked = not self._checked
+
+
+class _PanelScopeLocator(_Locator):
+    """Fake for the "Резюме с этим местом работы" panel container returned
+    by ``page.locator(EXPERIENCE_RESUME_PANEL_SCOPE)``. #782 PR review:
+    ``_reconcile_experience_resume_panel`` resolves each checkbox via
+    ``scope.get_by_role("checkbox", name=title, exact=True)`` instead of a
+    hand-built CSS selector — this fake mirrors that by dispatching to a
+    ``checkboxes`` dict keyed by title (a resume's accessible name), the
+    same lookup Playwright's role locator performs internally."""
+
+    def __init__(self, checkboxes: dict[str, _PanelCheckbox], *, count=1):
+        super().__init__(count=count)
+        self._checkboxes = checkboxes
+
+    def get_by_role(self, role, *, name, exact=False):
+        assert role == "checkbox"
+        assert exact is True
+        return self._checkboxes.get(name, _Locator(count=0))
 
 
 class _SavePage:
@@ -328,9 +348,6 @@ class _SavePage:
     def locator(self, selector):
         if selector.startswith("[data-qa^='edit-experience-button-']"):
             return _RowButtonsLocator(self.indexes)
-        if selector.startswith("input[type=checkbox][aria-label="):
-            title = selector.split("aria-label='", 1)[-1].rstrip("']")
-            return self._panel_checkboxes.get(title, _Locator(count=0))
         if selector.startswith("xpath=") and "Развернуть" in selector:
             if self._panel_titles is None:
                 return _Locator(count=0)
@@ -344,7 +361,9 @@ class _SavePage:
 
             return _ExpandLocator(count=1)
         if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
-            return _Locator(count=1 if self._panel_titles is not None else 0)
+            if self._panel_titles is None:
+                return _Locator(count=0)
+            return _PanelScopeLocator(self._panel_checkboxes)
         if "Развернуть" in selector:
             return _Locator(count=0)
         if "edit-experience-button" in selector:
@@ -941,9 +960,6 @@ class _AddButtonPage:
                     page.add_clicked = True
 
             return _AddTriggerLocator(count=1)
-        if selector.startswith("input[type=checkbox][aria-label="):
-            title = selector.split("aria-label='", 1)[-1].rstrip("']")
-            return self._panel_checkboxes.get(title, _Locator(count=0))
         if selector.startswith("xpath=") and "Развернуть" in selector:
             if not self._has_expand:
                 return _Locator(count=0)
@@ -955,7 +971,7 @@ class _AddButtonPage:
 
             return _ExpandLocator(count=1)
         if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
-            return _Locator(count=1)
+            return _PanelScopeLocator(self._panel_checkboxes)
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
@@ -1007,6 +1023,67 @@ def test_edit_experience_via_add_button_unchecks_other_resumes_before_save(monke
     assert page._panel_checkboxes["ai-teamlead"].is_checked() is False
     assert page._panel_checkboxes["python"].is_checked() is False
     assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_handles_apostrophe_in_resume_title(monkeypatch):
+    """PR review (#856): a resume title is untrusted free text and can
+    contain an apostrophe (a plausible Russian title) — reconciliation must
+    resolve it via accessible-name matching (get_by_role), not a hand-built
+    CSS attribute selector, or one such title would break checkbox lookup
+    for every OTHER resume in the account too, not just the one with the
+    quote. This test would fail with the old
+    input[aria-label='{title}']-based fake, whose naive split/rstrip
+    parsing breaks on an embedded quote the same way the real CSS selector
+    would."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={
+            "Target Resume": True,
+            "Data Engineer's Profile": True,
+        },
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "other": "Data Engineer's Profile"},
+    )
+
+    assert page._panel_checkboxes["Target Resume"].is_checked() is True
+    assert page._panel_checkboxes["Data Engineer's Profile"].is_checked() is False
+    assert results == [ExperienceResult("строка 7: сохранено и привязано к резюме", True)]
+
+
+def test_reconcile_experience_resume_panel_existing_row_only_touches_target(monkeypatch):
+    """#856 review (non-blocking observation): a direct unit test for
+    is_new_row=False — editing an EXISTING row must leave every OTHER
+    resume's checkbox exactly as found (their state is that row's real
+    binding, not a default to discard) and only ensure the target one ends
+    up checked."""
+    from hhru_bot.experience import _reconcile_experience_resume_panel
+
+    checkboxes = {
+        "Target Resume": _PanelCheckbox(count=1, checked=False),
+        "ai-engineer": _PanelCheckbox(count=1, checked=True),
+        "python": _PanelCheckbox(count=1, checked=False),
+    }
+    page = _AddButtonPage([2, 3], panel_titles={})
+    page._panel_checkboxes = checkboxes
+
+    _reconcile_experience_resume_panel(
+        page,
+        target_title="Target Resume",
+        other_titles=["ai-engineer", "python"],
+        is_new_row=False,
+    )
+
+    assert checkboxes["Target Resume"].is_checked() is True
+    assert checkboxes["ai-engineer"].is_checked() is True
+    assert checkboxes["python"].is_checked() is False
 
 
 def test_edit_experience_via_add_button_expands_collapsed_panel(monkeypatch):

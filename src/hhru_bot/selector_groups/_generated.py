@@ -95,7 +95,6 @@ VALUES: dict[str, str] = {
     "resume_experience.EXPERIENCE_MONTH_LISTBOX": "[role='listbox']",
     "resume_experience.EXPERIENCE_MONTH_OPTION": "[data-qa='magritte-select-option-{month}']",
     "resume_experience.EXPERIENCE_POSITION": "[data-qa='resume-profile-experience-specific-position-input-{index}']",
-    "resume_experience.EXPERIENCE_RESUME_PANEL_CHECKBOX": "input[type=checkbox][aria-label='{title}']",
     "resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND": "xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]//button[contains(., 'Развернуть')]",
     "resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE": "xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]",
     "resume_experience.EXPERIENCE_SAVE": "[data-qa='profile-layout-save-button']",

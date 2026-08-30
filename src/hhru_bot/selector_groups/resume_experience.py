@@ -236,6 +236,18 @@ EXPERIENCE_SHARED_NEW_ROW_POSITION = _selector(
 # EXPERIENCE_EDIT_BUTTON) the panel instead reflects that row's actual
 # current binding (some checked, some not) — the caller must not blindly
 # uncheck non-target resumes there, only ensure the target one is checked.
+#
+# #782 PR review: the individual checkbox is deliberately NOT a
+# _selector()-registered CSS string here. A resume title is untrusted free
+# text a user can name however they like (an apostrophe is a plausible
+# Russian title, e.g. "Data Engineer's..."), and interpolating it into a
+# hand-built `input[aria-label='{title}']` CSS attribute selector breaks the
+# selector's quoting for every OTHER title looked up in the same pass, not
+# just the offending one — experience.py's
+# ``_reconcile_experience_resume_panel`` instead resolves each checkbox via
+# ``scope.get_by_role("checkbox", name=title, exact=True)``, the same
+# accessible-name-matching pattern already used for other free-text labels
+# in this codebase (professional_roles.py, resume_position.py) — Playwright
+# handles the string safely internally, no manual CSS construction at all.
 EXPERIENCE_RESUME_PANEL_SCOPE = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE")
 EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND")
-EXPERIENCE_RESUME_PANEL_CHECKBOX = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_CHECKBOX")
