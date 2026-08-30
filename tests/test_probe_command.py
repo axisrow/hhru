@@ -56,7 +56,7 @@ def test_probe_passes_resume_id_not_config_slug(monkeypatch, tmp_path):
 
     # bare_resume строит resume_id из resume_url; подменяем id на слаг конфига,
     # чтобы воспроизвести реальную ситуацию «слаг != resume_id».
-    real_resume_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_resume_id = "00001111222233334444555566667777888899"
     resume = bare_resume(real_resume_id)
     resume.id = "python"
 

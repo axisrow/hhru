@@ -254,7 +254,7 @@ def test_foreign_resume_topic_with_account_ids_does_not_confirm_apply():
 # домене. Дальше — формы живого аккаунта 2026-08-16 (probe212): хэш конфига,
 # числовой id конфиг-резюме и числовой id default-резюме (форма отклика не
 # предлагает not_finished-резюме, и тема подписывается default-резюме).
-_HASH = "b3236ebbff10f60ff30039ed1f6d5876645331"
+_HASH = "00001111222233334444555566667777888899"
 _NUM_CONFIG = "284561395"  # python (not_finished)
 _NUM_DEFAULT = "96223331"  # marketing — резюме по умолчанию формы отклика
 _ACCOUNT = {_NUM_CONFIG, _NUM_DEFAULT}

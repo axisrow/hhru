@@ -36,7 +36,7 @@ logger = logging.getLogger("hhru_bot.resume_education")
 PRIMARY_TRIGGER = "[data-qa='resume-edit-button-education-{index}']"
 ADDITIONAL_TRIGGER = "[data-qa='resume-edit-button-additionalEducation-{index}']"
 # Confirmed by a read-only live DOM probe on the dedicated training resume
-# 584926d4ff10f8b2870039ed1f707779623239 (2026-08-18). These links only open
+# 11112222333344445555666677778888999900 (2026-08-18). These links only open
 # the form; they do not persist anything until SAVE_BUTTON is clicked.
 PRIMARY_ADD = "[data-qa='resume-list-card-education'] [data-qa='link']"
 ADDITIONAL_ADD = "[data-qa='resume-list-card-additionalEducation'] [data-qa='link']"

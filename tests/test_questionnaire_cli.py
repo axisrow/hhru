@@ -836,7 +836,7 @@ def test_learn_rekeys_scans_recorded_under_the_config_slug(tmp_path, monkeypatch
     После правки самого probe накопленные строки остались бы недостижимы через
     --resume: learn находил бы единицы вопросов вместо сотни, молча.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
     history = History(tmp_path / "h.db")
     _scan(history, "python", "v1", "Опишите самый сложный проект")
@@ -851,7 +851,7 @@ def test_learn_rekeys_scans_recorded_under_the_config_slug(tmp_path, monkeypatch
 
 
 def test_rekey_is_idempotent_and_leaves_foreign_keys_alone(tmp_path):
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     _scan(history, "python", "v1", "Опишите проект")
     _scan(history, "marketing", "v2", "Ваш опыт?")
@@ -870,7 +870,7 @@ def test_rekey_moves_the_pending_queue_not_only_the_scans(tmp_path):
     ON CONFLICT у очереди — (resume_id, question_key), слаг и hex не сталкиваются,
     и получился бы дубль, одна половина которого недостижима навсегда.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     history.record_questionnaire_pending(
         "python", [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
@@ -890,7 +890,7 @@ def test_rekey_collapses_a_question_queued_under_both_keys(tmp_path):
     UNIQUE(resume_id, question_key) не даст перенести слаг поверх существующего
     hex — перенос обязан схлопнуть дубль, а не упасть и не оставить сироту.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
     history.record_questionnaire_pending(real_id, question)
@@ -914,7 +914,7 @@ def test_rekey_collapses_a_question_queued_under_both_keys(tmp_path):
 def test_set_rekeys_legacy_scans_without_a_tty(tmp_path):
     """learn выходит по !isatty ДО нормализации, поэтому set — единственный её
     неинтерактивный путь."""
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
     history = History(tmp_path / "h.db")
     _scan(history, "python", "v1", "Опишите проект")
@@ -935,7 +935,7 @@ def test_rekey_keeps_a_pending_slug_row_whose_hex_twin_is_resolved(tmp_path):
     заново увиденный вопрос воскрешает resolved-строку), и перенос обязан
     совпадать с ним, а не противоречить.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
     # The resolved hex twin is older. Rekey must use the newer pending slug
@@ -969,7 +969,7 @@ def test_rekey_uses_updated_at_for_pending_twin_merge(
     Both pending/resolved directions must retain the complete newer row. In
     particular, an old slug row must not erase a newer hex row's cluster.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     item = [{"text": "Данные достоверны?", "kind": "text", "reason": "reason"}]
     history.record_questionnaire_pending(real_id, item)
@@ -1007,7 +1007,7 @@ def test_rekey_uses_updated_at_for_pending_twin_merge(
 
 def test_rekey_is_all_or_nothing_when_pending_timestamps_are_ambiguous(tmp_path):
     """An equal timestamp must not split scans from the still-unmerged queue."""
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     item = [{"text": "Неоднозначный вопрос", "kind": "text", "reason": "reason"}]
     history.record_questionnaire_pending(real_id, item)
@@ -1041,7 +1041,7 @@ def test_rekey_carries_the_slug_rows_fields_onto_the_surviving_twin(tmp_path):
     ``row["cluster"]`` вторым приоритетом. Потеряв его при rekey, learn молча
     получит 'mixed' там, где стоял 'compliance'.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     # hex-близнец: ранний apply, без кластера и без шаблона.
     history.record_questionnaire_pending(
@@ -1084,7 +1084,7 @@ def test_rekey_preserves_the_surviving_rows_original_created_at(tmp_path):
     вопрос вообще впервые увиден, а не момент последнего обновления — его
     затирать нельзя, даже когда слаг-строка новее по ``updated_at``.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     question = [{"text": "Данные достоверны?", "kind": "text", "reason": "нет шаблона"}]
     # hex-близнец: записан первым, его created_at — исходный момент встречи.
@@ -1125,7 +1125,7 @@ def test_rekey_does_not_revive_a_question_resolved_under_both_keys(tmp_path):
     является. Безусловный промоут вернул бы отвеченный вопрос в очередь на
     обучение и заново заблокировал бы вакансию через questionnaire_pending.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     history = History(tmp_path / "h.db")
     question = [{"text": "Ваш опыт?", "kind": "text", "reason": "нет шаблона"}]
     history.record_questionnaire_pending(real_id, question)
@@ -1156,7 +1156,7 @@ def test_rekey_refuses_when_a_slug_collides_with_another_resumes_real_id(tmp_pat
     """
     from hhru_bot.commands.questionnaire import rekey_legacy_scans
 
-    b_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    b_real = "00001111222233334444555566667777888899"
     a_real = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
     config = SimpleNamespace(
         resumes=[
@@ -1190,7 +1190,7 @@ def test_rekey_refuses_a_slug_matching_a_removed_resume_history_key(tmp_path, ca
     """
     from hhru_bot.commands.questionnaire import rekey_legacy_scans
 
-    gone = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    gone = "00001111222233334444555566667777888899"
     current_real = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
     config = SimpleNamespace(resumes=[SimpleNamespace(id=gone, resume_id=current_real)])
     history = History(tmp_path / "h.db")
@@ -1220,7 +1220,7 @@ def test_rekey_still_runs_when_a_slug_equals_its_own_real_id(tmp_path):
     from hhru_bot.commands.questionnaire import rekey_legacy_scans
 
     self_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
-    other_real = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    other_real = "00001111222233334444555566667777888899"
     config = SimpleNamespace(
         resumes=[
             SimpleNamespace(id=self_id, resume_id=self_id),  # слаг == свой же id
@@ -1243,7 +1243,7 @@ def test_learn_does_not_pin_a_resume_to_the_account_cluster(tmp_path, monkeypatc
     поэтому нескопированная проверка закрепляла бы 'mixed' аккаунта за резюме —
     ровно та деградация кластера, которую чинит #486 п.5, только с другого конца.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
     history = History(tmp_path / "h.db")
     # Account-шаблон с дефолтным кластером; резюме-переопределения ещё нет.
@@ -1277,7 +1277,7 @@ def test_static_example_resolves_only_within_the_given_scope(tmp_path):
     Тест выше вызывает set БЕЗ --resume, то есть scope=None и резолюция идёт
     по всей базе — он проходил бы и при сломанной фильтрации по resume_id.
     """
-    real_id = "b3236ebbff10f60ff30039ed1f6d5876645331"
+    real_id = "00001111222233334444555566667777888899"
     other_id = "aa11bb22cc33dd44ee55ff66aa77bb88cc99"
     _write_config(tmp_path, "python", f"https://hh.ru/resume/{real_id}")
     history = History(tmp_path / "h.db")
