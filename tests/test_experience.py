@@ -163,7 +163,10 @@ class _Locator:
     def fill(self, _value):
         return None
 
-    def click(self):
+    def click(self, *, timeout=None, **_kwargs):
+        return None
+
+    def scroll_into_view_if_needed(self, *, timeout=None, **_kwargs):
         return None
 
     def input_value(self):
@@ -282,7 +285,7 @@ class _PanelCheckbox(_Locator):
     actually toggles ``_checked`` (base _Locator.click() is a no-op), so a
     test can assert reconciliation logic really changed the panel state."""
 
-    def click(self):
+    def click(self, *, timeout=None, **_kwargs):
         self._checked = not self._checked
 
 
@@ -356,11 +359,11 @@ class _SavePage:
             page = self
 
             class _ExpandLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     page.expand_clicked = True
 
             return _ExpandLocator(count=1)
-        if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
+        if selector.startswith("xpath=") and "этим местом работы" in selector:
             if self._panel_titles is None:
                 return _Locator(count=0)
             return _PanelScopeLocator(self._panel_checkboxes)
@@ -488,7 +491,7 @@ class _DisabledEndYearSavePage(_SavePage):
             page = self
 
             class _CheckboxLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     page.checkbox_clicked = True
 
             return _CheckboxLocator(count=1)
@@ -618,7 +621,7 @@ class _MultiRowReadPage:
                 page = self
 
                 class _ExpandLocator(_Locator):
-                    def click(self):
+                    def click(self, *, timeout=None, **_kwargs):
                         page._expanded = True
 
                 return _ExpandLocator(count=1)
@@ -631,7 +634,7 @@ class _MultiRowReadPage:
                 page = self
 
                 class _EditButtonLocator(_Locator):
-                    def click(self):
+                    def click(self, *, timeout=None, **_kwargs):
                         page._form_open_for = index
 
                 return _EditButtonLocator(count=1)
@@ -691,7 +694,7 @@ class _MonthOptionLocator(_Locator):
         self._page = page
         self._month = month
 
-    def click(self):
+    def click(self, *, timeout=None, **_kwargs):
         self._page.selected_month = self._month
         self._page.listbox_open = False
 
@@ -770,7 +773,7 @@ class _MonthSavePage(_SavePage):
             page = self
 
             class _StartMonthLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     pass
 
             return _StartMonthLocator(count=1)
@@ -779,7 +782,7 @@ class _MonthSavePage(_SavePage):
             month = selector.rsplit("-", 1)[-1].rstrip("]").strip("'")
 
             class _OptionLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     page.start_month_selected = month
 
             return _OptionLocator(count=1)
@@ -871,7 +874,7 @@ class _ExpandLocator(_Locator):
         super().__init__(count=1)
         self._page = page
 
-    def click(self):
+    def click(self, *, timeout=None, **_kwargs):
         self._page.expand_clicked = True
         self._page._indexes = [2, 3, 4, 8, 9]
 
@@ -956,7 +959,7 @@ class _AddButtonPage:
             page = self
 
             class _AddTriggerLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     page.add_clicked = True
 
             return _AddTriggerLocator(count=1)
@@ -966,11 +969,11 @@ class _AddButtonPage:
             page = self
 
             class _ExpandLocator(_Locator):
-                def click(self):
+                def click(self, *, timeout=None, **_kwargs):
                     page.expand_clicked = True
 
             return _ExpandLocator(count=1)
-        if selector.startswith("xpath=") and "Резюме с этим местом работы" in selector:
+        if selector.startswith("xpath=") and "этим местом работы" in selector:
             return _PanelScopeLocator(self._panel_checkboxes)
         return _Locator(count=1)
 

@@ -249,5 +249,20 @@ EXPERIENCE_SHARED_NEW_ROW_POSITION = _selector(
 # accessible-name-matching pattern already used for other free-text labels
 # in this codebase (professional_roles.py, resume_position.py) — Playwright
 # handles the string safely internally, no manual CSS construction at all.
+#
+# #782 PR #856 LIVE WRITE test (2026-08-30, 17-resume account, draft target
+# resume): the panel's own <h3> heading is NOT the plain string it appears
+# to be — its real text is "Резюме с\xa0этим местом работы", with a
+# NON-BREAKING SPACE (U+00A0) between "с" and "этим", not a regular space.
+# XPath 1.0's normalize-space() does NOT fold NBSP into a plain space (it
+# only collapses/trims ASCII whitespace), so an exact-match
+# normalize-space(text())='Резюме с этим местом работы' NEVER matched live —
+# every attempt timed out as "panel not found", even though the panel was
+# genuinely present. Both selectors below use contains(text(), 'этим местом
+# работы') instead: a substring entirely after the NBSP, immune to this
+# specific encoding mismatch, and confirmed unique on the live page (h3
+# count()==1). Any future selector built from this heading's text must
+# avoid the "с " prefix or re-verify against the live NBSP byte, not just a
+# copy-pasted string from a design doc/screenshot.
 EXPERIENCE_RESUME_PANEL_SCOPE = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE")
 EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND")

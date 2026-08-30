@@ -482,6 +482,21 @@ def _reconcile_experience_resume_panel(
     match the expected resume count — a partial reconciliation is worse
     than no save at all, the same fail-closed principle already used
     throughout this module for save-binding verification.
+
+    PR #856 LIVE WRITE test (2026-08-30, 17-resume account): the expand
+    button's ACTIVATION was found unreliable — a plain ``.click()`` did not
+    expand the list on several live attempts even though the click target
+    was confirmed correct (no #824-style interception: elementFromPoint
+    resolves to the button's own label span). A ``focus()`` +
+    ``keyboard.press("Space")`` sequence expanded the list on one live
+    attempt but failed to on a later one with the identical sequence — the
+    underlying activation mechanism for this specific Magritte button
+    variant is not yet understood. Both are attempted below (click first,
+    then the keyboard sequence as a second attempt) since either narrows the
+    failure window even without explaining it; this remains a known,
+    tracked instability (follow-up needed), not a silently-accepted gap —
+    the fail-closed error below still fires if BOTH attempts leave the
+    button in place.
     """
     scope = page.locator(EXPERIENCE_RESUME_PANEL_SCOPE)
     if scope.count() != 1:
@@ -498,7 +513,19 @@ def _reconcile_experience_resume_panel(
         try:
             expand.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
             expand.click()
-            expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+            try:
+                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
+            except PlaywrightError:
+                # #782/#856 live trace: plain click() confirmed unreliable
+                # for this specific control (see docstring above) — a
+                # keyboard-activation retry via focus()+Space was live-
+                # confirmed to succeed at least once where click() alone did
+                # not. Only attempted once as a second line of defence, not
+                # looped: the fail-closed error below still fires if this
+                # also does not hide the button.
+                expand.focus()
+                page.keyboard.press("Space")
+                expand.wait_for(state="hidden", timeout=PANEL_TIMEOUT_MS)
         except PlaywrightError as exc:
             raise ResumePanelReconciliationError(
                 f"не удалось развернуть панель 'Резюме с этим местом работы': {exc}"
@@ -743,7 +770,43 @@ def edit_experience_on_hh(
                     )
                 ]
             try:
-                add_trigger.click()
+                # #782 live trace (2026-08-30): _experience_row_indexes()
+                # just above expands the collapsed row list
+                # (_expand_experience_list), which reflows the page and can
+                # leave EXPERIENCE_ADD_BUTTON's bounding box above the
+                # current viewport (negative Y, confirmed live) — a
+                # different failure shape from the usual "visible !=
+                # hydrated" render race documented in CLAUDE.md.
+                # Locator.click()'s own actionability check scrolls the
+                # element into view too, but live testing found that
+                # auto-scroll intermittently loses the race against the
+                # reflow anyway (repeated 10-30s click timeouts observed
+                # live) — an explicit scroll_into_view_if_needed() before
+                # the click is a stronger, independent guarantee that does
+                # not depend on click()'s internal timing. An explicit
+                # finite click timeout is still set so a genuine
+                # actionability failure surfaces as a normal
+                # PlaywrightError here rather than the ambient 30s default.
+                add_trigger.scroll_into_view_if_needed(timeout=FORM_TIMEOUT_MS)
+                add_trigger.click(timeout=FORM_TIMEOUT_MS)
+                # #782 live trace (2026-08-30): a blind retry click here is
+                # unsafe — the first click above can succeed and already
+                # navigate the page to the shared-editor URL while the panel
+                # itself is still rendering (ordinary "commit is not
+                # painted" React race, just a slower one on this specific
+                # screen than PANEL_TIMEOUT_MS alone covers). Retrying
+                # add_trigger.click() at that point waits on a control that
+                # no longer exists on the NEW page (add_trigger was scoped
+                # to the old resume page's DOM) and only ever times out —
+                # confirmed live: this was the actual cause of every
+                # "не удалось открыть форму" failure observed while
+                # developing this fix, not a genuinely missed first click.
+                # A longer single wait for the panel is the correct fix;
+                # FORM_TIMEOUT_MS (10s) already covers the same class of
+                # slow-render race used everywhere else in this module.
+                page.locator(EXPERIENCE_RESUME_PANEL_SCOPE).wait_for(
+                    state="visible", timeout=FORM_TIMEOUT_MS
+                )
             except PlaywrightError as exc:
                 return results + [
                     ExperienceResult(f"строка опыта {index}: не удалось открыть форму: {exc}")

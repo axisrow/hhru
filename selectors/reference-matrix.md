@@ -97,8 +97,8 @@
 | resume_experience.EXPERIENCE_MONTH_LISTBOX | `[role='listbox']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_MONTH_OPTION | `[data-qa='magritte-select-option-{month}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_POSITION | `[data-qa='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND | `xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]//button[contains(., 'Развернуть')]` | — | — | — | documented_live |
-| resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE | `xpath=//h3[normalize-space(text())='Резюме с этим местом работы']/ancestor::div[1]` | — | — | — | documented_live |
+| resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND | `xpath=//button[contains(., 'Развернуть')]` | — | — | — | documented_live |
+| resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE | `xpath=//h3[contains(text(), 'этим местом работы')]/ancestor::div[2]` | — | — | — | documented_live |
 | resume_experience.EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY | `[data-qa^='resume-profile-experience-specific-company-input-']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION | `[data-qa^='resume-profile-experience-specific-position-input-']` | — | — | — | live_dom |
