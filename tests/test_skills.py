@@ -214,12 +214,16 @@ def _mock_suggest_locator() -> MagicMock:
     """A RESUME_SKILLS_SUGGEST_USER_INPUT locator stub for the fill+click loop.
 
     #826: Enter never commits a chip in this combobox; the code clicks the
-    autocomplete option that echoes the typed text instead. .wait_for()
-    resolving immediately keeps this a no-op for tests that only care about
-    the eventual chip outcome, not the click mechanics themselves.
+    autocomplete option that echoes the typed text instead, via
+    `.filter(has_text=...).first` (review #830: exact-text filtered, matching
+    the expected_chip pattern below, to avoid clicking a stale option from a
+    previous iteration). `.wait_for()`/`.click()` on the raw locator resolve
+    immediately as a no-op for tests that only care about the eventual chip
+    outcome, not the click mechanics themselves — assert against
+    `.filter.return_value.first` when a test needs to observe the click.
     """
     suggestion = MagicMock()
-    suggestion.wait_for.return_value = None
+    suggestion.filter.return_value.first.wait_for.return_value = None
     return suggestion
 
 
@@ -329,7 +333,9 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
     assert input_.fill.call_args_list == [call("FastAPI"), call("LangChain")]
     # #826: each addition is committed by clicking the autocomplete option
     # that echoes the typed text, not by pressing Enter.
-    assert suggestion.click.call_count == 2
+    filter_calls = [c.kwargs["has_text"].pattern for c in suggestion.filter.call_args_list]
+    assert filter_calls == ["^FastAPI$", "^LangChain$"]
+    assert suggestion.filter.return_value.first.click.call_count == 2
     # Each addition is confirmed by its own exact-text filter, not a shared
     # chip-count check that a merged chip would also satisfy.
     filter_calls = [c.kwargs["has_text"].pattern for c in chip_locator.filter.call_args_list]

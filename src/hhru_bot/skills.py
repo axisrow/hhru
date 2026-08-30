@@ -339,7 +339,14 @@ def edit_skills_on_hh(
         # observed way to create the chip. The option renders asynchronously
         # after fill() (CLAUDE.md: "commit не значит отрисовано"), so wait for
         # it before clicking rather than assuming it is already there.
-        suggestion = page.locator(resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT)
+        # Filtered by exact text, matching the expected_chip pattern below —
+        # a stale option from the previous iteration must not be clicked if
+        # this iteration's option has not rendered yet (review #830).
+        suggestion = (
+            page.locator(resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT)
+            .filter(has_text=re.compile(rf"^{re.escape(skill.name)}$"))
+            .first
+        )
         try:
             suggestion.wait_for(state="visible", timeout=CHIP_COMMIT_TIMEOUT_MS)
             suggestion.click()
