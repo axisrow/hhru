@@ -259,10 +259,16 @@ def _fill_and_verify(page, locator, value: str) -> bool:
     already used for this same class of race elsewhere in the project
     (resume_position.py's WIZARD_VERIFY_POLL_MS, skills.py's CHIP_COMMIT_POLL_MS).
     """
+    # Review (PR #855): compare trimmed, not exact -- hh.ru may normalize the
+    # DOM value (collapsing/trimming whitespace) without that meaning the
+    # fill was lost. An exact match would retry the full budget and then
+    # falsely fail a field hh.ru genuinely accepted, just reformatted. This
+    # still catches the real #825 defect (value reverts to "").
+    expected = value.strip()
     deadline = time.monotonic() + FIELD_VERIFY_TIMEOUT_MS / 1000
     while True:
         locator.fill(value)
-        if locator.input_value() == value:
+        if locator.input_value().strip() == expected:
             return True
         if time.monotonic() >= deadline:
             return False
@@ -270,11 +276,15 @@ def _fill_and_verify(page, locator, value: str) -> bool:
 
 
 def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:
-    """Best-effort DOM/screenshot dump on a post-save-click failure (#825).
+    """Best-effort DOM/screenshot dump on a fill or post-save-click failure (#825).
 
-    A live failure (`save.click()` followed by a timed-out `wait_for_url`)
-    previously left no trace to diagnose beyond reproducing it live by hand.
-    Mirrors ``resume_position._dump_control_failure`` -- same pattern, applied
+    Two distinct failure points share this helper: a field whose value did
+    not survive ``fill()`` (``_fill_and_verify``, BEFORE Save is ever
+    clicked) and a save-click outcome that could not be confirmed
+    (`save.click()` followed by a timed-out `wait_for_url`, or an unconfirmed
+    identity/text check, AFTER the click). Both previously left no trace to
+    diagnose beyond reproducing them live by hand. Mirrors
+    ``resume_position._dump_control_failure`` -- same pattern, applied
     to this module's own failure point.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
