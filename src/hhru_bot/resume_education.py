@@ -437,7 +437,7 @@ def _edit_block(
                 editor_marker.first.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
                 current_path = urlsplit(page.url).path
                 path_parts = [part for part in current_path.split("/") if part]
-                if path_parts[-2:] != [resume_id, "additionalEducation"]:
+                if path_parts != ["resume", "edit", resume_id, "additionalEducation"]:
                     raise RuntimeError(
                         f"форма доп. образования открыта не для того резюме: {page.url}"
                     )

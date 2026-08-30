@@ -196,3 +196,20 @@ def test_direct_route_substring_resume_id_fails_closed(monkeypatch):
     assert result.success is False
     assert result.uncertain is False
     assert "не для того резюме" in result.reason
+
+
+def test_direct_route_extra_path_prefix_fails_closed(monkeypatch):
+    """Guard must match the full canonical path, not just its last 2 segments.
+
+    A URL ending in "/RID/additionalEducation" but with an unexpected prefix
+    (e.g. a same-origin redirect) must not pass just because the suffix
+    matches (#862 review round 2 finding).
+    """
+    page = _FakePage(direct_url="https://hh.ru/unexpected/prefix/RID/additionalEducation")
+    _patch_common(monkeypatch, page)
+
+    result = _edit_block(page, [_RECORD], additional=True, dry_run=False, resume_id="RID")
+
+    assert result.success is False
+    assert result.uncertain is False
+    assert "не для того резюме" in result.reason
