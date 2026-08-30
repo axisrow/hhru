@@ -113,6 +113,11 @@ FORM_TIMEOUT_MS = 15_000
 # сохранения (навигация происходит за секунды по всем живым прогонам), но не
 # держит CLI минуты на заведомо неуспешном пути.
 SAVE_TIMEOUT_MS = 20_000
+# The URL can commit before the resume page's React card is hydrated.  Wait for
+# the saved row itself before treating identity/text checks as authoritative;
+# this timeout is local to the post-save resume screen, not a browser-wide
+# default.
+POST_SAVE_RESUME_WAIT_TIMEOUT_MS = 15_000
 # #825: `open_hydrated_resume_editor`'s hydration marker is the primary form's
 # own institution INPUT becoming visible (see editor_selector below) -- but
 # "visible" only proves the empty <input> node exists in the DOM, not that
@@ -451,6 +456,7 @@ def _edit_block(
                 dismiss_cookie_banner(page)
                 save_clicked = True
                 save.click()
+                navigation_error: PlaywrightError | None = None
                 try:
                     page.wait_for_url(
                         f"**/resume/{resume_id}", wait_until="commit", timeout=SAVE_TIMEOUT_MS
@@ -475,32 +481,56 @@ def _edit_block(
                     # отрисовано" в CLAUDE.md, только в обратную сторону):
                     # если identity и текст записи всё же подтверждаются,
                     # результат success, а не ложный uncertain.
-                    if not resume_identity_matches(page, resume_id):
-                        _dump_save_failure(page, index, kind, exc)
-                        return EducationResult(
-                            kind,
-                            False,
-                            f"сохранение не подтверждено после клика: {exc}",
-                            uncertain=True,
-                            saved=saved_count,
-                        )
-                    # identity подтверждён несмотря на таймаут -- проваливаемся
-                    # дальше к позитивной проверке текста записи ниже, а не
-                    # повторяем ту же самую проверку identity.
-                else:
-                    if not resume_identity_matches(page, resume_id):
-                        # #825 review: дамп нужен и здесь -- этот путь такой же
-                        # непрозрачный без него, как и путь после таймаута выше.
-                        _dump_save_failure(
-                            page, index, kind, RuntimeError("identity резюме не подтверждён")
-                        )
-                        return EducationResult(
-                            kind,
-                            False,
-                            "после сохранения identity резюме не подтверждён",
-                            uncertain=True,
-                            saved=saved_count,
-                        )
+                    navigation_error = exc
+                # ``commit`` only proves navigation, not React hydration.  The
+                # saved row is a screen-local marker that cannot be present on
+                # the editor route; waiting for it separates a slow render from
+                # an actually missing/incorrect resume route.  In particular,
+                # this also gives the URL a chance to settle after a SPA
+                # pushState navigation that timed out in Playwright.
+                resume_marker = page.locator(trigger.format(index=index)).first
+                try:
+                    resume_marker.wait_for(
+                        state="visible", timeout=POST_SAVE_RESUME_WAIT_TIMEOUT_MS
+                    )
+                except PlaywrightError as marker_exc:
+                    logger.warning(
+                        "resume_education: post-save marker unavailable; url=%s marker_count=%s "
+                        "navigation_error=%s marker_error=%s",
+                        page.url,
+                        page.locator(trigger.format(index)).count(),
+                        navigation_error,
+                        marker_exc,
+                    )
+                    failure = navigation_error or marker_exc
+                    _dump_save_failure(page, index, kind, failure)
+                    return EducationResult(
+                        kind,
+                        False,
+                        f"сохранение не подтверждено после клика: {failure}",
+                        uncertain=True,
+                        saved=saved_count,
+                    )
+                logger.info(
+                    "resume_education: post-save marker visible; url=%s marker_count=%s "
+                    "navigation_error=%s",
+                    page.url,
+                    page.locator(trigger.format(index=index)).count(),
+                    navigation_error,
+                )
+                if not resume_identity_matches(page, resume_id):
+                    # #825 review: dump the exact post-hydration state rather
+                    # than attributing a selector race to identity blindly.
+                    _dump_save_failure(
+                        page, index, kind, RuntimeError("identity резюме не подтверждён")
+                    )
+                    return EducationResult(
+                        kind,
+                        False,
+                        "после сохранения identity резюме не подтверждён",
+                        uncertain=True,
+                        saved=saved_count,
+                    )
                 # #825: navigation back to the resume page is not itself proof
                 # the record was written -- live investigation found a case
                 # where a field silently reverted to empty (Magritte combobox

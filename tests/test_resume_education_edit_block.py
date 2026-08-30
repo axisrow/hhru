@@ -89,8 +89,9 @@ class FakeAbsentLocator:
 
 
 class FakeTrigger:
-    def __init__(self, count):
+    def __init__(self, count, page=None):
         self._count = count
+        self._page = page
 
     def count(self):
         return self._count
@@ -103,7 +104,8 @@ class FakeTrigger:
         return self
 
     def wait_for(self, *, state=None, timeout=None):  # noqa: ARG002
-        pass
+        if self._page is not None:
+            self._page.trigger_waits += 1
 
 
 class FakePage:
@@ -122,6 +124,7 @@ class FakePage:
     ):
         self._trigger_count = trigger_count
         self.saved_rows: list[int] = []
+        self.trigger_waits = 0
         self.current_index = -1
         self.url = f"https://hh.ru/resume/{resume_id}"
         # #825 review: wait_for_url_error lets a test model the exact case the
@@ -136,7 +139,7 @@ class FakePage:
 
     def locator(self, selector: str):
         if selector.startswith("[data-qa='resume-edit-button-"):
-            return FakeTrigger(self._trigger_count)
+            return FakeTrigger(self._trigger_count, self)
         if selector == "[data-qa='profile-layout-save-button']":
             return FakeSaveButton(self)
         if selector == "[data-qa='cookies-policy-informer-accept']":
@@ -271,6 +274,39 @@ def test_wait_for_url_timeout_with_confirmed_identity_and_text_is_success(monkey
     assert result.success is True
     assert result.uncertain is False
     assert result.saved == 1
+
+
+def test_post_save_waits_for_resume_marker_before_identity_check(monkeypatch):
+    """A committed URL is not enough: wait for the hydrated resume card.
+
+    The first wait is the pre-edit hydration guard.  The second one is the
+    post-save guard added for #868; without it a slow React render can make the
+    immediate identity/text checks classify a successful save as uncertain.
+    """
+    page = FakePage(trigger_count=1, resume_id="RID")
+
+    def fake_open_hydrated_resume_editor(page_arg, **kwargs):  # noqa: ARG001
+        page.current_index = 0
+        return page.locator(next(iter(kwargs.get("editor_selector", "") or "x")))
+
+    monkeypatch.setattr(
+        resume_education, "open_hydrated_resume_editor", fake_open_hydrated_resume_editor
+    )
+
+    result = _edit_block(
+        page,
+        [
+            EducationRecord(
+                institution="МГУ", level="", faculty="", organization="", specialty="", year="2020"
+            )
+        ],
+        additional=False,
+        dry_run=False,
+        resume_id="RID",
+    )
+
+    assert result.success is True
+    assert page.trigger_waits >= 2
 
 
 def test_wait_for_url_timeout_with_confirmed_identity_but_missing_text_is_uncertain(monkeypatch):
