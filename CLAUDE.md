@@ -398,6 +398,49 @@ textarea `vacancy-response-popup-form-letter-input`) и полноценная �
 до submit** (отклик без письма не отправляем). Full-page селекторы НЕ удалять — оба
 shape наблюдались в дампах одного дня.
 
+**Форма опыта работы — тот же паттерн, но ТРИ shape, не два (#786/#787/#815/#840).**
+Как и форма отклика выше, hh.ru рендерит семантически одно действие («заполнить запись
+опыта») через разный DOM в зависимости от точки входа — этот факт был обнаружен по
+частям трижды подряд (#786/#787 нашли первые два shape, #840 — третий), прежде чем
+его закрепили здесь. Все три живут в `selector_groups/resume_experience.py`:
+1. **Indexed row editor** — клик по `EXPERIENCE_EDIT_BUTTON.format(index=…)` для
+   существующей строки на самой странице резюме (SPA, `resumeFrom` в URL нет). Поля:
+   `EXPERIENCE_COMPANY`/`EXPERIENCE_POSITION` (индексированные `resume-profile-experience-
+   specific-{company,position}-input-{index}`), кнопки `EXPERIENCE_SAVE`/`EXPERIENCE_CANCEL`.
+2. **First-entry editor** — прямая навигация на `/resume/edit/{resume_id}/experience`,
+   единственный подтверждённо безопасный способ создать ПЕРВУЮ запись опыта на резюме
+   с нулём записей (#786/#787). Отдельный namespace: `FIRST_EXPERIENCE_COMPANY`/
+   `FIRST_EXPERIENCE_POSITION`/`FIRST_EXPERIENCE_SAVE`/`FIRST_EXPERIENCE_CANCEL`
+   (`resume-editor-experience-*-input`, `resume-partial-edit-*`). На резюме, где опыт
+   УЖЕ есть, этот же роут ненадёжен — #815 живым прогоном поймал и пустое открытие, и
+   молчаливую перезапись чужой существующей строки; `edit_experience_on_hh` использует
+   его только для `first_entry`, во всех остальных случаях падает `[FAIL]` вместо
+   догадки.
+3. **Shared profile editor** — `/profile/edit/experience?resumeFrom={resume_id}`,
+   куда ведёт клик по `EXPERIENCE_ADD_BUTTON` («Добавить» в карточке опыта) на резюме,
+   где опыт уже есть (#840). Третий namespace для save/cancel: `SHARED_EXPERIENCE_SAVE`/
+   `SHARED_EXPERIENCE_CANCEL` (`profile-layout-save-button`/`profile-layout-cancel-
+   button`) — НЕ те же `data-qa`, что у двух других shape. Company/position и оба
+   month-комбобокса при этом СОВПАДАЮТ по `data-qa` с indexed row editor (shape 1) —
+   отдельные константы для них не заводились. Форма открывается пустой (в отличие от
+   ненадёжного роута #2 выше на непустом резюме) — именно поэтому #840 считает это
+   безопасным кандидатом на «добавить запись к резюме, где опыт уже есть», в отличие
+   от first-entry роута. **Пока не подключено к `edit_experience_on_hh`** — селекторы
+   подтверждены, интеграция вынесена в follow-up.
+
+   Все три shape используют один и тот же паттерн month-комбобокса (`role="combobox"`
+   div с `data-qa='magritte-select-activator'`, открывает `role="listbox"` попап с
+   `data-qa='drop-base'` и 12 опциями `magritte-select-option-{01..12}`) — сам
+   `_select_month()` в `experience.py` переиспользуется без изменений для всех трёх.
+   #840 live-опровергла гипотезу «визуальный элемент перекрывает клик» (паттерн #824,
+   см. ниже) для этого конкретного триггера на третьем shape: `document.elementFromPoint`
+   в центре активатора возвращает сам активатор, разметка вокруг него структурно
+   идентична уже рабочим `EXPERIENCE_START_MONTH`/`END_MONTH`, а обычный клик открывает
+   попап штатно — если Playwright-клик на живом прогоне всё же не откроет список, первый
+   подозреваемый — момент клика относительно гидратации экрана после навигации по
+   `EXPERIENCE_ADD_BUTTON` (см. общий паттерн «commit не значит отрисовано» выше), а не
+   сама разметка комбобокса.
+
 **Панель выбора резюме не закрывается сама — её надо закрыть явно.** Клик по опции
 резюме выбирает её (`aria-selected="true"`), но всплывающая панель `[data-qa='drop-base']`
 остаётся открытой, спозиционирована абсолютно и физически перекрывает submit в футере

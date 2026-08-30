@@ -2343,6 +2343,57 @@ selectors:
     last_verified_at: '2026-08-29'
     verified_flow: authenticated_experience_editor_write_confirmed (draft resume, zero existing entries)
     verified_by: human
+  resume_experience.SHARED_EXPERIENCE_CANCEL:
+    value: '[data-qa=''profile-layout-cancel-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:59
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-cancel-button
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:59
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840): clicking "Добавить" inside the experience card (EXPERIENCE_ADD_BUTTON)
+        on a draft resume that already has experience entries navigates to /profile/edit/experience?resumeFrom={resume_id}
+        — a third, previously-undocumented DOM shape distinct from both the indexed row editor and the first-entry editor
+        at /resume/edit/{resume_id}/experience. This shape uses a third data-qa namespace for its save/cancel controls (profile-layout-save-button/profile-layout-cancel-button),
+        not resume-partial-edit-*/EXPERIENCE_SAVE/EXPERIENCE_CANCEL. Company/position fields on this shape reuse the exact
+        same indexed data-qa pattern as EXPERIENCE_COMPANY/EXPERIENCE_POSITION (resume-profile-experience-specific-{company,position}-input-{index},
+        observed index=24 — a fresh React counter unrelated to any existing row index, confirmed empty on open, not read here).
+        Only cancel/save are new selectors; company/position/month controls below reuse existing constants unchanged. No mutation
+        reached hh.ru — the form was never saved.'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
+  resume_experience.SHARED_EXPERIENCE_SAVE:
+    value: '[data-qa=''profile-layout-save-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:58
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-layout-save-button
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:58
+      note: 'Read-only + JS-confirmed 2026-08-30 (#840): same shared-profile-editor shape as SHARED_EXPERIENCE_CANCEL above
+        (/profile/edit/experience?resumeFrom={resume_id}, reached via EXPERIENCE_ADD_BUTTON on a resume that already has experience).
+        Save/cancel share the profile-layout-* namespace, distinct from both other experience-editor shapes. Not clicked —
+        clicking save was out of scope for this read-only+JS confirmation (no mutation reached hh.ru).'
+    last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_list.RESUME_DUPLICATE_INLINE:
     value: '[data-qa=''resume-dublicate'']'
     criticality: write
