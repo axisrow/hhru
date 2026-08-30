@@ -1,5 +1,6 @@
 """Unit tests for the simple common-screen editor."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -59,3 +60,50 @@ def test_read_common_fails_closed_on_ambiguous_selector():
 
     with pytest.raises(RuntimeError, match="не подтверждено однозначно"):
         read_common(page)
+
+
+def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
+    from hhru_bot import browser, config
+    from hhru_bot.commands import common as command
+    from hhru_bot.config import bare_resume
+
+    resume = bare_resume("00001")
+    fake_config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return MagicMock()
+
+    monkeypatch.setattr(config, "load_config_or_exit", lambda _path: fake_config)
+    monkeypatch.setattr(command, "confirm_write", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(browser, "launch_context", lambda *_args, **_kwargs: Context())
+    from hhru_bot.commands import _common
+
+    monkeypatch.setattr(_common, "resolve_resume", lambda *_args, **_kwargs: resume)
+    monkeypatch.setattr(
+        common,
+        "open_common_form",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(browser.NotAuthenticated("expired")),
+    )
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        history=str(tmp_path / "history.db"),
+        resume="00001",
+        first_name="Ada",
+        last_name=None,
+        birthday=None,
+        gender=None,
+        phone=None,
+        dry_run=True,
+        force=False,
+        headless=True,
+    )
+    with pytest.raises(browser.NotAuthenticated, match="expired"):
+        command._run(args, MagicMock())

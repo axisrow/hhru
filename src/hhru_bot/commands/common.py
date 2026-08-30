@@ -28,7 +28,7 @@ def register(subparsers) -> None:
 
 
 def _run(args: argparse.Namespace, progress) -> bool:
-    from ..browser import BrowserLaunchError, launch_context
+    from ..browser import BrowserLaunchError, NotAuthenticated, launch_context
     from ..common import CANCEL, CommonValues, open_common_form, read_common, save_common
     from ..config import ConfigError, load_config_or_exit
     from ..history import History
@@ -74,6 +74,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
             result = save_common(page, values, before_click=attempt.before_click)
             attempt.finish(result)
     except BrowserLaunchError:
+        raise
+    except NotAuthenticated:
+        # Preserve the supervisor's dedicated SESSION_EXPIRED classification
+        # and its actionable login/refresh-token guidance.
         raise
     except Exception as exc:
         if progress.attempted_count:
