@@ -184,11 +184,12 @@ def test_read_common_supports_magritte_trigger_and_replaces_selection():
 
     html = """
     <form>
-      <input data-qa="resume-edit-firstName" value="A"/>
-      <input data-qa="resume-edit-lastName" value="B"/>
-      <input data-qa="resume-edit-birthday" value="2000-01-01"/>
-      <select data-qa="resume-edit-gender"><option value="female" selected>F</option></select>
-      <input data-qa="resume-edit-phone" value="+7"/>
+      <input data-qa="resume-profile-common-name-input" value="A"/>
+      <input data-qa="resume-profile-common-surname-input" value="B"/>
+      <input data-qa="resume-profile-common-birthday-day-input" value="1"/>
+      <input data-qa="resume-profile-common-gender-male-chip" type="radio" checked/>
+      <input data-qa="resume-profile-common-gender-female-chip" type="radio"/>
+      <input data-qa="resume-phone-cell_phone" value="+7"/>
       <input data-qa="resume-edit-area" value="Москва"/>
       <label id="work-ticket-label">Наличие трудовой книжки</label>
       <button aria-labelledby="work-ticket-label" type="button">Да</button>
