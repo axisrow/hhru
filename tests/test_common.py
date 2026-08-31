@@ -189,6 +189,7 @@ def test_read_common_supports_magritte_trigger_and_replaces_selection():
       <input data-qa="resume-edit-birthday" value="2000-01-01"/>
       <select data-qa="resume-edit-gender"><option value="female" selected>F</option></select>
       <input data-qa="resume-edit-phone" value="+7"/>
+      <input data-qa="resume-edit-area" value="Москва"/>
       <label id="work-ticket-label">Наличие трудовой книжки</label>
       <button aria-labelledby="work-ticket-label" type="button">Да</button>
       <label id="relocation-label">Готовность к переезду</label><button aria-labelledby="relocation-label" type="button">Готов к переезду</button>

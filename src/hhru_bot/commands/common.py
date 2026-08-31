@@ -22,6 +22,13 @@ def register(subparsers) -> None:
     parser.add_argument("--birthday", help="Дата в формате, который принимает форма hh.ru")
     parser.add_argument("--gender", choices=("male", "female"), help="Пол")
     parser.add_argument("--phone", help="Телефон")
+    parser.add_argument("--area", help="Точный leaf города из live-каталога hh.ru")
+    parser.add_argument("--metro", help="Точная станция метро")
+    parser.add_argument(
+        "--citizenship",
+        action="append",
+        help="Точное гражданство из live-каталога; можно повторять",
+    )
     parser.add_argument("--work-ticket", choices=("true", "false"), help="Трудовая книжка")
     parser.add_argument(
         "--relocation", choices=("ready", "consider", "not_ready"), help="Готовность к переезду"
@@ -75,6 +82,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
         birthday=args.birthday,
         gender=args.gender,
         phone=args.phone,
+        area=getattr(args, "area", None),
+        metro=(
+            [args.metro]
+            if getattr(args, "metro", None) is not None and isinstance(args.metro, str)
+            else getattr(args, "metro", None)
+        ),
+        citizenship=getattr(args, "citizenship", None),
         work_ticket=getattr(args, "work_ticket", None),
         relocation=getattr(args, "relocation", None),
         schedule=getattr(args, "schedule", None),
