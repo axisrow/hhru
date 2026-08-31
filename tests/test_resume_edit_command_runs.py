@@ -7,6 +7,7 @@ import importlib
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -702,6 +703,7 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
         ChipPopularUnavailable,
         PositionFlowContext,
         PositionValues,
+        WizardRoleMismatch,
     )
     from hhru_bot.resume_state import ResumeState
 
@@ -780,6 +782,10 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
         return "Администратор"
 
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(WizardRoleMismatch("роль не совпала")),
+    )
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fake_minimum)
     monkeypatch.setattr(
         "hhru_bot.resume_position.verify_wizard_minimum_save",
@@ -810,7 +816,12 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
     """
     import hhru_bot.commands.resume_position as command
     from hhru_bot.professional_roles import ProfessionalRole
-    from hhru_bot.resume_position import ChipPopularUnavailable, PositionFlowContext, PositionValues
+    from hhru_bot.resume_position import (
+        ChipPopularUnavailable,
+        PositionFlowContext,
+        PositionValues,
+        WizardRoleMismatch,
+    )
     from hhru_bot.resume_state import ResumeState
 
     resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
@@ -850,6 +861,10 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
         raise RuntimeError("wizard-minimum тоже не сработал")
 
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(WizardRoleMismatch("роль не совпала")),
+    )
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fail_minimum)
 
     history_path = tmp_path / "history.db"
@@ -1095,3 +1110,62 @@ def test_browser_launch_error_propagates_to_cli_environment_handler(
 
     with pytest.raises(BrowserLaunchError):
         command.run(args)
+
+
+def test_chip_popular_unavailable_uses_verified_save_without_minimum_fallback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A committed exact role must finish successfully without the fallback."""
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import (
+        ChipPopularUnavailable,
+        PositionFlowContext,
+        PositionValues,
+    )
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    class _Page:
+        url = "https://hh.ru/profile/resume/professional_role?resume=r1"
+
+        def locator(self, _selector):
+            return SimpleNamespace(count=lambda: 1, click=lambda: None)
+
+    page = _Page()
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    flow = PositionFlowContext(
+        "wizard",
+        "r1",
+        PositionValues(title="Python-разработчик"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.open_position_form", lambda *_a: flow)
+    monkeypatch.setattr("hhru_bot.resume_position.is_position_wizard", lambda *_a: True)
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("96", label, "ИТ"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.save_position_wizard",
+        lambda *_a, **_kw: (_ for _ in ()).throw(ChipPopularUnavailable("chip")),
+    )
+    verified = ResumeState(status="new", is_searchable=True)
+    verify = MagicMock(return_value=verified)
+    monkeypatch.setattr("hhru_bot.resume_position.verify_wizard_save", verify)
+    minimum = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", minimum)
+
+    assert command.run(_draft_position_args(tmp_path / "history.db")) is False
+    assert verify.call_count == 1
+    minimum.assert_not_called()
+    assert "автоматическую публикацию" in capsys.readouterr().out

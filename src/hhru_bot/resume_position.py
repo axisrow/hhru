@@ -75,6 +75,14 @@ from .selector_groups.resume_page import (
 logger = logging.getLogger("hhru_bot.resume_position")
 
 
+class WizardRoleMismatch(RuntimeError):
+    """Post-save readback found a different professional role.
+
+    This is the one verification failure for which the legacy minimum-wizard
+    fallback remains appropriate; transport/state failures stay fail-closed.
+    """
+
+
 class ChipPopularUnavailable(RuntimeError):
     """The chip-popular shape (#881/#889) cannot confirm the exact catalog
     specialization — it is a fixed list of ~37 generic categories plus a
@@ -824,7 +832,7 @@ def verify_wizard_save(
         and (role.label is None or role.label == expected_role_label)
         for role in state.professional_roles
     ):
-        raise RuntimeError(
+        raise WizardRoleMismatch(
             f"post-save professional role не совпал: ожидалось "
             f"{expected_role_id}:{expected_role_label}, прочитано "
             f"{observed_roles or '<пусто>'}"

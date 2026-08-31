@@ -137,6 +137,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         CANCEL,
         ChipPopularUnavailable,
         PositionValues,
+        WizardRoleMismatch,
         apply_position,
         build_position_prompt,
         fill_only_missing,
@@ -383,30 +384,46 @@ def _run(args: argparse.Namespace, progress) -> bool:
                             expected_role_label=role.label,
                         )
                     except ChipPopularUnavailable:
-                        # #890: this DOM shape structurally cannot save the
-                        # exact requested specialization (confirmed live —
-                        # the catalog leaf is absent from its narrow
-                        # sub-modal). Save ANY valid placeholder category
-                        # just to clear professional_role, then reopen the
-                        # form — it must now be in editor mode, where the
-                        # already-working `_set_specializations` catalog
-                        # search sets the exact specialization.
-                        save_position_wizard_minimum(
-                            page, resume, before_first_click=mark_first_click_started
-                        )
-                        verify_wizard_minimum_save(page, resume)
-                        fixup_flow = open_position_form(page, resume)
-                        if fixup_flow.kind != "editor" or fixup_flow.resume_id != resume.resume_id:
-                            raise RuntimeError(
-                                "wizard-minimum сохранён, но форма не перешла в editor-режим"
-                            ) from None
-                        apply_position(page, plan, current=fixup_flow.values)
-                        _click_save_and_wait(page)
-                        published_note = (
-                            "[INFO] professional_role завершён через wizard-minimum "
-                            "fallback (#890); точная специализация применена в "
-                            "editor-режиме."
-                        )
+                        # The first NEXT may already have committed the exact
+                        # role while the DOM moved to an unusable chip shape.
+                        # Verify the identity-bound SSR state before touching
+                        # the wizard again; only a confirmed role mismatch
+                        # justifies the minimum fallback.
+                        try:
+                            verified_state = verify_wizard_save(
+                                page,
+                                resume,
+                                expected_title=plan.title or "",
+                                expected_role_id=role.role_id,
+                                expected_role_label=role.label,
+                            )
+                        except WizardRoleMismatch:
+                            # The role really did not match; preserve the
+                            # existing minimum-wizard fallback for that case.
+                            save_position_wizard_minimum(
+                                page, resume, before_first_click=mark_first_click_started
+                            )
+                            verify_wizard_minimum_save(page, resume)
+                            fixup_flow = open_position_form(page, resume)
+                            if (
+                                fixup_flow.kind != "editor"
+                                or fixup_flow.resume_id != resume.resume_id
+                            ):
+                                raise RuntimeError(
+                                    "wizard-minimum сохранён, но форма не перешла в editor-режим"
+                                ) from None
+                            apply_position(page, plan, current=fixup_flow.values)
+                            _click_save_and_wait(page)
+                            published_note = (
+                                "[INFO] professional_role завершён через wizard-minimum "
+                                "fallback (#890); точная специализация применена в "
+                                "editor-режиме."
+                            )
+                        else:
+                            published_note = (
+                                "[INFO] professional_role сохранён с первого NEXT; "
+                                "chip-fallback не потребовался."
+                            )
                 except Exception as exc:
                     if not first_click_started:
                         raise
