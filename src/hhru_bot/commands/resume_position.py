@@ -268,7 +268,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
             explicit_specialization = getattr(args, "specialization", None)
             if wizard:
                 from ..professional_roles import resolve_explicit_role, suggest_role
-                from ..resume_position import validate_wizard_role_for_write
 
                 effective_title = plan.title or current.title
                 if not effective_title:
@@ -279,7 +278,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         raise RuntimeError(
                             "для professional_role требуется ровно один --specialization"
                         )
-                    validate_wizard_role_for_write(page, explicit_specialization[0])
                     role = resolve_explicit_role(page, explicit_specialization[0])
                 else:
                     if config.ai is None:

@@ -596,6 +596,7 @@ def save_position_wizard(
             search.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
             break
         if chip.count() == 1:
+            validate_wizard_role_for_write(page, expected_label)
             # Second post-NEXT shape (#881/#889, live DOM 2026-08-31): hh.ru
             # skips the full tree-selector catalog modal and instead shows a
             # fixed list of ~37 generic categories, each opening a narrow

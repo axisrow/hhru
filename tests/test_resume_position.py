@@ -362,7 +362,9 @@ def test_wizard_accepts_role_present_on_chip_screen():
         playwright.stop()
 
 
-def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal_is_skipped():
+def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal_is_skipped(
+    monkeypatch,
+):
     # Live DOM, #881/#889 (2026-08-31): on a copy-resume draft that already
     # carries an inherited role, hh.ru skips the tree-selector catalog modal
     # entirely after NEXT and instead renders a fixed list of ~37 generic
@@ -402,6 +404,11 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
         resume_position.WIZARD_CATEGORY_SEARCH: search,
         resume_position.WIZARD_POSITION_CHIP_POPULAR.format("Python-разработчик"): chip,
     }[selector]
+    monkeypatch.setattr(
+        resume_position,
+        "validate_wizard_role_for_write",
+        lambda _page, label: label,
+    )
 
     with pytest.raises(resume_position.ChipPopularUnavailable, match="Программист, разработчик"):
         resume_position.save_position_wizard(
