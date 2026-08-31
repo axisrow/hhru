@@ -554,6 +554,10 @@ def save_position_wizard(
     validate_wizard_plan(plan)
     if not is_position_wizard(page, resume.resume_id):
         raise RuntimeError("professional_role identity не подтверждён перед сохранением")
+    expected_label = plan.specializations[0]
+    # Validate the already-rendered chip screen before clearing/filling the
+    # form or clicking NEXT: typing an absent role creates an arbitrary chip.
+    validate_wizard_role_for_write(page, expected_label)
 
     position = page.locator(WIZARD_POSITION)
     if position.count() != 1:
@@ -582,7 +586,6 @@ def save_position_wizard(
         before_first_click()
     next_button.click()
 
-    expected_label = plan.specializations[0]
     search = page.locator(WIZARD_CATEGORY_SEARCH)
     # The chip's ``value`` mirrors the just-typed title, not the catalog
     # specialization label confirmed below for the modal path (#881, live DOM
@@ -596,7 +599,6 @@ def save_position_wizard(
             search.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
             break
         if chip.count() == 1:
-            validate_wizard_role_for_write(page, expected_label)
             # Second post-NEXT shape (#881/#889, live DOM 2026-08-31): hh.ru
             # skips the full tree-selector catalog modal and instead shows a
             # fixed list of ~37 generic categories, each opening a narrow

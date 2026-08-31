@@ -256,9 +256,10 @@ def test_open_position_form_reloads_once_after_stalled_ssr_card(monkeypatch):
 
 
 @pytest.mark.parametrize("clear_count", [1, 0])
-def test_save_position_wizard_handles_existing_or_empty_role(
-    clear_count,
-):
+def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkeypatch):
+    monkeypatch.setattr(
+        resume_position, "validate_wizard_role_for_write", lambda _page, label: label
+    )
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -616,7 +617,10 @@ def test_verify_wizard_minimum_save_times_out_while_professional_role_persists(m
         resume_position.verify_wizard_minimum_save(page, resume)
 
 
-def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal():
+def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal(monkeypatch):
+    monkeypatch.setattr(
+        resume_position, "validate_wizard_role_for_write", lambda _page, label: label
+    )
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
