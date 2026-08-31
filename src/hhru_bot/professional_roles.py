@@ -322,9 +322,9 @@ def _open_catalog_dialog(page: Page):
     try:
         trigger.first.wait_for(state="visible", timeout=_WAIT_MS)
     except PlaywrightError as exc:
-        raise RuntimeError(f"поле live-каталога профессий не появилось: {exc}") from exc
+        raise RuntimeError(f"поле live-каталога поиска вакансий не появилось: {exc}") from exc
     if trigger.count() != 1:
-        raise RuntimeError(f"поле live-каталога профессий неоднозначно: {trigger.count()}")
+        raise RuntimeError(f"поле live-каталога поиска вакансий неоднозначно: {trigger.count()}")
     trigger.click()
 
     search_anywhere = page.locator("[data-qa='tree-selector-search-input']")
@@ -332,9 +332,9 @@ def _open_catalog_dialog(page: Page):
     try:
         dialog.first.wait_for(state="visible", timeout=_WAIT_MS)
     except PlaywrightError as exc:
-        raise RuntimeError(f"live-каталог профессий не открылся: {exc}") from exc
+        raise RuntimeError(f"live-каталог поиска вакансий не открылся: {exc}") from exc
     if dialog.count() != 1:
-        raise RuntimeError(f"live-каталог профессий неоднозначен: {dialog.count()}")
+        raise RuntimeError(f"live-каталог поиска вакансий неоднозначен: {dialog.count()}")
     search = dialog.locator("[data-qa='tree-selector-search-input']")
     if search.count() != 1:
         raise RuntimeError(f"поиск live-каталога неоднозначен: {search.count()}")

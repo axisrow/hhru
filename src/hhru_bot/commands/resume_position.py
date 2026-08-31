@@ -293,6 +293,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
                 plan.title = effective_title
                 plan.specializations = [role.label]
+                from ..resume_position import reject_wizard_role_write
+
+                # The live wizard chip screen is text-only and has no role_id.
+                # Resolve the requested role read-only first, then reject
+                # before any wizard mutation; editor mode is the exact-write
+                # path for the vacancy-search role catalog.
+                reject_wizard_role_write(role.label)
                 validate_wizard_plan(plan)
             auto_publish = _professional_role_closes_resume(flow)
             if auto_publish and not args.dry_run and not getattr(args, "allow_auto_publish", False):

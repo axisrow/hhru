@@ -93,6 +93,36 @@ class ChipPopularUnavailable(RuntimeError):
 # base selector down to the one radio matching the confirmed catalog label.
 WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE + "[value='{}']"
 
+
+def validate_wizard_role_for_write(page: Page, label: str) -> None:
+    """Fail closed when a role is not an actual wizard chip.
+
+    The wizard chips are text-only categories and do not expose the numeric
+    role ids used by the vacancy-search catalog.  An absent chip must never
+    be synthesized by typing into the combobox: hh.ru creates a new arbitrary
+    checked chip instead.  Such a role can only be written through editor
+    mode, where the role-id catalog is available.
+    """
+    chips = page.locator(WIZARD_POSITION_CHIP_POPULAR_BASE)
+    labels = [(chip.get_attribute("value") or "").strip() for chip in chips.all()]
+    if label.strip() not in labels:
+        raise RuntimeError(
+            f"роль «{label}» есть в каталоге поиска вакансий, но недоступна "
+            "в визарде резюме; используйте editor-режим"
+        )
+    raise RuntimeError(
+        f"визард резюме предлагает текстовую роль «{label}» без role_id; используйте editor-режим"
+    )
+
+
+def reject_wizard_role_write(label: str) -> None:
+    """Reject an exact-role write before the wizard can mutate anything."""
+    raise RuntimeError(
+        f"роль «{label}» есть в каталоге поиска вакансий, но недоступна "
+        "в визарде резюме; используйте editor-режим"
+    )
+
+
 # Fixed, deterministic placeholder for the wizard-minimum fallback (#890):
 # any of the ~37 chip-popular categories clears `nextIncompleteScreenId`
 # equally well, since its content is discarded immediately by the editor-mode
@@ -595,7 +625,9 @@ def save_position_wizard(
             )
         page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
     else:
-        raise RuntimeError("каталог профессий не появился после очистки прежних profession IDs")
+        raise RuntimeError(
+            "каталог ролей визарда резюме не появился после очистки прежних profession IDs"
+        )
     if search.count() != 1:
         raise RuntimeError(f"поиск профессий визарда неоднозначен: {search.count()}")
     search.fill(expected_label)

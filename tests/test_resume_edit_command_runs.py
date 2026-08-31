@@ -7,6 +7,7 @@ import importlib
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -606,6 +607,7 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
 
     page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
 
@@ -686,6 +688,46 @@ def _draft_position_args(history_path: Path) -> argparse.Namespace:
     )
 
 
+def test_search_catalog_role_missing_from_wizard_is_rejected_before_mutation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    page = MagicMock(url="https://hh.ru/profile/resume/professional_role?resume=r1")
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("96", label, "ИТ"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume: PositionFlowContext(
+            "wizard",
+            "r1",
+            PositionValues(title="Python-разработчик"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
+    )
+    save = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
+
+    assert command.run(_draft_position_args(tmp_path / "history.db")) is True
+    assert "недоступна в визарде резюме" in capsys.readouterr().out
+    save.assert_not_called()
+
+
 def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -709,6 +751,7 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
 
     class _Locator:
         def count(self):
@@ -817,6 +860,7 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
 
     page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
 
