@@ -664,6 +664,202 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
     assert row[other] == row["success"] == row["skipped"] == 0
 
 
+def _draft_position_args(history_path: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        config="config.yaml",
+        headless=True,
+        resume="r1",
+        title="Python-разработчик",
+        specialization=["Программист, разработчик"],
+        salary=None,
+        currency=None,
+        employment=None,
+        work_format=None,
+        commute=None,
+        business_trips=None,
+        mode=None,
+        dry_run=False,
+        force=True,
+        history=str(history_path),
+    )
+
+
+def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """#890: when the chip-popular shape cannot save the exact catalog leaf,
+    the command must save a throwaway placeholder via
+    ``save_position_wizard_minimum``, confirm it via
+    ``verify_wizard_minimum_save``, reopen the form as an editor, and finish
+    through the existing ``apply_position``/SAVE path — recording exactly
+    ONE durable attempt as success, not two attempts and not uncertain.
+    """
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import (
+        ChipPopularUnavailable,
+        PositionFlowContext,
+        PositionValues,
+    )
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    class _Locator:
+        def count(self):
+            return 1
+
+        def click(self):
+            return None
+
+        def wait_for(self, *, state=None, timeout=None):
+            return None
+
+    class _Page:
+        url = "https://hh.ru/profile/resume/professional_role?resume=r1"
+
+        def locator(self, _selector):
+            return _Locator()
+
+    page = _Page()
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+
+    flows = iter(
+        [
+            PositionFlowContext(
+                "wizard",
+                "r1",
+                PositionValues(title="Python-разработчик"),
+                ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+            ),
+            # second call: re-bind right before WRITE, still wizard
+            PositionFlowContext(
+                "wizard",
+                "r1",
+                PositionValues(title="Python-разработчик"),
+                ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+            ),
+            # third call: after wizard-minimum, the draft is now an editor
+            PositionFlowContext(
+                "editor",
+                "r1",
+                PositionValues(title="Администратор"),
+                ResumeState(status="not_finished"),
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form", lambda _page, _resume: next(flows)
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_position_wizard", lambda _page, _resume_id: True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("96", label, "ИТ"),
+    )
+
+    def fail_with_chip_popular(*_args, before_first_click, **_kwargs):
+        before_first_click()
+        raise ChipPopularUnavailable("chip-popular не содержит нужную специализацию")
+
+    minimum_calls: list[bool] = []
+
+    def fake_minimum(_page, _resume, *, before_first_click=None):
+        minimum_calls.append(True)
+        return "Администратор"
+
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fake_minimum)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_minimum_save",
+        lambda _page, _resume: ResumeState(status="not_finished"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.apply_position", lambda _page, _plan, current=None: None
+    )
+
+    history_path = tmp_path / "history.db"
+    assert command.run(_draft_position_args(history_path)) is False
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert minimum_calls == [True]
+
+    row = History(history_path).command_runs()[-1]
+    assert row["command"] == "resume_position"
+    assert row["attempted"] == row["success"] == 1
+    assert row["failed"] == row["uncertain"] == row["skipped"] == 0
+
+
+def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_counted(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """If the wizard-minimum fallback itself fails, the whole two-stage
+    attempt must still record exactly ONE durable attempt as uncertain — not
+    failed, and not a second `begin_attempt()` for the fallback stage.
+    """
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import ChipPopularUnavailable, PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+
+    page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume: PositionFlowContext(
+            "wizard",
+            "r1",
+            PositionValues(title="Python-разработчик"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_position_wizard", lambda _page, _resume_id: True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("96", label, "ИТ"),
+    )
+
+    def fail_with_chip_popular(*_args, before_first_click, **_kwargs):
+        before_first_click()
+        raise ChipPopularUnavailable("chip-popular не содержит нужную специализацию")
+
+    def fail_minimum(*_args, **_kwargs):
+        raise RuntimeError("wizard-minimum тоже не сработал")
+
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fail_minimum)
+
+    history_path = tmp_path / "history.db"
+    assert command.run(_draft_position_args(history_path)) is True
+    out = capsys.readouterr().out
+    assert "(uncertain)" in out
+
+    row = History(history_path).command_runs()[-1]
+    assert row["attempted"] == row["uncertain"] == 1
+    assert row["failed"] == row["success"] == row["skipped"] == 0
+
+
 def test_edit_experience_hard_failure_wins_over_uncertain_in_same_batch(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
