@@ -332,7 +332,7 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
     monkeypatch.setattr("hhru_bot.browser.launch_context", _wizard_context)
     monkeypatch.setattr(
         "hhru_bot.resume_position.open_position_form",
-        lambda page, resume: PositionFlowContext(
+        lambda page, resume, **_kwargs: PositionFlowContext(
             "wizard",
             resume.resume_id,
             PositionValues(title="AI Team Lead"),

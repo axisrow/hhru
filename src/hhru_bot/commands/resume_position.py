@@ -195,11 +195,19 @@ def _run(args: argparse.Namespace, progress) -> bool:
     profile = resume.ai_profile
     try:
         llm = None if manual else LLMClient(config.ai)
+        explicit_specialization = getattr(args, "specialization", None)
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            flow = open_position_form(page, resume)
+            # Resolving an explicit role uses the read-only vacancy catalog. In
+            # dry-run there is no reason to enter the resume wizard afterwards:
+            # its entry card is a different UI and its first NEXT can publish a
+            # draft. Keep the wizard entirely untouched in this path (#904).
+            if args.dry_run and explicit_specialization:
+                flow = open_position_form(page, resume, enter_wizard=False)
+            else:
+                flow = open_position_form(page, resume)
             current = flow.values
             wizard = flow.kind == "wizard"
             if manual:
@@ -263,7 +271,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
             role = None
             classification_reason = ""
             classification_queries: list[str] = []
-            explicit_specialization = getattr(args, "specialization", None)
             if wizard:
                 from ..professional_roles import resolve_explicit_role, suggest_role
 

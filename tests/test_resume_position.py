@@ -133,6 +133,27 @@ def test_open_position_form_reads_draft_wizard_title(monkeypatch):
     assert flow.values.title == "AI Team Lead"
 
 
+def test_open_position_form_can_inspect_wizard_without_entering_chip_screen(monkeypatch):
+    resume = bare_resume("00001")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=00001"
+    page.content.return_value = (
+        '{"scheme":{"nextIncompleteScreenId":"education"},'
+        '"resume":{"id":"00001","status":"not_finished",'
+        '"isSearchable":false,"canPublishOrUpdate":false,"title":"Existing draft"}}'
+    )
+    monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+
+    flow = resume_position.open_position_form(page, resume, enter_wizard=False)
+
+    assert flow.kind == "wizard"
+    assert flow.state.next_incomplete_screen_id == "education"
+    assert flow.values.title == "Existing draft"
+    assert flow.values_read is False
+    page.locator.assert_not_called()
+
+
 def test_open_position_form_routes_profile_state_to_identity_bound_wizard(monkeypatch):
     """Regression: hh.ru may keep /resume/<id> despite professional_role state."""
     resume = bare_resume("resume-id")

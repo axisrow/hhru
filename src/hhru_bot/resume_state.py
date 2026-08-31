@@ -20,6 +20,7 @@ class ResumeState:
     can_publish_or_update: bool | None = None
     next_incomplete_screen_id: str | None = None
     professional_roles: tuple[ResumeProfessionalRole, ...] = ()
+    title: str | None = None
 
 
 def is_published(state: ResumeState) -> bool:
@@ -74,13 +75,29 @@ def _state_from_mapping(
     if next_incomplete is None and isinstance(scheme, dict):
         next_incomplete = scheme.get("nextIncompleteScreenId")
     roles = _parse_professional_roles(details or record)
+    title = _parse_resume_title(details or record)
     return ResumeState(
         status=record.get("status"),
         is_searchable=record.get("isSearchable"),
         can_publish_or_update=record.get("canPublishOrUpdate"),
         next_incomplete_screen_id=next_incomplete,
         professional_roles=roles,
+        title=title,
     )
+
+
+def _parse_resume_title(record: dict) -> str | None:
+    """Read the draft title from the identity-bound bootstrap record."""
+    for key in ("title", "desiredPosition"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    position = record.get("position")
+    if isinstance(position, dict):
+        value = position.get("title")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _parse_professional_roles(record: dict) -> tuple[ResumeProfessionalRole, ...]:
