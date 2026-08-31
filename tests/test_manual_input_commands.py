@@ -366,6 +366,61 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
     save.assert_not_called()
 
 
+@pytest.mark.browser_unit
+def test_resume_position_command_reaches_chips_before_role_validation(
+    tmp_path, capsys, monkeypatch
+):
+    """The production command path must not validate the empty start screen."""
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    fixture = Path(__file__).parent / "fixtures" / "resume_position_wizard_start.html"
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch()
+    page = browser.new_page()
+    page.set_content(fixture.read_text(encoding="utf-8"))
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+
+    @contextmanager
+    def page_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr("hhru_bot.browser.launch_context", page_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume: PositionFlowContext(
+            "wizard",
+            "r1",
+            PositionValues(title="AI Team Lead"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("104", label, "ИТ"),
+    )
+    try:
+        assert (
+            resume_position_cmd.run(
+                _args(tmp_path, title="AI Team Lead", specialization=["Аналитик"], mode=None)
+            )
+            is False
+        )
+        assert page.locator("[data-qa='resume-profile-position-chip-popular']").count() == 2
+        assert "Ничего не записано" in capsys.readouterr().out
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
     tmp_path, capsys, monkeypatch
 ):

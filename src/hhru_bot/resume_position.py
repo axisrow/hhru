@@ -113,10 +113,22 @@ def ensure_wizard_role_chip_screen(page: Page, title: str) -> None:
         # the live-confirmed "Укажу профессию" card selector.
         select_job = page.locator(WIZARD_SELECT_JOB)
         if select_job.count() == 1:
-            select_job.first.click(timeout=WIZARD_TRANSITION_POLL_MS)
+            try:
+                select_job.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+            except PlaywrightError as exc:
+                raise RuntimeError("карточка выбора профессии визарда не появилась") from exc
             deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
-            while time.monotonic() < deadline and position.count() != 1:
+            while time.monotonic() < deadline and position.count() != 1 and chips.count() == 0:
+                try:
+                    # SSR can expose the card before React hydrates it; retry
+                    # only while the positive screen signal is absent.
+                    select_job.first.click(timeout=WIZARD_TRANSITION_POLL_MS)
+                except PlaywrightError:
+                    pass
                 page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+        if chips.count() > 0:
+            chips.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+            return
         if position.count() != 1:
             raise RuntimeError(
                 "экран chip-popular визарда не достигнут: поле должности "
@@ -132,6 +144,7 @@ def ensure_wizard_role_chip_screen(page: Page, title: str) -> None:
             "экран chip-popular визарда не достигнут: кнопка продолжения "
             f"неоднозначна (совпадений: {next_button.count()})"
         )
+    next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
     next_button.first.click()
 
     deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
