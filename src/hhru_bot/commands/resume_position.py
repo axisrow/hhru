@@ -73,7 +73,25 @@ def register(subparsers) -> None:
     )
     p.add_argument("--dry-run", action="store_true", help="Показать план без изменения hh.ru")
     p.add_argument("--force", action="store_true", help="Подтвердить запись без prompt")
+    p.add_argument(
+        "--allow-auto-publish",
+        action="store_true",
+        help=(
+            "Разрешить закрытие professional_role, после которого hh.ru может "
+            "автоматически опубликовать резюме"
+        ),
+    )
     p.set_defaults(func=run)
+
+
+def _professional_role_closes_resume(flow) -> bool:
+    """Return whether this write can trigger hh.ru auto-publication.
+
+    ``nextIncompleteScreenId=professional_role`` is the only state in which
+    this command closes the last missing screen; an editor flow or another
+    incomplete screen remains reversible and must not be blocked.
+    """
+    return flow.kind == "wizard" and flow.state.next_incomplete_screen_id == "professional_role"
 
 
 def _print_plan(plan) -> None:
@@ -276,6 +294,21 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 plan.title = effective_title
                 plan.specializations = [role.label]
                 validate_wizard_plan(plan)
+            auto_publish = _professional_role_closes_resume(flow)
+            if auto_publish and not args.dry_run and not getattr(args, "allow_auto_publish", False):
+                print(
+                    "[FAIL] professional_role — это последний незаполненный экран: "
+                    "hh.ru может автоматически опубликовать резюме после сохранения. "
+                    "Ничего не записано. Для явного разрешения используйте "
+                    "--allow-auto-publish вместе с --force."
+                )
+                return True
+            if auto_publish and not args.dry_run:
+                print(
+                    "[WARN] Следующий клик сохранения professional_role может "
+                    "автоматически опубликовать резюме на hh.ru. "
+                    "Разрешено флагом --allow-auto-publish."
+                )
             _print_plan(plan)
             if role is not None:
                 _print_classification(
