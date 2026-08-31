@@ -232,6 +232,25 @@ def test_search_has_common_args_no_limit():
     assert "--text" in opts
 
 
+def test_common_catalog_cardinality():
+    parser = _build()
+    args = parser.parse_args(
+        [
+            "common",
+            "--resume",
+            "00001",
+            "--metro",
+            "Маяковская",
+            "--citizenship",
+            "Россия",
+            "--citizenship",
+            "Беларусь",
+        ]
+    )
+    assert args.metro == "Маяковская"
+    assert args.citizenship == ["Россия", "Беларусь"]
+
+
 def test_search_text_is_optional_without_resume():
     parser = _build()
 
