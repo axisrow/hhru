@@ -73,6 +73,12 @@ def _subparser_actions(parser):
     raise AssertionError("subparsers не найден")
 
 
+def test_resume_position_auto_publish_gate_flag_is_explicit():
+    parser = _build()
+    args = parser.parse_args(["resume-position", "--resume", "00001", "--allow-auto-publish"])
+    assert args.allow_auto_publish is True
+
+
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)

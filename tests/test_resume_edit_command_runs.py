@@ -651,6 +651,7 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
         mode=None,
         dry_run=False,
         force=True,
+        allow_auto_publish=True,
         history=str(history_path),
     )
 
@@ -680,6 +681,7 @@ def _draft_position_args(history_path: Path) -> argparse.Namespace:
         mode=None,
         dry_run=False,
         force=True,
+        allow_auto_publish=True,
         history=str(history_path),
     )
 

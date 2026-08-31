@@ -405,6 +405,7 @@ def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
             mode=None,
             dry_run=False,
             force=True,
+            allow_auto_publish=True,
         )
     )
 
