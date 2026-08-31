@@ -1,7 +1,8 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.resume_position as resume_position
 from hhru_bot.config import bare_resume
@@ -255,7 +256,10 @@ def test_open_position_form_reloads_once_after_stalled_ssr_card(monkeypatch):
     assert select_job.click.call_count == 2
 
 
-def test_save_position_wizard_clears_inherited_role_and_selects_exact_catalog_role():
+@pytest.mark.parametrize("clear_count", [1, 0])
+def test_save_position_wizard_handles_existing_or_empty_role(
+    clear_count,
+):
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -263,13 +267,15 @@ def test_save_position_wizard_clears_inherited_role_and_selects_exact_catalog_ro
     position.count.return_value = 1
     position.input_value.return_value = ""
     clear = MagicMock()
-    clear.count.return_value = 1
+    clear.count.return_value = clear_count
     next_button = MagicMock()
     next_button.count.return_value = 1
     next_button.first = next_button
     search = MagicMock()
     search.count.return_value = 1
     search.first = search
+    chip = MagicMock()
+    chip.count.return_value = 0  # modal path: chip-popular shape not shown
     checkbox = MagicMock()
     # hh.ru repeats the same semantic role under several tree categories.
     checkbox.count.return_value = 2
@@ -293,6 +299,7 @@ def test_save_position_wizard_clears_inherited_role_and_selects_exact_catalog_ro
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
         resume_position.WIZARD_CATEGORY_SEARCH: search,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("AI Engineer"): chip,
         resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
         resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]
@@ -306,13 +313,122 @@ def test_save_position_wizard_clears_inherited_role_and_selects_exact_catalog_ro
         before_first_click=before_first_click,
     )
 
-    clear.click.assert_called_once_with()
+    if clear_count:
+        clear.click.assert_called_once_with()
+    else:
+        clear.click.assert_not_called()
     position.fill.assert_called_once_with("AI Engineer")
     before_first_click.assert_called_once_with()
     next_button.click.assert_called_once_with()
     search.fill.assert_called_once_with("Аналитик")
     checkbox.check.assert_called_once_with()
     submit.click.assert_called_once_with()
+
+
+@pytest.mark.parametrize("click_reports_after_navigation", [False, True])
+def test_save_position_wizard_uses_preselected_popular_chip_when_catalog_modal_is_skipped(
+    click_reports_after_navigation,
+):
+    # Live DOM, #881 (2026-08-31): on a copy-resume draft that already carries
+    # an inherited role, hh.ru skips the tree-selector catalog modal entirely
+    # after NEXT and instead renders flat "chip-popular" radios, with the
+    # inherited profession pre-checked. The tree-selector search input never
+    # appears, so treating its absence as a hard failure turned a valid save
+    # into a permanent `uncertain`.
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+    position = MagicMock()
+    position.count.return_value = 1
+    position.input_value.return_value = ""
+    clear = MagicMock()
+    clear.count.return_value = 1
+    next_button = MagicMock()
+    next_button.count.return_value = 1
+    next_button.first = next_button
+    search = MagicMock()
+    search.count.return_value = 0  # catalog modal never appears in this shape
+    chip = MagicMock()
+    chip.count.return_value = 1
+    chip.first = chip
+    chip.is_checked.return_value = True
+    chip.is_disabled.return_value = False
+    chip_card = MagicMock()
+    chip_card.count.return_value = 1
+    chip.locator.return_value = chip_card
+    page.locator.side_effect = lambda selector: {
+        resume_position.WIZARD_POSITION: position,
+        resume_position.WIZARD_POSITION_CLEAR: clear,
+        resume_position.WIZARD_NEXT: next_button,
+        resume_position.WIZARD_CATEGORY_SEARCH: search,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("Python-разработчик"): chip,
+    }[selector]
+    if click_reports_after_navigation:
+
+        def click_side_effect():
+            if next_button.click.call_count == 2:
+                page.url = "https://hh.ru/applicant/resumes/suitable_vacancies?published=true"
+                raise PlaywrightError("detached after navigation")
+
+        next_button.click.side_effect = click_side_effect
+
+    resume_position.save_position_wizard(
+        page,
+        resume,
+        PositionValues(title="Python-разработчик", specializations=["Программист, разработчик"]),
+        role_id="96",
+    )
+
+    assert next_button.click.call_count == 2
+    assert next_button.first.wait_for.call_count == 2
+    chip_card.click.assert_called_once_with()
+    if click_reports_after_navigation:
+        page.wait_for_url.assert_not_called()
+    else:
+        page.wait_for_url.assert_called_once_with(ANY, wait_until="commit", timeout=30_000)
+
+
+def test_save_position_wizard_rejects_unchecked_popular_chip():
+    # The chip shape (#881) is only a safe skip of the modal when hh.ru itself
+    # pre-checked the inherited profession; an unchecked chip means the save
+    # is not actually confirmed and must fail closed, not click NEXT blindly.
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+    position = MagicMock()
+    position.count.return_value = 1
+    position.input_value.return_value = ""
+    clear = MagicMock()
+    clear.count.return_value = 1
+    next_button = MagicMock()
+    next_button.count.return_value = 1
+    next_button.first = next_button
+    search = MagicMock()
+    search.count.return_value = 0
+    chip = MagicMock()
+    chip.count.return_value = 1
+    chip.first = chip
+    chip.is_checked.return_value = False
+    chip.is_disabled.return_value = False
+    page.locator.side_effect = lambda selector: {
+        resume_position.WIZARD_POSITION: position,
+        resume_position.WIZARD_POSITION_CLEAR: clear,
+        resume_position.WIZARD_NEXT: next_button,
+        resume_position.WIZARD_CATEGORY_SEARCH: search,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("Python-разработчик"): chip,
+    }[selector]
+
+    with pytest.raises(RuntimeError, match="не отмечен"):
+        resume_position.save_position_wizard(
+            page,
+            resume,
+            PositionValues(
+                title="Python-разработчик", specializations=["Программист, разработчик"]
+            ),
+            role_id="96",
+        )
+
+    next_button.click.assert_called_once_with()  # only the first NEXT, not a second
 
 
 def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal():
@@ -330,6 +446,8 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal()
     search = MagicMock()
     search.count.return_value = 1
     search.first = search
+    chip = MagicMock()
+    chip.count.return_value = 0  # modal path: chip-popular shape not shown
     checkbox = MagicMock()
     checkbox.count.return_value = 1
     checkbox.first = checkbox
@@ -352,6 +470,7 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal()
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
         resume_position.WIZARD_CATEGORY_SEARCH: search,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("AI Engineer"): chip,
         resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
         resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]
