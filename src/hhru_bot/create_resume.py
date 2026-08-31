@@ -12,7 +12,7 @@ from playwright.sync_api import Locator, Page
 
 from .browser import HH_BASE_URL, RESUMES_FULL_LIST_URL, goto_hh
 from .external_forms.detect import normalize
-from .selector_groups.resume_list import RESUME_LIST_CARD, RESUME_LIST_CARD_TITLE
+from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
     RESUME_CREATION_CATEGORY_INPUT,
@@ -257,35 +257,6 @@ def _click_until_screen_switches(
     return f"экран визарда не переключился после {attempts} попыток: {last_error}"
 
 
-def _existing_title_reason(card_count: int, titles: list[str], title: str) -> str:
-    """Fail-closed duplicate check from a confirmed card count and read titles.
-
-    ``RESUME_LIST_CARD`` is confirmed; ``RESUME_LIST_CARD_TITLE`` is unconfirmed
-    (resume_list.py). A zero-card list is a genuine empty account (the caller
-    anchors list hydration on ``RESUME_CREATE_BUTTON`` before reading) and must
-    not be blocked: an empty account legitimately creates its first resume.
-
-    For a non-empty list, the safety check is only trustworthy if EVERY confirmed
-    card yielded exactly one non-empty title. Any mismatch — fewer titles than
-    cards, a blank title, or extra matches — means the title selector drifted and
-    an existing same-title resume could be invisible, so refuse rather than
-    assume there is no duplicate (Codex cycles 2/3).
-    """
-    if card_count == 0:
-        return ""
-    if len(titles) != card_count or not all(titles):
-        return "не удалось прочитать заголовки всех существующих резюме; создание запрещено"
-    if normalize(title) in {normalize(item) for item in titles}:
-        return f"резюме с должностью «{title}» уже существует; второе создать нельзя"
-    return ""
-
-
-def _existing_resume_reason(page: Page, title: str) -> str:
-    cards = page.locator(RESUME_LIST_CARD)
-    titles = cards.locator(RESUME_LIST_CARD_TITLE).all_text_contents()
-    return _existing_title_reason(cards.count(), titles, title)
-
-
 def create_resume_on_hh(
     page: Page,
     *,
@@ -315,7 +286,13 @@ def create_resume_on_hh(
         if page.locator(RESUME_CREATE_BUTTON).count() == 0:
             return CreateResumeResult(False, reason=_RESUME_LIMIT_REASON)
         return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
-    duplicate_reason = _existing_resume_reason(page, title)
+    # Дубль-гард (#304, Codex cycles 2/3) вынесен в resume_titles (#911):
+    # должности в аккаунте уникальны, дубликат надо отклонять ДО клика —
+    # после клика отказ hh.ru молчит (живая проверка пользователя).
+    entries, list_reason = read_account_titles(page)
+    if list_reason:
+        return CreateResumeResult(False, reason=list_reason)
+    duplicate_reason = duplicate_title_reason(entries, title)
     if duplicate_reason:
         return CreateResumeResult(False, reason=duplicate_reason)
     create_button, reason = _one(page, RESUME_CREATE_BUTTON, "кнопка создания резюме")

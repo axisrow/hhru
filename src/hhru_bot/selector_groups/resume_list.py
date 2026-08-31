@@ -34,6 +34,12 @@ RESUME_LIST_CARD = _selector("resume_list.RESUME_LIST_CARD")
 RESUME_LIST_CARD_LINK_TPL = _selector("resume_list.RESUME_LIST_CARD_LINK_TPL")
 RESUME_LIST_CARD_LINK_PREFIX = _selector("resume_list.RESUME_LIST_CARD_LINK_PREFIX")
 
+# Хвост data-qa ссылки карточки после префикса — это и есть resume_id.
+# Отдельная константа (не выводится из селектора строковой хирургией): её
+# читает resume_titles.read_account_titles для привязки названия к резюме,
+# а copy_resume — для diff хэшей до/после копирования (#911).
+RESUME_LIST_CARD_LINK_QA_PREFIX = "resume-card-link-"
+
 # Кнопка «...» (меню действий) на карточке резюме.
 RESUME_LIST_ACTION_MORE = _selector("resume_list.RESUME_LIST_ACTION_MORE")
 

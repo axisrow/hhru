@@ -1,64 +1,105 @@
-"""Unit-тесты дубль-гарда создания резюме (create_resume, #304).
+"""Интеграционные тесты дубль-гарда create-resume (create_resume + resume_titles).
 
-``_existing_title_reason`` — чистая fail-closed проверка «второе резюме с той же
-должностью создать нельзя». Покрывает согласованный с Codex-review (циклы 2/3)
-инвариант: карточки (подтверждённый ``RESUME_LIST_CARD``) есть, но заголовки
-(неподтверждённый ``RESUME_LIST_CARD_TITLE``) не читаются → отказ, а не молчаливое
-разрешение дубля.
+Дубль-гард «второе резюме с той же должностью создать нельзя» (#304, циклы
+Codex-review 2/3) с #911 живёт в общем модуле ``resume_titles`` (чистая
+проверка — в test_resume_titles.py, вместе с остальными входами записи
+должности). Здесь проверяется проводка: ``create_resume_on_hh`` отклоняет
+дубликат должности ДО первого клика, и отказ hh.ru при этом невидим (живая
+проверка пользователя 2026-09-01: дубликат 1 в 1 молча не сохраняется).
+
+Список резюме гоняется по фикстуре, редуцированной из живого SSR-дампа
+/applicant/my_resumes (#911).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from hhru_bot.create_resume import _existing_title_reason
+from _fakes import FakeLocator, _parse_root, _parse_selector
+from hhru_bot.create_resume import create_resume_on_hh
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
-
-@pytest.mark.parametrize(
-    ("card_count", "titles", "title", "expected"),
-    [
-        # Пустой аккаунт (0 карточек, список отрисован — якорь RESUME_CREATE_BUTTON)
-        # — легитимно создаёт первое резюме.
-        (0, [], "Backend developer", ""),
-        # Карточки есть, но заголовки не читаются (селектор уехал) → fail-closed.
-        (1, [], "Backend developer", "не удалось прочитать заголовки"),
-        (3, [], "Backend developer", "не удалось прочитать заголовки"),
-        # Частичный сбой (Codex cycle 3): заголовков меньше, чем карточек → fail-closed,
-        # иначе пропущенная карточка была бы сочтена отсутствующей и дубль ушёл бы.
-        (2, ["QA"], "Backend developer", "не удалось прочитать заголовки"),
-        (3, ["QA", "DevOps"], "Backend developer", "не удалось прочитать заголовки"),
-        # Пустой заголовок в читаемом наборе → нельзя доказать отсутствие дубля.
-        (2, ["", "QA"], "Backend developer", "не удалось прочитать заголовки"),
-        # Лишние совпадения (len > card_count) — тот же признак дрейфа селектора.
-        (1, ["QA", "QA"], "Backend developer", "не удалось прочитать заголовки"),
-        # Совпадение по должности → дубль запрещён.
-        (1, ["Backend developer"], "Backend developer", "уже существует"),
-        (2, ["QA", "Backend developer"], "Backend developer", "уже существует"),
-        # Нет совпадения, все заголовки читаемы → разрешено.
-        (1, ["QA"], "Backend developer", ""),
-        (2, ["QA", "DevOps"], "Backend developer", ""),
-    ],
-)
-def test_existing_title_reason(card_count, titles, title, expected):
-    reason = _existing_title_reason(card_count, titles, title)
-    if expected:
-        assert expected in reason
-    else:
-        # Allowed-case assertions must pin reason == "" (not just contain ""):
-        # "" in reason is trivially true for any string and would mask a
-        # regression where a legitimately-allowed case starts failing closed.
-        assert reason == ""
+FIXTURE = Path(__file__).parent / "fixtures" / "resume_list_titles_911.html"
 
 
-@pytest.mark.parametrize(
-    ("existing", "new", "expected"),
-    [
-        # normalize() (external_forms/detect): collapse-whitespace + strip + casefold.
-        ("  Backend   Developer  ", "backend developer", "уже существует"),
-        ("QA Automation Engineer", "qa automation engineer", "уже существует"),
-    ],
-)
-def test_existing_title_reason_normalizes(existing, new, expected):
-    assert expected in _existing_title_reason(1, [existing], new)
+class _ClickthroughLocator(FakeLocator):
+    """Кликабельный локатор: дубль-гард срабатывает раньше, визард не нужен.
+
+    ``click``/``is_disabled`` — no-op, чтобы поток дошёл до якоря визарда и
+    остановился там штатным отказом «визард не отрисовался» (FakeLocator.wait_for
+    поднимает Timeout на отсутствующем элементе).
+    """
+
+    def click(self, *, timeout=None) -> None:  # noqa: ARG002
+        return None
+
+    def is_disabled(self) -> bool:
+        return False
+
+    @property
+    def first(self) -> FakeLocator:
+        # Базовый FakeLocator.first теряет подкласс; сохранить кликабельность
+        # у выбранного элемента (кнопка создания адресуется через .first).
+        matches = self._resolved()
+        return _ClickthroughLocator(
+            self._root, self._qa_match, matches=[matches[0]] if matches else []
+        )
+
+
+class ListPage:
+    """Двойник страницы списка резюме для проверки дубль-гарда."""
+
+    def __init__(self, html: str):
+        self._root = _parse_root(html)
+        self.url = ""
+
+    def locator(self, selector: str) -> FakeLocator:
+        return _ClickthroughLocator(self._root, _parse_selector(selector))
+
+    def goto(self, url, *, wait_until=None, timeout=None):  # noqa: ANN001, ARG002
+        self.url = url
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ANN001, ARG002
+        return None
+
+
+def test_duplicate_title_is_refused_before_any_click():
+    result = create_resume_on_hh(
+        ListPage(FIXTURE.read_text(encoding="utf-8")),
+        area="Программист, разработчик",
+        title="Программист",
+        dry_run=False,
+    )
+    assert not result.success
+    assert not result.uncertain
+    assert "уже существует" in result.reason
+
+
+def test_fresh_title_is_not_refused_by_duplicate_guard():
+    # Дубль-гард не блокирует новый заголовок: отказ приходит позже (визард),
+    # а не от дубль-гарда. Двойник не реализует визард — достаточно
+    # подтверждения, что причина отказа не про дубль.
+    result = create_resume_on_hh(
+        ListPage(FIXTURE.read_text(encoding="utf-8")),
+        area="Программист, разработчик",
+        title="Аналитик данных",
+        dry_run=False,
+    )
+    assert "уже существует" not in (result.reason or "")
+
+
+def test_unreadable_list_fails_closed():
+    # Карточка без названия (дрейф разметки) — список не доказывает отсутствие
+    # дубля, создание обязано отказать, а не молча разрешить.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "<div data-qa='resume-title'><h3 data-qa='title'>QA инженер тестировщик</h3></div>",
+        "",
+    )
+    result = create_resume_on_hh(
+        ListPage(html), area="Программист, разработчик", title="Аналитик данных", dry_run=False
+    )
+    assert not result.success
+    assert "не удалось прочитать заголовки" in result.reason

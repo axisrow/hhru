@@ -44,6 +44,7 @@ from .selector_groups.resume_list import (
     RESUME_DUPLICATE_MENU_ITEM,
     RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
+    RESUME_LIST_CARD_LINK_QA_PREFIX,
     RESUME_LIST_CARD_LINK_TPL,
     RESUME_LIST_CARD_TITLE,
     RESUME_PROFILE_READY,
@@ -62,7 +63,6 @@ PROFILE_POLL_MS = 250
 MENU_CLICK_TIMEOUT_MS = 1_000
 
 _RESUME_HASH_RE = re.compile(r"/resume/([0-9a-f]{32,40})")
-_CARD_LINK_PREFIX = "resume-card-link-"
 
 
 def _monotonic() -> float:
@@ -321,10 +321,10 @@ def _reload_resumes_list(page: Page) -> str:
 def _card_hashes(page: Page) -> set[str]:
     """Хэши всех резюме в списке /applicant/resumes (для diff до/после)."""
     hashes: set[str] = set()
-    for link in page.locator(f"[data-qa^='{_CARD_LINK_PREFIX}']").all():
+    for link in page.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
         qa = link.get_attribute("data-qa") or ""
-        if qa.startswith(_CARD_LINK_PREFIX):
-            hashes.add(qa[len(_CARD_LINK_PREFIX) :])
+        if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
+            hashes.add(qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :])
     return hashes
 
 
@@ -437,10 +437,10 @@ def list_resume_cards(
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
         resume_id = ""
-        for link in card.locator(f"[data-qa^='{_CARD_LINK_PREFIX}']").all():
+        for link in card.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
             qa = link.get_attribute("data-qa") or ""
-            if qa.startswith(_CARD_LINK_PREFIX):
-                resume_id = qa[len(_CARD_LINK_PREFIX) :]
+            if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
+                resume_id = qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :]
                 break
         if not resume_id:
             # Codex adversarial review (PR #322): вложенный селектор ссылки-хэша

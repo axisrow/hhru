@@ -15,6 +15,17 @@ from hhru_bot.history import History
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _no_duplicate_titles(monkeypatch):
+    """#911: дубль-гард должностей по умолчанию «нет дубля» — двойники этих
+    тестов не моделируют список резюме; проводка гарда покрыта в
+    test_resume_position_command.py."""
+    monkeypatch.setattr(
+        "hhru_bot.resume_titles.account_duplicate_reason",
+        lambda page, title, exclude_resume_id="": "",
+    )
+
+
 @pytest.mark.parametrize(
     ("module_name", "command_name"),
     [

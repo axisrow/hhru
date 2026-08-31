@@ -136,6 +136,17 @@ class FakeLocator:
     def count(self) -> int:
         return len(self._resolved())
 
+    def all(self) -> list[FakeLocator]:
+        """Список локаторов-элементов; каждый скоуплен своим поддеревом.
+
+        Реальный Playwright ``Locator.all()`` возвращает независимые
+        элементные локаторы, чей ``.locator()`` ищет внутри элемента — здесь
+        это делает ``_CardLocator`` (тот же скоупинг, что у ``.nth()``-карточек
+        переговоров). Вызывается только после ``count() > 0`` — как в бою
+        (copy_resume/resume_titles итерируют карточки после проверки счёта).
+        """
+        return [_CardLocator(node, lambda _v: True, matches=[node]) for node in self._resolved()]
+
     def inner_text(self) -> str:
         # first/nth зафиксировал один узел (self._matches длина 1); иначе — коллекция,
         # у Playwright inner_text на коллекции в strict mode кидает Error. Для тестов
