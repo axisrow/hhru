@@ -74,11 +74,33 @@ from .selector_groups.resume_page import (
 
 logger = logging.getLogger("hhru_bot.resume_position")
 
+
+class ChipPopularUnavailable(RuntimeError):
+    """The chip-popular shape (#881/#889) cannot confirm the exact catalog
+    specialization — it is a fixed list of ~37 generic categories plus a
+    narrow "Уточните профессию" sub-modal (~15 items each) that does not
+    contain most real catalog leaves (confirmed live DOM 2026-08-31: role_id
+    96 "Программист, разработчик" is absent from the "Программист" sub-list).
+    A dedicated exception type (not a plain RuntimeError) lets the caller
+    distinguish "this shape cannot do it, try the wizard-minimum fallback"
+    from every other wizard failure, which must still surface as-is.
+    """
+
+
 # The chip-popular radio does not carry the profession in its data-qa (every
 # chip on the screen shares the same data-qa); the profession lives in the
 # input's ``value`` attribute instead (#881, live DOM 2026-08-31). Scope the
 # base selector down to the one radio matching the confirmed catalog label.
 WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE + "[value='{}']"
+
+# Fixed, deterministic placeholder for the wizard-minimum fallback (#890):
+# any of the ~37 chip-popular categories clears `nextIncompleteScreenId`
+# equally well, since its content is discarded immediately by the editor-mode
+# `_set_specializations` call that follows. A hardcoded, always-identical
+# choice (first item on the confirmed live list) is deliberate — not derived
+# from `plan.title` or randomized — per the project's anti-fraud principle of
+# not behaving unpredictably towards hh.ru (CLAUDE.md).
+WIZARD_MINIMUM_PLACEHOLDER_TITLE = "Администратор"
 
 # Explicit, generous but bounded — avoids a silent 30s-default hang per call
 # (CLAUDE.md requires an inline timeout with a comment for every post-render
@@ -553,59 +575,24 @@ def save_position_wizard(
             search.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
             break
         if chip.count() == 1:
-            # Second post-NEXT shape (#881, live DOM 2026-08-31): hh.ru skips
-            # the catalog modal for a draft that already carries an inherited
-            # role and instead pre-checks the matching "popular" chip. The
-            # tree-selector search input never appears in this shape, so
-            # falling through to the modal path below would misclassify a
-            # valid save as a failure.
-            chip.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
-            if not chip.first.is_checked():
-                raise RuntimeError(
-                    f"чип должности «{plan.title}» найден, но не отмечен — "
-                    "автоматический выбор не подтверждён"
-                )
-            if chip.first.is_disabled():
-                raise RuntimeError(
-                    f"чип должности «{plan.title}» отмечен, но отключён — "
-                    "сохранение через chip-popular не подтверждено"
-                )
-            # The initial checked state is only the server-provided popular
-            # suggestion. Re-select the exact catalog chip so the wizard
-            # registers the choice before the final NEXT. The radio input is
-            # disabled in this shape; its wrapping card is the hit target.
-            chip_card = chip.first.locator("xpath=ancestor::label[1]")
-            if chip_card.count() != 1:
-                raise RuntimeError("карточка chip должности не подтверждена")
-            chip_card.click()
-            # The chip and the final NEXT button are rendered together by the
-            # SPA.  The button locator from the first screen can resolve
-            # before its click handler is attached on this second render.
-            next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
-            try:
-                next_button.click()
-            except PlaywrightError:
-                # Playwright can report an intercepted/detached click after
-                # the SPA has already navigated.  The changed route is the
-                # positive save signal; only re-raise while still on the
-                # professional_role screen.
-                if not _is_wizard_path(getattr(page, "url", "")):
-                    return
-                raise
-            # A checked chip is only a positive selection signal.  Wait for
-            # the wizard route to leave professional_role after the final
-            # NEXT, otherwise verify_wizard_save can read the old state while
-            # the SPA is still committing the save.
-            try:
-                page.wait_for_url(
-                    lambda url: urlsplit(str(url)).path != WIZARD_PATH,
-                    wait_until="commit",
-                    timeout=30_000,
-                )
-            except PlaywrightError:
-                _dump_wizard_failure(page, resume.resume_id, "chip_popular_post_next")
-                raise
-            return
+            # Second post-NEXT shape (#881/#889, live DOM 2026-08-31): hh.ru
+            # skips the full tree-selector catalog modal and instead shows a
+            # fixed list of ~37 generic categories, each opening a narrow
+            # "Уточните профессию" sub-modal with ~15 items. This shape
+            # cannot reach an arbitrary catalog leaf: live DOM confirmed
+            # role_id 96 "Программист, разработчик" is absent from the
+            # sub-modal under its own general category "Программист" — the
+            # chip's checked state only reflects the just-typed title, never
+            # the requested ``expected_label``. Clicking the chip and NEXT
+            # here would either fail closed (unchecked/disabled) or silently
+            # save the WRONG specialization (checked+enabled). Neither
+            # outcome can satisfy ``expected_label``, so this shape is
+            # unusable for an exact save and the caller must fall back to
+            # the wizard-minimum + editor path instead of attempting it.
+            raise ChipPopularUnavailable(
+                f"chip-popular shape не может сохранить точную специализацию "
+                f"«{expected_label}» — каталог этого экрана её не содержит"
+            )
         page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
     else:
         raise RuntimeError("каталог профессий не появился после очистки прежних profession IDs")
@@ -652,6 +639,135 @@ def save_position_wizard(
         wait_until="commit",
         timeout=30_000,
     )
+
+
+def save_position_wizard_minimum(
+    page: Page,
+    resume: ResumeConfig,
+    *,
+    before_first_click: Callable[[], None] | None = None,
+) -> str:
+    """Save ANY valid chip-popular category to clear professional_role (#890).
+
+    This is the fallback for :func:`save_position_wizard` raising
+    :class:`ChipPopularUnavailable`: the chip-popular shape cannot reach an
+    arbitrary catalog leaf, but the caller does not need it to — it only
+    needs `nextIncompleteScreenId` to stop being `"professional_role"` so
+    :func:`open_position_form` returns ``kind="editor"`` next time, where the
+    exact specialization is set through the already-working
+    ``apply_position``/``_set_specializations`` catalog search. The saved
+    title is deliberately the fixed :data:`WIZARD_MINIMUM_PLACEHOLDER_TITLE`,
+    not ``plan.title`` — its content is thrown away immediately by the editor
+    step that follows, so there is nothing to get right here beyond a valid,
+    checked, non-disabled chip.
+
+    Returns the placeholder title actually saved, for the caller to log/pass
+    to the editor step's ``current`` baseline.
+    """
+    if not is_position_wizard(page, resume.resume_id):
+        raise RuntimeError("professional_role identity не подтверждён перед сохранением")
+
+    title = WIZARD_MINIMUM_PLACEHOLDER_TITLE
+    position = page.locator(WIZARD_POSITION)
+    if position.count() != 1:
+        raise RuntimeError(f"поле должности визарда неоднозначно: {position.count()}")
+    clear = page.locator(WIZARD_POSITION_CLEAR)
+    clear_count = clear.count()
+    if clear_count > 1:
+        raise RuntimeError(f"очистка должности визарда неоднозначна: {clear_count}")
+    if clear_count == 1:
+        clear.click()
+        clear_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+        while time.monotonic() < clear_deadline and position.input_value():
+            page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+    if position.input_value():
+        raise RuntimeError("визард не подтвердил очистку прежней должности и profession IDs")
+
+    position.fill(title)
+    next_button = page.locator(WIZARD_NEXT)
+    try:
+        next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError(f"кнопка продолжения визарда не появилась: {exc}") from exc
+    if next_button.count() != 1:
+        raise RuntimeError(f"кнопка продолжения визарда неоднозначна: {next_button.count()}")
+    if before_first_click is not None:
+        before_first_click()
+    next_button.click()
+
+    chip = page.locator(WIZARD_POSITION_CHIP_POPULAR.format(title))
+    deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+    while time.monotonic() < deadline:
+        if not _is_wizard_path(getattr(page, "url", "")):
+            return title
+        if chip.count() == 1:
+            break
+        page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+    else:
+        raise RuntimeError(
+            f"chip-popular для «{title}» не появился — минимальное сохранение невозможно"
+        )
+    chip.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    if not chip.first.is_checked():
+        raise RuntimeError(f"чип должности «{title}» найден, но не отмечен")
+    if chip.first.is_disabled():
+        raise RuntimeError(f"чип должности «{title}» отмечен, но отключён")
+    # The radio input itself is disabled in this shape; its wrapping card is
+    # the actual hit target (same pattern as the currency-chip click in
+    # ``apply_position`` below).
+    chip_card = chip.first.locator("xpath=ancestor::label[1]")
+    if chip_card.count() != 1:
+        raise RuntimeError("карточка chip должности не подтверждена")
+    chip_card.click()
+    next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    try:
+        next_button.click()
+    except PlaywrightError:
+        # The route change itself is the positive signal; only re-raise if
+        # we are still stuck on professional_role.
+        if not _is_wizard_path(getattr(page, "url", "")):
+            return title
+        raise
+    try:
+        page.wait_for_url(
+            lambda url: urlsplit(str(url)).path != WIZARD_PATH,
+            wait_until="commit",
+            timeout=30_000,
+        )
+    except PlaywrightError:
+        _dump_wizard_failure(page, resume.resume_id, "wizard_minimum_post_next")
+        raise
+    return title
+
+
+def verify_wizard_minimum_save(page: Page, resume: ResumeConfig) -> ResumeState:
+    """Poll only for professional_role clearing — no title/role match (#890).
+
+    Deliberately narrower than :func:`verify_wizard_save`: the wizard-minimum
+    step saves a throwaway placeholder on purpose, so checking its title or
+    role against anything would be a foot-gun (a future call could weaken
+    real verification by passing loose expectations). This function proves
+    exactly one fact — the draft left the professional_role screen — leaving
+    the exact specialization to the editor-mode step that follows.
+    """
+    deadline = time.monotonic() + WIZARD_VERIFY_TIMEOUT_MS / 1000
+    state = ResumeState()
+    while time.monotonic() < deadline:
+        goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
+        require_authenticated_page(page)
+        route_matches = resume_identity_matches(page, resume.resume_id) or is_position_wizard(
+            page, resume.resume_id
+        )
+        if not route_matches:
+            raise RuntimeError("post-save readback открыт не для того резюме")
+        state = parse_resume_state(page.content(), resume.resume_id)
+        if state.status is not None and state.next_incomplete_screen_id != "professional_role":
+            return state
+        page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+
+    if state.status is None:
+        raise RuntimeError("post-save readback не подтвердил состояние резюме (wizard-minimum)")
+    raise RuntimeError("post-save readback всё ещё показывает professional_role (wizard-minimum)")
 
 
 def verify_wizard_save(

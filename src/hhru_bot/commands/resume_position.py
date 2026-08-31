@@ -94,13 +94,30 @@ def _print_classification(role, *, reason: str = "", queries: list[str] | None =
         print(f"  reason: {reason}")
 
 
+def _click_save_and_wait(page) -> None:
+    """Click the editor SAVE button and wait for the form to close.
+
+    Shared by the pure-editor path and the wizard-minimum fallback (#890):
+    both end up applying the plan through ``apply_position`` on the same
+    ``/resume/edit/{id}/position`` form and must confirm the same way. Any
+    failure here is a grey-zone post-click failure — the caller wraps it in
+    ``_SaveConfirmationUncertain`` once the mutating click has landed.
+    """
+    from ..resume_position import SAVE
+
+    if page.locator(SAVE).count() != 1:
+        raise RuntimeError("кнопка сохранения формы не подтверждена")
+    page.locator(SAVE).click()
+    page.locator("[data-qa='resume-edit-position-form']").wait_for(state="hidden", timeout=10_000)
+
+
 def _run(args: argparse.Namespace, progress) -> bool:
     from ..ai.llm_client import LLMClient
     from ..browser import BrowserLaunchError, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_position import (
         CANCEL,
-        SAVE,
+        ChipPopularUnavailable,
         PositionValues,
         apply_position,
         build_position_prompt,
@@ -109,7 +126,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
         open_position_form,
         parse_position_response,
         save_position_wizard,
+        save_position_wizard_minimum,
         validate_wizard_plan,
+        verify_wizard_minimum_save,
         verify_wizard_save,
     )
 
@@ -309,21 +328,52 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     nonlocal first_click_started
                     first_click_started = True
 
+                verified_state = None
+                published_note = (
+                    "[INFO] professional_role завершён; публикация требует "
+                    "отдельной read-only проверки."
+                )
                 try:
-                    save_position_wizard(
-                        page,
-                        resume,
-                        plan,
-                        role_id=role.role_id,
-                        before_first_click=mark_first_click_started,
-                    )
-                    verified_state = verify_wizard_save(
-                        page,
-                        resume,
-                        expected_title=plan.title or "",
-                        expected_role_id=role.role_id,
-                        expected_role_label=role.label,
-                    )
+                    try:
+                        save_position_wizard(
+                            page,
+                            resume,
+                            plan,
+                            role_id=role.role_id,
+                            before_first_click=mark_first_click_started,
+                        )
+                        verified_state = verify_wizard_save(
+                            page,
+                            resume,
+                            expected_title=plan.title or "",
+                            expected_role_id=role.role_id,
+                            expected_role_label=role.label,
+                        )
+                    except ChipPopularUnavailable:
+                        # #890: this DOM shape structurally cannot save the
+                        # exact requested specialization (confirmed live —
+                        # the catalog leaf is absent from its narrow
+                        # sub-modal). Save ANY valid placeholder category
+                        # just to clear professional_role, then reopen the
+                        # form — it must now be in editor mode, where the
+                        # already-working `_set_specializations` catalog
+                        # search sets the exact specialization.
+                        save_position_wizard_minimum(
+                            page, resume, before_first_click=mark_first_click_started
+                        )
+                        verify_wizard_minimum_save(page, resume)
+                        fixup_flow = open_position_form(page, resume)
+                        if fixup_flow.kind != "editor" or fixup_flow.resume_id != resume.resume_id:
+                            raise RuntimeError(
+                                "wizard-minimum сохранён, но форма не перешла в editor-режим"
+                            ) from None
+                        apply_position(page, plan, current=fixup_flow.values)
+                        _click_save_and_wait(page)
+                        published_note = (
+                            "[INFO] professional_role завершён через wizard-minimum "
+                            "fallback (#890); точная специализация применена в "
+                            "editor-режиме."
+                        )
                 except Exception as exc:
                     if not first_click_started:
                         raise
@@ -334,23 +384,15 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 print(f"[OK] professional_role резюме '{resume.id}' сохранён и проверен.")
                 from ..resume_state import is_published
 
-                if is_published(verified_state):
+                if verified_state is not None and is_published(verified_state):
                     print("[INFO] hh.ru подтвердил автоматическую публикацию: isSearchable=true.")
                 else:
-                    print(
-                        "[INFO] professional_role завершён; публикация требует "
-                        "отдельной read-only проверки."
-                    )
+                    print(published_note)
                 return False
             progress.begin_attempt()
             apply_position(page, plan, current=current)
-            if page.locator(SAVE).count() != 1:
-                raise RuntimeError("кнопка сохранения формы не подтверждена")
             try:
-                page.locator(SAVE).click()
-                page.locator("[data-qa='resume-edit-position-form']").wait_for(
-                    state="hidden", timeout=10_000
-                )
+                _click_save_and_wait(page)
             except Exception as exc:  # click already landed; result is uncertain
                 raise _SaveConfirmationUncertain(
                     f"сохранение не подтверждено (uncertain) после клика: {exc}"
