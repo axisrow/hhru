@@ -266,7 +266,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
             explicit_specialization = getattr(args, "specialization", None)
             if wizard:
                 from ..professional_roles import resolve_explicit_role, suggest_role
-                from ..resume_position import validate_wizard_role_for_write
+                from ..resume_position import (
+                    ensure_wizard_role_chip_screen,
+                    validate_wizard_role_for_write,
+                )
 
                 effective_title = plan.title or current.title
                 if not effective_title:
@@ -277,9 +280,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         raise RuntimeError(
                             "для professional_role требуется ровно один --specialization"
                         )
-                    # The wizard chip screen is read-only at this point. Keep
-                    # dry-run fail-closed and avoid resolving/writing a role
-                    # that the wizard cannot represent.
+                    # Reach the actual chip screen before reading it. A fresh
+                    # duplicate starts on the title form, where zero chips
+                    # means "wrong screen", not "role absent".
+                    if hasattr(page, "locator"):
+                        ensure_wizard_role_chip_screen(page, effective_title)
                     validate_wizard_role_for_write(page, explicit_specialization[0])
                     role = resolve_explicit_role(page, explicit_specialization[0])
                 else:

@@ -326,6 +326,33 @@ def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkey
 
 
 @pytest.mark.browser_unit
+@pytest.mark.parametrize(
+    ("label", "expected"), [("Аналитик", "Аналитик"), ("Программист, разработчик", None)]
+)
+def test_wizard_start_screen_reaches_chips_before_validating_role(label, expected):
+    """Production order: fresh position form -> chips -> exact role decision."""
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    fixture = Path(__file__).parent / "fixtures" / "resume_position_wizard_start.html"
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch()
+    page = browser.new_page()
+    page.set_content(fixture.read_text(encoding="utf-8"))
+    try:
+        resume_position.ensure_wizard_role_chip_screen(page, "Data Analyst")
+        if expected is None:
+            with pytest.raises(RuntimeError, match="недоступна в визарде резюме"):
+                resume_position.validate_wizard_role_for_write(page, label)
+        else:
+            assert resume_position.validate_wizard_role_for_write(page, label) == expected
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+@pytest.mark.browser_unit
 def test_wizard_rejects_search_catalog_role_missing_from_chip_screen():
     """A vacancy-search role must not reach a wizard mutation (#904)."""
     from pathlib import Path

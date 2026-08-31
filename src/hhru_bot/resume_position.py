@@ -95,6 +95,62 @@ class ChipPopularUnavailable(RuntimeError):
 WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE
 
 
+def ensure_wizard_role_chip_screen(page: Page, title: str) -> None:
+    """Navigate from the wizard position form to its chip screen.
+
+    The position form is not the role catalog: on a fresh draft the chips are
+    mounted only after the title is submitted with NEXT.  Keep this transition
+    separate from role validation so an empty chip locator is not mistaken for
+    a missing role.  This is still before the irreversible save click.
+    """
+    chips = page.locator(WIZARD_POSITION_CHIP_POPULAR_BASE)
+    if chips.count() > 0:
+        return
+
+    position = page.locator(WIZARD_POSITION)
+    if position.count() != 1:
+        # Fresh copies may still be on the three-choice entry screen. This is
+        # the live-confirmed "Укажу профессию" card selector.
+        select_job = page.locator(WIZARD_SELECT_JOB)
+        if select_job.count() == 1:
+            select_job.first.click(timeout=WIZARD_TRANSITION_POLL_MS)
+            deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+            while time.monotonic() < deadline and position.count() != 1:
+                page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+        if position.count() != 1:
+            raise RuntimeError(
+                "экран chip-popular визарда не достигнут: поле должности "
+                f"неоднозначно (совпадений: {position.count()})"
+            )
+    position.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    if position.input_value() != title:
+        position.fill(title)
+
+    next_button = page.locator(WIZARD_NEXT)
+    if next_button.count() != 1:
+        raise RuntimeError(
+            "экран chip-popular визарда не достигнут: кнопка продолжения "
+            f"неоднозначна (совпадений: {next_button.count()})"
+        )
+    next_button.first.click()
+
+    deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+    while time.monotonic() < deadline:
+        if chips.count() > 0:
+            return
+        page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+
+    # A real wizard catalog screen is a different shape; report that distinctly
+    # from a valid chip screen missing the requested label.
+    search = page.locator(WIZARD_CATEGORY_SEARCH)
+    if search.count() == 1:
+        raise RuntimeError(
+            "экран chip-popular визарда не достигнут: открыт каталог ролей "
+            "визарда, а не список доступных чипов"
+        )
+    raise RuntimeError("экран chip-popular визарда не достигнут: чипы не появились")
+
+
 def validate_wizard_role_for_write(page: Page, label: str) -> str:
     """Return a role only when it is an actual wizard chip.
 
@@ -105,6 +161,11 @@ def validate_wizard_role_for_write(page: Page, label: str) -> str:
     mode, where the role-id catalog is available.
     """
     chips = page.locator(WIZARD_POSITION_CHIP_POPULAR_BASE)
+    if chips.count() == 0:
+        raise RuntimeError(
+            "экран chip-popular визарда не достигнут: сначала доведите визард "
+            "до списка доступных ролей"
+        )
     labels = [(chip.get_attribute("value") or "").strip() for chip in chips.all()]
     normalized = " ".join(label.split()).casefold()
     if normalized not in {" ".join(value.split()).casefold() for value in labels}:

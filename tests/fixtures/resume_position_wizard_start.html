@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+  <body>
+    <button data-qa="resume-profile-card-select-job" type="button">Укажу профессию</button>
+    <button data-qa="resume-profile-next-screen" type="button" hidden>Далее</button>
+    <script>
+      document.querySelector('[data-qa="resume-profile-card-select-job"]').addEventListener('click', () => {
+        const position = document.createElement('input');
+        position.dataset.qa = 'resume-profile-position-input';
+        position.type = 'text';
+        document.body.prepend(position);
+        const next = document.querySelector('[data-qa="resume-profile-next-screen"]');
+        next.hidden = false;
+        next.addEventListener('click', () => {
+          const chips = document.createElement('div');
+          chips.innerHTML = `
+            <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Администратор">Администратор</label>
+            <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Аналитик">Аналитик</label>`;
+          document.body.append(chips);
+        }, {once: true});
+      });
+    </script>
+  </body>
+</html>
