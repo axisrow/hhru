@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -18,19 +19,18 @@ from .browser import (
     HH_BASE_URL,
     goto_hh,
     labelled_field,
-    open_hydrated_resume_editor,
     require_authenticated_page,
 )
 from .config import ResumeConfig
+from .selector_groups import account_profile
 from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
 
-FORM = "[data-qa='resume-edit-common-form']"
-EDIT = "[data-qa='resume-edit-common-button']"
-FIRST_NAME = "[data-qa='resume-edit-firstName']"
-LAST_NAME = "[data-qa='resume-edit-lastName']"
-BIRTHDAY = "[data-qa='resume-edit-birthday']"
-GENDER = "[data-qa='resume-edit-gender']"
-PHONE = "[data-qa='resume-edit-phone']"
+FORM = account_profile.RESUME_COMMON_FORM
+FIRST_NAME = account_profile.RESUME_COMMON_FIRST_NAME
+LAST_NAME = account_profile.RESUME_COMMON_LAST_NAME
+BIRTHDAY = account_profile.RESUME_COMMON_BIRTHDAY_DAY
+GENDER = account_profile.RESUME_COMMON_GENDER_MALE
+PHONE = account_profile.RESUME_COMMON_PHONE
 AREA = "[data-qa='resume-edit-area']"
 METRO = "[data-qa='resume-edit-metro']"
 CITIZENSHIP = "[data-qa='resume-edit-citizenship']"
@@ -57,8 +57,8 @@ EMPLOYMENT_LABELS = {
     "volunteer": "Волонтёрство",
 }
 WORK_FORMAT_LABELS = {"office": "Офис", "hybrid": "Гибрид", "remote": "Удалённо"}
-SAVE = "[data-qa='resume-partial-edit-save']"
-CANCEL = "[data-qa='resume-partial-edit-cancel']"
+SAVE = account_profile.RESUME_COMMON_NEXT
+CANCEL = account_profile.RESUME_COMMON_PREV
 _WAIT_MS = 5_000
 
 
@@ -120,21 +120,14 @@ def _strict(page: Page, selector: str, label: str):
 def open_common_form(page: Page, resume: ResumeConfig):
     """Open and identity-bind the common editor; never guess from a redirect."""
     resume_id = resume.resume_id
-    goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
+    goto_hh(page, f"{HH_BASE_URL}{account_profile.RESUME_COMMON_PATH}?resume={resume_id}")
     require_authenticated_page(page)
-    editor = open_hydrated_resume_editor(
-        page,
-        trigger_selector=EDIT,
-        editor_selector=FORM,
-        profile_path=f"/resume/{resume_id}",
-        edit_path=f"/resume/edit/{resume_id}/common",
-        click_trigger=True,
-        trigger_error="кнопка common не подтверждена",
-        open_error="форма common не открылась",
-        wrong_route_error="форма common открыта не для того резюме",
-    )
-    # The click above starts a React render.  Do not perform strict field
-    # counts until the form is visibly mounted (commit != rendered).
+    editor = page.locator(FORM)
+    if editor.count() != 1:
+        raise RuntimeError("форма common не открылась")
+    route = urlsplit(page.url)
+    if route.path != "/profile/resume/common" or parse_qs(route.query).get("resume") != [resume_id]:
+        raise RuntimeError("форма common открыта не для запрошенного резюме")
     editor.first.wait_for(state="visible", timeout=_WAIT_MS)
     return editor
 

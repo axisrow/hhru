@@ -10,6 +10,15 @@
 | account_profile.ACCOUNT_PROFILE_LAST_NAME | `[data-qa='profile-common-card-lastname']` | — | — | — | documented_live |
 | account_profile.ACCOUNT_PROFILE_PHONE | `[data-qa='profile-contact-item-phone']` | — | — | — | documented_live |
 | account_profile.ACCOUNT_PROFILE_READY | `h1[data-qa='title']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_BIRTHDAY_DAY | `[data-qa='resume-profile-common-birthday-day-input']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_FIRST_NAME | `[data-qa='resume-profile-common-name-input']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_FORM | `[data-qa='resume-profile-screen resume-profile-screen_common']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_GENDER_FEMALE | `[data-qa='resume-profile-common-gender-female-chip']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_GENDER_MALE | `[data-qa='resume-profile-common-gender-male-chip']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_LAST_NAME | `[data-qa='resume-profile-common-surname-input']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_NEXT | `[data-qa='resume-profile-next-screen']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_PHONE | `[data-qa='resume-phone-cell_phone']` | — | — | — | live_dom |
+| account_profile.RESUME_COMMON_PREV | `[data-qa='resume-profile-prev-screen']` | — | — | — | live_dom |
 | account_profile.RESUME_CONTACT_EMAIL | `[data-qa='resume-contact-email-value']` | — | — | — | live_dom |
 | account_profile.RESUME_CONTACT_PHONE | `[data-qa='resume-contact-phone-value-preferred']` | — | — | — | live_dom |
 | account_profile.RESUME_LIST_PROFILE_NAME | `[data-qa='profile-activator-fullname']` | — | — | — | live_dom |
