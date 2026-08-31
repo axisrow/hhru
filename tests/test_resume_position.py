@@ -140,7 +140,7 @@ def test_open_position_form_can_inspect_wizard_without_entering_chip_screen(monk
     page.content.return_value = (
         '{"scheme":{"nextIncompleteScreenId":"education"},'
         '"resume":{"id":"00001","status":"not_finished",'
-        '"isSearchable":false,"canPublishOrUpdate":false}}'
+        '"isSearchable":false,"canPublishOrUpdate":false,"title":"Existing draft"}}'
     )
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
@@ -149,6 +149,7 @@ def test_open_position_form_can_inspect_wizard_without_entering_chip_screen(monk
 
     assert flow.kind == "wizard"
     assert flow.state.next_incomplete_screen_id == "education"
+    assert flow.values.title == "Existing draft"
     assert flow.values_read is False
     page.locator.assert_not_called()
 

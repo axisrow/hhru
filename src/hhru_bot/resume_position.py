@@ -448,7 +448,7 @@ def open_position_form(
             return PositionFlowContext(
                 kind="wizard",
                 resume_id=resume.resume_id,
-                values=PositionValues(),
+                values=PositionValues(title=state.title),
                 state=state,
                 values_read=False,
             )
@@ -468,7 +468,7 @@ def open_position_form(
             return PositionFlowContext(
                 kind="wizard",
                 resume_id=resume.resume_id,
-                values=PositionValues(),
+                values=PositionValues(title=state.title),
                 state=state,
                 values_read=False,
             )
