@@ -171,6 +171,7 @@ class PositionFlowContext:
     resume_id: str
     values: PositionValues
     state: ResumeState
+    values_read: bool = True
 
 
 def _profile_context(profile: Any) -> dict[str, Any]:
@@ -428,7 +429,9 @@ def _dump_wizard_failure(page: Page, resume_id: str, reason: str) -> str:
     return str(html_path)
 
 
-def open_position_form(page: Page, resume: ResumeConfig) -> PositionFlowContext:
+def open_position_form(
+    page: Page, resume: ResumeConfig, *, enter_wizard: bool = True
+) -> PositionFlowContext:
     """Open the state-selected position flow for exactly one resume.
 
     hh.ru does not consistently redirect unfinished drafts from ``/resume/<id>``
@@ -438,6 +441,17 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionFlowContext:
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     require_authenticated_page(page)
     if _is_wizard_path(getattr(page, "url", "")):
+        if not enter_wizard:
+            state = parse_resume_state(page.content(), resume.resume_id)
+            if state.status is None:
+                raise RuntimeError("состояние резюме не подтверждено перед выбором position flow")
+            return PositionFlowContext(
+                kind="wizard",
+                resume_id=resume.resume_id,
+                values=PositionValues(),
+                state=state,
+                values_read=False,
+            )
         return _open_position_wizard(
             page,
             resume,
@@ -450,6 +464,14 @@ def open_position_form(page: Page, resume: ResumeConfig) -> PositionFlowContext:
     if state.status is None:
         raise RuntimeError("состояние резюме не подтверждено перед выбором position flow")
     if state.next_incomplete_screen_id == "professional_role":
+        if not enter_wizard:
+            return PositionFlowContext(
+                kind="wizard",
+                resume_id=resume.resume_id,
+                values=PositionValues(),
+                state=state,
+                values_read=False,
+            )
         return _open_position_wizard(page, resume, state=state)
 
     current = read_display_position(page)
