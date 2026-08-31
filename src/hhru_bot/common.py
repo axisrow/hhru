@@ -14,8 +14,15 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import HH_BASE_URL, goto_hh, open_hydrated_resume_editor, require_authenticated_page
+from .browser import (
+    HH_BASE_URL,
+    goto_hh,
+    labelled_field,
+    open_hydrated_resume_editor,
+    require_authenticated_page,
+)
 from .config import ResumeConfig
+from .selector_groups.resume_page import RESUME_POSITION_DROPDOWN
 
 FORM = "[data-qa='resume-edit-common-form']"
 EDIT = "[data-qa='resume-edit-common-button']"
@@ -31,6 +38,25 @@ TREE_MODAL = "[data-qa='tree-selector-modal']"
 TREE_SEARCH = "[data-qa='tree-selector-search-input']"
 TREE_OPTION = "[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']"
 TREE_SUBMIT = "[data-qa='tree-selector-submit']"
+WORK_TICKET = "Наличие трудовой книжки"
+RELOCATION = "Готовность к переезду"
+SCHEDULE = "График работы"
+EMPLOYMENT = "Тип занятости"
+WORK_FORMAT = "Формат работы"
+BUSINESS_TRIP = "Готовность к командировкам"
+SCHEDULE_LABELS = {
+    "full_day": "Полный день",
+    "shift": "Сменный график",
+    "flexible": "Гибкий график",
+    "remote": "Удалённая работа",
+}
+EMPLOYMENT_LABELS = {
+    "full_time": "Постоянная работа",
+    "part_time": "Подработка",
+    "internship": "Стажировка",
+    "volunteer": "Волонтёрство",
+}
+WORK_FORMAT_LABELS = {"office": "Офис", "hybrid": "Гибрид", "remote": "Удалённо"}
 SAVE = "[data-qa='resume-partial-edit-save']"
 CANCEL = "[data-qa='resume-partial-edit-cancel']"
 _WAIT_MS = 5_000
@@ -46,6 +72,12 @@ class CommonValues:
     area: str | None = None
     metro: list[str] | None = None
     citizenship: list[str] | None = None
+    work_ticket: str | None = None
+    relocation: str | None = None
+    schedule: list[str] | None = None
+    employment: list[str] | None = None
+    work_format: list[str] | None = None
+    business_trip: str | None = None
 
     def provided(self) -> dict[str, str]:
         return {
@@ -59,6 +91,12 @@ class CommonValues:
                 "area": self.area,
                 "metro": self.metro,
                 "citizenship": self.citizenship,
+                "workTicket": self.work_ticket,
+                "relocation": self.relocation,
+                "schedule": self.schedule,
+                "employment": self.employment,
+                "work_format": self.work_format,
+                "businessTrip": self.business_trip,
             }.items()
             if value is not None
         }
@@ -108,6 +146,17 @@ def read_common(page: Page) -> CommonValues:
         loc = _strict(page, selector, selector)
         return loc.input_value().strip()
 
+    def labelled_value(label: str):
+        field = labelled_field(page, label)
+        tag = field.evaluate("e=>e.tagName")
+        if tag == "SELECT" and field.get_attribute("multiple") is not None:
+            return field.evaluate("e=>Array.from(e.selectedOptions).map(o=>o.value)")
+        if tag in ("INPUT", "TEXTAREA"):
+            return field.input_value().strip()
+        # Magritte may bind a label to a div/button trigger rather than an
+        # input; its visible text is the readable state.
+        return field.inner_text().strip()
+
     return CommonValues(
         first_name=value(FIRST_NAME),
         last_name=value(LAST_NAME),
@@ -117,6 +166,12 @@ def read_common(page: Page) -> CommonValues:
         area=value(AREA),
         metro=None,
         citizenship=None,
+        work_ticket=labelled_value(WORK_TICKET),
+        relocation=labelled_value(RELOCATION),
+        schedule=labelled_value(SCHEDULE),
+        employment=labelled_value(EMPLOYMENT),
+        work_format=labelled_value(WORK_FORMAT),
+        business_trip=labelled_value(BUSINESS_TRIP),
     )
 
 
@@ -187,6 +242,89 @@ def apply_common(page: Page, values: CommonValues) -> None:
         _set_tree(page, METRO, values.metro, "metro")
     if values.citizenship is not None:
         _set_tree(page, CITIZENSHIP, values.citizenship, "citizenship")
+
+    controls = (
+        (WORK_TICKET, values.work_ticket, {"true": "Да", "false": "Нет"}),
+        (
+            RELOCATION,
+            values.relocation,
+            {
+                "ready": "Готов к переезду",
+                "consider": "Рассмотрю",
+                "not_ready": "Не готов к переезду",
+            },
+        ),
+        (BUSINESS_TRIP, values.business_trip, {"true": "Могу", "false": "Не могу"}),
+    )
+    for label, value, labels in controls:
+        if value is not None:
+            _set_control(page, labelled_field(page, label), value, labels)
+    for label, value, labels in (
+        (SCHEDULE, values.schedule, SCHEDULE_LABELS),
+        (EMPLOYMENT, values.employment, EMPLOYMENT_LABELS),
+        (WORK_FORMAT, values.work_format, WORK_FORMAT_LABELS),
+    ):
+        if value is not None:
+            _set_many(page, labelled_field(page, label), value, labels)
+
+
+def _set_control(page, field, value: str, labels: dict[str, str]) -> None:
+    """Set a labelled native/custom single-choice control without guessing."""
+    if value not in labels:
+        raise ValueError(f"недопустимое значение common: {value}")
+    tag = field.evaluate("e=>e.tagName")
+    if tag == "SELECT":
+        field.select_option(value)
+    elif tag == "INPUT" and field.get_attribute("type") == "checkbox":
+        (field.check if value == "true" else field.uncheck)()
+    else:
+        # Magritte renders these as a labelled trigger.  The caller's exact
+        # label binding is the identity check; the option's exact accessible
+        # name is the value check.
+        field.click()
+        popup = page.locator(RESUME_POSITION_DROPDOWN)
+        popup.wait_for(state="visible", timeout=_WAIT_MS)
+        options = popup.get_by_role("option", name=labels[value], exact=True)
+        if options.count() != 1:
+            raise RuntimeError(f"вариант формы не найден: {labels[value]}")
+        options.first.click()
+        page.mouse.click(0, 0)
+        popup.wait_for(state="hidden", timeout=_WAIT_MS)
+
+
+def _set_many(page, field, values: list[str], labels: dict[str, str]) -> None:
+    if not isinstance(values, list):
+        raise ValueError("мультивыбор common должен быть списком значений")
+    unknown = [value for value in values if value not in labels]
+    if unknown:
+        raise ValueError(f"недопустимое значение common: {unknown[0]}")
+    tag = field.evaluate("e=>e.tagName")
+    if tag == "SELECT":
+        field.select_option(values)
+        return
+    # A checkbox collection is returned by the exact labelled binding.  Set
+    # the requested state explicitly, so repeated application is idempotent
+    # and stale selections are removed rather than silently retained.
+    field.click()
+    popup = page.locator(RESUME_POSITION_DROPDOWN)
+    popup.wait_for(state="visible", timeout=_WAIT_MS)
+    options = popup.get_by_role("option")
+    wanted = {labels[value] for value in values}
+    for index in range(options.count()):
+        option = options.nth(index)
+        if (
+            option.get_attribute("aria-selected") == "true"
+            and option.inner_text().strip() not in wanted
+        ):
+            option.click()
+    for value in values:
+        option = popup.get_by_role("option", name=labels[value], exact=True)
+        if option.count() != 1:
+            raise RuntimeError(f"вариант формы не найден: {value}")
+        if option.first.get_attribute("aria-selected") != "true":
+            option.first.click()
+    page.mouse.click(0, 0)
+    popup.wait_for(state="hidden", timeout=_WAIT_MS)
 
 
 def save_common(

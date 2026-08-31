@@ -12,8 +12,8 @@ def register(subparsers) -> None:
         "common",
         help="Заполнить простые поля экрана common резюме",
         description=(
-            "Заполняет через UI firstName, lastName, birthday, gender, phone, area, "
-            "metro и citizenship."
+            "Заполняет через UI поля common, включая условия работы. "
+            "area, metro и citizenship пока не входят в команду."
         ),
     )
     parser.add_argument("--resume", required=True, help="Slug из конфига или resume_id HH.ru")
@@ -28,6 +28,35 @@ def register(subparsers) -> None:
         "--citizenship",
         action="append",
         help="Точное гражданство из live-каталога; можно повторять",
+    )
+    parser.add_argument("--work-ticket", choices=("true", "false"), help="Трудовая книжка")
+    parser.add_argument(
+        "--relocation", choices=("ready", "consider", "not_ready"), help="Готовность к переезду"
+    )
+    parser.add_argument(
+        "--schedule",
+        action="append",
+        choices=("full_day", "shift", "flexible", "remote"),
+        help="График работы; можно указать несколько раз",
+    )
+    parser.add_argument(
+        "--employment",
+        action="append",
+        choices=("full_time", "part_time", "internship", "volunteer"),
+        help="Тип занятости; можно указать несколько раз",
+    )
+    parser.add_argument(
+        "--work-format",
+        action="append",
+        choices=("office", "hybrid", "remote"),
+        help="Формат работы; можно указать несколько раз",
+    )
+    parser.add_argument(
+        "--business-trip",
+        "--business-trips",
+        dest="business_trip",
+        choices=("true", "false"),
+        help="Готовность к командировкам",
     )
     parser.add_argument("--dry-run", action="store_true", help="Показать план без сохранения")
     parser.add_argument("--force", action="store_true", help="Подтвердить запись без prompt")
@@ -54,8 +83,18 @@ def _run(args: argparse.Namespace, progress) -> bool:
         gender=args.gender,
         phone=args.phone,
         area=getattr(args, "area", None),
-        metro=[args.metro] if getattr(args, "metro", None) is not None else None,
+        metro=(
+            [args.metro]
+            if getattr(args, "metro", None) is not None and isinstance(args.metro, str)
+            else getattr(args, "metro", None)
+        ),
         citizenship=getattr(args, "citizenship", None),
+        work_ticket=getattr(args, "work_ticket", None),
+        relocation=getattr(args, "relocation", None),
+        schedule=getattr(args, "schedule", None),
+        employment=getattr(args, "employment", None),
+        work_format=getattr(args, "work_format", None),
+        business_trip=getattr(args, "business_trip", None),
     )
     if not values.provided():
         print("[FAIL] Укажите хотя бы одно поле common")

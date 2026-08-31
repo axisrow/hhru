@@ -133,3 +133,102 @@ def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
     )
     with pytest.raises(browser.NotAuthenticated, match="expired"):
         command._run(args, MagicMock())
+
+
+def test_common_values_exposes_work_conditions():
+    values = CommonValues(
+        work_ticket="true",
+        relocation="ready",
+        schedule=["full_day"],
+        employment=["full_time"],
+        work_format=["remote"],
+        business_trip="false",
+    )
+    assert values.provided() == {
+        "workTicket": "true",
+        "relocation": "ready",
+        "schedule": ["full_day"],
+        "employment": ["full_time"],
+        "work_format": ["remote"],
+        "businessTrip": "false",
+    }
+
+
+def test_apply_common_uses_exact_visible_labels_for_conditions():
+    page = MagicMock()
+    fields = {}
+    for label in (
+        common.WORK_TICKET,
+        common.RELOCATION,
+        common.SCHEDULE,
+        common.EMPLOYMENT,
+        common.WORK_FORMAT,
+        common.BUSINESS_TRIP,
+    ):
+        field = MagicMock()
+        field.count.return_value = 1
+        field.evaluate.return_value = "SELECT"
+        fields[label] = field
+    page.get_by_label.side_effect = lambda label, exact: fields[label]
+    apply_common(
+        page, CommonValues(schedule=["full_day"], employment=["full_time"], work_format=["remote"])
+    )
+    fields[common.SCHEDULE].select_option.assert_called_once_with(["full_day"])
+    fields[common.EMPLOYMENT].select_option.assert_called_once_with(["full_time"])
+    fields[common.WORK_FORMAT].select_option.assert_called_once_with(["remote"])
+
+
+@pytest.mark.browser_unit
+def test_read_common_supports_magritte_trigger_and_replaces_selection():
+    from playwright.sync_api import sync_playwright
+
+    html = """
+    <form>
+      <input data-qa="resume-edit-firstName" value="A"/>
+      <input data-qa="resume-edit-lastName" value="B"/>
+      <input data-qa="resume-edit-birthday" value="2000-01-01"/>
+      <select data-qa="resume-edit-gender"><option value="female" selected>F</option></select>
+      <input data-qa="resume-edit-phone" value="+7"/>
+      <input data-qa="resume-edit-area" value="Москва"/>
+      <label id="work-ticket-label">Наличие трудовой книжки</label>
+      <button aria-labelledby="work-ticket-label" type="button">Да</button>
+      <label id="relocation-label">Готовность к переезду</label><button aria-labelledby="relocation-label" type="button">Готов к переезду</button>
+      <label id="schedule-label">График работы</label>
+      <button aria-labelledby="schedule-label" id="schedule" type="button">Полный день</button>
+      <label id="employment-label">Тип занятости</label><button aria-labelledby="employment-label" type="button">Постоянная работа</button>
+      <label id="format-label">Формат работы</label><button aria-labelledby="format-label" type="button">Офис</button>
+      <label id="trip-label">Готовность к командировкам</label><button aria-labelledby="trip-label" type="button">Могу</button>
+      <div data-qa="drop-base" hidden>
+        <div role="option" aria-selected="true">Сменный график</div>
+        <div role="option" aria-selected="false">Полный день</div>
+      </div>
+    </form>
+    <script>
+      document.getElementById('schedule').onclick = () => document.querySelector('[data-qa=drop-base]').hidden = false;
+      document.querySelectorAll('[role=option]').forEach(o => o.onclick = e => {
+        e.stopPropagation(); o.setAttribute('aria-selected', o.getAttribute('aria-selected') !== 'true');
+      });
+      document.onclick = e => {
+        if (e.target.id !== 'schedule' && !e.target.closest('[role=option]'))
+          document.querySelector('[data-qa=drop-base]').hidden = true;
+      };
+    </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html)
+        try:
+            values = read_common(page)
+            assert values.work_ticket == "Да"
+            page.locator("[data-qa='drop-base']").evaluate("e=>e.hidden=false")
+            common._set_many(
+                page,
+                page.locator("#schedule"),
+                ["full_day"],
+                common.SCHEDULE_LABELS,
+            )
+            assert page.locator("[role=option]").nth(0).get_attribute("aria-selected") == "false"
+            assert page.locator("[role=option]").nth(1).get_attribute("aria-selected") == "true"
+        finally:
+            browser.close()
