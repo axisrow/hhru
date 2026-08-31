@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -1317,3 +1318,14 @@ def test_verify_wizard_save_rejects_wrong_server_role(monkeypatch):
             expected_role_id="10",
             expected_role_label="Аналитик",
         )
+
+
+def test_live_post_save_dump_fixture_captures_unmatched_role():
+    """Sanitized fixture from the single #899 live post-save dump."""
+    fixture = Path(__file__).with_name("fixtures") / "post_save_professional_role_mismatch.html"
+    state = resume_position.parse_resume_state(fixture.read_text(encoding="utf-8"), "00001")
+
+    assert state.status == "not_finished"
+    assert state.is_searchable is False
+    assert state.next_incomplete_screen_id == "professional_role"
+    assert [(role.role_id, role.label) for role in state.professional_roles] == [("31", "Грузчик")]
