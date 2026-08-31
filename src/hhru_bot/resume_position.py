@@ -87,11 +87,12 @@ class ChipPopularUnavailable(RuntimeError):
     """
 
 
-# The chip-popular radio does not carry the profession in its data-qa (every
-# chip on the screen shares the same data-qa); the profession lives in the
-# input's ``value`` attribute instead (#881, live DOM 2026-08-31). Scope the
-# base selector down to the one radio matching the confirmed catalog label.
-WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE + "[value='{}']"
+# The chip-popular radio does not carry the typed profession in its data-qa.
+# In fact the title input is not retained on this screen: hh.ru highlights one
+# of the fixed generic categories. Keep the unscoped selector for this shape;
+# selecting by the requested title would miss the chips (or, worse, imply that
+# the highlighted generic category was the requested catalog leaf).
+WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE
 
 
 def validate_wizard_role_for_write(page: Page, label: str) -> str:
@@ -115,7 +116,7 @@ def validate_wizard_role_for_write(page: Page, label: str) -> str:
 
 
 # Fixed, deterministic placeholder for the wizard-minimum fallback (#890):
-# any of the ~37 chip-popular categories clears `nextIncompleteScreenId`
+# any of the fixed chip-popular categories clears `nextIncompleteScreenId`
 # equally well, since its content is discarded immediately by the editor-mode
 # `_set_specializations` call that follows. A hardcoded, always-identical
 # choice (first item on the confirmed live list) is deliberate — not derived
@@ -587,10 +588,10 @@ def save_position_wizard(
     next_button.click()
 
     search = page.locator(WIZARD_CATEGORY_SEARCH)
-    # The chip's ``value`` mirrors the just-typed title, not the catalog
-    # specialization label confirmed below for the modal path (#881, live DOM
-    # 2026-08-31) — hh.ru pre-fills the chip from what the user entered above.
-    chip = page.locator(WIZARD_POSITION_CHIP_POPULAR.format(plan.title))
+    # The chip list is a different entity from the role_id catalog: its
+    # values are generic text labels and the input does not retain what was
+    # typed (#890 live DOM 2026-08-31).
+    chip = page.locator(WIZARD_POSITION_CHIP_POPULAR)
     transition_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
     while time.monotonic() < transition_deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
@@ -721,27 +722,28 @@ def save_position_wizard_minimum(
         before_first_click()
     next_button.click()
 
-    chip = page.locator(WIZARD_POSITION_CHIP_POPULAR.format(title))
+    chips = page.locator(WIZARD_POSITION_CHIP_POPULAR)
     deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
     while time.monotonic() < deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
             return title
-        if chip.count() == 1:
+        if chips.count() > 0:
             break
         page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
     else:
         raise RuntimeError(
             f"chip-popular для «{title}» не появился — минимальное сохранение невозможно"
         )
-    chip.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
-    if not chip.first.is_checked():
-        raise RuntimeError(f"чип должности «{title}» найден, но не отмечен")
-    if chip.first.is_disabled():
-        raise RuntimeError(f"чип должности «{title}» отмечен, но отключён")
-    # The radio input itself is disabled in this shape; its wrapping card is
-    # the actual hit target (same pattern as the currency-chip click in
-    # ``apply_position`` below).
-    chip_card = chip.first.locator("xpath=ancestor::label[1]")
+    # The title typed on the previous screen is not a stable chip value. Pick
+    # the first generic category in the server-rendered order: this is an
+    # intentional, known-wrong wizard minimum and is replaced immediately in
+    # editor mode. Never claim it is the requested profession.
+    chip = chips.first
+    chip.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    # The radio input itself may be disabled in this shape; its wrapping card
+    # is the actual hit target (same pattern as the currency-chip click in
+    # ``apply_position`` below). Check the card, not the input's disabled flag.
+    chip_card = chip.locator("xpath=ancestor::label[1]")
     if chip_card.count() != 1:
         raise RuntimeError("карточка chip должности не подтверждена")
     chip_card.click()
@@ -770,8 +772,9 @@ def verify_wizard_minimum_save(page: Page, resume: ResumeConfig) -> ResumeState:
     """Poll only for professional_role clearing — no title/role match (#890).
 
     Deliberately narrower than :func:`verify_wizard_save`: the wizard-minimum
-    step saves a throwaway placeholder on purpose, so checking its title or
-    role against anything would be a foot-gun (a future call could weaken
+    step intentionally records a known-wrong prerequisite category, so
+    checking its title or role against anything would be a foot-gun (a future
+    call could weaken
     real verification by passing loose expectations). This function proves
     exactly one fact — the draft left the professional_role screen — leaving
     the exact specialization to the editor-mode step that follows.

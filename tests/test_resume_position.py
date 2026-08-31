@@ -299,7 +299,7 @@ def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkey
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
         resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("AI Engineer"): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
         resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
         resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]
@@ -397,13 +397,14 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     chip.count.return_value = 1
     chip.first = chip
     chip.is_checked.return_value = True
-    chip.is_disabled.return_value = False
+    # Live DOM disables the radio input; the label card remains clickable.
+    chip.is_disabled.return_value = True
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
         resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("Python-разработчик"): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
     monkeypatch.setattr(
         resume_position,
@@ -454,7 +455,8 @@ def test_save_position_wizard_minimum_saves_any_placeholder_category_via_chip(cl
     chip.count.return_value = 1
     chip.first = chip
     chip.is_checked.return_value = True
-    chip.is_disabled.return_value = False
+    # The live radio input is disabled; its wrapping label is clickable.
+    chip.is_disabled.return_value = True
     chip_card = MagicMock()
     chip_card.count.return_value = 1
     chip.locator.return_value = chip_card
@@ -462,9 +464,7 @@ def test_save_position_wizard_minimum_saves_any_placeholder_category_via_chip(cl
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format(
-            resume_position.WIZARD_MINIMUM_PLACEHOLDER_TITLE
-        ): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
 
     def click_side_effect():
@@ -494,7 +494,7 @@ def test_save_position_wizard_minimum_rejects_wrong_identity():
         resume_position.save_position_wizard_minimum(page, resume)
 
 
-def test_save_position_wizard_minimum_fails_closed_on_unchecked_chip():
+def test_save_position_wizard_minimum_rejects_chip_without_clickable_card():
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -509,17 +509,15 @@ def test_save_position_wizard_minimum_fails_closed_on_unchecked_chip():
     chip = MagicMock()
     chip.count.return_value = 1
     chip.first = chip
-    chip.is_checked.return_value = False
+    chip.is_disabled.return_value = False
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format(
-            resume_position.WIZARD_MINIMUM_PLACEHOLDER_TITLE
-        ): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
 
-    with pytest.raises(RuntimeError, match="не отмечен"):
+    with pytest.raises(RuntimeError, match="карточка chip"):
         resume_position.save_position_wizard_minimum(page, resume)
 
     next_button.click.assert_called_once_with()
@@ -542,16 +540,15 @@ def test_save_position_wizard_minimum_fails_closed_on_disabled_chip():
     chip.first = chip
     chip.is_checked.return_value = True
     chip.is_disabled.return_value = True
+    chip.locator.return_value.count.return_value = 0
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format(
-            resume_position.WIZARD_MINIMUM_PLACEHOLDER_TITLE
-        ): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
 
-    with pytest.raises(RuntimeError, match="отключён"):
+    with pytest.raises(RuntimeError, match="карточка chip"):
         resume_position.save_position_wizard_minimum(page, resume)
 
     next_button.click.assert_called_once_with()
@@ -575,9 +572,7 @@ def test_save_position_wizard_minimum_fails_closed_when_chip_never_appears():
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format(
-            resume_position.WIZARD_MINIMUM_PLACEHOLDER_TITLE
-        ): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
 
     with pytest.raises(RuntimeError, match="chip-popular"):
@@ -659,7 +654,7 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal(m
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
         resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR.format("AI Engineer"): chip,
+        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
         resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
         resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]

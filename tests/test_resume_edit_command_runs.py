@@ -636,7 +636,7 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
             before_first_click()
         raise RuntimeError("browser drift")
 
-    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_save)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fail_save)
 
     history_path = tmp_path / "history.db"
     args = argparse.Namespace(
@@ -792,6 +792,10 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
         lambda _page, _resume: ResumeState(status="not_finished"),
     )
     monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        lambda *_args, **_kwargs: ResumeState(status="not_finished"),
+    )
+    monkeypatch.setattr(
         "hhru_bot.resume_position.apply_position", lambda _page, _plan, current=None: None
     )
 
@@ -816,7 +820,7 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
     """
     import hhru_bot.commands.resume_position as command
     from hhru_bot.professional_roles import ProfessionalRole
-    from hhru_bot.resume_position import ChipPopularUnavailable, PositionFlowContext, PositionValues
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
     from hhru_bot.resume_state import ResumeState
 
     resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
@@ -851,14 +855,10 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
         lambda _page, label: ProfessionalRole("96", label, "ИТ"),
     )
 
-    def fail_with_chip_popular(*_args, before_first_click, **_kwargs):
+    def fail_minimum(*_args, before_first_click=None, **_kwargs):
         before_first_click()
-        raise ChipPopularUnavailable("chip-popular не содержит нужную специализацию")
-
-    def fail_minimum(*_args, **_kwargs):
         raise RuntimeError("wizard-minimum тоже не сработал")
 
-    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fail_minimum)
 
     history_path = tmp_path / "history.db"

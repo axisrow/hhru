@@ -343,9 +343,6 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
         "hhru_bot.professional_roles.resolve_explicit_role",
         lambda page, label: ProfessionalRole("104", label, "Информационные технологии"),
     )
-    monkeypatch.setattr(
-        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
-    )
     save = MagicMock()
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
 
@@ -386,7 +383,10 @@ def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
         PositionValues(title="AI Engineer"),
         ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
     )
-    open_flow = MagicMock(return_value=flow)
+    editor_flow = PositionFlowContext(
+        "editor", REMOTE_ONLY_HASH, PositionValues(title="Администратор"), ResumeState(status="new")
+    )
+    open_flow = MagicMock(side_effect=[flow, flow, editor_flow])
     save = MagicMock()
     monkeypatch.setattr("hhru_bot.browser.launch_context", _wizard_context)
     monkeypatch.setattr("hhru_bot.resume_position.open_position_form", open_flow)
@@ -394,13 +394,19 @@ def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
         "hhru_bot.professional_roles.resolve_explicit_role",
         lambda page, label: ProfessionalRole("10", label, "Информационные технологии"),
     )
+    monkeypatch.setattr("hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, label: label)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", save)
     monkeypatch.setattr(
-        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+        "hhru_bot.resume_position.verify_wizard_minimum_save",
+        lambda *_args, **_kwargs: ResumeState(status="new", is_searchable=True),
     )
-    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
     monkeypatch.setattr(
         "hhru_bot.resume_position.verify_wizard_save",
-        lambda *_args, **_kwargs: ResumeState(status="new", is_searchable=True),
+        lambda *_args, **_kwargs: ResumeState(status="new", is_searchable=False),
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.apply_position", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "hhru_bot.commands.resume_position._click_save_and_wait", lambda *_args: None
     )
 
     result = resume_position_cmd.run(
@@ -417,10 +423,10 @@ def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
 
     out = capsys.readouterr().out
     assert result is False
-    assert open_flow.call_count == 2
+    assert open_flow.call_count == 3
     save.assert_called_once()
     assert "[OK] professional_role" in out
-    assert "автоматическую публикацию" in out
+    assert "точная специализация применена" in out
     assert "[OK] Раздел желаемой работы" not in out
 
 
