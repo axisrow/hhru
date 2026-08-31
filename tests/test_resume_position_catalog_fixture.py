@@ -10,6 +10,7 @@ import hhru_bot.resume_position as resume_position
 pytestmark = pytest.mark.integration
 
 FIXTURE = Path(__file__).parent / "fixtures" / "resume_position_specializations.html"
+WIZARD_CHIPS_FIXTURE = Path(__file__).parent / "fixtures" / "resume_position_wizard_chips.html"
 
 
 def _page():
@@ -18,6 +19,24 @@ def _page():
     page = browser.new_page()
     page.set_content(FIXTURE.read_text(encoding="utf-8"))
     return playwright, browser, page
+
+
+@pytest.mark.browser_unit
+def test_wizard_chip_fixture_is_generic_and_does_not_retain_typed_catalog_leaf():
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch()
+    page = browser.new_page()
+    page.set_content(WIZARD_CHIPS_FIXTURE.read_text(encoding="utf-8"))
+    try:
+        chips = page.locator(resume_position.WIZARD_POSITION_CHIP_POPULAR)
+        assert chips.count() == 36
+        assert page.locator(resume_position.WIZARD_POSITION).input_value() == ""
+        assert chips.filter(has_text="Программист, разработчик").count() == 0
+        assert chips.filter(has_text="Программист").count() == 0
+        assert chips.first.get_attribute("value") == "Администратор"
+    finally:
+        browser.close()
+        playwright.stop()
 
 
 @pytest.mark.browser_unit

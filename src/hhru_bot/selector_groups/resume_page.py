@@ -167,10 +167,12 @@ RESUME_CREATION_CATEGORY_SUBMIT = _selector("resume_page.RESUME_CREATION_CATEGOR
 RESUME_CREATION_CATEGORY_INPUT = _selector("resume_page.RESUME_CREATION_CATEGORY_INPUT")
 
 # Second post-NEXT shape (#881, confirmed live DOM 2026-08-31 on a copy-resume
-# draft): when the wizard already carries an inherited role from cloning, hh.ru
-# skips the catalog modal above entirely and instead renders a flat list of
-# radio "chips" for popular professions, with the inherited one pre-selected
-# (checked). ``save_position_wizard`` must check for this shape before treating
+# draft): after the title step hh.ru skips the catalog modal above entirely and
+# instead renders a flat list of
+# radio "chips" for popular professions, with the text entered on the previous
+# step highlighted as a chip (checked). Copies start with no professional role;
+# the text is not retained in the input and has no role_id. The saver must
+# check for this shape before treating
 # an absent catalog search input as a failure — see the two-shape branch there.
 RESUME_CREATION_POSITION_CHIP_POPULAR = _selector(
     "resume_page.RESUME_CREATION_POSITION_CHIP_POPULAR"
