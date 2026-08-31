@@ -268,6 +268,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             explicit_specialization = getattr(args, "specialization", None)
             if wizard:
                 from ..professional_roles import resolve_explicit_role, suggest_role
+                from ..resume_position import validate_wizard_role_for_write
 
                 effective_title = plan.title or current.title
                 if not effective_title:
@@ -278,6 +279,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         raise RuntimeError(
                             "для professional_role требуется ровно один --specialization"
                         )
+                    validate_wizard_role_for_write(page, explicit_specialization[0])
                     role = resolve_explicit_role(page, explicit_specialization[0])
                 else:
                     if config.ai is None:
@@ -293,13 +295,6 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
                 plan.title = effective_title
                 plan.specializations = [role.label]
-                from ..resume_position import reject_wizard_role_write
-
-                # The live wizard chip screen is text-only and has no role_id.
-                # Resolve the requested role read-only first, then reject
-                # before any wizard mutation; editor mode is the exact-write
-                # path for the vacancy-search role catalog.
-                reject_wizard_role_write(role.label)
                 validate_wizard_plan(plan)
             auto_publish = _professional_role_closes_resume(flow)
             if auto_publish and not args.dry_run and not getattr(args, "allow_auto_publish", False):

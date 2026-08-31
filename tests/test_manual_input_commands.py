@@ -343,7 +343,9 @@ def test_resume_position_draft_dry_run_resolves_explicit_live_role(tmp_path, cap
         "hhru_bot.professional_roles.resolve_explicit_role",
         lambda page, label: ProfessionalRole("104", label, "Информационные технологии"),
     )
-    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+    )
     save = MagicMock()
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
 
@@ -392,7 +394,9 @@ def test_resume_position_wizard_write_rebinds_and_never_reports_editor_success(
         "hhru_bot.professional_roles.resolve_explicit_role",
         lambda page, label: ProfessionalRole("10", label, "Информационные технологии"),
     )
-    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+    )
     monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", save)
     monkeypatch.setattr(
         "hhru_bot.resume_position.verify_wizard_save",

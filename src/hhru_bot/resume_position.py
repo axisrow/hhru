@@ -94,8 +94,8 @@ class ChipPopularUnavailable(RuntimeError):
 WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE + "[value='{}']"
 
 
-def validate_wizard_role_for_write(page: Page, label: str) -> None:
-    """Fail closed when a role is not an actual wizard chip.
+def validate_wizard_role_for_write(page: Page, label: str) -> str:
+    """Return a role only when it is an actual wizard chip.
 
     The wizard chips are text-only categories and do not expose the numeric
     role ids used by the vacancy-search catalog.  An absent chip must never
@@ -105,22 +105,13 @@ def validate_wizard_role_for_write(page: Page, label: str) -> None:
     """
     chips = page.locator(WIZARD_POSITION_CHIP_POPULAR_BASE)
     labels = [(chip.get_attribute("value") or "").strip() for chip in chips.all()]
-    if label.strip() not in labels:
+    normalized = " ".join(label.split()).casefold()
+    if normalized not in {" ".join(value.split()).casefold() for value in labels}:
         raise RuntimeError(
             f"роль «{label}» есть в каталоге поиска вакансий, но недоступна "
             "в визарде резюме; используйте editor-режим"
         )
-    raise RuntimeError(
-        f"визард резюме предлагает текстовую роль «{label}» без role_id; используйте editor-режим"
-    )
-
-
-def reject_wizard_role_write(label: str) -> None:
-    """Reject an exact-role write before the wizard can mutate anything."""
-    raise RuntimeError(
-        f"роль «{label}» есть в каталоге поиска вакансий, но недоступна "
-        "в визарде резюме; используйте editor-режим"
-    )
+    return next(value for value in labels if " ".join(value.split()).casefold() == normalized)
 
 
 # Fixed, deterministic placeholder for the wizard-minimum fallback (#890):

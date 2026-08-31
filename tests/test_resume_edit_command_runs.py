@@ -607,7 +607,9 @@ def test_draft_position_classifies_failure_at_first_click_boundary(
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
-    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+    )
 
     page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
 
@@ -751,7 +753,9 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
-    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+    )
 
     class _Locator:
         def count(self):
@@ -860,7 +864,9 @@ def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_count
     config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
     monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
     monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
-    monkeypatch.setattr("hhru_bot.resume_position.reject_wizard_role_write", lambda _label: None)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.validate_wizard_role_for_write", lambda _page, _label: _label
+    )
 
     page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
 

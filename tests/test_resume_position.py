@@ -344,6 +344,24 @@ def test_wizard_rejects_search_catalog_role_missing_from_chip_screen():
         playwright.stop()
 
 
+@pytest.mark.browser_unit
+def test_wizard_accepts_role_present_on_chip_screen():
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    fixture = Path(__file__).parent / "fixtures" / "resume_position_chip_roles.html"
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch()
+    page = browser.new_page()
+    page.set_content(fixture.read_text(encoding="utf-8"))
+    try:
+        assert resume_position.validate_wizard_role_for_write(page, "  аналитик ") == "Аналитик"
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal_is_skipped():
     # Live DOM, #881/#889 (2026-08-31): on a copy-resume draft that already
     # carries an inherited role, hh.ru skips the tree-selector catalog modal
