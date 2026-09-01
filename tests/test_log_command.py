@@ -527,3 +527,17 @@ def test_run_prune_missing_dir_reports_ok(tmp_path, capsys):
     log_cmd.run(_prune_args(tmp_path / "logs"))
     out = capsys.readouterr().out
     assert "[OK]" in out and "чистить нечего" in out
+
+
+def test_register_log_dir_follows_isolated_log_dir(tmp_path, monkeypatch):
+    """CLI-дефолт log_dir читает logging_setup.LOG_DIR на момент build_parser.
+
+    Страж изоляции #131: _isolate_log_dir патчит logging_setup.LOG_DIR;
+    register() обязан взять подменённое значение, иначе `log --prune` из-под
+    тестов увидел бы реальный data/logs.
+    """
+    monkeypatch.setattr(logging_setup, "LOG_DIR", tmp_path / "isolated")
+    from hhru_bot.cli import build_parser
+
+    args = build_parser().parse_args(["log"])
+    assert args.log_dir == str(tmp_path / "isolated")

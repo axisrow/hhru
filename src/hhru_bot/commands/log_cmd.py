@@ -48,6 +48,7 @@ from pathlib import Path
 # Дефолтный путь к логу — туда же, куда setup_logging пишет FileHandler.
 # Вычисляется здесь (а не в run()) через set_defaults, чтобы run() принимал
 # путь параметром и тестировался на tmp-файлах без monkeypatch глобалей.
+from .. import logging_setup as _logging_setup
 from ..logging_setup import LOG_DIR
 from .copy_resume import confirm_write
 
@@ -135,7 +136,17 @@ def register(subparsers) -> None:
         action="store_true",
         help="С --prune: подтвердить удаление без TTY prompt",
     )
-    p.set_defaults(func=run, log_path=str(DEFAULT_LOG_PATH), log_dir=str(LOG_DIR))
+    # log_dir читается ЧЕРЕЗ МОДУЛЬ, а не из биндинга импорта: LOG_DIR
+    # подменяется тестовой изоляцией (conftest._isolate_log_dir патчит
+    # logging_setup.LOG_DIR) — биндинг `from ..logging_setup import LOG_DIR`
+    # подмену не увидел бы, и CLI `log --prune` в тестах смотрел бы в реальный
+    # data/logs. DEFAULT_LOG_PATH — наоборот, константа на импорте, поэтому
+    # фикстура патчит сам атрибут log_cmd.DEFAULT_LOG_PATH.
+    p.set_defaults(
+        func=run,
+        log_path=str(DEFAULT_LOG_PATH),
+        log_dir=str(_logging_setup.LOG_DIR),
+    )
 
 
 def _tail_from(lines_view, n: int) -> list[str]:
