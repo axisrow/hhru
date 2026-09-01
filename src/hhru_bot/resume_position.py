@@ -554,12 +554,24 @@ def is_profession_modal_confirmed(page: Page) -> bool:
     search = dialog.first.locator(WIZARD_CATEGORY_SEARCH)
     if search.count() != 1 or not search.first.is_visible():
         return False
-    # inner_text() гоняется с unmount размонтирующейся модалки (между count
-    # и чтением) и висит дефолтные 30с; count() по filter — RPC без ожидания.
+    # inner_text() гоняется с unmount (висит 30с); count() по filter — без ожидания.
     title = dialog.first.locator(WIZARD_CATEGORY_MODAL_TITLE).filter(
         has_text=PROFESSION_MODAL_TITLE_TEXT
     )
     return title.count() == 1
+
+
+def _click_wizard_next(page: Page) -> None:
+    """NEXT-клик, чей исход решает последующий state-machine wait.
+
+    Живой прогон #913 (2026-09-01): mousedown доходит, hh.ru открывает
+    модалку, но её enter/disappear-анимация перехватывает pointer events —
+    Playwright роняет click() по таймауту ПРИ СОСТОЯВШЕМСЯ переходе.
+    """
+    try:
+        page.locator(WIZARD_NEXT).first.click()
+    except PlaywrightError:
+        pass
 
 
 def validate_wizard_plan(plan: PositionValues) -> None:
@@ -596,18 +608,15 @@ def save_position_wizard(
 ) -> None:
     """Save the exact catalog leaf directly in the draft wizard (#913).
 
-    Доказанный контракт #911 battle2 (5487694535): fill(точное имя листа)
-    → NEXT → модалка «Уточните специальность» → поиск → клик по строке
-    листа → poll выбранного состояния → submit → финальный NEXT — визард
-    сам пишет профессию с role_id за один проход, без заглушки и без
-    editor-фиксапа. Обязательное условие: ``plan.title`` — ТОЧНОЕ имя листа
-    каталога (неточный ввод вырождается в «Другое», id 40); вызывающая
-    сторона обязана гарантировать это до WRITE.
+    Контракт #911 battle2 (5487694535): fill(точное имя листа) → NEXT →
+    модалка → поиск → клик по строке листа → poll выбранного состояния →
+    submit → финальный NEXT — визард сам пишет профессию с role_id за один
+    проход, без заглушки и editor-фиксапа. ``plan.title`` — ТОЧНОЕ имя
+    листа (неточный ввод вырождается в «Другое», id 40); гарантирует
+    вызывающая сторона до WRITE.
 
-    Возможное упрощение (НЕ реализовано, требует proving-прогона): наблюдение
-    2026-09-01 — сабмит модалки с пустым выбором (0 из 5) валиден; гипотеза,
-    что для точного листа выбор в модалке избыточен. Прогон делал выбор
-    листа — реализован доказанный путь.
+    Возможное упрощение (требует proving-прогона): сабмит модалки с пустым
+    выбором (0 из 5) валиден (наблюдение 2026-09-01); прогон делал выбор.
     """
     validate_wizard_plan(plan)
     if not is_position_wizard(page, resume.resume_id):
@@ -638,16 +647,14 @@ def save_position_wizard(
         raise RuntimeError(f"кнопка продолжения визарда неоднозначна: {next_button.count()}")
     if before_first_click is not None:
         before_first_click()
-    next_button.click()
+    _click_wizard_next(page)
 
     expected_label = plan.specializations[0]
     # State-machine wait (#913): после NEXT чип отмечается синхронно, а
-    # модалка каталога монтируется АСИНХРОННО — есть краткое состояние чистого
-    # визарда («мигание», наблюдение 2026-09-01). Ждать ЛИБО подтверждённой
-    # модалки, ЛИБО ухода URL с professional_role; при таймауте — dump и
-    # различимый отказ. Повторный NEXT в этом окне запрещён: экран мог
-    # закрыться прямым save базовой категории (#900), и второй клик попал бы
-    # уже в следующий экран.
+    # модалка монтируется АСИНХРОННО («мигание», 2026-09-01). Ждать ЛИБО
+    # подтверждённой модалки, ЛИБО ухода URL; таймаут → dump + различимый
+    # отказ. Повторный NEXT запрещён: экран мог закрыться прямым save базовой
+    # категории (#900), второй клик попал бы в следующий экран.
     modal_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
     while time.monotonic() < modal_deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
@@ -667,16 +674,14 @@ def save_position_wizard(
         )
 
     # Выбор листа — боевая механика create-resume (#778/#836/#837): клик по
-    # видимой строке (не по скрытому input), затем poll is_checked;
-    # вырождение поиска в «Другое» или несовпадение role_id — отказ ДО
-    # клика. Сабмит модалки выполняется тем же helper'ом.
+    # видимой строке (не по скрытому input), poll is_checked; «Другое» или
+    # несовпадение role_id — отказ ДО клика. Сабмит — тем же helper'ом.
     reason = select_catalog_leaf(page, expected_label, expected_role_id=role_id)
     if reason:
         raise RuntimeError(reason)
 
-    # Обратное «мигание»: сабмит скрывает модалку асинхронно, а видимый
-    # overlay ПЕРЕКРЫВАЕТ экран визарда и БЛОКИРУЕТ клик по wizard NEXT —
-    # финальный NEXT только после подтверждённого скрытия (или ухода URL).
+    # Обратное «мигание»: сабмит скрывает модалку асинхронно, видимый overlay
+    # БЛОКИРУЕТ клик по wizard NEXT — финальный NEXT после скрытия/ухода URL.
     close_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
     while time.monotonic() < close_deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
@@ -696,7 +701,8 @@ def save_position_wizard(
         raise RuntimeError(
             f"финальная кнопка продолжения визарда неоднозначна: {next_button.count()}"
         )
-    next_button.click()
+    # Тот же защищённый клик: исход решает wait_for_url (URL ушёл — переход).
+    _click_wizard_next(page)
     page.wait_for_url(
         lambda url: urlsplit(str(url)).path != WIZARD_PATH,
         wait_until="commit",

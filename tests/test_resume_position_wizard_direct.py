@@ -1,15 +1,14 @@
 """Direct wizard save of an exact catalog leaf — unit level (#913).
 
-Контракт боевого прогона #911 battle2 (5487694535): fill точного имени → NEXT →
-модалка «Уточните специальность» (монтируется АСИНХРОННО — state-machine wait:
-подтверждённая модалка ЛИБО уход URL) → поиск → клик по строке листа → poll
-выбранного состояния → submit → финальный NEXT после скрытия модалки.
-Дубликаты должностей отсекаются раньше — общий префлайт resume_titles (#912).
+Контракт #911 battle2 (5487694535): fill точного имени → NEXT → модалка
+(state-machine wait: подтверждённая модалка ЛИБО уход URL) → выбор листа →
+submit → финальный NEXT после скрытия. Дубликаты отсекает префлайт #912.
 """
 
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.resume_position as resume_position
 from hhru_bot.config import bare_resume
@@ -52,10 +51,12 @@ def _fast_polls(monkeypatch):
 
 
 def test_direct_save_waits_out_modal_flicker_then_selects_leaf(monkeypatch):
-    # После NEXT чип отмечается синхронно, модалка монтируется асинхронно
-    # (#913): первые опросы видят «чистый визард» — мигание НЕ ошибка.
-    # NEXT не ретраится: ровно один клик до подтверждённой модалки.
+    # После NEXT модалка монтируется асинхронно (#913): мигание НЕ ошибка,
+    # NEXT не ретраится. Живой прогон 2026-09-01: click() роняется
+    # enter-анимацией модалки ПРИ СОСТОЯВШЕМСЯ переходе — исключение
+    # глотается, переход подтверждает state-machine wait.
     page, position, next_button = _wizard_page()
+    next_button.click.side_effect = PlaywrightError("intercepted by modal-overlay")
     confirmations = iter([False, False, True, True, False, False])
     monkeypatch.setattr(
         resume_position, "is_profession_modal_confirmed", lambda _page: next(confirmations)
@@ -81,9 +82,8 @@ def test_direct_save_waits_out_modal_flicker_then_selects_leaf(monkeypatch):
 
 
 def test_direct_save_returns_when_screen_left_without_modal(monkeypatch):
-    # Экран ушёл с professional_role сразу после NEXT (прямой save базовой
-    # категории, #900-инцидент): модалки не будет, кликать нечего — функция
-    # возвращается, а запись разбирает identity-bound readback вызывающего.
+    # Экран ушёл сразу после NEXT (прямой save базовой категории, #900):
+    # модалки не будет — функция возвращается, запись разбирает readback.
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     select = MagicMock()
@@ -123,9 +123,8 @@ def test_direct_save_fails_closed_when_modal_never_confirms(monkeypatch):
 
 
 def test_direct_save_surfaces_catalog_reason_as_runtime_error(monkeypatch):
-    # Вырождение поиска в «Другое»/несовпадение role_id приходит из
-    # select_catalog_leaf причиной-строкой — прямой путь поднимает её в
-    # отказ ДО submit и не кликает финальный NEXT.
+    # «Другое»/несовпадение role_id приходит причиной-строкой из
+    # select_catalog_leaf — отказ ДО submit, финальный NEXT не кликается.
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
     monkeypatch.setattr(
