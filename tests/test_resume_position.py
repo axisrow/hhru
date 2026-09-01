@@ -300,6 +300,7 @@ def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkey
         resume_position.WIZARD_NEXT: next_button,
     }[selector]
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
+    monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
     selected: list[tuple[str, dict]] = []
 
     def fake_select(_page, area, *, expected_role_id=None, **_kwargs):
@@ -364,6 +365,7 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 50)
     monkeypatch.setattr(resume_position, "WIZARD_VERIFY_POLL_MS", 1)
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
+    monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
     select = MagicMock()
     monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
     monkeypatch.setattr(resume_position, "_dump_wizard_failure", lambda *_args: "dump.html")
@@ -590,6 +592,7 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal(m
         resume_position.WIZARD_NEXT: next_button,
     }[selector]
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
+    monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
 
     def _submitted(_page, _area, *, expected_role_id=None, **_kwargs):
         # submit модалки асинхронно скрывает её: экран вернулся, чип отмечен

@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import HH_BASE_URL, RESUMES_FULL_LIST_URL, goto_hh
+from .browser import (
+    HH_BASE_URL,
+    RESUMES_FULL_LIST_URL,
+    dismiss_cookie_banner,
+    goto_hh,
+)
 from .external_forms.detect import normalize
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
@@ -325,6 +330,9 @@ def create_resume_on_hh(
         goto_hh(page, CREATION_URL)
     else:
         try:
+            # Баннер cookie-политики ephemeral-конекста перекрывает кнопку
+            # создания (живой тур #913, 2026-09-01) — закрыть до клика.
+            dismiss_cookie_banner(page)
             _require(create_button).click()
             page.wait_for_url(f"**{RESUME_CREATION_URL}**", wait_until="commit")
         except PlaywrightError as exc:
@@ -364,6 +372,7 @@ def create_resume_on_hh(
         # asynchronously after each input; a strict count()/click right away can
         # see count=0 before the SPA hydrates (same #304 race guarded above).
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
+        dismiss_cookie_banner(page)
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
@@ -377,6 +386,7 @@ def create_resume_on_hh(
     # Точка невозврата: клик ниже создаёт резюме, поэтому ЛЮБОЙ сбой начиная
     # отсюда — uncertain (fail-closed, #176): результат клика не наблюдаем.
     try:
+        dismiss_cookie_banner(page)
         reason = _click_one(
             page,
             RESUME_CREATION_NEXT,

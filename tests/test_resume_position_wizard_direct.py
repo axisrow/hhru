@@ -48,6 +48,8 @@ def _plan() -> PositionValues:
 def _fast_polls(monkeypatch):
     monkeypatch.setattr(resume_position, "WIZARD_VERIFY_POLL_MS", 1)
     monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 300)
+    # словарные page-двойники не моделируют баннер cookie-политики
+    monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
 
 
 def test_direct_save_waits_out_modal_flicker_then_selects_leaf(monkeypatch):

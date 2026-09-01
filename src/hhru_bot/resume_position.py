@@ -23,6 +23,7 @@ from playwright.sync_api import Page
 
 from .browser import (
     HH_BASE_URL,
+    dismiss_cookie_banner,
     goto_hh,
     open_hydrated_resume_editor,
     require_authenticated_page,
@@ -567,7 +568,11 @@ def _click_wizard_next(page: Page) -> None:
     Живой прогон #913 (2026-09-01): mousedown доходит, hh.ru открывает
     модалку, но её enter/disappear-анимация перехватывает pointer events —
     Playwright роняет click() по таймауту ПРИ СОСТОЯВШЕМСЯ переходе.
+    Баннер cookie-политики ephemeral-конекста перекрывает NEXT так же
+    (живой тур 2026-09-01, кука cookie_policy_agreement) — закрываем его
+    перед кликом (best-effort, паттерн resume_education #825).
     """
+    dismiss_cookie_banner(page)
     try:
         page.locator(WIZARD_NEXT).first.click()
     except PlaywrightError:
