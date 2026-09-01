@@ -106,6 +106,12 @@ def test_mode_only_change_clicks_label_and_save(monkeypatch):
     mode_label.click.assert_called_once_with(position={"x": 10, "y": 28.0})
     before_click.assert_called_once_with()
     save.click.assert_called_once_with()
+    # Готовность формы: wait_for_function по window.onSecurePortalFingerprintDone
+    # (живая трассировка PR #917: до его появления POST уходит со старым
+    # accessType без fingerprintIteration2 — изменение не применяется), затем
+    # пауза закрепления выбора перед Save.
+    page.wait_for_function.assert_called_once()
+    assert page.wait_for_timeout.call_args_list == [call(1000)]
 
 
 def test_mode_click_not_reflected_in_radio_fails_closed(monkeypatch):
@@ -541,23 +547,28 @@ def test_save_success_requires_reread_mode_match(monkeypatch):
     assert len(goto_calls) == 2
 
 
-def test_save_reread_mode_mismatch_is_plain_fail(monkeypatch):
+def test_save_reread_mismatch_retried_then_fails_closed(monkeypatch):
     """#901 п.3 + живой прогон PR #917: несовпадение при УДАЧНОЙ перечитке —
-    состояние на hh.ru известно и равно прежнему, двусмысленности нет —
-    обычный failed (повтор команды безопасен), НЕ uncertain: uncertain здесь
-    навсегда блокировал бы резюме через has_unresolved_uncertain при
-    известном исходе."""
+    состояние на hh.ru известно и равно прежнему (серверный no-op), поэтому
+    НЕ uncertain — ретрай (окно готовности формы вероятностно), и лишь после
+    исчерпания попыток обычный failed. uncertain блокировал бы резюме через
+    has_unresolved_uncertain при известном исходе."""
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
     mode_labels = _all_mode_labels(active="no-one")
     no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
     link_only_label = mode_labels[sel.RESUME_VISIBILITY_MODE_LINK_ONLY]
 
+    def _on_card_click(_position=None, **_kw):
+        # Клиентский выбор карточки: radio отмечен в DOM (нативно).
+        no_one_label.locator.return_value.is_checked.return_value = True
+
     def _on_save_click():
-        # Сервер не применил запрошенный режим: при перечитке активен link-only.
+        # Форма упрямо отправляет прежнее серверное состояние (link-only).
         no_one_label.locator.return_value.is_checked.return_value = False
         link_only_label.locator.return_value.is_checked.return_value = True
 
+    no_one_label.click.side_effect = _on_card_click
     save.click.side_effect = _on_save_click
 
     page = MagicMock()
@@ -570,25 +581,71 @@ def test_save_reread_mode_mismatch_is_plain_fail(monkeypatch):
 
     assert not result.success
     assert not result.uncertain
-    assert "ожидался «no-one»" in result.reason
+    assert "активен режим «link-only», ожидался «no-one»" in result.reason
+    save.click.assert_called()  # ретрай был, не одинокий failed
 
 
-def test_save_reread_mode_undefined_is_plain_fail(monkeypatch):
-    """Ревью PR #917 + живой прогон: перечитка после Save не смогла определить
-    режим (ни один внешний radio не checked) — экран перечитан, состояние
-    известно (неизменным его не назвать, но определённость чтения есть) —
+def test_save_retry_applies_mode_on_second_attempt(monkeypatch):
+    """Живой кейс PR #917: первая попытка отправила СТАРОЕ состояние (форма не
+    была готова), вторая — применила запрошенный режим. Именно этот исход дал
+    финальный боевой [OK]: ретрай с перечиткой — детерминированный путь
+    сквозь вероятностное окно готовности формы."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_labels = _all_mode_labels(active="no-one")
+    no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
+    link_only_label = mode_labels[sel.RESUME_VISIBILITY_MODE_LINK_ONLY]
+    save_clicks = []
+
+    def _on_card_click(_position=None, **_kw):
+        no_one_label.locator.return_value.is_checked.return_value = True
+        link_only_label.locator.return_value.is_checked.return_value = False
+
+    def _on_save_click():
+        save_clicks.append(1)
+        if len(save_clicks) == 1:
+            # Форма не была готова: POST ушёл со старым состоянием (link-only).
+            no_one_label.locator.return_value.is_checked.return_value = False
+            link_only_label.locator.return_value.is_checked.return_value = True
+        # вторая попытка: сервер применил no-one — мок уже выставлен кликом.
+
+    no_one_label.click.side_effect = _on_card_click
+    save.click.side_effect = _on_save_click
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **mode_labels,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert result.success
+    assert len(save_clicks) == 2
+
+
+def test_save_reread_mode_undefined_fails_after_retries(monkeypatch):
+    """Ревью PR #917 + живой прогон: перечитка после Save стабильно не
+    определяет режим (ни один внешний radio не checked) — ретраи исчерпаны,
     обычный failed с внятной причиной (без «режим «None»»). Прямой юнит-аналог
     browser_unit-теста test_read_active_mode_none_when_no_card_checked, но на
     уровне всей команды."""
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
     mode_labels = _all_mode_labels(active="no-one")
+    no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
+    save_clicks = []
+
+    def _on_card_click(_position=None, **_kw):
+        no_one_label.locator.return_value.is_checked.return_value = True
 
     def _on_save_click():
+        save_clicks.append(1)
         # После сохранения ни один режим не прочитан (странная страница/дрейф).
         for label in mode_labels.values():
             label.locator.return_value.is_checked.return_value = False
 
+    no_one_label.click.side_effect = _on_card_click
     save.click.side_effect = _on_save_click
 
     page = MagicMock()
@@ -602,6 +659,7 @@ def test_save_reread_mode_undefined_is_plain_fail(monkeypatch):
     assert not result.success
     assert not result.uncertain
     assert "активный режим не определён" in result.reason
+    assert len(save_clicks) == 3
 
 
 def test_save_reread_playwright_error_is_uncertain_not_crash(monkeypatch):
