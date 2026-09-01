@@ -48,6 +48,7 @@ from .selector_groups.resume_visibility import (
     RESUME_VISIBILITY_MODE_EVERYONE,
     RESUME_VISIBILITY_MODE_LINK_ONLY,
     RESUME_VISIBILITY_MODE_NO_ONE,
+    RESUME_VISIBILITY_MODE_RADIO,
     RESUME_VISIBILITY_MODE_WHITELIST,
     RESUME_VISIBILITY_SAVE,
 )
@@ -117,17 +118,57 @@ def _click_mode(page: Page, mode: str) -> str:
     above) would then trust the wrong mode. Verify the nested radio input is
     checked afterwards, fail-closed otherwise — the same discipline the rest
     of this module already applies to every other click.
+
+    #901: карточка содержит ДВА input[type='radio'] — внешний (прямой дочерний
+    label'а) и внутренний Magritte (в span[data-qa='radio-container'], readonly;
+    см. RESUME_VISIBILITY_MODE_RADIO). Пост-кликовая проверка адресует внешний:
+    именно его активирует нативный клик по label-карточке, и с ним же React
+    синхронизирует внутренний. Программное выставление checked (в обход клика
+    по карточке) внутреннему/внешнему инпуту НЕ уведомляет Magritte — режим
+    не доезжает до сервера (живая проверка #901 в комментарии к issue).
     """
     locator, reason = _one(page, _MODE_SELECTORS[mode], f"режим видимости «{mode}»")
     if reason:
         return reason
     assert locator is not None
     locator.click()
-    radio = locator.locator("input[type='radio']")
+    radio = locator.locator(RESUME_VISIBILITY_MODE_RADIO)
     if radio.count() != 1:
         return f"radio-инпут режима «{mode}» не подтверждён однозначно после клика"
     if not radio.first.is_checked():
         return f"клик по режиму «{mode}» не подтверждён — radio не отмечен после клика"
+    return ""
+
+
+def read_active_mode(page: Page) -> str | None:
+    """Активный режим видимости по checked внешнего radio карточек (#901).
+
+    Внешний radio — ПРЯМОЙ дочерний label'а (RESUME_VISIBILITY_MODE_RADIO):
+    descendant-поиск нашёл бы и внутренний Magritte-инпут (#901). Не найден
+    ровно один checked режим — None (fail-closed), а не «первый попавшийся».
+    Используется и для детекции активного whitelist/blacklist без явного
+    --mode, и как позитивный маркер результата после Save.
+    """
+    for mode, selector in _MODE_SELECTORS.items():
+        radio = page.locator(selector).locator(RESUME_VISIBILITY_MODE_RADIO)
+        if radio.count() == 1 and radio.first.is_checked():
+            return mode
+    return None
+
+
+def _open_visibility_screen(page: Page, resume_id: str) -> str:
+    """Перейти на экран видимости и дождаться его отрисовки (commit != отрисовано).
+
+    Единственный вызов для обеих точек входа: первичное открытие перед вводом
+    и повторное чтение после Save (позитивный маркер #901) — тот же экран,
+    тот же wait; различается только обработка ошибки вызывающей стороной
+    (до Save — обычный fail, после — uncertain, клик уже ушёл).
+    """
+    goto_hh(page, visibility_url(resume_id))
+    try:
+        page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return f"экран видимости не отрисовался: {exc}"
     return ""
 
 
@@ -313,11 +354,9 @@ def set_resume_visibility_on_hh(
             )
         return ResumeVisibilityResult(resume_id, True, "dry-run; " + "; ".join(parts))
 
-    goto_hh(page, visibility_url(resume_id))
-    try:
-        page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="visible", timeout=15000)
-    except PlaywrightError as exc:
-        return ResumeVisibilityResult(resume_id, False, f"экран видимости не отрисовался: {exc}")
+    reason = _open_visibility_screen(page, resume_id)
+    if reason:
+        return ResumeVisibilityResult(resume_id, False, reason)
 
     if mode is not None:
         reason = _click_mode(page, mode)
@@ -327,21 +366,17 @@ def set_resume_visibility_on_hh(
     wants_employer_edit = bool(add_employers or remove_employers)
     if wants_employer_edit:
         # Determine the active list mode: explicit --mode wins; otherwise read
-        # which whitelist/blacklist radio is currently checked on hh.ru. Nested
-        # <input type="radio"> под каждым label — ровно один на label, `.checked`
-        # читаемо (подтверждено разведкой #746: живой JS-дамп `input.checked`
-        # для всех пяти radio дал true ровно на активном режиме, false на
-        # остальных — см. `resume_visibility_probe_2026-08-29.md`). count()!=1
-        # здесь — фактический дрейф DOM, не отсутствие поддержки; такой случай
-        # оставляет list_mode=None и уходит в fail-closed отказ ниже.
+        # which whitelist/blacklist radio is currently checked on hh.ru.
+        # Читается внешний radio карточки (RESUME_VISIBILITY_MODE_RADIO,
+        # #901): descendant-поиск находит и внутренний Magritte-инпут, а
+        # `.checked` синхронен у обоих (подтверждено разведкой #746: живой
+        # JS-дамп `input.checked` для всех пяти radio дал true ровно на
+        # активном режиме). Ни один не подтверждён — fail-closed отказ ниже.
         list_mode = mode if mode in _EMPLOYER_LIST_MODES else None
         if list_mode is None:
-            for candidate in _EMPLOYER_LIST_MODES:
-                sel = _MODE_SELECTORS[candidate]
-                loc = page.locator(sel).locator("input[type='radio']")
-                if loc.count() == 1 and loc.first.is_checked():
-                    list_mode = candidate
-                    break
+            active = read_active_mode(page)
+            if active in _EMPLOYER_LIST_MODES:
+                list_mode = active
         if list_mode is None:
             return ResumeVisibilityResult(
                 resume_id,
@@ -433,4 +468,31 @@ def set_resume_visibility_on_hh(
             f"ошибка после клика «Сохранить»: {exc}",
             uncertain=True,
         )
+
+    # Позитивный маркер результата (#901): исчезновение кнопки Save — сигнал
+    # только об отсутствии видимой ошибки, НЕ о применённом режиме (рапорт
+    # успеха без проверки факта — тот же класс дефекта, что #899). После Save
+    # экран перечитывается заново и подтверждается checked внешнего radio
+    # запрошенного режима; несовпадение/нечитаемость — пост-кликовая зона,
+    # uncertain (клик уже ушёл на hh.ru, fail-closed как #176). Для mode=None
+    # (только списки работодателей) read-only источника истины нет — список
+    # виден только внутри модалки, известное ограничение (см. комментарий к
+    # wait_for hidden выше).
+    if mode is not None:
+        reason = _open_visibility_screen(page, resume_id)
+        if reason:
+            return ResumeVisibilityResult(
+                resume_id,
+                False,
+                f"режим не перечитан после сохранения: {reason}",
+                uncertain=True,
+            )
+        active = read_active_mode(page)
+        if active != mode:
+            return ResumeVisibilityResult(
+                resume_id,
+                False,
+                f"после сохранения активен режим «{active}», ожидался «{mode}»",
+                uncertain=True,
+            )
     return ResumeVisibilityResult(resume_id, True, "видимость сохранена")
