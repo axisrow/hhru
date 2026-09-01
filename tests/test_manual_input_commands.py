@@ -105,7 +105,7 @@ def _fake_launch_context(*_args, **_kwargs):
 
 def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
-    edit_experience_cmd.run(
+    result = edit_experience_cmd.run(
         _args(
             tmp_path,
             mode="fill",
@@ -118,6 +118,7 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
         )
     )
     out = capsys.readouterr().out
+    assert result is False
     assert "ООО Тест" in out
     assert "[DRY-RUN] save не нажат" in out
 
@@ -175,25 +176,6 @@ def test_edit_experience_entry_rejects_llm_only_mode(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "LLM-планированию" in out
     assert "--help" in out
-
-
-def test_edit_experience_entry_accepts_explicit_fill_mode(tmp_path, capsys, monkeypatch):
-    """--mode fill matches the implicit manual default and must not be rejected (#921)."""
-    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
-    result = edit_experience_cmd.run(
-        _args(
-            tmp_path,
-            mode="fill",
-            career=None,
-            existing=None,
-            entry=[
-                '{"company": "ООО Тест", "position": "Инженер", "start_month": "3", '
-                '"duties": "Делал дело"}'
-            ],
-        )
-    )
-    assert result is False
-    assert "ООО Тест" in capsys.readouterr().out
 
 
 def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
