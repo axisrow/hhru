@@ -156,6 +156,46 @@ def test_edit_experience_entry_conflicts_with_career(tmp_path, capsys):
     assert "LLM-планированию" in capsys.readouterr().out
 
 
+def test_edit_experience_entry_rejects_llm_only_mode(tmp_path, capsys):
+    """#921: --mode=create is LLM-planning-only; with --entry it must fail
+    with an actionable hint (remove --mode / pass the fill default), not a
+    contract that is only discoverable from the failure text itself."""
+    assert (
+        edit_experience_cmd.run(
+            _args(
+                tmp_path,
+                mode="create",
+                career=None,
+                existing=None,
+                entry=['{"company": "a", "position": "b", "start_month": "3"}'],
+            )
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "LLM-планированию" in out
+    assert "--help" in out
+
+
+def test_edit_experience_entry_accepts_explicit_fill_mode(tmp_path, capsys, monkeypatch):
+    """--mode fill matches the implicit manual default and must not be rejected (#921)."""
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    result = edit_experience_cmd.run(
+        _args(
+            tmp_path,
+            mode="fill",
+            career=None,
+            existing=None,
+            entry=[
+                '{"company": "ООО Тест", "position": "Инженер", "start_month": "3", '
+                '"duties": "Делал дело"}'
+            ],
+        )
+    )
+    assert result is False
+    assert "ООО Тест" in capsys.readouterr().out
+
+
 def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
     assert edit_experience_cmd.run(_args(tmp_path, mode="fill", career=None, existing=None)) is True
     assert "--career" in capsys.readouterr().out

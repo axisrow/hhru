@@ -38,7 +38,17 @@ def register(subparsers) -> None:
             "для профиля (#782) — резюме определяет привязку, не место записи."
         ),
     )
-    parser.add_argument("--mode", choices=("create", "fill"), default="fill")
+    parser.add_argument(
+        "--mode",
+        choices=("create", "fill"),
+        default="fill",
+        help=(
+            "Режим LLM-планирования, действует только вместе с --career: "
+            "fill — до-заполнить существующие записи (по умолчанию), "
+            "create — составить план с нуля. С --entry не сочетается: "
+            "ручной путь сам читает живое состояние резюме (#326)."
+        ),
+    )
     parser.add_argument(
         "--career",
         help="Факты карьеры для LLM (обязательно без --entry)",
@@ -59,7 +69,10 @@ def register(subparsers) -> None:
     parser.add_argument(
         "--existing",
         type=Path,
-        help="JSON-массив существующих записей для режима fill",
+        help=(
+            "JSON-массив существующих записей вместо живого чтения hh.ru "
+            "(только для LLM-планирования в режиме fill)"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true", help="Показать план, не нажимая save")
     parser.add_argument("--force", action="store_true", help="Разрешить запись без TTY prompt")
@@ -142,7 +155,11 @@ def _run(args: argparse.Namespace, progress) -> bool:
         print("[FAIL] Требуется --career (LLM) или --entry (готовый текст, #326)")
         return True
     if manual and args.mode != "fill":
-        print("[FAIL] --mode относится к LLM-планированию и не сочетается с --entry (#326)")
+        print(
+            "[FAIL] --mode относится к LLM-планированию (--career) и не сочетается "
+            "с --entry: ручной путь сам читает живой опыт резюме. Уберите --mode "
+            "или передайте значение по умолчанию fill (#326, см. --help)"
+        )
         return True
 
     try:
