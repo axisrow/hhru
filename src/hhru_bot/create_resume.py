@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
-from .browser import HH_BASE_URL, RESUMES_FULL_LIST_URL, goto_hh
+from .browser import (
+    HH_BASE_URL,
+    RESUMES_FULL_LIST_URL,
+    dismiss_cookie_banner,
+    goto_hh,
+)
 from .external_forms.detect import normalize
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
@@ -81,14 +86,22 @@ def _click_one(
     return ""
 
 
-def _select_catalog_leaf(
+def select_catalog_leaf(
     page: Page,
     area: str,
     *,
     filter_timeout: float = 15.0,
     checkbox_confirm_timeout: float = _CHECKBOX_CONFIRM_TIMEOUT,
+    expected_role_id: str | None = None,
 ) -> str:
-    """Select one exact leaf from hh.ru's full profession tree."""
+    """Select one exact leaf from hh.ru's full profession tree.
+
+    ``expected_role_id`` (#913) — согласованный id роли из каталога поиска
+    вакансий: id-пространства дерева модалки и того каталога совместимы
+    (подтверждено live: 96 <-> ``tree-selector-item-96``). Когда id задан, лист
+    с ДРУГИМ id не кликается вовсе — точное совпадение текста ещё не доказывает
+    нужную роль, а молчаливая подмена записала бы чужой role_id.
+    """
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
     # the search input immediately after can observe the stale blank body (the
@@ -185,6 +198,15 @@ def _select_catalog_leaf(
     match = re.search(r"tree-selector-item-text-(\d+)$", qa)
     if not match:
         return f"пункт каталога «{area}» не является leaf-профессией"
+    if expected_role_id is not None and match.group(1) != expected_role_id:
+        # Неточная цель вырождается в «Другое» (id 40) или находит лист с тем
+        # же текстом, но другим id (#911/#913): «Другое» не выбирать никогда —
+        # это отказ, а не выбор. Остановка ДО клика оставляет форму без
+        # изменений, и повтор с корректной целью ничего не должен откатывать.
+        return (
+            f"профессия «{area}» найдена в каталоге с role_id={match.group(1)}, "
+            f"ожидался согласованный role_id={expected_role_id}"
+        )
     # The checkbox shares the tree row confirmed rendered above, but it is still
     # a distinct control the SPA attaches asynchronously; wait before the strict
     # _one() so the commit-vs-hydration pattern stays symmetric across the wizard.
@@ -308,6 +330,9 @@ def create_resume_on_hh(
         goto_hh(page, CREATION_URL)
     else:
         try:
+            # Баннер cookie-политики ephemeral-конекста перекрывает кнопку
+            # создания (живой тур #913, 2026-09-01) — закрыть до клика.
+            dismiss_cookie_banner(page)
             _require(create_button).click()
             page.wait_for_url(f"**{RESUME_CREATION_URL}**", wait_until="commit")
         except PlaywrightError as exc:
@@ -347,10 +372,11 @@ def create_resume_on_hh(
         # asynchronously after each input; a strict count()/click right away can
         # see count=0 before the SPA hydrates (same #304 race guarded above).
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
+        dismiss_cookie_banner(page)
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
-        category_reason = _select_catalog_leaf(page, area)
+        category_reason = select_catalog_leaf(page, area)
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
@@ -360,6 +386,7 @@ def create_resume_on_hh(
     # Точка невозврата: клик ниже создаёт резюме, поэтому ЛЮБОЙ сбой начиная
     # отсюда — uncertain (fail-closed, #176): результат клика не наблюдаем.
     try:
+        dismiss_cookie_banner(page)
         reason = _click_one(
             page,
             RESUME_CREATION_NEXT,

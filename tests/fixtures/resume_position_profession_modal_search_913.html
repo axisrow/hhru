@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Редуцировано из живого дампа /tmp/hhru-911-battle2/03-profession-search.html
+     (боевой прогон #911 battle2, 2026-09-01): модалка "Уточните специальность"
+     открыта поверх экрана визарда, поиск уже дал единственный точный лист
+     tree-selector-item-124 "Тестировщик" (role_id из battle2 readback).
+     Подтверждение открытости по пяти признакам (#913): modal-overlay ВИДЕН,
+     вложенный role=dialog виден, tree-selector-search-input виден со значением,
+     заголовок h4[data-qa=title] = "Уточните специальность". ВАЖНО: aria-selected
+     живёт на ВЛОЖЕННОМ div[role=treeitem]; внешний data-qa="tree-selector-item
+     tree-selector-item-124" атрибута не имеет (ловушка измерения #911,
+     комментарий 5487227929). Реальные resume_id аккаунта в редукцию не входят. -->
+<html lang="ru"><body>
+  <input data-qa="resume-profile-position-input" value="" role="combobox">
+  <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Тестировщик" checked disabled>Тестировщик</label>
+  <div data-qa="modal-overlay" style="z-index: 1200;">
+    <div aria-modal="true" role="dialog" tabindex="-1" aria-labelledby=":rb: :r8:" aria-describedby=":r9:">
+      <div data-qa="modal-content-scroll-container">
+        <div data-qa="title-container">
+          <h4 data-qa="title">Уточните специальность</h4>
+        </div>
+        <div>Вы выбрали 0 из 5 специальностей</div>
+        <input data-qa="tree-selector-search-input" value="Тестировщик">
+        <div role="tree" aria-multiselectable="true">
+          <div data-qa="tree-selector-item tree-selector-item-124" style="padding-left: 0px;">
+            <div role="treeitem" aria-selected="false" aria-setsize="1" aria-level="1" tabindex="0">
+              <label data-qa="cell">
+                <span data-qa="checkbox-container">
+                  <input name="tree-selector-item-top-124" tabindex="-1" data-qa="tree-selector-input tree-selector-input-124" type="checkbox">
+                  <span data-qa="checkbox"></span>
+                </span>
+                <span data-qa="cell-text-content-wrapper">
+                  <span data-qa="tree-selector-item-text tree-selector-item-text-124">
+                    <span data-qa="cell-text-content">Тестировщик</span>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-qa="modal-footer">
+        <button type="button" data-qa="category-modal-cancel">Сбросить выбор</button>
+        <button type="button" data-qa="category-modal-submit">Сохранить и продолжить</button>
+      </div>
+    </div>
+  </div>
+  <button type="button" data-qa="resume-profile-next-screen">Сохранить и продолжить</button>
+</body></html>

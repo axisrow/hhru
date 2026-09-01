@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Состояние описано живым наблюдением #911 (2026-09-01, вкладка
+     пользователя): modal-overlay смонтирован в DOM, но СКРЫТ — это НЕ
+     открытая модалка и она не перекрывает экран визарда. Дамп этого
+     состояния не снимался; разметка модалки скопирована из редукции
+     resume_position_profession_modal_search_913.html (battle2/03) с
+     display:none на overlay. Служит парой к ней: подтверждение открытости
+     обязано отличать скрытый узел от видимой модалки. -->
+<html lang="ru"><body>
+  <input data-qa="resume-profile-position-input" value="" role="combobox">
+  <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Тестировщик" checked disabled>Тестировщик</label>
+  <div data-qa="modal-overlay" style="z-index: 1200; display: none;">
+    <div aria-modal="true" role="dialog" tabindex="-1">
+      <div data-qa="modal-content-scroll-container">
+        <div data-qa="title-container">
+          <h4 data-qa="title">Уточните специальность</h4>
+        </div>
+        <input data-qa="tree-selector-search-input" value="Тестировщик">
+        <div role="tree" aria-multiselectable="true">
+          <div data-qa="tree-selector-item tree-selector-item-124">
+            <div role="treeitem" aria-selected="false" aria-level="1">
+              <label data-qa="cell">
+                <span data-qa="checkbox-container">
+                  <input data-qa="tree-selector-input tree-selector-input-124" type="checkbox">
+                </span>
+                <span data-qa="tree-selector-item-text tree-selector-item-text-124">
+                  <span data-qa="cell-text-content">Тестировщик</span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-qa="modal-footer">
+        <button type="button" data-qa="category-modal-cancel">Сбросить выбор</button>
+        <button type="button" data-qa="category-modal-submit">Сохранить и продолжить</button>
+      </div>
+    </div>
+  </div>
+  <button type="button" data-qa="resume-profile-next-screen">Сохранить и продолжить</button>
+</body></html>

@@ -7,6 +7,7 @@ import importlib
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -697,6 +698,26 @@ def _draft_position_args(history_path: Path) -> argparse.Namespace:
     )
 
 
+class _WizardSavePage:
+    """Minimal page double for the #913 wizard write paths: URL carrier with
+    a single always-clickable locator (editor SAVE in the fallback fixup)."""
+
+    url = "https://hh.ru/profile/resume/professional_role?resume=r1"
+
+    def locator(self, _selector):
+        class _Locator:
+            def count(self):
+                return 1
+
+            def click(self):
+                return None
+
+            def wait_for(self, *, state=None, timeout=None):
+                return None
+
+        return _Locator()
+
+
 def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -814,6 +835,256 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
     assert row["command"] == "resume_position"
     assert row["attempted"] == row["success"] == 1
     assert row["failed"] == row["uncertain"] == row["skipped"] == 0
+
+
+def test_exact_leaf_title_is_saved_directly_in_wizard(tmp_path: Path, monkeypatch, capsys) -> None:
+    """#913: when the requested title IS the exact catalog leaf (title ==
+    agreed specialization), the command must save it directly through the
+    wizard's own catalog modal — no placeholder, no editor fixup. The direct
+    path is proven by battle run #911 (5487694535): the wizard writes the
+    real role_id in one pass and the readback verifies title+role together.
+    """
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_position_wizard", lambda _page, _resume_id: True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("124", label, "Информационные технологии"),
+    )
+
+    page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+
+    flow = PositionFlowContext(
+        "wizard",
+        "r1",
+        PositionValues(title="Тестировщик"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="common"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume, **_kwargs: flow,
+    )
+
+    direct_calls: list[dict] = []
+
+    def fake_direct(_page, _resume, plan, *, role_id, before_first_click=None):
+        direct_calls.append({"title": plan.title, "role_id": role_id})
+        return None
+
+    minimum_calls: list[bool] = []
+
+    def fake_minimum(_page, _resume, *, before_first_click=None):
+        minimum_calls.append(True)
+        return "Администратор"
+
+    verify_calls: list[dict] = []
+
+    def fake_verify(_page, _resume, *, expected_title, expected_role_id, expected_role_label):
+        verify_calls.append(
+            {"title": expected_title, "role_id": expected_role_id, "label": expected_role_label}
+        )
+        return ResumeState(status="not_finished")
+
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fake_direct)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fake_minimum)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        fake_verify,
+    )
+    apply_calls: list[bool] = []
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.apply_position",
+        lambda *_a, **_k: apply_calls.append(True),
+    )
+
+    args = _draft_position_args(tmp_path / "history.db")
+    args.title = "Тестировщик"
+    args.specialization = ["Тестировщик"]
+    assert command.run(args) is False
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+
+    assert direct_calls == [{"title": "Тестировщик", "role_id": "124"}]
+    assert minimum_calls == []  # прямому пути заглушка не нужна
+    assert apply_calls == []  # editor-фиксап не выполнялся
+    assert verify_calls == [{"title": "Тестировщик", "role_id": "124", "label": "Тестировщик"}]
+
+    row = History(tmp_path / "history.db").command_runs()[-1]
+    assert row["attempted"] == row["success"] == 1
+    assert row["failed"] == row["uncertain"] == 0
+
+
+def test_direct_save_is_never_attempted_in_dry_run(tmp_path: Path, monkeypatch, capsys) -> None:
+    """#909/#913: dry-run строго немутирующ — прямой путь (как и фолбэк)
+    не выполняется, wizard не открывается при явной --specialization."""
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("124", label, "Информационные технологии"),
+    )
+
+    page = SimpleNamespace(url="https://hh.ru/profile/resume/professional_role?resume=r1")
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume, **_kwargs: PositionFlowContext(
+            "wizard",
+            "r1",
+            PositionValues(title="Тестировщик"),
+            ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+        ),
+    )
+    direct = MagicMock()
+    minimum = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", direct)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", minimum)
+
+    args = _draft_position_args(tmp_path / "history.db")
+    args.title = "Тестировщик"
+    args.specialization = ["Тестировщик"]
+    args.dry_run = True
+    assert command.run(args) is False
+    out = capsys.readouterr().out
+    assert "Ничего не записано" in out
+    direct.assert_not_called()
+    minimum.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("title", "expect_direct"),
+    [("Тестировщик", True), ("тестировщик", False)],
+)
+def test_direct_save_chip_popular_still_falls_back_to_wizard_minimum(
+    title: str, expect_direct: bool, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """#913: the direct path is tried first for an exact leaf, but when the
+    catalog modal never confirms (chip-popular shape без каталога, #881) it
+    must fall back to the existing wizard-minimum + editor fixup — recording
+    ONE durable success attempt, not an uncertain result and not a second
+    begin_attempt(). The lowercase variant (review of PR #914) must not even
+    enter the direct path (gate is byte-exact like the readback).
+    """
+    import hhru_bot.commands.resume_position as command
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import (
+        ChipPopularUnavailable,
+        PositionFlowContext,
+        PositionValues,
+    )
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_position_wizard", lambda _page, _resume_id: True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("124", label, "Информационные технологии"),
+    )
+
+    page = _WizardSavePage()
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+
+    flows = iter(
+        [
+            PositionFlowContext(
+                "wizard",
+                "r1",
+                PositionValues(title="Тестировщик"),
+                ResumeState(status="not_finished", next_incomplete_screen_id="common"),
+            ),
+            PositionFlowContext(
+                "wizard",
+                "r1",
+                PositionValues(title="Тестировщик"),
+                ResumeState(status="not_finished", next_incomplete_screen_id="common"),
+            ),
+            PositionFlowContext(
+                "editor",
+                "r1",
+                PositionValues(title="Тестировщик"),
+                ResumeState(status="not_finished", next_incomplete_screen_id="common"),
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume, **_kwargs: next(flows),
+    )
+
+    direct_calls: list[bool] = []
+
+    def fail_with_chip_popular(_page, _resume, _plan, *, role_id, before_first_click=None):
+        # Модалка каталога не подтвердилась уже ПОСЛЕ первого NEXT —
+        # прямому пути больше нечего пробовать без повторного клика.
+        direct_calls.append(True)
+        before_first_click()
+        raise ChipPopularUnavailable("модалка каталога не подтвердилась")
+
+    minimum_calls: list[bool] = []
+
+    def fake_minimum(_page, _resume, *, before_first_click=None):
+        minimum_calls.append(True)
+        return "Администратор"
+
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard", fail_with_chip_popular)
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", fake_minimum)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_minimum_save",
+        lambda _page, _resume: ResumeState(status="not_finished"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.verify_wizard_save",
+        lambda *_args, **_kwargs: ResumeState(status="not_finished"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.apply_position", lambda _page, _plan, current=None: None
+    )
+
+    args = _draft_position_args(tmp_path / "history.db")
+    args.title = title
+    args.specialization = ["Тестировщик"]
+    assert command.run(args) is False
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert minimum_calls == [True]
+    assert bool(direct_calls) is expect_direct
 
 
 def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_counted(
