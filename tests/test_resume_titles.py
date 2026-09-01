@@ -197,6 +197,11 @@ class _OneNode:
     def count(self) -> int:
         return 1
 
+    def all(self) -> list[_OneNode]:
+        # card_resume_id (#891) читает ссылки снапшотом .all(), как список
+        # карточек: двойник возвращает сам себя единственным совпадением.
+        return [self]
+
     def get_attribute(self, name: str) -> str | None:
         if self._raise_read:
             raise PlaywrightError("detached by rerender")

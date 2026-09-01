@@ -14,7 +14,6 @@ resume-card-link-<hash> (identity-bound); новый resume_id обязан от
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,13 +38,27 @@ from .negotiations_probe import parse_initial_state
 # copy-resume-only variant; the command layer already treats this shared
 # PageStateIndeterminate subtype as an expired-session failure.
 from .responses import NotAuthenticated
+
+# Имена `_card_hashes` и `_RESUME_HASH_RE` сохранены как тестируемый seam:
+# тесты monkeypatch'ат их в этом модуле, и вызовы copy_resume_on_hh обязаны
+# резолвиться через глобал этого модуля.
+from .resume_ids import (
+    RESUME_ID_FROM_PATH_RE as _RESUME_HASH_RE,
+)
+from .resume_ids import (
+    card_resume_id,
+    read_ssr_resume_items,
+    resume_card_locator,
+    resume_item_attrs,
+)
+from .resume_ids import (
+    page_card_hashes as _card_hashes,
+)
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
     RESUME_LIST_ACTION_MORE,
     RESUME_LIST_CARD,
-    RESUME_LIST_CARD_LINK_QA_PREFIX,
-    RESUME_LIST_CARD_LINK_TPL,
     RESUME_LIST_CARD_TITLE,
     RESUME_PROFILE_READY,
 )
@@ -61,8 +74,6 @@ PROFILE_STALL_SECONDS = 15.0
 PROFILE_ABSOLUTE_TIMEOUT_SECONDS = 300.0
 PROFILE_POLL_MS = 250
 MENU_CLICK_TIMEOUT_MS = 1_000
-
-_RESUME_HASH_RE = re.compile(r"/resume/([0-9a-f]{32,40})")
 
 
 def _monotonic() -> float:
@@ -318,16 +329,6 @@ def _reload_resumes_list(page: Page) -> str:
     return ""
 
 
-def _card_hashes(page: Page) -> set[str]:
-    """Хэши всех резюме в списке /applicant/resumes (для diff до/после)."""
-    hashes: set[str] = set()
-    for link in page.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
-        qa = link.get_attribute("data-qa") or ""
-        if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
-            hashes.add(qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :])
-    return hashes
-
-
 def _resume_lineage(page: Page) -> dict[str, ResumeLineage]:
     """Read hash/numeric parentage from the resume-list SSR state.
 
@@ -340,20 +341,12 @@ def _resume_lineage(page: Page) -> dict[str, ResumeLineage]:
     An empty mapping is an unavailable proof, never evidence that a relation
     is absent.  Callers retain the URL-bound fallback and otherwise fail closed.
     """
-    try:
-        state = parse_initial_state(page.content())
-    except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
-        return {}
-    if not isinstance(state, dict):
-        return {}
-    resumes = state.get("applicantResumes")
-    if not isinstance(resumes, list):
-        return {}
+    resumes, _ = read_ssr_resume_items(page)
 
     result: dict[str, ResumeLineage] = {}
     for item in resumes:
-        attrs = item.get("_attributes") if isinstance(item, dict) else None
-        if not isinstance(attrs, dict):
+        attrs = resume_item_attrs(item)
+        if attrs is None:
             continue
         resume_hash = attrs.get("hash")
         numeric_id = attrs.get("id")
@@ -394,54 +387,36 @@ def list_resume_cards(
 
     status_by_hash: dict[str, str] = {}
     searchable_by_hash: dict[str, bool] = {}
-    ssr_unavailable = False  # Флаг: SSR данные недоступны или некорректны
-    try:
-        state = parse_initial_state(page.content())
-    except (ValueError, AttributeError, PlaywrightError, PlaywrightTimeoutError):
-        # PlaywrightError/PlaywrightTimeoutError могут возникнуть при закрытии страницы,
-        # сбое renderer или деградации браузера. Помечаем SSR как недоступный.
-        state = None
-        ssr_unavailable = True
-
-    if not ssr_unavailable and not isinstance(state, dict):
-        # Valid JSON can still have the wrong top-level shape (for example an
-        # interstitial payload such as null or a list).
-        ssr_unavailable = True
-    elif not ssr_unavailable:
-        resumes = state.get("applicantResumes")
-        if not isinstance(resumes, list) or not resumes:
-            # applicantResumes отсутствует, пуст или имеет неправильный тип:
-            # пустой список неотличим от SSR, который не загрузился.
+    # Непустая reason — SSR не прочитан / не объект / секция отсутствует, пуста
+    # или не список (пустой список неотличим от SSR, который не загрузился).
+    resumes, ssr_reason = read_ssr_resume_items(page)
+    ssr_unavailable = bool(ssr_reason)
+    for item in resumes:
+        attrs = resume_item_attrs(item)
+        if attrs is None:
             ssr_unavailable = True
-        else:
-            for item in resumes:
-                attrs = item.get("_attributes") if isinstance(item, dict) else None
-                resume_hash = attrs.get("hash") if isinstance(attrs, dict) else None
-                status = attrs.get("status") if isinstance(attrs, dict) else None
-                if (
-                    not isinstance(resume_hash, str)
-                    or not resume_hash
-                    or not isinstance(status, str)
-                    or not status
-                ):
-                    # A partially valid SSR payload must not be presented as a
-                    # complete status read: callers need to know that status
-                    # data is unavailable or schema-drifted.
-                    ssr_unavailable = True
-                    continue
-                status_by_hash[resume_hash] = status
-                is_searchable = attrs.get("isSearchable")
-                if isinstance(is_searchable, bool):
-                    searchable_by_hash[resume_hash] = is_searchable
+            continue
+        resume_hash = attrs.get("hash")
+        status = attrs.get("status")
+        if (
+            not isinstance(resume_hash, str)
+            or not resume_hash
+            or not isinstance(status, str)
+            or not status
+        ):
+            # A partially valid SSR payload must not be presented as a
+            # complete status read: callers need to know that status
+            # data is unavailable or schema-drifted.
+            ssr_unavailable = True
+            continue
+        status_by_hash[resume_hash] = status
+        is_searchable = attrs.get("isSearchable")
+        if isinstance(is_searchable, bool):
+            searchable_by_hash[resume_hash] = is_searchable
 
     cards: list[ResumeCard] = []
     for card in cards_locator.all():
-        resume_id = ""
-        for link in card.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
-            qa = link.get_attribute("data-qa") or ""
-            if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
-                resume_id = qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :]
-                break
+        resume_id = card_resume_id(card)
         if not resume_id:
             # Codex adversarial review (PR #322): вложенный селектор ссылки-хэша
             # — второй, независимо дрейфующий локатор (RESUME_LIST_CARD уже
@@ -530,8 +505,8 @@ def resolve_numeric_resume_ids(page: Page) -> ResumeIdMapping | None:
     mapping: dict[str, str] = {}
     statuses: dict[str, str] = {}
     for item in resumes:
-        attrs = item.get("_attributes") if isinstance(item, dict) else None
-        if not isinstance(attrs, dict):
+        attrs = resume_item_attrs(item)
+        if attrs is None:
             continue
         resume_hash, numeric_id = attrs.get("hash"), attrs.get("id")
         if not resume_hash or numeric_id is None:
@@ -709,10 +684,9 @@ def copy_resume_on_hh(
     logger.info("Открываю список резюме: %s", RESUMES_LIST_URL)
     _goto_resumes_list(page)
 
-    link_sel = RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume.resume_id)
     duplicate = None
     for attempt in range(2):
-        card_locator = page.locator(f"{RESUME_LIST_CARD}:has({link_sel})")
+        card_locator = resume_card_locator(page, resume.resume_id)
         match_count = _wait_single_match_count(card_locator, timeout_ms=COPY_TIMEOUT_MS)
         if match_count == -1:
             return CopyResumeResult(

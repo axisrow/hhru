@@ -18,10 +18,9 @@ from playwright.sync_api import Page
 
 from .browser import RESUMES_FULL_LIST_URL, goto_hh
 from .external_forms.detect import normalize
+from .resume_ids import card_resume_id
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
-    RESUME_LIST_CARD_LINK_PREFIX,
-    RESUME_LIST_CARD_LINK_QA_PREFIX,
     RESUME_LIST_CARD_TITLE,
 )
 from .selector_groups.resume_page import RESUME_CREATE_BUTTON
@@ -70,15 +69,10 @@ def read_account_titles(page: Page) -> tuple[list[AccountTitle], str]:
             return [], ""
         entries: list[AccountTitle] = []
         for card in cards.all():
-            # Счёт строго до чтения: get_attribute/inner_text по отсутствующему
-            # элементу в реальном Playwright ждёт его весь таймаут и кидает
-            # TimeoutError, а не возвращает None — причина отказа должна
-            # формироваться по count()==0, а не падать 30-секундным ожиданием.
-            link = card.locator(RESUME_LIST_CARD_LINK_PREFIX)
-            link_qa = ""
-            if link.count() >= 1:
-                link_qa = link.first.get_attribute("data-qa") or ""
-            resume_id = link_qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :] if link_qa else ""
+            # Чтение resume_id через общий ридер (#891): .all() не ждёт элемент,
+            # так что «счёт строго до чтения» здесь соблюдён самим снапшотом
+            # ссылок — get_attribute берётся только с реально найденных узлов.
+            resume_id = card_resume_id(card)
             if not resume_id:
                 return [], (
                     "карточка резюме без resume_id (ссылка-хэш не найдена — дрейф разметки); "

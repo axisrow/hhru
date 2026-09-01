@@ -739,9 +739,9 @@ def test_no_navigation_with_matching_parent_lineage_succeeds(monkeypatch):
 
 
 def test_resume_lineage_reads_server_clone_relation(monkeypatch):
+    # SSR-чтение переехало в resume_ids (#891), поэтому шов патчится там.
     monkeypatch.setattr(
-        cr,
-        "parse_initial_state",
+        "hhru_bot.resume_ids.parse_initial_state",
         lambda html: {
             "applicantResumes": [
                 {
@@ -761,7 +761,7 @@ def test_resume_lineage_reads_server_clone_relation(monkeypatch):
 
 
 def test_resume_lineage_malformed_state_is_unavailable(monkeypatch):
-    monkeypatch.setattr(cr, "parse_initial_state", lambda html: ["interstitial"])
+    monkeypatch.setattr("hhru_bot.resume_ids.parse_initial_state", lambda html: ["interstitial"])
 
     assert cr._resume_lineage(SimpleNamespace(content=lambda: "<html>")) == {}
 
