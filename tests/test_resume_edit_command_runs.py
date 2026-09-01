@@ -929,6 +929,156 @@ def test_exact_leaf_title_is_saved_directly_in_wizard(tmp_path: Path, monkeypatc
     assert row["failed"] == row["uncertain"] == 0
 
 
+def test_landed_first_next_save_is_verified_not_masked_by_fallback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """#899 (регресс-страж): когда первый NEXT прямого пути сам сохраняет
+    специализацию и закрывает экран — живой факт #893 (hh.ru редиректит
+    завершённый professional_role; замер воспроизведён на двух резюме) и
+    #900-инцидент — команда обязана подтвердить сохранение через
+    ``verify_wizard_save`` и записать success: НЕ запускать
+    wizard-minimum fallback по «виду экрана» и НЕ рапортовать (uncertain).
+    Здесь гоняется НАСТОЯЩАЯ ``save_position_wizard`` (не двойник): модалка
+    не подтверждена ни разу, URL уходит с визарда первым же NEXT.
+    """
+    import hhru_bot.commands.resume_position as command
+    import hhru_bot.resume_position as resume_position_module
+    from hhru_bot.professional_roles import ProfessionalRole
+    from hhru_bot.resume_position import PositionFlowContext, PositionValues
+    from hhru_bot.resume_state import ResumeState
+
+    resume = SimpleNamespace(id="r1", resume_id="r1", ai_profile=None)
+    config = SimpleNamespace(storage_state_file="session.json", user_agent=None, ai=None)
+    monkeypatch.setattr("hhru_bot.config.load_config_or_exit", lambda _path: config)
+    monkeypatch.setattr("hhru_bot.commands._common.resolve_resume", lambda *_a, **_kw: resume)
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_position_wizard", lambda _page, _resume_id: True
+    )
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda _page, label: ProfessionalRole("96", label, "ИТ"),
+    )
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "https://hh.ru/profile/resume/professional_role?resume=r1"
+
+        def locator(self, selector):
+            return {
+                resume_position_module.WIZARD_POSITION: _PositionLocator(),
+                resume_position_module.WIZARD_POSITION_CLEAR: _CountLocator(0),
+                resume_position_module.WIZARD_NEXT: _NextLocator(self),
+            }[selector]
+
+        def wait_for_timeout(self, _ms):
+            # Транзитный chip-экран: URL уходит не мгновенно по клику, а
+            # через один тик опроса — живой зазор, в который стреляла
+            # диагностика «по виду экрана» (#892/#899).
+            self.url = "https://hh.ru/resume/r1"
+            return None
+
+    class _PositionLocator:
+        def count(self):
+            return 1
+
+        def input_value(self):
+            return ""
+
+        def fill(self, _value):
+            return None
+
+    class _CountLocator:
+        def __init__(self, count: int) -> None:
+            self._count = count
+
+        def count(self):
+            return self._count
+
+    class _NextLocator:
+        def __init__(self, page: _Page) -> None:
+            self._page = page
+            self.first = self
+
+        def count(self):
+            return 1
+
+        def wait_for(self, *, state=None, timeout=None):
+            return None
+
+        def click(self):
+            # Единственный NEXT живого сценария #899: hh.ru принимает
+            # специализацию и закрывает экран; сам URL уходит позже, тиком
+            # опроса (см. _Page.wait_for_timeout).
+            return None
+
+    page = _Page()
+
+    @contextmanager
+    def fake_launch_context(*_args, **_kwargs):
+        yield SimpleNamespace(new_page=lambda: page)
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
+
+    flow = PositionFlowContext(
+        "wizard",
+        "r1",
+        PositionValues(title="Программист, разработчик"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
+    )
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.open_position_form",
+        lambda _page, _resume, **_kwargs: flow,
+    )
+
+    # Модалка каталога не подтверждена ни разу — как в живом прогоне #899:
+    # экран закрылся прямым save, без открытия «Уточните специальность».
+    monkeypatch.setattr(
+        "hhru_bot.resume_position.is_profession_modal_confirmed", lambda _page: False
+    )
+    monkeypatch.setattr("hhru_bot.resume_position.dismiss_cookie_banner", lambda _page: None)
+    select = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.select_catalog_leaf", select)
+    monkeypatch.setattr("hhru_bot.resume_position._dump_wizard_failure", lambda *_args: "dump.html")
+
+    minimum = MagicMock()
+    minimum_verify = MagicMock()
+    apply = MagicMock()
+    monkeypatch.setattr("hhru_bot.resume_position.save_position_wizard_minimum", minimum)
+    monkeypatch.setattr("hhru_bot.resume_position.verify_wizard_minimum_save", minimum_verify)
+    monkeypatch.setattr("hhru_bot.resume_position.apply_position", apply)
+
+    verify_calls: list[dict] = []
+
+    def fake_verify(_page, _resume, *, expected_title, expected_role_id, expected_role_label):
+        verify_calls.append(
+            {"title": expected_title, "role_id": expected_role_id, "label": expected_role_label}
+        )
+        return ResumeState(status="not_finished")
+
+    monkeypatch.setattr("hhru_bot.resume_position.verify_wizard_save", fake_verify)
+
+    args = _draft_position_args(tmp_path / "history.db")
+    args.title = "Программист, разработчик"
+    assert command.run(args) is False
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert "(uncertain)" not in out
+
+    # Состоявшееся сохранение подтверждается readback'ом, а не маскируется
+    # fallback'ом: ни заглушки, ни editor-фиксапа, ни повторного входа в визард.
+    minimum.assert_not_called()
+    minimum_verify.assert_not_called()
+    apply.assert_not_called()
+    select.assert_not_called()
+    assert verify_calls == [
+        {"title": "Программист, разработчик", "role_id": "96", "label": "Программист, разработчик"}
+    ]
+
+    row = History(tmp_path / "history.db").command_runs()[-1]
+    assert row["attempted"] == row["success"] == 1
+    assert row["failed"] == row["uncertain"] == row["skipped"] == 0
+
+
 def test_direct_save_is_never_attempted_in_dry_run(tmp_path: Path, monkeypatch, capsys) -> None:
     """#909/#913: dry-run строго немутирующ — прямой путь (как и фолбэк)
     не выполняется, wizard не открывается при явной --specialization."""
