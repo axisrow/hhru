@@ -7,7 +7,7 @@ import hhru_bot.professional_roles as professional_roles_module
 from hhru_bot.professional_roles import (
     ProfessionalRole,
     ProfessionalRoleCacheError,
-    ProfessionalRoleCatalog,
+    VacancySearchRoleCatalog,
     build_role_choice_prompt,
     load_professional_role_cache,
     parse_role_choice,
@@ -15,7 +15,7 @@ from hhru_bot.professional_roles import (
     professional_role_cache_is_stale,
     resolve_explicit_role,
     search_cached_professional_roles,
-    validate_professional_role_catalog,
+    validate_vacancy_search_role_catalog,
     write_professional_role_cache,
 )
 
@@ -74,8 +74,8 @@ def test_resolve_explicit_role_rejects_duplicate_labels(monkeypatch):
         resolve_explicit_role(MagicMock(), "Аналитик")
 
 
-def _catalog(*, fetched_at: datetime | None = None) -> ProfessionalRoleCatalog:
-    return ProfessionalRoleCatalog(
+def _catalog(*, fetched_at: datetime | None = None) -> VacancySearchRoleCatalog:
+    return VacancySearchRoleCatalog(
         fetched_at=fetched_at or datetime(2026, 8, 24, tzinfo=UTC),
         categories=("ИТ", "Менеджмент"),
         roles=(
@@ -97,7 +97,7 @@ def test_invalid_catalog_does_not_replace_existing_cache(tmp_path):
     path = tmp_path / "professional_roles.json"
     write_professional_role_cache(_catalog(), path)
     before = path.read_bytes()
-    invalid = ProfessionalRoleCatalog(
+    invalid = VacancySearchRoleCatalog(
         fetched_at=datetime.now(UTC),
         categories=("ИТ",),
         roles=(ProfessionalRole("96", "Программист", "Другая"),),
@@ -128,14 +128,14 @@ def test_cache_rejects_non_string_role_fields(tmp_path):
 
 
 def test_catalog_validation_rejects_category_without_roles():
-    invalid = ProfessionalRoleCatalog(
+    invalid = VacancySearchRoleCatalog(
         fetched_at=datetime.now(UTC),
         categories=("ИТ", "Пустая"),
         roles=(ProfessionalRole("96", "Программист", "ИТ"),),
     )
 
     with pytest.raises(ProfessionalRoleCacheError, match="Пустая"):
-        validate_professional_role_catalog(invalid)
+        validate_vacancy_search_role_catalog(invalid)
 
 
 def test_cache_staleness_uses_seven_day_boundary():
@@ -147,7 +147,7 @@ def test_cache_staleness_uses_seven_day_boundary():
 
 
 def test_cached_search_ranks_exact_then_prefix_then_substring_and_ors_queries():
-    catalog = ProfessionalRoleCatalog(
+    catalog = VacancySearchRoleCatalog(
         fetched_at=datetime.now(UTC),
         categories=("ИТ",),
         roles=(
@@ -171,7 +171,7 @@ def test_full_catalog_collection_keeps_category_binding(monkeypatch):
     search = MagicMock()
     monkeypatch.setattr(
         professional_roles_module,
-        "_open_catalog_dialog",
+        "_open_vacancy_search_catalog_dialog",
         lambda _page: (object(), search),
     )
     monkeypatch.setattr(professional_roles_module, "_wait_for_tree", lambda *_a: None)
@@ -188,7 +188,7 @@ def test_full_catalog_collection_keeps_category_binding(monkeypatch):
         ],
     )
 
-    catalog = professional_roles_module.collect_professional_role_catalog(object())
+    catalog = professional_roles_module.collect_vacancy_search_role_catalog(object())
 
     search.fill.assert_called_once_with("")
     assert catalog.categories == ("ИТ", "Менеджмент")
@@ -202,7 +202,7 @@ def test_full_catalog_merges_same_role_id_across_categories(monkeypatch):
     ]
     monkeypatch.setattr(
         professional_roles_module,
-        "_open_catalog_dialog",
+        "_open_vacancy_search_catalog_dialog",
         lambda _page: (object(), MagicMock()),
     )
     monkeypatch.setattr(professional_roles_module, "_wait_for_tree", lambda *_a: None)
@@ -213,7 +213,7 @@ def test_full_catalog_merges_same_role_id_across_categories(monkeypatch):
         lambda _page, _dialog, category: [ProfessionalRole("8", "Администратор", category.label)],
     )
 
-    catalog = professional_roles_module.collect_professional_role_catalog(object())
+    catalog = professional_roles_module.collect_vacancy_search_role_catalog(object())
 
     assert len(catalog.roles) == 1
     assert catalog.roles[0].categories == tuple(category.label for category in categories)

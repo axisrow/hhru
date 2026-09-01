@@ -86,7 +86,7 @@ def _click_one(
     return ""
 
 
-def select_catalog_leaf(
+def select_wizard_catalog_leaf(
     page: Page,
     area: str,
     *,
@@ -94,13 +94,15 @@ def select_catalog_leaf(
     checkbox_confirm_timeout: float = _CHECKBOX_CONFIRM_TIMEOUT,
     expected_role_id: str | None = None,
 ) -> str:
-    """Select one exact leaf from hh.ru's full profession tree.
+    """Select one exact leaf from the resume wizard's profession tree.
 
-    ``expected_role_id`` (#913) — согласованный id роли из каталога поиска
-    вакансий: id-пространства дерева модалки и того каталога совместимы
-    (подтверждено live: 96 <-> ``tree-selector-item-96``). Когда id задан, лист
-    с ДРУГИМ id не кликается вовсе — точное совпадение текста ещё не доказывает
-    нужную роль, а молчаливая подмена записала бы чужой role_id.
+    Это каталог ВИЗАРДА резюме (resume_wizard_roles, #908), не каталог
+    поиска вакансий: id-пространства дерева модалки и фильтров поиска
+    вакансий совместимы (#913, подтверждено live: 96 <->
+    ``tree-selector-item-96``), поэтому ``expected_role_id`` — согласованный
+    id роли из каталога поиска вакансий. Когда id задан, лист с ДРУГИМ id
+    не кликается вовсе — точное совпадение текста ещё не доказывает нужную
+    роль, а молчаливая подмена записала бы чужой role_id.
     """
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
@@ -109,8 +111,8 @@ def select_catalog_leaf(
     try:
         page.locator(RESUME_CREATION_CATEGORY_SEARCH).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
-        return f"экран каталога профессий не отрисовался: {exc}"
-    search, reason = _one(page, RESUME_CREATION_CATEGORY_SEARCH, "поиск каталога профессий")
+        return f"экран каталога визарда резюме не отрисовался: {exc}"
+    search, reason = _one(page, RESUME_CREATION_CATEGORY_SEARCH, "поиск каталога визарда резюме")
     if reason:
         return reason
     _require(search).fill(area)
@@ -190,21 +192,27 @@ def select_catalog_leaf(
         offered = list(seen)
         if offered:
             options = "; ".join(offered)
-            return f"профессия «{area}» не найдена в каталоге; каталог предлагает: {options}"
-        return f"профессия «{area}» не найдена в каталоге (список пуст)"
+            return (
+                f"профессия «{area}» не найдена в каталоге визарда резюме; "
+                f"дерево предлагает: {options}"
+            )
+        return f"профессия «{area}» не найдена в каталоге визарда резюме (список пуст)"
     if len(matches) > 1:
-        return f"профессия «{area}» не найдена однозначно в каталоге (совпадений: {len(matches)})"
+        return (
+            f"профессия «{area}» не найдена однозначно в каталоге визарда "
+            f"резюме (совпадений: {len(matches)})"
+        )
     qa = matches[0].get_attribute("data-qa") or ""
     match = re.search(r"tree-selector-item-text-(\d+)$", qa)
     if not match:
-        return f"пункт каталога «{area}» не является leaf-профессией"
+        return f"пункт каталога визарда «{area}» не является leaf-профессией"
     if expected_role_id is not None and match.group(1) != expected_role_id:
         # Неточная цель вырождается в «Другое» (id 40) или находит лист с тем
         # же текстом, но другим id (#911/#913): «Другое» не выбирать никогда —
         # это отказ, а не выбор. Остановка ДО клика оставляет форму без
         # изменений, и повтор с корректной целью ничего не должен откатывать.
         return (
-            f"профессия «{area}» найдена в каталоге с role_id={match.group(1)}, "
+            f"профессия «{area}» найдена в каталоге визарда с role_id={match.group(1)}, "
             f"ожидался согласованный role_id={expected_role_id}"
         )
     # The checkbox shares the tree row confirmed rendered above, but it is still
@@ -239,8 +247,10 @@ def select_catalog_leaf(
     while not _require(checkbox).is_checked() and time.monotonic() < checkbox_deadline:
         page.wait_for_timeout(100)
     if not _require(checkbox).is_checked():
-        return f"профессия «{area}» не отмечена после клика по строке каталога"
-    return _click_one(page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка каталога профессий")
+        return f"профессия «{area}» не отмечена после клика по строке каталога визарда"
+    return _click_one(
+        page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка подтверждения каталога визарда"
+    )
 
 
 def _click_until_screen_switches(
@@ -376,7 +386,7 @@ def create_resume_on_hh(
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
-        category_reason = select_catalog_leaf(page, area)
+        category_reason = select_wizard_catalog_leaf(page, area)
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)

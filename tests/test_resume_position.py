@@ -279,7 +279,7 @@ def test_open_position_form_reloads_once_after_stalled_ssr_card(monkeypatch):
 @pytest.mark.parametrize("clear_count", [1, 0])
 def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkeypatch):
     # #913: прямой путь делегирует выбор листа боевой механике create-resume
-    # (select_catalog_leaf, покрытой собственными Chromium-тестами на живых
+    # (select_wizard_catalog_leaf, покрытой собственными Chromium-тестами на живых
     # фикстурах #911); здесь проверяется обвязка — очистка прежней должности,
     # ввод точного имени, ровно один NEXT до подтверждённой модалки и seam
     # before_first_click до него.
@@ -309,7 +309,7 @@ def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkey
         page.url = "https://hh.ru/profile/resume/common?resume=resume-id"
         return ""
 
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", fake_select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", fake_select)
     before_first_click = MagicMock()
 
     resume_position.save_position_wizard(
@@ -371,7 +371,7 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
     select = MagicMock()
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", select)
     monkeypatch.setattr(resume_position, "_dump_wizard_failure", lambda *_args: "dump.html")
 
     with pytest.raises(resume_position.ChipPopularUnavailable, match="Уточните специальность"):
@@ -432,7 +432,7 @@ def test_save_position_wizard_screen_closed_by_first_next_is_not_chip_popular(mo
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
     select = MagicMock()
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", select)
     # При регрессии падению предшествует настоящий дамп на MagicMock-странице
     # (write_text(MagicMock) → TypeError); стаб держит отказ чистым — как в
     # соседнем тесте на ChipPopularUnavailable и в командном двойнике.
@@ -671,7 +671,7 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal(m
         monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
         return ""
 
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", _submitted)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", _submitted)
 
     def _leave_wizard():
         # финальный NEXT уводит экран с professional_role

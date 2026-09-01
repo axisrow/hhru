@@ -1,9 +1,16 @@
-"""Read and resolve hh.ru professional-role catalog entries through live UI.
+"""Read and resolve hh.ru professional roles through the live UI.
 
-The vacancy-search filter is deliberately used as the read-only catalog
-surface.  It exposes the same role ids as the resume wizard without requiring
-the wizard's first ``Save and continue`` click, so dry-run can validate a
-classification before any resume mutation (#574).
+This module owns the **vacancy search catalog** (``vacancy_search_catalog``):
+the professional-role filter of ``/search/vacancy``, opened read-only.  It is
+the single source of ``role_id`` for ``--specialization`` validation.
+
+It is NOT the resume wizard's professional-role screen
+(``resume_wizard_roles``, ``/profile/resume/professional_role``): that screen
+is a fixed list of text categories with no ``role_id`` at all (#904).  The
+two must never share a name — the conflated wording sent #894-#898 hunting
+for a catalog on the chip screen, where none exists (#908).  The only wizard
+surface whose ids match this catalog is the «Уточните специальность» modal
+tree (#913).
 """
 
 from __future__ import annotations
@@ -55,24 +62,29 @@ class ProfessionalRoleCategory:
 
 
 @dataclass(frozen=True)
-class ProfessionalRoleCatalog:
+class VacancySearchRoleCatalog:
+    """Snapshot of the vacancy-search role filter (#908) — the ``role_id``
+    source.  Not the resume wizard chip screen, which has no ids at all."""
+
     fetched_at: datetime
     categories: tuple[str, ...]
     roles: tuple[ProfessionalRole, ...]
 
 
 class ProfessionalRoleCacheError(RuntimeError):
-    """The local catalog snapshot is missing, malformed, or incomplete."""
+    """The local vacancy-search catalog snapshot is missing, malformed, or
+    incomplete."""
 
 
 def build_role_query_prompt(title: str) -> list[dict[str, str]]:
-    """Ask for a few Russian catalog-search phrases, not a classification."""
+    """Ask for a few Russian vacancy-search catalog query phrases, not a classification."""
     return [
         {
             "role": "system",
             "content": (
                 "Подбери 1-4 коротких русских поисковых запроса для live-каталога "
-                "профессий hh.ru. Не выбирай профессию и не выдумывай каталог. "
+                "профессий hh.ru (фильтры поиска вакансий /search/vacancy). "
+                "Не выбирай профессию и не выдумывай каталог. "
                 'Ответь только JSON: {"queries":["..."]}.'
             ),
         },
@@ -88,31 +100,31 @@ def _strip_json_fence(raw: str) -> str:
 
 def parse_role_queries(content: str | None) -> list[str]:
     if not content or not content.strip():
-        raise ValueError("LLM не предложил запросы к каталогу профессий")
+        raise ValueError("LLM не предложил запросы к каталогу поиска вакансий")
     raw = _strip_json_fence(content.strip())
     data = json.loads(raw)
     queries = data.get("queries") if isinstance(data, dict) else None
     if not isinstance(queries, list) or not all(isinstance(item, str) for item in queries):
-        raise ValueError("LLM-запросы к каталогу должны быть списком строк")
+        raise ValueError("LLM-запросы к каталогу поиска вакансий должны быть списком строк")
     result: list[str] = []
     for item in queries:
         value = item.strip()
         if value and value not in result:
             result.append(value)
     if not result:
-        raise ValueError("LLM не предложил непустые запросы к каталогу профессий")
+        raise ValueError("LLM не предложил непустые запросы к каталогу поиска вакансий")
     return result[:4]
 
 
 def build_role_choice_prompt(title: str, roles: list[ProfessionalRole]) -> list[dict[str, str]]:
-    """Constrain the model to ids already observed in the live catalog."""
+    """Constrain the model to ids already observed in the live vacancy-search catalog."""
     payload = {"title": title, "roles": [asdict(role) for role in roles]}
     return [
         {
             "role": "system",
             "content": (
                 "Выбери ровно одну наиболее подходящую профессию только из переданного "
-                "live-каталога hh.ru. Ответь только JSON: "
+                "live-каталога профессий hh.ru (фильтры поиска вакансий). Ответь только JSON: "
                 '{"role_id":"...","reason":"кратко"}.'
             ),
         },
@@ -131,7 +143,9 @@ def parse_role_choice(
         raise ValueError("LLM-выбор профессии должен содержать строковый role_id")
     matches = [role for role in roles if role.role_id == data["role_id"]]
     if len(matches) != 1:
-        raise ValueError("LLM выбрал role_id, которого нет в прочитанном live-каталоге")
+        raise ValueError(
+            "LLM выбрал role_id, которого нет в прочитанном live-каталоге поиска вакансий"
+        )
     reason = data.get("reason")
     return matches[0], reason.strip() if isinstance(reason, str) else ""
 
@@ -207,7 +221,7 @@ def _wait_for_tree(page: Page, dialog) -> None:
     try:
         tree_items.first.wait_for(state="visible", timeout=_WAIT_MS)
     except PlaywrightError as exc:
-        raise RuntimeError(f"дерево live-каталога не отрисовалось: {exc}") from exc
+        raise RuntimeError(f"дерево live-каталога поиска вакансий не отрисовалось: {exc}") from exc
     page.wait_for_timeout(100)
 
 
@@ -229,9 +243,9 @@ def _collect_categories(page: Page, dialog) -> list[ProfessionalRoleCategory]:
         _tree_scroll(dialog, "advance")
         page.wait_for_timeout(100)
     else:
-        raise RuntimeError("обход категорий live-каталога не достиг конца")
+        raise RuntimeError("обход категорий live-каталога поиска вакансий не достиг конца")
     if not by_id:
-        raise RuntimeError("live-каталог не вернул категории профессий")
+        raise RuntimeError("live-каталог поиска вакансий не вернул категории профессий")
     return list(by_id.values())
 
 
@@ -247,7 +261,9 @@ def _find_category(page: Page, dialog, category_id: str):
             break
         _tree_scroll(dialog, "advance")
         page.wait_for_timeout(100)
-    raise RuntimeError(f"категория live-каталога id={category_id} потеряна при прокрутке")
+    raise RuntimeError(
+        f"категория live-каталога поиска вакансий id={category_id} потеряна при прокрутке"
+    )
 
 
 def _collect_category_roles(
@@ -315,16 +331,20 @@ def _open_filters_if_needed(page: Page) -> None:
         page.wait_for_timeout(250)
 
 
-def _open_catalog_dialog(page: Page):
+def _open_vacancy_search_catalog_dialog(page: Page):
     goto_hh(page, SEARCH_URL)
     _open_filters_if_needed(page)
     trigger = page.locator(FILTER_TRIGGER)
     try:
         trigger.first.wait_for(state="visible", timeout=_WAIT_MS)
     except PlaywrightError as exc:
-        raise RuntimeError(f"поле live-каталога профессий не появилось: {exc}") from exc
+        raise RuntimeError(
+            f"поле professional-role в фильтрах поиска вакансий не появилось: {exc}"
+        ) from exc
     if trigger.count() != 1:
-        raise RuntimeError(f"поле live-каталога профессий неоднозначно: {trigger.count()}")
+        raise RuntimeError(
+            f"поле professional-role в фильтрах поиска вакансий неоднозначно: {trigger.count()}"
+        )
     trigger.click()
 
     search_anywhere = page.locator("[data-qa='tree-selector-search-input']")
@@ -332,18 +352,18 @@ def _open_catalog_dialog(page: Page):
     try:
         dialog.first.wait_for(state="visible", timeout=_WAIT_MS)
     except PlaywrightError as exc:
-        raise RuntimeError(f"live-каталог профессий не открылся: {exc}") from exc
+        raise RuntimeError(f"live-каталог поиска вакансий не открылся: {exc}") from exc
     if dialog.count() != 1:
-        raise RuntimeError(f"live-каталог профессий неоднозначен: {dialog.count()}")
+        raise RuntimeError(f"live-каталог поиска вакансий неоднозначен: {dialog.count()}")
     search = dialog.locator("[data-qa='tree-selector-search-input']")
     if search.count() != 1:
-        raise RuntimeError(f"поиск live-каталога неоднозначен: {search.count()}")
+        raise RuntimeError(f"поиск live-каталога поиска вакансий неоднозначен: {search.count()}")
     return dialog, search
 
 
-def collect_professional_role_catalog(page: Page) -> ProfessionalRoleCatalog:
+def collect_vacancy_search_role_catalog(page: Page) -> VacancySearchRoleCatalog:
     """Read the complete category/leaf tree without selecting or saving it."""
-    dialog, search = _open_catalog_dialog(page)
+    dialog, search = _open_vacancy_search_catalog_dialog(page)
     search.fill("")
     _wait_for_tree(page, dialog)
     categories = _collect_categories(page, dialog)
@@ -355,7 +375,7 @@ def collect_professional_role_catalog(page: Page) -> ProfessionalRoleCatalog:
                 if normalize(previous.label) != normalize(role.label):
                     raise RuntimeError(
                         f"role_id={role.role_id} имеет разные названия «{previous.label}» "
-                        f"и «{role.label}» в live-каталоге"
+                        f"и «{role.label}» в live-каталоге поиска вакансий"
                     )
                 merged_categories = tuple(dict.fromkeys((*previous.categories, role.category)))
                 seen_by_id[role.role_id] = ProfessionalRole(
@@ -368,35 +388,39 @@ def collect_professional_role_catalog(page: Page) -> ProfessionalRoleCatalog:
             seen_by_id[role.role_id] = ProfessionalRole(
                 role.role_id, role.label, role.category, (role.category,)
             )
-    return ProfessionalRoleCatalog(
+    return VacancySearchRoleCatalog(
         fetched_at=datetime.now(UTC),
         categories=tuple(category.label for category in categories),
         roles=tuple(seen_by_id.values()),
     )
 
 
-def validate_professional_role_catalog(
-    catalog: ProfessionalRoleCatalog,
-) -> ProfessionalRoleCatalog:
+def validate_vacancy_search_role_catalog(
+    catalog: VacancySearchRoleCatalog,
+) -> VacancySearchRoleCatalog:
     if catalog.fetched_at.tzinfo is None:
         raise ProfessionalRoleCacheError("fetched_at кэша должен содержать часовой пояс")
     if not catalog.categories:
-        raise ProfessionalRoleCacheError("кэш каталога не содержит категорий")
+        raise ProfessionalRoleCacheError("кэш каталога поиска вакансий не содержит категорий")
     if len(set(catalog.categories)) != len(catalog.categories):
-        raise ProfessionalRoleCacheError("кэш каталога содержит повторяющиеся категории")
+        raise ProfessionalRoleCacheError(
+            "кэш каталога поиска вакансий содержит повторяющиеся категории"
+        )
     if any(not category.strip() for category in catalog.categories):
-        raise ProfessionalRoleCacheError("кэш каталога содержит пустую категорию")
+        raise ProfessionalRoleCacheError("кэш каталога поиска вакансий содержит пустую категорию")
     category_set = set(catalog.categories)
     if not catalog.roles:
-        raise ProfessionalRoleCacheError("кэш каталога не содержит профессий")
+        raise ProfessionalRoleCacheError("кэш каталога поиска вакансий не содержит профессий")
     role_ids: set[str] = set()
     categories_with_roles: set[str] = set()
     for role in catalog.roles:
         if not role.role_id.strip() or not role.label.strip():
-            raise ProfessionalRoleCacheError("кэш каталога содержит пустой id или название")
+            raise ProfessionalRoleCacheError(
+                "кэш каталога поиска вакансий содержит пустой id или название"
+            )
         if role.role_id in role_ids:
             raise ProfessionalRoleCacheError(
-                f"кэш каталога содержит повторяющийся role_id={role.role_id}"
+                f"кэш каталога поиска вакансий содержит повторяющийся role_id={role.role_id}"
             )
         role_categories = role.categories or ((role.category,) if role.category else ())
         if not role_categories or any(category not in category_set for category in role_categories):
@@ -412,12 +436,13 @@ def validate_professional_role_catalog(
     missing = [category for category in catalog.categories if category not in categories_with_roles]
     if missing:
         raise ProfessionalRoleCacheError(
-            "кэш каталога не содержит профессий для категорий: " + ", ".join(missing)
+            "кэш каталога поиска вакансий не содержит профессий для категорий: "
+            + ", ".join(missing)
         )
     return catalog
 
 
-def _catalog_payload(catalog: ProfessionalRoleCatalog) -> dict[str, object]:
+def _vacancy_search_catalog_payload(catalog: VacancySearchRoleCatalog) -> dict[str, object]:
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "source": CACHE_SOURCE,
@@ -429,10 +454,10 @@ def _catalog_payload(catalog: ProfessionalRoleCatalog) -> dict[str, object]:
 
 
 def write_professional_role_cache(
-    catalog: ProfessionalRoleCatalog, path: Path = DEFAULT_CACHE_PATH
+    catalog: VacancySearchRoleCatalog, path: Path = DEFAULT_CACHE_PATH
 ) -> None:
-    validate_professional_role_catalog(catalog)
-    payload = _catalog_payload(catalog)
+    validate_vacancy_search_role_catalog(catalog)
+    payload = _vacancy_search_catalog_payload(catalog)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_name: str | None = None
     try:
@@ -456,24 +481,29 @@ def write_professional_role_cache(
             Path(temp_name).unlink(missing_ok=True)
 
 
-def load_professional_role_cache(path: Path = DEFAULT_CACHE_PATH) -> ProfessionalRoleCatalog:
+def load_professional_role_cache(path: Path = DEFAULT_CACHE_PATH) -> VacancySearchRoleCatalog:
     if not path.is_file():
         raise ProfessionalRoleCacheError(
-            f"кэш каталога профессий не найден: {path}. "
+            f"кэш каталога поиска вакансий не найден: {path}. "
             "Выполните: hhru professional-roles --refresh"
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ProfessionalRoleCacheError(f"кэш каталога профессий повреждён: {exc}") from exc
+        raise ProfessionalRoleCacheError(f"кэш каталога поиска вакансий повреждён: {exc}") from exc
     if not isinstance(payload, dict):
-        raise ProfessionalRoleCacheError("кэш каталога должен содержать JSON-объект")
+        raise ProfessionalRoleCacheError(
+            "кэш каталога поиска вакансий должен содержать JSON-объект"
+        )
     if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
         raise ProfessionalRoleCacheError(
-            "версия кэша каталога несовместима; выполните: hhru professional-roles --refresh"
+            "версия кэша каталога поиска вакансий несовместима; "
+            "выполните: hhru professional-roles --refresh"
         )
     if payload.get("source") != CACHE_SOURCE or payload.get("locale") != CACHE_LOCALE:
-        raise ProfessionalRoleCacheError("source/locale кэша каталога не совпадают с hh.ru/ru")
+        raise ProfessionalRoleCacheError(
+            "source/locale кэша каталога поиска вакансий не совпадают с hh.ru/ru"
+        )
     try:
         fetched_at = datetime.fromisoformat(str(payload["fetched_at"]))
         raw_categories = payload["categories"]
@@ -510,9 +540,11 @@ def load_professional_role_cache(path: Path = DEFAULT_CACHE_PATH) -> Professiona
             )
         roles = tuple(parsed_roles)
     except (KeyError, TypeError, ValueError) as exc:
-        raise ProfessionalRoleCacheError(f"структура кэша каталога повреждена: {exc}") from exc
-    return validate_professional_role_catalog(
-        ProfessionalRoleCatalog(
+        raise ProfessionalRoleCacheError(
+            f"структура кэша каталога поиска вакансий повреждена: {exc}"
+        ) from exc
+    return validate_vacancy_search_role_catalog(
+        VacancySearchRoleCatalog(
             fetched_at=fetched_at,
             categories=tuple(raw_categories),
             roles=roles,
@@ -521,7 +553,7 @@ def load_professional_role_cache(path: Path = DEFAULT_CACHE_PATH) -> Professiona
 
 
 def professional_role_cache_is_stale(
-    catalog: ProfessionalRoleCatalog,
+    catalog: VacancySearchRoleCatalog,
     *,
     now: datetime | None = None,
     max_age: timedelta = CACHE_MAX_AGE,
@@ -533,7 +565,7 @@ def professional_role_cache_is_stale(
 
 
 def search_cached_professional_roles(
-    catalog: ProfessionalRoleCatalog, queries: list[str], *, limit: int = 20
+    catalog: VacancySearchRoleCatalog, queries: list[str], *, limit: int = 20
 ) -> list[ProfessionalRole]:
     cleaned = [normalize(query) for query in queries if query and normalize(query)]
     if not cleaned:
@@ -564,7 +596,7 @@ def search_professional_roles(page: Page, queries: list[str]) -> list[Profession
     if not cleaned:
         raise ValueError("для поиска по каталогу нужна непустая строка")
 
-    dialog, search = _open_catalog_dialog(page)
+    dialog, search = _open_vacancy_search_catalog_dialog(page)
 
     by_id: dict[str, ProfessionalRole] = {}
     for query in cleaned:
@@ -605,7 +637,7 @@ def resolve_explicit_role(page: Page, label: str) -> ProfessionalRole:
     matches = [role for role in roles if normalize(role.label) == normalize(label)]
     if len(matches) != 1:
         raise RuntimeError(
-            f"профессия «{label}» не найдена однозначно в live-каталоге "
+            f"профессия «{label}» не найдена однозначно в live-каталоге поиска вакансий "
             f"(совпадений: {len(matches)})"
         )
     return matches[0]
@@ -616,7 +648,9 @@ def suggest_role(page: Page, llm, title: str) -> tuple[ProfessionalRole, str, li
     queries = parse_role_queries(query_response.content)
     roles = search_professional_roles(page, queries)
     if not roles:
-        raise RuntimeError("live-каталог не вернул leaf-профессии по предложенным запросам")
+        raise RuntimeError(
+            "live-каталог поиска вакансий не вернул leaf-профессии по предложенным запросам"
+        )
     choice_response = llm.chat(build_role_choice_prompt(title, roles))
     role, reason = parse_role_choice(choice_response.content, roles)
     return role, reason, queries

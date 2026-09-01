@@ -10,16 +10,16 @@ import pytest
 import hhru_bot.commands.professional_roles as command
 from hhru_bot.professional_roles import (
     ProfessionalRole,
-    ProfessionalRoleCatalog,
+    VacancySearchRoleCatalog,
     write_professional_role_cache,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def _catalog(*, stale: bool = False) -> ProfessionalRoleCatalog:
+def _catalog(*, stale: bool = False) -> VacancySearchRoleCatalog:
     fetched_at = datetime.now(UTC) - (timedelta(days=8) if stale else timedelta())
-    return ProfessionalRoleCatalog(
+    return VacancySearchRoleCatalog(
         fetched_at=fetched_at,
         categories=("Информационные технологии",),
         roles=(ProfessionalRole("96", "Программист, разработчик", "Информационные технологии"),),
@@ -89,7 +89,7 @@ def test_refresh_writes_complete_snapshot_then_searches(tmp_path, monkeypatch, c
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr(
-        "hhru_bot.professional_roles.collect_professional_role_catalog",
+        "hhru_bot.professional_roles.collect_vacancy_search_role_catalog",
         lambda _page: _catalog(),
     )
 
@@ -97,7 +97,7 @@ def test_refresh_writes_complete_snapshot_then_searches(tmp_path, monkeypatch, c
 
     assert cache.is_file()
     out = capsys.readouterr().out
-    assert "Кэш каталога профессий обновлён" in out
+    assert "Кэш каталога поиска вакансий обновлён" in out
     assert "Программист, разработчик" in out
 
 
@@ -115,7 +115,7 @@ def test_failed_refresh_preserves_previous_cache(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", fake_launch_context)
     monkeypatch.setattr(
-        "hhru_bot.professional_roles.collect_professional_role_catalog",
+        "hhru_bot.professional_roles.collect_vacancy_search_role_catalog",
         lambda _page: (_ for _ in ()).throw(RuntimeError("неполный DOM")),
     )
 
@@ -123,7 +123,7 @@ def test_failed_refresh_preserves_previous_cache(tmp_path, monkeypatch, capsys):
 
     assert cache.read_bytes() == before
     out = capsys.readouterr().out
-    assert "[FAIL] Кэш каталога не обновлён" in out
+    assert "[FAIL] Кэш каталога поиска вакансий не обновлён" in out
     assert "Предыдущий валидный снимок сохранён" in out
 
 

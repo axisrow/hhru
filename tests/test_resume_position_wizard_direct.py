@@ -73,7 +73,7 @@ def test_direct_save_waits_out_modal_flicker_then_selects_leaf(monkeypatch):
         # submit закрывает модалку: подтверждения после выбора — False
         return ""
 
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", fake_select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", fake_select)
     resume = bare_resume("resume-id")
 
     resume_position.save_position_wizard(
@@ -92,7 +92,7 @@ def test_direct_save_returns_when_screen_left_without_modal(monkeypatch):
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     select = MagicMock()
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", select)
 
     def _leave_wizard():
         page.url = LEFT_URL
@@ -114,7 +114,7 @@ def test_direct_save_fails_closed_when_modal_never_confirms(monkeypatch):
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     select = MagicMock()
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", select)
     dump = MagicMock(return_value="dump.html")
     monkeypatch.setattr(resume_position, "_dump_wizard_failure", dump)
     resume = bare_resume("resume-id")
@@ -140,7 +140,7 @@ def test_chip_shape_gives_up_on_modal_open_budget_not_wizard_wait(monkeypatch):
     confirmations = MagicMock(return_value=False)
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", confirmations)
     select = MagicMock()
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", select)
     monkeypatch.setattr(
         resume_position, "_dump_wizard_failure", MagicMock(return_value="dump.html")
     )
@@ -161,12 +161,12 @@ def test_chip_shape_gives_up_on_modal_open_budget_not_wizard_wait(monkeypatch):
 
 def test_direct_save_surfaces_catalog_reason_as_runtime_error(monkeypatch):
     # «Другое»/несовпадение role_id приходит причиной-строкой из
-    # select_catalog_leaf — отказ ДО submit, финальный NEXT не кликается.
+    # select_wizard_catalog_leaf — отказ ДО submit, финальный NEXT не кликается.
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
     monkeypatch.setattr(
         resume_position,
-        "select_catalog_leaf",
+        "select_wizard_catalog_leaf",
         lambda *_args, **_kwargs: "профессия «Тестировщик» не найдена в каталоге",
     )
     resume = bare_resume("resume-id")
@@ -183,7 +183,7 @@ def test_direct_save_waits_for_modal_close_before_final_next(monkeypatch):
     # скрытия модалки; не закрылась — отказ без второго NEXT.
     page, _position, next_button = _wizard_page()
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
-    monkeypatch.setattr(resume_position, "select_catalog_leaf", lambda *_a, **_k: "")
+    monkeypatch.setattr(resume_position, "select_wizard_catalog_leaf", lambda *_a, **_k: "")
     resume = bare_resume("resume-id")
 
     with pytest.raises(RuntimeError, match="не закрылась"):

@@ -38,7 +38,7 @@ def register(subparsers) -> None:
         "--specialization",
         action="append",
         help=(
-            "Точная профессия из live-каталога hh.ru; для черновика одна, "
+            "Точная профессия из live-каталога поиска вакансий hh.ru; для черновика одна, "
             "для опубликованного резюме можно несколько"
         ),
     )
@@ -101,13 +101,13 @@ def _print_plan(plan) -> None:
 
 
 def _print_classification(role, *, reason: str = "", queries: list[str] | None = None) -> None:
-    print("[CLASSIFICATION] Согласование профессии live-каталога hh.ru:")
+    print("[CLASSIFICATION] Согласование профессии live-каталога поиска вакансий hh.ru:")
     print(f"  role_id: {role.role_id}")
     print(f"  profession: {role.label}")
     if role.category:
         print(f"  category: {role.category}")
     if queries:
-        print(f"  catalog_queries: {queries}")
+        print(f"  vacancy_search_catalog_queries: {queries}")
     if reason:
         print(f"  reason: {reason}")
 
@@ -202,7 +202,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
         ) as context:
             page = context.new_page()
-            # Resolving an explicit role uses the read-only vacancy catalog. In
+            # Resolving an explicit role uses the read-only vacancy-search catalog. In
             # dry-run there is no reason to enter the resume wizard afterwards:
             # its entry card is a different UI and its first NEXT can publish a
             # draft. Keep the wizard entirely untouched in this path (#904).
@@ -291,7 +291,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         print_professional_role_guidance(resume)
                         raise RuntimeError(
                             "для подбора профессии нужна секция ai; либо передайте "
-                            "точный --specialization из live-каталога"
+                            "точный --specialization из live-каталога поиска вакансий"
                         )
                     if llm is None:
                         llm = LLMClient(config.ai)
@@ -382,7 +382,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 print("[FAIL] Нужен --force или интерактивное подтверждение. Ничего не записано.")
                 return True
             if wizard:
-                # Catalog resolution navigates to the read-only vacancy filter;
+                # Catalog resolution navigates to the read-only vacancy-search filter;
                 # reopen and re-bind the exact draft immediately before WRITE.
                 write_flow = open_position_form(page, resume)
                 if (
@@ -403,7 +403,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     "[INFO] professional_role завершён; публикация требует "
                     "отдельной read-only проверки."
                 )
-                # #913: если цель — ТОЧНЫЙ лист каталога (title байт-в-байт
+                # #913: если цель — ТОЧНЫЙ лист каталога поиска вакансий (title байт-в-байт
                 # совпадает со специализацией), визард сам пишет профессию с
                 # role_id за один проход (#911 battle2) — без заглушки и
                 # editor-фиксапа. Сравнение строгое, как readback (==): визард
@@ -421,7 +421,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                                 before_first_click=mark_first_click_started,
                             )
                         except ChipPopularUnavailable:
-                            # Модалка каталога не подтвердилась (chip-popular
+                            # Модалка выбора профессии визарда не подтвердилась (chip-popular
                             # shape #881 и подобные) — прямой путь исчерпан
                             # без единого повторного клика NEXT; дальше штатный
                             # wizard-minimum + editor-фиксап.

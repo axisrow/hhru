@@ -153,9 +153,10 @@ RESUME_DELETE_HIDE_CONFIRM = _selector("resume_page.RESUME_DELETE_HIDE_CONFIRM")
 RESUME_DELETE_CLOSE = _selector("resume_page.RESUME_DELETE_CLOSE")
 
 # Create-resume wizard (#304), confirmed against the authenticated live DOM
-# on 2026-08-18.  The catalog is a live tree: top-level rows expand, while
-# leaf professions have checkboxes.  Do not replace this with a hand-copied
-# partial list; the tree search exposes the full current catalog.
+# on 2026-08-18.  The wizard catalog (resume_wizard_roles screen family,
+# #908 — not the vacancy-search catalog) is a live tree: top-level rows
+# expand, while leaf professions have checkboxes.  Do not replace this with
+# a hand-copied partial list; the tree search exposes the full current tree.
 RESUME_CREATE_BUTTON = _selector("resume_page.RESUME_CREATE_BUTTON")
 RESUME_CREATION_URL = "/profile/resume/professional_role"
 RESUME_CREATION_SELECT_JOB = _selector("resume_page.RESUME_CREATION_SELECT_JOB")
@@ -167,7 +168,7 @@ RESUME_CREATION_CATEGORY_SUBMIT = _selector("resume_page.RESUME_CREATION_CATEGOR
 RESUME_CREATION_CATEGORY_INPUT = _selector("resume_page.RESUME_CREATION_CATEGORY_INPUT")
 
 # Second post-NEXT shape (#881, confirmed live DOM 2026-08-31 on a copy-resume
-# draft): after the title step hh.ru skips the catalog modal above entirely and
+# draft): after the title step hh.ru skips the wizard catalog modal above entirely and
 # instead renders a flat list of
 # radio "chips" for popular professions, with the text entered on the previous
 # step highlighted as a chip (checked). Copies start with no professional role;
