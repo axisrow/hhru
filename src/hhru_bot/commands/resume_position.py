@@ -394,15 +394,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     "[INFO] professional_role завершён; публикация требует "
                     "отдельной read-only проверки."
                 )
-                # #913: если запрошенная цель — ТОЧНЫЙ лист каталога (title
-                # совпадает с согласованной специализацией), визард сам пишет
-                # настоящую профессию с role_id за один проход (доказано
-                # боевым прогоном #911 battle2) — заглушка и editor-фиксап не
-                # нужны. Неточная цель прямым путём недостижима (поиск
-                # вырождается в «Другое») — для неё остаётся #907-путь ниже.
-                from ..external_forms.detect import normalize as _normalize
-
-                direct_save = _normalize(plan.title or "") == _normalize(role.label)
+                # #913: если цель — ТОЧНЫЙ лист каталога (title байт-в-байт
+                # совпадает со специализацией), визард сам пишет профессию с
+                # role_id за один проход (#911 battle2) — без заглушки и
+                # editor-фиксапа. Сравнение строгое, как readback (==): визард
+                # сохраняет каноничный label листа, поэтому регистровый вариант
+                # ушёл бы в durable-uncertain вместо success через #907-путь.
+                direct_save = (plan.title or "").strip() == role.label.strip()
                 try:
                     if direct_save:
                         try:

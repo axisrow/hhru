@@ -896,11 +896,7 @@ def test_exact_leaf_title_is_saved_directly_in_wizard(tmp_path: Path, monkeypatc
 
     def fake_verify(_page, _resume, *, expected_title, expected_role_id, expected_role_label):
         verify_calls.append(
-            {
-                "title": expected_title,
-                "role_id": expected_role_id,
-                "label": expected_role_label,
-            }
+            {"title": expected_title, "role_id": expected_role_id, "label": expected_role_label}
         )
         return ResumeState(status="not_finished")
 
@@ -982,14 +978,19 @@ def test_direct_save_is_never_attempted_in_dry_run(tmp_path: Path, monkeypatch, 
     minimum.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("title", "expect_direct"),
+    [("Тестировщик", True), ("тестировщик", False)],
+)
 def test_direct_save_chip_popular_still_falls_back_to_wizard_minimum(
-    tmp_path: Path, monkeypatch, capsys
+    title: str, expect_direct: bool, tmp_path: Path, monkeypatch, capsys
 ) -> None:
     """#913: the direct path is tried first for an exact leaf, but when the
     catalog modal never confirms (chip-popular shape без каталога, #881) it
     must fall back to the existing wizard-minimum + editor fixup — recording
     ONE durable success attempt, not an uncertain result and not a second
-    begin_attempt().
+    begin_attempt(). The lowercase variant (review of PR #914) must not even
+    enter the direct path (gate is byte-exact like the readback).
     """
     import hhru_bot.commands.resume_position as command
     from hhru_bot.professional_roles import ProfessionalRole
@@ -1047,9 +1048,12 @@ def test_direct_save_chip_popular_still_falls_back_to_wizard_minimum(
         lambda _page, _resume, **_kwargs: next(flows),
     )
 
+    direct_calls: list[bool] = []
+
     def fail_with_chip_popular(_page, _resume, _plan, *, role_id, before_first_click=None):
         # Модалка каталога не подтвердилась уже ПОСЛЕ первого NEXT —
         # прямому пути больше нечего пробовать без повторного клика.
+        direct_calls.append(True)
         before_first_click()
         raise ChipPopularUnavailable("модалка каталога не подтвердилась")
 
@@ -1074,12 +1078,13 @@ def test_direct_save_chip_popular_still_falls_back_to_wizard_minimum(
     )
 
     args = _draft_position_args(tmp_path / "history.db")
-    args.title = "Тестировщик"
+    args.title = title
     args.specialization = ["Тестировщик"]
     assert command.run(args) is False
     out = capsys.readouterr().out
     assert "[OK]" in out
     assert minimum_calls == [True]
+    assert bool(direct_calls) is expect_direct
 
 
 def test_chip_popular_unavailable_fallback_failure_is_uncertain_not_double_counted(

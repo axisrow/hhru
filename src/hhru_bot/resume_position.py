@@ -76,14 +76,13 @@ class ChipPopularUnavailable(RuntimeError):
     categories plus a narrow "Уточните профессию" sub-modal (~15 items each)
     that does not contain most real catalog leaves (confirmed live DOM
     2026-08-31: role_id 96 "Программист, разработчик" is absent from the
-    "Программист" sub-list). For an EXACT catalog leaf the battle run #911
-    proved the catalog modal does open; this exception therefore also covers
-    "the confirmed modal never appeared within the deadline" — either way the
-    direct save cannot honor the requested role and the caller must fall back
-    to the wizard-minimum + editor path instead of attempting it. A dedicated
-    exception type (not a plain RuntimeError) lets the caller distinguish
-    "this shape cannot do it" from every other wizard failure, which must
-    still surface as-is.
+    "Программист" sub-list). For an EXACT leaf battle run #911 proved the
+    catalog modal does open, so this exception also covers "the confirmed
+    modal never appeared within the deadline" — either way the direct save
+    cannot honor the requested role and the caller must fall back to the
+    wizard-minimum + editor path. A dedicated type (not a plain
+    RuntimeError) distinguishes "this shape cannot do it" from every other
+    wizard failure, which must still surface as-is.
     """
 
 
@@ -540,13 +539,11 @@ def is_position_wizard(page: Page, resume_id: str) -> bool:
 def is_profession_modal_confirmed(page: Page) -> bool:
     """True только для ОТКРЫТОЙ модалки каталога профессий (#913).
 
-    Пять наблюдаемых признаков (живые дампы #911 battle2/clean 2026-09-01 и
-    наблюдение пользователя того же дня): единственный ``modal-overlay``,
-    который ВИДИМ — ``count()=1`` означает лишь присутствие узла в DOM,
-    скрытый overlay модалкой не является и кликам не мешает; видимый
-    вложенный ``role=dialog``; видимый внутри него поиск каталога; заголовок
-    «Уточните специальность». Всё остальное — «модалки нет», включая
-    промежуточное «мигание» после NEXT/submit.
+    Признаки (живые дампы #911 battle2/clean 2026-09-01): единственный
+    ВИДИМЫЙ ``modal-overlay`` (``count()=1`` — лишь узел в DOM, скрытый
+    overlay модалкой не является), видимый вложенный ``role=dialog``, видимый
+    поиск каталога, заголовок «Уточните специальность». Прочее — «модалки
+    нет», включая «мигание» после NEXT/submit.
     """
     overlay = page.locator(WIZARD_CATEGORY_MODAL_OVERLAY)
     if overlay.count() != 1 or not overlay.first.is_visible():
@@ -599,20 +596,18 @@ def save_position_wizard(
 ) -> None:
     """Save the exact catalog leaf directly in the draft wizard (#913).
 
-    Доказанный контракт боевого прогона #911 battle2 (5487694535):
-    fill(точное имя листа) → NEXT → модалка «Уточните специальность» →
-    поиск → клик по строке листа → poll выбранного состояния → submit →
-    финальный NEXT — визард сам пишет настоящую профессию с role_id за один
-    проход, без заглушки и без editor-фиксапа. Обязательное условие:
-    ``plan.title`` — ТОЧНОЕ имя листа каталога (неточный ввод вырождается
-    в «Другое», id 40); вызывающая сторона обязана гарантировать это до WRITE.
+    Доказанный контракт #911 battle2 (5487694535): fill(точное имя листа)
+    → NEXT → модалка «Уточните специальность» → поиск → клик по строке
+    листа → poll выбранного состояния → submit → финальный NEXT — визард
+    сам пишет профессию с role_id за один проход, без заглушки и без
+    editor-фиксапа. Обязательное условие: ``plan.title`` — ТОЧНОЕ имя листа
+    каталога (неточный ввод вырождается в «Другое», id 40); вызывающая
+    сторона обязана гарантировать это до WRITE.
 
-    Возможное упрощение (НЕ реализовано, требует отдельного proving-прогона):
-    наблюдение пользователя 2026-09-01 — сабмит модалки с пустым выбором
-    (0 из 5) валиден и возвращает на экран с отмеченным чипом; гипотеза, что
-    для точного листа выбор в модалке избыточен (type → NEXT → пустой
-    сабмит → финальный NEXT). Боевой прогон делал выбор листа — реализован
-    доказанный путь.
+    Возможное упрощение (НЕ реализовано, требует proving-прогона): наблюдение
+    2026-09-01 — сабмит модалки с пустым выбором (0 из 5) валиден; гипотеза,
+    что для точного листа выбор в модалке избыточен. Прогон делал выбор
+    листа — реализован доказанный путь.
     """
     validate_wizard_plan(plan)
     if not is_position_wizard(page, resume.resume_id):

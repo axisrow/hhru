@@ -64,7 +64,7 @@ def test_direct_save_waits_out_modal_flicker_then_selects_leaf(monkeypatch):
 
     def fake_select(_page, area, *, expected_role_id=None, **_kwargs):
         selected.append((area, {"expected_role_id": expected_role_id}))
-        # submit закрывает модалку: после выбора подтверждения становятся False
+        # submit закрывает модалку: подтверждения после выбора — False
         return ""
 
     monkeypatch.setattr(resume_position, "select_catalog_leaf", fake_select)
