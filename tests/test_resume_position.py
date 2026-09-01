@@ -386,6 +386,74 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     select.assert_not_called()
 
 
+def test_save_position_wizard_screen_closed_by_first_next_is_not_chip_popular(monkeypatch):
+    # #899 (регресс-страж): живой факт #893 (диагностика 2026-08-31,
+    # воспроизведена на двух резюме) и #900-инцидент — первый NEXT может сам
+    # сохранить специализацию и закрыть экран: hh.ru уводит URL с
+    # professional_role, а модалка каталога не открывается вовсе. Этот исход
+    # НЕ ChipPopularUnavailable: в ветке #892 исключение ставилось по виду
+    # chip-экрана и маскировало СОСТОЯВШЕЕСЯ сохранение, уводя fallback в
+    # демонтируемый экран с финальным (uncertain). #913: state-machine wait
+    # проверяет уход URL ПЕРВЫМ, поэтому состоявшийся save выходит чистым
+    # return, а вердикт делает только identity-bound readback вызывающего
+    # (verify_wizard_save).
+    resume = bare_resume("resume-id")
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
+    position = MagicMock()
+    position.count.return_value = 1
+    position.input_value.return_value = ""
+    clear = MagicMock()
+    clear.count.return_value = 0
+    next_button = MagicMock()
+    next_button.count.return_value = 1
+    next_button.first = next_button
+    page.locator.side_effect = lambda selector: {
+        resume_position.WIZARD_POSITION: position,
+        resume_position.WIZARD_POSITION_CLEAR: clear,
+        resume_position.WIZARD_NEXT: next_button,
+    }[selector]
+
+    # Транзитный chip-экран: URL уходит не мгновенно по клику, а через один
+    # тик опроса (живой сценарий #899: чипы видны, экран демонтируется, затем
+    # редирект). Регрессия «диагноз по виду экрана» (#892) стреляла именно в
+    # этот зазор — уход URL обязан решать исход раньше любого детектора.
+    def click_side_effect():
+        return None
+
+    next_button.click.side_effect = click_side_effect
+    page.wait_for_timeout.side_effect = lambda _ms: setattr(
+        page, "url", "https://hh.ru/resume/resume-id"
+    )
+    monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
+    monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
+    select = MagicMock()
+    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    # При регрессии падению предшествует настоящий дамп на MagicMock-странице
+    # (write_text(MagicMock) → TypeError); стаб держит отказ чистым — как в
+    # соседнем тесте на ChipPopularUnavailable и в командном двойнике.
+    monkeypatch.setattr(resume_position, "_dump_wizard_failure", lambda *_args: "dump.html")
+
+    resume_position.save_position_wizard(
+        page,
+        resume,
+        PositionValues(
+            title="Программист, разработчик", specializations=["Программист, разработчик"]
+        ),
+        role_id="96",
+    )
+
+    # Сохранившийся save не диагностируется как chip-popular: ровно один NEXT,
+    # каталог не тронут, финальный wait_for_url не нужен. Несущие ассерты —
+    # запрет повторного NEXT (#900) и отсутствие финального wait; тик опроса
+    # проверяется фактом (.called ≥ 1: транзитный chip-экран пройден), а не
+    # точным числом — лишний poll в продакшне не меняет поведение.
+    next_button.click.assert_called_once_with()
+    assert page.wait_for_timeout.called
+    select.assert_not_called()
+    page.wait_for_url.assert_not_called()
+
+
 @pytest.mark.parametrize("clear_count", [1, 0])
 def test_save_position_wizard_minimum_saves_any_placeholder_category_via_chip(clear_count):
     # #890: the wizard-minimum fallback does not care WHICH profession gets
