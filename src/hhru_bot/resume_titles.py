@@ -55,36 +55,47 @@ def read_account_titles(page: Page) -> tuple[list[AccountTitle], str]:
     список не может доказать отсутствие дубля, поэтому тоже отказ. Тот же
     инвариант, что у create_resume (циклы Codex-review 2/3) и у
     ``copy_resume.list_resume_cards`` (PR #322): неполный список — не список.
+
+    Функция тотальна: Playwright-ошибки чтения (детач карточки ререндером
+    между ``count()`` и чтением, отказ рендерера) конвертируются в ту же
+    причину отказа — команды получают обычный fail-closed ``[FAIL]``, а не
+    трейсбек из префлайта (ревью PR #912: в create/copy-вызовах общего
+    обработчика нет, BaseException-ветка copy-resume ретраит исключение).
     """
     cards = page.locator(RESUME_LIST_CARD)
-    if cards.count() == 0:
-        if page.locator(RESUME_CREATE_BUTTON).count() == 0:
-            return [], "список резюме не отрисовался: проверка дубля должности невозможна"
-        return [], ""
-    entries: list[AccountTitle] = []
-    for card in cards.all():
-        # Счёт строго до чтения: get_attribute/inner_text по отсутствующему
-        # элементу в реальном Playwright ждёт его весь таймаут и кидает
-        # TimeoutError, а не возвращает None — причина отказа должна
-        # формироваться по count()==0, а не падать 30-секундным ожиданием.
-        link = card.locator(RESUME_LIST_CARD_LINK_PREFIX)
-        link_qa = ""
-        if link.count() >= 1:
-            link_qa = link.first.get_attribute("data-qa") or ""
-        resume_id = link_qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :] if link_qa else ""
-        if not resume_id:
-            return [], (
-                "карточка резюме без resume_id (ссылка-хэш не найдена — дрейф разметки); "
-                "список не подтверждён, запись запрещена"
-            )
-        title_locator = card.locator(RESUME_LIST_CARD_TITLE)
-        title = ""
-        if title_locator.count() == 1:
-            title = (title_locator.first.inner_text() or "").strip()
-        if not title:
-            return [], "не удалось прочитать заголовки всех существующих резюме; запись запрещена"
-        entries.append(AccountTitle(resume_id=resume_id, title=title))
-    return entries, ""
+    try:
+        if cards.count() == 0:
+            if page.locator(RESUME_CREATE_BUTTON).count() == 0:
+                return [], "список резюме не отрисовался: проверка дубля должности невозможна"
+            return [], ""
+        entries: list[AccountTitle] = []
+        for card in cards.all():
+            # Счёт строго до чтения: get_attribute/inner_text по отсутствующему
+            # элементу в реальном Playwright ждёт его весь таймаут и кидает
+            # TimeoutError, а не возвращает None — причина отказа должна
+            # формироваться по count()==0, а не падать 30-секундным ожиданием.
+            link = card.locator(RESUME_LIST_CARD_LINK_PREFIX)
+            link_qa = ""
+            if link.count() >= 1:
+                link_qa = link.first.get_attribute("data-qa") or ""
+            resume_id = link_qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :] if link_qa else ""
+            if not resume_id:
+                return [], (
+                    "карточка резюме без resume_id (ссылка-хэш не найдена — дрейф разметки); "
+                    "список не подтверждён, запись запрещена"
+                )
+            title_locator = card.locator(RESUME_LIST_CARD_TITLE)
+            title = ""
+            if title_locator.count() == 1:
+                title = (title_locator.first.inner_text() or "").strip()
+            if not title:
+                return [], (
+                    "не удалось прочитать заголовки всех существующих резюме; запись запрещена"
+                )
+            entries.append(AccountTitle(resume_id=resume_id, title=title))
+        return entries, ""
+    except PlaywrightError as exc:
+        return [], f"не удалось прочитать список резюме: {exc}"
 
 
 def duplicate_title_reason(
@@ -114,8 +125,13 @@ def account_duplicate_reason(page: Page, title: str, *, exclude_resume_id: str =
     Один вызов для команд copy/resume-position: навигация + якорь
     «кнопка создания ИЛИ карточка» (на исчерпанном лимите резюме hh.ru кнопку
     не рендерит вовсе — карточки при этом читаемы) + чтение + чистая проверка.
+    Тотальна, как и :func:`read_account_titles`: отказ навигации — тоже
+    «проверка невозможна» с причиной, а не исключение в команду.
     """
-    goto_hh(page, RESUMES_FULL_LIST_URL)
+    try:
+        goto_hh(page, RESUMES_FULL_LIST_URL)
+    except PlaywrightError as exc:
+        return f"не удалось открыть список резюме: {exc}"
     anchor = page.locator(RESUME_CREATE_BUTTON).or_(page.locator(RESUME_LIST_CARD)).first
     try:
         anchor.wait_for(state="visible", timeout=_LIST_ANCHOR_TIMEOUT_MS)

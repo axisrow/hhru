@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from _fakes import FakeLocator, _parse_root, _parse_selector
 from hhru_bot.resume_titles import (
@@ -23,6 +24,10 @@ from hhru_bot.resume_titles import (
     account_duplicate_reason,
     duplicate_title_reason,
     read_account_titles,
+)
+from hhru_bot.selector_groups.resume_list import (
+    RESUME_LIST_CARD,
+    RESUME_LIST_CARD_LINK_PREFIX,
 )
 
 pytestmark = pytest.mark.unit
@@ -171,3 +176,85 @@ def test_account_duplicate_reason_excludes_own_resume():
         ListPage(_fixture_html()), "Программист", exclude_resume_id=ID_1
     )
     assert reason == ""
+
+
+class _OneNode:
+    """Локатор-двойник одного узла; при raise_read чтение кидает PlaywrightError.
+
+    Моделирует ререндер между count() и чтением (ревью PR #912): html-фикстура
+    на таком детач не способна, поэтому двойник duck-typed, без _fakes.
+    """
+
+    def __init__(self, *, qa: str | None = None, text: str | None = None, raise_read: bool = False):
+        self._qa = qa
+        self._text = text
+        self._raise_read = raise_read
+
+    @property
+    def first(self) -> _OneNode:
+        return self
+
+    def count(self) -> int:
+        return 1
+
+    def get_attribute(self, name: str) -> str | None:
+        if self._raise_read:
+            raise PlaywrightError("detached by rerender")
+        return self._qa
+
+    def inner_text(self) -> str:
+        if self._raise_read:
+            raise PlaywrightError("detached by rerender")
+        return self._text or ""
+
+
+class _DetachedCard:
+    """Карточка: ссылка читается, заголовок падает посреди чтения."""
+
+    def __init__(self, resume_id: str):
+        self._resume_id = resume_id
+
+    def locator(self, selector: str):  # noqa: ANN202
+        if selector == RESUME_LIST_CARD_LINK_PREFIX:
+            return _OneNode(qa=f"resume-card-link-{self._resume_id}")
+        return _OneNode(text="Программист", raise_read=True)
+
+
+class _DetachedReadPage:
+    """Страница с одной карточкой, у которой чтение заголовка кидает ошибку."""
+
+    url = ""
+
+    def __init__(self):
+        self._cards = [_DetachedCard(ID_1)]
+
+    def locator(self, selector: str):  # noqa: ANN202
+        if selector == RESUME_LIST_CARD:
+            return self
+        return _OneNode()
+
+    def count(self) -> int:
+        return len(self._cards)
+
+    def all(self) -> list[_DetachedCard]:
+        return list(self._cards)
+
+
+def test_reader_converts_dom_read_failure_into_reason():
+    # PlaywrightError чтения (детач ререндером между count() и inner_text())
+    # не покидает ридер: команды получают fail-closed причину, а не трейсбек
+    # (ревью PR #912 — в create/copy-вызвах общего обработчика нет).
+    entries, reason = read_account_titles(_DetachedReadPage())
+    assert entries == []
+    assert "не удалось прочитать список резюме" in reason
+
+
+def test_account_duplicate_reason_survives_goto_failure(monkeypatch):
+    # goto_hh пробрасывает ошибку последней попытки (#80): навигация к списку
+    # тоже «проверка невозможна», а не краш команды.
+    def _crash(page, url, *, ready_selector=None):  # noqa: ANN001, ARG001
+        raise PlaywrightError("net::ERR_FAILED")
+
+    monkeypatch.setattr("hhru_bot.resume_titles.goto_hh", _crash)
+    reason = account_duplicate_reason(ListPage(_fixture_html()), "Программист")
+    assert "не удалось открыть список резюме" in reason
