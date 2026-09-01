@@ -122,16 +122,32 @@ def _click_mode(page: Page, mode: str) -> str:
     #901: карточка содержит ДВА input[type='radio'] — внешний (прямой дочерний
     label'а) и внутренний Magritte (в span[data-qa='radio-container'], readonly;
     см. RESUME_VISIBILITY_MODE_RADIO). Пост-кликовая проверка адресует внешний:
-    именно его активирует нативный клик по label-карточке, и с ним же React
-    синхронизирует внутренний. Программное выставление checked (в обход клика
-    по карточке) внутреннему/внешнему инпуту НЕ уведомляет Magritte — режим
-    не доезжает до сервера (живая проверка #901 в комментарии к issue).
+    с ним же React синхронизирует внутренний. Программное выставление checked
+    (в обход клика по карточке) внутреннему/внешнему инпуту НЕ уведомляет
+    Magritte — режим не доезжает до сервера (живая проверка #901 в комментарии
+    к issue).
+
+    Клик — в ЛЕВУЮ PADDING-ЗОНУ карточки (position x=10, вертикальный центр),
+    не в центр bounding box (живой замер 2026-09-01, PR #917): вложенный
+    label[data-qa='cell'] покрывает ВСЮ внутреннюю область карточки (текст и
+    radio-container), и клик в неё перехватывается label-активацией ВНУТРЕННЕГО
+    Magritte-инпута — React-состояние карточки не обновляется (внешний radio
+    остаётся unchecked, прежний режим не сбрасывается), паузами не лечится —
+    это не гонка гидратации. Клик по padding-зоне (вне вложенного label)
+    доходит до onClick карточки (data-interactive=true) и переключает режим
+    целиком: оба input'а checked + сброс прежнего. Дефолтный центр
+    locator.click() попадает ровно на cell-text-content — первый боевой
+    прогон #917 падал на этом («radio не отмечен после клика», мутации не
+    было, attempted=0).
     """
     locator, reason = _one(page, _MODE_SELECTORS[mode], f"режим видимости «{mode}»")
     if reason:
         return reason
     assert locator is not None
-    locator.click()
+    box = locator.bounding_box()
+    if box is None or box["height"] <= 0:
+        return f"карточка режима «{mode}» не видна для клика"
+    locator.click(position={"x": 10, "y": box["height"] / 2})
     radio = locator.locator(RESUME_VISIBILITY_MODE_RADIO)
     if radio.count() != 1:
         return f"radio-инпут режима «{mode}» не подтверждён однозначно после клика"

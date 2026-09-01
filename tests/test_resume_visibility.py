@@ -28,10 +28,11 @@ def _mock_locator(count: int = 1, *, radio_checked: bool = True):
     """A generic locator mock; also stands in for a mode label whose nested
     radio input is checked by default (the post-#746-round-3 verification in
     _click_mode reads `.locator(RESUME_VISIBILITY_MODE_RADIO)` after every
-    click)."""
+    click). bounding_box — карточка режима (живой замер #901: 690x56)."""
     loc = MagicMock()
     loc.count.return_value = count
     loc.first = loc
+    loc.bounding_box.return_value = {"x": 0, "y": 0, "width": 690, "height": 56}
     radio = MagicMock()
     radio.count.return_value = 1
     radio.first = radio
@@ -99,7 +100,10 @@ def test_mode_only_change_clicks_label_and_save(monkeypatch):
     )
 
     assert result.success
-    mode_label.click.assert_called_once_with()
+    # Клик по карточке режима — в левую padding-зону (живой замер #901/#917:
+    # центр карточки перехватывается вложенным label[data-qa='cell'] без
+    # обновления React-состояния), а не в центр bounding box.
+    mode_label.click.assert_called_once_with(position={"x": 10, "y": 28.0})
     before_click.assert_called_once_with()
     save.click.assert_called_once_with()
 
@@ -121,7 +125,7 @@ def test_mode_click_not_reflected_in_radio_fails_closed(monkeypatch):
 
     assert not result.success
     assert "не подтверждён" in result.reason
-    mode_label.click.assert_called_once_with()
+    mode_label.click.assert_called_once_with(position={"x": 10, "y": 28.0})
     save.click.assert_not_called()
 
 
