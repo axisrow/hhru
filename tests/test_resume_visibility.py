@@ -541,9 +541,12 @@ def test_save_success_requires_reread_mode_match(monkeypatch):
     assert len(goto_calls) == 2
 
 
-def test_save_reread_mode_mismatch_is_uncertain(monkeypatch):
-    """#901 п.3: после Save перечитан ДРУГОЙ режим — пост-кликовая зона,
-    uncertain (fail-closed как #176), не «success по факту клика»."""
+def test_save_reread_mode_mismatch_is_plain_fail(monkeypatch):
+    """#901 п.3 + живой прогон PR #917: несовпадение при УДАЧНОЙ перечитке —
+    состояние на hh.ru известно и равно прежнему, двусмысленности нет —
+    обычный failed (повтор команды безопасен), НЕ uncertain: uncertain здесь
+    навсегда блокировал бы резюме через has_unresolved_uncertain при
+    известном исходе."""
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
     mode_labels = _all_mode_labels(active="no-one")
@@ -566,15 +569,17 @@ def test_save_reread_mode_mismatch_is_uncertain(monkeypatch):
     result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
 
     assert not result.success
-    assert result.uncertain
+    assert not result.uncertain
     assert "ожидался «no-one»" in result.reason
 
 
-def test_save_reread_mode_undefined_is_uncertain(monkeypatch):
-    """Ревью PR #917: перечитка после Save не смогла определить режим (ни один
-    внешний radio не checked) — пост-кликовая зона, uncertain с внятной
-    причиной (без «режим «None»»). Прямой юнит-аналог browser_unit-теста
-    test_read_active_mode_none_when_no_card_checked, но на уровне всей команды."""
+def test_save_reread_mode_undefined_is_plain_fail(monkeypatch):
+    """Ревью PR #917 + живой прогон: перечитка после Save не смогла определить
+    режим (ни один внешний radio не checked) — экран перечитан, состояние
+    известно (неизменным его не назвать, но определённость чтения есть) —
+    обычный failed с внятной причиной (без «режим «None»»). Прямой юнит-аналог
+    browser_unit-теста test_read_active_mode_none_when_no_card_checked, но на
+    уровне всей команды."""
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
     mode_labels = _all_mode_labels(active="no-one")
@@ -595,7 +600,7 @@ def test_save_reread_mode_undefined_is_uncertain(monkeypatch):
     result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
 
     assert not result.success
-    assert result.uncertain
+    assert not result.uncertain
     assert "активный режим не определён" in result.reason
 
 
