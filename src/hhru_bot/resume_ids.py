@@ -24,6 +24,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from .negotiations_probe import parse_initial_state
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
+    RESUME_LIST_CARD_LINK_PREFIX,
     RESUME_LIST_CARD_LINK_QA_PREFIX,
     RESUME_LIST_CARD_LINK_TPL,
 )
@@ -55,7 +56,7 @@ def card_resume_id(card: Locator) -> str:
     пропускать карточку (тот же инвариант, что у ``list_resume_cards``, PR
     #322: частичный список — не список).
     """
-    for link in card.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
+    for link in card.locator(RESUME_LIST_CARD_LINK_PREFIX).all():
         qa = link.get_attribute("data-qa") or ""
         if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
             return qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :]
@@ -65,7 +66,7 @@ def card_resume_id(card: Locator) -> str:
 def page_card_hashes(page: Page) -> set[str]:
     """Хэши всех резюме в списке (для diff карточек до/после мутации)."""
     hashes: set[str] = set()
-    for link in page.locator(f"[data-qa^='{RESUME_LIST_CARD_LINK_QA_PREFIX}']").all():
+    for link in page.locator(RESUME_LIST_CARD_LINK_PREFIX).all():
         qa = link.get_attribute("data-qa") or ""
         if qa.startswith(RESUME_LIST_CARD_LINK_QA_PREFIX):
             hashes.add(qa[len(RESUME_LIST_CARD_LINK_QA_PREFIX) :])

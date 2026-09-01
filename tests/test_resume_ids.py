@@ -25,6 +25,7 @@ from hhru_bot.resume_ids import (
 )
 from hhru_bot.selector_groups.resume_list import (
     RESUME_LIST_CARD,
+    RESUME_LIST_CARD_LINK_PREFIX,
     RESUME_LIST_CARD_LINK_TPL,
 )
 
@@ -58,7 +59,9 @@ class _Card:
         self._qas = qas
 
     def locator(self, selector: str) -> _LinksLocator:
-        assert selector.startswith("[data-qa^='resume-card-link-'"), selector
+        # Ридер обязан строить селектор из генерируемой константы реестра, а не
+        # из собственного литерала (правило «можно сгенерировать — не хардкодить»).
+        assert selector == RESUME_LIST_CARD_LINK_PREFIX, selector
         return _LinksLocator(self._qas)
 
 
@@ -67,7 +70,7 @@ class _HashesPage:
         self._qas = qas
 
     def locator(self, selector: str) -> _LinksLocator:
-        assert selector.startswith("[data-qa^='resume-card-link-'"), selector
+        assert selector == RESUME_LIST_CARD_LINK_PREFIX, selector
         return _LinksLocator(self._qas)
 
 

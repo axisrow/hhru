@@ -69,9 +69,12 @@ def read_account_titles(page: Page) -> tuple[list[AccountTitle], str]:
             return [], ""
         entries: list[AccountTitle] = []
         for card in cards.all():
-            # Чтение resume_id через общий ридер (#891): .all() не ждёт элемент,
-            # так что «счёт строго до чтения» здесь соблюдён самим снапшотом
-            # ссылок — get_attribute берётся только с реально найденных узлов.
+            # Чтение resume_id через общий ридер (#891): снапшот .all() убирает
+            # ожидание на ПОИСК ссылок («счёт строго до чтения» — без retry-гонки
+            # между count() и перечислением). Само чтение атрибута авто-ждёт и
+            # при детаче между .all() и get_attribute кидает TimeoutError — это
+            # покрывает внешний except PlaywrightError ниже, не снимать его как
+            # якобы избыточный.
             resume_id = card_resume_id(card)
             if not resume_id:
                 return [], (
