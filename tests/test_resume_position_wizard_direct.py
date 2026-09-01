@@ -48,6 +48,9 @@ def _plan() -> PositionValues:
 def _fast_polls(monkeypatch):
     monkeypatch.setattr(resume_position, "WIZARD_VERIFY_POLL_MS", 1)
     monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 300)
+    # бюджет открытия модалки (#915) отдельно от WIZARD_WAIT_MS: без него
+    # таймаут-тесты крутили бы реальные 5с вместо миллисекундного poll-цикла
+    monkeypatch.setattr(resume_position, "PROFESSION_MODAL_OPEN_WAIT_MS", 300)
     # словарные page-двойники не моделируют баннер cookie-политики
     monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
 
@@ -122,6 +125,38 @@ def test_direct_save_fails_closed_when_modal_never_confirms(monkeypatch):
     next_button.click.assert_called_once_with()
     select.assert_not_called()
     dump.assert_called_once()
+
+
+def test_chip_shape_gives_up_on_modal_open_budget_not_wizard_wait(monkeypatch):
+    # #915: chip-popular shape (вход через copy-resume) не открывает модалку
+    # ВООБЩЕ (дамп #881: 0 modal-overlay/role=dialog/tree-selector), а чипы
+    # после NEXT присутствуют в DOM в ОБОИХ shape (дамп battle2/01) —
+    # мгновенного дискриминатора нет. Отказ обязан наступать по отдельному
+    # бюджету открытия модалки (живой монтаж sub-second, battle2), а не по
+    # полному WIZARD_WAIT_MS, который лишь добавлял каждому фолбэку ~15с.
+    page, _position, next_button = _wizard_page()
+    monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 60_000)
+    monkeypatch.setattr(resume_position, "PROFESSION_MODAL_OPEN_WAIT_MS", 1_000)
+    confirmations = MagicMock(return_value=False)
+    monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", confirmations)
+    select = MagicMock()
+    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(
+        resume_position, "_dump_wizard_failure", MagicMock(return_value="dump.html")
+    )
+    # Fake-часы: t=0 при расчёте дедлайна, t=0.5 — первая итерация цикла
+    # (внутри бюджета 1с), t=6 — за бюджетом, но далеко внутри WIZARD_WAIT_MS
+    # (60с). Если бы цикл жил по полному таймауту визарда, понадобилась бы
+    # четвёртая выборка времени — side_effect исчерпался бы StopIteration'ом.
+    monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0.0, 0.5, 6.0]))
+    resume = bare_resume("resume-id")
+
+    with pytest.raises(resume_position.ChipPopularUnavailable, match="Уточните специальность"):
+        resume_position.save_position_wizard(page, resume, _plan(), role_id="124")
+
+    next_button.click.assert_called_once_with()
+    confirmations.assert_called_once()
+    select.assert_not_called()
 
 
 def test_direct_save_surfaces_catalog_reason_as_runtime_error(monkeypatch):

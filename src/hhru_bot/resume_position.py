@@ -132,6 +132,18 @@ BUSINESS_TRIPS = "[data-qa='resume-edit-business-trip-readiness']"
 CANCEL = "[data-qa='resume-partial-edit-cancel']"
 SAVE = "[data-qa='resume-partial-edit-save']"
 WIZARD_WAIT_MS = 15_000
+# Бюджет ожидания ОТКРЫТИЯ модалки каталога после подтверждённого NEXT
+# (#915). Калиброван живым battle2 (#911, 2026-09-01): async mount завершается
+# sub-second — дампы «до NEXT» и «модалка открыта» лежат в одну секунду;
+# 5с — запас ×5, как у соседнего post-render ожидания (_CONTROL_WAIT_TIMEOUT_MS).
+# Прежние полные WIZARD_WAIT_MS не имели измерительного обоснования: в
+# chip-popular shape модалки нет ВООБЩЕ (дамп #881: 0 modal-overlay,
+# 0 role=dialog, 0 tree-selector), и 15с лишь добавляли каждому фолбэку
+# ChipPopularUnavailable пятнадцать секунд простоя. Ранний отказ здесь
+# безопасен — это фолбэк на wizard-minimum, а не uncertain. Закрытие модалки
+# после submit осталось на WIZARD_WAIT_MS: его ранний отказ происходит после
+# мутирующего клика и несёт _SaveConfirmationUncertain, а не безопасный фолбэк.
+PROFESSION_MODAL_OPEN_WAIT_MS = 5_000
 WIZARD_TRANSITION_ATTEMPTS = 15
 WIZARD_TRANSITION_POLL_MS = 1_000
 WIZARD_VERIFY_TIMEOUT_MS = 30_000
@@ -661,8 +673,11 @@ def save_position_wizard(
     # модалка монтируется АСИНХРОННО («мигание», 2026-09-01). Ждать ЛИБО
     # подтверждённой модалки, ЛИБО ухода URL; таймаут → dump + различимый
     # отказ. Повторный NEXT запрещён: экран мог закрыться прямым save базовой
-    # категории (#900), второй клик попал бы в следующий экран.
-    modal_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+    # категории (#900), второй клик попал бы в следующий экран. Бюджет —
+    # PROFESSION_MODAL_OPEN_WAIT_MS (#915): живой монтаж sub-second, а в
+    # chip-popular shape модалки нет никогда — полный WIZARD_WAIT_MS здесь
+    # ничего не защищал, только удлинял фолбэк.
+    modal_deadline = time.monotonic() + PROFESSION_MODAL_OPEN_WAIT_MS / 1000
     while time.monotonic() < modal_deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
             # Экран закрылся без модалки (прямой save базовой категории,
