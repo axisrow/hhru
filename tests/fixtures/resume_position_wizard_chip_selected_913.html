@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Редуцировано из живого дампа /tmp/hhru-911-battle2/05-profession-submitted.html
+     (боевой прогон #911 battle2, 2026-09-01): экран визарда professional_role
+     БЕЗ модалки — точный лист уже зафиксирован чипом (checked+disabled),
+     modal-overlay в DOM отсутствует, wizard NEXT достижим. Это то самое
+     "мигание" после NEXT/submit (#913, async mount/unmount модалки): краткое
+     состояние чистого визарда, в котором подтверждённой модалки ещё/уже нет,
+     но экран professional_role ещё не закрыт. Код без state-machine wait
+     (ждать модалку ЛИБО уход URL) ошибается на этом состоянии. -->
+<html lang="ru"><body>
+  <input data-qa="resume-profile-position-input" value="" role="combobox">
+  <div role="listbox">
+    <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Тестировщик" checked disabled>Тестировщик</label>
+    <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Администратор">Администратор</label>
+    <label><input data-qa="resume-profile-position-chip-popular" type="radio" value="Менеджер">Менеджер</label>
+  </div>
+  <button type="button" data-qa="resume-profile-next-screen">Сохранить и продолжить</button>
+</body></html>

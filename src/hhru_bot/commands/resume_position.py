@@ -135,6 +135,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
     from ..config import ConfigError, load_config_or_exit
     from ..resume_position import (
         CANCEL,
+        ChipPopularUnavailable,
         PositionValues,
         apply_position,
         build_position_prompt,
@@ -142,6 +143,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         is_position_wizard,
         open_position_form,
         parse_position_response,
+        save_position_wizard,
         save_position_wizard_minimum,
         validate_wizard_plan,
         verify_wizard_minimum_save,
@@ -392,41 +394,79 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     "[INFO] professional_role завершён; публикация требует "
                     "отдельной read-only проверки."
                 )
+                # #913: если запрошенная цель — ТОЧНЫЙ лист каталога (title
+                # совпадает с согласованной специализацией), визард сам пишет
+                # настоящую профессию с role_id за один проход (доказано
+                # боевым прогоном #911 battle2) — заглушка и editor-фиксап не
+                # нужны. Неточная цель прямым путём недостижима (поиск
+                # вырождается в «Другое») — для неё остаётся #907-путь ниже.
+                from ..external_forms.detect import normalize as _normalize
+
+                direct_save = _normalize(plan.title or "") == _normalize(role.label)
                 try:
-                    # The chip wizard cannot represent role_id, and its first
-                    # NEXT may close the screen immediately. Do not attempt an
-                    # exact save there: record the known-wrong prerequisite
-                    # category directly, then perform the mandatory fixup.
-                    save_position_wizard_minimum(
-                        page, resume, before_first_click=mark_first_click_started
-                    )
-                    verify_wizard_minimum_save(page, resume)
-                    fixup_flow = open_position_form(page, resume)
-                    if fixup_flow.kind != "editor" or fixup_flow.resume_id != resume.resume_id:
-                        raise RuntimeError(
-                            "wizard-minimum сохранён, но форма не перешла в editor-режим"
-                        ) from None
-                    try:
-                        apply_position(page, plan, current=fixup_flow.values)
-                        _click_save_and_wait(page)
-                        verified_state = verify_wizard_save(
-                            page,
-                            resume,
-                            expected_title=plan.title or "",
-                            expected_role_id=role.role_id,
-                            expected_role_label=role.label,
+                    if direct_save:
+                        try:
+                            save_position_wizard(
+                                page,
+                                resume,
+                                plan,
+                                role_id=role.role_id,
+                                before_first_click=mark_first_click_started,
+                            )
+                        except ChipPopularUnavailable:
+                            # Модалка каталога не подтвердилась (chip-popular
+                            # shape #881 и подобные) — прямой путь исчерпан
+                            # без единого повторного клика NEXT; дальше штатный
+                            # wizard-minimum + editor-фиксап.
+                            direct_save = False
+                        else:
+                            verified_state = verify_wizard_save(
+                                page,
+                                resume,
+                                expected_title=plan.title or "",
+                                expected_role_id=role.role_id,
+                                expected_role_label=role.label,
+                            )
+                            published_note = (
+                                "[INFO] professional_role записан прямым путём "
+                                "(#913): визард сохранил точную профессию с "
+                                "role_id без заглушки и editor-фиксапа."
+                            )
+                    if not direct_save:
+                        # The chip wizard cannot represent role_id, and its first
+                        # NEXT may close the screen immediately. Do not attempt an
+                        # exact save there: record the known-wrong prerequisite
+                        # category directly, then perform the mandatory fixup.
+                        save_position_wizard_minimum(
+                            page, resume, before_first_click=mark_first_click_started
                         )
-                    except Exception as exc:
-                        raise RuntimeError(
-                            "осознанно неверная профессия wizard-minimum сохранена, "
-                            "но обязательное исправление в editor-режиме не удалось: "
-                            f"{exc}"
-                        ) from exc
-                    published_note = (
-                        "[INFO] professional_role завершён через wizard-minimum "
-                        "fallback (#890); точная специализация применена в "
-                        "editor-режиме."
-                    )
+                        verify_wizard_minimum_save(page, resume)
+                        fixup_flow = open_position_form(page, resume)
+                        if fixup_flow.kind != "editor" or fixup_flow.resume_id != resume.resume_id:
+                            raise RuntimeError(
+                                "wizard-minimum сохранён, но форма не перешла в editor-режим"
+                            ) from None
+                        try:
+                            apply_position(page, plan, current=fixup_flow.values)
+                            _click_save_and_wait(page)
+                            verified_state = verify_wizard_save(
+                                page,
+                                resume,
+                                expected_title=plan.title or "",
+                                expected_role_id=role.role_id,
+                                expected_role_label=role.label,
+                            )
+                        except Exception as exc:
+                            raise RuntimeError(
+                                "осознанно неверная профессия wizard-minimum сохранена, "
+                                "но обязательное исправление в editor-режиме не удалось: "
+                                f"{exc}"
+                            ) from exc
+                        published_note = (
+                            "[INFO] professional_role завершён через wizard-minimum "
+                            "fallback (#890); точная специализация применена в "
+                            "editor-режиме."
+                        )
                 except Exception as exc:
                     if not first_click_started:
                         raise

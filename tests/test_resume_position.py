@@ -277,9 +277,12 @@ def test_open_position_form_reloads_once_after_stalled_ssr_card(monkeypatch):
 
 
 @pytest.mark.parametrize("clear_count", [1, 0])
-def test_save_position_wizard_handles_existing_or_empty_role(
-    clear_count,
-):
+def test_save_position_wizard_handles_existing_or_empty_role(clear_count, monkeypatch):
+    # #913: прямой путь делегирует выбор листа боевой механике create-resume
+    # (select_catalog_leaf, покрытой собственными Chromium-тестами на живых
+    # фикстурах #911); здесь проверяется обвязка — очистка прежней должности,
+    # ввод точного имени, ровно один NEXT до подтверждённой модалки и seam
+    # before_first_click до него.
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -291,44 +294,27 @@ def test_save_position_wizard_handles_existing_or_empty_role(
     next_button = MagicMock()
     next_button.count.return_value = 1
     next_button.first = next_button
-    search = MagicMock()
-    search.count.return_value = 1
-    search.first = search
-    chip = MagicMock()
-    chip.count.return_value = 0  # modal path: chip-popular shape not shown
-    checkbox = MagicMock()
-    # hh.ru repeats the same semantic role under several tree categories.
-    checkbox.count.return_value = 2
-    checkbox.first = checkbox
-    checkbox.nth.return_value = checkbox
-    row = MagicMock()
-    row.count.return_value = 1
-    text = MagicMock()
-    text.count.return_value = 1
-    text.first = text
-    text.inner_text.return_value = "Аналитик"
-    checkbox.locator.return_value = row
-    row.locator.return_value = text
-    submit = MagicMock()
-    submit.count.return_value = 1
-    submit.click.side_effect = lambda: setattr(
-        page, "url", "https://hh.ru/applicant/resumes/suitable_vacancies?published=true"
-    )
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
-        resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
-        resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]
+    monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
+    selected: list[tuple[str, dict]] = []
+
+    def fake_select(_page, area, *, expected_role_id=None, **_kwargs):
+        # submit модалки закрывает её и уводит экран с professional_role
+        selected.append((area, {"expected_role_id": expected_role_id}))
+        page.url = "https://hh.ru/profile/resume/common?resume=resume-id"
+        return ""
+
+    monkeypatch.setattr(resume_position, "select_catalog_leaf", fake_select)
     before_first_click = MagicMock()
 
     resume_position.save_position_wizard(
         page,
         resume,
-        PositionValues(title="AI Engineer", specializations=["Аналитик"]),
+        PositionValues(title="Аналитик", specializations=["Аналитик"]),
         role_id="10",
         before_first_click=before_first_click,
     )
@@ -337,15 +323,16 @@ def test_save_position_wizard_handles_existing_or_empty_role(
         clear.click.assert_called_once_with()
     else:
         clear.click.assert_not_called()
-    position.fill.assert_called_once_with("AI Engineer")
+    position.fill.assert_called_once_with("Аналитик")
     before_first_click.assert_called_once_with()
     next_button.click.assert_called_once_with()
-    search.fill.assert_called_once_with("Аналитик")
-    checkbox.check.assert_called_once_with()
-    submit.click.assert_called_once_with()
+    assert selected == [("Аналитик", {"expected_role_id": "10"})]
+    page.wait_for_url.assert_not_called()  # экран ушёл ещё до финального NEXT
 
 
-def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal_is_skipped():
+def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal_is_skipped(
+    monkeypatch,
+):
     # Live DOM, #881/#889 (2026-08-31): on a copy-resume draft that already
     # carries an inherited role, hh.ru skips the tree-selector catalog modal
     # entirely after NEXT and instead renders a fixed list of ~37 generic
@@ -353,13 +340,11 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     # sub-modal with ~15 items. This shape structurally cannot reach an
     # arbitrary catalog leaf (confirmed live: role_id 96 "Программист,
     # разработчик" is absent from the sub-modal under its own general
-    # category "Программист") — whether the chip is checked/enabled or not,
-    # it never carries the requested specialization. Earlier code tried to
-    # click through this shape and either failed closed on an unchecked chip
-    # or silently saved the WRONG specialization when checked; both are
-    # wrong. The only correct behavior is to raise a distinguishable
-    # exception so the caller falls back to the wizard-minimum + editor path
-    # (#890) instead of attempting a save this shape cannot honor.
+    # category "Программист"). #913: для ТОЧНОГО листа каталог battle2 доказал
+    # открытие модалки — поэтому отсутствие подтверждённой модалки за дедлайн
+    # означает «этот экран прямой записью не владеет», и единственно верное
+    # поведение — различимое исключение, чтобы вызывающий ушёл в
+    # wizard-minimum + editor (#890), без единого повторного клика NEXT.
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -371,37 +356,32 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
     next_button = MagicMock()
     next_button.count.return_value = 1
     next_button.first = next_button
-    search = MagicMock()
-    search.count.return_value = 0  # catalog modal never appears in this shape
-    chip = MagicMock()
-    chip.count.return_value = 1
-    chip.first = chip
-    chip.is_checked.return_value = True
-    # Live DOM disables the radio input; the label card remains clickable.
-    chip.is_disabled.return_value = True
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
     }[selector]
+    monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 50)
+    monkeypatch.setattr(resume_position, "WIZARD_VERIFY_POLL_MS", 1)
+    monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
+    select = MagicMock()
+    monkeypatch.setattr(resume_position, "select_catalog_leaf", select)
+    monkeypatch.setattr(resume_position, "_dump_wizard_failure", lambda *_args: "dump.html")
 
-    with pytest.raises(resume_position.ChipPopularUnavailable, match="Программист, разработчик"):
+    with pytest.raises(resume_position.ChipPopularUnavailable, match="Уточните специальность"):
         resume_position.save_position_wizard(
             page,
             resume,
             PositionValues(
-                title="Python-разработчик", specializations=["Программист, разработчик"]
+                title="Программист, разработчик", specializations=["Программист, разработчик"]
             ),
             role_id="96",
         )
 
-    # Only the first NEXT click (to leave the title screen); the chip is
-    # never clicked and no second NEXT is attempted.
+    # Only the first NEXT click (to leave the title screen); the catalog is
+    # never touched and no second NEXT is attempted.
     next_button.click.assert_called_once_with()
-    chip.check.assert_not_called()
-    chip.click.assert_not_called()
+    select.assert_not_called()
 
 
 @pytest.mark.parametrize("clear_count", [1, 0])
@@ -587,7 +567,12 @@ def test_verify_wizard_minimum_save_times_out_while_professional_role_persists(m
         resume_position.verify_wizard_minimum_save(page, resume)
 
 
-def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal():
+def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal(monkeypatch):
+    # #911 battle2 (5487694535): submit модалки возвращает на экран визарда
+    # (URL всё ещё professional_role) — финальный NEXT обязателен, и кликается
+    # он только ПОСЛЕ подтверждённого скрытия модалки (видимый overlay
+    # блокирует клик). Модалка подтверждается на входе и не подтверждается
+    # после submit — то же «мигание» в обратную сторону.
     resume = bare_resume("resume-id")
     page = MagicMock()
     page.url = "https://hh.ru/profile/resume/professional_role?resume=resume-id"
@@ -599,46 +584,36 @@ def test_save_position_wizard_clicks_final_next_when_catalog_only_closes_modal()
     next_button = MagicMock()
     next_button.count.return_value = 1
     next_button.first = next_button
-    search = MagicMock()
-    search.count.return_value = 1
-    search.first = search
-    chip = MagicMock()
-    chip.count.return_value = 0  # modal path: chip-popular shape not shown
-    checkbox = MagicMock()
-    checkbox.count.return_value = 1
-    checkbox.first = checkbox
-    checkbox.nth.return_value = checkbox
-    row = MagicMock()
-    row.count.return_value = 1
-    text = MagicMock()
-    text.count.return_value = 1
-    text.first = text
-    text.inner_text.return_value = "Аналитик"
-    checkbox.locator.return_value = row
-    row.locator.return_value = text
-    submit = MagicMock()
-    submit.count.return_value = 1
-    next_button.click.side_effect = lambda: setattr(
-        page, "url", "https://hh.ru/applicant/resumes/suitable_vacancies?published=true"
-    )
     page.locator.side_effect = lambda selector: {
         resume_position.WIZARD_POSITION: position,
         resume_position.WIZARD_POSITION_CLEAR: clear,
         resume_position.WIZARD_NEXT: next_button,
-        resume_position.WIZARD_CATEGORY_SEARCH: search,
-        resume_position.WIZARD_POSITION_CHIP_POPULAR: chip,
-        resume_position.WIZARD_CATEGORY_INPUT.format("10"): checkbox,
-        resume_position.WIZARD_CATEGORY_SUBMIT: submit,
     }[selector]
+    monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: True)
+
+    def _submitted(_page, _area, *, expected_role_id=None, **_kwargs):
+        # submit модалки асинхронно скрывает её: экран вернулся, чип отмечен
+        monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
+        return ""
+
+    monkeypatch.setattr(resume_position, "select_catalog_leaf", _submitted)
+
+    def _leave_wizard():
+        # финальный NEXT уводит экран с professional_role
+        if next_button.click.call_count == 2:
+            page.url = "https://hh.ru/profile/resume/common?resume=resume-id"
+
+    next_button.click.side_effect = _leave_wizard
 
     resume_position.save_position_wizard(
         page,
         resume,
-        PositionValues(title="AI Engineer", specializations=["Аналитик"]),
+        PositionValues(title="Аналитик", specializations=["Аналитик"]),
         role_id="10",
     )
 
-    next_button.click.assert_called_once_with()
+    assert next_button.click.call_count == 2
+    page.wait_for_url.assert_called_once()
 
 
 def test_apply_position_rejects_empty_title_without_touching_dom():

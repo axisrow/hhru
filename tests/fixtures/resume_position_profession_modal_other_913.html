@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- Редуцировано из живого дампа /tmp/hhru-911-clean/03-modal1-search.html
+     (прогон #911 clean, 2026-09-01): та же подтверждённая модалка
+     "Уточните специальность", но поиск неточной цели ("Frontend-разработчик")
+     выродился в единственный пункт "Другое" (tree-selector-item-40).
+     Правило #913: "Другое" — это отказ, а не выбор; прямой путь обязан
+     остановиться до клика по дереву. Реальные resume_id не входят. -->
+<html lang="ru"><body>
+  <input data-qa="resume-profile-position-input" value="" role="combobox">
+  <div data-qa="modal-overlay" style="z-index: 1200;">
+    <div aria-modal="true" role="dialog" tabindex="-1" aria-labelledby=":rb: :r8:" aria-describedby=":r9:">
+      <div data-qa="modal-content-scroll-container">
+        <div data-qa="title-container">
+          <h4 data-qa="title">Уточните специальность</h4>
+        </div>
+        <div>Вы выбрали 0 из 5 специальностей</div>
+        <input data-qa="tree-selector-search-input" value="Frontend-разработчик">
+        <div role="tree" aria-multiselectable="true">
+          <div data-qa="tree-selector-item tree-selector-item-40" style="padding-left: 0px;">
+            <div role="treeitem" aria-selected="false" aria-setsize="1" aria-level="1" tabindex="0">
+              <label data-qa="cell">
+                <span data-qa="checkbox-container">
+                  <input name="tree-selector-item-top-40" tabindex="-1" data-qa="tree-selector-input tree-selector-input-40" type="checkbox">
+                  <span data-qa="checkbox"></span>
+                </span>
+                <span data-qa="cell-text-content-wrapper">
+                  <span data-qa="tree-selector-item-text tree-selector-item-text-40">
+                    <span data-qa="cell-text-content">Другое</span>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-qa="modal-footer">
+        <button type="button" data-qa="category-modal-cancel">Сбросить выбор</button>
+        <button type="button" data-qa="category-modal-submit">Сохранить и продолжить</button>
+      </div>
+    </div>
+  </div>
+  <button type="button" data-qa="resume-profile-next-screen">Сохранить и продолжить</button>
+</body></html>

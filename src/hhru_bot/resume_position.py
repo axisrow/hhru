@@ -29,16 +29,11 @@ from .browser import (
     resume_identity_matches,
 )
 from .config import ResumeConfig
+from .create_resume import select_catalog_leaf
 from .logging_setup import LOG_DIR
 from .resume_state import ResumeState, parse_resume_state
 from .selector_groups.resume_page import (
-    RESUME_CREATION_CATEGORY_INPUT as WIZARD_CATEGORY_INPUT,
-)
-from .selector_groups.resume_page import (
     RESUME_CREATION_CATEGORY_SEARCH as WIZARD_CATEGORY_SEARCH,
-)
-from .selector_groups.resume_page import (
-    RESUME_CREATION_CATEGORY_SUBMIT as WIZARD_CATEGORY_SUBMIT,
 )
 from .selector_groups.resume_page import RESUME_CREATION_NEXT as WIZARD_NEXT
 from .selector_groups.resume_page import RESUME_CREATION_POSITION as WIZARD_POSITION
@@ -76,14 +71,19 @@ logger = logging.getLogger("hhru_bot.resume_position")
 
 
 class ChipPopularUnavailable(RuntimeError):
-    """The chip-popular shape (#881/#889) cannot confirm the exact catalog
-    specialization — it is a fixed list of ~37 generic categories plus a
-    narrow "Уточните профессию" sub-modal (~15 items each) that does not
-    contain most real catalog leaves (confirmed live DOM 2026-08-31: role_id
-    96 "Программист, разработчик" is absent from the "Программист" sub-list).
-    A dedicated exception type (not a plain RuntimeError) lets the caller
-    distinguish "this shape cannot do it, try the wizard-minimum fallback"
-    from every other wizard failure, which must still surface as-is.
+    """The wizard screen cannot confirm the exact catalog specialization
+    (#881/#889, #913): the chip-popular shape is a fixed list of ~37 generic
+    categories plus a narrow "Уточните профессию" sub-modal (~15 items each)
+    that does not contain most real catalog leaves (confirmed live DOM
+    2026-08-31: role_id 96 "Программист, разработчик" is absent from the
+    "Программист" sub-list). For an EXACT catalog leaf the battle run #911
+    proved the catalog modal does open; this exception therefore also covers
+    "the confirmed modal never appeared within the deadline" — either way the
+    direct save cannot honor the requested role and the caller must fall back
+    to the wizard-minimum + editor path instead of attempting it. A dedicated
+    exception type (not a plain RuntimeError) lets the caller distinguish
+    "this shape cannot do it" from every other wizard failure, which must
+    still surface as-is.
     """
 
 
@@ -93,6 +93,17 @@ class ChipPopularUnavailable(RuntimeError):
 # selecting by the requested title would miss the chips (or, worse, imply that
 # the highlighted generic category was the requested catalog leaf).
 WIZARD_POSITION_CHIP_POPULAR = WIZARD_POSITION_CHIP_POPULAR_BASE
+
+# «Уточните специальность» — модалка каталога профессий визарда. Все три
+# селектора подтверждены живыми дампами #911 battle2/clean (2026-09-01):
+# overlay перекрывает экран визарда и БЛОКИРУЕТ клик по wizard NEXT, пока
+# виден; заголовок h4[data-qa='title'] сидит внутри вложенного role=dialog.
+# Литералы по прецеденту FORM/EDIT/SAVE ниже (подтверждённое живым DOM не
+# нуждается в реестре референсов).
+WIZARD_CATEGORY_MODAL_OVERLAY = "[data-qa='modal-overlay']"
+WIZARD_CATEGORY_MODAL_DIALOG = "[role='dialog']"
+WIZARD_CATEGORY_MODAL_TITLE = "[data-qa='title']"
+PROFESSION_MODAL_TITLE_TEXT = "Уточните специальность"
 
 # Fixed, deterministic placeholder for the wizard-minimum fallback (#890):
 # any of the fixed chip-popular categories clears `nextIncompleteScreenId`
@@ -526,6 +537,32 @@ def is_position_wizard(page: Page, resume_id: str) -> bool:
     return query.get("resume") == [resume_id]
 
 
+def is_profession_modal_confirmed(page: Page) -> bool:
+    """True только для ОТКРЫТОЙ модалки каталога профессий (#913).
+
+    Пять наблюдаемых признаков (живые дампы #911 battle2/clean 2026-09-01 и
+    наблюдение пользователя того же дня): единственный ``modal-overlay``,
+    который ВИДИМ — ``count()=1`` означает лишь присутствие узла в DOM,
+    скрытый overlay модалкой не является и кликам не мешает; видимый
+    вложенный ``role=dialog``; видимый внутри него поиск каталога; заголовок
+    «Уточните специальность». Всё остальное — «модалки нет», включая
+    промежуточное «мигание» после NEXT/submit.
+    """
+    overlay = page.locator(WIZARD_CATEGORY_MODAL_OVERLAY)
+    if overlay.count() != 1 or not overlay.first.is_visible():
+        return False
+    dialog = overlay.first.locator(WIZARD_CATEGORY_MODAL_DIALOG)
+    if dialog.count() != 1 or not dialog.first.is_visible():
+        return False
+    search = dialog.first.locator(WIZARD_CATEGORY_SEARCH)
+    if search.count() != 1 or not search.first.is_visible():
+        return False
+    title = dialog.first.locator(WIZARD_CATEGORY_MODAL_TITLE)
+    if title.count() != 1:
+        return False
+    return (title.first.inner_text() or "").strip() == PROFESSION_MODAL_TITLE_TEXT
+
+
 def validate_wizard_plan(plan: PositionValues) -> None:
     """Reject fields the first draft wizard cannot save without dropping data."""
     if plan.title == "":
@@ -558,7 +595,24 @@ def save_position_wizard(
     role_id: str,
     before_first_click: Callable[[], None] | None = None,
 ) -> None:
-    """Save one title/role pair in the draft wizard after caller confirmation."""
+    """Save the exact catalog leaf directly in the draft wizard (#913).
+
+    Доказанный контракт боевого прогона #911 battle2 (5487694535):
+    fill(точное имя листа) → NEXT → модалка «Уточните специальность» →
+    поиск → клик по строке листа → poll выбранного состояния → submit →
+    финальный NEXT — визард сам пишет настоящую профессию с role_id за один
+    проход, без заглушки и без editor-фиксапа. Обязательное условие:
+    Обязательное условие: ``plan.title`` — ТОЧНОЕ имя листа каталога
+    (неточный ввод вырождается в «Другое», id 40); вызывающая сторона обязана
+    гарантировать это до WRITE.
+
+    Возможное упрощение (НЕ реализовано, требует отдельного proving-прогона):
+    наблюдение пользователя 2026-09-01 — сабмит модалки с пустым выбором
+    (0 из 5) валиден и возвращает на экран с отмеченным чипом; гипотеза, что
+    для точного листа выбор в модалке избыточен (type → NEXT → пустой
+    сабмит → финальный NEXT). Боевой прогон делал выбор листа — реализован
+    доказанный путь.
+    """
     validate_wizard_plan(plan)
     if not is_position_wizard(page, resume.resume_id):
         raise RuntimeError("professional_role identity не подтверждён перед сохранением")
@@ -591,78 +645,62 @@ def save_position_wizard(
     next_button.click()
 
     expected_label = plan.specializations[0]
-    search = page.locator(WIZARD_CATEGORY_SEARCH)
-    # The chip list is a different entity from the role_id catalog: its
-    # values are generic text labels and the input does not retain what was
-    # typed (#890 live DOM 2026-08-31).
-    chip = page.locator(WIZARD_POSITION_CHIP_POPULAR)
-    transition_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
-    while time.monotonic() < transition_deadline:
+    # State-machine wait (#913): после NEXT чип отмечается синхронно, а
+    # модалка каталога монтируется АСИНХРОННО — есть краткое состояние чистого
+    # визарда («мигание», наблюдение 2026-09-01). Ждать ЛИБО подтверждённой
+    # модалки, ЛИБО ухода URL с professional_role; при таймауте — dump и
+    # различимый отказ. Повторный NEXT в этом окне запрещён: экран мог
+    # закрыться прямым save базовой категории (#900), и второй клик попал бы
+    # уже в следующий экран.
+    modal_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+    while time.monotonic() < modal_deadline:
         if not _is_wizard_path(getattr(page, "url", "")):
+            # Экран закрылся без модалки (прямой save базовой категории,
+            # #900-инцидент 2026-09-01): точная роль этим путём не
+            # записывалась — что реально сохранилось, решает только
+            # identity-bound readback вызывающего (verify_wizard_save).
             return
-        if search.count() == 1:
-            search.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+        if is_profession_modal_confirmed(page):
             break
-        if chip.count() == 1:
-            # Second post-NEXT shape (#881/#889, live DOM 2026-08-31): hh.ru
-            # skips the full tree-selector catalog modal and instead shows a
-            # fixed list of ~37 generic categories, each opening a narrow
-            # "Уточните профессию" sub-modal with ~15 items. This shape
-            # cannot reach an arbitrary catalog leaf: live DOM confirmed
-            # role_id 96 "Программист, разработчик" is absent from the
-            # sub-modal under its own general category "Программист" — the
-            # chip's checked state only reflects the just-typed title, never
-            # the requested ``expected_label``. Clicking the chip and NEXT
-            # here would either fail closed (unchecked/disabled) or silently
-            # save the WRONG specialization (checked+enabled). Neither
-            # outcome can satisfy ``expected_label``, so this shape is
-            # unusable for an exact save and the caller must fall back to
-            # the wizard-minimum + editor path instead of attempting it.
-            raise ChipPopularUnavailable(
-                f"chip-popular shape не может сохранить точную специализацию "
-                f"«{expected_label}» — каталог этого экрана её не содержит"
-            )
         page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
     else:
-        raise RuntimeError("каталог профессий не появился после очистки прежних profession IDs")
-    if search.count() != 1:
-        raise RuntimeError(f"поиск профессий визарда неоднозначен: {search.count()}")
-    search.fill(expected_label)
-    checkbox = page.locator(WIZARD_CATEGORY_INPUT.format(role_id))
-    checkbox.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
-    checkbox_count = checkbox.count()
-    if checkbox_count == 0:
-        raise RuntimeError(f"профессия «{expected_label}» не подтверждена по role_id={role_id}")
-    for index in range(checkbox_count):
-        row = checkbox.nth(index).locator("xpath=ancestor::label[1]")
-        text = row.locator("[data-qa='cell-text-content']")
-        if (
-            row.count() != 1
-            or text.count() != 1
-            or (text.first.inner_text() or "").strip() != expected_label
-        ):
-            raise RuntimeError("label профессии не совпал с согласованным live-каталогом")
-    checkbox.first.check()
-    submit = page.locator(WIZARD_CATEGORY_SUBMIT)
-    if submit.count() != 1:
-        raise RuntimeError(f"кнопка подтверждения каталога неоднозначна: {submit.count()}")
-    submit.click()
+        dump = _dump_wizard_failure(page, resume.resume_id, "category_modal_missing")
+        raise ChipPopularUnavailable(
+            f"модалка «{PROFESSION_MODAL_TITLE_TEXT}» не подтвердилась для "
+            f"«{expected_label}» — прямой путь невозможен; диагностика={dump}"
+        )
 
-    # Current hh.ru builds may commit the selected role from the modal itself;
-    # older wizard builds only close the modal and require the final NEXT.  In
-    # the latter case, waiting for a route change before clicking NEXT would
-    # turn a valid save into an unnecessary uncertain timeout.
-    if _is_wizard_path(getattr(page, "url", "")):
-        next_button = page.locator(WIZARD_NEXT)
-        try:
-            next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
-        except PlaywrightError as exc:
-            raise RuntimeError(f"финальная кнопка продолжения визарда не появилась: {exc}") from exc
-        if next_button.count() != 1:
-            raise RuntimeError(
-                f"финальная кнопка продолжения визарда неоднозначна: {next_button.count()}"
-            )
-        next_button.click()
+    # Выбор листа — боевая механика create-resume (#778/#836/#837): клик по
+    # видимой строке (не по скрытому input), затем poll is_checked;
+    # вырождение поиска в «Другое» или несовпадение role_id — отказ ДО
+    # клика. Сабмит модалки выполняется тем же helper'ом.
+    reason = select_catalog_leaf(page, expected_label, expected_role_id=role_id)
+    if reason:
+        raise RuntimeError(reason)
+
+    # Обратное «мигание»: сабмит скрывает модалку асинхронно, а видимый
+    # overlay ПЕРЕКРЫВАЕТ экран визарда и БЛОКИРУЕТ клик по wizard NEXT —
+    # финальный NEXT только после подтверждённого скрытия (или ухода URL).
+    close_deadline = time.monotonic() + WIZARD_WAIT_MS / 1000
+    while time.monotonic() < close_deadline:
+        if not _is_wizard_path(getattr(page, "url", "")):
+            return
+        if not is_profession_modal_confirmed(page):
+            break
+        page.wait_for_timeout(WIZARD_VERIFY_POLL_MS)
+    else:
+        raise RuntimeError("модалка каталога не закрылась после подтверждения выбора")
+
+    next_button = page.locator(WIZARD_NEXT)
+    try:
+        next_button.first.wait_for(state="visible", timeout=WIZARD_WAIT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError(f"финальная кнопка продолжения визарда не появилась: {exc}") from exc
+    if next_button.count() != 1:
+        raise RuntimeError(
+            f"финальная кнопка продолжения визарда неоднозначна: {next_button.count()}"
+        )
+    next_button.click()
     page.wait_for_url(
         lambda url: urlsplit(str(url)).path != WIZARD_PATH,
         wait_until="commit",

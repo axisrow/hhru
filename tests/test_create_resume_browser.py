@@ -18,7 +18,7 @@ from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.create_resume as create
 from _fakes import _parse_root
-from hhru_bot.create_resume import _select_catalog_leaf as _real_select
+from hhru_bot.create_resume import select_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -547,7 +547,7 @@ def test_absent_profession_still_fails_without_hanging(monkeypatch):
     # Короткий дедлайн: проверяется факт опроса и выхода, а не длительность.
     monkeypatch.setattr(
         create,
-        "_select_catalog_leaf",
+        "select_catalog_leaf",
         lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
     )
 
@@ -590,7 +590,7 @@ def test_genuine_ambiguity_is_not_confused_with_absence(monkeypatch):
     page = AmbiguousCatalogPage()
     monkeypatch.setattr(
         create,
-        "_select_catalog_leaf",
+        "select_catalog_leaf",
         lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
     )
 
@@ -685,7 +685,7 @@ def test_unchecked_after_row_click_refuses_to_continue(monkeypatch):
     monkeypatch.setattr(create.time, "monotonic", fake_monotonic)
     monkeypatch.setattr(
         create,
-        "_select_catalog_leaf",
+        "select_catalog_leaf",
         lambda p, area, **_: _real_select(p, area, checkbox_confirm_timeout=0.3),
     )
 
@@ -786,7 +786,7 @@ def test_permanently_unchecked_checkbox_still_refuses_to_continue(monkeypatch):
     page = DelayedCheckPage(reads_until_checked=1_000_000)
     monkeypatch.setattr(
         create,
-        "_select_catalog_leaf",
+        "select_catalog_leaf",
         lambda p, area, **_: _real_select(p, area, checkbox_confirm_timeout=0.3),
     )
 
