@@ -337,7 +337,16 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     "автоматически опубликовать резюме на hh.ru. "
                     "Разрешено флагом --allow-auto-publish."
                 )
-            _print_plan(plan)
+            # #910: dry-run без --title обязан показывать фактический
+            # заголовок черновика, а не терять его. Fallback — только на
+            # печать: сам план не меняется, потому что title=None означает
+            # «не трогать» и дубль-гард #911 срабатывает лишь на реально
+            # записываемую должность (wizard-ветка выше назначает plan.title
+            # явно через effective_title).
+            display_plan = plan
+            if plan.title is None and current.title:
+                display_plan = PositionValues(**{**vars(plan), "title": current.title})
+            _print_plan(display_plan)
             if role is not None:
                 _print_classification(
                     role,

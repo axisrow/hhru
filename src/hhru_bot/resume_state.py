@@ -87,11 +87,30 @@ def _state_from_mapping(
 
 
 def _parse_resume_title(record: dict) -> str | None:
-    """Read the draft title from the identity-bound bootstrap record."""
+    """Read the draft title from the identity-bound bootstrap record.
+
+    Live dumps (#910, 2026-08-25..2026-09-01, both draft states) render
+    ``title`` as a LIST of ``{"string": ...}`` parts — the plain-string
+    shape existed only in older synthetic fixtures, which is why the
+    draft title silently parsed as ``None``. The list is addressed by the
+    direct node path only: sibling ``scheme.resumes`` entries and
+    ``screens`` carry their own foreign ``title`` keys, so anything but
+    exactly one non-empty part stays ``None`` — an honest unknown beats a
+    guessed value.
+    """
     for key in ("title", "desiredPosition"):
         value = record.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+        if isinstance(value, list):
+            parts = [
+                item["string"].strip()
+                for item in value
+                if isinstance(item, dict) and isinstance(item.get("string"), str)
+            ]
+            non_empty = [part for part in parts if part]
+            if len(non_empty) == 1:
+                return non_empty[0]
     position = record.get("position")
     if isinstance(position, dict):
         value = position.get("title")

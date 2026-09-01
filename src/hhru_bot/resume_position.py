@@ -453,12 +453,12 @@ def open_position_form(
     require_authenticated_page(page)
     if _is_wizard_path(getattr(page, "url", "")):
         if not enter_wizard:
-            # state.title is currently the only title source on this
-            # read-only path. Live verification showed it is None when
-            # nextIncompleteScreenId=common (00002), because that flow does
-            # not enter the wizard. The professional_role case was not
-            # verified: 00001 was run with an explicit --title. The confirmed
-            # profileResumes.resumeHash source belongs in follow-up #910.
+            # state.title is the only title source on this read-only path:
+            # the identity-bound scheme.resume record. Its live shape is a
+            # LIST of {"string": ...} parts in both draft states — handled
+            # by _parse_resume_title since #910 (previously only the
+            # synthetic plain-string shape parsed, so 00002 with
+            # nextIncompleteScreenId=common printed title: None).
             state = parse_resume_state(page.content(), resume.resume_id)
             if state.status is None:
                 raise RuntimeError("состояние резюме не подтверждено перед выбором position flow")
