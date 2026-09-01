@@ -373,13 +373,15 @@ def _execute(args: argparse.Namespace) -> None:
         args.command == "account"
         and (
             getattr(args, "account_command", None) == "list"
-            # `account delete` без --force — plan-only режим (#723): он ничего
-            # не мутирует, и FileHandler не должен создавать data/logs как
-            # побочный эффект плана. Боевое --force логируется как обычная
-            # WRITE-мутация.
+            # `account delete` в plan-only режиме (#723) — как `account list`:
+            # ничего не мутирует, и FileHandler не должен создавать data/logs
+            # как побочный эффект плана. Условие зеркалит account.py::run_delete
+            # (`dry_run или не force`, dry-run побеждает), поэтому
+            # `--dry-run --force` тоже остаётся без лога. Боевое удаление
+            # (`--force` без `--dry-run`) логируется как обычная WRITE-мутация.
             or (
                 getattr(args, "account_command", None) == "delete"
-                and not getattr(args, "force", False)
+                and (getattr(args, "dry_run", False) or not getattr(args, "force", False))
             )
         )
     )

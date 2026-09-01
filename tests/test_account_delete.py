@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from hhru_bot import cli
 from hhru_bot.commands import account as account_cmd
 from hhru_bot.write_lock import acquire_write_lock
 
@@ -125,16 +126,39 @@ def test_rejects_path_traversal(tmp_path, monkeypatch, capsys):
     assert (tmp_path / "outside").exists() is False
 
 
+def test_plan_marks_session_outside_account_dir_as_not_deleted(tmp_path, monkeypatch, capsys):
+    account_dir = tmp_path / "data" / "accounts" / "work"
+    account_dir.mkdir(parents=True)
+    (account_dir / "config.yaml").write_text(
+        "account:\n  storage_state_file: ../session-outside.json\n", encoding="utf-8"
+    )
+    outside = tmp_path / "data" / "accounts" / "session-outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert account_cmd.run_delete(_args("work", force=True)) is False
+
+    out = capsys.readouterr().out
+    assert "вне каталога аккаунта — удалён не будет" in out
+    assert outside.is_file()
+    assert not account_dir.exists()
+
+
 def test_plan_mode_skips_setup_logging_but_force_logs(tmp_path, monkeypatch):
     """Plan-only delete must not create data/logs as a side effect (READ, #21)."""
     _make_account(tmp_path)
     monkeypatch.chdir(tmp_path)
-    from hhru_bot import cli
 
     called = []
     monkeypatch.setattr(cli, "setup_logging", lambda **kwargs: called.append(kwargs))
 
     cli._execute(cli.build_parser().parse_args(["account", "delete", "marketing"]))
+    assert called == []
+
+    # --dry-run --force: план-only (dry-run побеждает), лога нет — как в run_delete.
+    cli._execute(
+        cli.build_parser().parse_args(["account", "delete", "marketing", "--dry-run", "--force"])
+    )
     assert called == []
 
     # --force логируется как WRITE-мутация ещё до резолва имени (тут — [FAIL]).
@@ -146,7 +170,15 @@ def test_plan_mode_skips_setup_logging_but_force_logs(tmp_path, monkeypatch):
 def test_refuses_delete_while_write_lock_held(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     account_dir = _make_account(tmp_path)
-    lock_path = account_dir / ".hhru.lock"
+    # Тот же лок, что взяла бы боевая write-команда этого аккаунта: путь
+    # строится cli._write_lock_path, чтобы дрейф формулы в cli.py ловил тест.
+    lock_path = cli._write_lock_path(
+        argparse.Namespace(
+            command="bump",
+            config=str(account_dir / "config.yaml"),
+            history=str(account_dir / "history.db"),
+        )
+    )
 
     with acquire_write_lock(lock_path, command="bump"):
         assert account_cmd.run_delete(_args("marketing", force=True)) is True

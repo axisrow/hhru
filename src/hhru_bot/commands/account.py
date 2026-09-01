@@ -168,6 +168,11 @@ def run_delete(args: argparse.Namespace) -> bool:
         print("  сессия:      файл сессии не определён (ошибка конфига)")
     else:
         state = "есть" if plan.session_exists else "нет"
+        # storage_state_file резолвится от директории конфига и легально может
+        # указывать за пределы каталога аккаунта; rmtree удалит только сам
+        # каталог, и [OK] не должен читаться как "удалено всё из плана".
+        if not plan.session_path.resolve().is_relative_to(plan.account_dir.resolve()):
+            state += "; вне каталога аккаунта — удалён не будет"
         print(f"  сессия:      {plan.session_path} ({state})")
 
     if args.dry_run or not args.force:
