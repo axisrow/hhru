@@ -363,6 +363,10 @@ def test_save_position_wizard_raises_chip_popular_unavailable_when_catalog_modal
         resume_position.WIZARD_NEXT: next_button,
     }[selector]
     monkeypatch.setattr(resume_position, "WIZARD_WAIT_MS", 50)
+    # бюджет открытия модалки (#915) ограничивает именно этот цикл: без патча
+    # он крутится реальные PROFESSION_MODAL_OPEN_WAIT_MS (5с) — page-двойник
+    # не моделирует ход времени (wait_for_timeout — no-op)
+    monkeypatch.setattr(resume_position, "PROFESSION_MODAL_OPEN_WAIT_MS", 50)
     monkeypatch.setattr(resume_position, "WIZARD_VERIFY_POLL_MS", 1)
     monkeypatch.setattr(resume_position, "is_profession_modal_confirmed", lambda _page: False)
     monkeypatch.setattr(resume_position, "dismiss_cookie_banner", lambda _page: None)
