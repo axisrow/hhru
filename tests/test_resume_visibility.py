@@ -27,16 +27,30 @@ def _resume():
 def _mock_locator(count: int = 1, *, radio_checked: bool = True):
     """A generic locator mock; also stands in for a mode label whose nested
     radio input is checked by default (the post-#746-round-3 verification in
-    _click_mode reads `.locator("input[type='radio']")` after every click)."""
+    _click_mode reads `.locator(RESUME_VISIBILITY_MODE_RADIO)` after every
+    click). bounding_box — карточка режима (живой замер #901: 690x56)."""
     loc = MagicMock()
     loc.count.return_value = count
     loc.first = loc
+    loc.bounding_box.return_value = {"x": 0, "y": 0, "width": 690, "height": 56}
     radio = MagicMock()
     radio.count.return_value = 1
     radio.first = radio
     radio.is_checked.return_value = radio_checked
     loc.locator.return_value = radio
     return loc
+
+
+def _all_mode_labels(active: str | None = None) -> dict[str, MagicMock]:
+    """Все пять карточек режимов; у «active» внешний radio checked, у остальных нет.
+
+    read_active_mode (#901) перебирает все карточки — и при детекции активного
+    whitelist/blacklist, и в перечитке после Save, — поэтому словарь
+    page.locator обязан отвечать на каждый селектор режима."""
+    return {
+        rv._MODE_SELECTORS[mode]: _mock_locator(radio_checked=(mode == active))
+        for mode in rv.VISIBILITY_MODES
+    }
 
 
 def test_dry_run_lists_planned_changes_without_touching_page():
@@ -69,10 +83,11 @@ def test_unknown_mode_rejected_before_any_navigation():
 def test_mode_only_change_clicks_label_and_save(monkeypatch):
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
-    mode_label = _mock_locator()
+    mode_labels = _all_mode_labels(active="link-only")
+    mode_label = mode_labels[sel.RESUME_VISIBILITY_MODE_LINK_ONLY]
     locators = {
         sel.RESUME_VISIBILITY_SAVE: save,
-        sel.RESUME_VISIBILITY_MODE_LINK_ONLY: mode_label,
+        **mode_labels,
     }
     page = MagicMock()
     page.locator.side_effect = lambda selector: locators[selector]
@@ -85,9 +100,18 @@ def test_mode_only_change_clicks_label_and_save(monkeypatch):
     )
 
     assert result.success
-    mode_label.click.assert_called_once_with()
+    # Клик по карточке режима — в левую padding-зону (живой замер #901/#917:
+    # центр карточки перехватывается вложенным label[data-qa='cell'] без
+    # обновления React-состояния), а не в центр bounding box.
+    mode_label.click.assert_called_once_with(position={"x": 10, "y": 28.0})
     before_click.assert_called_once_with()
     save.click.assert_called_once_with()
+    # Готовность формы: wait_for_function по window.onSecurePortalFingerprintDone
+    # (живая трассировка PR #917: до его появления POST уходит со старым
+    # accessType без fingerprintIteration2 — изменение не применяется), затем
+    # пауза закрепления выбора перед Save.
+    page.wait_for_function.assert_called_once()
+    assert page.wait_for_timeout.call_args_list == [call(1000)]
 
 
 def test_mode_click_not_reflected_in_radio_fails_closed(monkeypatch):
@@ -107,26 +131,19 @@ def test_mode_click_not_reflected_in_radio_fails_closed(monkeypatch):
 
     assert not result.success
     assert "не подтверждён" in result.reason
-    mode_label.click.assert_called_once_with()
+    mode_label.click.assert_called_once_with(position={"x": 10, "y": 28.0})
     save.click.assert_not_called()
 
 
 def test_employer_list_edit_requires_active_list_mode(monkeypatch):
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
-
-    def _unchecked_mode_label():
-        label = _mock_locator()
-        radio_input = _mock_locator()
-        radio_input.is_checked.return_value = False
-        label.locator.return_value = radio_input
-        return label
-
+    # Ни один режим не checked — активный не whitelist/blacklist (#901:
+    # read_active_mode читает внешние radio всех пяти карточек).
     page = MagicMock()
     page.locator.side_effect = lambda selector: {
         sel.RESUME_VISIBILITY_SAVE: save,
-        sel.RESUME_VISIBILITY_MODE_WHITELIST: _unchecked_mode_label(),
-        sel.RESUME_VISIBILITY_MODE_BLACKLIST: _unchecked_mode_label(),
+        **_all_mode_labels(active=None),
     }[selector]
 
     result = rv.set_resume_visibility_on_hh(
@@ -134,6 +151,35 @@ def test_employer_list_edit_requires_active_list_mode(monkeypatch):
     )
     assert not result.success
     assert "не whitelist/blacklist" in result.reason
+
+
+def test_employer_list_detection_playwright_error_is_plain_fail(monkeypatch):
+    """Ревью PR #917: пре-кликовая детекция активного режима — НЕ серая зона
+    (мутации ещё не было, before_click не звали): PlaywrightError обязан
+    стать обычным failed-результатом с per-resume [FAIL], а не сырым
+    исключением, обрывающим --resume all batch."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    broken_card = MagicMock()
+    broken_radio = MagicMock()
+    broken_radio.count.side_effect = PlaywrightError("Target closed")
+    broken_card.locator.return_value = broken_radio
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **{s: broken_card for s in rv._MODE_SELECTORS.values()},
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(
+        page, _resume(), None, dry_run=False, add_employers=("Ксамата",)
+    )
+    assert not result.success
+    assert not result.uncertain
+    assert "активный режим не прочитан" in result.reason
+    save.click.assert_not_called()
 
 
 def test_add_employer_ambiguous_match_is_reported_not_guessed(monkeypatch):
@@ -228,7 +274,7 @@ def test_add_employer_single_match_checks_and_confirms(monkeypatch):
     def _by_selector(selector):
         return {
             sel.RESUME_VISIBILITY_SAVE: save,
-            sel.RESUME_VISIBILITY_MODE_WHITELIST: _mock_locator(),
+            **_all_mode_labels(active="whitelist"),
             sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_WHITELIST: activator,
             sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
             sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_PREFIX: result_items,
@@ -356,7 +402,7 @@ def test_remove_employer_exact_name_match_clicks_delete(monkeypatch):
     def _by_selector(selector):
         return {
             sel.RESUME_VISIBILITY_SAVE: save,
-            sel.RESUME_VISIBILITY_MODE_BLACKLIST: _mock_locator(),
+            **_all_mode_labels(active="blacklist"),
             sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST: activator,
             sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
             sel.RESUME_VISIBILITY_EMPLOYER_LIST_ITEM_PREFIX: list_items,
@@ -424,7 +470,7 @@ def test_combined_add_and_remove_clears_search_before_remove(monkeypatch):
     def _by_selector(selector):
         return {
             sel.RESUME_VISIBILITY_SAVE: save,
-            sel.RESUME_VISIBILITY_MODE_BLACKLIST: _mock_locator(),
+            **_all_mode_labels(active="blacklist"),
             sel.RESUME_VISIBILITY_EMPLOYERS_ACTIVATOR_BLACKLIST: activator,
             sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_INPUT: search_input,
             sel.RESUME_VISIBILITY_EMPLOYER_SEARCH_RESULT_ITEM_PREFIX: add_result_items,
@@ -474,3 +520,173 @@ def test_click_failure_after_save_is_uncertain_not_failed(monkeypatch):
     result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
     assert not result.success
     assert result.uncertain
+
+
+def test_save_success_requires_reread_mode_match(monkeypatch):
+    """#901 п.3: успех рапортуется только после перечитки экрана — checked
+    внешний radio запрошенного режима и есть позитивный маркер результата
+    (рапорт успеха без проверки факта — класс дефекта #899)."""
+    save = _mock_locator()
+    goto_calls: list[str] = []
+
+    def _goto(_page, url):
+        goto_calls.append(url)
+
+    monkeypatch.setattr(rv, "goto_hh", _goto)
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **_all_mode_labels(active="no-one"),
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert result.success
+    # Экран открыт дважды: до ввода и повторно после Save (перечитка).
+    assert len(goto_calls) == 2
+
+
+def test_save_reread_mismatch_retried_then_fails_closed(monkeypatch):
+    """#901 п.3 + живой прогон PR #917: несовпадение при УДАЧНОЙ перечитке —
+    состояние на hh.ru известно и равно прежнему (серверный no-op), поэтому
+    НЕ uncertain — ретрай (окно готовности формы вероятностно), и лишь после
+    исчерпания попыток обычный failed. uncertain блокировал бы резюме через
+    has_unresolved_uncertain при известном исходе."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_labels = _all_mode_labels(active="no-one")
+    no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
+    link_only_label = mode_labels[sel.RESUME_VISIBILITY_MODE_LINK_ONLY]
+
+    def _on_card_click(_position=None, **_kw):
+        # Клиентский выбор карточки: radio отмечен в DOM (нативно).
+        no_one_label.locator.return_value.is_checked.return_value = True
+
+    def _on_save_click():
+        # Форма упрямо отправляет прежнее серверное состояние (link-only).
+        no_one_label.locator.return_value.is_checked.return_value = False
+        link_only_label.locator.return_value.is_checked.return_value = True
+
+    no_one_label.click.side_effect = _on_card_click
+    save.click.side_effect = _on_save_click
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **mode_labels,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "активен режим «link-only», ожидался «no-one»" in result.reason
+    save.click.assert_called()  # ретрай был, не одинокий failed
+
+
+def test_save_retry_applies_mode_on_second_attempt(monkeypatch):
+    """Живой кейс PR #917: первая попытка отправила СТАРОЕ состояние (форма не
+    была готова), вторая — применила запрошенный режим. Именно этот исход дал
+    финальный боевой [OK]: ретрай с перечиткой — детерминированный путь
+    сквозь вероятностное окно готовности формы."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_labels = _all_mode_labels(active="no-one")
+    no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
+    link_only_label = mode_labels[sel.RESUME_VISIBILITY_MODE_LINK_ONLY]
+    save_clicks = []
+
+    def _on_card_click(_position=None, **_kw):
+        no_one_label.locator.return_value.is_checked.return_value = True
+        link_only_label.locator.return_value.is_checked.return_value = False
+
+    def _on_save_click():
+        save_clicks.append(1)
+        if len(save_clicks) == 1:
+            # Форма не была готова: POST ушёл со старым состоянием (link-only).
+            no_one_label.locator.return_value.is_checked.return_value = False
+            link_only_label.locator.return_value.is_checked.return_value = True
+        # вторая попытка: сервер применил no-one — мок уже выставлен кликом.
+
+    no_one_label.click.side_effect = _on_card_click
+    save.click.side_effect = _on_save_click
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **mode_labels,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert result.success
+    assert len(save_clicks) == 2
+
+
+def test_save_reread_mode_undefined_fails_after_retries(monkeypatch):
+    """Ревью PR #917 + живой прогон: перечитка после Save стабильно не
+    определяет режим (ни один внешний radio не checked) — ретраи исчерпаны,
+    обычный failed с внятной причиной (без «режим «None»»). Прямой юнит-аналог
+    browser_unit-теста test_read_active_mode_none_when_no_card_checked, но на
+    уровне всей команды."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_labels = _all_mode_labels(active="no-one")
+    no_one_label = mode_labels[sel.RESUME_VISIBILITY_MODE_NO_ONE]
+    save_clicks = []
+
+    def _on_card_click(_position=None, **_kw):
+        no_one_label.locator.return_value.is_checked.return_value = True
+
+    def _on_save_click():
+        save_clicks.append(1)
+        # После сохранения ни один режим не прочитан (странная страница/дрейф).
+        for label in mode_labels.values():
+            label.locator.return_value.is_checked.return_value = False
+
+    no_one_label.click.side_effect = _on_card_click
+    save.click.side_effect = _on_save_click
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **mode_labels,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "активный режим не определён" in result.reason
+    assert len(save_clicks) == 3
+
+
+def test_save_reread_playwright_error_is_uncertain_not_crash(monkeypatch):
+    """Перечитка после Save — пост-кликовая зона целиком: PlaywrightError из
+    goto_hh (релейз после ретраев) или count()/is_checked() обязан стать
+    uncertain-результатом, а не сырым исключением, обрывающим --resume all
+    batch (#746 round 3 — пер-резюме гранулярность)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    save = _mock_locator()
+    goto_calls: list[str] = []
+
+    def _goto(_page, url):
+        goto_calls.append(url)
+        if len(goto_calls) == 2:  # перечитка после Save, не первичное открытие
+            raise PlaywrightError("net::ERR_NETWORK_CHANGED")
+
+    monkeypatch.setattr(rv, "goto_hh", _goto)
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **_all_mode_labels(active="no-one"),
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert not result.success
+    assert result.uncertain
+    assert "перечитки режима" in result.reason

@@ -31,6 +31,19 @@ RESUME_VISIBILITY_MODE_BLACKLIST = _selector("resume_visibility.RESUME_VISIBILIT
 RESUME_VISIBILITY_MODE_LINK_ONLY = _selector("resume_visibility.RESUME_VISIBILITY_MODE_LINK_ONLY")
 RESUME_VISIBILITY_MODE_NO_ONE = _selector("resume_visibility.RESUME_VISIBILITY_MODE_NO_ONE")
 
+# Внешний radio карточки режима — ПРЯМОЙ дочерний <input type="radio"> label'а.
+# Подтверждено живым DOM 2026-09-01 (issue #901, read-only дамп): карточка
+# содержит ДВА input[type="radio"] — внешний (прямой дочерний, из атрибутов
+# только type) и внутренний Magritte (вложен в span[data-qa="radio-container"]
+# внутри вложенного label[data-qa="cell"], class^="magritte-radio-input",
+# readonly). Descendant-поиск "input[type='radio']" по карточке находит оба —
+# прежняя строгая проверка count()==1 на нём fail-closed ломалась на легитимном
+# DOM (команда останавливалась до Save, attempted=0). Оба input'а синхронны
+# (React), поэтому читается/проверяется внешний: нативный клик по карточке-label
+# активирует именно его (первый labelable-потомок внешнего label — подтверждено
+# #901 живым кликом и на фикстуре tests/fixtures/resume_visibility_cards_901.html).
+RESUME_VISIBILITY_MODE_RADIO = ":scope > input[type='radio']"
+
 # Активаторы блока "Кто видит"/"Кто не видит" — условно отрендерены, только
 # когда активен соответствующий режим (whitelist/blacklist). Клик открывает
 # модалку поиска работодателя. Подтверждено живым DOM 2026-08-29.

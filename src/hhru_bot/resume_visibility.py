@@ -48,6 +48,7 @@ from .selector_groups.resume_visibility import (
     RESUME_VISIBILITY_MODE_EVERYONE,
     RESUME_VISIBILITY_MODE_LINK_ONLY,
     RESUME_VISIBILITY_MODE_NO_ONE,
+    RESUME_VISIBILITY_MODE_RADIO,
     RESUME_VISIBILITY_MODE_WHITELIST,
     RESUME_VISIBILITY_SAVE,
 )
@@ -117,17 +118,79 @@ def _click_mode(page: Page, mode: str) -> str:
     above) would then trust the wrong mode. Verify the nested radio input is
     checked afterwards, fail-closed otherwise — the same discipline the rest
     of this module already applies to every other click.
+
+    #901: карточка содержит ДВА input[type='radio'] — внешний (прямой дочерний
+    label'а) и внутренний Magritte (в span[data-qa='radio-container'], readonly;
+    см. RESUME_VISIBILITY_MODE_RADIO). Пост-кликовая проверка адресует внешний:
+    с ним же React синхронизирует внутренний. Программное выставление checked
+    (в обход клика по карточке) внутреннему/внешнему инпуту НЕ уведомляет
+    Magritte — режим не доезжает до сервера (живая проверка #901 в комментарии
+    к issue).
+
+    Клик — в ЛЕВУЮ PADDING-ЗОНУ карточки (position x=10, вертикальный центр),
+    не в центр bounding box (живой замер 2026-09-01, PR #917): вложенный
+    label[data-qa='cell'] покрывает ВСЮ внутреннюю область карточки (текст и
+    radio-container), и клик в неё перехватывается label-активацией ВНУТРЕННЕГО
+    Magritte-инпута — React-состояние карточки не обновляется (внешний radio
+    остаётся unchecked, прежний режим не сбрасывается), паузами не лечится —
+    это не гонка гидратации. Клик по padding-зоне (вне вложенного label)
+    доходит до onClick карточки (data-interactive=true) и переключает режим
+    целиком: оба input'а checked + сброс прежнего. Дефолтный центр
+    locator.click() попадает ровно на cell-text-content — первый боевой
+    прогон #917 падал на этом («radio не отмечен после клика», мутации не
+    было, attempted=0).
     """
     locator, reason = _one(page, _MODE_SELECTORS[mode], f"режим видимости «{mode}»")
     if reason:
         return reason
     assert locator is not None
-    locator.click()
-    radio = locator.locator("input[type='radio']")
+    box = locator.bounding_box()
+    if box is None or box["height"] <= 0:
+        return f"карточка режима «{mode}» не видна для клика"
+    locator.click(position={"x": 10, "y": box["height"] / 2})
+    radio = locator.locator(RESUME_VISIBILITY_MODE_RADIO)
     if radio.count() != 1:
         return f"radio-инпут режима «{mode}» не подтверждён однозначно после клика"
     if not radio.first.is_checked():
         return f"клик по режиму «{mode}» не подтверждён — radio не отмечен после клика"
+    return ""
+
+
+def read_active_mode(page: Page) -> str | None:
+    """Активный режим видимости по checked внешнего radio карточек (#901).
+
+    Внешний radio — ПРЯМОЙ дочерний label'а (RESUME_VISIBILITY_MODE_RADIO):
+    descendant-поиск нашёл бы и внутренний Magritte-инпут (#901). Возвращается
+    режим только при РОВНО одном checked (fail-closed): у внешних radio пустой
+    name, браузер НЕ снимает соседей при клике — эксклюзивность держит React,
+    поэтому 2+ checked (дрейф DOM, момент между нативным кликом и React-
+    синхронизацией) означают неопределённость, а не «первый попавшийся».
+    Используется и для детекции активного whitelist/blacklist без явного
+    --mode, и как позитивный маркер результата после Save.
+    """
+    checked: list[str] = []
+    for mode, selector in _MODE_SELECTORS.items():
+        radio = page.locator(selector).locator(RESUME_VISIBILITY_MODE_RADIO)
+        if radio.count() == 1 and radio.first.is_checked():
+            checked.append(mode)
+    if len(checked) == 1:
+        return checked[0]
+    return None
+
+
+def _open_visibility_screen(page: Page, resume_id: str) -> str:
+    """Перейти на экран видимости и дождаться его отрисовки (commit != отрисовано).
+
+    Единственный вызов для обеих точек входа: первичное открытие перед вводом
+    и повторное чтение после Save (позитивный маркер #901) — тот же экран,
+    тот же wait; различается только обработка ошибки вызывающей стороной
+    (до Save — обычный fail, после — uncertain, клик уже ушёл).
+    """
+    goto_hh(page, visibility_url(resume_id))
+    try:
+        page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="visible", timeout=15000)
+    except PlaywrightError as exc:
+        return f"экран видимости не отрисовался: {exc}"
     return ""
 
 
@@ -313,11 +376,32 @@ def set_resume_visibility_on_hh(
             )
         return ResumeVisibilityResult(resume_id, True, "dry-run; " + "; ".join(parts))
 
-    goto_hh(page, visibility_url(resume_id))
+    reason = _open_visibility_screen(page, resume_id)
+    if reason:
+        return ResumeVisibilityResult(resume_id, False, reason)
+    # Готовность формы к взаимодействию (живой прогон PR #917, 2026-09-01:
+    # A/B-эксперимент на теле POST /applicant/resume/edit + трассировка
+    # window-ключей). Карточки и Save появляются в DOM одновременно, но
+    # React-форма принимает изменения только после инициализации secure-portal
+    # антиспама: раньше клик по карточке попадает в DOM (нативный checked
+    # внешнего radio, пост-кликовая проверка проходит), но в стейт формы не
+    # попадает — POST уходит со СТАРЫМ accessType и без fingerprintIteration2,
+    # и изменение на hh.ru не применяется. Наблюдаемый маркер готовности —
+    # появление window.onSecurePortalFingerprintDone: по трассировке на
+    # холодной странице это +6.4с от commit (+3.9с ПОСЛЕ карточек), на
+    # «тёплой» (повторный переход) — мгновенно, поэтому фиксированная пауза
+    # не покрывает оба случая. DOM-маркера нет (fingerprint живёт в JS-стейте,
+    # атрибуты Save/карточек побитово неизменны). «visible != гидратирован»
+    # в чистом виде: до ЛЮБОГО взаимодействия с экраном (режим, модалка списка).
     try:
-        page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="visible", timeout=15000)
+        page.wait_for_function(
+            "() => typeof onSecurePortalFingerprintDone !== 'undefined'",
+            timeout=15000,
+        )
     except PlaywrightError as exc:
-        return ResumeVisibilityResult(resume_id, False, f"экран видимости не отрисовался: {exc}")
+        return ResumeVisibilityResult(
+            resume_id, False, f"форма видимости не инициализировалась: {exc}"
+        )
 
     if mode is not None:
         reason = _click_mode(page, mode)
@@ -327,21 +411,29 @@ def set_resume_visibility_on_hh(
     wants_employer_edit = bool(add_employers or remove_employers)
     if wants_employer_edit:
         # Determine the active list mode: explicit --mode wins; otherwise read
-        # which whitelist/blacklist radio is currently checked on hh.ru. Nested
-        # <input type="radio"> под каждым label — ровно один на label, `.checked`
-        # читаемо (подтверждено разведкой #746: живой JS-дамп `input.checked`
-        # для всех пяти radio дал true ровно на активном режиме, false на
-        # остальных — см. `resume_visibility_probe_2026-08-29.md`). count()!=1
-        # здесь — фактический дрейф DOM, не отсутствие поддержки; такой случай
-        # оставляет list_mode=None и уходит в fail-closed отказ ниже.
+        # which whitelist/blacklist radio is currently checked on hh.ru.
+        # Читается внешний radio карточки (RESUME_VISIBILITY_MODE_RADIO,
+        # #901): descendant-поиск находит и внутренний Magritte-инпут, а
+        # `.checked` синхронен у обоих input'ов карточки — подтверждено живым
+        # дампом #901 (оба checked на активном режиме); разведка #746 этот
+        # факт доказать не могла — знала только один radio на карточку. Ни
+        # один не подтверждён — fail-closed отказ ниже.
         list_mode = mode if mode in _EMPLOYER_LIST_MODES else None
         if list_mode is None:
-            for candidate in _EMPLOYER_LIST_MODES:
-                sel = _MODE_SELECTORS[candidate]
-                loc = page.locator(sel).locator("input[type='radio']")
-                if loc.count() == 1 and loc.first.is_checked():
-                    list_mode = candidate
-                    break
+            # Пре-кликовое окно (ревью PR #917): мутации ещё не было, поэтому
+            # обычный failed, НЕ uncertain — серая зона начинается с клика по
+            # Save ниже. Но исход тоже per-resume: не пойманный PlaywrightError
+            # из count()/is_checked() оборвал бы --resume all batch сырым
+            # исключением без [FAIL] — против гранулярности #746 round 3; тем
+            # же соображением обёрнута и пост-Save перечитка ниже.
+            try:
+                active = read_active_mode(page)
+            except PlaywrightError as exc:
+                return ResumeVisibilityResult(
+                    resume_id, False, f"активный режим не прочитан: {exc}"
+                )
+            if active in _EMPLOYER_LIST_MODES:
+                list_mode = active
         if list_mode is None:
             return ResumeVisibilityResult(
                 resume_id,
@@ -393,44 +485,107 @@ def set_resume_visibility_on_hh(
         assert close is not None
         close.click()
 
-    save, reason = _one(page, RESUME_VISIBILITY_SAVE, "кнопка «Сохранить»")
-    if reason:
-        return ResumeVisibilityResult(resume_id, False, reason)
-    assert save is not None
-    # before_click зарезервирован ровно здесь, а не раньше (клики по radio-режиму,
-    # "Добавить"/крестику удаления в модалке списка) — все эти промежуточные клики
-    # меняют только клиентское состояние формы React-SPA, подтверждено живой
-    # разведкой #746 (переключение radio без клика «Сохранить» не изменило
-    # состояние резюме на сервере, проверено повторной навигацией). Реальная
-    # мутация hh.ru — единственный клик ниже; "серая зона" (CLAUDE.md §3)
-    # начинается именно с него, не раньше.
-    try:
-        if before_click is not None:
-            before_click()
-        save.click()
-        # hh.ru пересобирает форму после сохранения; ждём исчезновения кнопки
-        # или редиректа как позитивного сигнала вместо фиксированного sleep.
-        #
-        # #746 review round 3: это ТОЛЬКО позитивный сигнал — нет проверки
-        # негативного маркера (validation-ошибка/toast), который отличал бы
-        # реальный успех сохранения от React-формы, скрывшей кнопку во время
-        # отображения ошибки. Аналогичный многоселекторный fail-closed паттерн
-        # для "серой зоны" уже есть в apply/pipeline.py (внешний источник
-        # истины — /applicant/negotiations, CLAUDE.md §3), но здесь для него
-        # нет ни подтверждённого селектора ошибки, ни read-only способа
-        # перепроверить итоговый список компаний без повторного открытия
-        # модалки (сама модалка не идентична "источнику истины" apply).
-        # Селектор ошибки НЕ подтверждён живым DOM (разведка #746 не покрывала
-        # сценарий реальной ошибки сохранения) — гадать его здесь означало бы
-        # нарушить тот же принцип, которым обоснован весь этот модуль (CLAUDE.md:
-        # "Селекторы — статус проверки"). Известное ограничение, не забытый шаг;
-        # требует отдельной живой разведки сценария ошибки прежде чем закрывать.
-        page.locator(RESUME_VISIBILITY_SAVE).first.wait_for(state="hidden", timeout=15000)
-    except PlaywrightError as exc:
-        return ResumeVisibilityResult(
-            resume_id,
-            False,
-            f"ошибка после клика «Сохранить»: {exc}",
-            uncertain=True,
+    # Ретрай с верификацией (живые прогоны PR #917, 2026-09-01): окно готовности
+    # React-формы вероятностно — даже с wait_for_function-маркером
+    # onSecurePortalFingerprintDone один и тот же путь то применял смену, то
+    # отправлял POST со СТАРЫМ accessType (серверный no-op, состояние не
+    # менялось — подтверждено телом POST в A/B-эксперименте). Детерминированный
+    # исход даёт только цикл «выбор → Save → перечитка → факт»: несовпадение
+    # означает прежнее состояние на hh.ru, повтор безопасен (тот же паттерн
+    # ретрая клика, что у bump; poll-верификация — как select_catalog_leaf).
+    # Ретраится ТОЛЬКО чистая смена режима: employer-редактирование — одна
+    # попытка (повтор списка вслепую мог бы задвоить/потерять его элементы).
+    max_attempts = 3 if mode is not None and not wants_employer_edit else 1
+    last_reason = ""
+    for attempt_no in range(max_attempts):
+        if attempt_no > 0:
+            # Экран после перечитки — заново выбрать режим и дождаться той же
+            # готовности формы (см. wait_for_function выше).
+            try:
+                page.wait_for_function(
+                    "() => typeof onSecurePortalFingerprintDone !== 'undefined'",
+                    timeout=15000,
+                )
+            except PlaywrightError as exc:
+                return ResumeVisibilityResult(
+                    resume_id,
+                    False,
+                    f"форма видимости не инициализировалась: {exc}",
+                    uncertain=True,
+                )
+            reason = _click_mode(page, mode)
+            if reason:
+                return ResumeVisibilityResult(resume_id, False, reason)
+        save, reason = _one(page, RESUME_VISIBILITY_SAVE, "кнопка «Сохранить»")
+        if reason:
+            return ResumeVisibilityResult(resume_id, False, reason)
+        assert save is not None
+        # Окно закрепления выбора перед Save (живой прогон PR #917): POST уходит
+        # с закоммиченным состоянием формы; 1с хватает на тёплой форме.
+        page.wait_for_timeout(1000)
+        # before_click зарезервирован на ПЕРВОМ Save-клике, а не раньше (клики
+        # по radio-режиму, "Добавить"/крестику в модалке) — все промежуточные
+        # клики меняют только клиентское состояние React-формы (живая разведка
+        # #746: без «Сохранить» состояние резюме не менялось). Реальная мутация
+        # — Save-клики; повторные Save той же команды — та же попытка, маркер
+        # один (#476). "Серая зона" (CLAUDE.md §3) начинается с первого из них.
+        try:
+            if before_click is not None and attempt_no == 0:
+                before_click()
+            save.click()
+            # Живой прогон PR #917 (2026-09-01) опроверг гипотезу #746 «после
+            # сохранения hh.ru скрывает кнопку Save»: при не применившемся
+            # сохранении кнопка остаётся видимой (34x visible за 15с), а при
+            # применившемся экран пересобирается (карточки исчезают). Оба
+            # состояния различает только перечитка ниже; негативный маркер
+            # (toast/validation) не подтверждён живым DOM и не гадается
+            # (CLAUDE.md «Селекторы — статус проверки»).
+        except PlaywrightError as exc:
+            return ResumeVisibilityResult(
+                resume_id,
+                False,
+                f"ошибка после клика «Сохранить»: {exc}",
+                uncertain=True,
+            )
+        if mode is None:
+            # Только списки работодателей: read-only источника истины нет
+            # (список виден лишь внутри модалки), ретрая и верификации нет —
+            # известное ограничение с рождения модуля (#746).
+            return ResumeVisibilityResult(resume_id, True, "видимость сохранена")
+        # Позитивный маркер результата (#901): перечитка экрана, успех — только
+        # при совпадении checked внешнего radio с запрошенным режимом (рапорт
+        # успеха без проверки факта — класс #899). Классификация по
+        # определённости состояния, а не по факту клика: несовпадение при
+        # удачной перечитке — состояние известно и равно прежнему (повтор
+        # безопасен: ретрай выше либо обычный failed в конце — НЕ uncertain,
+        # который навсегда блокировал бы резюме при известном исходе);
+        # исключение/нечитаемость окна перечитки — состояние неизвестно,
+        # uncertain (fail-closed как #176): goto_hh после ретраев ререйзит (в
+        # т.ч. ThrottledChannelDetected), и не пойманное исключение оборвало бы
+        # --resume all batch сырым traceback вместо per-resume [FAIL] — против
+        # гранулярности #746 round 3.
+        try:
+            reason = _open_visibility_screen(page, resume_id)
+            if reason:
+                return ResumeVisibilityResult(
+                    resume_id,
+                    False,
+                    f"режим не перечитан после сохранения: {reason}",
+                    uncertain=True,
+                )
+            active = read_active_mode(page)
+        except PlaywrightError as exc:
+            return ResumeVisibilityResult(
+                resume_id,
+                False,
+                f"ошибка перечитки режима после «Сохранить»: {exc}",
+                uncertain=True,
+            )
+        if active == mode:
+            return ResumeVisibilityResult(resume_id, True, "видимость сохранена")
+        last_reason = (
+            f"после сохранения активный режим не определён (ожидался «{mode}»)"
+            if active is None
+            else f"после сохранения активен режим «{active}», ожидался «{mode}»"
         )
-    return ResumeVisibilityResult(resume_id, True, "видимость сохранена")
+    return ResumeVisibilityResult(resume_id, False, last_reason)
