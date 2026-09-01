@@ -160,3 +160,48 @@ def test_no_title_change_skips_guard(env, capsys, tmp_path, monkeypatch):
 
     assert asked == []
     assert "[OK] Раздел желаемой работы резюме 'draft' обновлён." in capsys.readouterr().out
+
+
+def test_editor_dry_run_without_title_prints_current_title(env, capsys, tmp_path):
+    """#910: editor-путь без --title терял заголовок черновика (title: None).
+
+    Печать показывает фактический заголовок, но сам план не меняется:
+    title=None по-прежнему значит «не трогать», и дубль-гард #911 не
+    вызывается (см. test_no_title_change_skips_guard).
+    """
+    assert (
+        cmd.run(
+            _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
+        )
+        is False
+    )
+
+    out = capsys.readouterr().out
+    assert "title: QA" in out
+    assert "[INFO] Ничего не записано на hh.ru." in out
+
+
+def test_editor_dry_run_without_title_keeps_honest_none(env, capsys, tmp_path, monkeypatch):
+    """#910: черновик без заголовка печатает честный None, а не догадку."""
+    flow = SimpleNamespace(
+        kind="editor",
+        resume_id=RESUME_ID,
+        values=PositionValues(title=None),
+        state=SimpleNamespace(next_incomplete_screen_id=None),
+    )
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "open_position_form",
+        lambda page, resume, enter_wizard=True: flow,
+    )
+
+    assert (
+        cmd.run(
+            _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
+        )
+        is False
+    )
+
+    out = capsys.readouterr().out
+    assert "title: None" in out
+    assert "[INFO] Ничего не записано на hh.ru." in out
