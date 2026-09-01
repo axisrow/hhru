@@ -144,15 +144,21 @@ def read_active_mode(page: Page) -> str | None:
     """Активный режим видимости по checked внешнего radio карточек (#901).
 
     Внешний radio — ПРЯМОЙ дочерний label'а (RESUME_VISIBILITY_MODE_RADIO):
-    descendant-поиск нашёл бы и внутренний Magritte-инпут (#901). Не найден
-    ровно один checked режим — None (fail-closed), а не «первый попавшийся».
+    descendant-поиск нашёл бы и внутренний Magritte-инпут (#901). Возвращается
+    режим только при РОВНО одном checked (fail-closed): у внешних radio пустой
+    name, браузер НЕ снимает соседей при клике — эксклюзивность держит React,
+    поэтому 2+ checked (дрейф DOM, момент между нативным кликом и React-
+    синхронизацией) означают неопределённость, а не «первый попавшийся».
     Используется и для детекции активного whitelist/blacklist без явного
     --mode, и как позитивный маркер результата после Save.
     """
+    checked: list[str] = []
     for mode, selector in _MODE_SELECTORS.items():
         radio = page.locator(selector).locator(RESUME_VISIBILITY_MODE_RADIO)
         if radio.count() == 1 and radio.first.is_checked():
-            return mode
+            checked.append(mode)
+    if len(checked) == 1:
+        return checked[0]
     return None
 
 
@@ -369,9 +375,10 @@ def set_resume_visibility_on_hh(
         # which whitelist/blacklist radio is currently checked on hh.ru.
         # Читается внешний radio карточки (RESUME_VISIBILITY_MODE_RADIO,
         # #901): descendant-поиск находит и внутренний Magritte-инпут, а
-        # `.checked` синхронен у обоих (подтверждено разведкой #746: живой
-        # JS-дамп `input.checked` для всех пяти radio дал true ровно на
-        # активном режиме). Ни один не подтверждён — fail-closed отказ ниже.
+        # `.checked` синхронен у обоих input'ов карточки — подтверждено живым
+        # дампом #901 (оба checked на активном режиме); разведка #746 этот
+        # факт доказать не могла — знала только один radio на карточку. Ни
+        # один не подтверждён — fail-closed отказ ниже.
         list_mode = mode if mode in _EMPLOYER_LIST_MODES else None
         if list_mode is None:
             active = read_active_mode(page)
@@ -474,20 +481,40 @@ def set_resume_visibility_on_hh(
     # успеха без проверки факта — тот же класс дефекта, что #899). После Save
     # экран перечитывается заново и подтверждается checked внешнего radio
     # запрошенного режима; несовпадение/нечитаемость — пост-кликовая зона,
-    # uncertain (клик уже ушёл на hh.ru, fail-closed как #176). Для mode=None
+    # uncertain (клик уже ушёл на hh.ru, fail-closed как #176). Всё окно
+    # перечитки — включая goto_hh и count()/is_checked() — под тем же
+    # except PlaywrightError: goto_hh после ретраев ререйзит (в т.ч.
+    # ThrottledChannelDetected), и не пойманное здесь исключение оборвало бы
+    # --resume all batch сырым traceback вместо per-resume [FAIL] (uncertain)
+    # — против решения #746 round 3 о пер-резюме гранулярности. Для mode=None
     # (только списки работодателей) read-only источника истины нет — список
     # виден только внутри модалки, известное ограничение (см. комментарий к
     # wait_for hidden выше).
     if mode is not None:
-        reason = _open_visibility_screen(page, resume_id)
-        if reason:
+        try:
+            reason = _open_visibility_screen(page, resume_id)
+            if reason:
+                return ResumeVisibilityResult(
+                    resume_id,
+                    False,
+                    f"режим не перечитан после сохранения: {reason}",
+                    uncertain=True,
+                )
+            active = read_active_mode(page)
+        except PlaywrightError as exc:
             return ResumeVisibilityResult(
                 resume_id,
                 False,
-                f"режим не перечитан после сохранения: {reason}",
+                f"ошибка перечитки режима после «Сохранить»: {exc}",
                 uncertain=True,
             )
-        active = read_active_mode(page)
+        if active is None:
+            return ResumeVisibilityResult(
+                resume_id,
+                False,
+                f"после сохранения активный режим не определён (ожидался «{mode}»)",
+                uncertain=True,
+            )
         if active != mode:
             return ResumeVisibilityResult(
                 resume_id,

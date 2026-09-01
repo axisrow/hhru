@@ -487,7 +487,6 @@ def test_save_success_requires_reread_mode_match(monkeypatch):
     """#901 п.3: успех рапортуется только после перечитки экрана — checked
     внешний radio запрошенного режима и есть позитивный маркер результата
     (рапорт успеха без проверки факта — класс дефекта #899)."""
-    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
     goto_calls: list[str] = []
 
@@ -536,3 +535,33 @@ def test_save_reread_mode_mismatch_is_uncertain(monkeypatch):
     assert not result.success
     assert result.uncertain
     assert "ожидался «no-one»" in result.reason
+
+
+def test_save_reread_playwright_error_is_uncertain_not_crash(monkeypatch):
+    """Перечитка после Save — пост-кликовая зона целиком: PlaywrightError из
+    goto_hh (релейз после ретраев) или count()/is_checked() обязан стать
+    uncertain-результатом, а не сырым исключением, обрывающим --resume all
+    batch (#746 round 3 — пер-резюме гранулярность)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    save = _mock_locator()
+    goto_calls: list[str] = []
+
+    def _goto(_page, url):
+        goto_calls.append(url)
+        if len(goto_calls) == 2:  # перечитка после Save, не первичное открытие
+            raise PlaywrightError("net::ERR_NETWORK_CHANGED")
+
+    monkeypatch.setattr(rv, "goto_hh", _goto)
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **_all_mode_labels(active="no-one"),
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert not result.success
+    assert result.uncertain
+    assert "перечитки режима" in result.reason

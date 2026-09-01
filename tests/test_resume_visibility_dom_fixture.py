@@ -100,3 +100,26 @@ def test_read_active_mode_none_when_no_card_checked():
     finally:
         browser.close()
         playwright.stop()
+
+
+@pytest.mark.browser_unit
+def test_read_active_mode_none_when_two_cards_checked():
+    # Fail-closed «ровно один»: у внешних radio пустой name — браузер НЕ
+    # снимает соседей при нативном клике, эксклюзивность держит React. В голом
+    # Chromium фикстуры клик по no-one оставляет checked и на прежнем direct:
+    # ровно тот DOM-миг, который живой сайт переживает между кликом и
+    # React-синхронизацией. Два checked = режим не определён, а не «первый
+    # попавшийся» (порядок итерации _MODE_SELECTORS отдал бы everyone).
+    playwright, browser, page = _page()
+    try:
+        assert rv._click_mode(page, "no-one") == ""
+        no_one = page.locator(RESUME_VISIBILITY_MODE_NO_ONE).locator(":scope > input[type='radio']")
+        link_only = page.locator(RESUME_VISIBILITY_MODE_LINK_ONLY).locator(
+            ":scope > input[type='radio']"
+        )
+        assert no_one.first.is_checked() is True
+        assert link_only.first.is_checked() is True  # браузер не снял соседа
+        assert rv.read_active_mode(page) is None
+    finally:
+        browser.close()
+        playwright.stop()
