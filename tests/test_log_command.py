@@ -541,3 +541,44 @@ def test_register_log_dir_follows_isolated_log_dir(tmp_path, monkeypatch):
 
     args = build_parser().parse_args(["log"])
     assert args.log_dir == str(tmp_path / "isolated")
+
+
+def test_prune_candidates_tolerates_vanishing_file(tmp_path, monkeypatch):
+    """Файл, исчезнувший между iterdir и stat, не роняет отбор (гонка как у unlink).
+
+    Ревью PR #923: entry.stat() без guard'а дал бы traceback вместо плана.
+    Симуляция: Path.stat бросает FileNotFoundError ровно для одного файла.
+    """
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", mtime=now - 100 * 86400)
+    real_stat = Path.stat
+
+    def racing_stat(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    assert prune_candidates(tmp_path, 14, now=now) == [stays]
+
+
+def test_print_prune_plan_tolerates_vanishing_file(tmp_path, capsys, monkeypatch):
+    """Файл, исчезнувший между отбором и печатью плана, пропускается без падения."""
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", size=100, mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", size=2048, mtime=now - 100 * 86400)
+    real_stat = Path.stat
+
+    def racing_stat(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    total = log_cmd._print_prune_plan([gone, stays])
+    out = capsys.readouterr().out
+    assert "probe_gone.html" not in out
+    assert "probe_stays.html" in out
+    assert "[INFO] Кандидаты на удаление: 1 файл(ов), освободится 2.0 КиБ" in out
+    assert total == 2048

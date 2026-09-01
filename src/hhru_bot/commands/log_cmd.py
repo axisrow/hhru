@@ -337,27 +337,38 @@ def prune_candidates(
     cutoff = now - older_than_days * 86400
     if not log_dir.is_dir():
         return []
-    candidates = [
-        entry
-        for entry in log_dir.iterdir()
-        if entry.is_file()
-        and entry.suffix.lower() in PRUNE_EXTENSIONS
-        and entry.stat().st_mtime < cutoff
-    ]
+    candidates = []
+    for entry in log_dir.iterdir():
+        try:
+            if not entry.is_file() or entry.suffix.lower() not in PRUNE_EXTENSIONS:
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+        except FileNotFoundError:
+            # Файл исчез между iterdir и stat (тот же класс гонки, что
+            # missing_ok у unlink) — удалять нечего, пропускаем без падения.
+            continue
+        candidates.append(entry)
     return sorted(candidates)
 
 
 def _print_prune_plan(candidates: list[Path]) -> int:
-    """Печать плана: по строке на файл + итог. Возвращает суммарный объём."""
+    """Печать плана: по строке на файл + итог. Возвращает суммарный объём.
+
+    Файл, исчезнувший между отбором и печатью, пропускается (гонка та же):
+    в план и в итоговый объём попадает только то, что ещё лежит на диске.
+    """
     total = 0
+    listed = 0
     for path in candidates:
-        size = path.stat().st_size
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            continue
         total += size
+        listed += 1
         print(f"  {path.name}  {format_size(size)}")
-    print(
-        f"[INFO] Кандидаты на удаление: {len(candidates)} файл(ов), "
-        f"освободится {format_size(total)}"
-    )
+    print(f"[INFO] Кандидаты на удаление: {listed} файл(ов), освободится {format_size(total)}")
     return total
 
 
