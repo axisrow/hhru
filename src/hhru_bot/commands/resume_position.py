@@ -299,6 +299,27 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 plan.title = effective_title
                 plan.specializations = [role.label]
                 validate_wizard_plan(plan)
+            # #911: должности в аккаунте уникальны — дубликат отклоняется ДО
+            # клика сохранения: после клика отказ hh.ru молчит (живая проверка
+            # пользователя, 2026-09-01). Проверка читает список отдельной
+            # вкладкой того же контекста: визард/редактор уже открыты на текущей
+            # странице, и уход на список их не должен закрывать. Карточка самого
+            # резюме исключается: сохранить должность, которую оно уже носит, —
+            # не дубль.
+            written_title = (plan.title or "").strip()
+            if written_title:
+                from ..resume_titles import account_duplicate_reason
+
+                # Вкладка не закрывается руками: команда завершается выходом
+                # из launch_context, который закрывает все страницы контекста.
+                duplicate_reason = account_duplicate_reason(
+                    context.new_page(), written_title, exclude_resume_id=resume.resume_id
+                )
+                if duplicate_reason:
+                    if not wizard:
+                        page.locator(CANCEL).click()
+                    print(f"[FAIL] {duplicate_reason}")
+                    return True
             auto_publish = _professional_role_closes_resume(flow)
             if auto_publish and not args.dry_run and not getattr(args, "allow_auto_publish", False):
                 print(

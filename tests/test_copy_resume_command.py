@@ -483,6 +483,12 @@ def env(monkeypatch, tmp_path):
         return state.result
 
     monkeypatch.setattr(hhru_bot.copy_resume, "copy_resume_on_hh", fake_copy)
+    # #911: дубль-гард должности по умолчанию «нет дубля» — двойник страницы
+    # не моделирует список резюме; тесты самого гарда подменяют эту заглушку.
+    monkeypatch.setattr(
+        "hhru_bot.resume_titles.account_duplicate_reason",
+        lambda page, title, exclude_resume_id="": "",
+    )
     return state
 
 
@@ -820,3 +826,44 @@ def test_set_copy_title_raises_when_displayed_title_does_not_match(monkeypatch):
 
     with pytest.raises(RuntimeError, match="title после сохранения не подтверждён"):
         cmd._set_copy_title(page, NEW_ID, "Python-разработчик")
+
+
+# --- Дубль-гард должности (#911): уникальность в рамках аккаунта ---
+
+
+def test_run_duplicate_title_fails_before_clone(env, capsys, tmp_path, monkeypatch):
+    """#911: должности в аккаунте уникальны — дубликат отклоняется ДО клика
+    «Дублировать». После копирования title молча не сохранился бы (живая
+    проверка пользователя), а откатывать созданную копию команда не умеет."""
+    monkeypatch.setattr(
+        "hhru_bot.resume_titles.account_duplicate_reason",
+        lambda page, title, exclude_resume_id="": (
+            "резюме с должностью «Программист» уже существует; "
+            "должности в аккаунте уникальны, запись запрещена"
+        ),
+    )
+
+    assert cmd.run(_args(tmp_path, force=True, title="Программист")) is True
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "уже существует" in out
+    # Копия не создавалась и в аудит не попала.
+    assert env.calls == []
+    assert History(tmp_path / "h.db").count_today(OLD_ID, "copy_resume") == 0
+
+
+def test_run_without_title_skips_duplicate_guard(env, capsys, tmp_path, monkeypatch):
+    """Без --title команда должность не пишет — дубль-гард не нужен."""
+    asked: list[str] = []
+
+    def _spy(page, title, exclude_resume_id=""):  # noqa: ARG001
+        asked.append(title)
+        return ""
+
+    monkeypatch.setattr("hhru_bot.resume_titles.account_duplicate_reason", _spy)
+
+    cmd.run(_args(tmp_path, force=True))
+
+    assert asked == []
+    assert "[OK] Резюме backend скопирован" in capsys.readouterr().out

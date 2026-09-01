@@ -427,6 +427,17 @@ def run(args: argparse.Namespace):
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
                 page = context.new_page()
+                # #911: должности в аккаунте уникальны — дубликат отклоняется
+                # ДО клика «Дублировать». После копирования title молча не
+                # сохранился бы (живая проверка пользователя), а откатывать
+                # созданную копию команда не умеет.
+                if title is not None:
+                    from ..resume_titles import account_duplicate_reason
+
+                    duplicate_reason = account_duplicate_reason(page, title)
+                    if duplicate_reason:
+                        print(f"[FAIL] {resume.id} — {duplicate_reason}")
+                        return True
                 result = copy_resume_on_hh(
                     page,
                     resume,
