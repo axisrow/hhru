@@ -683,6 +683,9 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 
 - `-n, --lines LINES` — Количество строк (по умолчанию 50) (по умолчанию: 50)
 - `-f, --follow` — Следить за логом (tail -f); прерывается по Ctrl-C
+- `--prune` — Чистка дампов probe/apply (*.html/*.png) в data/logs; по умолчанию только план (dry-run), удаление — по --yes или TTY-подтверждению
+- `--older-than DAYS` — Удалять дампы старше N дней (по умолчанию 14) (по умолчанию: 14)
+- `--yes` — С --prune: подтвердить удаление без TTY prompt
 
 ### `login`
 

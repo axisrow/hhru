@@ -4,7 +4,17 @@
 (``tail -f``): polling seek+read в цикле с коротким sleep, прерывается по Ctrl-C.
 ``log -n <count>`` — количество строк.
 
-READ: читает только локальный файл, ничего не меняет ни на hh.ru, ни локально.
+``log --prune`` (#717) — WRITE-local чистка ДАМПОВ probe/apply в data/logs:
+только ``*.html``/``*.png`` старше ``--older-than`` дней. Логи
+(hhru_bot.log/scheduled.log) и любые другие файлы не трогаются — за ротацию
+логов отвечает logging_setup. Сканирование НЕ рекурсивное и жёстко
+ограничено каталогом data/logs (args.log_dir) — файлы вне него недостижимы
+по построению. ``--dry-run`` по умолчанию: без подтверждения печатается
+только план (список, счётчик, освобождаемый объём); удаление — по ``--yes``
+или интерактивному [y/N] (общий confirm_write). Автоматической/фоновой
+чистки нет — только явный вызов пользователем.
+
+READ (tail/follow): читает только локальный файл, ничего не меняет ни на hh.ru, ни локально.
 Чувствительные ID (resume_id, сессия) уже редачены уровнями логирования — команда
 их не фильтрует (контракт #21). follow реализован polling-циклом, НЕ фоновым
 демоном (без скрытых/фоновых режимов — см. CLAUDE.md). Прерывание по
@@ -39,6 +49,7 @@ from pathlib import Path
 # Вычисляется здесь (а не в run()) через set_defaults, чтобы run() принимал
 # путь параметром и тестировался на tmp-файлах без monkeypatch глобалей.
 from ..logging_setup import LOG_DIR
+from .copy_resume import confirm_write
 
 DEFAULT_LOG_PATH = LOG_DIR / "hhru_bot.log"
 DEFAULT_LINES = 50
@@ -52,6 +63,17 @@ FOLLOW_POLL_INTERVAL = 0.5
 # только в диагностическом edge-case, не в штатном режиме (цикл ревью #61, р.3).
 LOG_READ_ERRORS = "replace"
 
+# --prune (#717): чистятся ТОЛЬКО дампы probe/apply — эти два расширения.
+# hhru_bot.log/scheduled.log (*.log) в множество не входят и потому
+# недостижимы по построению — ротация логов не здесь.
+PRUNE_EXTENSIONS = frozenset({".html", ".png"})
+# Порог по умолчанию: две недели. Инцидентные дампы (#199/#207) нужны, пока
+# жив разбор инцидента; 14 дней покрывают цикл ревью с запасом и дают
+# предсказуемую верхнюю границу роста data/logs (~50-100 МБ вместо unbounded).
+DEFAULT_PRUNE_OLDER_THAN_DAYS = 14
+# Бинарные пороги для human-readable объёма (1024-кратные, как du -h).
+_SIZE_UNITS = ("Б", "КиБ", "МиБ", "ГиБ", "ТиБ")
+
 
 def _positive_int(value: str) -> int:
     """``argparse type=``: -n должно быть целым >= 1.
@@ -63,6 +85,17 @@ def _positive_int(value: str) -> int:
     n = int(value)
     if n < 1:
         raise argparse.ArgumentTypeError(f"требуется положительное целое, получено {value!r}")
+    return n
+
+
+def _non_negative_int(value: str) -> int:
+    """``argparse type=``: --older-than должно быть целым >= 0.
+
+    0 — валидное значение («стереть все дампы»), отрицательное — нет.
+    """
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"требуется неотрицательное целое, получено {value!r}")
     return n
 
 
@@ -84,7 +117,25 @@ def register(subparsers) -> None:
         action="store_true",
         help="Следить за логом (tail -f); прерывается по Ctrl-C",
     )
-    p.set_defaults(func=run, log_path=str(DEFAULT_LOG_PATH))
+    p.add_argument(
+        "--prune",
+        action="store_true",
+        help="Чистка дампов probe/apply (*.html/*.png) в data/logs; "
+        "по умолчанию только план (dry-run), удаление — по --yes или TTY-подтверждению",
+    )
+    p.add_argument(
+        "--older-than",
+        type=_non_negative_int,
+        default=DEFAULT_PRUNE_OLDER_THAN_DAYS,
+        metavar="DAYS",
+        help=f"Удалять дампы старше N дней (по умолчанию {DEFAULT_PRUNE_OLDER_THAN_DAYS})",
+    )
+    p.add_argument(
+        "--yes",
+        action="store_true",
+        help="С --prune: подтвердить удаление без TTY prompt",
+    )
+    p.set_defaults(func=run, log_path=str(DEFAULT_LOG_PATH), log_dir=str(LOG_DIR))
 
 
 def _tail_from(lines_view, n: int) -> list[str]:
@@ -240,7 +291,108 @@ def _log_path_was_replaced(f, path: Path) -> bool:
     return (current.st_dev, current.st_ino) != (active.st_dev, active.st_ino)
 
 
+def format_size(num_bytes: int) -> str:
+    """Человекочитаемый объём (1024-кратные единицы, как ``du -h``).
+
+    Чистая функция — используется в плане prune и тестируется отдельно.
+    """
+    size = float(num_bytes)
+    for unit in _SIZE_UNITS:
+        if size < 1024 or unit == _SIZE_UNITS[-1]:
+            if unit == "Б":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} {_SIZE_UNITS[-1]}"  # pragma: no cover - цикл выше всегда завершается
+
+
+def prune_candidates(
+    log_dir: Path,
+    older_than_days: int,
+    *,
+    now: float | None = None,
+) -> list[Path]:
+    """Дампы (*.html/*.png) в ``log_dir`` старше ``older_than_days`` дней.
+
+    Чистая функция (чтение FS без мутаций) — тестируется на tmp-каталоге.
+    Скан НЕ рекурсивный: дампы пишутся плоско в LOG_DIR (probe, apply/steps,
+    resume_*), а не-рекурсивность исключает захват чужих деревьев под
+    data/logs. Критерий отбора двойной: расширение из PRUNE_EXTENSIONS
+    (логи hhru_bot.log/scheduled.log недостижимы) И mtime старше порога.
+    ``now`` инъектится для детерминированных тестов границы возраста.
+    """
+    if now is None:
+        now = time.time()
+    cutoff = now - older_than_days * 86400
+    if not log_dir.is_dir():
+        return []
+    candidates = [
+        entry
+        for entry in log_dir.iterdir()
+        if entry.is_file()
+        and entry.suffix.lower() in PRUNE_EXTENSIONS
+        and entry.stat().st_mtime < cutoff
+    ]
+    return sorted(candidates)
+
+
+def _print_prune_plan(candidates: list[Path]) -> int:
+    """Печать плана: по строке на файл + итог. Возвращает суммарный объём."""
+    total = 0
+    for path in candidates:
+        size = path.stat().st_size
+        total += size
+        print(f"  {path.name}  {format_size(size)}")
+    print(
+        f"[INFO] Кандидаты на удаление: {len(candidates)} файл(ов), "
+        f"освободится {format_size(total)}"
+    )
+    return total
+
+
+def _run_prune(args: argparse.Namespace) -> None:
+    log_dir = Path(args.log_dir)
+    if args.follow:
+        print("[FAIL] --prune несовместим с -f/--follow.", file=sys.stderr)
+        sys.exit(1)
+
+    candidates = prune_candidates(log_dir, args.older_than)
+    if not candidates:
+        # Отсутствие самого каталога — тот же «чистить нечего» (data/logs
+        # создаётся первым WRITE-запуском; traceback вместо [OK] был бы ложной
+        # ошибкой на свежей установке).
+        print(f"[OK] Дампов старше {args.older_than} дн. в {log_dir} нет — чистить нечего.")
+        return
+
+    print(f"[INFO] log --prune: каталог {log_dir}, порог {args.older_than} дн.")
+    total = _print_prune_plan(candidates)
+
+    if not confirm_write(
+        args.yes,
+        prompt=f"Удалить {len(candidates)} файл(ов) ({format_size(total)}) безвозвратно?",
+    ):
+        print(
+            "[DRY-RUN] Ничего не удалено. Для реальной чистки: "
+            "hhru log --prune --yes (или подтвердите интерактивно)."
+        )
+        return
+
+    deleted = 0
+    for path in candidates:
+        # missing_ok: файл мог исчезнуть между планом и удалением (параллельный
+        # прогон записал/стёр) — это не ошибка чистки.
+        path.unlink(missing_ok=True)
+        deleted += 1
+    print(f"[OK] Удалено {deleted} файл(ов), освобождено {format_size(total)}.")
+
+
 def run(args: argparse.Namespace) -> None:
+    if getattr(args, "prune", False):
+        # prune не требует существования hhru_bot.log — ветка ДО missing-file
+        # проверки tail-режима.
+        _run_prune(args)
+        return
+
     path = Path(args.log_path)
 
     if not path.is_file():
