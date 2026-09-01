@@ -378,7 +378,7 @@ python3 -m playwright install chromium
   поднятия, маркер «уже откликались».
 
 **Визард `professional_role` имеет два shape, и путь записи выбирает команда по
-цели** (`commands/resume_position.py`: `direct_save = plan.title.strip() ==
+цели** (`commands/resume_position.py`: `direct_save = (plan.title or "").strip() ==
 role.label.strip()`):
 
 - **Путь создания / точная цель** (#913, контракт #911 battle2 2026-09-01): когда
