@@ -1025,10 +1025,13 @@ def test_landed_first_next_save_is_verified_not_masked_by_fallback(
         PositionValues(title="Программист, разработчик"),
         ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
     )
-    monkeypatch.setattr(
-        "hhru_bot.resume_position.open_position_form",
-        lambda _page, _resume, **_kwargs: flow,
-    )
+    open_calls: list[bool] = []
+
+    def fake_open(_page, _resume, **_kwargs):
+        open_calls.append(True)
+        return flow
+
+    monkeypatch.setattr("hhru_bot.resume_position.open_position_form", fake_open)
 
     # Модалка каталога не подтверждена ни разу — как в живом прогоне #899:
     # экран закрылся прямым save, без открытия «Уточните специальность».
@@ -1065,11 +1068,15 @@ def test_landed_first_next_save_is_verified_not_masked_by_fallback(
     assert "(uncertain)" not in out
 
     # Состоявшееся сохранение подтверждается readback'ом, а не маскируется
-    # fallback'ом: ни заглушки, ни editor-фиксапа, ни повторного входа в визард.
+    # fallback'ом: ни заглушки wizard-minimum, ни editor-фиксапа. Открытий
+    # формы ровно два — вход и обязательный pre-WRITE re-bind прямого пути
+    # (commands/resume_position.py:378); третий вызыв был бы реентерой
+    # fallback'а после состоявшегося save.
     minimum.assert_not_called()
     minimum_verify.assert_not_called()
     apply.assert_not_called()
     select.assert_not_called()
+    assert len(open_calls) == 2
     assert verify_calls == [
         {"title": "Программист, разработчик", "role_id": "96", "label": "Программист, разработчик"}
     ]
