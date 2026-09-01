@@ -557,10 +557,12 @@ def is_profession_modal_confirmed(page: Page) -> bool:
     search = dialog.first.locator(WIZARD_CATEGORY_SEARCH)
     if search.count() != 1 or not search.first.is_visible():
         return False
-    title = dialog.first.locator(WIZARD_CATEGORY_MODAL_TITLE)
-    if title.count() != 1:
-        return False
-    return (title.first.inner_text() or "").strip() == PROFESSION_MODAL_TITLE_TEXT
+    # inner_text() гоняется с unmount размонтирующейся модалки (между count
+    # и чтением) и висит дефолтные 30с; count() по filter — RPC без ожидания.
+    title = dialog.first.locator(WIZARD_CATEGORY_MODAL_TITLE).filter(
+        has_text=PROFESSION_MODAL_TITLE_TEXT
+    )
+    return title.count() == 1
 
 
 def validate_wizard_plan(plan: PositionValues) -> None:
