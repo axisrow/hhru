@@ -125,6 +125,24 @@ def test_rejects_path_traversal(tmp_path, monkeypatch, capsys):
     assert (tmp_path / "outside").exists() is False
 
 
+def test_plan_mode_skips_setup_logging_but_force_logs(tmp_path, monkeypatch):
+    """Plan-only delete must not create data/logs as a side effect (READ, #21)."""
+    _make_account(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    from hhru_bot import cli
+
+    called = []
+    monkeypatch.setattr(cli, "setup_logging", lambda **kwargs: called.append(kwargs))
+
+    cli._execute(cli.build_parser().parse_args(["account", "delete", "marketing"]))
+    assert called == []
+
+    # --force логируется как WRITE-мутация ещё до резолва имени (тут — [FAIL]).
+    with pytest.raises(SystemExit):
+        cli._execute(cli.build_parser().parse_args(["account", "delete", "ghost", "--force"]))
+    assert len(called) == 1
+
+
 def test_refuses_delete_while_write_lock_held(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     account_dir = _make_account(tmp_path)

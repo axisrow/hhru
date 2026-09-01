@@ -370,7 +370,18 @@ def _execute(args: argparse.Namespace) -> None:
     # #179: то же условие решает, есть ли у логгера hhru_bot FileHandler — нужно
     # ниже ещё раз (except Exception), считаем один раз, не дублируем условие.
     logging_enabled = args.command not in {"log", "diagnostics"} and not (
-        args.command == "account" and getattr(args, "account_command", None) == "list"
+        args.command == "account"
+        and (
+            getattr(args, "account_command", None) == "list"
+            # `account delete` без --force — plan-only режим (#723): он ничего
+            # не мутирует, и FileHandler не должен создавать data/logs как
+            # побочный эффект плана. Боевое --force логируется как обычная
+            # WRITE-мутация.
+            or (
+                getattr(args, "account_command", None) == "delete"
+                and not getattr(args, "force", False)
+            )
+        )
     )
     if logging_enabled:
         setup_logging(verbose=args.verbose)
