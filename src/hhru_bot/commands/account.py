@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..accounts import AccountError, validate_account_name
+from ..accounts import AccountError, resolve_account_paths, validate_account_name
 from ..report import _ascii_table
 from ..session_security import secure_directory
+from ..write_lock import WriteLockBusy, acquire_write_lock
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_TEMPLATE_PATH = Path("config") / "config.example.yaml"
@@ -49,6 +50,181 @@ def register(subparsers) -> None:
         help="Показать настроенные локальные аккаунты (READ)",
     )
     list_accounts.set_defaults(func=run_list)
+
+    delete = commands.add_parser(
+        "delete",
+        help="Удалить локальный аккаунт (план по умолчанию, удаление --force)",
+        description=(
+            "Показать, что будет удалено в data/accounts/<name>/, "
+            "а с --force выполнить необратимое удаление."
+        ),
+    )
+    delete.add_argument("name", help="Имя удаляемого аккаунта")
+    delete.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показать план и ничего не удалять (это поведение по умолчанию)",
+    )
+    delete.add_argument(
+        "--force",
+        action="store_true",
+        help="Выполнить удаление (необратимо; уносит конфиг, историю и сессию)",
+    )
+    delete.set_defaults(func=run_delete)
+
+
+@dataclass(frozen=True)
+class AccountDeletePlan:
+    """Everything ``account delete`` would remove, collected read-only."""
+
+    name: str
+    account_dir: Path
+    config_path: Path
+    history_path: Path
+    history_records: int | None
+    session_path: Path | None
+    session_exists: bool
+
+
+def build_delete_plan(
+    name: str,
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+) -> AccountDeletePlan:
+    """Collect the deletion plan for a named account without changing files.
+
+    ``resolve_account_paths`` is the single resolution rule: it validates the
+    name as a plain path component and fails with ``AccountError`` when the
+    account config does not exist.
+    """
+    paths = resolve_account_paths(name, data_dir=data_dir)
+    account_dir = paths.config.parent
+    session_path = _session_path(paths.config)
+    return AccountDeletePlan(
+        name=name,
+        account_dir=account_dir,
+        config_path=paths.config,
+        history_path=paths.history,
+        history_records=_count_history_records(paths.history),
+        session_path=session_path,
+        session_exists=session_path.is_file() if session_path is not None else False,
+    )
+
+
+def _session_path(config_path: Path) -> Path | None:
+    """Resolve the account's storage-state file, or None on a broken config."""
+    from yaml import YAMLError
+
+    from ..config import ConfigError, load_config
+
+    try:
+        config = load_config(config_path)
+    except (AttributeError, ConfigError, OSError, TypeError, ValueError, YAMLError):
+        return None
+    return Path(config.storage_state_file)
+
+
+def _count_history_records(history_path: Path) -> int | None:
+    """Count rows across all tables of ``history.db`` without creating it.
+
+    Read-only URI (the same pattern as ``_last_action``) keeps an existing DB
+    from being changed while the plan is built.  ``None`` means the DB is
+    missing or unreadable -- the plan still lists the file.
+    """
+    if not history_path.is_file():
+        return None
+    try:
+        uri = f"file:{history_path.resolve()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            tables = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            ]
+            return sum(
+                conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in tables
+            )
+    except sqlite3.Error:
+        return None
+
+
+def run_delete(args: argparse.Namespace) -> bool:
+    """Delete an account (with ``--force``) or print the plan; return failure."""
+    try:
+        plan = build_delete_plan(args.name)
+    except AccountError as exc:
+        print(f"[FAIL] {exc}")
+        return True
+
+    print(f'[INFO] План удаления аккаунта "{plan.name}":')
+    print(f"  каталог:     {plan.account_dir}")
+    print(f"  конфиг:      {plan.config_path}")
+    if plan.history_records is None:
+        print(f"  history.db:  {plan.history_path} (отсутствует или не читается)")
+    else:
+        print(f"  history.db:  {plan.history_path} (записей: {plan.history_records})")
+    if plan.session_path is None:
+        print("  сессия:      файл сессии не определён (ошибка конфига)")
+    else:
+        state = "есть" if plan.session_exists else "нет"
+        print(f"  сессия:      {plan.session_path} ({state})")
+
+    if args.dry_run or not args.force:
+        print("[DRY-RUN] --force не передан: ничего не удалено.")
+        return False
+
+    return _delete_account(plan)
+
+
+def _delete_account(plan: AccountDeletePlan) -> bool:
+    """Remove exactly ``data/accounts/<name>/`` under the account's write lock.
+
+    The non-blocking acquisition is the refusal criterion (#723): a held lock
+    means another write command is running against this account right now, and
+    removing its state from underneath it is forbidden.  Holding the lock
+    through ``rmtree`` also closes the TOCTOU window where a write command
+    could start between the check and the deletion.
+    """
+    # Reuse cli's lock-path formula instead of duplicating the ".hhru.lock"
+    # name: the same lock a write command against this account's history would
+    # take.  Lazy import -- cli imports this module while building the parser.
+    from ..cli import _write_lock_path
+
+    lock_path = _write_lock_path(
+        argparse.Namespace(
+            command="account",
+            config=str(plan.config_path),
+            history=str(plan.history_path),
+        )
+    )
+    try:
+        with acquire_write_lock(lock_path, command=f"account delete {plan.name}"):
+            account_dir = plan.account_dir
+            if account_dir.resolve().parent != account_dir.parent.resolve():
+                # Defence-in-depth beyond resolve_account_paths: rmtree must
+                # only ever run on a direct child of data/accounts.
+                print(f"[FAIL] недопустимый путь удаления: {account_dir}")
+                return True
+            shutil.rmtree(account_dir)
+    except WriteLockBusy as exc:
+        owner = exc.owner
+        detail = (
+            f" (pid={owner.get('pid')}, command={owner.get('command')}, "
+            f"started_at={owner.get('started_at')})"
+            if owner
+            else ""
+        )
+        print(
+            f'[FAIL] аккаунт "{plan.name}" не удалён: удерживается write-lock, идёт прогон{detail}'
+        )
+        return True
+    except OSError as exc:
+        print(f"[FAIL] {exc}")
+        return True
+
+    print(f'[OK] Аккаунт "{plan.name}" удалён: {plan.account_dir}')
+    return False
 
 
 def scan_accounts(data_dir: Path = DEFAULT_DATA_DIR) -> list[AccountInfo]:
