@@ -167,7 +167,10 @@ def test_direct_save_surfaces_catalog_reason_as_runtime_error(monkeypatch):
     monkeypatch.setattr(
         resume_position,
         "select_wizard_catalog_leaf",
-        lambda *_args, **_kwargs: "профессия «Тестировщик» не найдена в каталоге",
+        lambda *_args, **_kwargs: (
+            "профессия «Тестировщик» не найдена в каталоге визарда резюме; "
+            "дерево предлагает: Администратор"
+        ),
     )
     resume = bare_resume("resume-id")
 
