@@ -381,7 +381,18 @@ def set_resume_visibility_on_hh(
         # один не подтверждён — fail-closed отказ ниже.
         list_mode = mode if mode in _EMPLOYER_LIST_MODES else None
         if list_mode is None:
-            active = read_active_mode(page)
+            # Пре-кликовое окно (ревью PR #917): мутации ещё не было, поэтому
+            # обычный failed, НЕ uncertain — серая зона начинается с клика по
+            # Save ниже. Но исход тоже per-resume: не пойманный PlaywrightError
+            # из count()/is_checked() оборвал бы --resume all batch сырым
+            # исключением без [FAIL] — против гранулярности #746 round 3; тем
+            # же соображением обёрнута и пост-Save перечитка ниже.
+            try:
+                active = read_active_mode(page)
+            except PlaywrightError as exc:
+                return ResumeVisibilityResult(
+                    resume_id, False, f"активный режим не прочитан: {exc}"
+                )
             if active in _EMPLOYER_LIST_MODES:
                 list_mode = active
         if list_mode is None:

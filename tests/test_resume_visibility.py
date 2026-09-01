@@ -143,6 +143,35 @@ def test_employer_list_edit_requires_active_list_mode(monkeypatch):
     assert "не whitelist/blacklist" in result.reason
 
 
+def test_employer_list_detection_playwright_error_is_plain_fail(monkeypatch):
+    """Ревью PR #917: пре-кликовая детекция активного режима — НЕ серая зона
+    (мутации ещё не было, before_click не звали): PlaywrightError обязан
+    стать обычным failed-результатом с per-resume [FAIL], а не сырым
+    исключением, обрывающим --resume all batch."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    broken_card = MagicMock()
+    broken_radio = MagicMock()
+    broken_radio.count.side_effect = PlaywrightError("Target closed")
+    broken_card.locator.return_value = broken_radio
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **{s: broken_card for s in rv._MODE_SELECTORS.values()},
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(
+        page, _resume(), None, dry_run=False, add_employers=("Ксамата",)
+    )
+    assert not result.success
+    assert not result.uncertain
+    assert "активный режим не прочитан" in result.reason
+    save.click.assert_not_called()
+
+
 def test_add_employer_ambiguous_match_is_reported_not_guessed(monkeypatch):
     monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
     save = _mock_locator()
@@ -535,6 +564,35 @@ def test_save_reread_mode_mismatch_is_uncertain(monkeypatch):
     assert not result.success
     assert result.uncertain
     assert "ожидался «no-one»" in result.reason
+
+
+def test_save_reread_mode_undefined_is_uncertain(monkeypatch):
+    """Ревью PR #917: перечитка после Save не смогла определить режим (ни один
+    внешний radio не checked) — пост-кликовая зона, uncertain с внятной
+    причиной (без «режим «None»»). Прямой юнит-аналог browser_unit-теста
+    test_read_active_mode_none_when_no_card_checked, но на уровне всей команды."""
+    monkeypatch.setattr(rv, "goto_hh", lambda *_a, **_kw: None)
+    save = _mock_locator()
+    mode_labels = _all_mode_labels(active="no-one")
+
+    def _on_save_click():
+        # После сохранения ни один режим не прочитан (странная страница/дрейф).
+        for label in mode_labels.values():
+            label.locator.return_value.is_checked.return_value = False
+
+    save.click.side_effect = _on_save_click
+
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: {
+        sel.RESUME_VISIBILITY_SAVE: save,
+        **mode_labels,
+    }[selector]
+
+    result = rv.set_resume_visibility_on_hh(page, _resume(), "no-one", dry_run=False)
+
+    assert not result.success
+    assert result.uncertain
+    assert "активный режим не определён" in result.reason
 
 
 def test_save_reread_playwright_error_is_uncertain_not_crash(monkeypatch):
