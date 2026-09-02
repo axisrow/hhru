@@ -15,9 +15,9 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 
 from .browser import RESUMES_FULL_LIST_URL, goto_hh, open_confirmed_resume
+from .resume_ids import resume_card_locator
 from .selector_groups.resume_list import (
     RESUME_LIST_CARD,
-    RESUME_LIST_CARD_LINK_TPL,
 )
 from .selector_groups.resume_page import (
     RESUME_DELETE_BUTTON,
@@ -105,10 +105,7 @@ def delete_resume_on_hh(
     """
     resume_id = resume.resume_id
     goto_hh(page, RESUMES_FULL_LIST_URL)
-    card_selector = (
-        f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
-    )
-    card = page.locator(card_selector)
+    card = resume_card_locator(page, resume_id)
     if card.count() == 0:
         try:
             card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
@@ -187,7 +184,7 @@ def delete_resume_on_hh(
             # Same commit-vs-hydration guard as above: after domcontentloaded the
             # React card may not be attached yet, so a bare count()==0 right after
             # the reload must not be treated as a permanent failure.
-            card = page.locator(card_selector)
+            card = resume_card_locator(page, resume_id)
             if card.count() == 0:
                 try:
                     card.first.wait_for(state="attached", timeout=DELETE_VERIFY_TIMEOUT_MS)
@@ -261,9 +258,7 @@ def delete_resume_on_hh(
                     True,
                 )
         _wait_resume_list_ready(page)
-        remaining = page.locator(
-            f"{RESUME_LIST_CARD}:has({RESUME_LIST_CARD_LINK_TPL.format(resume_id=resume_id)})"
-        ).count()
+        remaining = resume_card_locator(page, resume_id).count()
     except Exception as exc:
         return DeleteResumeResult(
             resume_id, False, f"не удалось проверить результат удаления: {exc}", True

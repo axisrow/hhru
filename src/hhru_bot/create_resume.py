@@ -17,6 +17,7 @@ from .browser import (
     goto_hh,
 )
 from .external_forms.detect import normalize
+from .resume_ids import RESUME_ID_FROM_PATH_OR_QUERY_RE
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -30,12 +31,6 @@ from .selector_groups.resume_page import (
 )
 
 CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
-# hh.ru подтверждает сохранение ДВУМЯ формами URL: прямой страницей резюме
-# (/resume/{id}) и следующим шагом визарда, где id уходит в query-параметр
-# (/profile/resume/educations?resume={id}&hhtmFrom=...). Боевой прогон #778
-# наблюдал вторую: резюме создавалось, но ожидание первой формы падало по
-# таймауту и давало uncertain при фактическом успехе.
-_RESUME_ID_RE = re.compile(r"(?:/resume/|[?&]resume=)([0-9a-f]{32,40})(?:[/?#&]|$)")
 # #837: живой замер показал checked=True уже на первой проверке спустя
 # +100мс после клика — секундный запас на порядок больше наблюдавшейся
 # задержки, но честный (не бесконечный) дедлайн на случай, если чекбокс
@@ -405,12 +400,12 @@ def create_resume_on_hh(
         )
         if reason:
             return CreateResumeResult(False, reason=reason)
-        page.wait_for_url(_RESUME_ID_RE, wait_until="commit")
+        page.wait_for_url(RESUME_ID_FROM_PATH_OR_QUERY_RE, wait_until="commit")
     except PlaywrightError as exc:
         return CreateResumeResult(
             False, reason=f"ошибка после клика сохранения: {exc}", uncertain=True
         )
-    match = _RESUME_ID_RE.search(page.url)
+    match = RESUME_ID_FROM_PATH_OR_QUERY_RE.search(page.url)
     if not match:
         return CreateResumeResult(
             False, reason="новый resume_id не подтверждён после сохранения", uncertain=True
