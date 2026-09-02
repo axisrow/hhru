@@ -370,7 +370,20 @@ def _execute(args: argparse.Namespace) -> None:
     # #179: то же условие решает, есть ли у логгера hhru_bot FileHandler — нужно
     # ниже ещё раз (except Exception), считаем один раз, не дублируем условие.
     logging_enabled = args.command not in {"log", "diagnostics"} and not (
-        args.command == "account" and getattr(args, "account_command", None) == "list"
+        args.command == "account"
+        and (
+            getattr(args, "account_command", None) == "list"
+            # `account delete` в plan-only режиме (#723) — как `account list`:
+            # ничего не мутирует, и FileHandler не должен создавать data/logs
+            # как побочный эффект плана. Условие зеркалит account.py::run_delete
+            # (`dry_run или не force`, dry-run побеждает), поэтому
+            # `--dry-run --force` тоже остаётся без лога. Боевое удаление
+            # (`--force` без `--dry-run`) логируется как обычная WRITE-мутация.
+            or (
+                getattr(args, "account_command", None) == "delete"
+                and (getattr(args, "dry_run", False) or not getattr(args, "force", False))
+            )
+        )
     )
     if logging_enabled:
         setup_logging(verbose=args.verbose)
