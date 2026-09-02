@@ -327,6 +327,19 @@ def test_confirm_unresolved_draft_refuses_unreadable_list(monkeypatch):
     assert "не удалось прочитать список" in reason
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("профессия «ЛЛМ» не найдена в каталоге визарда резюме (список пуст)", True),
+        ("экран каталога визарда резюме не отрисовался: timeout", False),
+        ("не удалось подтвердить единственный лист каталога (дерево перерендерилось)", False),
+        ("профессия найдена в каталоге с role_id=96, ожидался role_id=132", False),
+    ],
+)
+def test_allow_unresolved_gate_accepts_only_missing_catalog_area(reason, expected):
+    assert create._is_unresolved_area_reason(reason) is expected
+
+
 def test_confirm_unresolved_draft_retries_then_confirms_empty_role(monkeypatch):
     import hhru_bot.browser as browser
     import hhru_bot.copy_resume as copy_resume

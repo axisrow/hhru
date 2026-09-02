@@ -630,6 +630,11 @@ def _phantom_draft_hint(title: str) -> str:
     )
 
 
+def _is_unresolved_area_reason(reason: str) -> bool:
+    """Return true only for the catalog's explicit missing-area refusals."""
+    return "не найдена" in reason and "в каталоге" in reason
+
+
 def _confirm_unresolved_draft(page: Page, title: str) -> tuple[str, str]:
     """Confirm the draft materialized by the first wizard NEXT (#936).
 
@@ -851,7 +856,7 @@ def create_resume_on_hh(
             page, leaf_area, expected_role_id=expected_leaf_id
         )
         if category_reason:
-            if allow_unresolved_area:
+            if allow_unresolved_area and _is_unresolved_area_reason(category_reason):
                 new_resume_id, confirmation = _confirm_unresolved_draft(page, title)
                 if new_resume_id:
                     return CreateResumeResult(
