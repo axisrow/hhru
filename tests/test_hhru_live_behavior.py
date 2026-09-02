@@ -32,12 +32,12 @@ RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_content_scenario.js"
 VISIBILITY_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_visibility_hidden_scenario.js"
 
 
-def _run_node_scenario(runner: Path) -> dict:
+def _run_node_scenario(runner: Path, args: list[str] | None = None) -> dict:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node не найден в PATH — поведенческий тест content.js пропущен")
     result = subprocess.run(
-        [node, str(runner)],
+        [node, str(runner), *(args or [])],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -108,3 +108,106 @@ def test_hhru_live_content_script_does_not_misreport_css_visibility_hidden_as_sh
     assert scenario["overlayReportCount"] == 1, (
         f"expected exactly one overlay_detected after the reveal, got: {scenario}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Policy-слой (issue #588, первый этап): классификация + allowlist-команды +
+# закрытие ТОЛЬКО безопасных overlay. Сценарии исполняют content.js по-настоящему
+# через tests/js_harness/run_command_scenario.js <name>.
+# ---------------------------------------------------------------------------
+
+COMMAND_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_command_scenario.js"
+
+
+def _run_command_scenario(name: str) -> dict:
+    return _run_node_scenario(COMMAND_RUNNER, [name])
+
+
+def test_hhru_live_policy_toast_safe_dismiss_closes_via_close_control():
+    """Тост с явным close-контролом: safe, закрывается кликом ровно по нему."""
+    scenario = _run_command_scenario("toast_safe")
+    assert scenario["listedDisposition"] == "safe"
+    assert scenario["dismissedOk"] and scenario["overlayGone"]
+    assert scenario["clickCount"] == 1 and scenario["clickedClose"]
+
+
+def test_hhru_live_policy_cookie_banner_dismiss():
+    """Cookie-баннер закрывается своим close-контролом (#586)."""
+    scenario = _run_command_scenario("cookie_banner")
+    assert scenario["listedType"] == "cookie_banner"
+    assert scenario["listedDisposition"] == "safe"
+    assert scenario["dismissedOk"] and scenario["overlayGone"]
+    assert scenario["clickCount"] == 1 and scenario["clickedClose"]
+
+
+def test_hhru_live_policy_resume_delivered_never_clicks_save():
+    """Ключевой инвариант #588/#586: тост «Резюме доставлено» закрывается
+    крестиком; кнопка «Сохранить» (выбор статуса поиска — профильные данные)
+    не кликается НИКОГДА, ни при каком раскладе."""
+    scenario = _run_command_scenario("resume_delivered_never_saves")
+    assert scenario["listedDisposition"] == "safe"
+    assert scenario["dismissedOk"] and scenario["overlayGone"]
+    assert scenario["clickCount"] == 1 and scenario["clickedClose"]
+    assert scenario["clickedSave"] is False, f"клик по «Сохранить» недопустим: {scenario}"
+
+
+def test_hhru_live_policy_apply_step_modal_is_blocked():
+    """Модалка формы отклика (RESPONSE_MODAL_FORM_ID / data-qa
+    vacancy-response) — apply_step: не закрывается автоматически, кликов 0."""
+    scenario = _run_command_scenario("apply_step_blocked")
+    assert scenario["listedDisposition"] == "apply_step"
+    assert scenario["dismissedOk"] is False
+    assert scenario["error"] == "overlay_not_safe"
+    assert scenario["errorDisposition"] == "apply_step"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_dangerous_confirm_blocked():
+    """Confirm-модалка необратимого действия — dangerous, блокируется даже
+    при наличии close-контрола."""
+    scenario = _run_command_scenario("danger_confirm_blocked")
+    assert scenario["listedDisposition"] == "dangerous"
+    assert scenario["dismissedOk"] is False and scenario["error"] == "overlay_not_safe"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_dangerous_captcha_blocked():
+    """CAPTCHA-текст опасен сам по себе, без остальных якорей."""
+    scenario = _run_command_scenario("danger_captcha_blocked")
+    assert scenario["listedDisposition"] == "dangerous"
+    assert scenario["dismissedOk"] is False and scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_ambiguous_modal_blocked():
+    """Незнакомая модалка без close-контрола — ambiguous: блокируется,
+    решение возвращается агенту (fail-closed, никакого угадывания)."""
+    scenario = _run_command_scenario("ambiguous_blocked")
+    assert scenario["listedDisposition"] == "ambiguous"
+    assert scenario["dismissedOk"] is False and scenario["error"] == "overlay_not_safe"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_unknown_action_rejected():
+    """Действие вне allowlist отклоняется до какого-либо доступа к DOM."""
+    scenario = _run_command_scenario("unknown_action_rejected")
+    assert scenario["ok"] is False and scenario["error"] == "action_not_allowed"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_check_element_confirms_next_step():
+    """Подтверждение «следующий элемент доступен»: found/visible по селектору;
+    obstruction-проба в стабе недоступна и честно репортится как непроверенная."""
+    scenario = _run_command_scenario("check_element")
+    assert scenario["found"] and scenario["visible"]
+    assert scenario["obstructionChecked"] is False
+    assert scenario["absentFound"] is False and scenario["noSelectorFound"] is False
+
+
+def test_hhru_live_policy_dismiss_hidden_overlay_does_not_click():
+    """Overlay, скрытый между листингом и dismiss (или отвязанный), не
+    кликается: действие по невидимому контролу не имеет оснований."""
+    scenario = _run_command_scenario("dismiss_hidden_overlay")
+    assert scenario["listedCount"] == 1
+    assert scenario["dismissedOk"] is False
+    assert scenario["error"] == "overlay_not_found"
+    assert scenario["clickCount"] == 0

@@ -45,18 +45,66 @@ def test_hhru_live_extension_manifest_and_detector_contract():
         assert selector in source
     assert "MutationObserver" in source
     assert "element.remove" not in source
-    assert "click()" not in source
+    # Issue #588 stage 1: единственный клик в content.js — по close-контролу
+    # safe-overlay внутри dismissOverlay, и он стоит ПОСЛЕ fail-closed гейта
+    # `overlay_not_safe` (любой не-safe disposition выходит раньше клика).
+    assert source.count("control.click();") == 1, (
+        "click() разрешён ровно один раз — по close-контролу внутри dismissOverlay"
+    )
+    assert source.index("overlay_not_safe") < source.index("control.click();")
 
 
-def test_hhru_live_extension_transport_has_empty_allowlist():
+def test_hhru_live_extension_transport_allowlist_is_exact():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
     content = (root / "content.js").read_text()
     background = (root / "background.js").read_text()
-    assert "new Set()" in content
+    allowlist = "new Set(['list_overlays', 'dismiss_overlay', 'check_element'])"
+    # Ровно три действия MVP (детект живёт сам, без команд); всё прочее —
+    # action_not_allowed. Новый дефолт вместо пустого allowlist эпохи #644.
+    assert allowlist in content
+    assert allowlist in background, (
+        "RELAY_ACTIONS в background.js должен зеркалить ACTION_ALLOWLIST "
+        "content.js — две копии обязаны совпадать дословно"
+    )
     assert "name !== 'hhru-agent'" in background
     assert "action_not_allowed" in background
+
+
+def test_hhru_live_extension_danger_anchors_outrank_apply_anchors():
+    """Fail-closed приоритет классификации: опасное окно остаётся опасным,
+    даже если в нём есть сигналы формы отклика. DANGEROUS_TEXT проверяется
+    строго раньше hasApplySignal."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    # Обе метки — вызовы внутри classifyDisposition: DANGEROUS_TEXT.some там
+    # один, 'apply_step' впервые возвращается сразу после hasApplySignal.
+    danger_check = content.index("DANGEROUS_TEXT.some")
+    apply_check = content.index("return 'apply_step'")
+    assert danger_check < apply_check
+
+
+def test_hhru_live_extension_close_markers_exclude_action_buttons():
+    """Close-контролы — только явные close-маркеры. Слова-действия
+    («Сохранить», «Отмена», «Понятно», «Принять») не входят и не должны
+    появиться в списке паттернов: клик по ним меняет данные пользователя
+    (#586: «Сохранить» в тосте «Резюме доставлено» — выбор статуса поиска)."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    # Страж смотрит только в findCloseControls: в шапке файла те же слова
+    # упомянуты легитимно — в описании того, куда кликать запрещено.
+    start = content.index("function findCloseControls")
+    end = content.index("function hasApplySignal")
+    close_marker_body = content[start:end]
+    for word in ("Понятно", "Отмена", "Сохранить", "Принять"):
+        assert word not in close_marker_body, (
+            f"«{word}» не может быть close-маркером — только крестик/close-aria/data-qa"
+        )
 
 
 def test_hhru_live_extension_declares_storage_permission():

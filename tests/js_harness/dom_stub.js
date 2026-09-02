@@ -178,6 +178,9 @@ function makeChrome(sentMessages) {
   const listeners = [];
   return {
     runtime: {
+      // content.js only accepts commands whose sender.id equals
+      // chrome.runtime.id; command scenarios pass this value as the sender.
+      id: 'hhru-live-test-extension',
       sendMessage(message) {
         sentMessages.push(message);
       },
@@ -199,6 +202,13 @@ function createEnvironment() {
     createElement: (tag) => new Element(tag),
   };
   const sentMessages = [];
+  // Every click performed by content.js lands here, so scenarios can assert
+  // on exactly WHICH element was clicked (the close control, never other
+  // buttons like «Сохранить»).
+  const clicks = [];
+  Element.prototype.click = function () {
+    clicks.push(this);
+  };
   const chrome = makeChrome(sentMessages);
 
   class MutationObserver {
@@ -221,6 +231,7 @@ function createEnvironment() {
     document,
     chrome,
     sentMessages,
+    clicks,
     MutationObserver,
     Element,
     getComputedStyle,
