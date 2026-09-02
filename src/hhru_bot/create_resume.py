@@ -66,6 +66,11 @@ OTHER_ROLE_ID = "40"
 # совпадает с id листов дерева (подтверждено live: 132 <->
 # tree-selector-item-132).
 _POSITION_SUGGEST_URL_FRAGMENT = "profession_suggestions"
+# #920 (прогон «Логопед» 2026-09-02): число попыток фильтра дерева на один
+# вызов select_wizard_catalog_leaf. Нестабильность фильтра hh.ru подтверждена
+# пользователем вручную и боевым прогоном (один и тот же запрос: боевой
+# прогон -> «Другое», repro -> точный лист); см. комментарий в теле функции.
+_FILTER_ATTEMPTS = 2
 _SUGGEST_TYPE_DELAY_MS = 40
 _SUGGEST_POLL_TIMEOUT = 6.0
 _SUGGEST_POLL_INTERVAL_MS = 250
@@ -150,142 +155,168 @@ def select_wizard_catalog_leaf(
     search, reason = _one(page, RESUME_CREATION_CATEGORY_SEARCH, "поиск каталога визарда резюме")
     if reason:
         return reason
-    _require(search).fill(area)
-    # The filtered tree re-renders asynchronously (React) after typing, and the
-    # PRE-filter tree is already populated — so waiting for "a first node" is
-    # satisfied instantly by the stale full catalog (живой замер #778: 14 узлов
-    # до fill, те же 14 сразу после wait_for, и лишь через ~500 мс остаётся 1).
-    # Reading .all() at that moment collects other professions and surfaces as a
-    # false "профессия «…» не найдена однозначно (совпадений: 0)". Poll the tree
-    # until the exact match appears instead of trusting a single read.
-    # get_by_text() resolves to the inner ``cell-text-content`` span on the
-    # current hh.ru DOM, while the identifier we need is on its wrapper.
-    # Match the wrapper by its own rendered text instead of assuming the
-    # attribute is attached to the text node.
-    deadline = time.monotonic() + filter_timeout
-    matches: list[Locator] = []
-    candidates: list[Locator] = []
-    # #920: единственный кандидат последнего КОНСИСТЕНТНОГО чтения дерева.
-    # Перезаписывается каждой итерацией опроса, поэтому после выхода из цикла
-    # отражает финальное состояние фильтра; рассинхрон длин обнуляет его —
-    # на снимке, у которого тексты и элементы от разных рендеров, принимать
-    # решение нельзя.
-    unique_candidate: Locator | None = None
-    # #920: кандидатом фильтра (не точным совпадением). Лог «принят» пишется
-    # только ПОСЛЕ всех гардов (leaf/expected_role_id/checked), перед submit —
-    # раньше он читался как «принято» даже в пути resume_position direct-save,
-    # где следом за ним идёт отказ по role_id (review #933).
+    # #920 (боевой прогон «Логопед» 2026-09-02): фильтр дерева hh.ru
+    # НЕСТАБИЛЕН — на один и тот же запрос (полное имя роли
+    # «Учитель, преподаватель, педагог») боевой прогон получил ровно один
+    # узел «Другое» (= «нет результатов фильтра»), а повтор живым repro тем
+    # же кодом и тем же запросом — точный лист tree-selector-item-132.
+    # Причина нестабильности на стороне hh.ru не установлена; пустой
+    # результат не отличим от гонки неприменённого фильтра, поэтому отказ
+    # класса «точное совпадение не найдено» переспрашивается ОДИН раз
+    # (полным повтором fill + опроса). Fail-closed не ослабляется: при
+    # стабильном отсутствии профессии повтор возвращает тот же отказ,
+    # а гарды #913/#920 и гард expected_role_id ниже выполняются на
+    # финальной попытке так же, как раньше.
     fuzzy_matched = False
-    while True:
-        tree = page.locator("[data-qa*='tree-selector-item-text-']")
-        try:
-            # #837 (боевой прогон 2026-08-30): читать candidates=.all() один
-            # раз, а затем построчно candidate.text_content() каждого элемента
-            # — race. Между .all() (снимок handle-ов) и последним .text_content()
-            # в цикле React успевает перерендерить дерево (переход от
-            # нефильтрованного списка категорий к отфильтрованному leaf), и
-            # .text_content() на уже отсоединённом handle висит полный
-            # дефолтный таймаут Playwright (30с), не пойман никаким try/except
-            # внутри цикла — падает наружу как generic "ошибка до сохранения
-            # резюме". all_text_contents() читает тексты ВСЕХ текущих
-            # совпадений селектора одним batch-вызовом Playwright, а не по
-            # одному хэндлу — устраняет основной источник race. candidates
-            # снимается сразу следом на том же (ещё живом на момент вызова)
-            # locator; любой PlaywrightError из обоих вызовов — тот же сигнал
-            # "дерево перерендерилось", не финальная ошибка.
-            texts = [normalize(text) for text in tree.all_text_contents()]
-            candidates = tree.all()
-        except PlaywrightError:
-            # Не финальная ошибка, а сигнал повторить опрос — тот же принцип,
-            # что уже применяется ниже к нулю/множеству совпадений: решение
-            # только после того, как список стабилизируется или истечёт
-            # дедлайн.
-            texts = []
-            candidates = []
-        unique_candidate = None
-        if len(candidates) != len(texts):
-            # all_text_contents() и .all() — два отдельных Playwright-вызова;
-            # React мог перерендерить дерево МЕЖДУ ними тоже (более узкое, но
-            # то же семейство окно, что и построчное чтение выше). Разная
-            # длина — надёжный сигнал рассинхрона: доверять индексному
-            # сопоставлению candidates[i]/texts[i] в этом случае нельзя,
-            # правильнее считать итерацию неудачной и повторить опрос, чем
-            # молча сопоставить чужой текст чужому элементу.
-            matches = []
-        else:
-            matches = [
-                candidate
-                for candidate, text in zip(candidates, texts, strict=True)
-                if text == normalize(area)
-            ]
-            if len(candidates) == 1:
-                unique_candidate = candidates[0]
-        if len(matches) == 1 or time.monotonic() >= deadline:
-            break
-        page.wait_for_timeout(250)
-    if not matches and unique_candidate is not None:
-        # #920: фильтр сузил дерево до единственного кандидата без точного
-        # равенства («Плотник» -> «Столяр, плотник»). Принять его, а не
-        # отказывать, можно только при ОБОИХ гардах: запрос содержится в
-        # имени листа (однозначность по-человечески, а не «фильтр вернул
-        # что-то одно») и лист не вырожденное «Другое» (#913: catch-all не
-        # выбирается никогда). Цикл выше не выходит рано на единственном
-        # кандидате НАМЕРЕННО: он ждёт дедлайн, чтобы поймать возможное
-        # точное совпадение, и заодно даёт фильтру досидеть до стабильного
-        # состояния — transient-снимок с одним узлом посреди перерендера не
-        # доживёт до дедлайна, не сменившись финальным деревом.
-        qa = unique_candidate.get_attribute("data-qa") or ""
-        id_match = re.search(r"tree-selector-item-text-(\d+)$", qa)
-        leaf_id = id_match.group(1) if id_match else ""
-        query = normalize(area)
-        if (
-            leaf_id
-            and leaf_id != OTHER_ROLE_ID
-            # Пустой запрос «содержится» в любом имени — не автопринимать
-            # (fail-closed; --area "" проходит argparse).
-            and query
-            and query in normalize(unique_candidate.text_content() or "")
-        ):
-            fuzzy_matched = True
-            matches = [unique_candidate]
-        else:
+    refusal = ""
+    matches: list[Locator] = []
+    for attempt in range(_FILTER_ATTEMPTS):
+        _require(search).fill(area)
+        # The filtered tree re-renders asynchronously (React) after typing, and the
+        # PRE-filter tree is already populated — so waiting for "a first node" is
+        # satisfied instantly by the stale full catalog (живой замер #778: 14 узлов
+        # до fill, те же 14 сразу после wait_for, и лишь через ~500 мс остаётся 1).
+        # Reading .all() at that moment collects other professions and surfaces as a
+        # false "профессия «…» не найдена однозначно (совпадений: 0)". Poll the tree
+        # until the exact match appears instead of trusting a single read.
+        # get_by_text() resolves to the inner ``cell-text-content`` span on the
+        # current hh.ru DOM, while the identifier we need is on its wrapper.
+        # Match the wrapper by its own rendered text instead of assuming the
+        # attribute is attached to the text node.
+        deadline = time.monotonic() + filter_timeout
+        candidates: list[Locator] = []
+        # #920: единственный кандидат последнего КОНСИСТЕНТНОГО чтения дерева.
+        # Перезаписывается каждой итерацией опроса, поэтому после выхода из цикла
+        # отражает финальное состояние фильтра; рассинхрон длин обнуляет его —
+        # на снимке, у которого тексты и элементы от разных рендеров, принимать
+        # решение нельзя.
+        unique_candidate: Locator | None = None
+        while True:
+            tree = page.locator("[data-qa*='tree-selector-item-text-']")
+            try:
+                # #837 (боевой прогон 2026-08-30): читать candidates=.all() один
+                # раз, а затем построчно candidate.text_content() каждого элемента
+                # — race. Между .all() (снимок handle-ов) и последним .text_content()
+                # в цикле React успевает перерендерить дерево (переход от
+                # нефильтрованного списка категорий к отфильтрованному leaf), и
+                # .text_content() на уже отсоединённом handle висит полный
+                # дефолтный таймаут Playwright (30с), не пойман никаким try/except
+                # внутри цикла — падает наружу как generic "ошибка до сохранения
+                # резюме". all_text_contents() читает тексты ВСЕХ текущих
+                # совпадений селектора одним batch-вызовом Playwright, а не по
+                # одному хэндлу — устраняет основной источник race. candidates
+                # снимается сразу следом на том же (ещё живом на момент вызова)
+                # locator; любой PlaywrightError из обоих вызовов — тот же сигнал
+                # "дерево перерендерилось", не финальная ошибка.
+                texts = [normalize(text) for text in tree.all_text_contents()]
+                candidates = tree.all()
+            except PlaywrightError:
+                # Не финальная ошибка, а сигнал повторить опрос — тот же принцип,
+                # что уже применяется ниже к нулю/множеству совпадений: решение
+                # только после того, как список стабилизируется или истечёт
+                # дедлайн.
+                texts = []
+                candidates = []
+            unique_candidate = None
+            if len(candidates) != len(texts):
+                # all_text_contents() и .all() — два отдельных Playwright-вызова;
+                # React мог перерендерить дерево МЕЖДУ ними тоже (более узкое, но
+                # то же семейство окно, что и построчное чтение выше). Разная
+                # длина — надёжный сигнал рассинхрона: доверять индексному
+                # сопоставлению candidates[i]/texts[i] в этом случае нельзя,
+                # правильнее считать итерацию неудачной и повторить опрос, чем
+                # молча сопоставить чужой текст чужому элементу.
+                matches = []
+            else:
+                matches = [
+                    candidate
+                    for candidate, text in zip(candidates, texts, strict=True)
+                    if text == normalize(area)
+                ]
+                if len(candidates) == 1:
+                    unique_candidate = candidates[0]
+            if len(matches) == 1 or time.monotonic() >= deadline:
+                break
+            page.wait_for_timeout(250)
+        if not matches and unique_candidate is not None:
+            # #920: фильтр сузил дерево до единственного кандидата без точного
+            # равенства («Плотник» -> «Столяр, плотник»). Принять его, а не
+            # отказывать, можно только при ОБОИХ гардах: запрос содержится в
+            # имени листа (однозначность по-человечески, а не «фильтр вернул
+            # что-то одно») и лист не вырожденное «Другое» (#913: catch-all не
+            # выбирается никогда). Цикл выше не выходит рано на единственном
+            # кандидате НАМЕРЕННО: он ждёт дедлайн, чтобы поймать возможное
+            # точное совпадение, и заодно даёт фильтру досидеть до стабильного
+            # состояния — transient-снимок с одним узлом посреди перерендера не
+            # доживёт до дедлайна, не сменившись финальным деревом.
+            qa = unique_candidate.get_attribute("data-qa") or ""
+            id_match = re.search(r"tree-selector-item-text-(\d+)$", qa)
+            leaf_id = id_match.group(1) if id_match else ""
+            query = normalize(area)
+            if (
+                leaf_id
+                and leaf_id != OTHER_ROLE_ID
+                # Пустой запрос «содержится» в любом имени — не автопринимать
+                # (fail-closed; --area "" проходит argparse).
+                and query
+                and query in normalize(unique_candidate.text_content() or "")
+            ):
+                fuzzy_matched = True
+                matches = [unique_candidate]
+                break
             # Единственный кандидат, но не принят: вырождение в «Другое»
             # (#913), пустой запрос либо запрос не содержится в имени листа.
             # Отказ ДО клика с явным указанием, с каким именем повторять, —
-            # прогон не тратит путь в никуда (#920, soft-fail).
+            # прогон не тратит путь в никуда (#920, soft-fail). На первой
+            # попытке — переспрос (см. комментарий о нестабильности фильтра
+            # выше), на последней — честный отказ.
             text = (unique_candidate.text_content() or "").strip()
             if leaf_id == OTHER_ROLE_ID:
-                return (
+                refusal = (
                     f"профессия «{area}» не найдена в каталоге; фильтр выродился "
                     f"в «Другое» (id {OTHER_ROLE_ID}) — повторите с точным именем листа"
                 )
-            return (
-                f"профессия «{area}» не найдена в каталоге; фильтр предлагает "
-                f"единственный лист «{text}» без точного совпадения — повторите с ним"
+            else:
+                refusal = (
+                    f"профессия «{area}» не найдена в каталоге; фильтр предлагает "
+                    f"единственный лист «{text}» без точного совпадения — повторите с ним"
+                )
+        elif not matches:
+            # #836: «не найдена однозначно (совпадений: 0)» не различало опечатку
+            # и пропажу значения из каталога hh.ru (боевой кейс — "Программист,
+            # разработчик" исчез из каталога создания резюме). Показать, что
+            # каталог реально предлагает по этому запросу, — тот же принцип, что
+            # #822/PR #832 закрепил для дерева специализаций резюме (сообщение
+            # различает «нет совпадений» и «неоднозначность»). Текст берётся из
+            # живого каталога как есть (не normalize(), который лоуеркейсит) —
+            # правило проекта "перечень профессий брать из живого каталога, не
+            # вшивать литералом".
+            seen: dict[str, None] = {}
+            for candidate in candidates:
+                text = (candidate.text_content() or "").strip()
+                if text:
+                    seen.setdefault(text, None)
+            offered = list(seen)
+            if offered:
+                options = "; ".join(offered)
+                refusal = (
+                    f"профессия «{area}» не найдена в каталоге визарда резюме; "
+                    f"дерево предлагает: {options}"
+                )
+            else:
+                refusal = f"профессия «{area}» не найдена в каталоге визарда резюме (список пуст)"
+        else:
+            break
+        if attempt + 1 < _FILTER_ATTEMPTS:
+            logger.info(
+                "фильтр каталога не дал точного совпадения для «%s» "
+                "(попытка %d из %d) — переспрашиваю",
+                area,
+                attempt + 1,
+                _FILTER_ATTEMPTS,
             )
-    if not matches:
-        # #836: «не найдена однозначно (совпадений: 0)» не различало опечатку
-        # и пропажу значения из каталога hh.ru (боевой кейс — "Программист,
-        # разработчик" исчез из каталога создания резюме). Показать, что
-        # каталог реально предлагает по этому запросу, — тот же принцип, что
-        # #822/PR #832 закрепил для дерева специализаций резюме (сообщение
-        # различает «нет совпадений» и «неоднозначность»). Текст берётся из
-        # живого каталога как есть (не normalize(), который лоуеркейсит) —
-        # правило проекта "перечень профессий брать из живого каталога, не
-        # вшивать литералом".
-        seen: dict[str, None] = {}
-        for candidate in candidates:
-            text = (candidate.text_content() or "").strip()
-            if text:
-                seen.setdefault(text, None)
-        offered = list(seen)
-        if offered:
-            options = "; ".join(offered)
-            return (
-                f"профессия «{area}» не найдена в каталоге визарда резюме; "
-                f"дерево предлагает: {options}"
-            )
-        return f"профессия «{area}» не найдена в каталоге визарда резюме (список пуст)"
+            continue
+        return refusal
     if len(matches) > 1:
         return (
             f"профессия «{area}» не найдена однозначно в каталоге визарда "

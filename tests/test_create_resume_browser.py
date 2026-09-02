@@ -1332,3 +1332,90 @@ def test_zero_suggestions_keep_catalog_tree_flow(monkeypatch, caplog):
     assert "подсказка" not in caplog.text, "о подсказках не должно быть ни слова"
     assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
     assert (RESUME_CREATION_POSITION, "") in page.filled, "поле всё равно очищается перед набором"
+
+
+# --- #920: ретрай фильтра дерева при его нестабильности ----------------------
+
+
+class RetryFilterLocator(HydrationLocator):
+    """Локатор, который на ВТОРОМ fill поисковой строки каталога меняет
+    листья дерева: первая попытка — «Другое» (пустой результат фильтра),
+    вторая — точный лист роли. Моделирует живой инцидент «Логопед»
+    (#920, боевой прогон 2026-09-02): тот же запрос боевой прогон получил
+    «Другое», repro — точный лист tree-selector-item-132."""
+
+    def fill(self, value):
+        super().fill(value)
+        if self.page.search_fills == 1:
+            self.page.set_leaves(
+                [TreeItem(ROLE_NAME, f"tree-selector-item-text-{ROLE_ID}", self.page)]
+            )
+        self.page.search_fills += 1
+
+
+class RetryFilterPage(HydrationRacePage):
+    TREE = "tree-selector-item-text-"
+
+    def __init__(self):
+        super().__init__(clicks_until_hydrated=0)
+        self.search_fills = 0
+        self.tree_reads = 0
+        self.set_leaves([TreeItem("Другое", "tree-selector-item-text-40", self)])
+
+    def set_leaves(self, leaves):
+        self._leaves = leaves
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if selector == RESUME_CREATION_CATEGORY_SEARCH:
+            return RetryFilterLocator(self, selector, count)
+        if self.TREE in selector:
+            return CompositeLeafLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+def test_transient_empty_filter_result_is_retried_and_recovers(caplog):
+    """Пустой результат фильтра («Другое») переспрашивается — и сходится.
+
+    Боевой прогон «Логопед» упал «фильтр выродился в Другое» там, где repro
+    тем же кодом и запросом получает точный лист 132: фильтр hh.ru
+    нестабилен (подтверждено и ручными тестами пользователя). Один полный
+    повтор fill+опрос обязан переживать такой транзиент.
+    """
+    import logging
+
+    page = RetryFilterPage()
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        reason = _real_select(
+            cast(PlaywrightPage, cast(object, page)),
+            ROLE_NAME,
+            filter_timeout=0.05,
+            expected_role_id=ROLE_ID,
+        )
+
+    assert reason == "", f"вторая попытка должна найти лист: {reason}"
+    assert page.search_fills == 2, "ровно один переспрос"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks
+    assert "переспрашиваю" in caplog.text
+
+
+def test_persistent_other_refusal_survives_retry_after_both_attempts():
+    """Стабильное отсутствие профессии — тот же отказ, обе попытки.
+
+    Ретрай не ослабляет fail-closed: фильтр, который стабильно отвечает
+    «Другое», даёт прежнее сообщение после исчерпания попыток.
+    """
+    page = DegenerateOtherPage()
+
+    reason = _real_select(
+        cast(PlaywrightPage, cast(object, page)),
+        "Инженер по тестированию",
+        filter_timeout=0.05,
+    )
+
+    assert "фильтр выродился" in reason
+    assert "Другое" in reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks
+    search_fills = [f for f in page.filled if f[0] == RESUME_CREATION_CATEGORY_SEARCH]
+    assert len(search_fills) == 2, "обе попытки перезаполняют поиск"
