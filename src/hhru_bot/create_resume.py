@@ -19,6 +19,7 @@ from .browser import (
 )
 from .external_forms.detect import normalize
 from .resume_ids import RESUME_ID_FROM_PATH_OR_QUERY_RE
+from .resume_limits import resume_limit_reason
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -40,10 +41,6 @@ logger = logging.getLogger("hhru_bot.create_resume")
 # задержки, но честный (не бесконечный) дедлайн на случай, если чекбокс
 # реально не переключился.
 _CHECKBOX_CONFIRM_TIMEOUT = 5.0
-_RESUME_LIMIT_REASON = (
-    "лимит резюме hh.ru (~20) достигнут или кнопка создания недоступна; "
-    "удалите ненужные резюме и повторите попытку"
-)
 # #913 (battle2, живой дамп): «Другое» — вырожденный catch-all лист каталога
 # с фиксированным id; id-пространство дерева совместимо с каталогом поиска
 # (подтверждено live: 96 <-> tree-selector-item-96). Автопринятие единственного
@@ -657,8 +654,9 @@ def create_resume_on_hh(
         # На лимите hh.ru кнопку не рендерит вовсе. Не маскировать этот
         # наблюдаемый отказ под проблему гидрации/сети: создание без кнопки
         # невозможно, поэтому остаёмся fail-closed.
-        if page.locator(RESUME_CREATE_BUTTON).count() == 0:
-            return CreateResumeResult(False, reason=_RESUME_LIMIT_REASON)
+        limit_reason = resume_limit_reason(page.locator(RESUME_CREATE_BUTTON))
+        if limit_reason:
+            return CreateResumeResult(False, reason=limit_reason)
         return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
     # Дубль-гард (#304, Codex cycles 2/3) вынесен в resume_titles (#911):
     # должности в аккаунте уникальны, дубликат надо отклонять ДО клика —
@@ -675,8 +673,9 @@ def create_resume_on_hh(
     # count() подтверждает только наличие узла. При исчерпанном лимите hh.ru
     # узел остаётся в DOM, но становится disabled; клик по нему даёт сетевую
     # ошибку и скрывает настоящую причину.
-    if _require(create_button).is_disabled():
-        return CreateResumeResult(False, reason=_RESUME_LIMIT_REASON)
+    limit_reason = resume_limit_reason(create_button)
+    if limit_reason:
+        return CreateResumeResult(False, reason=limit_reason)
 
     if dry_run:
         goto_hh(page, CREATION_URL)

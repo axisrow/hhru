@@ -238,6 +238,17 @@ def test_resume_limit_is_reported_before_create_click(monkeypatch, html):
     assert RESUME_CREATE_BUTTON not in page.clicks
 
 
+def test_disabled_create_button_is_terminal_quota_failure(monkeypatch):
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = HtmlCreateButtonPage("<button data-qa='mainmenu_createResume' disabled>Создать</button>")
+
+    result = _run(page)
+
+    assert not result.success
+    assert result.reason.startswith("лимит резюме исчерпан")
+    assert RESUME_CREATE_BUTTON not in page.clicks
+
+
 def test_active_create_button_keeps_existing_behavior(monkeypatch):
     """An enabled button still enters the existing wizard flow."""
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
