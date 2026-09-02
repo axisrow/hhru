@@ -1452,6 +1452,53 @@ def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
     assert "list-resumes" in result.reason
 
 
+class _SequencedSuggestPage:
+    """Попап подсказок с поздним ответом shard'а (гонка cycle 3 review).
+
+    Первые два чтения дают [A]; между вторым и третьим в capture
+    доставляется payload с «B», и только после этого попап доворачивается
+    до [A, B] — ровно сценарий «два одинаковых снимка предшествуют
+    расширению списка».
+    """
+
+    def __init__(self, capture):
+        self._capture = capture
+        self._reads = 0
+        self._late_dispatched = False
+        self.option_texts = ["A"]
+
+    def locator(self, selector):
+        return self
+
+    def all_text_contents(self):
+        self._reads += 1
+        if self._reads == 2 and not self._late_dispatched:
+            self._late_dispatched = True
+            self._capture(_FakeSuggestResponse(_payload("B", "55", "Роль B")))
+        if self._reads >= 3:
+            self.option_texts = ["A", "B"]
+        return list(self.option_texts)
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_late_shard_response_invalidates_stable_suggestion_snapshot():
+    """Поздний ответ shard'а сбрасывает стабильность попапа (#933 cycle 3).
+
+    Два одинаковых непустых снимка подряд доказывают финальность только
+    пока не пришёл новый ответ shard'а: [A],[A] перед приходом payload с
+    «B» — не финал; решение обязано дождаться [A,B] (а несколько
+    подсказок автоматически не берутся).
+    """
+    capture = create._SuggestionCapture()
+    page = _SequencedSuggestPage(capture)
+
+    texts = create._poll_suggestion_texts(page, capture, timeout=5.0)
+
+    assert texts == ["A", "B"]
+
+
 def test_conflicting_payload_roles_disable_suggestion_acceptance(monkeypatch, caplog):
     """Расхождение маппингов между ответами shard'а — неоднозначность.
 

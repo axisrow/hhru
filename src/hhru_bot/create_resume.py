@@ -493,12 +493,19 @@ def _read_suggestion_texts(page: Page) -> list[str]:
         return []
 
 
-def _poll_suggestion_texts(page: Page, *, timeout: float | None = None) -> list[str]:
+def _poll_suggestion_texts(
+    page: Page, capture: _SuggestionCapture, *, timeout: float | None = None
+) -> list[str]:
     """Опрос опций подсказки до двух одинаковых непустых снимков подряд (#920).
 
     Ответ shard'а и рендер попапа асинхронны: первые чтения видят пустой или
     недостроенный попап, поэтому решение принимается только по стабильному
     снимку (тот же принцип консистентного снимка, что #837 у дерева).
+    Стабильность отсчитывается от последнего полученного ответа shard'а:
+    новый payload между чтениями означает, что прежние снимки описывали
+    недостроенный список — счётчик стабильности сбрасывается (#933 cycle 3:
+    гонка «[A],[A] -> пришёл payload -> [A,B]» принимала бы единственную
+    подсказку из неполного перечня).
     Пустой список — валидный итог: подсказок по запросу может не быть вовсе,
     тогда выбор остаётся за деревом каталога.
     """
@@ -509,8 +516,12 @@ def _poll_suggestion_texts(page: Page, *, timeout: float | None = None) -> list[
         timeout = _SUGGEST_POLL_TIMEOUT
     deadline = time.monotonic() + timeout
     previous: list[str] | None = None
+    seen_payloads = len(capture.payloads)
     while True:
         texts = _read_suggestion_texts(page)
+        if len(capture.payloads) != seen_payloads:
+            seen_payloads = len(capture.payloads)
+            previous = None
         if texts and texts == previous:
             return texts
         previous = texts
@@ -550,7 +561,7 @@ def _resolve_leaf_by_suggestions(
     try:
         position.fill("")
         position.press_sequentially(area, delay=_SUGGEST_TYPE_DELAY_MS)
-        texts = _poll_suggestion_texts(page)
+        texts = _poll_suggestion_texts(page, capture)
         if len(texts) > 1:
             logger.info(
                 "каталог предлагает несколько подсказок для «%s»: %s; "
