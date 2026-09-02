@@ -651,9 +651,8 @@ def create_resume_on_hh(
     try:
         page.locator(RESUME_CREATE_BUTTON).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
-        # На лимите hh.ru кнопку не рендерит вовсе. Не маскировать этот
-        # наблюдаемый отказ под проблему гидрации/сети: создание без кнопки
-        # невозможно, поэтому остаёмся fail-closed.
+        # Отсутствие кнопки не доказывает лимит hh.ru: это также может быть
+        # сбой чтения/гидрации. Классифицируем состояние строго fail-closed.
         limit_reason = resume_limit_reason(page.locator(RESUME_CREATE_BUTTON))
         if limit_reason:
             return CreateResumeResult(False, reason=limit_reason)
@@ -670,9 +669,8 @@ def create_resume_on_hh(
     create_button, reason = _one(page, RESUME_CREATE_BUTTON, "кнопка создания резюме")
     if reason:
         return CreateResumeResult(False, reason=reason)
-    # count() подтверждает только наличие узла. При исчерпанном лимите hh.ru
-    # узел остаётся в DOM, но становится disabled; клик по нему даёт сетевую
-    # ошибку и скрывает настоящую причину.
+    # count()/disabled не являются явным маркером квоты: при сетевом сбое
+    # они дают те же значения. Не называем это исчерпанием без N/M-маркера.
     limit_reason = resume_limit_reason(create_button)
     if limit_reason:
         return CreateResumeResult(False, reason=limit_reason)

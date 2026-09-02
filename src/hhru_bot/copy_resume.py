@@ -54,7 +54,7 @@ from .resume_ids import (
 from .resume_ids import (
     page_card_hashes as _card_hashes,
 )
-from .resume_limits import RESUME_LIMIT_REASON, resume_limit_reason
+from .resume_limits import RESUME_QUOTA_UNREADABLE_REASON, resume_limit_reason
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -744,7 +744,7 @@ def copy_resume_on_hh(
         # Отсутствие действия при уже завершившемся client render — не stall и
         # не повод перезагружать страницу (например, достигнут лимит резюме).
         if (
-            failure.startswith(RESUME_LIMIT_REASON)
+            failure.startswith(RESUME_QUOTA_UNREADABLE_REASON)
             or failure.startswith("duplicate_action_missing:")
             or "неоднозначно" in failure
         ):

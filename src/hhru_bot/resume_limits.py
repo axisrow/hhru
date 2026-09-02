@@ -4,20 +4,18 @@ from __future__ import annotations
 
 from playwright.sync_api import Locator
 
-RESUME_LIMIT_REASON = "лимит резюме исчерпан; удалите ненужные резюме и повторите попытку"
+RESUME_QUOTA_UNREADABLE_REASON = "квоту прочитать не удалось — повторите попытку"
+RESUME_LIMIT_REASON = RESUME_QUOTA_UNREADABLE_REASON
 
 
 def resume_limit_reason(action: Locator) -> str:
-    """Return the quota failure when an action is absent or disabled.
+    """Return an unreadable-quota failure unless the action is unambiguous.
 
-    Callers must invoke this only after the relevant page has been hydrated.
-    Before that point an absent action is merely an indeterminate DOM state;
-    treating it as a quota would hide selector or loading failures.  More than
-    one action is likewise left to the caller's ambiguity check.
+    An absent or disabled action can be caused by a network/rendering failure.
+    An exhausted result must come from an explicit hh.ru quota marker with
+    parsed N/M values, never from this fallback.
     """
     count = action.count()
-    if count == 0:
-        return RESUME_LIMIT_REASON
-    if count == 1 and action.first.is_disabled():
-        return RESUME_LIMIT_REASON
+    if count != 1 or action.first.is_disabled():
+        return RESUME_QUOTA_UNREADABLE_REASON
     return ""
