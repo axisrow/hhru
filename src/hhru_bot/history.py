@@ -1754,6 +1754,36 @@ class History:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def adaptive_report_facts(self) -> dict[str, list[dict]]:
+        """Return the read-only rows needed by the adaptive-pool report.
+
+        This deliberately does not reuse ``list_actions``: its default limit is
+        a presentation concern and would silently truncate the metric.
+        """
+        with self._connect() as conn:
+            vacancies = [
+                dict(row)
+                for row in conn.execute(
+                    """SELECT vacancy_id, title, company, search_query, vacancy_text
+                       FROM vacancies_seen ORDER BY vacancy_id, last_seen_at DESC"""
+                )
+            ]
+            actions = [
+                dict(row)
+                for row in conn.execute(
+                    """SELECT resume_id, vacancy_id, action, status
+                       FROM actions WHERE action = 'apply'"""
+                )
+            ]
+            responses = [
+                dict(row)
+                for row in conn.execute("SELECT resume_id, vacancy_id, status FROM responses")
+            ]
+            views = [
+                dict(row) for row in conn.execute("SELECT resume_id, viewed_at FROM resume_views")
+            ]
+        return {"vacancies": vacancies, "actions": actions, "responses": responses, "views": views}
+
     # --- Мониторинг ответов работодателей (#12, Этап 2) ------------------------
     # Новые методы в конец файла (паттерн with self._connect(), существующие
     # не трогаем). responses — отдельная таблица (см. SCHEMA), хранит ПОСЛЕДНЕЕ
