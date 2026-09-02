@@ -18,7 +18,7 @@ CURL_BIN="${CURL_BIN:-curl}"
 
 case "${1:-}" in
     "") PROBE_CHANNEL="direct"; CURL_ROUTE="--noproxy '*'" ;;
-    --via-proxy) PROBE_CHANNEL="via-proxy"; CURL_ROUTE="environment proxy" ;;
+    --via-proxy) PROBE_CHANNEL="via-proxy"; CURL_ROUTE="environment proxy (NO_PROXY ignored)" ;;
     *) echo "usage: $0 [--via-proxy]" >&2; exit 2 ;;
 esac
 
@@ -41,7 +41,7 @@ probe() {
             -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n%{http_code} %{time_total}" \
             "$url") || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "transport_fail"; return; }
     else
-        result=$("$CURL_BIN" -sS -o /dev/null --max-time "$TIMEOUT" \
+        result=$("$CURL_BIN" --noproxy '' -sS -o /dev/null --max-time "$TIMEOUT" \
             -w "http_code=%{http_code} time_connect=%{time_connect}s time_total=%{time_total}s size=%{size_download}\n%{http_code} %{time_total}" \
             "$url") || { echo "curl failed (timeout ${TIMEOUT}s exceeded or connection error)"; echo "transport_fail"; return; }
     fi

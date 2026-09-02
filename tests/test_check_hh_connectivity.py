@@ -15,7 +15,7 @@ def _run(tmp_path, *args, **extra_env):
     fake_curl = tmp_path / "curl"
     fake_curl.write_text(
         "#!/bin/sh\n"
-        'printf \'%s\\n\' "$*" >> "$CURL_LOG"\n'
+        'printf \'[%s]\\n\' "$@" >> "$CURL_LOG"\n'
         "printf 'http_code=200 time_connect=0.01s time_total=0.10s size=1\\n200 0.10'\n"
     )
     fake_curl.chmod(0o755)
@@ -40,6 +40,7 @@ def test_direct_probe_is_invariant_to_proxy_environment(tmp_path):
         HTTP_PROXY="http://127.0.0.1:8118",
         HTTPS_PROXY="http://127.0.0.1:8118",
         ALL_PROXY="http://127.0.0.1:8118",
+        NO_PROXY="hh.ru,*",
     )
 
     def result_lines(output):
@@ -50,7 +51,8 @@ def test_direct_probe_is_invariant_to_proxy_environment(tmp_path):
         ]
 
     assert result_lines(without_proxy) == result_lines(with_proxy)
-    assert all("--noproxy *" in line for line in (tmp_path / "curl.log").read_text().splitlines())
+    curl_args = (tmp_path / "curl.log").read_text().splitlines()
+    assert "[--noproxy]" in curl_args and "[*]" in curl_args
 
 
 def test_via_proxy_is_explicit_mode(tmp_path):
@@ -59,6 +61,5 @@ def test_via_proxy_is_explicit_mode(tmp_path):
     assert "КАНАЛ ПРОБЫ: via-proxy" in output
     assert "HTTP(S)_PROXY/ALL_PROXY" in output
     assert "ВЕРДИКТ: большинство baseline быстрые" in output
-    assert all(
-        "--noproxy *" not in line for line in (tmp_path / "curl.log").read_text().splitlines()
-    )
+    curl_args = (tmp_path / "curl.log").read_text().splitlines()
+    assert "[--noproxy]" in curl_args and "[]" in curl_args
