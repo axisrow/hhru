@@ -16,8 +16,9 @@ def register(subparsers) -> None:
             "Открывает визард hh.ru и создаёт новый черновик резюме. "
             "Один запуск создаёт одно резюме с одной основной профессией; "
             "для нескольких профессий нужны отдельные резюме и отдельные запуски. "
-            "С --allow-unresolved-area можно явно создать подтверждённый черновик "
-            "без профессии, если area отсутствует в каталоге. "
+            "С --allow-unresolved-area, если area отсутствует в каталоге, черновик "
+            "создаётся с ролью-плейсхолдером «Другое» — профессию затем заменяют "
+            "вручную через «Дополнить». "
             "WRITE-команда: по умолчанию только dry-run; боевой запуск требует "
             "--force или интерактивного подтверждения."
         ),
@@ -40,7 +41,8 @@ def register(subparsers) -> None:
         "--allow-unresolved",
         action="store_true",
         help=(
-            "Разрешить черновик без профессии, если area не найдена в каталоге "
+            "Если area не найдена в каталоге — создать черновик с ролью-"
+            "плейсхолдером «Другое» (id 40), профессия заменяется вручную "
             "(синоним: --allow-unresolved)"
         ),
     )
@@ -114,7 +116,7 @@ def run(args: argparse.Namespace):
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
         else:
-            detail = f" {result.reason}." if "без профессии" in result.reason else ""
+            detail = f" {result.reason}." if "профессия НЕ установлена" in result.reason else ""
             print(f"[OK] Черновик резюме создан.{detail} Новый resume_id: {result.new_resume_id}")
             print(format_config_snippet(result.new_resume_id))
         return False

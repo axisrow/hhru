@@ -46,6 +46,12 @@ _CHECKBOX_CONFIRM_TIMEOUT = 5.0
 # (подтверждено live: 96 <-> tree-selector-item-96). Автопринятие единственного
 # кандидата фильтра (#920) никогда не выбирает его — это отказ, а не выбор.
 OTHER_ROLE_ID = "40"
+# #936 (ручной сценарий владельца аккаунта, живой факт 2026-09-03): имя листа
+# id 40 в дереве каталога; выбор «Другое» + продолжение — рабочий способ
+# завершить визард профессией вне каталога (роль экрана закрывается
+# плейсхолдером, черновик материализуется, профессию владелец меняет вручную
+# через «Дополнить»).
+OTHER_ROLE_LABEL = "Другое"
 
 # #920 этап 2 (живая диагностика 2026-09-02): на ПЕРВОМ экране визарда поле
 # должности — combobox с подсказками автодополнения hh.ru; попап открывается
@@ -71,8 +77,6 @@ _FILTER_ATTEMPTS = 2
 _SUGGEST_TYPE_DELAY_MS = 40
 _SUGGEST_POLL_TIMEOUT = 6.0
 _SUGGEST_POLL_INTERVAL_MS = 250
-_UNRESOLVED_CONFIRM_ATTEMPTS = 3
-_UNRESOLVED_CONFIRM_DELAY_MS = 1000
 
 
 @dataclass
@@ -640,65 +644,13 @@ def _is_unresolved_area_reason(reason: str) -> bool:
     )
 
 
-def _confirm_unresolved_draft(page: Page, title: str) -> tuple[str, str]:
-    """Confirm the draft materialized by the first wizard NEXT (#936).
-
-    The catalog is deliberately not submitted without a role.  Instead, the
-    full live list is read back and the matching card is opened read-only; the
-    identity-bound bootstrap must still say that ``professional_role`` is the
-    next incomplete screen and contain no professional roles.
-    """
-    from .browser import PageStateIndeterminate
-    from .copy_resume import ResumeListIndeterminate, list_resume_cards
-    from .resume_state import parse_resume_state
-
-    last_reason = "черновик без профессии не найден в списке резюме"
-    for _attempt in range(_UNRESOLVED_CONFIRM_ATTEMPTS):
-        # Give hh.ru's first-NEXT autosave a short life before navigating away;
-        # subsequent attempts add the same bounded grace between list reads.
-        page.wait_for_timeout(_UNRESOLVED_CONFIRM_DELAY_MS)
-        try:
-            goto_hh(page, RESUMES_FULL_LIST_URL)
-            cards = list_resume_cards(page, navigate=False, url=RESUMES_FULL_LIST_URL)
-        except (PlaywrightError, ResumeListIndeterminate) as exc:
-            last_reason = f"не удалось прочитать список резюме для подтверждения: {exc}"
-            continue
-        matches = [card for card in cards if normalize(card.title) == normalize(title)]
-        if len(matches) != 1:
-            last_reason = (
-                f"черновик с title «{title}» не подтверждён однозначно в списке "
-                f"резюме (совпадений: {len(matches)})"
-            )
-            continue
-        card = matches[0]
-        if card.status != "not_finished":
-            last_reason = f"резюме с title «{title}» найдено, но это не черновик"
-            continue
-        try:
-            from .browser import open_confirmed_resume
-
-            open_confirmed_resume(page, card.resume_id)
-            state = parse_resume_state(page.content(), card.resume_id)
-        except (PlaywrightError, PageStateIndeterminate, ValueError) as exc:
-            last_reason = f"состояние черновика «{title}» не подтверждено: {exc}"
-            continue
-        if state.status is None:
-            last_reason = f"запись черновика «{title}» не найдена в состоянии резюме"
-            continue
-        if state.status != "not_finished":
-            last_reason = f"состояние черновика «{title}» изменилось: status={state.status}"
-            continue
-        if state.next_incomplete_screen_id != "professional_role":
-            last_reason = (
-                f"черновик «{title}» не подтверждён как без профессии: "
-                f"nextIncompleteScreenId={state.next_incomplete_screen_id}"
-            )
-            continue
-        if state.professional_roles:
-            last_reason = f"черновик «{title}» уже содержит профессию; запись запрещена"
-            continue
-        return card.resume_id, "черновик создан без профессии; роль не установлена"
-    return "", last_reason
+def _placeholder_role_success_reason() -> str:
+    """Итог [OK] для флагового пути: роль закрыта плейсхолдером, не профессией."""
+    return (
+        "черновик создан; профессия НЕ установлена — назначена "
+        f"роль-плейсхолдер «{OTHER_ROLE_LABEL}» (id {OTHER_ROLE_ID}), "
+        "замените её на реальную вручную через «Дополнить»"
+    )
 
 
 def create_resume_on_hh(
@@ -792,30 +744,22 @@ def create_resume_on_hh(
     select_job = select_job_locator.first
     if dry_run:
         detail = (
-            "план: черновик без профессии"
+            "план: если профессия не резолвится в каталоге — черновик с "
+            f"ролью-плейсхолдером «{OTHER_ROLE_LABEL}» (id {OTHER_ROLE_ID})"
             if allow_unresolved_area
             else "визард найден, клики не выполнены"
         )
         return CreateResumeResult(True, reason=f"dry-run; {detail}")
 
     # Шаги ДО точки невозврата: классификация исходов CLI здесь — обычный
-    # failed/retry (uncertain начинается с финального NEXT, #777, тот же
-    # принцип, что у before_click-seam в CLAUDE.md, раздел 6). НО мутация
-    # уже возможна: первый «Продолжить» ниже МОЖЕТ материализовать черновик
-    # (#920, живой факт 2026-09-02), поэтому любой отказ после него обязан
-    # предупреждать о фантоме — включая неожиданные PlaywrightError.
+    # failed/retry. #936 (боевой прогон 2026-09-03): первый «Продолжить» с
+    # ПУСТЫМ каталогом НЕ материализует черновик (attempted=1, live-проверки
+    # списка сразу и через 5 минут — следа нет); мутирующий клик — финальный
+    # NEXT после каталога, и before_click-seam стоит ровно на нём для обоих
+    # путей. Фантом-подсказка при отказах сохраняется консервативно (#920).
 
-    # Первый try — ДО мутирующего клика: сущности черновика появиться не из
-    # чего, фантом-подсказка здесь ложный сигнал (#933 cycle 2), поэтому
-    # except без неё.
-    first_next_reserved = False
-
-    def reserve_first_next() -> None:
-        nonlocal first_next_reserved
-        first_next_reserved = True
-        if before_click is not None:
-            before_click()
-
+    # Первый try — до мутирующего клика: сущности черновика появиться не из
+    # чего, фантом-подсказка здесь ложный сигнал (#933 cycle 2).
     try:
         switch_reason = _click_until_screen_switches(page, select_job, RESUME_CREATION_POSITION)
         if switch_reason:
@@ -836,49 +780,50 @@ def create_resume_on_hh(
         # see count=0 before the SPA hydrates (same #304 race guarded above).
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
         dismiss_cookie_banner(page)
-        # With --allow-unresolved-area this NEXT is the potentially
-        # materializing mutation, so reserve it before clicking.  The final
-        # NEXT is skipped on the unresolved path and must not reserve twice.
-        reason = _click_one(
-            page,
-            RESUME_CREATION_NEXT,
-            "кнопка продолжения визарда",
-            before_click=reserve_first_next if allow_unresolved_area else None,
-        )
+        reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
     except PlaywrightError as exc:
-        return CreateResumeResult(
-            False,
-            reason=f"ошибка до сохранения резюме: {exc}",
-            uncertain=first_next_reserved,
-        )
+        return CreateResumeResult(False, reason=f"ошибка до сохранения резюме: {exc}")
 
-    # Второй try — ПОСЛЕ первого NEXT: мутация уже возможна (#920), любой
-    # отказ отсюда обязан предупреждать о фантоме (см. _phantom_draft_hint).
+    # Второй try — выбор листа каталога. #936 (ручной сценарий владельца
+    # аккаунта, 2026-09-03): рабочий способ провести профессию вне каталога —
+    # выбрать в дереве плейсхолдер «Другое» (id 40): экран professional_role
+    # закрывается плейсхолдером, черновик материализуется финальным NEXT,
+    # реальную профессию владелец ставит вручную через «Дополнить». Прежняя
+    # конструкция «NEXT с пустым каталогом + подтверждение по списку» живо
+    # опровергнута: следа нет (боевой прогон 2026-09-03).
+    placeholder_role = False
     try:
         category_reason = select_wizard_catalog_leaf(
             page, leaf_area, expected_role_id=expected_leaf_id
         )
         if category_reason:
-            if allow_unresolved_area and _is_unresolved_area_reason(category_reason):
-                new_resume_id, confirmation = _confirm_unresolved_draft(page, title)
-                if new_resume_id:
-                    return CreateResumeResult(
-                        True, new_resume_id=new_resume_id, reason=confirmation
-                    )
-                return CreateResumeResult(False, reason=confirmation, uncertain=True)
-            # #920 (живой факт 2026-09-02): молчаливый [FAIL] приучал бы к
-            # «на hh.ru ничего нет» — см. комментарий над try выше.
-            return CreateResumeResult(
-                False, reason=f"{category_reason}{_phantom_draft_hint(title)}"
+            if not (allow_unresolved_area and _is_unresolved_area_reason(category_reason)):
+                # #920 (живой факт 2026-09-02): молчаливый [FAIL] приучал бы к
+                # «на hh.ru ничего нет» — предупреждаем о возможном фантоме.
+                return CreateResumeResult(
+                    False, reason=f"{category_reason}{_phantom_draft_hint(title)}"
+                )
+            logger.info(
+                "профессия «%s» вне каталога, разрешено --allow-unresolved-area — "
+                "выбираю роль-плейсхолдер «%s» (id %s)",
+                area,
+                OTHER_ROLE_LABEL,
+                OTHER_ROLE_ID,
             )
+            category_reason = select_wizard_catalog_leaf(
+                page, OTHER_ROLE_LABEL, expected_role_id=OTHER_ROLE_ID
+            )
+            if category_reason:
+                return CreateResumeResult(
+                    False, reason=f"{category_reason}{_phantom_draft_hint(title)}"
+                )
+            placeholder_role = True
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
         return CreateResumeResult(
-            False,
-            reason=f"ошибка до сохранения резюме: {exc}{_phantom_draft_hint(title)}",
-            uncertain=allow_unresolved_area,
+            False, reason=f"ошибка до сохранения резюме: {exc}{_phantom_draft_hint(title)}"
         )
 
     # Точка невозврата: клик ниже создаёт резюме, поэтому ЛЮБОЙ сбой начиная
@@ -889,7 +834,7 @@ def create_resume_on_hh(
             page,
             RESUME_CREATION_NEXT,
             "кнопка продолжения после каталога",
-            before_click=None if allow_unresolved_area else before_click,
+            before_click=before_click,
         )
         if reason:
             return CreateResumeResult(False, reason=reason)
@@ -902,5 +847,11 @@ def create_resume_on_hh(
     if not match:
         return CreateResumeResult(
             False, reason="новый resume_id не подтверждён после сохранения", uncertain=True
+        )
+    if placeholder_role:
+        return CreateResumeResult(
+            True,
+            new_resume_id=match.group(1),
+            reason=_placeholder_role_success_reason(),
         )
     return CreateResumeResult(True, new_resume_id=match.group(1), reason="черновик создан")
