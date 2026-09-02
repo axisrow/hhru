@@ -54,6 +54,7 @@ from .resume_ids import (
 from .resume_ids import (
     page_card_hashes as _card_hashes,
 )
+from .resume_limits import resume_limit_reason
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -297,6 +298,9 @@ def _wait_duplicate_action(
 
         duplicate_count = duplicate.count()
         if duplicate_count == 1:
+            limit_reason = resume_limit_reason(duplicate)
+            if limit_reason:
+                return None, limit_reason
             observer.confirm_ready()
             return duplicate.first, ""
         if duplicate_count > 1:
@@ -308,9 +312,20 @@ def _wait_duplicate_action(
 
         now = _monotonic()
         if now >= absolute_deadline:
+            if ready_seen:
+                limit_reason = resume_limit_reason(duplicate)
+                if limit_reason:
+                    return None, limit_reason
             return None, observer.failure_reason(absolute=True)
         if now - observer.last_progress_at >= PROFILE_STALL_SECONDS:
             if ready_seen:
+                # Once the profile-ready marker was seen, a persistently
+                # missing duplicate action is the quota signal documented by
+                # hh.ru, not a stalled profile.  Keep this check shared with
+                # create-resume, including disabled actions.
+                limit_reason = resume_limit_reason(duplicate)
+                if limit_reason:
+                    return None, limit_reason
                 return None, observer.failure_reason()
             return None, observer.failure_reason(stalled=True)
         page.wait_for_timeout(PROFILE_POLL_MS)
@@ -721,7 +736,11 @@ def copy_resume_on_hh(
 
         # Отсутствие действия при уже завершившемся client render — не stall и
         # не повод перезагружать страницу (например, достигнут лимит резюме).
-        if failure.startswith("duplicate_action_missing:") or "неоднозначно" in failure:
+        if (
+            failure.startswith("лимит резюме исчерпан")
+            or failure.startswith("duplicate_action_missing:")
+            or "неоднозначно" in failure
+        ):
             return CopyResumeResult(resume.id, False, reason=failure)
 
         if attempt == 1:

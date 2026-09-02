@@ -116,6 +116,9 @@ class StubLocator:
     def get_attribute(self, name):
         return None
 
+    def is_disabled(self):
+        return False
+
 
 class StubPage:
     """Конфигурируемый минимум Page для copy_resume_on_hh.
@@ -426,8 +429,7 @@ def test_duplicate_button_missing_fails(monkeypatch):
     _patch_env(monkeypatch, page)
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
     assert not result.success
-    assert "Дублировать" in result.reason
-    assert result.reason.startswith("duplicate_action_missing:")
+    assert "лимит резюме исчерпан" in result.reason
     # Client render подтверждён optional-маркером: отсутствие action — это не
     # stall и не повод для recovery reload (возможен лимит резюме hh.ru).
     assert page.reloads == []
@@ -520,7 +522,7 @@ def test_recovered_hydration_error_does_not_poison_later_failure(monkeypatch):
     result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
 
     assert not result.success
-    assert result.reason.startswith("duplicate_action_missing:")
+    assert "лимит резюме исчерпан" in result.reason
     assert "hydration_error" not in result.reason
 
 
