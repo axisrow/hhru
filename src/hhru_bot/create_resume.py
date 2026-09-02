@@ -653,8 +653,21 @@ def create_resume_on_hh(
     except PlaywrightError as exc:
         # Отсутствие кнопки не доказывает лимит hh.ru: это также может быть
         # сбой чтения/гидрации. Классифицируем состояние строго fail-closed.
-        limit_reason = resume_limit_reason(page.locator(RESUME_CREATE_BUTTON))
+        create_button_locator = page.locator(RESUME_CREATE_BUTTON)
+        limit_reason = resume_limit_reason(create_button_locator)
         if limit_reason:
+            # Preserve the actionable Playwright diagnostic when the selector
+            # is ambiguous: strict count() failure is still unreadable quota,
+            # but hiding the exception makes selector drift unnecessarily hard
+            # to diagnose.
+            if create_button_locator.count() > 1:
+                return CreateResumeResult(
+                    False,
+                    reason=(
+                        f"{limit_reason} (кнопка создания неоднозначна: "
+                        f"{create_button_locator.count()} совпадений; ошибка: {exc})"
+                    ),
+                )
             return CreateResumeResult(False, reason=limit_reason)
         return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
     # Дубль-гард (#304, Codex cycles 2/3) вынесен в resume_titles (#911):
