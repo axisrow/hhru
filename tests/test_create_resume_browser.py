@@ -224,8 +224,8 @@ def _run(page, before_click=None):
         "<main>список резюме</main>",
     ],
 )
-def test_resume_limit_is_reported_before_create_click(monkeypatch, html):
-    """The list HTML exposes the hh.ru resume limit as disabled/missing button."""
+def test_unreadable_quota_is_reported_before_create_click(monkeypatch, html):
+    """Disabled/missing list action leaves the hh.ru quota unreadable."""
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
     page = HtmlCreateButtonPage(html)
 
@@ -233,19 +233,19 @@ def test_resume_limit_is_reported_before_create_click(monkeypatch, html):
 
     assert not result.success
     assert not result.uncertain
-    assert "лимит" in result.reason.lower()
-    assert "удал" in result.reason.lower()
+    assert "квоту прочитать не удалось" in result.reason
+    assert "исчерпан" not in result.reason
     assert RESUME_CREATE_BUTTON not in page.clicks
 
 
-def test_disabled_create_button_is_terminal_quota_failure(monkeypatch):
+def test_disabled_create_button_is_unreadable_quota_failure(monkeypatch):
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
     page = HtmlCreateButtonPage("<button data-qa='mainmenu_createResume' disabled>Создать</button>")
 
     result = _run(page)
 
     assert not result.success
-    assert result.reason.startswith("лимит резюме исчерпан")
+    assert result.reason.startswith("квоту прочитать не удалось")
     assert RESUME_CREATE_BUTTON not in page.clicks
 
 

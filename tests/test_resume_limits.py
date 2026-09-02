@@ -2,7 +2,7 @@
 
 import pytest
 
-from hhru_bot.resume_limits import RESUME_LIMIT_REASON, resume_limit_reason
+from hhru_bot.resume_limits import RESUME_QUOTA_UNREADABLE_REASON, resume_limit_reason
 
 pytestmark = pytest.mark.unit
 
@@ -20,9 +20,11 @@ class _Locator:
         return self._disabled
 
 
-@pytest.mark.parametrize("locator", [_Locator(0), _Locator(1, disabled=True)])
-def test_absent_or_disabled_action_reports_quota(locator):
-    assert resume_limit_reason(locator) == RESUME_LIMIT_REASON
+@pytest.mark.parametrize("locator", [_Locator(0), _Locator(1, disabled=True), _Locator(2)])
+def test_unreadable_action_never_reports_exhausted_quota(locator):
+    reason = resume_limit_reason(locator)
+    assert reason == RESUME_QUOTA_UNREADABLE_REASON
+    assert "исчерпан" not in reason
 
 
 def test_enabled_action_has_no_quota_reason():
@@ -30,4 +32,4 @@ def test_enabled_action_has_no_quota_reason():
 
 
 def test_ambiguous_action_is_not_called_quota():
-    assert resume_limit_reason(_Locator(2, disabled=True)) == ""
+    assert resume_limit_reason(_Locator(2, disabled=True)) == RESUME_QUOTA_UNREADABLE_REASON

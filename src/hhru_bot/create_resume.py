@@ -651,11 +651,23 @@ def create_resume_on_hh(
     try:
         page.locator(RESUME_CREATE_BUTTON).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
-        # На лимите hh.ru кнопку не рендерит вовсе. Не маскировать этот
-        # наблюдаемый отказ под проблему гидрации/сети: создание без кнопки
-        # невозможно, поэтому остаёмся fail-closed.
-        limit_reason = resume_limit_reason(page.locator(RESUME_CREATE_BUTTON))
+        # Отсутствие кнопки не доказывает лимит hh.ru: это также может быть
+        # сбой чтения/гидрации. Классифицируем состояние строго fail-closed.
+        create_button_locator = page.locator(RESUME_CREATE_BUTTON)
+        limit_reason = resume_limit_reason(create_button_locator)
         if limit_reason:
+            # Preserve the actionable Playwright diagnostic when the selector
+            # is ambiguous: strict count() failure is still unreadable quota,
+            # but hiding the exception makes selector drift unnecessarily hard
+            # to diagnose.
+            if create_button_locator.count() > 1:
+                return CreateResumeResult(
+                    False,
+                    reason=(
+                        f"{limit_reason} (кнопка создания неоднозначна: "
+                        f"{create_button_locator.count()} совпадений; ошибка: {exc})"
+                    ),
+                )
             return CreateResumeResult(False, reason=limit_reason)
         return CreateResumeResult(False, reason=f"список резюме не отрисовался: {exc}")
     # Дубль-гард (#304, Codex cycles 2/3) вынесен в resume_titles (#911):
@@ -670,9 +682,8 @@ def create_resume_on_hh(
     create_button, reason = _one(page, RESUME_CREATE_BUTTON, "кнопка создания резюме")
     if reason:
         return CreateResumeResult(False, reason=reason)
-    # count() подтверждает только наличие узла. При исчерпанном лимите hh.ru
-    # узел остаётся в DOM, но становится disabled; клик по нему даёт сетевую
-    # ошибку и скрывает настоящую причину.
+    # count()/disabled не являются явным маркером квоты: при сетевом сбое
+    # они дают те же значения. Не называем это исчерпанием без N/M-маркера.
     limit_reason = resume_limit_reason(create_button)
     if limit_reason:
         return CreateResumeResult(False, reason=limit_reason)
