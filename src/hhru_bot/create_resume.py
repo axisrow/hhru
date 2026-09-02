@@ -85,6 +85,10 @@ class CreateResumeResult:
     new_resume_id: str = ""
     reason: str = ""
     uncertain: bool = False
+    # #936: успех через фолбэк «Другое» (id 40) — профессия НЕ установлена,
+    # роль закрыта плейсхолдером. Поле вместо снифа подстроки reason
+    # (cycle 7): потребителю нужен структурированный факт, а не парсинг текста.
+    placeholder_role: bool = False
 
 
 def _one(page: Page, selector: str, label: str) -> tuple[Locator | None, str]:
@@ -853,5 +857,6 @@ def create_resume_on_hh(
             True,
             new_resume_id=match.group(1),
             reason=_placeholder_role_success_reason(),
+            placeholder_role=True,
         )
     return CreateResumeResult(True, new_resume_id=match.group(1), reason="черновик создан")

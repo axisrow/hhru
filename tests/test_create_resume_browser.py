@@ -303,13 +303,11 @@ def test_allow_unresolved_falls_back_to_other_role_for_missing_area(monkeypatch)
     result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
 
     assert result.success, result.reason
+    assert result.placeholder_role is True
     assert select_calls == [
         (AREA, None),
         ("Другое", "40"),
     ]
-    assert "профессия НЕ установлена" in result.reason
-    assert "Другое" in result.reason
-    assert "Дополнить" in result.reason
 
 
 def test_allow_unresolved_fallback_failure_stays_plain_failed(monkeypatch):
