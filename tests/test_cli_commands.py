@@ -90,6 +90,14 @@ def test_resume_sections_help_states_first_row_and_no_deletions(capsys):
     assert "удаления не выполняются" in help_text
 
 
+def test_create_resume_unresolved_area_flag_is_explicit():
+    parser = _build()
+    args = parser.parse_args(
+        ["create-resume", "--area", "ЛЛМ", "--title", "ЛЛМ", "--allow-unresolved-area"]
+    )
+    assert args.allow_unresolved_area is True
+
+
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)
