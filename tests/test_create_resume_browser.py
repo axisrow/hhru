@@ -209,12 +209,13 @@ class HtmlCreateButtonPage(Page):
         return super().locator(selector)
 
 
-def _run(page, before_click=None):
+def _run(page, before_click=None, *, allow_unresolved_area=False):
     return create.create_resume_on_hh(
         cast(PlaywrightPage, cast(object, page)),
         area=AREA,
         title=TITLE,
         dry_run=False,
+        allow_unresolved_area=allow_unresolved_area,
         before_click=before_click,
     )
 
@@ -334,6 +335,8 @@ def test_confirm_unresolved_draft_refuses_unreadable_list(monkeypatch):
         ("экран каталога визарда резюме не отрисовался: timeout", False),
         ("не удалось подтвердить единственный лист каталога (дерево перерендерилось)", False),
         ("профессия найдена в каталоге с role_id=96, ожидался role_id=132", False),
+        ("профессия «ЛЛМ» не найдена однозначно в каталоге визарда (совпадений: 2)", False),
+        ("профессия не найдена в каталоге; фильтр предлагает единственный лист", False),
     ],
 )
 def test_allow_unresolved_gate_accepts_only_missing_catalog_area(reason, expected):
@@ -360,6 +363,48 @@ def test_confirm_unresolved_draft_retries_then_confirms_empty_role(monkeypatch):
     assert resume_id == "00001"
     assert reason == "черновик создан без профессии; роль не установлена"
     assert len(page.waits) == 2
+
+
+def test_allow_unresolved_does_not_bypass_transient_catalog_failure(monkeypatch):
+    page = Page(fail_on_wait=None)
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    monkeypatch.setattr(
+        create,
+        "select_wizard_catalog_leaf",
+        lambda *_args, **_kwargs: "экран каталога визарда резюме не отрисовался: timeout",
+    )
+    confirm = []
+    monkeypatch.setattr(create, "_confirm_unresolved_draft", lambda *_args: confirm.append(1))
+
+    result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
+
+    assert not result.success
+    assert not result.uncertain
+    assert confirm == []
+    assert "list-resumes" in result.reason
+
+
+def test_allow_unresolved_uses_confirmation_for_missing_area(monkeypatch):
+    page = Page(fail_on_wait=None)
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    monkeypatch.setattr(
+        create,
+        "select_wizard_catalog_leaf",
+        lambda *_args, **_kwargs: (
+            "профессия «ЛЛМ» не найдена в каталоге визарда резюме (список пуст)"
+        ),
+    )
+    monkeypatch.setattr(
+        create,
+        "_confirm_unresolved_draft",
+        lambda *_args: ("00001", "черновик создан без профессии; роль не установлена"),
+    )
+
+    result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
+
+    assert result.success
+    assert result.new_resume_id == "00001"
+    assert "без профессии" in result.reason
 
 
 def test_confirm_unresolved_draft_retries_after_not_authenticated(monkeypatch):
