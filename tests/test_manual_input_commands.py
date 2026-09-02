@@ -105,7 +105,7 @@ def _fake_launch_context(*_args, **_kwargs):
 
 def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
-    edit_experience_cmd.run(
+    result = edit_experience_cmd.run(
         _args(
             tmp_path,
             mode="fill",
@@ -118,6 +118,7 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
         )
     )
     out = capsys.readouterr().out
+    assert result is False
     assert "ООО Тест" in out
     assert "[DRY-RUN] save не нажат" in out
 
@@ -154,6 +155,27 @@ def test_edit_experience_entry_conflicts_with_career(tmp_path, capsys):
         is True
     )
     assert "LLM-планированию" in capsys.readouterr().out
+
+
+def test_edit_experience_entry_rejects_llm_only_mode(tmp_path, capsys):
+    """#921: --mode=create is LLM-planning-only; with --entry it must fail
+    with an actionable hint (remove --mode / pass the fill default), not a
+    contract that is only discoverable from the failure text itself."""
+    assert (
+        edit_experience_cmd.run(
+            _args(
+                tmp_path,
+                mode="create",
+                career=None,
+                existing=None,
+                entry=['{"company": "a", "position": "b", "start_month": "3"}'],
+            )
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "LLM-планированию" in out
+    assert "--help" in out
 
 
 def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
