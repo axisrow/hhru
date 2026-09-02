@@ -3097,6 +3097,35 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_CREATION_POSITION_SUGGEST:
+    value: '[data-qa=''suggest-item-cell'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:181
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - suggest-item-cell
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:181
+      note: 'Issue #920 stage 2, live DOM 2026-09-02 (authenticated create-resume wizard, first screen): typing in the position
+        combobox (resume-profile-position-input, aria-haspopup=listbox) opens an autocomplete popup rendering one suggest-item-cell
+        card per suggested profession. The popup opens only on character-by-character typing (Playwright fill() does not trigger
+        it) and exists only on this first screen - the catalog screen tree search renders no suggestions. Options carry no
+        role id in the DOM; the text-to-professionalRole mapping lives only in the JSON of the profession_suggestions shard
+        response the page fetches itself. Clicking an option dead-ends the wizard: the input is cleared, the suggestion chip
+        stays checked, and repeated NEXT clicks are silent no-ops with no network activity (reproduced headless and headed).
+        The option is therefore read, never clicked. Role ids from the payload match the wizard tree leaf ids (132 -> tree-selector-item-132;
+        the catch-all ''Other'' is 40), and the profession text itself is NOT a tree leaf - only the role name from the payload
+        is.'
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_editor_write_dry_run
+    verified_by: claude
   resume_page.RESUME_CREATION_SELECT_JOB:
     value: '[data-qa=''resume-profile-card-select-job'']'
     criticality: write

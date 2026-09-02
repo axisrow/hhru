@@ -166,6 +166,19 @@ RESUME_CREATION_NEXT = _selector("resume_page.RESUME_CREATION_NEXT")
 RESUME_CREATION_CATEGORY_SEARCH = _selector("resume_page.RESUME_CREATION_CATEGORY_SEARCH")
 RESUME_CREATION_CATEGORY_SUBMIT = _selector("resume_page.RESUME_CREATION_CATEGORY_SUBMIT")
 RESUME_CREATION_CATEGORY_INPUT = _selector("resume_page.RESUME_CREATION_CATEGORY_INPUT")
+# #920 (live DOM 2026-09-02): the wizard's FIRST screen position input is a
+# combobox (aria-haspopup="listbox") whose autocomplete popup renders one
+# `[data-qa='suggest-item-cell']` card per suggested profession. The popup
+# only opens on character-by-character typing (Playwright fill() does not
+# trigger it) and exists ONLY on this first screen — the catalog screen's
+# tree search shows no suggestions. Options carry no role id in the DOM; the
+# text->professionalRole mapping lives in the JSON of the
+# profession_suggestions shard response the page itself fetches. Clicking an
+# option is a dead end: the wizard then refuses to advance on NEXT (input is
+# cleared, the suggestion chip stays checked, repeated NEXT clicks are
+# silent no-ops with no network activity — reproduced headless and headed),
+# so the option is read, never clicked.
+RESUME_CREATION_POSITION_SUGGEST = _selector("resume_page.RESUME_CREATION_POSITION_SUGGEST")
 
 # Second post-NEXT shape (#881, confirmed live DOM 2026-08-31 on a copy-resume
 # draft): after the title step hh.ru skips the wizard catalog modal above entirely and

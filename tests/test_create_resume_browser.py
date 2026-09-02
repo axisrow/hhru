@@ -10,6 +10,7 @@ NEXT, выбор leaf — мутацию не совершает, и ошибк�
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 import pytest
@@ -22,8 +23,11 @@ from hhru_bot.create_resume import select_wizard_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
+    RESUME_CREATION_CATEGORY_SEARCH,
+    RESUME_CREATION_CATEGORY_SUBMIT,
     RESUME_CREATION_NEXT,
     RESUME_CREATION_POSITION,
+    RESUME_CREATION_POSITION_SUGGEST,
     RESUME_CREATION_SELECT_JOB,
 )
 
@@ -31,6 +35,17 @@ pytestmark = pytest.mark.integration
 
 TITLE = "QA Test Resume"
 AREA = "Программист, разработчик"
+
+
+@pytest.fixture(autouse=True)
+def _fast_suggest_poll(monkeypatch):
+    """Укоротить дедлайн опроса попапа подсказок (#920 этап 2).
+
+    Существующие full-flow тесты не дают подсказок: с боевыми 6 секундами
+    каждый ждал бы их реальным wall-clock'ом (wait_for_timeout двойника —
+    no-op, цикл не спит).
+    """
+    monkeypatch.setattr(create, "_SUGGEST_POLL_TIMEOUT", 0.05)
 
 
 class TreeItem:
@@ -41,10 +56,10 @@ class TreeItem:
         self._qa = qa
         self.page = page
 
-    def text_content(self):
+    def text_content(self, *, timeout=None):  # noqa: ARG002 — боевой код передаёт inline-таймаут
         return self._text
 
-    def get_attribute(self, name):
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
         return self._qa if name == "data-qa" else None
 
     def click(self, *, timeout=None):  # noqa: ARG002
@@ -108,6 +123,11 @@ class Locator:
     def fill(self, value):
         self.page.filled.append((self.selector, value))
 
+    def press_sequentially(self, text, *, delay=None, timeout=None):  # noqa: ARG002
+        # Посимвольный ввод (#920): fill() попап подсказок не триггерит.
+        self.page.typed.append((self.selector, text))
+        self.page.after_typing()
+
 
 CREATE_BUTTON_HTML = "<button data-qa='mainmenu_createResume'>{label}</button>"
 
@@ -137,10 +157,21 @@ class Page:
         self.fail_on_wait = fail_on_wait
         self.clicks: list[str] = []
         self.filled: list[tuple[str, str]] = []
+        self.typed: list[tuple[str, str]] = []
+        self.response_listeners: list = []
         self.url = "https://hh.ru/profile/resume/professional_role"
 
     def goto(self, url, *, timeout=None, wait_until=None, referer=None):  # noqa: ARG002
         self.url = url
+
+    def on(self, event, handler):
+        self.response_listeners.append(handler)
+
+    def remove_listener(self, event, handler):
+        self.response_listeners.remove(handler)
+
+    def after_typing(self):
+        """Хук после посимвольного ввода; SuggestPage диспатчит ответы shard'а."""
 
     def locator(self, selector):
         # Пустой аккаунт: карточек резюме нет, дубль-гард пропускает создание.
@@ -619,6 +650,258 @@ def test_polling_stops_as_soon_as_match_appears(monkeypatch):
     assert page.tree_reads == 2, f"лишние чтения после совпадения: {page.tree_reads}"
 
 
+# --- #920: единственный кандидат фильтра без точного равенства -------------
+
+
+class CompositeLeafPage(HydrationRacePage):
+    """Фильтр стабильно сужает дерево до единственного СОСТАВНОГО листа,
+    чьё имя не равно запросу (#920, боевой прогон 2026-09-02 00:51:
+    «Плотник» -> единственный лист «Столяр, плотник»)."""
+
+    TREE = "tree-selector-item-text-"
+
+    def __init__(self, *, leaves=None):
+        super().__init__(clicks_until_hydrated=0)
+        self.tree_reads = 0
+        self._leaves = leaves or [TreeItem("Столяр, плотник", "tree-selector-item-text-96", self)]
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return CompositeLeafLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class CompositeLeafLocator(HydrationLocator):
+    def all(self):
+        self.page.tree_reads += 1
+        return self.page._leaves  # noqa: SLF001 — тестовый двойник, не production API
+
+
+def _run_area(page, area, monkeypatch, *, before_click=None):
+    """Боевой прогон с чужим ``area`` и коротким дедлайном опроса дерева."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    monkeypatch.setattr(
+        create,
+        "select_wizard_catalog_leaf",
+        # **kw пропускает expected_role_id: продакшен после #920 этапа 2
+        # передаёт его ВСЕГДА (None у фолбэков) — проглатывать его здесь
+        # значило бы не тестировать проводку гарда #913 до дерева.
+        lambda p, area, **kw: _real_select(p, area, filter_timeout=0.5, **kw),
+    )
+    return create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area=area,
+        title=TITLE,
+        dry_run=False,
+        before_click=before_click,
+    )
+
+
+def test_unique_filtered_candidate_is_accepted_without_exact_match(monkeypatch, caplog):
+    """«Плотник» -> единственный лист «Столяр, плотник» — выбор, а не отказ.
+
+    Фильтр hh.ru сузил дерево до одного листа, но строгая equality его не
+    находила: имена листов составные, и команда требовала посимвольного
+    ввода (боевой прогон #920). Запрос содержится в имени листа —
+    однозначность по-человечески; лист кликается той же механикой, что и
+    точное совпадение (клик по строке -> poll checked -> submit).
+    """
+    import logging
+
+    page = CompositeLeafPage()
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"единственный кандидат фильтра должен быть принят: {result.reason}"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks, "каталог должен быть засабмичен"
+    assert "Столяр, плотник" in caplog.text, "автопринятие обязано попасть в лог"
+
+
+def test_unique_candidate_with_unexpected_role_id_refuses_before_click():
+    """Фолбэк #920 не обходит гард #913: чужой role_id у кандидата — отказ.
+
+    create-resume вызывает select_wizard_catalog_leaf без expected_role_id, но
+    resume_position (direct_save) — с ним: единственный кандидат фильтра с
+    id, не равным согласованному, отказывает ДО клика, как и точное
+    совпадение с чужим id.
+    """
+    page = CompositeLeafPage()
+
+    reason = _real_select(
+        cast(PlaywrightPage, cast(object, page)),
+        "Плотник",
+        filter_timeout=0.5,
+        expected_role_id="148",
+    )
+
+    assert "role_id=96" in reason
+    assert "148" in reason
+    assert page.clicks == [], "отказ до клика по строке и submit"
+
+
+class DegenerateOtherPage(CompositeLeafPage):
+    """Фильтр вырождается в единственный catch-all лист «Другое» (#913)."""
+
+    def __init__(self):
+        super().__init__(leaves=[TreeItem("Другое", "tree-selector-item-text-40", self)])
+
+
+def test_filter_degeneration_into_other_is_refused_without_click(monkeypatch):
+    """Единственный кандидат «Другое» не выбирается никогда (#913).
+
+    Фильтр hh.ru по неточному запросу («Инженер по тестированию») сужает
+    дерево до catch-all «Другое» — это отказ с именем для повтора, а не
+    выбор: резюме с профессией «Другое» — молчаливая порча данных.
+    """
+    page = DegenerateOtherPage()
+
+    result = _run_area(page, "Инженер по тестированию", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Другое" in result.reason
+    assert "повторите" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+class UnrelatedLeafPage(CompositeLeafPage):
+    """Единственный кандидат фильтра не содержит запрос в своём имени."""
+
+    def __init__(self):
+        super().__init__(leaves=[TreeItem("Аналитик", "tree-selector-item-text-10", self)])
+
+
+def test_unique_candidate_without_query_in_name_is_refused_with_hint(monkeypatch):
+    """Единственный кандидат без запроса в имени — soft-fail с именем листа.
+
+    «Фильтр вернул что-то одно» — ещё не однозначное совпадение: hh.ru
+    фильтрует нечётко, и автопринятие неродственного листа записало бы
+    профессию, которую пользователь не называл.
+    """
+    page = UnrelatedLeafPage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Аналитик" in result.reason, "имя листа для повтора должно быть в сообщении"
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_empty_area_is_never_accepted_as_substring_of_anything(monkeypatch):
+    """Пустой --area не «содержится» в имени листа — автопринятия нет.
+
+    normalize("") == \"\" — подстрока любой строки; без отдельного гварда
+    пустой запрос автопринял бы первого попавшегося единственного кандидата
+    (fail-closed: argparse пропускает --area "").
+    """
+    page = CompositeLeafPage()
+
+    result = _run_area(page, "", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_multiple_candidates_without_exact_match_still_refuse(monkeypatch):
+    """Несколько кандидатов фильтра — прежний отказ с перечнем (#920 гард).
+
+    Однозначность — ровно один кандидат; два составных листа, содержащих
+    запрос, разрешает только пользователь перезапуском с точным именем.
+    """
+
+    class TwoCompositeLeavesPage(CompositeLeafPage):
+        def __init__(self):
+            super().__init__(
+                leaves=[
+                    TreeItem("Столяр, плотник", "tree-selector-item-text-96", self),
+                    TreeItem("Плотник-бетонщик", "tree-selector-item-text-97", self),
+                ]
+            )
+
+    page = TwoCompositeLeavesPage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Столяр, плотник" in result.reason and "Плотник-бетонщик" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+class DesyncedTreePage(CompositeLeafPage):
+    """all_text_contents() и .all() стабильно расходятся (#837-семейство).
+
+    Тексты от одного рендера, элементы — от другого: индексному
+    сопоставлению доверять нельзя, значит и «единственный кандидат»
+    недоказуем — автопринятие обязано молчать (fail-closed).
+    """
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return DesyncedTreeLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class DesyncedTreeLocator(HydrationLocator):
+    def all(self):
+        return [
+            TreeItem("Столяр, плотник", "tree-selector-item-text-96", self.page),
+            TreeItem("Аналитик", "tree-selector-item-text-10", self.page),
+        ]
+
+    def all_text_contents(self):
+        return ["столяр, плотник"]
+
+
+def test_desynced_read_disqualifies_unique_candidate(monkeypatch):
+    """Рассинхрон текстов и элементов — автопринятия нет, прежний отказ.
+
+    Единственность кандидата доказуема только на консистентном снимке
+    дерева; на снимке от двух разных рендеров принимать решение — всё равно
+    что сопоставить чужой текст чужому элементу (#837, тот же принцип).
+    """
+    page = DesyncedTreePage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_dry_run_never_reaches_catalog(monkeypatch):
+    """Dry-run не доходит до select_wizard_catalog_leaf — кликать нечего (#920).
+
+    Изменение семантики match не меняет dry-run план структурно: create-resume
+    в dry-run возвращается сразу после подтверждения визарда, до клика по
+    карточке профессии. Закрепляем, чтобы будущий рефактор не подвёл dry-run
+    к каталогу.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CompositeLeafPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Плотник",
+        title=TITLE,
+        dry_run=True,
+    )
+
+    assert result.success
+    assert "dry-run" in result.reason
+    assert page.clicks == [], "dry-run не кликает ничего"
+    assert page.tree_reads == 0, "dry-run не доходит до дерева каталога"
+
+
 class CheckboxWrapperPage(CatalogFilterPage):
     """hh.ru оборачивает <input type=checkbox> в стилизованный контейнер.
 
@@ -823,3 +1106,551 @@ def test_resume_id_is_read_from_wizard_query_url(monkeypatch):
 
     assert result.success, f"id из query должен распознаваться: {result.reason}"
     assert result.new_resume_id == new_id
+
+
+# --- #920 этап 2: подсказки автодополнения как приоритетная поверхность -----
+
+SUGGEST_TEXT = "Директор учебного заведения/заведующий учебным процессом"
+ROLE_NAME = "Учитель, преподаватель, педагог"
+ROLE_ID = "132"
+
+
+def _payload(text, role_id, role_name):
+    return {"items": [{"text": text, "professionalRoles": [{"id": role_id, "name": role_name}]}]}
+
+
+class _FakeSuggestResponse:
+    """Ответ shard'а profession_suggestions, полученный страницей сама (боевой
+    источник id роли — слушатель читает его пассивно, прямых запросов нет)."""
+
+    def __init__(self, payload):
+        self.url = "https://hh.ru/inbox/shards/profession_suggestions?query=x"
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class SuggestPage(CompositeLeafPage):
+    """Первый экран визарда с попапом подсказок.
+
+    ``after_typing`` диспатчит ответы shard'а слушателям страницы — ровно то,
+    что боевой код получает от ``page.on("response", ...)``: hh.ru сам делает
+    запрос на посимвольный ввод, двойник лишь имитирует доставку.
+    """
+
+    def __init__(self, *, option_texts=(), payloads=(), leaves=None):
+        super().__init__(leaves=leaves)
+        self.option_texts = list(option_texts)
+        self.payloads = list(payloads)
+
+    def after_typing(self):
+        for payload in self.payloads:
+            for handler in list(self.response_listeners):
+                handler(_FakeSuggestResponse(payload))
+
+    def set_leaves(self, leaves):
+        # Листья дерева знают свою страницу (клик по строке отмечает чекбокс),
+        # поэтому создаются уже ПОСЛЕ двойника страницы — в конструктор их не
+        # передать: там ``page`` ещё не связан.
+        self._leaves = leaves
+
+    def locator(self, selector):
+        if selector == RESUME_CREATION_POSITION_SUGGEST:
+            return SuggestLocator(self, selector, 1)
+        return super().locator(selector)
+
+
+class SuggestLocator(HydrationLocator):
+    def all_text_contents(self):
+        return list(self.page.option_texts)
+
+
+def _teacher_leaves(page):
+    return [TreeItem(ROLE_NAME, f"tree-selector-item-text-{ROLE_ID}", page)]
+
+
+def test_single_suggestion_resolves_role_and_selects_leaf(monkeypatch, caplog):
+    """Одна подсказка с однозначной ролью -> дерево по имени роли + гард id (#920).
+
+    Ровно тот случай «Ученый»: hh.ru предлагает одну профессию, чей текст в
+    дереве не ищется вовсе; резолв идёт через payload shard'а, а выбор
+    доказывает дерево по имени роли с expected_role_id (#913).
+    """
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"подсказка должна привести к листу дерева: {result.reason}"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks
+    assert RESUME_CREATION_POSITION_SUGGEST not in page.clicks, "опция читается, не кликается"
+    assert "принята подсказка каталога" in caplog.text
+    assert ROLE_NAME in caplog.text
+    # Дерево запрашивается именем РОЛИ, а не текстом профессии и не area.
+    assert (RESUME_CREATION_CATEGORY_SEARCH, ROLE_NAME) in page.filled
+
+
+def test_position_field_is_restored_to_title_after_suggestions(monkeypatch):
+    """После опроса подсказок поле возвращается к title перед NEXT.
+
+    NEXT уходит на каталог свободным текстом, а резолвнутую роль доказывает
+    дерево; набранный area в поле остаться не должен.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success
+    position_fills = [value for sel, value in page.filled if sel == RESUME_CREATION_POSITION]
+    assert position_fills == ["", TITLE], f"поле должности: {position_fills}"
+    typed = [value for sel, value in page.typed if sel == RESUME_CREATION_POSITION]
+    assert typed == ["Ученый"], f"посимвольно набран area: {typed}"
+
+
+def test_multiple_suggestions_are_never_auto_selected(monkeypatch, caplog):
+    """Несколько подсказок — ни одна не берётся автоматически (#920).
+
+    Выбор между несколькими — за штурвалом: перечень пишется в лог, дерево
+    получает исходный запрос area (перезапуск с точным именем — решение
+    выбирающего, паттерн #836).
+    """
+    import logging
+
+    other_text = "Научный сотрудник"
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT, other_text],
+        payloads=[
+            {
+                "items": [
+                    {
+                        "text": SUGGEST_TEXT,
+                        "professionalRoles": [{"id": ROLE_ID, "name": ROLE_NAME}],
+                    },
+                    {"text": other_text, "professionalRoles": [{"id": "193", "name": "Учёный"}]},
+                ]
+            }
+        ],
+    )
+    # Точное совпадение с ИСХОДНЫМ area: доказывает, что дерево запросили
+    # им «Ученый», а не имя какой-то из подсказок.
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на исходный area должен работать: {result.reason}"
+    assert "ни одна не выбрана" in caplog.text
+    assert SUGGEST_TEXT in caplog.text and other_text in caplog.text, (
+        "перечень подсказок обязан попасть в лог"
+    )
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+
+
+def test_suggestion_degenerating_into_other_is_not_accepted(monkeypatch, caplog):
+    """Подсказка, чья роль — catch-all «Другое» (id 40), не принимается (#913)."""
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, "40", "Другое")],
+    )
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на дерево по area должен работать: {result.reason}"
+    assert "не принимается" in caplog.text
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled, (
+        "дерево должно получить исходный area, а не имя роли «Другое»"
+    )
+
+
+def test_suggestion_without_unambiguous_payload_falls_back_to_tree(monkeypatch, caplog):
+    """Роль не резолвится из payload — подсказка не принимается (fail-closed)."""
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[{"items": []}],
+    )
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на дерево по area должен работать: {result.reason}"
+    assert "не сопоставлена" in caplog.text
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+
+
+def test_tree_leaf_id_mismatch_with_resolved_role_refuses_before_click(monkeypatch):
+    """Гард #913 на подсказочном пути: чужой id листа — отказ ДО клика.
+
+    Текст листа совпадает с именем роли, id — нет: точное совпадение текста
+    ещё не доказывает роль, молчаливая подмена записала бы чужой role_id.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    # Тот же текст, ЧУЖОЙ id листа.
+    page.set_leaves([TreeItem(ROLE_NAME, "tree-selector-item-text-96", page)])
+
+    result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert f"ожидался согласованный role_id={ROLE_ID}" in result.reason
+    # Полный флоу кликает cookie-баннер/карточку/NEXT — их клики в page.clicks
+    # законны; проверяем, что отказали до клика по строке leaf и submit.
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks
+    assert "tree-selector-item-text-96" not in page.clicks
+
+
+def test_zero_suggestions_keep_catalog_tree_flow(monkeypatch, caplog):
+    """Ноль подсказок — прежняя логика дерева без изменений (#920 этап 1)."""
+    import logging
+
+    page = SuggestPage()  # option_texts пуст: попап не открывается
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"дерево по area должно работать как раньше: {result.reason}"
+    assert "подсказка" not in caplog.text, "о подсказках не должно быть ни слова"
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+    assert (RESUME_CREATION_POSITION, "") in page.filled, "поле всё равно очищается перед набором"
+
+
+# --- #920: ретрай фильтра дерева при его нестабильности ----------------------
+
+
+class RetryFilterLocator(HydrationLocator):
+    """Локатор, который на ВТОРОМ fill поисковой строки каталога меняет
+    листья дерева: первая попытка — «Другое» (пустой результат фильтра),
+    вторая — точный лист роли. Моделирует живой инцидент «Логопед»
+    (#920, боевой прогон 2026-09-02): тот же запрос боевой прогон получил
+    «Другое», repro — точный лист tree-selector-item-132."""
+
+    def fill(self, value):
+        super().fill(value)
+        if self.page.search_fills == 1:
+            self.page.set_leaves(
+                [TreeItem(ROLE_NAME, f"tree-selector-item-text-{ROLE_ID}", self.page)]
+            )
+        self.page.search_fills += 1
+
+
+class RetryFilterPage(HydrationRacePage):
+    TREE = "tree-selector-item-text-"
+
+    def __init__(self):
+        super().__init__(clicks_until_hydrated=0)
+        self.search_fills = 0
+        self.tree_reads = 0
+        self.set_leaves([TreeItem("Другое", "tree-selector-item-text-40", self)])
+
+    def set_leaves(self, leaves):
+        self._leaves = leaves
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if selector == RESUME_CREATION_CATEGORY_SEARCH:
+            return RetryFilterLocator(self, selector, count)
+        if self.TREE in selector:
+            return CompositeLeafLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+def test_transient_empty_filter_result_is_retried_and_recovers(caplog):
+    """Пустой результат фильтра («Другое») переспрашивается — и сходится.
+
+    Боевой прогон «Логопед» упал «фильтр выродился в Другое» там, где repro
+    тем же кодом и запросом получает точный лист 132: фильтр hh.ru
+    нестабилен (подтверждено и ручными тестами пользователя). Один полный
+    повтор fill+опрос обязан переживать такой транзиент.
+    """
+    import logging
+
+    page = RetryFilterPage()
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        reason = _real_select(
+            cast(PlaywrightPage, cast(object, page)),
+            ROLE_NAME,
+            filter_timeout=0.05,
+            expected_role_id=ROLE_ID,
+        )
+
+    assert reason == "", f"вторая попытка должна найти лист: {reason}"
+    assert page.search_fills == 2, "ровно один переспрос"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks
+    assert "переспрашиваю" in caplog.text
+
+
+def test_persistent_other_refusal_survives_retry_after_both_attempts():
+    """Стабильное отсутствие профессии — тот же отказ, обе попытки.
+
+    Ретрай не ослабляет fail-closed: фильтр, который стабильно отвечает
+    «Другое», даёт прежнее сообщение после исчерпания попыток.
+    """
+    page = DegenerateOtherPage()
+
+    reason = _real_select(
+        cast(PlaywrightPage, cast(object, page)),
+        "Инженер по тестированию",
+        filter_timeout=0.05,
+    )
+
+    assert "фильтр выродился" in reason
+    assert "Другое" in reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks
+    search_fills = [f for f in page.filled if f[0] == RESUME_CREATION_CATEGORY_SEARCH]
+    assert len(search_fills) == 2, "обе попытки перезаполняют поиск"
+
+
+# --- #920: предупреждение о фантомном черновике при отказе после NEXT --------
+
+
+def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
+    """Отказ в каталоге (после первого NEXT) предупреждает о фантоме (#920).
+
+    hh.ru может материализовать сущность черновика уже после первого
+    «Продолжить» (живой факт 2026-09-02): молчаливый [FAIL] приучал бы к
+    «на hh.ru ничего нет». Предупреждение обязано назвать title для поиска
+    и путь уборки.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "черновик" in result.reason
+    assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
+    assert "delete-resume" in result.reason
+    assert "list-resumes" in result.reason
+
+
+class _DetachedLeaf(TreeItem):
+    """Лист, чьё per-handle чтение кидает PlaywrightError.
+
+    Реальный сценарий #837: React отсоединил хэндл между batch-снимком
+    ``all()``/``all_text_contents()`` и точечным чтением кандидата — на
+    живом Playwright такое чтение висит дефолтные 30с и бросает
+    PlaywrightError; двойник бросает сразу, проверяется управляемость
+    исхода (retry/честный отказ), а не тайминг.
+    """
+
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        return self._text
+
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        raise PlaywrightError("Locator.get_attribute: Execution context was destroyed")
+
+
+class DetachedLeafPage(CompositeLeafPage):
+    """Фильтр сводит дерево к единственному leaf с отсоединённым хэндлом."""
+
+    def __init__(self):
+        super().__init__(
+            leaves=[_DetachedLeaf("Столяр, плотник", "tree-selector-item-text-96", self)]
+        )
+
+
+def test_detached_leaf_handle_is_retry_not_generic_crash(monkeypatch):
+    """Per-handle чтение leaf после перерендера — retry, не generic-краш.
+
+    Fuzzy-accept читает кандидата точечно ПОСЛЕ batch-снимка; гонка #837
+    вешала чтение на 30с и выбрасывала PlaywrightError наружу — наверх
+    как generic «ошибка до сохранения» (с фантом-подсказкой при отказе,
+    который на деле был hang). Нефинальная ошибка обязана обрабатываться
+    как перерендер: переспрос и честный отказ.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = DetachedLeafPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Плотник",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain
+    assert "ошибка до сохранения резюме" not in result.reason
+    assert "перерендерилось" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+class _SequencedSuggestPage:
+    """Попап подсказок с поздним ответом shard'а (гонка cycle 3 review).
+
+    Первые два чтения дают [A]; между вторым и третьим в capture
+    доставляется payload с «B», и только после этого попап доворачивается
+    до [A, B] — ровно сценарий «два одинаковых снимка предшествуют
+    расширению списка».
+    """
+
+    def __init__(self, capture):
+        self._capture = capture
+        self._reads = 0
+        self._late_dispatched = False
+        self.option_texts = ["A"]
+
+    def locator(self, selector):
+        return self
+
+    def all_text_contents(self):
+        self._reads += 1
+        if self._reads == 2 and not self._late_dispatched:
+            self._late_dispatched = True
+            self._capture(_FakeSuggestResponse(_payload("B", "55", "Роль B")))
+        if self._reads >= 3:
+            self.option_texts = ["A", "B"]
+        return list(self.option_texts)
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_late_shard_response_invalidates_stable_suggestion_snapshot():
+    """Поздний ответ shard'а сбрасывает стабильность попапа (#933 cycle 3).
+
+    Два одинаковых непустых снимка подряд доказывают финальность только
+    пока не пришёл новый ответ shard'а: [A],[A] перед приходом payload с
+    «B» — не финал; решение обязано дождаться [A,B] (а несколько
+    подсказок автоматически не берутся).
+    """
+    capture = create._SuggestionCapture()
+    page = _SequencedSuggestPage(capture)
+
+    texts = create._poll_suggestion_texts(page, capture, timeout=5.0)
+
+    assert texts == ["A", "B"]
+
+
+def test_conflicting_payload_roles_disable_suggestion_acceptance(monkeypatch, caplog):
+    """Расхождение маппингов между ответами shard'а — неоднозначность.
+
+    Один и тот же текст опции в разных ответах shard'а отрезолвился в
+    РАЗНЫЕ роли: first-match взял бы первую молча, а expected_role_id
+    закрепил бы возможный неверный id. Fail-closed: противоречивые
+    маппинга не принимаются, дерево получает исходный запрос.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[
+            _payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME),
+            _payload(SUGGEST_TEXT, "999", "Совсем другая роль"),
+        ],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert "принята подсказка каталога" not in caplog.text
+    assert "не сопоставлена с ролью каталога однозначно" in caplog.text
+    # Дерево получает исходный запрос, а не имя роли из спорного маппинга.
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+    assert not result.uncertain
+
+
+def test_error_before_next_does_not_hint_phantom_draft(monkeypatch):
+    """Ошибка в подсказках ДО первого NEXT — фантом-подсказки быть не должно.
+
+    PlaywrightError из набора area (press_sequentially) случается до
+    нажатия «Продолжить»: сущности черновика появиться не из чего, и
+    предупреждение о фантоме здесь — ложный сигнал (#933 cycle 2).
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _boom(page, position, area):
+        raise PlaywrightError("Locator.press_sequentially: Timeout 30000ms exceeded")
+
+    monkeypatch.setattr(create, "_resolve_leaf_by_suggestions", _boom)
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain
+    assert "ошибка до сохранения резюме" in result.reason
+    assert "черновик" not in result.reason, "до первого NEXT фантома быть не может"
+
+
+def test_unexpected_error_after_next_warns_about_phantom_draft(monkeypatch):
+    """Неожиданная ошибка ПОСЛЕ первого NEXT предупреждает о фантоме (#920).
+
+    Контролируемый отказ по профессии печатает путь уборки фантома, но
+    PlaywrightError из того же каталог-блока (timeout опроса дерева, обрыв
+    соединения) уходил в общий обработчик молча — а «Продолжить» к тому
+    моменту уже нажат, и hh.ru мог материализовать черновик. Семантика
+    исхода не меняется (failed, до точки невозврата), меняется только
+    честность сообщения.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _boom(page, area, **kw):
+        raise PlaywrightError("Timeout 30000ms exceeded waiting for tree")
+
+    monkeypatch.setattr(create, "select_wizard_catalog_leaf", _boom)
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "ошибка до сохранения резюме" in result.reason
+    assert "черновик" in result.reason
+    assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
+    assert "delete-resume" in result.reason
+    assert "list-resumes" in result.reason
+
+
+def test_pre_next_failure_does_not_warn_about_phantom_draft(monkeypatch):
+    """Отказ ДО первого NEXT — предупреждения о фантоме нет.
+
+    Мутация там физически невозможна: первый «Продолжить» не нажимался,
+    сущность черновика появиться не из чего.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = Page(fail_on_wait=RESUME_CREATION_POSITION)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "черновик" not in result.reason

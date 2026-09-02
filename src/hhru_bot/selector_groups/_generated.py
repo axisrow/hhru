@@ -137,6 +137,7 @@ VALUES: dict[str, str] = {
     "resume_page.RESUME_CREATION_POSITION": "[data-qa='resume-profile-position-input']",
     "resume_page.RESUME_CREATION_POSITION_CHIP_POPULAR": "[data-qa='resume-profile-position-chip-popular']",
     "resume_page.RESUME_CREATION_POSITION_CLEAR": "[data-qa='input-clearable-button']",
+    "resume_page.RESUME_CREATION_POSITION_SUGGEST": "[data-qa='suggest-item-cell']",
     "resume_page.RESUME_CREATION_SELECT_JOB": "[data-qa='resume-profile-card-select-job']",
     "resume_page.RESUME_DELETE_BUTTON": "[data-qa='resume-delete']",
     "resume_page.RESUME_DELETE_CLOSE": "[data-qa='resume-delete-close']",
