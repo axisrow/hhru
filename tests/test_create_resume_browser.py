@@ -19,7 +19,9 @@ from playwright.sync_api import Page as PlaywrightPage
 
 import hhru_bot.create_resume as create
 from _fakes import _parse_root
+from hhru_bot.copy_resume import ResumeCard, ResumeListIndeterminate
 from hhru_bot.create_resume import select_wizard_catalog_leaf as _real_select
+from hhru_bot.resume_state import ResumeProfessionalRole, ResumeState
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -247,6 +249,134 @@ def test_disabled_create_button_is_unreadable_quota_failure(monkeypatch):
     assert not result.success
     assert result.reason.startswith("квоту прочитать не удалось")
     assert RESUME_CREATE_BUTTON not in page.clicks
+class ConfirmPage:
+    """Minimal read-only page double for the unresolved-draft confirmation."""
+
+    url = "https://hh.ru/profile/resume/professional_role"
+
+    def __init__(self):
+        self.waits = []
+
+    def wait_for_timeout(self, timeout):
+        self.waits.append(timeout)
+
+    def content(self):
+        return "<html />"
+
+
+def _confirm_card(title="ЛЛМ", *, status="not_finished"):
+    return ResumeCard("00001", title, "https://hh.ru/resume/00001", status=status)
+
+
+@pytest.mark.parametrize(
+    ("cards", "state", "expected"),
+    [
+        ([], ResumeState(), "совпадений: 0"),
+        ([_confirm_card(status="finished")], ResumeState(), "не черновик"),
+        ([_confirm_card()], ResumeState(), "запись черновика"),
+        (
+            [_confirm_card()],
+            ResumeState(status="not_finished", next_incomplete_screen_id="common"),
+            "nextIncompleteScreenId=common",
+        ),
+        (
+            [_confirm_card()],
+            ResumeState(
+                status="not_finished",
+                next_incomplete_screen_id="professional_role",
+                professional_roles=(ResumeProfessionalRole("96", "Программист"),),
+            ),
+            "уже содержит профессию",
+        ),
+    ],
+)
+def test_confirm_unresolved_draft_refuses_untrusted_readback(monkeypatch, cards, state, expected):
+    """Every unresolved-draft proof guard fails closed."""
+    import hhru_bot.browser as browser
+    import hhru_bot.copy_resume as copy_resume
+    import hhru_bot.resume_state as resume_state
+
+    page = ConfirmPage()
+    monkeypatch.setattr(create, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(copy_resume, "list_resume_cards", lambda *_args, **_kwargs: cards)
+    monkeypatch.setattr(browser, "open_confirmed_resume", lambda *_args: None)
+    monkeypatch.setattr(resume_state, "parse_resume_state", lambda *_args: state)
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_ATTEMPTS", 1)
+
+    resume_id, reason = create._confirm_unresolved_draft(page, "ЛЛМ")
+
+    assert resume_id == ""
+    assert expected in reason
+
+
+def test_confirm_unresolved_draft_refuses_unreadable_list(monkeypatch):
+    import hhru_bot.copy_resume as copy_resume
+
+    page = ConfirmPage()
+    monkeypatch.setattr(create, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(
+        copy_resume,
+        "list_resume_cards",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ResumeListIndeterminate("дрейф")),
+    )
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_ATTEMPTS", 1)
+
+    resume_id, reason = create._confirm_unresolved_draft(page, "ЛЛМ")
+
+    assert resume_id == ""
+    assert "не удалось прочитать список" in reason
+
+
+def test_confirm_unresolved_draft_retries_then_confirms_empty_role(monkeypatch):
+    import hhru_bot.browser as browser
+    import hhru_bot.copy_resume as copy_resume
+    import hhru_bot.resume_state as resume_state
+
+    page = ConfirmPage()
+    calls = iter([[], [_confirm_card()]])
+    state = ResumeState(status="not_finished", next_incomplete_screen_id="professional_role")
+    monkeypatch.setattr(create, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(copy_resume, "list_resume_cards", lambda *_args, **_kwargs: next(calls))
+    monkeypatch.setattr(browser, "open_confirmed_resume", lambda *_args: None)
+    monkeypatch.setattr(resume_state, "parse_resume_state", lambda *_args: state)
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_ATTEMPTS", 2)
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_DELAY_MS", 0)
+
+    resume_id, reason = create._confirm_unresolved_draft(page, "ЛЛМ")
+
+    assert resume_id == "00001"
+    assert reason == "черновик создан без профессии; роль не установлена"
+    assert len(page.waits) == 2
+
+
+def test_confirm_unresolved_draft_retries_after_not_authenticated(monkeypatch):
+    import hhru_bot.browser as browser
+    import hhru_bot.copy_resume as copy_resume
+
+    page = ConfirmPage()
+    state = ResumeState(status="not_finished", next_incomplete_screen_id="professional_role")
+    monkeypatch.setattr(create, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(
+        copy_resume, "list_resume_cards", lambda *_args, **_kwargs: [_confirm_card()]
+    )
+    calls = iter([browser.NotAuthenticated("сессия истекла"), None])
+
+    def open_resume(*_args):
+        result = next(calls)
+        if result:
+            raise result
+
+    monkeypatch.setattr(browser, "open_confirmed_resume", open_resume)
+    import hhru_bot.resume_state as resume_state
+
+    monkeypatch.setattr(resume_state, "parse_resume_state", lambda *_args: state)
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_ATTEMPTS", 2)
+    monkeypatch.setattr(create, "_UNRESOLVED_CONFIRM_DELAY_MS", 0)
+
+    resume_id, reason = create._confirm_unresolved_draft(page, "ЛЛМ")
+
+    assert resume_id == "00001"
+    assert "роль не установлена" in reason
 
 
 def test_active_create_button_keeps_existing_behavior(monkeypatch):

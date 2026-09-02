@@ -638,6 +638,7 @@ def _confirm_unresolved_draft(page: Page, title: str) -> tuple[str, str]:
     identity-bound bootstrap must still say that ``professional_role`` is the
     next incomplete screen and contain no professional roles.
     """
+    from .browser import PageStateIndeterminate
     from .copy_resume import ResumeListIndeterminate, list_resume_cards
     from .resume_state import parse_resume_state
 
@@ -668,8 +669,11 @@ def _confirm_unresolved_draft(page: Page, title: str) -> tuple[str, str]:
 
             open_confirmed_resume(page, card.resume_id)
             state = parse_resume_state(page.content(), card.resume_id)
-        except (PlaywrightError, ValueError) as exc:
+        except (PlaywrightError, PageStateIndeterminate, ValueError) as exc:
             last_reason = f"состояние черновика «{title}» не подтверждено: {exc}"
+            continue
+        if state.status is None:
+            last_reason = f"запись черновика «{title}» не найдена в состоянии резюме"
             continue
         if state.status != "not_finished":
             last_reason = f"состояние черновика «{title}» изменилось: status={state.status}"
