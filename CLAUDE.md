@@ -393,7 +393,7 @@ role.label.strip()`):
   (`is_profession_modal_confirmed`): единственный ВИДИМЫЙ `modal-overlay`, видимый
   вложенный `role=dialog`, видимый поиск каталога, заголовок по тексту; скрытый
   overlay — отдельное состояние, не «модалка открыта». Выбор листа —
-  `select_catalog_leaf(..., expected_role_id=role_id)`: точное совпадение текста ещё
+  `select_wizard_catalog_leaf(..., expected_role_id=role_id)`: точное совпадение текста ещё
   не доказывает роль — лист с чужим id не кликается вовсе, вырождение в «Другое»
   (id 40) — отказ, никогда не выбор. Бюджет ожидания ОТКРЫТИЯ модалки — отдельная
   `PROFESSION_MODAL_OPEN_WAIT_MS` (5с, #915: живой монтаж sub-second, а chip-shape

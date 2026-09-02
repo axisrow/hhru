@@ -1040,7 +1040,7 @@ def test_landed_first_next_save_is_verified_not_masked_by_fallback(
     )
     monkeypatch.setattr("hhru_bot.resume_position.dismiss_cookie_banner", lambda _page: None)
     select = MagicMock()
-    monkeypatch.setattr("hhru_bot.resume_position.select_catalog_leaf", select)
+    monkeypatch.setattr("hhru_bot.resume_position.select_wizard_catalog_leaf", select)
     monkeypatch.setattr("hhru_bot.resume_position._dump_wizard_failure", lambda *_args: "dump.html")
 
     minimum = MagicMock()

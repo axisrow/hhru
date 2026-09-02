@@ -19,10 +19,11 @@ def _positive_limit(value: str) -> int:
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "professional-roles",
-        help="Поиск по локальному кэшу профессий hh.ru и явное обновление каталога",
+        help="Поиск по локальному кэшу профессий hh.ru и обновление каталога поиска вакансий",
         description=(
             "Без --refresh читает только data/cache/professional_roles.json. "
-            "--refresh открывает live-каталог hh.ru, но не выбирает профессии "
+            "--refresh открывает live-каталог поиска вакансий "
+            "(фильтры /search/vacancy), но не выбирает профессии "
             "и не нажимает «Сохранить»."
         ),
     )
@@ -40,7 +41,8 @@ def register(subparsers) -> None:
     p.add_argument(
         "--refresh",
         action="store_true",
-        help="Явно перечитать полный live-каталог и атомарно обновить локальный кэш",
+        help="Явно перечитать полный live-каталог поиска вакансий "
+        "и атомарно обновить локальный кэш",
     )
     p.set_defaults(func=run)
 
@@ -48,7 +50,7 @@ def register(subparsers) -> None:
 def run(args: argparse.Namespace) -> bool:
     from ..professional_roles import (
         ProfessionalRoleCacheError,
-        collect_professional_role_catalog,
+        collect_vacancy_search_role_catalog,
         load_professional_role_cache,
         professional_role_cache_is_stale,
         search_cached_professional_roles,
@@ -73,15 +75,18 @@ def run(args: argparse.Namespace) -> bool:
                 headless=args.headless,
                 user_agent=config.user_agent,
             ) as context:
-                catalog = collect_professional_role_catalog(context.new_page())
+                catalog = collect_vacancy_search_role_catalog(context.new_page())
             write_professional_role_cache(catalog, cache_path)
         except BrowserLaunchError:
             raise
         except (OSError, ProfessionalRoleCacheError, RuntimeError) as exc:
-            print(f"[FAIL] Кэш каталога не обновлён: {exc}. Предыдущий валидный снимок сохранён.")
+            print(
+                f"[FAIL] Кэш каталога поиска вакансий не обновлён: {exc}. "
+                "Предыдущий валидный снимок сохранён."
+            )
             return True
         print(
-            f"[OK] Кэш каталога профессий обновлён: "
+            f"[OK] Кэш каталога поиска вакансий обновлён: "
             f"{len(catalog.categories)} категорий, {len(catalog.roles)} профессий."
         )
 
@@ -96,7 +101,7 @@ def run(args: argparse.Namespace) -> bool:
     if professional_role_cache_is_stale(catalog):
         fetched_at = catalog.fetched_at.astimezone().strftime("%Y-%m-%d %H:%M %Z")
         print(
-            f"[WARN] Кэш каталога старше 7 дней (снимок: {fetched_at}). "
+            f"[WARN] Кэш каталога поиска вакансий старше 7 дней (снимок: {fetched_at}). "
             "Обновите: hhru professional-roles --refresh"
         )
 
@@ -111,5 +116,5 @@ def run(args: argparse.Namespace) -> bool:
         [role.role_id, role.label, ", ".join(role.categories) or role.category] for role in roles
     ]
     print(_ascii_table(["role_id", "profession", "category"], rows))
-    print("[INFO] Это кандидаты из каталога, а не автоматическая классификация.")
+    print("[INFO] Это кандидаты из каталога поиска вакансий, а не автоматическая классификация.")
     return False

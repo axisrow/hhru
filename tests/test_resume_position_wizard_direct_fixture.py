@@ -12,7 +12,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 import hhru_bot.resume_position as resume_position
-from hhru_bot.create_resume import select_catalog_leaf
+from hhru_bot.create_resume import select_wizard_catalog_leaf
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +39,7 @@ def test_profession_modal_is_confirmed_only_by_all_five_signals():
     # count=1 у overlay означает лишь наличие DOM-узла, не открытие).
     playwright, browser, page = _page(MODAL_SEARCH_FIXTURE)
     try:
-        overlay = page.locator(resume_position.WIZARD_CATEGORY_MODAL_OVERLAY)
+        overlay = page.locator(resume_position.WIZARD_PROFESSION_MODAL_OVERLAY)
         assert overlay.count() == 1
         assert overlay.first.is_visible()
         assert resume_position.is_profession_modal_confirmed(page) is True
@@ -71,12 +71,12 @@ def test_outer_tree_row_does_not_carry_aria_selected_only_inner_treeitem_does():
 
 
 @pytest.mark.browser_unit
-def test_select_catalog_leaf_clicks_leaf_row_and_waits_for_checked_state():
+def test_select_wizard_catalog_leaf_clicks_leaf_row_and_waits_for_checked_state():
     # Доказанная механика battle2: клик по СТРОКЕ листа (не по скрытому input),
     # затем poll is_checked(); ожидаемый role_id обязан совпасть до клика.
     playwright, browser, page = _page(MODAL_SEARCH_FIXTURE)
     try:
-        reason = select_catalog_leaf(page, "Тестировщик", expected_role_id="124")
+        reason = select_wizard_catalog_leaf(page, "Тестировщик", expected_role_id="124")
         assert reason == ""
         checkbox = page.locator("[data-qa~='tree-selector-input-124']")
         assert checkbox.is_checked() is True
@@ -86,13 +86,13 @@ def test_select_catalog_leaf_clicks_leaf_row_and_waits_for_checked_state():
 
 
 @pytest.mark.browser_unit
-def test_select_catalog_leaf_refuses_other_degeneration_before_any_click():
+def test_select_wizard_catalog_leaf_refuses_other_degeneration_before_any_click():
     # Неточная цель вырождается в «Другое» (id 40) — это отказ с перечнем
     # предложенного, а не выбор (#913, правило 1). Никаких кликов по дереву
     # и submit.
     playwright, browser, page = _page(MODAL_OTHER_FIXTURE)
     try:
-        reason = select_catalog_leaf(page, "Инженер по тестированию", expected_role_id="124")
+        reason = select_wizard_catalog_leaf(page, "Инженер по тестированию", expected_role_id="124")
         assert "не найдена в каталоге" in reason
         assert "Другое" in reason
         assert page.locator("[data-qa~='tree-selector-input-40']").is_checked() is False
@@ -102,12 +102,12 @@ def test_select_catalog_leaf_refuses_other_degeneration_before_any_click():
 
 
 @pytest.mark.browser_unit
-def test_select_catalog_leaf_refuses_leaf_found_with_unexpected_role_id():
+def test_select_wizard_catalog_leaf_refuses_leaf_found_with_unexpected_role_id():
     # Лист найден по точному тексту, но его id не совпадает с согласованным
     # role_id — остановка до клика: подмена листа молча записала бы чужую роль.
     playwright, browser, page = _page(MODAL_SEARCH_FIXTURE)
     try:
-        reason = select_catalog_leaf(page, "Тестировщик", expected_role_id="148")
+        reason = select_wizard_catalog_leaf(page, "Тестировщик", expected_role_id="148")
         assert "role_id" in reason
         assert page.locator("[data-qa~='tree-selector-input-124']").is_checked() is False
     finally:
@@ -135,7 +135,7 @@ def test_hidden_overlay_is_not_a_confirmed_modal():
     # смонтирован, но скрыт — модалкой НЕ является и кликам не мешает.
     playwright, browser, page = _page(HIDDEN_OVERLAY_FIXTURE)
     try:
-        overlay = page.locator(resume_position.WIZARD_CATEGORY_MODAL_OVERLAY)
+        overlay = page.locator(resume_position.WIZARD_PROFESSION_MODAL_OVERLAY)
         assert overlay.count() == 1
         assert overlay.first.is_visible() is False
         assert resume_position.is_profession_modal_confirmed(page) is False

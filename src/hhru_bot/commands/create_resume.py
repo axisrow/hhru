@@ -20,7 +20,11 @@ def register(subparsers) -> None:
             "--force или интерактивного подтверждения."
         ),
     )
-    p.add_argument("--area", required=True, help="Точная leaf-профессия из live-каталога hh.ru")
+    p.add_argument(
+        "--area",
+        required=True,
+        help="Точная leaf-профессия из каталога визарда создания резюме",
+    )
     p.add_argument("--title", required=True, help="Одна основная профессия резюме")
     p.add_argument("--dry-run", action="store_true", help="Показать план без создания")
     p.add_argument("--force", action="store_true", help="Подтвердить боевое создание")
