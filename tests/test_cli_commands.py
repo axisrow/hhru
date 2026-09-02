@@ -79,6 +79,17 @@ def test_resume_position_auto_publish_gate_flag_is_explicit():
     assert args.allow_auto_publish is True
 
 
+def test_resume_sections_help_states_first_row_and_no_deletions(capsys):
+    parser = _build()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["resume-sections", "--help"])
+
+    help_text = capsys.readouterr().out
+    assert "первую строку" in help_text
+    assert "удаления не выполняются" in help_text
+
+
 def test_all_commands_registered():
     parser = _build()
     action = _subparser_actions(parser)

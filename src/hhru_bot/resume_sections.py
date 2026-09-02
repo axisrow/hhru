@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
@@ -49,16 +50,29 @@ RESUME_EDIT_BUTTON = {
 
 
 def _attestation_route(resume_id: str) -> re.Pattern[str]:
-    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/attestationEducation/[^/?#]+")
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/attestationEducation(?:/[^/?#]+)?")
 
 
 def _recommendation_route(resume_id: str) -> re.Pattern[str]:
-    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation/[^/?#]+")
+    return re.compile(rf"/resume/edit/{re.escape(resume_id)}/recommendation(?:/[^/?#]+)?")
 
 
 SECTION_ROUTES = {
     "attestations": _attestation_route,
     "recommendations": _recommendation_route,
+}
+
+FIRST_SECTION_EDIT_PATHS = {
+    "attestations": "attestationEducation",
+    "recommendations": "recommendation",
+}
+# Live-confirmed on the empty draft probe (2026-09-02): these suggestion
+# buttons are rendered for an actually empty block.  Require the corresponding
+# marker before treating zero row triggers as an empty section; otherwise a
+# hydration/anti-bot failure could be mistaken for permission to create a row.
+EMPTY_SECTION_MARKERS = {
+    "attestations": "[data-qa='suitable-vacancies-suggest-item-attestationEducation']",
+    "recommendations": "[data-qa='suitable-vacancies-suggest-item-recommendation']",
 }
 
 
@@ -225,6 +239,14 @@ def _apply_rows(
     dry_run: bool,
 ) -> list[str]:
     errors: list[str] = []
+    if resume_id and items:
+        # A previous empty-section editor may leave the page on its own route
+        # after cancel/save.  Re-open the resume before inspecting this block
+        # so its row trigger and empty marker are always read from the same
+        # deterministic page (#922).
+        goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
+        if has_login_form(page):
+            return ["hh.ru показал форму входа"]
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
     for index, item in enumerate(items):
         # The current HH.ru recommendation editor has no text control. Reject
@@ -250,10 +272,26 @@ def _apply_rows(
             # covers save.click()/cancel.click() themselves (#331 cycle-review
             # round 3): an element-detached or navigation error from either
             # must not propagate and crash apply_plan.
-            if index >= trigger.count():
+            trigger_count = trigger.count()
+            if index == 0 and trigger_count == 0 and resume_id:
+                # An empty section has no row trigger.  HH.ru's confirmed
+                # resume-scoped editor route opens the first row directly;
+                # unlike a suggestion chip, it cannot silently bind the row
+                # to another resume.  This is the only creation path here:
+                # later missing rows remain rejected below.
+                empty_marker = page.locator(EMPTY_SECTION_MARKERS[block])
+                if empty_marker.count() != 1:
+                    raise RuntimeError(f"{block}: пустой блок не подтверждён однозначно")
+                edit_path = f"/resume/edit/{resume_id}/{FIRST_SECTION_EDIT_PATHS[block]}"
+                goto_hh(page, f"{HH_BASE_URL}{edit_path}")
+                current_path = urlsplit(page.url).path.rstrip("/")
+                if not SECTION_ROUTES[block](resume_id).fullmatch(current_path):
+                    raise RuntimeError(f"{block}: первая строка открыта не для того резюме")
+                page.locator(ready_selector).wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
+            elif index >= trigger_count:
                 errors.append(f"{block}: строка {index} отсутствует; добавление не подтверждено")
                 continue
-            if resume_id:
+            elif resume_id:
                 edit_path = SECTION_ROUTES[block](resume_id)
                 open_hydrated_resume_editor(
                     page,
@@ -327,7 +365,7 @@ def _apply_rows(
 
 
 def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run: bool) -> list[str]:
-    """Apply only existing, live-confirmed rows. Never invents add controls."""
+    """Apply rows, creating the first row through the confirmed empty-section route."""
     if not has_auth_cookie(page):
         return ["отсутствует auth cookie"]
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")

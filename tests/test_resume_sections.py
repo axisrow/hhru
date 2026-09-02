@@ -385,3 +385,188 @@ def test_attestation_row_saves_through_partial_edit_button() -> None:
 
     assert returned is save
     assert page.locator.call_args_list[-1].args[0] == "[data-qa='resume-partial-edit-save']"
+
+
+@pytest.mark.parametrize(
+    ("block", "path", "item"),
+    [
+        (
+            "attestations",
+            "attestationEducation",
+            resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024"),
+        ),
+        (
+            "recommendations",
+            "recommendation",
+            Recommendation("", "Acme", "Ada", "Reviewer"),
+        ),
+    ],
+)
+def test_empty_section_opens_first_row_via_resume_scoped_route(
+    monkeypatch, block, path, item
+) -> None:
+    """#922: an empty block has no row trigger, so the first row uses the
+    confirmed resume-scoped editor route instead of inventing an add click."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    empty_marker = MagicMock()
+    empty_marker.count.return_value = 1
+    ready = MagicMock()
+    cancel = MagicMock()
+    cancel.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
+        resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: empty_marker,
+        (
+            f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']"
+            if block == "attestations"
+            else "input[name='company']"
+        ): ready,
+        "[data-qa='resume-partial-edit-cancel']": cancel,
+    }[selector]
+    visited = []
+
+    def goto(_page, url):
+        visited.append(url)
+        page.url = url
+
+    monkeypatch.setattr(resume_sections, "goto_hh", goto)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(
+        resume_sections,
+        "_fill_attestation_row" if block == "attestations" else "_fill_recommendation_row",
+        lambda *_args: MagicMock(),
+    )
+
+    plan = (
+        ResumeSectionsPlan(attestations=[item])
+        if block == "attestations"
+        else ResumeSectionsPlan(recommendations=[item])
+    )
+    errors = apply_plan(page, "resume-id", plan, dry_run=True)
+
+    assert errors == []
+    assert f"https://hh.ru/resume/edit/resume-id/{path}" in visited
+    no_rows.nth.assert_not_called()
+    cancel.click.assert_called_once_with()
+
+
+def test_both_empty_sections_reset_to_resume_before_each_block(monkeypatch) -> None:
+    """#922: the second empty block must be inspected on the resume page,
+    not on the first block's editor route."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    empty_marker = MagicMock()
+    empty_marker.count.return_value = 1
+    ready = MagicMock()
+    cancel = MagicMock()
+    cancel.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
+        resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: empty_marker,
+        f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
+        "input[name='company']": ready,
+        "[data-qa='resume-partial-edit-cancel']": cancel,
+    }[selector]
+    visited = []
+
+    def goto(_page, url):
+        visited.append(url)
+        page.url = url
+
+    monkeypatch.setattr(resume_sections, "goto_hh", goto)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(resume_sections, "_fill_attestation_row", lambda *_args: MagicMock())
+    monkeypatch.setattr(resume_sections, "_fill_recommendation_row", lambda *_args: MagicMock())
+
+    plan = ResumeSectionsPlan(
+        attestations=[resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024")],
+        recommendations=[Recommendation("", "Acme", "Ada", "Reviewer")],
+    )
+    errors = apply_plan(page, "resume-id", plan, dry_run=True)
+
+    assert errors == []
+    assert visited == [
+        "https://hh.ru/resume/resume-id",
+        "https://hh.ru/resume/resume-id",
+        "https://hh.ru/resume/edit/resume-id/attestationEducation",
+        "https://hh.ru/resume/resume-id",
+        "https://hh.ru/resume/edit/resume-id/recommendation",
+    ]
+    no_rows.nth.assert_not_called()
+    assert cancel.click.call_count == 2
+
+
+@pytest.mark.parametrize("marker_count", [0, 2])
+def test_empty_section_requires_unique_live_marker(monkeypatch, marker_count) -> None:
+    """#922: zero triggers without exactly one empty marker are indeterminate."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    marker = MagicMock()
+    marker.count.return_value = marker_count
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
+    }[selector]
+    monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(
+            attestations=[resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024")]
+        ),
+        dry_run=True,
+    )
+
+    assert len(errors) == 1
+    assert "пустой блок не подтверждён однозначно" in errors[0]
+
+
+def test_empty_section_route_guard_rejects_other_resume(monkeypatch) -> None:
+    """#922: direct first-row navigation must retain resume identity binding."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    marker = MagicMock()
+    marker.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
+    }[selector]
+
+    def goto(_page, url):
+        page.url = url.replace("resume-id", "other-resume")
+
+    monkeypatch.setattr(resume_sections, "goto_hh", goto)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+
+    errors = apply_plan(
+        page,
+        "resume-id",
+        ResumeSectionsPlan(
+            attestations=[resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024")]
+        ),
+        dry_run=True,
+    )
+
+    assert len(errors) == 1
+    assert "первая строка открыта не для того резюме" in errors[0]
