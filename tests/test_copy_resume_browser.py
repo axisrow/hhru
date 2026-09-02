@@ -108,6 +108,7 @@ class StubLocator:
         one = StubLocator(self._page, self.selector, count=min(self._count, 1), scope=self._scope)
         one._count_after_wait = 1
         one._wait_ok = self._wait_ok
+        one._disabled = getattr(self, "_disabled", False)
         return one
 
     def all(self):
@@ -117,7 +118,7 @@ class StubLocator:
         return None
 
     def is_disabled(self):
-        return False
+        return getattr(self, "_disabled", False)
 
 
 class StubPage:
@@ -432,6 +433,21 @@ def test_duplicate_button_missing_fails(monkeypatch):
     assert "лимит резюме исчерпан" in result.reason
     # Client render подтверждён optional-маркером: отсутствие action — это не
     # stall и не повод для recovery reload (возможен лимит резюме hh.ru).
+    assert page.reloads == []
+    assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE)]
+
+
+def test_disabled_duplicate_button_reports_quota_without_retry(monkeypatch):
+    duplicate = StubLocator(None, DUP_SEL, count=1, scope="")
+    duplicate._disabled = True
+    page = StubPage(dup_locators={CARD_SEL: duplicate})
+    _patch_env(monkeypatch, page)
+
+    result = cr.copy_resume_on_hh(page, _resume(), dry_run=False)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "лимит резюме исчерпан" in result.reason
     assert page.reloads == []
     assert page.clicks == [(CARD_SEL, RESUME_LIST_ACTION_MORE)]
 

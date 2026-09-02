@@ -54,7 +54,7 @@ from .resume_ids import (
 from .resume_ids import (
     page_card_hashes as _card_hashes,
 )
-from .resume_limits import resume_limit_reason
+from .resume_limits import RESUME_LIMIT_REASON, resume_limit_reason
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -300,6 +300,13 @@ def _wait_duplicate_action(
         if duplicate_count == 1:
             limit_reason = resume_limit_reason(duplicate)
             if limit_reason:
+                # A disabled menu item may be mounted briefly while Magritte
+                # finishes hydration.  Require a second, delayed reading;
+                # otherwise a transient disabled state would become a
+                # terminal quota verdict and skip the safe recovery path.
+                page.wait_for_timeout(PROFILE_POLL_MS)
+                if duplicate.count() != 1 or not resume_limit_reason(duplicate):
+                    continue
                 return None, limit_reason
             observer.confirm_ready()
             return duplicate.first, ""
@@ -737,7 +744,7 @@ def copy_resume_on_hh(
         # Отсутствие действия при уже завершившемся client render — не stall и
         # не повод перезагружать страницу (например, достигнут лимит резюме).
         if (
-            failure.startswith("лимит резюме исчерпан")
+            failure.startswith(RESUME_LIMIT_REASON)
             or failure.startswith("duplicate_action_missing:")
             or "неоднозначно" in failure
         ):
