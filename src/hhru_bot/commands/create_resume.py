@@ -114,7 +114,8 @@ def run(args: argparse.Namespace):
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
         else:
-            print(f"[OK] {result.reason}. Новый resume_id: {result.new_resume_id}")
+            detail = f" {result.reason}." if "без профессии" in result.reason else ""
+            print(f"[OK] Черновик резюме создан.{detail} Новый resume_id: {result.new_resume_id}")
             print(format_config_snippet(result.new_resume_id))
         return False
 
