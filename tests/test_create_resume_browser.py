@@ -94,10 +94,14 @@ class Locator:
             return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
         return [self]
 
-    def text_content(self):
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        if "tree-selector-item-text-" in self.selector:
+            return AREA
         return ""
 
-    def get_attribute(self, name):  # noqa: ARG002
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        if name == "data-qa" and "tree-selector-item-text-" in self.selector:
+            return self.selector.rsplit("tree-selector-item-text-", 1)[1].split("'")[0]
         return None
 
     def is_disabled(self):
@@ -382,6 +386,8 @@ class HydrationLocator(Locator):
         self.page.clicks.append(self.selector)
         if self.selector == RESUME_CREATION_SELECT_JOB:
             self.page.select_job_clicks += 1
+        if "tree-selector-item-text-" in self.selector:
+            self.page.checked = True
 
 
 def test_click_on_unhydrated_card_is_retried(monkeypatch):
@@ -676,6 +682,29 @@ class CompositeLeafLocator(HydrationLocator):
     def all(self):
         self.page.tree_reads += 1
         return self.page._leaves  # noqa: SLF001 — тестовый двойник, не production API
+
+    def _live_leaf(self):
+        prefix = "[data-qa~='"
+        suffix = "']"
+        if self.selector.startswith(prefix) and self.selector.endswith(suffix):
+            qa = self.selector[len(prefix) : -len(suffix)]
+            return next((leaf for leaf in self.page._leaves if leaf._qa == qa), None)  # noqa: SLF001
+        return None
+
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        return leaf._text if leaf is not None else ""  # noqa: SLF001
+
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        return leaf._qa if leaf is not None and name == "data-qa" else None  # noqa: SLF001
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        if leaf is not None:
+            leaf.click()
+        else:
+            super().click()
 
 
 def _run_area(page, area, monkeypatch, *, before_click=None):
