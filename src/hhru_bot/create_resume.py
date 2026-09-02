@@ -150,6 +150,11 @@ def select_wizard_catalog_leaf(
     # на снимке, у которого тексты и элементы от разных рендеров, принимать
     # решение нельзя.
     unique_candidate: Locator | None = None
+    # #920: кандидатом фильтра (не точным совпадением). Лог «принят» пишется
+    # только ПОСЛЕ всех гардов (leaf/expected_role_id/checked), перед submit —
+    # раньше он читался как «принято» даже в пути resume_position direct-save,
+    # где следом за ним идёт отказ по role_id (review #933).
+    fuzzy_matched = False
     while True:
         tree = page.locator("[data-qa*='tree-selector-item-text-']")
         try:
@@ -220,13 +225,7 @@ def select_wizard_catalog_leaf(
             and query
             and query in normalize(unique_candidate.text_content() or "")
         ):
-            accepted_text = (unique_candidate.text_content() or "").strip()
-            logger.info(
-                "профессия «%s» не совпала с листом каталога точно; "
-                "принят единственный кандидат фильтра: «%s»",
-                area,
-                accepted_text,
-            )
+            fuzzy_matched = True
             matches = [unique_candidate]
         else:
             # Единственный кандидат, но не принят: вырождение в «Другое»
@@ -317,6 +316,17 @@ def select_wizard_catalog_leaf(
         page.wait_for_timeout(100)
     if not _require(checkbox).is_checked():
         return f"профессия «{area}» не отмечена после клика по строке каталога визарда"
+    if fuzzy_matched:
+        # Только здесь «принят» — правда: leaf подтверждён, role_id (если
+        # согласован) совпал, чекбокс отмечен. До этой точки фолбэк #920 мог
+        # отказаться на любом гарде выше.
+        accepted_text = (matches[0].text_content() or "").strip()
+        logger.info(
+            "профессия «%s» не совпала с листом каталога точно; "
+            "принят единственный кандидат фильтра: «%s»",
+            area,
+            accepted_text,
+        )
     return _click_one(
         page, RESUME_CREATION_CATEGORY_SUBMIT, "кнопка подтверждения каталога визарда"
     )
