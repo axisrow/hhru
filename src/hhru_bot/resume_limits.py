@@ -5,7 +5,6 @@ from __future__ import annotations
 from playwright.sync_api import Locator
 
 RESUME_QUOTA_UNREADABLE_REASON = "квоту прочитать не удалось — повторите попытку"
-RESUME_LIMIT_REASON = RESUME_QUOTA_UNREADABLE_REASON
 
 
 def resume_limit_reason(action: Locator) -> str:
