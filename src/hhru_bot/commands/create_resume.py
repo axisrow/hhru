@@ -16,6 +16,9 @@ def register(subparsers) -> None:
             "Открывает визард hh.ru и создаёт новый черновик резюме. "
             "Один запуск создаёт одно резюме с одной основной профессией; "
             "для нескольких профессий нужны отдельные резюме и отдельные запуски. "
+            "С --allow-unresolved-area, если area отсутствует в каталоге, черновик "
+            "создаётся с ролью-плейсхолдером «Другое» — профессию затем заменяют "
+            "вручную через «Дополнить». "
             "WRITE-команда: по умолчанию только dry-run; боевой запуск требует "
             "--force или интерактивного подтверждения."
         ),
@@ -33,6 +36,16 @@ def register(subparsers) -> None:
         ),
     )
     p.add_argument("--title", required=True, help="Одна основная профессия резюме")
+    p.add_argument(
+        "--allow-unresolved-area",
+        "--allow-unresolved",
+        action="store_true",
+        help=(
+            "Если area не найдена в каталоге — создать черновик с ролью-"
+            "плейсхолдером «Другое» (id 40), профессия заменяется вручную "
+            "(синоним: --allow-unresolved)"
+        ),
+    )
     p.add_argument("--dry-run", action="store_true", help="Показать план без создания")
     p.add_argument("--force", action="store_true", help="Подтвердить боевое создание")
     p.set_defaults(func=run)
@@ -80,13 +93,15 @@ def run(args: argparse.Namespace):
             with launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
-                result = create_resume_on_hh(
-                    context.new_page(),
-                    area=args.area,
-                    title=args.title,
-                    dry_run=dry_run,
-                    before_click=attempt.before_click if attempt is not None else None,
-                )
+                create_kwargs = {
+                    "area": args.area,
+                    "title": args.title,
+                    "dry_run": dry_run,
+                    "before_click": attempt.before_click if attempt is not None else None,
+                }
+                if getattr(args, "allow_unresolved_area", False):
+                    create_kwargs["allow_unresolved_area"] = True
+                result = create_resume_on_hh(context.new_page(), **create_kwargs)
         except BaseException as exc:
             if attempt is not None:
                 attempt.interrupt(exc)
@@ -101,7 +116,8 @@ def run(args: argparse.Namespace):
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
         else:
-            print(f"[OK] Черновик резюме создан. Новый resume_id: {result.new_resume_id}")
+            detail = f" {result.reason}." if result.placeholder_role else ""
+            print(f"[OK] Черновик резюме создан.{detail} Новый resume_id: {result.new_resume_id}")
             print(format_config_snippet(result.new_resume_id))
         return False
 

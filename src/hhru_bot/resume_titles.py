@@ -111,7 +111,8 @@ def duplicate_title_reason(
     if normalize(title) in {normalize(existing) for existing in others}:
         return (
             f"резюме с должностью «{title}» уже существует; должности в аккаунте "
-            "уникальны, запись запрещена"
+            "уникальны, запись запрещена — возьмите другое имя "
+            "(например, с суффиксом «2»)"
         )
     return ""
 

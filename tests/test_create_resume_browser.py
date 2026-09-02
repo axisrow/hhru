@@ -207,12 +207,13 @@ class HtmlCreateButtonPage(Page):
         return super().locator(selector)
 
 
-def _run(page, before_click=None):
+def _run(page, before_click=None, *, allow_unresolved_area=False):
     return create.create_resume_on_hh(
         cast(PlaywrightPage, cast(object, page)),
         area=AREA,
         title=TITLE,
         dry_run=False,
+        allow_unresolved_area=allow_unresolved_area,
         before_click=before_click,
     )
 
@@ -247,6 +248,86 @@ def test_disabled_create_button_is_unreadable_quota_failure(monkeypatch):
     assert not result.success
     assert result.reason.startswith("квоту прочитать не удалось")
     assert RESUME_CREATE_BUTTON not in page.clicks
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("профессия «ЛЛМ» не найдена в каталоге визарда резюме (список пуст)", True),
+        ("экран каталога визарда резюме не отрисовался: timeout", False),
+        ("не удалось подтвердить единственный лист каталога (дерево перерендерилось)", False),
+        ("профессия найдена в каталоге с role_id=96, ожидался role_id=132", False),
+        ("профессия «ЛЛМ» не найдена однозначно в каталоге визарда (совпадений: 2)", False),
+        ("профессия не найдена в каталоге; фильтр предлагает единственный лист", False),
+    ],
+)
+def test_allow_unresolved_gate_accepts_only_missing_catalog_area(reason, expected):
+    assert create._is_unresolved_area_reason(reason) is expected
+
+
+def test_allow_unresolved_does_not_bypass_transient_catalog_failure(monkeypatch):
+    """Transient-отказ каталога не срабатывает фолбэк «Другое» (#936 cycle)."""
+    page = Page(fail_on_wait=None)
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    select_calls: list[tuple] = []
+
+    def fake_select(_page, leaf_area, *, expected_role_id=None):
+        select_calls.append((leaf_area, expected_role_id))
+        return "экран каталога визарда резюме не отрисовался: timeout"
+
+    monkeypatch.setattr(create, "select_wizard_catalog_leaf", fake_select)
+
+    result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
+
+    assert not result.success
+    assert not result.uncertain
+    assert select_calls == [(AREA, None)]
+    assert "Первый «Продолжить»" in result.reason
+
+
+def test_allow_unresolved_falls_back_to_other_role_for_missing_area(monkeypatch):
+    """#936 (живой факт 2026-09-03): фолбэк выбирает «Другое» (id 40) и идёт
+    штатным сохранением; пустой NEXT черновик не материализует."""
+    page = HydrationRacePage(clicks_until_hydrated=0)
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    select_calls: list[tuple] = []
+
+    def fake_select(_page, leaf_area, *, expected_role_id=None):
+        select_calls.append((leaf_area, expected_role_id))
+        if len(select_calls) == 1:
+            return "профессия «ЛЛМ» не найдена в каталоге визарда резюме (список пуст)"
+        return None
+
+    monkeypatch.setattr(create, "select_wizard_catalog_leaf", fake_select)
+
+    result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
+
+    assert result.success, result.reason
+    assert result.placeholder_role is True
+    assert select_calls == [
+        (AREA, None),
+        ("Другое", "40"),
+    ]
+
+
+def test_allow_unresolved_fallback_failure_stays_plain_failed(monkeypatch):
+    """Отказ даже при выборе «Другое» — обычный failed с фантом-подсказкой."""
+    page = Page(fail_on_wait=None)
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def fake_select(_page, leaf_area, *, expected_role_id=None):
+        if leaf_area == "Другое":
+            return "чекбокс профессии «Другое» не отрисовался: timeout"
+        return "профессия «ЛЛМ» не найдена в каталоге визарда резюме (список пуст)"
+
+    monkeypatch.setattr(create, "select_wizard_catalog_leaf", fake_select)
+
+    result = _run(page, before_click=lambda: None, allow_unresolved_area=True)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "чекбокс профессии «Другое»" in result.reason
+    assert "Первый «Продолжить»" in result.reason
 
 
 def test_active_create_button_keeps_existing_behavior(monkeypatch):
