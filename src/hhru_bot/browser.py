@@ -532,3 +532,52 @@ def dismiss_cookie_banner(page: Page, *, timeout: int = 2_000) -> None:
         # если клик не удался, дальнейший код всё равно проверит реальный
         # результат своего действия (fail-closed на своём собственном уровне).
         pass
+
+
+def wait_for_react_hydration(page: Page, selector: str, *, timeout_ms: int) -> bool:
+    """Ждать появления React-привязки (__reactFiber$/__reactProps$) на элементе.
+
+    Инвариант «visible != гидратирован» (#858): SSR-разметка видима и
+    доступна ДО гидратации, а клики/change-события в этом окне молча
+    теряются — обработчиков ещё нет. Наличие instance-ключей —
+    детерминированный сигнал готовности. Возвращает False по таймауту
+    (включая «элемента нет вовсе»), не бросает: решение об отказе — за
+    вызывающим. Чтение ``Object.keys`` — чтение DOM, не внутренний API.
+
+    Точечный вариант с локатором и доменной ошибкой —
+    ``experience._wait_for_react_hydration``; общий хелпер здесь — для
+    новых экранов, чтобы детектор не плодился в копиях.
+    """
+    try:
+        page.wait_for_function(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                const keys = Object.keys(el);
+                return keys.some((k) => k.startsWith('__reactFiber'))
+                    && keys.some((k) => k.startsWith('__reactProps'));
+            }""",
+            arg=selector,
+            timeout=timeout_ms,
+        )
+    except PlaywrightError:
+        return False
+    return True
+
+
+def dump_page_html(page: Page, stem: str) -> Path | None:
+    """Best-effort дамп HTML страницы в LOG_DIR для разбора инцидента.
+
+    Общий хелпер семейства ``_dump_*_failure`` (resume_education/
+    resume_position): дубли выключенной диагностики недопустимы, но и
+    падать из-за неё нельзя — любая OSError глушится, возвращается None.
+    """
+    from .logging_setup import LOG_DIR
+
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / f"{stem}_{time.strftime('%Y%m%d_%H%M%S')}.html"
+        path.write_text(page.content(), encoding="utf-8")
+        return path
+    except OSError:
+        return None

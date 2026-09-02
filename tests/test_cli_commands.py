@@ -165,6 +165,7 @@ def test_all_commands_registered():
         "blacklist",
         "update",
         "report-vacancy",
+        "upload-photo",
     }
 
 
@@ -240,6 +241,7 @@ def test_register_commands_returns_names():
         "blacklist",
         "update",
         "report_vacancy",
+        "upload_photo",
     }
 
 
@@ -783,3 +785,18 @@ def test_throttled_channel_prints_environment_without_traceback(monkeypatch, cap
     assert "медленный" in stderr or "задушенный" in stderr
     assert "Traceback" not in stderr
     logging.getLogger("hhru_bot").handlers.clear()
+
+
+def test_upload_photo_has_required_args():
+    parser = _build()
+    args = parser.parse_args(
+        ["upload-photo", "--resume", "rid", "--photo", "/tmp/x.jpg", "--force"]
+    )
+    assert args.resume == "rid"
+    assert args.photo == Path("/tmp/x.jpg")
+    assert args.force is True
+    assert args.dry_run is False
+    with pytest.raises(SystemExit):
+        parser.parse_args(["upload-photo", "--photo", "/tmp/x.jpg"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["upload-photo", "--resume", "rid"])

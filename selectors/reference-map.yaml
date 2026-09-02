@@ -3944,6 +3944,151 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_photo.RESUME_AVATAR_BLOCK:
+    value: '[data-qa=''resume-avatar'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:58
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:58
+      note: Контейнер аватара на странице резюме, состояние «фото нет» (placeholder без img). Read-only дамп authenticated-сессии,
+        explore_photo_full_20260902_100454.html, 2026-09-02.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_AVATAR_EDIT_BUTTON:
+    value: '[data-qa=''resume-avatar-edit-button'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:63
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:63
+      note: Кнопка-карандаш поверх аватара. Путь загрузки НЕ является — клик не открывает file chooser и не меняет DOM (expect_file_chooser
+        дважды, с ожиданием гидратации и без), 2026-09-02.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_AVATAR_IMAGE:
+    value: '[data-qa=''resume-avatar''] img'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:68
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:68
+      note: Позитивный маркер успешной загрузки (img внутри аватара). Подтверждён боевым прогоном 2026-09-02 — после клика
+        photo-viewer-action-assign-current img появился в блоке аватара (дамп photo_assign_final_110123.html).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_EDITOR_APPLY:
+    value: '[data-qa=''photo-editor-apply'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:74
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:74
+      note: Кнопка применения crop-редактора, запускает upload. Подтверждена боевым прогоном 2026-09-02 — после set_input_files
+        модалка редактора открылась, клик привёл к модалке назначения (дамп photo_flow_editor_105227.html).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_FILE_INPUT:
+    value: input[data-qa='resume-photo-proxy-gallery-input']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:54
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:54
+      note: Скрытый постоянный input[type=file] micro-frontend resumePhotoViewer, accept=image/jpeg,image/png,image/jpg. Read-only
+        дамп authenticated-сессии, explore_photo_full_20260902_100454.html, 2026-09-02. Боевой путь — гидратация + set_input_files;
+        передача в негидратированный инпут молча никуда не идёт (эксперимент 2026-09-02). Один и тот же узел обслуживает и
+        поллинг гидратации (browser.wait_for_react_hydration), и адресацию set_input_files — отдельный дубль-константы не
+        заводится (прецедент
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_MFE_CONTAINER:
+    value: '[class*=''ContainerForMicroFrontend-resumePhotoViewer'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:44
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:44
+      note: Контейнер микрофроненда resumePhotoViewer, цель scrollIntoView перед ожиданием гидратации (ленивая гидратация
+        запускается попаданием в вьюпорт, reactProps на gallery-input за 2-4с). Подтверждён живыми дампами 2026-09-02 (photo_flow_*);
+        без скролла привязка не появляется (эксперимент explore_photo_upload_net).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+    value: '[data-qa=''photo-viewer-action-assign-current'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:81
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:81
+      note: Кнопка «назначить на текущее резюме» в модалке «Все загруженные фото». Подтверждена боевым прогоном 2026-09-02
+        — клик привёл к появлению img в аватаре (дамп photo_assign_final_110123.html). Кликать после затухания анимации overlay,
+        иначе Playwright ретраит в таймаут.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
   resume_position.BUSINESS_TRIPS:
     value: '[data-qa=''resume-edit-business-trip-readiness'']'
     criticality: write
