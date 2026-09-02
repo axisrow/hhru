@@ -233,3 +233,35 @@ def test_hhru_live_policy_body_state_class_never_registered():
     страница с текстом всего документа."""
     scenario = _run_command_scenario("body_state_class_never_registered")
     assert scenario["listedCount"] == 0
+
+
+def test_hhru_live_policy_latin_x_needs_real_button():
+    """Латинская «x» засчитывается только на настоящей кнопке
+    (button/a/[role=button]): декоративный спан с data-qa и глифом «x»
+    не должен вставать controls[0] перед настоящим крестиком (PR #935
+    review). ×/✕ работают как раньше."""
+    scenario = _run_command_scenario("glyph_x_needs_real_button")
+    assert scenario["closeControls"] == 1
+    assert scenario["clickedFake"] is False
+    assert scenario["clickedReal"] is True
+    assert scenario["dismissedOk"] is True
+
+
+def test_hhru_live_policy_reshow_reuses_registry_entry():
+    """hide->show того же DOM-узла репортится повторно (seen — по видимости),
+    но запись в registry переиспользуется: новый id дал бы дубль в листинге,
+    который pruneRegistry никогда не уберёт (PR #935 review)."""
+    scenario = _run_command_scenario("dedupe_on_reshow")
+    assert scenario["entries"] == 1
+
+
+def test_hhru_live_policy_obstruction_probe_off_viewport_is_not_checked():
+    """elementFromPoint -> null (центр вне вьюпорта) означает «проба ничего
+    не смогла проверить»: obstructionChecked обязан остаться false, а не
+    covered=false, который агент прочтёт как «кликать можно» (PR #935
+    review). Сама проба: свой элемент -> covered=false, чужой ->
+    covered=true."""
+    scenario = _run_command_scenario("obstruction_probe")
+    assert scenario["clearChecked"] is True and scenario["clearCovered"] is False
+    assert scenario["coveredChecked"] is True and scenario["coveredValue"] is True
+    assert scenario["offscreenChecked"] is False and scenario["offscreenCovered"] is None

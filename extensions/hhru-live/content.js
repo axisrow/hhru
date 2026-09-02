@@ -50,7 +50,11 @@ const APPLY_QA = /vacancy-response/i;
 const APPLY_CLASS = /task-question|task-body/i;
 const APPLY_FORM_ID = /RESPONSE_MODAL_FORM_ID/;
 const CLOSE_LABEL = /закрыт|close|dismiss/i;
-const CLOSE_GLYPH = /^[×✕x]$/i;
+// A lone latin "x" is weaker evidence than ×/✕: decorative spans with a
+// data-qa attribute and an x glyph exist on real pages, and it must not be
+// clickable just because of the attribute (PR #935 review).
+const CLOSE_GLYPH = /^[×✕]$/;
+const CLOSE_LATIN_X = /^x$/i;
 const OVERLAY_GONE_POLL_MS = 100;
 const OVERLAY_GONE_TIMEOUT_MS = 2000;
 
@@ -111,12 +115,17 @@ function findCloseControls(element) {
     const cls = (node.getAttribute('class') || '').toLowerCase();
     const role = (node.getAttribute('role') || '').toLowerCase();
     const text = (node.textContent || '').trim().replace(/\s+/g, ' ');
-    const interactive = ['button', 'a'].includes(String(node.tagName).toLowerCase())
-      || role === 'button' || qa !== '' || cls.includes('close');
-    if (!interactive) return;
+    const tagInteractive = ['button', 'a'].includes(String(node.tagName).toLowerCase())
+      || role === 'button';
+    const weaklyInteractive = qa !== '' || cls.includes('close');
+    if (!tagInteractive && !weaklyInteractive) return;
     if (/close/.test(qa) || /close/.test(cls) || CLOSE_GLYPH.test(text)) {
       controls.push(node);
+      return;
     }
+    // Latin "x" counts only on a real button/a/role=button: a data-qa or
+    // class alone must not make a decorative x-glyph span clickable.
+    if (CLOSE_LATIN_X.test(text) && tagInteractive) controls.push(node);
   });
   return controls;
 }
@@ -182,16 +191,31 @@ function listOverlays() {
   return Array.from(registry.entries()).map(([id, entry]) => describeOverlay(id, entry.element));
 }
 
-function report(element) {
-  const id = `overlay-${++registrySeq}`;
-  const info = classify(element);
-  registry.set(id, { element, info });
-  const report = {
+function sendReport(id, info, element) {
+  chrome.runtime.sendMessage({
     kind: 'overlay_detected',
     observedAt: new Date().toISOString(),
     overlay: { ...info, id, disposition: classifyDisposition(element, info) }
-  };
-  chrome.runtime.sendMessage(report);
+  });
+}
+
+function report(element) {
+  // Re-use the existing entry when the same element re-surfaces via
+  // hide->show: `seen` is intentionally per-visibility (see
+  // reportIfNewlyVisible), so the node reports again — but a fresh id would
+  // list one DOM node twice, the stale entry staying visible so pruneRegistry
+  // never removes it (PR #935 review).
+  for (const [existingId, entry] of registry) {
+    if (entry.element === element) {
+      entry.info = classify(element);
+      sendReport(existingId, entry.info, element);
+      return;
+    }
+  }
+  const id = `overlay-${++registrySeq}`;
+  const info = classify(element);
+  registry.set(id, { element, info });
+  sendReport(id, info, element);
 }
 
 // `seen` gates a report only while the element stays visible: once it goes
@@ -260,8 +284,14 @@ function checkElement(selector) {
     const rect = element.getBoundingClientRect();
     if (rect) {
       const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-      obstructionChecked = true;
-      covered = !!hit && hit !== element && !(typeof element.contains === 'function' && element.contains(hit));
+      // hit === null means the center point is off-viewport: the probe checked
+      // nothing, so report "not checked" rather than a misleading
+      // covered=false that an agent would read as "clear to click"
+      // (PR #935 review).
+      if (hit) {
+        obstructionChecked = true;
+        covered = hit !== element && !(typeof element.contains === 'function' && element.contains(hit));
+      }
     }
   }
   return { found: true, visible, covered, obstructionChecked };

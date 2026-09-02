@@ -255,6 +255,70 @@ const SCENARIOS = {
     return { listedCount: listed.overlays.length };
   },
 
+  // A decorative span with a data-qa attribute and an «x» glyph standing
+  // before the real close button must not be clicked: latin x counts only on
+  // a real button/a/role=button (PR #935 review).
+  glyph_x_needs_real_button: async () => {
+    const fake = el('span', { 'data-qa': 'decorative-marker' }, 'x');
+    const real = el('button', {}, 'x');
+    const toast = el('div', { class: 'toast-notification' }, 'Тост с двумя иксами');
+    toast.appendChild(fake);
+    toast.appendChild(real);
+    append(toast);
+    const listed = await send({ action: 'list_overlays' });
+    const pending = send({ action: 'dismiss_overlay', id: listed.overlays[0].id });
+    setTimeout(() => toast._setVisible(false), 50);
+    const dismissed = await pending;
+    return {
+      closeControls: listed.overlays[0].closeControls,
+      clickedFake: env.clicks.includes(fake),
+      clickedReal: env.clicks.includes(real),
+      dismissedOk: dismissed.ok,
+    };
+  },
+
+  // hide->show of the same DOM node re-reports it (seen is per-visibility),
+  // but the existing registry entry must be reused: a fresh id would list
+  // one node twice, the stale entry staying visible for pruneRegistry.
+  dedupe_on_reshow: async () => {
+    const close = el('button', { 'aria-label': 'Закрыть' }, '×');
+    const toast = el('div', { class: 'toast-notification' }, 'Тост с ре-шоу');
+    toast.appendChild(close);
+    append(toast);
+    toast._setVisible(false);
+    toast.setAttribute('style', 'display: none');
+    env.flush();
+    toast._setVisible(true);
+    toast.setAttribute('style', '');
+    env.flush();
+    const listed = await send({ action: 'list_overlays' });
+    return { entries: listed.overlays.length };
+  },
+
+  // Real-browser obstruction probe: element at the center point must be the
+  // element itself. Off-viewport center (elementFromPoint -> null) means the
+  // probe checked nothing and must report obstructionChecked: false, not a
+  // misleading covered: false (PR #935 review).
+  obstruction_probe: async () => {
+    const next = el('button', { 'data-qa': 'next-button' }, 'Далее');
+    append(next);
+    next.getBoundingClientRect = () => ({ left: 10, top: 10, width: 50, height: 20 });
+    env.document.elementFromPoint = () => next;
+    const clear = await send({ action: 'check_element', selector: '[data-qa="next-button"]' });
+    env.document.elementFromPoint = () => ({ someOtherElement: true });
+    const covered = await send({ action: 'check_element', selector: '[data-qa="next-button"]' });
+    env.document.elementFromPoint = () => null;
+    const offscreen = await send({ action: 'check_element', selector: '[data-qa="next-button"]' });
+    return {
+      clearChecked: clear.element.obstructionChecked,
+      clearCovered: clear.element.covered,
+      coveredChecked: covered.element.obstructionChecked,
+      coveredValue: covered.element.covered,
+      offscreenChecked: offscreen.element.obstructionChecked,
+      offscreenCovered: offscreen.element.covered,
+    };
+  },
+
   // check_element: confirmation that the next step's element is reachable.
   check_element: async () => {
     const next = el('button', { 'data-qa': 'next-button' }, 'Далее');

@@ -36,10 +36,15 @@ find_binary() {
     [ -d "$dir" ] || continue
     dirs+=("$dir")
   done
-  for dir in $(printf '%s\n' "${dirs[@]}" | sort -rV); do
-    candidates+=("$dir/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
-    candidates+=("$dir/chrome-mac/Chromium.app/Contents/MacOS/Chromium")
-  done
+  # macOS ships bash 3.2, where "${dirs[@]}" on an empty array aborts under
+  # set -u before the [FAIL] hint below can print (review of PR #935) —
+  # guard with the count, which is safe when empty.
+  if [ "${#dirs[@]}" -gt 0 ]; then
+    for dir in $(printf '%s\n' "${dirs[@]}" | sort -rV); do
+      candidates+=("$dir/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+      candidates+=("$dir/chrome-mac/Chromium.app/Contents/MacOS/Chromium")
+    done
+  fi
   # Системный Chromium (НЕ брендированный Google Chrome).
   candidates+=("/Applications/Chromium.app/Contents/MacOS/Chromium")
   candidates+=("$(command -v chromium 2>/dev/null || true)")
