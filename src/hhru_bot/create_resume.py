@@ -450,10 +450,12 @@ def _role_from_suggestion_payloads(
     """Сопоставить текст опции подсказки с ролью каталога (id, имя) (#920).
 
     Возвращает None, если текст не найден ни в одном ответе, роль не ровно
-    одна или поля пусты — неоднозначный/неполный маппинг не принимается
+    одна, поля пусты ИЛИ разные ответы того же shard'а отрезолвили один
+    текст в разные роли — неоднозначный/неполный маппинг не принимается
     (fail-closed): резюме не должно получить профессию, которую никто не
-    называл.
+    называл, а first-match закрепил бы возможный неверный role_id.
     """
+    found: tuple[str, str] | None = None
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
@@ -471,9 +473,13 @@ def _role_from_suggestion_payloads(
                 continue
             role_id = str(role.get("id") or "")
             role_name = str(role.get("name") or "")
-            if role_id and role_name:
-                return role_id, role_name
-    return None
+            if not role_id or not role_name:
+                continue
+            if found is not None and found[0] != role_id:
+                return None
+            if found is None:
+                found = (role_id, role_name)
+    return found
 
 
 def _read_suggestion_texts(page: Page) -> list[str]:
@@ -679,6 +685,9 @@ def create_resume_on_hh(
     # (#920, живой факт 2026-09-02), поэтому любой отказ после него обязан
     # предупреждать о фантоме — включая неожиданные PlaywrightError.
 
+    # Первый try — ДО мутирующего клика: сущности черновика появиться не из
+    # чего, фантом-подсказка здесь ложный сигнал (#933 cycle 2), поэтому
+    # except без неё.
     try:
         switch_reason = _click_until_screen_switches(page, select_job, RESUME_CREATION_POSITION)
         if switch_reason:
@@ -702,6 +711,12 @@ def create_resume_on_hh(
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
+    except PlaywrightError as exc:
+        return CreateResumeResult(False, reason=f"ошибка до сохранения резюме: {exc}")
+
+    # Второй try — ПОСЛЕ первого NEXT: мутация уже возможна (#920), любой
+    # отказ отсюда обязан предупреждать о фантоме (см. _phantom_draft_hint).
+    try:
         category_reason = select_wizard_catalog_leaf(
             page, leaf_area, expected_role_id=expected_leaf_id
         )

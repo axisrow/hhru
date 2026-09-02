@@ -10,6 +10,7 @@ NEXT, выбор leaf — мутацию не совершает, и ошибк�
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 import pytest
@@ -1449,6 +1450,61 @@ def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
     assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
     assert "delete-resume" in result.reason
     assert "list-resumes" in result.reason
+
+
+def test_conflicting_payload_roles_disable_suggestion_acceptance(monkeypatch, caplog):
+    """Расхождение маппингов между ответами shard'а — неоднозначность.
+
+    Один и тот же текст опции в разных ответах shard'а отрезолвился в
+    РАЗНЫЕ роли: first-match взял бы первую молча, а expected_role_id
+    закрепил бы возможный неверный id. Fail-closed: противоречивые
+    маппинга не принимаются, дерево получает исходный запрос.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[
+            _payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME),
+            _payload(SUGGEST_TEXT, "999", "Совсем другая роль"),
+        ],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert "принята подсказка каталога" not in caplog.text
+    assert "не сопоставлена с ролью каталога однозначно" in caplog.text
+    # Дерево получает исходный запрос, а не имя роли из спорного маппинга.
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+    assert not result.uncertain
+
+
+def test_error_before_next_does_not_hint_phantom_draft(monkeypatch):
+    """Ошибка в подсказках ДО первого NEXT — фантом-подсказки быть не должно.
+
+    PlaywrightError из набора area (press_sequentially) случается до
+    нажатия «Продолжить»: сущности черновика появиться не из чего, и
+    предупреждение о фантоме здесь — ложный сигнал (#933 cycle 2).
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _boom(page, position, area):
+        raise PlaywrightError("Locator.press_sequentially: Timeout 30000ms exceeded")
+
+    monkeypatch.setattr(create, "_resolve_leaf_by_suggestions", _boom)
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain
+    assert "ошибка до сохранения резюме" in result.reason
+    assert "черновик" not in result.reason, "до первого NEXT фантома быть не может"
 
 
 def test_unexpected_error_after_next_warns_about_phantom_draft(monkeypatch):
