@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from hhru_bot.adaptive_metrics import build_adaptive_metrics
+from hhru_bot.report_adaptive import success_statement
 
 pytestmark = pytest.mark.unit
 
@@ -48,3 +49,12 @@ def test_no_scores_are_reported_as_insufficient_data():
     )
     assert all(metric.median_score is None for metric in metrics)
     assert all(metric.win_rate is None for metric in metrics)
+
+
+def test_below_threshold_is_not_reported_as_success():
+    metric = SimpleNamespace(wins=1, comparisons=4)
+
+    statement = success_statement([metric])
+
+    assert statement.startswith("[INFO]")
+    assert "25.0%" in statement

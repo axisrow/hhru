@@ -43,7 +43,8 @@ def success_statement(metrics) -> str:
     if not comparisons:
         return "[INFO] insufficient data: нет сопоставимых score универсального и пула"
     rate = wins / comparisons
+    prefix = "[OK]" if rate > 0.5 else "[INFO]"
     return (
-        f"[OK] Критерий по данным: пул выигрывает в {rate * 100:.1f}% пар "
+        f"{prefix} Критерий по данным: пул выигрывает в {rate * 100:.1f}% пар "
         f"(n={comparisons}); оправдан, если доля выше 50%"
     )
