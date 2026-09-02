@@ -250,6 +250,8 @@ def test_disabled_create_button_is_unreadable_quota_failure(monkeypatch):
     assert not result.success
     assert result.reason.startswith("квоту прочитать не удалось")
     assert RESUME_CREATE_BUTTON not in page.clicks
+
+
 class ConfirmPage:
     """Minimal read-only page double for the unresolved-draft confirmation."""
 
