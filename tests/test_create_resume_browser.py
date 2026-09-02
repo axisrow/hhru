@@ -56,10 +56,10 @@ class TreeItem:
         self._qa = qa
         self.page = page
 
-    def text_content(self):
+    def text_content(self, *, timeout=None):  # noqa: ARG002 — боевой код передаёт inline-таймаут
         return self._text
 
-    def get_attribute(self, name):
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
         return self._qa if name == "data-qa" else None
 
     def click(self, *, timeout=None):  # noqa: ARG002
@@ -1450,6 +1450,58 @@ def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
     assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
     assert "delete-resume" in result.reason
     assert "list-resumes" in result.reason
+
+
+class _DetachedLeaf(TreeItem):
+    """Лист, чьё per-handle чтение кидает PlaywrightError.
+
+    Реальный сценарий #837: React отсоединил хэндл между batch-снимком
+    ``all()``/``all_text_contents()`` и точечным чтением кандидата — на
+    живом Playwright такое чтение висит дефолтные 30с и бросает
+    PlaywrightError; двойник бросает сразу, проверяется управляемость
+    исхода (retry/честный отказ), а не тайминг.
+    """
+
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        return self._text
+
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        raise PlaywrightError("Locator.get_attribute: Execution context was destroyed")
+
+
+class DetachedLeafPage(CompositeLeafPage):
+    """Фильтр сводит дерево к единственному leaf с отсоединённым хэндлом."""
+
+    def __init__(self):
+        super().__init__(
+            leaves=[_DetachedLeaf("Столяр, плотник", "tree-selector-item-text-96", self)]
+        )
+
+
+def test_detached_leaf_handle_is_retry_not_generic_crash(monkeypatch):
+    """Per-handle чтение leaf после перерендера — retry, не generic-краш.
+
+    Fuzzy-accept читает кандидата точечно ПОСЛЕ batch-снимка; гонка #837
+    вешала чтение на 30с и выбрасывала PlaywrightError наружу — наверх
+    как generic «ошибка до сохранения» (с фантом-подсказкой при отказе,
+    который на деле был hang). Нефинальная ошибка обязана обрабатываться
+    как перерендер: переспрос и честный отказ.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = DetachedLeafPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Плотник",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain
+    assert "ошибка до сохранения резюме" not in result.reason
+    assert "перерендерилось" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
 
 
 class _SequencedSuggestPage:

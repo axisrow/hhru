@@ -249,37 +249,51 @@ def select_wizard_catalog_leaf(
             # точное совпадение, и заодно даёт фильтру досидеть до стабильного
             # состояния — transient-снимок с одним узлом посреди перерендера не
             # доживёт до дедлайна, не сменившись финальным деревом.
-            qa = unique_candidate.get_attribute("data-qa") or ""
-            id_match = re.search(r"tree-selector-item-text-(\d+)$", qa)
-            leaf_id = id_match.group(1) if id_match else ""
-            query = normalize(area)
-            if (
-                leaf_id
-                and leaf_id != OTHER_ROLE_ID
-                # Пустой запрос «содержится» в любом имени — не автопринимать
-                # (fail-closed; --area "" проходит argparse).
-                and query
-                and query in normalize(unique_candidate.text_content() or "")
-            ):
-                fuzzy_matched = True
-                matches = [unique_candidate]
-                break
-            # Единственный кандидат, но не принят: вырождение в «Другое»
-            # (#913), пустой запрос либо запрос не содержится в имени листа.
-            # Отказ ДО клика с явным указанием, с каким именем повторять, —
-            # прогон не тратит путь в никуда (#920, soft-fail). На первой
-            # попытке — переспрос (см. комментарий о нестабильности фильтра
-            # выше), на последней — честный отказ.
-            text = (unique_candidate.text_content() or "").strip()
-            if leaf_id == OTHER_ROLE_ID:
+            # Точечные чтения кандидата выполняются ПОСЛЕ batch-снимка:
+            # перерендер дерева между ними отсоединяет хэндл (класс гонки
+            # #837). Inline-таймаут ограничивает зависание detached handle,
+            # PlaywrightError трактуется как сигнал перерендера — retry/
+            # честный отказ, а не generic-краш наверх (#933 контроль).
+            try:
+                qa = unique_candidate.get_attribute("data-qa", timeout=2000) or ""
+                id_match = re.search(r"tree-selector-item-text-(\d+)$", qa)
+                leaf_id = id_match.group(1) if id_match else ""
+                query = normalize(area)
+                if (
+                    leaf_id
+                    and leaf_id != OTHER_ROLE_ID
+                    # Пустой запрос «содержится» в любом имени — не автопринимать
+                    # (fail-closed; --area "" проходит argparse).
+                    and query
+                    # Текст листа берётся из ТОГО ЖЕ batch-снимка, что и сам
+                    # кандидат (unique_candidate == candidates[0], длины
+                    # сверены выше) — точечное чтение имени не нужно.
+                    and query in texts[0]
+                ):
+                    fuzzy_matched = True
+                    matches = [unique_candidate]
+                    break
+                # Единственный кандидат, но не принят: вырождение в «Другое»
+                # (#913), пустой запрос либо запрос не содержится в имени листа.
+                # Отказ ДО клика с явным указанием, с каким именем повторять, —
+                # прогон не тратит путь в никуда (#920, soft-fail). На первой
+                # попытке — переспрос (см. комментарий о нестабильности фильтра
+                # выше), на последней — честный отказ.
+                text = (unique_candidate.text_content(timeout=2000) or "").strip()
+                if leaf_id == OTHER_ROLE_ID:
+                    refusal = (
+                        f"профессия «{area}» не найдена в каталоге; фильтр выродился "
+                        f"в «Другое» (id {OTHER_ROLE_ID}) — повторите с точным именем листа"
+                    )
+                else:
+                    refusal = (
+                        f"профессия «{area}» не найдена в каталоге; фильтр предлагает "
+                        f"единственный лист «{text}» без точного совпадения — повторите с ним"
+                    )
+            except PlaywrightError:
                 refusal = (
-                    f"профессия «{area}» не найдена в каталоге; фильтр выродился "
-                    f"в «Другое» (id {OTHER_ROLE_ID}) — повторите с точным именем листа"
-                )
-            else:
-                refusal = (
-                    f"профессия «{area}» не найдена в каталоге; фильтр предлагает "
-                    f"единственный лист «{text}» без точного совпадения — повторите с ним"
+                    "не удалось подтвердить единственный лист каталога "
+                    "(дерево перерендерилось); повторите попытку"
                 )
         elif not matches:
             # #836: «не найдена однозначно (совпадений: 0)» не различало опечатку
@@ -372,7 +386,13 @@ def select_wizard_catalog_leaf(
         # Только здесь «принят» — правда: leaf подтверждён, role_id (если
         # согласован) совпал, чекбокс отмечен. До этой точки фолбэк #920 мог
         # отказаться на любом гарде выше.
-        accepted_text = (matches[0].text_content() or "").strip()
+        try:
+            accepted_text = (matches[0].text_content(timeout=2000) or "").strip()
+        except PlaywrightError:
+            # Тот же класс гонки #837, но ПОСЛЕ клика: generic-краш здесь
+            # выглядел бы как отказ с фантом-подсказкой, хотя leaf уже
+            # подтверждён чекбоксом — в лог идёт имя запроса.
+            accepted_text = area
         logger.info(
             "профессия «%s» не совпала с листом каталога точно; "
             "принят единственный кандидат фильтра: «%s»",
