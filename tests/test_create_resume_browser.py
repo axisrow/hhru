@@ -22,6 +22,7 @@ from hhru_bot.create_resume import select_wizard_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
+    RESUME_CREATION_CATEGORY_SUBMIT,
     RESUME_CREATION_NEXT,
     RESUME_CREATION_POSITION,
     RESUME_CREATION_SELECT_JOB,
@@ -617,6 +618,255 @@ def test_polling_stops_as_soon_as_match_appears(monkeypatch):
     assert result.success
     # 1 чтение нефильтрованного дерева + 1 чтение с совпадением = выход.
     assert page.tree_reads == 2, f"лишние чтения после совпадения: {page.tree_reads}"
+
+
+# --- #920: единственный кандидат фильтра без точного равенства -------------
+
+
+class CompositeLeafPage(HydrationRacePage):
+    """Фильтр стабильно сужает дерево до единственного СОСТАВНОГО листа,
+    чьё имя не равно запросу (#920, боевой прогон 2026-09-02 00:51:
+    «Плотник» -> единственный лист «Столяр, плотник»)."""
+
+    TREE = "tree-selector-item-text-"
+
+    def __init__(self, *, leaves=None):
+        super().__init__(clicks_until_hydrated=0)
+        self.tree_reads = 0
+        self._leaves = leaves or [TreeItem("Столяр, плотник", "tree-selector-item-text-96", self)]
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return CompositeLeafLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class CompositeLeafLocator(HydrationLocator):
+    def all(self):
+        self.page.tree_reads += 1
+        return self.page._leaves  # noqa: SLF001 — тестовый двойник, не production API
+
+
+def _run_area(page, area, monkeypatch, *, before_click=None):
+    """Боевой прогон с чужим ``area`` и коротким дедлайном опроса дерева."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    monkeypatch.setattr(
+        create,
+        "select_wizard_catalog_leaf",
+        lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
+    )
+    return create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area=area,
+        title=TITLE,
+        dry_run=False,
+        before_click=before_click,
+    )
+
+
+def test_unique_filtered_candidate_is_accepted_without_exact_match(monkeypatch, caplog):
+    """«Плотник» -> единственный лист «Столяр, плотник» — выбор, а не отказ.
+
+    Фильтр hh.ru сузил дерево до одного листа, но строгая equality его не
+    находила: имена листов составные, и команда требовала посимвольного
+    ввода (боевой прогон #920). Запрос содержится в имени листа —
+    однозначность по-человечески; лист кликается той же механикой, что и
+    точное совпадение (клик по строке -> poll checked -> submit).
+    """
+    import logging
+
+    page = CompositeLeafPage()
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"единственный кандидат фильтра должен быть принят: {result.reason}"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks, "каталог должен быть засабмичен"
+    assert "Столяр, плотник" in caplog.text, "автопринятие обязано попасть в лог"
+
+
+def test_unique_candidate_with_unexpected_role_id_refuses_before_click():
+    """Фолбэк #920 не обходит гард #913: чужой role_id у кандидата — отказ.
+
+    create-resume вызывает select_wizard_catalog_leaf без expected_role_id, но
+    resume_position (direct_save) — с ним: единственный кандидат фильтра с
+    id, не равным согласованному, отказывает ДО клика, как и точное
+    совпадение с чужим id.
+    """
+    page = CompositeLeafPage()
+
+    reason = _real_select(
+        cast(PlaywrightPage, cast(object, page)),
+        "Плотник",
+        filter_timeout=0.5,
+        expected_role_id="148",
+    )
+
+    assert "role_id=96" in reason
+    assert "148" in reason
+    assert page.clicks == [], "отказ до клика по строке и submit"
+
+
+class DegenerateOtherPage(CompositeLeafPage):
+    """Фильтр вырождается в единственный catch-all лист «Другое» (#913)."""
+
+    def __init__(self):
+        super().__init__(leaves=[TreeItem("Другое", "tree-selector-item-text-40", self)])
+
+
+def test_filter_degeneration_into_other_is_refused_without_click(monkeypatch):
+    """Единственный кандидат «Другое» не выбирается никогда (#913).
+
+    Фильтр hh.ru по неточному запросу («Инженер по тестированию») сужает
+    дерево до catch-all «Другое» — это отказ с именем для повтора, а не
+    выбор: резюме с профессией «Другое» — молчаливая порча данных.
+    """
+    page = DegenerateOtherPage()
+
+    result = _run_area(page, "Инженер по тестированию", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Другое" in result.reason
+    assert "повторите" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+class UnrelatedLeafPage(CompositeLeafPage):
+    """Единственный кандидат фильтра не содержит запрос в своём имени."""
+
+    def __init__(self):
+        super().__init__(leaves=[TreeItem("Аналитик", "tree-selector-item-text-10", self)])
+
+
+def test_unique_candidate_without_query_in_name_is_refused_with_hint(monkeypatch):
+    """Единственный кандидат без запроса в имени — soft-fail с именем листа.
+
+    «Фильтр вернул что-то одно» — ещё не однозначное совпадение: hh.ru
+    фильтрует нечётко, и автопринятие неродственного листа записало бы
+    профессию, которую пользователь не называл.
+    """
+    page = UnrelatedLeafPage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Аналитик" in result.reason, "имя листа для повтора должно быть в сообщении"
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_empty_area_is_never_accepted_as_substring_of_anything(monkeypatch):
+    """Пустой --area не «содержится» в имени листа — автопринятия нет.
+
+    normalize("") == \"\" — подстрока любой строки; без отдельного гварда
+    пустой запрос автопринял бы первого попавшегося единственного кандидата
+    (fail-closed: argparse пропускает --area "").
+    """
+    page = CompositeLeafPage()
+
+    result = _run_area(page, "", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_multiple_candidates_without_exact_match_still_refuse(monkeypatch):
+    """Несколько кандидатов фильтра — прежний отказ с перечнем (#920 гард).
+
+    Однозначность — ровно один кандидат; два составных листа, содержащих
+    запрос, разрешает только пользователь перезапуском с точным именем.
+    """
+
+    class TwoCompositeLeavesPage(CompositeLeafPage):
+        def __init__(self):
+            super().__init__(
+                leaves=[
+                    TreeItem("Столяр, плотник", "tree-selector-item-text-96", self),
+                    TreeItem("Плотник-бетонщик", "tree-selector-item-text-97", self),
+                ]
+            )
+
+    page = TwoCompositeLeavesPage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "Столяр, плотник" in result.reason and "Плотник-бетонщик" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+class DesyncedTreePage(CompositeLeafPage):
+    """all_text_contents() и .all() стабильно расходятся (#837-семейство).
+
+    Тексты от одного рендера, элементы — от другого: индексному
+    сопоставлению доверять нельзя, значит и «единственный кандидат»
+    недоказуем — автопринятие обязано молчать (fail-closed).
+    """
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return DesyncedTreeLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class DesyncedTreeLocator(HydrationLocator):
+    def all(self):
+        return [
+            TreeItem("Столяр, плотник", "tree-selector-item-text-96", self.page),
+            TreeItem("Аналитик", "tree-selector-item-text-10", self.page),
+        ]
+
+    def all_text_contents(self):
+        return ["столяр, плотник"]
+
+
+def test_desynced_read_disqualifies_unique_candidate(monkeypatch):
+    """Рассинхрон текстов и элементов — автопринятия нет, прежний отказ.
+
+    Единственность кандидата доказуема только на консистентном снимке
+    дерева; на снимке от двух разных рендеров принимать решение — всё равно
+    что сопоставить чужой текст чужому элементу (#837, тот же принцип).
+    """
+    page = DesyncedTreePage()
+
+    result = _run_area(page, "Плотник", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks, "отказ до клика"
+
+
+def test_dry_run_never_reaches_catalog(monkeypatch):
+    """Dry-run не доходит до select_wizard_catalog_leaf — кликать нечего (#920).
+
+    Изменение семантики match не меняет dry-run план структурно: create-resume
+    в dry-run возвращается сразу после подтверждения визарда, до клика по
+    карточке профессии. Закрепляем, чтобы будущий рефактор не подвёл dry-run
+    к каталогу.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = CompositeLeafPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Плотник",
+        title=TITLE,
+        dry_run=True,
+    )
+
+    assert result.success
+    assert "dry-run" in result.reason
+    assert page.clicks == [], "dry-run не кликает ничего"
+    assert page.tree_reads == 0, "dry-run не доходит до дерева каталога"
 
 
 class CheckboxWrapperPage(CatalogFilterPage):

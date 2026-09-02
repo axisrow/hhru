@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -31,6 +32,8 @@ from .selector_groups.resume_page import (
 )
 
 CREATION_URL = f"{HH_BASE_URL}{RESUME_CREATION_URL}"
+
+logger = logging.getLogger("hhru_bot.create_resume")
 # #837: живой замер показал checked=True уже на первой проверке спустя
 # +100мс после клика — секундный запас на порядок больше наблюдавшейся
 # задержки, но честный (не бесконечный) дедлайн на случай, если чекбокс
@@ -40,6 +43,11 @@ _RESUME_LIMIT_REASON = (
     "лимит резюме hh.ru (~20) достигнут или кнопка создания недоступна; "
     "удалите ненужные резюме и повторите попытку"
 )
+# #913 (battle2, живой дамп): «Другое» — вырожденный catch-all лист каталога
+# с фиксированным id; id-пространство дерева совместимо с каталогом поиска
+# (подтверждено live: 96 <-> tree-selector-item-96). Автопринятие единственного
+# кандидата фильтра (#920) никогда не выбирает его — это отказ, а не выбор.
+OTHER_ROLE_ID = "40"
 
 
 @dataclass
@@ -98,6 +106,17 @@ def select_wizard_catalog_leaf(
     id роли из каталога поиска вакансий. Когда id задан, лист с ДРУГИМ id
     не кликается вовсе — точное совпадение текста ещё не доказывает нужную
     роль, а молчаливая подмена записала бы чужой role_id.
+
+    #920: если точного совпадения нет, а фильтр каталога сузил дерево до
+    РОВНО одного кандидата (боевой кейс: «Плотник» -> единственный лист
+    «Столяр, плотник»), этот кандидат принимается — человек считает такой
+    результат однозначным совпадением, имена листов составные. Принятие
+    требует, чтобы запрос содержался в имени листа, и никогда не выбирает
+    вырожденное «Другое» (``OTHER_ROLE_ID``); иначе — отказ ДО клика с
+    именем листа для повтора. Отказ при нуле и при нескольких кандидатах
+    сохранён; все гарды ниже (leaf через чекбокс, ``expected_role_id``,
+    подтверждение checked) применяются к принятому кандидату так же, как к
+    точному совпадению.
     """
     # The caller arrives right after clicking the wizard's NEXT control, which
     # re-renders the catalog screen asynchronously (React); a strict _one() on
@@ -125,6 +144,12 @@ def select_wizard_catalog_leaf(
     deadline = time.monotonic() + filter_timeout
     matches: list[Locator] = []
     candidates: list[Locator] = []
+    # #920: единственный кандидат последнего КОНСИСТЕНТНОГО чтения дерева.
+    # Перезаписывается каждой итерацией опроса, поэтому после выхода из цикла
+    # отражает финальное состояние фильтра; рассинхрон длин обнуляет его —
+    # на снимке, у которого тексты и элементы от разных рендеров, принимать
+    # решение нельзя.
+    unique_candidate: Locator | None = None
     while True:
         tree = page.locator("[data-qa*='tree-selector-item-text-']")
         try:
@@ -151,6 +176,7 @@ def select_wizard_catalog_leaf(
             # дедлайн.
             texts = []
             candidates = []
+        unique_candidate = None
         if len(candidates) != len(texts):
             # all_text_contents() и .all() — два отдельных Playwright-вызова;
             # React мог перерендерить дерево МЕЖДУ ними тоже (более узкое, но
@@ -166,9 +192,57 @@ def select_wizard_catalog_leaf(
                 for candidate, text in zip(candidates, texts, strict=True)
                 if text == normalize(area)
             ]
+            if len(candidates) == 1:
+                unique_candidate = candidates[0]
         if len(matches) == 1 or time.monotonic() >= deadline:
             break
         page.wait_for_timeout(250)
+    if not matches and unique_candidate is not None:
+        # #920: фильтр сузил дерево до единственного кандидата без точного
+        # равенства («Плотник» -> «Столяр, плотник»). Принять его, а не
+        # отказывать, можно только при ОБОИХ гардах: запрос содержится в
+        # имени листа (однозначность по-человечески, а не «фильтр вернул
+        # что-то одно») и лист не вырожденное «Другое» (#913: catch-all не
+        # выбирается никогда). Цикл выше не выходит рано на единственном
+        # кандидате НАМЕРЕННО: он ждёт дедлайн, чтобы поймать возможное
+        # точное совпадение, и заодно даёт фильтру досидеть до стабильного
+        # состояния — transient-снимок с одним узлом посреди перерендера не
+        # доживёт до дедлайна, не сменившись финальным деревом.
+        qa = unique_candidate.get_attribute("data-qa") or ""
+        id_match = re.search(r"tree-selector-item-text-(\d+)$", qa)
+        leaf_id = id_match.group(1) if id_match else ""
+        query = normalize(area)
+        if (
+            leaf_id
+            and leaf_id != OTHER_ROLE_ID
+            # Пустой запрос «содержится» в любом имени — не автопринимать
+            # (fail-closed; --area "" проходит argparse).
+            and query
+            and query in normalize(unique_candidate.text_content() or "")
+        ):
+            accepted_text = (unique_candidate.text_content() or "").strip()
+            logger.info(
+                "профессия «%s» не совпала с листом каталога точно; "
+                "принят единственный кандидат фильтра: «%s»",
+                area,
+                accepted_text,
+            )
+            matches = [unique_candidate]
+        else:
+            # Единственный кандидат, но не принят: вырождение в «Другое»
+            # (#913), пустой запрос либо запрос не содержится в имени листа.
+            # Отказ ДО клика с явным указанием, с каким именем повторять, —
+            # прогон не тратит путь в никуда (#920, soft-fail).
+            text = (unique_candidate.text_content() or "").strip()
+            if leaf_id == OTHER_ROLE_ID:
+                return (
+                    f"профессия «{area}» не найдена в каталоге; фильтр выродился "
+                    f"в «Другое» (id {OTHER_ROLE_ID}) — повторите с точным именем листа"
+                )
+            return (
+                f"профессия «{area}» не найдена в каталоге; фильтр предлагает "
+                f"единственный лист «{text}» без точного совпадения — повторите с ним"
+            )
     if not matches:
         # #836: «не найдена однозначно (совпадений: 0)» не различало опечатку
         # и пропажу значения из каталога hh.ru (боевой кейс — "Программист,

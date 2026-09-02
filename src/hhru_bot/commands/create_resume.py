@@ -23,7 +23,11 @@ def register(subparsers) -> None:
     p.add_argument(
         "--area",
         required=True,
-        help="Точная leaf-профессия из каталога визарда создания резюме",
+        help=(
+            "Leaf-профессия из каталога визарда создания резюме; если фильтр "
+            "каталога оставляет единственный лист, он принимается даже без "
+            "точного совпадения (#920)"
+        ),
     )
     p.add_argument("--title", required=True, help="Одна основная профессия резюме")
     p.add_argument("--dry-run", action="store_true", help="Показать план без создания")
