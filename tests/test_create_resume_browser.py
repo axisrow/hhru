@@ -1419,3 +1419,49 @@ def test_persistent_other_refusal_survives_retry_after_both_attempts():
     assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks
     search_fills = [f for f in page.filled if f[0] == RESUME_CREATION_CATEGORY_SEARCH]
     assert len(search_fills) == 2, "обе попытки перезаполняют поиск"
+
+
+# --- #920: предупреждение о фантомном черновике при отказе после NEXT --------
+
+
+def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
+    """Отказ в каталоге (после первого NEXT) предупреждает о фантоме (#920).
+
+    hh.ru может материализовать сущность черновика уже после первого
+    «Продолжить» (живой факт 2026-09-02): молчаливый [FAIL] приучал бы к
+    «на hh.ru ничего нет». Предупреждение обязано назвать title для поиска
+    и путь уборки.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "не найдена в каталоге" in result.reason
+    assert "черновик" in result.reason
+    assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
+    assert "delete-resume" in result.reason
+    assert "list-resumes" in result.reason
+
+
+def test_pre_next_failure_does_not_warn_about_phantom_draft(monkeypatch):
+    """Отказ ДО первого NEXT — предупреждения о фантоме нет.
+
+    Мутация там физически невозможна: первый «Продолжить» не нажимался,
+    сущность черновика появиться не из чего.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = Page(fail_on_wait=RESUME_CREATION_POSITION)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain
+    assert "черновик" not in result.reason

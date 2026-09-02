@@ -685,7 +685,20 @@ def create_resume_on_hh(
             page, leaf_area, expected_role_id=expected_leaf_id
         )
         if category_reason:
-            return CreateResumeResult(False, reason=category_reason)
+            # #920 (живой факт 2026-09-02): hh.ru может материализовать
+            # сущность черновика уже после первого «Продолжить» (наблюдалось
+            # при ручном уходе с экрана каталога; мгновенные CLI-отказы следа
+            # не оставляли, но гарантии нет). Отказ по профессии после NEXT
+            # обязан предупреждать о возможном фантоме с голым title и пути
+            # уборки — молчаливый [FAIL] приучает к «на hh.ru ничего нет».
+            return CreateResumeResult(
+                False,
+                reason=(
+                    f"{category_reason} Первый «Продолжить» визарда мог уже "
+                    f"создать черновик с title «{title}» без профессии — "
+                    f"проверьте list-resumes и удалите ненужный (delete-resume)."
+                ),
+            )
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
         return CreateResumeResult(False, reason=f"ошибка до сохранения резюме: {exc}")
