@@ -97,7 +97,7 @@ class FakePage:
     def evaluate(self, script, arg=None):  # noqa: ARG002
         return None  # scrollIntoView контейнера
 
-    def wait_for_function(self, script, arg=None, timeout=None):  # noqa: ARG002
+    def wait_for_function(self, script, *, arg=None, timeout=None):  # noqa: ARG002
         # browser.wait_for_react_hydration поллит через wait_for_function;
         # таймаут в реальном Playwright — PlaywrightError.
         if not self._hydrated:
