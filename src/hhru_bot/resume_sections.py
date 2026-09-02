@@ -239,12 +239,14 @@ def _apply_rows(
     dry_run: bool,
 ) -> list[str]:
     errors: list[str] = []
-    if resume_id:
+    if resume_id and items:
         # A previous empty-section editor may leave the page on its own route
         # after cancel/save.  Re-open the resume before inspecting this block
         # so its row trigger and empty marker are always read from the same
         # deterministic page (#922).
         goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
+        if has_login_form(page):
+            return ["hh.ru показал форму входа"]
     trigger = page.locator(RESUME_EDIT_BUTTON[block])
     for index, item in enumerate(items):
         # The current HH.ru recommendation editor has no text control. Reject
