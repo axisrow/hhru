@@ -211,3 +211,25 @@ def test_hhru_live_policy_dismiss_hidden_overlay_does_not_click():
     assert scenario["dismissedOk"] is False
     assert scenario["error"] == "overlay_not_found"
     assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_hidden_close_control_is_no_close_control():
+    """Первый close-маркер в порядке документа может быть скрытым
+    (display:none шаблон/дубль): клик по невидимому контролу противоречит
+    философии файла, поэтому видимые контролы фильтруются, и при их
+    отсутствии ответ no_close_control, а не молчаливый клик мимо (PR #935
+    review)."""
+    scenario = _run_command_scenario("dismiss_hidden_close_control")
+    assert scenario["listedCount"] == 1
+    assert scenario["dismissedOk"] is False
+    assert scenario["error"] == "no_close_control"
+    assert scenario["clickCount"] == 0
+
+
+def test_hhru_live_policy_body_state_class_never_registered():
+    """hh.ru помечает cookie-баннер state-классом на <body>
+    (cookie-policy-banner-enabled, подтверждено живым DOM 2026-09-02):
+    [class*="cookie"] матчит body, и без стража «оверлеем» становится вся
+    страница с текстом всего документа."""
+    scenario = _run_command_scenario("body_state_class_never_registered")
+    assert scenario["listedCount"] == 0

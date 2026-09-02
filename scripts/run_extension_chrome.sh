@@ -23,6 +23,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXT_DIR="$REPO_ROOT/extensions/hhru-live"
 PROFILE_DIR="$REPO_ROOT/data/extension-profile"
 URL="${1:-https://hh.ru/}"
+[ $# -gt 0 ] && shift
+# Остальные аргументы пробрасываются в Chrome как есть (например,
+# --remote-debugging-port=9333 для read-only диагностики через CDP).
 
 find_binary() {
   local candidates=()
@@ -73,4 +76,4 @@ exec "$BINARY" \
   --load-extension="$EXT_DIR" \
   --no-first-run \
   --no-default-browser-check \
-  "$URL"
+  "$URL" "$@"

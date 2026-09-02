@@ -25,19 +25,27 @@ const OVERLAY_SELECTORS = [
 ];
 // Danger anchors are matched against the overlay's own + descendant text.
 // Intentionally narrow: a miss keeps the overlay merely blocked (safe side);
-// the /удал|подтверд/ families also cover "подтвердите удаление" style
+// the /подтверд|удалени/ families also cover "подтвердите удаление" style
 // confirmations. Known trade-off: a cookie banner phrased as «подтвердите
 // согласие» would land here too — fail-closed, it stays and is reported.
 const DANGEROUS_TEXT = [
   /captcha/i, /не робот/i,
-  /удал/i, /отозвать/i, /отмена отклика/i, /withdraw/i,
+  // Deliberately NOT the bare stem-удал pattern: that substring also matches
+  // «удалённая работа», which would permanently mark routine remote-work
+  // popups as dangerous (PR #935 review). The infinitive/noun forms still
+  // cover «подтвердите удаление».
+  /удалить|удалени/i, /отозвать/i, /отмена отклика/i, /withdraw/i,
   /необратим/i, /irreversible/i,
   /вы уверены/i, /are you sure/i,
   /подтверд/i, /confirm/i
 ];
 // Apply-flow anchors: structural (form id, data-qa namespace, task-question
 // classes — both response-modal shapes from CLAUDE.md) and text wording.
-const APPLY_TEXT = [/сопроводительн/i, /тестовое задание/i, /анкет/i, /отклик/i];
+// Bare «отклик» is intentionally absent: hh.ru's post-submit success toast
+// «Отклик отправлен» is a notification, not part of the form, and must stay
+// dismissible (PR #935 review). The response form itself is covered by the
+// structural anchors below.
+const APPLY_TEXT = [/сопроводительн/i, /тестовое задание/i, /анкет/i];
 const APPLY_QA = /vacancy-response/i;
 const APPLY_CLASS = /task-question|task-body/i;
 const APPLY_FORM_ID = /RESPONSE_MODAL_FORM_ID/;
@@ -84,7 +92,10 @@ function collectText(element) {
 
 function walkDescendants(element, visit) {
   visit(element);
-  (element.children || []).forEach((child) => walkDescendants(child, visit));
+  // element.children is an HTMLCollection: array-LIKE but without forEach
+  // (unlike NodeList) — iterating it with .forEach throws. Array.from works
+  // for both the live collection and the test stub's plain array.
+  Array.from(element.children || []).forEach((child) => walkDescendants(child, visit));
 }
 
 function findCloseControls(element) {
@@ -133,9 +144,14 @@ function classifyDisposition(element, info) {
 }
 
 function isAttached(element) {
+  // Climb to the root of the tree: an attached node's root is the Document
+  // itself (nodeType 9), NOT documentElement — documentElement.parentNode is
+  // the document, so a === documentElement comparison is never true in a real
+  // browser (found on live hh.ru: the registry pruned every entry, so
+  // list_overlays was always empty and dismiss always overlay_not_found).
   let node = element;
   while (node.parentNode) node = node.parentNode;
-  return node === document.documentElement;
+  return node.nodeType === 9;
 }
 
 // Registry of overlays reported by the observer, keyed by stable id so the
@@ -184,6 +200,13 @@ function report(element) {
 // permanently blocked. This is what makes the `attributes: true` observer
 // (added for hide/show toggles) actually useful across repeat show events.
 function reportIfNewlyVisible(node, seen) {
+  // The page shell is never an overlay: hh.ru marks the cookie banner with a
+  // state class on <body> (cookie-policy-banner-enabled, confirmed live
+  // 2026-09-02), which [class*="cookie"] matches — registering it reports the
+  // whole page text and misclassifies everything. Confirmed live in #932
+  // follow-up territory; the guard belongs here, the single choke point both
+  // the initial scan and every mutation go through.
+  if (node === document.documentElement || node === document.body) return;
   if (!isVisible(node)) {
     seen.delete(node);
     return;
@@ -272,7 +295,11 @@ function dismissOverlay(id, params, sendResponse) {
     sendResponse({ ok: false, error: 'overlay_not_safe', disposition, overlay: info });
     return;
   }
-  const controls = findCloseControls(entry.element);
+  // The first close marker in document order may be a hidden template/duplicate
+  // (display:none); clicking an invisible control is exactly the action
+  // without evidence this file refuses to do, so only visible controls count
+  // (PR #935 review).
+  const controls = findCloseControls(entry.element).filter(isVisible);
   if (controls.length === 0) {
     sendResponse({ ok: false, error: 'no_close_control', disposition, overlay: info });
     return;

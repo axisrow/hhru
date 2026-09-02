@@ -29,6 +29,23 @@ function matchesSimpleSelector(el, selector) {
   return actual === value;
 }
 
+// Array-like children collection mirroring the real HTMLCollection contract:
+// indexable + iterable, but WITHOUT forEach (unlike NodeList) — so content
+// code that iterates children with .forEach fails here exactly as it does in
+// a real browser. (That bug shipped once: content.js used
+// (children || []).forEach in walkDescendants, which a plain Array stub
+// happily accepted and live hh.ru rejected with a TypeError at document_idle,
+// killing the whole content script before its onMessage listener registered.)
+function makeChildren() {
+  const items = [];
+  return new Proxy(items, {
+    get(target, prop, receiver) {
+      if (prop === 'forEach') return undefined;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
 class ClassList {
   constructor(el) {
     this._el = el;
@@ -49,7 +66,7 @@ class Element {
   constructor(tagName) {
     this.tagName = tagName;
     this._attrs = new Map();
-    this.children = [];
+    this.children = makeChildren();
     this.parentNode = null;
     this.innerText = '';
     this.textContent = '';
@@ -122,10 +139,10 @@ class Element {
     const selectors = selectorList.split(',').map((s) => s.trim());
     const out = [];
     const visit = (node) => {
-      node.children.forEach((child) => {
+      for (const child of node.children) {
         if (selectors.some((s) => matchesSimpleSelector(child, s))) out.push(child);
         visit(child);
-      });
+      }
     };
     visit(this);
     return out;
@@ -196,11 +213,25 @@ function makeChrome(sentMessages) {
 
 function createEnvironment() {
   const documentElement = new DocumentElement();
+  const body = new Element('body');
+  documentElement.appendChild(body);
   const document = {
+    // Real-DOM shape: documentElement.parentNode is the Document (nodeType 9),
+    // and the tree root is the document, not documentElement. content.js's
+    // isAttached() climbs to the root and checks nodeType — a stub tree rooted
+    // at documentElement itself would make that check pass trivially and hide
+    // a live-browser failure (it did once).
+    nodeType: 9,
+    _isDocumentRoot: true,
     documentElement,
+    body,
+    // Mutation bookkeeping lives on the documentElement; the document node is
+    // now the tree root _ownerDocument() resolves to, so delegate to it.
+    _recordMutation: (...args) => documentElement._recordMutation(...args),
     querySelectorAll: (sel) => documentElement.querySelectorAll(sel),
     createElement: (tag) => new Element(tag),
   };
+  documentElement.parentNode = document;
   const sentMessages = [];
   // Every click performed by content.js lands here, so scenarios can assert
   // on exactly WHICH element was clicked (the close control, never other

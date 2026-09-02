@@ -87,6 +87,22 @@ def test_hhru_live_extension_danger_anchors_outrank_apply_anchors():
     assert danger_check < apply_check
 
 
+def test_hhru_live_extension_danger_and_apply_text_anchors_are_narrow():
+    """Суженные якоря (PR #935 review):
+    - /удал/i запрещён: подстрока матчит «удалённая работа» и навсегда
+      делает рутинные попапы dangerous; разрешены только /удалить|удалени/.
+    - голое /отклик/i запрещено в APPLY_TEXT: тост «Отклик отправлен» —
+      штатное подтверждение после submit и должно оставаться safe-dismiss;
+      форму отклика покрывают структурные якоря."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "extensions" / "hhru-live"
+    content = (root / "content.js").read_text()
+    assert "/удал/i" not in content
+    assert "/удалить|удалени/i" in content
+    assert "/отклик/i" not in content
+
+
 def test_hhru_live_extension_close_markers_exclude_action_buttons():
     """Close-контролы — только явные close-маркеры. Слова-действия
     («Сохранить», «Отмена», «Понятно», «Принять») не входят и не должны

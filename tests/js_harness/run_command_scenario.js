@@ -42,11 +42,11 @@ function el(tag, attrs = {}, text = '') {
   return element;
 }
 
-// Appends nodes to the document root and flushes the synchronous-batch
-// MutationObserver, so the overlay lands in the registry like it would on a
-// real page right after insertion.
+// Appends nodes to document.body (like a real page would) and flushes the
+// synchronous-batch MutationObserver, so the overlay lands in the registry
+// like it would on a real page right after insertion.
 function append(...nodes) {
-  nodes.forEach((node) => env.document.documentElement.appendChild(node));
+  nodes.forEach((node) => env.document.body.appendChild(node));
   env.flush();
 }
 
@@ -222,6 +222,37 @@ const SCENARIOS = {
       error: dismissed.error ?? null,
       clickCount: env.clicks.length,
     };
+  },
+
+  // The overlay is visible but its only close control is a hidden
+  // template/duplicate (display:none): no click at all — clicking an
+  // invisible control is an action without evidence behind it (PR #935
+  // review), answered no_close_control instead of a silent no-op click.
+  dismiss_hidden_close_control: async () => {
+    const close = el('button', { 'aria-label': 'Закрыть' }, 'x');
+    close._setVisible(false);
+    const toast = el('div', { class: 'toast-notification' }, 'Тост со скрытым крестиком');
+    toast.appendChild(close);
+    append(toast);
+    const listed = await send({ action: 'list_overlays' });
+    const dismissed = await send({ action: 'dismiss_overlay', id: listed.overlays[0].id });
+    return {
+      listedCount: listed.overlays.length,
+      dismissedOk: dismissed.ok,
+      error: dismissed.error ?? null,
+      clickCount: env.clicks.length,
+    };
+  },
+
+  // html/body carry state classes (hh.ru: cookie-policy-banner-enabled on
+  // <body>, confirmed live 2026-09-02) that match [class*="cookie"] — the
+  // page shell must never register as an overlay, or the whole page text
+  // gets classified.
+  body_state_class_never_registered: async () => {
+    env.document.body.setAttribute('class', 'cookie-policy-banner-enabled');
+    env.flush();
+    const listed = await send({ action: 'list_overlays' });
+    return { listedCount: listed.overlays.length };
   },
 
   // check_element: confirmation that the next step's element is reachable.
