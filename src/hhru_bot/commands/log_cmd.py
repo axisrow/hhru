@@ -352,11 +352,13 @@ def prune_candidates(
     return sorted(candidates)
 
 
-def _print_prune_plan(candidates: list[Path]) -> int:
-    """Печать плана: по строке на файл + итог. Возвращает суммарный объём.
+def _print_prune_plan(candidates: list[Path]) -> tuple[int, int]:
+    """Печать плана: по строке на файл + итог. Возвращает (количество, объём).
 
     Файл, исчезнувший между отбором и печатью, пропускается (гонка та же):
     в план и в итоговый объём попадает только то, что ещё лежит на диске.
+    Возвращаемые счётчики используются в prompt и в итоговом [OK] — иначе
+    при гонке план показывал бы «1 файл», а вопрос «Удалить 2» (ревью PR #923).
     """
     total = 0
     listed = 0
@@ -369,7 +371,7 @@ def _print_prune_plan(candidates: list[Path]) -> int:
         listed += 1
         print(f"  {path.name}  {format_size(size)}")
     print(f"[INFO] Кандидаты на удаление: {listed} файл(ов), освободится {format_size(total)}")
-    return total
+    return listed, total
 
 
 def _run_prune(args: argparse.Namespace) -> None:
@@ -387,11 +389,11 @@ def _run_prune(args: argparse.Namespace) -> None:
         return
 
     print(f"[INFO] log --prune: каталог {log_dir}, порог {args.older_than} дн.")
-    total = _print_prune_plan(candidates)
+    listed, total = _print_prune_plan(candidates)
 
     if not confirm_write(
         args.yes,
-        prompt=f"Удалить {len(candidates)} файл(ов) ({format_size(total)}) безвозвратно?",
+        prompt=f"Удалить {listed} файл(ов) ({format_size(total)}) безвозвратно?",
     ):
         print(
             "[DRY-RUN] Ничего не удалено. Для реальной чистки: "
@@ -399,13 +401,23 @@ def _run_prune(args: argparse.Namespace) -> None:
         )
         return
 
+    # Счётчики [OK] — только реально удалённое: файл, исчезнувший между планом
+    # и удалением (параллельный прогон записал/стёр), не ошибка чистки и не
+    # «удалён» — иначе [OK] расходился бы с планом в окнах гонки.
     deleted = 0
+    freed = 0
     for path in candidates:
-        # missing_ok: файл мог исчезнуть между планом и удалением (параллельный
-        # прогон записал/стёр) — это не ошибка чистки.
-        path.unlink(missing_ok=True)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
         deleted += 1
-    print(f"[OK] Удалено {deleted} файл(ов), освобождено {format_size(total)}.")
+        freed += size
+    print(f"[OK] Удалено {deleted} файл(ов), освобождено {format_size(freed)}.")
 
 
 def run(args: argparse.Namespace) -> None:

@@ -576,9 +576,30 @@ def test_print_prune_plan_tolerates_vanishing_file(tmp_path, capsys, monkeypatch
         return real_stat(self, *a, **kw)
 
     monkeypatch.setattr(Path, "stat", racing_stat)
-    total = log_cmd._print_prune_plan([gone, stays])
+    listed, total = log_cmd._print_prune_plan([gone, stays])
     out = capsys.readouterr().out
     assert "probe_gone.html" not in out
     assert "probe_stays.html" in out
     assert "[INFO] Кандидаты на удаление: 1 файл(ов), освободится 2.0 КиБ" in out
-    assert total == 2048
+    # Счётчики плана используются в prompt/[OK] — сходятся во всех окнах гонки.
+    assert (listed, total) == (1, 2048)
+
+
+def test_run_prune_ok_counts_only_actually_deleted(tmp_path, capsys, monkeypatch):
+    """[OK] считает только реально удалённое: файл, исчезнувший между планом
+    и unlink, не «удалён» — счётчики [OK] не расходятся с планом (ревью PR #923)."""
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", size=100, mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", size=2048, mtime=now - 100 * 86400)
+    real_unlink = Path.unlink
+
+    def racing_unlink(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", racing_unlink)
+    log_cmd.run(_prune_args(tmp_path, yes=True))
+    out = capsys.readouterr().out
+    assert "[OK] Удалено 1 файл(ов), освобождено 2.0 КиБ" in out
+    assert stays.exists() is False
