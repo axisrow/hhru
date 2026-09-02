@@ -48,6 +48,13 @@
   - Этот контракт одинаков для всех трёх команд — CLI-валидация единая. `--dry-run`
     работает без подтверждения (ничего не отправляет).
   - Глобального `--force` в `cli.py` нет; это per-команда флаг этих трёх команд.
+  - **Конвенция имени флага подтверждения (#717):** `--force` — команды,
+    мутирующие hh.ru (контракт трёх команд выше); `--yes` — WRITE-local
+    команды с необратимым локальным удалением (первая — `log --prune`).
+    Контракт подтверждения тот же (флаг ИЛИ TTY-prompt через общий
+    `confirm_write`), различается только имя — чтобы по флагу было видно,
+    ЧТО подтверждается. Новые WRITE-local-команды с удалением — `--yes`,
+    новые hh.ru-мутации — `--force`.
 
 ### 1.1. Chromium и Codex sandbox (#568)
 
@@ -469,20 +476,28 @@ Checkpoint `--resume` привязан также к `items-per-page`: smoke н�
 
 ---
 
-#### `log` — хвост лога
+#### `log` — хвост лога, чистка дампов
 
-- **Природа:** READ
+- **Природа:** READ (`tail`/`follow`); `--prune` — WRITE-local (#717)
 - **Референс:** `s3rgeym log -f`.
 - **Сигнатура:**
   ```
   hhru_bot log                          # последние N строк data/logs/hhru_bot.log
   hhru_bot log -f                       | follow (tail -f), прерывается по Ctrl-C
   hhru_bot log -n <count>               # количество строк (по умолчанию 50)
+  hhru_bot log --prune                  | план чистки дампов (dry-run по умолчанию)
+  hhru_bot log --prune --older-than <days>  # порог возраста (по умолчанию 14)
+  hhru_bot log --prune --yes            | подтвердить удаление без TTY prompt
   ```
 - **Вывод:** поток текста (`data/logs/hhru_bot.log`). Чувствительные ID (resume_id,
   сессия) в логе уже редacted уровнями логирования — команда ничего не фильтрует.
 - **Заметка:** `follow` реализуется через чтение с polling (стандартный tail-loop),
   НЕ через фоновый демон. Прерывание по `KeyboardInterrupt` — exit 130 (как `main`).
+- **`--prune` (#717):** удаляет ТОЛЬКО дампы `probe`/`apply` (`*.html`, `*.png`)
+  из `data/logs/` старше порога; `hhru_bot.log`/`scheduled.log` и всё вне
+  `data/logs/` не затрагиваются. Dry-run по умолчанию: сначала план (список,
+  счётчик, освобождаемый объём), удаление — по `--yes` или интерактивному
+  `[y/N]` (общий `confirm_write`). Никакой фоновой чистки — только явный вызов.
 
 ---
 
@@ -1030,7 +1045,7 @@ READ-команды (быстрые, безопасные) → WRITE-local → W
 |-----------|---------------------|-------------|-----------------------------------|
 | 1 (READ)  | `whoami`            | READ        | `responses`/`actions` (есть)      |
 | 1 (READ)  | `list-resumes`      | READ        | `config`, `throttle.can_bump_now` |
-| 1 (READ)  | `log`               | READ        | `logging_setup` (есть)            |
+| 1 (READ)  | `log`               | READ; `--prune` — WRITE-local | `logging_setup`, `confirm_write` (есть) |
 | 1 (READ)  | `refresh-token`     | READ / WRITE-local (`--force`) | `auth`/`storage_state` (есть)     |
 | 1 (READ)  | `call-api`          | READ        | Playwright-сессия (GET только)    |
 | 2 (LOCAL) | `config`            | READ/WRITE-local | `config.py` (есть)           |

@@ -9,14 +9,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from hhru_bot import logging_setup
 from hhru_bot.commands import log_cmd
-from hhru_bot.commands.log_cmd import follow, tail_lines
+from hhru_bot.commands.log_cmd import follow, prune_candidates, tail_lines
 
 pytestmark = pytest.mark.integration
 
@@ -360,3 +362,244 @@ def test_log_command_does_not_create_log(tmp_path, monkeypatch):
     # ключевой ассерт: READ-команда не создала файл/директорию
     assert not log_path.exists()
     assert not (tmp_path / "logs").exists()
+
+
+# --- log --prune (#717): чистка дампов probe/apply ---------------------------
+#
+# ЖЁСТКАЯ граница: все prune-тесты работают ТОЛЬКО на tmp-каталоге
+# (_prune_args(log_dir=tmp_path)). Реальный data/logs никогда не
+# затрагивается — ни один тест не читает и не пишет LOG_DIR.
+
+
+def _make_dump(path: Path, size: int = 10, mtime: float | None = None) -> Path:
+    path.write_bytes(b"x" * size)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
+
+
+def _prune_args(log_dir, **overrides) -> argparse.Namespace:
+    base = {
+        "log_path": str(log_dir / "hhru_bot.log"),
+        "log_dir": str(log_dir),
+        "lines": 50,
+        "follow": False,
+        "prune": True,
+        "older_than": 14,
+        "yes": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+# --- prune_candidates: отбор -----------------------------------------------
+
+
+def test_prune_candidates_selects_old_dumps_only(tmp_path):
+    now = 1_700_000_000.0
+    old = now - 15 * 86400
+    _make_dump(tmp_path / "probe_a.html", mtime=old)
+    _make_dump(tmp_path / "probe_a.png", mtime=old)
+    _make_dump(tmp_path / "probe_fresh.html", mtime=now - 100)
+    assert prune_candidates(tmp_path, 14, now=now) == [
+        tmp_path / "probe_a.html",
+        tmp_path / "probe_a.png",
+    ]
+
+
+def test_prune_candidates_ignores_logs_and_other_extensions(tmp_path):
+    """Логи (hhru_bot.log/scheduled.log) и чужие расширения не кандидаты."""
+    now = 1_700_000_000.0
+    old = now - 100 * 86400
+    _make_dump(tmp_path / "hhru_bot.log", mtime=old)
+    _make_dump(tmp_path / "scheduled.log", mtime=old)
+    _make_dump(tmp_path / "notes.txt", mtime=old)
+    _make_dump(tmp_path / "dump", mtime=old)  # без расширения
+    assert prune_candidates(tmp_path, 14, now=now) == []
+
+
+def test_prune_candidates_not_recursive(tmp_path):
+    """Скан не рекурсивен: *.html во вложенном каталоге не трогается."""
+    now = 1_700_000_000.0
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    _make_dump(nested / "probe_a.html", mtime=now - 100 * 86400)
+    assert prune_candidates(tmp_path, 14, now=now) == []
+
+
+def test_prune_candidates_age_boundary_is_exclusive(tmp_path):
+    """Ровно на пороге (mtime == cutoff) файл НЕ кандидат: «старше N дней»."""
+    now = 1_700_000_000.0
+    cutoff = now - 14 * 86400
+    at_boundary = _make_dump(tmp_path / "at.html", mtime=cutoff)
+    just_before = _make_dump(tmp_path / "before.html", mtime=cutoff - 1)
+    assert prune_candidates(tmp_path, 14, now=now) == [just_before]
+    assert at_boundary not in prune_candidates(tmp_path, 14, now=now)
+
+
+def test_prune_candidates_older_than_zero_matches_everything(tmp_path):
+    now = 1_700_000_000.0
+    dump = _make_dump(tmp_path / "probe_a.html", mtime=now - 1)
+    assert prune_candidates(tmp_path, 0, now=now) == [dump]
+
+
+def test_prune_candidates_empty_dir(tmp_path):
+    assert prune_candidates(tmp_path, 14, now=1_700_000_000.0) == []
+
+
+# --- format_size ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("num_bytes", "expected"),
+    [
+        (0, "0 Б"),
+        (512, "512 Б"),
+        (1024, "1.0 КиБ"),
+        (2 * 1024 * 1024, "2.0 МиБ"),
+        (253 * 1024 * 1024, "253.0 МиБ"),
+    ],
+)
+def test_format_size(num_bytes, expected):
+    assert log_cmd.format_size(num_bytes) == expected
+
+
+# --- run(): поведение команды ----------------------------------------------
+
+
+def test_run_prune_dry_run_by_default_deletes_nothing(tmp_path, capsys):
+    """Без --yes и TTY (pytest stdin не tty) — только план, файлы на месте."""
+    # run() берёт now из time.time() — mtimes задаём относительно реального
+    # времени, а не фиксированной эпохи.
+    old = _make_dump(tmp_path / "probe_a.html", size=2048, mtime=time.time() - 100 * 86400)
+    log = _make_dump(tmp_path / "hhru_bot.log", mtime=time.time() - 100 * 86400)
+    log_cmd.run(_prune_args(tmp_path))
+    out = capsys.readouterr().out
+    assert "[DRY-RUN]" in out
+    assert "probe_a.html" in out
+    assert old.exists()
+    assert log.exists()
+
+
+def test_run_prune_yes_deletes_only_candidates(tmp_path, capsys):
+    now = time.time()
+    old_html = _make_dump(tmp_path / "probe_a.html", mtime=now - 100 * 86400)
+    old_png = _make_dump(tmp_path / "apply_b.png", mtime=now - 100 * 86400)
+    fresh_png = _make_dump(tmp_path / "probe_fresh.png", mtime=now - 10)
+    log = _make_dump(tmp_path / "hhru_bot.log", mtime=now - 100 * 86400)
+    scheduled = _make_dump(tmp_path / "scheduled.log", mtime=now - 100 * 86400)
+
+    log_cmd.run(_prune_args(tmp_path, yes=True))
+
+    out = capsys.readouterr().out
+    assert "[OK] Удалено 2 файл(ов)" in out
+    assert not old_html.exists()
+    assert not old_png.exists()
+    for survivor in (fresh_png, log, scheduled):
+        assert survivor.exists()
+
+
+def test_run_prune_no_candidates_reports_ok(tmp_path, capsys):
+    _make_dump(tmp_path / "probe_fresh.html", mtime=time.time() - 10)
+    log_cmd.run(_prune_args(tmp_path))
+    out = capsys.readouterr().out
+    assert "[OK]" in out
+    assert "чистить нечего" in out
+    assert (tmp_path / "probe_fresh.html").exists()
+
+
+def test_run_prune_rejects_follow(tmp_path, capsys):
+    """--prune с -f — явный отказ, ничего не удалено."""
+    old = _make_dump(tmp_path / "probe_a.html", mtime=time.time() - 100 * 86400)
+    with pytest.raises(SystemExit) as exc:
+        log_cmd.run(_prune_args(tmp_path, follow=True))
+    assert exc.value.code != 0
+    assert "[FAIL]" in capsys.readouterr().err
+    assert old.exists()
+
+
+def test_prune_candidates_missing_dir_is_empty(tmp_path):
+    """data/logs ещё не существует (свежая установка) — не candidates, не traceback."""
+    assert prune_candidates(tmp_path / "logs", 14, now=1_700_000_000.0) == []
+
+
+def test_run_prune_missing_dir_reports_ok(tmp_path, capsys):
+    log_cmd.run(_prune_args(tmp_path / "logs"))
+    out = capsys.readouterr().out
+    assert "[OK]" in out and "чистить нечего" in out
+
+
+def test_register_log_dir_follows_isolated_log_dir(tmp_path, monkeypatch):
+    """CLI-дефолт log_dir читает logging_setup.LOG_DIR на момент build_parser.
+
+    Страж изоляции #131: _isolate_log_dir патчит logging_setup.LOG_DIR;
+    register() обязан взять подменённое значение, иначе `log --prune` из-под
+    тестов увидел бы реальный data/logs.
+    """
+    monkeypatch.setattr(logging_setup, "LOG_DIR", tmp_path / "isolated")
+    from hhru_bot.cli import build_parser
+
+    args = build_parser().parse_args(["log"])
+    assert args.log_dir == str(tmp_path / "isolated")
+
+
+def test_prune_candidates_tolerates_vanishing_file(tmp_path, monkeypatch):
+    """Файл, исчезнувший между iterdir и stat, не роняет отбор (гонка как у unlink).
+
+    Ревью PR #923: entry.stat() без guard'а дал бы traceback вместо плана.
+    Симуляция: Path.stat бросает FileNotFoundError ровно для одного файла.
+    """
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", mtime=now - 100 * 86400)
+    real_stat = Path.stat
+
+    def racing_stat(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    assert prune_candidates(tmp_path, 14, now=now) == [stays]
+
+
+def test_print_prune_plan_tolerates_vanishing_file(tmp_path, capsys, monkeypatch):
+    """Файл, исчезнувший между отбором и печатью плана, пропускается без падения."""
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", size=100, mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", size=2048, mtime=now - 100 * 86400)
+    real_stat = Path.stat
+
+    def racing_stat(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    listed, total = log_cmd._print_prune_plan([gone, stays])
+    out = capsys.readouterr().out
+    assert "probe_gone.html" not in out
+    assert "probe_stays.html" in out
+    assert "[INFO] Кандидаты на удаление: 1 файл(ов), освободится 2.0 КиБ" in out
+    # Счётчики плана используются в prompt/[OK] — сходятся во всех окнах гонки.
+    assert (listed, total) == (1, 2048)
+
+
+def test_run_prune_ok_counts_only_actually_deleted(tmp_path, capsys, monkeypatch):
+    """[OK] считает только реально удалённое: файл, исчезнувший между планом
+    и unlink, не «удалён» — счётчики [OK] не расходятся с планом (ревью PR #923)."""
+    now = time.time()
+    gone = _make_dump(tmp_path / "probe_gone.html", size=100, mtime=now - 100 * 86400)
+    stays = _make_dump(tmp_path / "probe_stays.html", size=2048, mtime=now - 100 * 86400)
+    real_unlink = Path.unlink
+
+    def racing_unlink(self, *a, **kw):
+        if self == gone:
+            raise FileNotFoundError(self)
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", racing_unlink)
+    log_cmd.run(_prune_args(tmp_path, yes=True))
+    out = capsys.readouterr().out
+    assert "[OK] Удалено 1 файл(ов), освобождено 2.0 КиБ" in out
+    assert stays.exists() is False
