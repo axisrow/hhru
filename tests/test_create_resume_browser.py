@@ -1451,6 +1451,40 @@ def test_catalog_refusal_warns_about_phantom_draft(monkeypatch):
     assert "list-resumes" in result.reason
 
 
+def test_unexpected_error_after_next_warns_about_phantom_draft(monkeypatch):
+    """Неожиданная ошибка ПОСЛЕ первого NEXT предупреждает о фантоме (#920).
+
+    Контролируемый отказ по профессии печатает путь уборки фантома, но
+    PlaywrightError из того же каталог-блока (timeout опроса дерева, обрыв
+    соединения) уходил в общий обработчик молча — а «Продолжить» к тому
+    моменту уже нажат, и hh.ru мог материализовать черновик. Семантика
+    исхода не меняется (failed, до точки невозврата), меняется только
+    честность сообщения.
+    """
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _boom(page, area, **kw):
+        raise PlaywrightError("Timeout 30000ms exceeded waiting for tree")
+
+    monkeypatch.setattr(create, "select_wizard_catalog_leaf", _boom)
+    page = DegenerateOtherPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Инженер по тестированию",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert "ошибка до сохранения резюме" in result.reason
+    assert "черновик" in result.reason
+    assert TITLE in result.reason, "title для поиска фантома обязан быть в сообщении"
+    assert "delete-resume" in result.reason
+    assert "list-resumes" in result.reason
+
+
 def test_pre_next_failure_does_not_warn_about_phantom_draft(monkeypatch):
     """Отказ ДО первого NEXT — предупреждения о фантоме нет.
 

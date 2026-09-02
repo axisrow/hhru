@@ -427,7 +427,7 @@ class _SuggestionCapture:
     запроса: hh.ru сам запрашивает ``profession_suggestions`` при вводе, мы
     только читаем уже полученные телом ответы. Прямых HTTP-вызовов нет —
     это чтение состояния страницы, а не скрытый запрос (см. границу
-    браузерных действий в CLAUDE.md). Тело个别 ответа может оказаться
+    браузерных действий в CLAUDE.md). Тело ответа может оказаться
     недоступно Playwright (страница ушла вперёд) — такой ответ пропускается,
     это не фатально: следующий ответ того же shard'а придёт при вводе.
     """
@@ -488,11 +488,6 @@ def _read_suggestion_texts(page: Page) -> list[str]:
 
 
 def _poll_suggestion_texts(page: Page, *, timeout: float | None = None) -> list[str]:
-    if timeout is None:
-        # Константа читается в момент вызова, а не как дефолт параметра:
-        # дефолт фиксируется при определении функции, и тестовая подмена
-        # create._SUGGEST_POLL_TIMEOUT его не видела бы.
-        timeout = _SUGGEST_POLL_TIMEOUT
     """Опрос опций подсказки до двух одинаковых непустых снимков подряд (#920).
 
     Ответ shard'а и рендер попапа асинхронны: первые чтения видят пустой или
@@ -501,6 +496,11 @@ def _poll_suggestion_texts(page: Page, *, timeout: float | None = None) -> list[
     Пустой список — валидный итог: подсказок по запросу может не быть вовсе,
     тогда выбор остаётся за деревом каталога.
     """
+    if timeout is None:
+        # Константа читается в момент вызова, а не как дефолт параметра:
+        # дефолт фиксируется при определении функции, и тестовая подмена
+        # create._SUGGEST_POLL_TIMEOUT его не видела бы.
+        timeout = _SUGGEST_POLL_TIMEOUT
     deadline = time.monotonic() + timeout
     previous: list[str] | None = None
     while True:
@@ -575,6 +575,23 @@ def _resolve_leaf_by_suggestions(
     finally:
         page.remove_listener("response", capture)
     return leaf_area, expected_leaf_id
+
+
+def _phantom_draft_hint(title: str) -> str:
+    """Предупреждение о возможном фантомном черновике (#920, appendix к отказу).
+
+    Первый «Продолжить» визарда МОЖЕТ материализовать сущность черновика
+    (живой факт 2026-09-02; мгновенные CLI-отказы следа не оставляли, но
+    гарантии нет), поэтому ЛЮБОЙ отказ после него — и контролируемый отказ
+    по профессии, и неожиданная ошибка Playwright — обязан называть title
+    для поиска и путь уборки: молчаливый [FAIL] приучает к «на hh.ru
+    ничего нет».
+    """
+    return (
+        f" Первый «Продолжить» визарда мог уже создать черновик с title "
+        f"«{title}» без профессии — проверьте list-resumes и удалите "
+        f"ненужный (delete-resume)."
+    )
 
 
 def create_resume_on_hh(
@@ -655,9 +672,13 @@ def create_resume_on_hh(
     if dry_run:
         return CreateResumeResult(True, reason="dry-run; визард найден, клики не выполнены")
 
-    # Шаги ДО точки невозврата: мутация здесь физически невозможна, поэтому
-    # PlaywrightError остаётся обычным failed и не блокирует повтор (#777,
-    # тот же принцип, что у before_click-seam в CLAUDE.md, раздел 6).
+    # Шаги ДО точки невозврата: классификация исходов CLI здесь — обычный
+    # failed/retry (uncertain начинается с финального NEXT, #777, тот же
+    # принцип, что у before_click-seam в CLAUDE.md, раздел 6). НО мутация
+    # уже возможна: первый «Продолжить» ниже МОЖЕТ материализовать черновик
+    # (#920, живой факт 2026-09-02), поэтому любой отказ после него обязан
+    # предупреждать о фантоме — включая неожиданные PlaywrightError.
+
     try:
         switch_reason = _click_until_screen_switches(page, select_job, RESUME_CREATION_POSITION)
         if switch_reason:
@@ -685,23 +706,16 @@ def create_resume_on_hh(
             page, leaf_area, expected_role_id=expected_leaf_id
         )
         if category_reason:
-            # #920 (живой факт 2026-09-02): hh.ru может материализовать
-            # сущность черновика уже после первого «Продолжить» (наблюдалось
-            # при ручном уходе с экрана каталога; мгновенные CLI-отказы следа
-            # не оставляли, но гарантии нет). Отказ по профессии после NEXT
-            # обязан предупреждать о возможном фантоме с голым title и пути
-            # уборки — молчаливый [FAIL] приучает к «на hh.ru ничего нет».
+            # #920 (живой факт 2026-09-02): молчаливый [FAIL] приучал бы к
+            # «на hh.ru ничего нет» — см. комментарий над try выше.
             return CreateResumeResult(
-                False,
-                reason=(
-                    f"{category_reason} Первый «Продолжить» визарда мог уже "
-                    f"создать черновик с title «{title}» без профессии — "
-                    f"проверьте list-resumes и удалите ненужный (delete-resume)."
-                ),
+                False, reason=f"{category_reason}{_phantom_draft_hint(title)}"
             )
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
     except PlaywrightError as exc:
-        return CreateResumeResult(False, reason=f"ошибка до сохранения резюме: {exc}")
+        return CreateResumeResult(
+            False, reason=f"ошибка до сохранения резюме: {exc}{_phantom_draft_hint(title)}"
+        )
 
     # Точка невозврата: клик ниже создаёт резюме, поэтому ЛЮБОЙ сбой начиная
     # отсюда — uncertain (fail-closed, #176): результат клика не наблюдаем.
