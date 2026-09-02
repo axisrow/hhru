@@ -385,3 +385,70 @@ def test_attestation_row_saves_through_partial_edit_button() -> None:
 
     assert returned is save
     assert page.locator.call_args_list[-1].args[0] == "[data-qa='resume-partial-edit-save']"
+
+
+@pytest.mark.parametrize(
+    ("block", "path", "item"),
+    [
+        (
+            "attestations",
+            "attestationEducation",
+            resume_sections.Attestation("AWS", "Amazon", "Cloud", "2024"),
+        ),
+        (
+            "recommendations",
+            "recommendation",
+            Recommendation("", "Acme", "Ada", "Reviewer"),
+        ),
+    ],
+)
+def test_empty_section_opens_first_row_via_resume_scoped_route(
+    monkeypatch, block, path, item
+) -> None:
+    """#922: an empty block has no row trigger, so the first row uses the
+    confirmed resume-scoped editor route instead of inventing an add click."""
+    page = MagicMock()
+    page.url = "https://hh.ru/resume/resume-id"
+    no_rows = MagicMock()
+    no_rows.count.return_value = 0
+    empty_marker = MagicMock()
+    empty_marker.count.return_value = 1
+    ready = MagicMock()
+    cancel = MagicMock()
+    cancel.count.return_value = 1
+    page.locator.side_effect = lambda selector: {
+        resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
+        resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
+        resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
+        resume_sections.EMPTY_SECTION_MARKERS["recommendations"]: empty_marker,
+        (
+            f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']"
+            if block == "attestations"
+            else "input[name='company']"
+        ): ready,
+        "[data-qa='resume-partial-edit-cancel']": cancel,
+    }[selector]
+
+    def goto(_page, url):
+        page.url = url
+
+    monkeypatch.setattr(resume_sections, "goto_hh", goto)
+    monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
+    monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
+    monkeypatch.setattr(
+        resume_sections,
+        "_fill_attestation_row" if block == "attestations" else "_fill_recommendation_row",
+        lambda *_args: MagicMock(),
+    )
+
+    plan = (
+        ResumeSectionsPlan(attestations=[item])
+        if block == "attestations"
+        else ResumeSectionsPlan(recommendations=[item])
+    )
+    errors = apply_plan(page, "resume-id", plan, dry_run=True)
+
+    assert errors == []
+    assert page.url == f"https://hh.ru/resume/edit/resume-id/{path}"
+    no_rows.nth.assert_not_called()
+    cancel.click.assert_called_once_with()
