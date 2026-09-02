@@ -27,6 +27,7 @@ from .selector_groups.resume_page import (
     RESUME_CREATION_CATEGORY_SUBMIT,
     RESUME_CREATION_NEXT,
     RESUME_CREATION_POSITION,
+    RESUME_CREATION_POSITION_SUGGEST,
     RESUME_CREATION_SELECT_JOB,
     RESUME_CREATION_URL,
 )
@@ -48,6 +49,26 @@ _RESUME_LIMIT_REASON = (
 # (подтверждено live: 96 <-> tree-selector-item-96). Автопринятие единственного
 # кандидата фильтра (#920) никогда не выбирает его — это отказ, а не выбор.
 OTHER_ROLE_ID = "40"
+
+# #920 этап 2 (живая диагностика 2026-09-02): на ПЕРВОМ экране визарда поле
+# должности — combobox с подсказками автодополнения hh.ru; попап открывается
+# только посимвольным вводом (fill() его не триггерит) и существует только на
+# этом экране — на экране каталога подсказок нет. Опции
+# (RESUME_CREATION_POSITION_SUGGEST) не несут id роли в DOM: маппинг
+# «текст профессии -> роль» живёт в JSON ответа shard'а подсказок, который
+# страница сама уже получила (слушатель ответов читает его пассивно; прямых
+# HTTP-запросов нет — граница «Чтение состояния»). КЛИКАТЬ опцию нельзя:
+# после клика визард зависает (поле сбрасывается, чип подсказки остаётся
+# отмеченным, повторные NEXT — молчаливые no-op без сетевой активности;
+# воспроизведено headless и headed), поэтому подсказка только читается.
+# Текст профессии из подсказки в дереве каталога НЕ ищется («Директор
+# учебного заведения» -> «Другое»), ищется имя РОЛИ из payload, а id ролей
+# совпадает с id листов дерева (подтверждено live: 132 <->
+# tree-selector-item-132).
+_POSITION_SUGGEST_URL_FRAGMENT = "profession_suggestions"
+_SUGGEST_TYPE_DELAY_MS = 40
+_SUGGEST_POLL_TIMEOUT = 6.0
+_SUGGEST_POLL_INTERVAL_MS = 250
 
 
 @dataclass
@@ -368,6 +389,163 @@ def _click_until_screen_switches(
     return f"экран визарда не переключился после {attempts} попыток: {last_error}"
 
 
+class _SuggestionCapture:
+    """Пассивный сборщик ответов shard'а подсказок, полученных страницей (#920).
+
+    Подключается слушателем ``page.on("response", ...)`` на время набора
+    запроса: hh.ru сам запрашивает ``profession_suggestions`` при вводе, мы
+    только читаем уже полученные телом ответы. Прямых HTTP-вызовов нет —
+    это чтение состояния страницы, а не скрытый запрос (см. границу
+    браузерных действий в CLAUDE.md). Тело个别 ответа может оказаться
+    недоступно Playwright (страница ушла вперёд) — такой ответ пропускается,
+    это не фатально: следующий ответ того же shard'а придёт при вводе.
+    """
+
+    def __init__(self) -> None:
+        self.payloads: list[object] = []
+
+    def __call__(self, response):
+        if _POSITION_SUGGEST_URL_FRAGMENT not in response.url:
+            return
+        try:
+            self.payloads.append(response.json())
+        except Exception:  # noqa: BLE001 — недоступное тело пропускаем, не падаем
+            return
+
+
+def _role_from_suggestion_payloads(
+    payloads: list[object], option_text: str
+) -> tuple[str, str] | None:
+    """Сопоставить текст опции подсказки с ролью каталога (id, имя) (#920).
+
+    Возвращает None, если текст не найден ни в одном ответе, роль не ровно
+    одна или поля пусты — неоднозначный/неполный маппинг не принимается
+    (fail-closed): резюме не должно получить профессию, которую никто не
+    называл.
+    """
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        items = payload.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict) or item.get("text") != option_text:
+                continue
+            roles = item.get("professionalRoles") or []
+            if len(roles) != 1:
+                continue
+            role = roles[0]
+            if not isinstance(role, dict):
+                continue
+            role_id = str(role.get("id") or "")
+            role_name = str(role.get("name") or "")
+            if role_id and role_name:
+                return role_id, role_name
+    return None
+
+
+def _read_suggestion_texts(page: Page) -> list[str]:
+    locator = page.locator(RESUME_CREATION_POSITION_SUGGEST)
+    try:
+        return [text.strip() for text in locator.all_text_contents() if text.strip()]
+    except PlaywrightError:
+        # Попап мог закрыться/перерендериться между итерациями опроса — это
+        # сигнал повторить чтение, а не финальная ошибка (тот же принцип,
+        # что у опроса дерева в select_wizard_catalog_leaf).
+        return []
+
+
+def _poll_suggestion_texts(page: Page, *, timeout: float | None = None) -> list[str]:
+    if timeout is None:
+        # Константа читается в момент вызова, а не как дефолт параметра:
+        # дефолт фиксируется при определении функции, и тестовая подмена
+        # create._SUGGEST_POLL_TIMEOUT его не видела бы.
+        timeout = _SUGGEST_POLL_TIMEOUT
+    """Опрос опций подсказки до двух одинаковых непустых снимков подряд (#920).
+
+    Ответ shard'а и рендер попапа асинхронны: первые чтения видят пустой или
+    недостроенный попап, поэтому решение принимается только по стабильному
+    снимку (тот же принцип консистентного снимка, что #837 у дерева).
+    Пустой список — валидный итог: подсказок по запросу может не быть вовсе,
+    тогда выбор остаётся за деревом каталога.
+    """
+    deadline = time.monotonic() + timeout
+    previous: list[str] | None = None
+    while True:
+        texts = _read_suggestion_texts(page)
+        if texts and texts == previous:
+            return texts
+        previous = texts
+        if time.monotonic() >= deadline:
+            return texts
+        page.wait_for_timeout(_SUGGEST_POLL_INTERVAL_MS)
+
+
+def _resolve_leaf_by_suggestions(
+    page: Page, position: Locator, area: str
+) -> tuple[str, str | None]:
+    """#920 этап 2: подсказки автодополнения — приоритетная поверхность выбора.
+
+    Набирает ``area`` посимвольно в поле должности первого экрана, читает
+    попап подсказок и пытается сопоставить единственную подсказку с ролью
+    каталога по ответам shard'а. Возвращает ``(запрос_для_дерева,
+    ожидаемый_role_id | None)`` для ``select_wizard_catalog_leaf``:
+
+    - ровно одна подсказка с однозначной ролью (и не «Другое») -> имя роли
+      как запрос дерева + её id как ``expected_role_id`` (гард #913);
+    - ноль подсказок, неоднозначный маппинг, «Другое» -> исходный ``area``
+      без ожидаемого id — выбор остаётся за деревом каталога с его
+      собственными гардами (#920/#913);
+    - несколько подсказок -> ни одна не берётся автоматически (выбор между
+      несколькими — за штурвалом, #920), перечень пишется в лог, дерево
+      получает исходный запрос.
+
+    Подсказка не кликается: клик по опции вешает визард (живая диагностика
+    2026-09-02, см. комментарий у констант выше). Поле после опроса остаётся
+    с набранным текстом — вызывающий код возвращает туда ``title`` перед
+    NEXT, как и делал раньше.
+    """
+    leaf_area = area
+    expected_leaf_id = None
+    capture = _SuggestionCapture()
+    page.on("response", capture)
+    try:
+        position.fill("")
+        position.press_sequentially(area, delay=_SUGGEST_TYPE_DELAY_MS)
+        texts = _poll_suggestion_texts(page)
+        if len(texts) > 1:
+            logger.info(
+                "каталог предлагает несколько подсказок для «%s»: %s; "
+                "автоматически ни одна не выбрана, решает дерево каталога",
+                area,
+                "; ".join(texts),
+            )
+        elif len(texts) == 1:
+            resolved = _role_from_suggestion_payloads(capture.payloads, texts[0])
+            if resolved is None:
+                logger.info("подсказка «%s» не сопоставлена с ролью каталога однозначно", texts[0])
+            elif resolved[0] == OTHER_ROLE_ID:
+                logger.info(
+                    "подсказка «%s» вырождается в «Другое» (id %s) — не принимается",
+                    texts[0],
+                    OTHER_ROLE_ID,
+                )
+            else:
+                role_id, role_name = resolved
+                leaf_area, expected_leaf_id = role_name, role_id
+                logger.info(
+                    "принята подсказка каталога: «%s» — профессия «%s», роль «%s» (id %s)",
+                    area,
+                    texts[0],
+                    role_name,
+                    role_id,
+                )
+    finally:
+        page.remove_listener("response", capture)
+    return leaf_area, expected_leaf_id
+
+
 def create_resume_on_hh(
     page: Page,
     *,
@@ -456,7 +634,14 @@ def create_resume_on_hh(
         position, reason = _one(page, RESUME_CREATION_POSITION, "поле поиска профессии")
         if reason:
             return CreateResumeResult(False, reason=reason)
-        _require(position).fill(title)
+        position = _require(position)
+        # #920 этап 2: подсказки автодополнения — приоритетная поверхность
+        # выбора. Набор area посимвольно читает попап подсказок (id роли —
+        # только в payload, опцию кликать нельзя), затем поле возвращается
+        # к title: NEXT уходит на каталог свободным текстом, а резолвнутую
+        # роль доказывает уже дерево каталога через expected_role_id.
+        leaf_area, expected_leaf_id = _resolve_leaf_by_suggestions(page, position, area)
+        position.fill(title)
         # The NEXT control (and the catalog screen after SUBMIT below) renders
         # asynchronously after each input; a strict count()/click right away can
         # see count=0 before the SPA hydrates (same #304 race guarded above).
@@ -465,7 +650,9 @@ def create_resume_on_hh(
         reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
         if reason:
             return CreateResumeResult(False, reason=reason)
-        category_reason = select_wizard_catalog_leaf(page, area)
+        category_reason = select_wizard_catalog_leaf(
+            page, leaf_area, expected_role_id=expected_leaf_id
+        )
         if category_reason:
             return CreateResumeResult(False, reason=category_reason)
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)

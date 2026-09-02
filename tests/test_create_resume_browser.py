@@ -22,9 +22,11 @@ from hhru_bot.create_resume import select_wizard_catalog_leaf as _real_select
 from hhru_bot.selector_groups.resume_list import RESUME_LIST_CARD
 from hhru_bot.selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
+    RESUME_CREATION_CATEGORY_SEARCH,
     RESUME_CREATION_CATEGORY_SUBMIT,
     RESUME_CREATION_NEXT,
     RESUME_CREATION_POSITION,
+    RESUME_CREATION_POSITION_SUGGEST,
     RESUME_CREATION_SELECT_JOB,
 )
 
@@ -32,6 +34,17 @@ pytestmark = pytest.mark.integration
 
 TITLE = "QA Test Resume"
 AREA = "Программист, разработчик"
+
+
+@pytest.fixture(autouse=True)
+def _fast_suggest_poll(monkeypatch):
+    """Укоротить дедлайн опроса попапа подсказок (#920 этап 2).
+
+    Существующие full-flow тесты не дают подсказок: с боевыми 6 секундами
+    каждый ждал бы их реальным wall-clock'ом (wait_for_timeout двойника —
+    no-op, цикл не спит).
+    """
+    monkeypatch.setattr(create, "_SUGGEST_POLL_TIMEOUT", 0.05)
 
 
 class TreeItem:
@@ -109,6 +122,11 @@ class Locator:
     def fill(self, value):
         self.page.filled.append((self.selector, value))
 
+    def press_sequentially(self, text, *, delay=None, timeout=None):  # noqa: ARG002
+        # Посимвольный ввод (#920): fill() попап подсказок не триггерит.
+        self.page.typed.append((self.selector, text))
+        self.page.after_typing()
+
 
 CREATE_BUTTON_HTML = "<button data-qa='mainmenu_createResume'>{label}</button>"
 
@@ -138,10 +156,21 @@ class Page:
         self.fail_on_wait = fail_on_wait
         self.clicks: list[str] = []
         self.filled: list[tuple[str, str]] = []
+        self.typed: list[tuple[str, str]] = []
+        self.response_listeners: list = []
         self.url = "https://hh.ru/profile/resume/professional_role"
 
     def goto(self, url, *, timeout=None, wait_until=None, referer=None):  # noqa: ARG002
         self.url = url
+
+    def on(self, event, handler):
+        self.response_listeners.append(handler)
+
+    def remove_listener(self, event, handler):
+        self.response_listeners.remove(handler)
+
+    def after_typing(self):
+        """Хук после посимвольного ввода; SuggestPage диспатчит ответы shard'а."""
 
     def locator(self, selector):
         # Пустой аккаунт: карточек резюме нет, дубль-гард пропускает создание.
@@ -654,7 +683,10 @@ def _run_area(page, area, monkeypatch, *, before_click=None):
     monkeypatch.setattr(
         create,
         "select_wizard_catalog_leaf",
-        lambda p, area, **_: _real_select(p, area, filter_timeout=0.5),
+        # **kw пропускает expected_role_id: продакшен после #920 этапа 2
+        # передаёт его ВСЕГДА (None у фолбэков) — проглатывать его здесь
+        # значило бы не тестировать проводку гарда #913 до дерева.
+        lambda p, area, **kw: _real_select(p, area, filter_timeout=0.5, **kw),
     )
     return create.create_resume_on_hh(
         cast(PlaywrightPage, cast(object, page)),
@@ -1073,3 +1105,230 @@ def test_resume_id_is_read_from_wizard_query_url(monkeypatch):
 
     assert result.success, f"id из query должен распознаваться: {result.reason}"
     assert result.new_resume_id == new_id
+
+
+# --- #920 этап 2: подсказки автодополнения как приоритетная поверхность -----
+
+SUGGEST_TEXT = "Директор учебного заведения/заведующий учебным процессом"
+ROLE_NAME = "Учитель, преподаватель, педагог"
+ROLE_ID = "132"
+
+
+def _payload(text, role_id, role_name):
+    return {"items": [{"text": text, "professionalRoles": [{"id": role_id, "name": role_name}]}]}
+
+
+class _FakeSuggestResponse:
+    """Ответ shard'а profession_suggestions, полученный страницей сама (боевой
+    источник id роли — слушатель читает его пассивно, прямых запросов нет)."""
+
+    def __init__(self, payload):
+        self.url = "https://hh.ru/inbox/shards/profession_suggestions?query=x"
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class SuggestPage(CompositeLeafPage):
+    """Первый экран визарда с попапом подсказок.
+
+    ``after_typing`` диспатчит ответы shard'а слушателям страницы — ровно то,
+    что боевой код получает от ``page.on("response", ...)``: hh.ru сам делает
+    запрос на посимвольный ввод, двойник лишь имитирует доставку.
+    """
+
+    def __init__(self, *, option_texts=(), payloads=(), leaves=None):
+        super().__init__(leaves=leaves)
+        self.option_texts = list(option_texts)
+        self.payloads = list(payloads)
+
+    def after_typing(self):
+        for payload in self.payloads:
+            for handler in list(self.response_listeners):
+                handler(_FakeSuggestResponse(payload))
+
+    def set_leaves(self, leaves):
+        # Листья дерева знают свою страницу (клик по строке отмечает чекбокс),
+        # поэтому создаются уже ПОСЛЕ двойника страницы — в конструктор их не
+        # передать: там ``page`` ещё не связан.
+        self._leaves = leaves
+
+    def locator(self, selector):
+        if selector == RESUME_CREATION_POSITION_SUGGEST:
+            return SuggestLocator(self, selector, 1)
+        return super().locator(selector)
+
+
+class SuggestLocator(HydrationLocator):
+    def all_text_contents(self):
+        return list(self.page.option_texts)
+
+
+def _teacher_leaves(page):
+    return [TreeItem(ROLE_NAME, f"tree-selector-item-text-{ROLE_ID}", page)]
+
+
+def test_single_suggestion_resolves_role_and_selects_leaf(monkeypatch, caplog):
+    """Одна подсказка с однозначной ролью -> дерево по имени роли + гард id (#920).
+
+    Ровно тот случай «Ученый»: hh.ru предлагает одну профессию, чей текст в
+    дереве не ищется вовсе; резолв идёт через payload shard'а, а выбор
+    доказывает дерево по имени роли с expected_role_id (#913).
+    """
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"подсказка должна привести к листу дерева: {result.reason}"
+    assert RESUME_CREATION_CATEGORY_SUBMIT in page.clicks
+    assert RESUME_CREATION_POSITION_SUGGEST not in page.clicks, "опция читается, не кликается"
+    assert "принята подсказка каталога" in caplog.text
+    assert ROLE_NAME in caplog.text
+    # Дерево запрашивается именем РОЛИ, а не текстом профессии и не area.
+    assert (RESUME_CREATION_CATEGORY_SEARCH, ROLE_NAME) in page.filled
+
+
+def test_position_field_is_restored_to_title_after_suggestions(monkeypatch):
+    """После опроса подсказок поле возвращается к title перед NEXT.
+
+    NEXT уходит на каталог свободным текстом, а резолвнутую роль доказывает
+    дерево; набранный area в поле остаться не должен.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    page.set_leaves(_teacher_leaves(page))
+
+    result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success
+    position_fills = [value for sel, value in page.filled if sel == RESUME_CREATION_POSITION]
+    assert position_fills == ["", TITLE], f"поле должности: {position_fills}"
+    typed = [value for sel, value in page.typed if sel == RESUME_CREATION_POSITION]
+    assert typed == ["Ученый"], f"посимвольно набран area: {typed}"
+
+
+def test_multiple_suggestions_are_never_auto_selected(monkeypatch, caplog):
+    """Несколько подсказок — ни одна не берётся автоматически (#920).
+
+    Выбор между несколькими — за штурвалом: перечень пишется в лог, дерево
+    получает исходный запрос area (перезапуск с точным именем — решение
+    выбирающего, паттерн #836).
+    """
+    import logging
+
+    other_text = "Научный сотрудник"
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT, other_text],
+        payloads=[
+            {
+                "items": [
+                    {
+                        "text": SUGGEST_TEXT,
+                        "professionalRoles": [{"id": ROLE_ID, "name": ROLE_NAME}],
+                    },
+                    {"text": other_text, "professionalRoles": [{"id": "193", "name": "Учёный"}]},
+                ]
+            }
+        ],
+    )
+    # Точное совпадение с ИСХОДНЫМ area: доказывает, что дерево запросили
+    # им «Ученый», а не имя какой-то из подсказок.
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на исходный area должен работать: {result.reason}"
+    assert "ни одна не выбрана" in caplog.text
+    assert SUGGEST_TEXT in caplog.text and other_text in caplog.text, (
+        "перечень подсказок обязан попасть в лог"
+    )
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+
+
+def test_suggestion_degenerating_into_other_is_not_accepted(monkeypatch, caplog):
+    """Подсказка, чья роль — catch-all «Другое» (id 40), не принимается (#913)."""
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, "40", "Другое")],
+    )
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на дерево по area должен работать: {result.reason}"
+    assert "не принимается" in caplog.text
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled, (
+        "дерево должно получить исходный area, а не имя роли «Другое»"
+    )
+
+
+def test_suggestion_without_unambiguous_payload_falls_back_to_tree(monkeypatch, caplog):
+    """Роль не резолвится из payload — подсказка не принимается (fail-closed)."""
+    import logging
+
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[{"items": []}],
+    )
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"фолбэк на дерево по area должен работать: {result.reason}"
+    assert "не сопоставлена" in caplog.text
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+
+
+def test_tree_leaf_id_mismatch_with_resolved_role_refuses_before_click(monkeypatch):
+    """Гард #913 на подсказочном пути: чужой id листа — отказ ДО клика.
+
+    Текст листа совпадает с именем роли, id — нет: точное совпадение текста
+    ещё не доказывает роль, молчаливая подмена записала бы чужой role_id.
+    """
+    page = SuggestPage(
+        option_texts=[SUGGEST_TEXT],
+        payloads=[_payload(SUGGEST_TEXT, ROLE_ID, ROLE_NAME)],
+    )
+    # Тот же текст, ЧУЖОЙ id листа.
+    page.set_leaves([TreeItem(ROLE_NAME, "tree-selector-item-text-96", page)])
+
+    result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert not result.success
+    assert not result.uncertain, "выбор профессии — до точки невозврата"
+    assert f"ожидался согласованный role_id={ROLE_ID}" in result.reason
+    # Полный флоу кликает cookie-баннер/карточку/NEXT — их клики в page.clicks
+    # законны; проверяем, что отказали до клика по строке leaf и submit.
+    assert RESUME_CREATION_CATEGORY_SUBMIT not in page.clicks
+    assert "tree-selector-item-text-96" not in page.clicks
+
+
+def test_zero_suggestions_keep_catalog_tree_flow(monkeypatch, caplog):
+    """Ноль подсказок — прежняя логика дерева без изменений (#920 этап 1)."""
+    import logging
+
+    page = SuggestPage()  # option_texts пуст: попап не открывается
+    page.set_leaves([TreeItem("Ученый", f"tree-selector-item-text-{ROLE_ID}", page)])
+
+    with caplog.at_level(logging.INFO, logger="hhru_bot.create_resume"):
+        result = _run_area(page, "Ученый", monkeypatch, before_click=lambda: None)
+
+    assert result.success, f"дерево по area должно работать как раньше: {result.reason}"
+    assert "подсказка" not in caplog.text, "о подсказках не должно быть ни слова"
+    assert (RESUME_CREATION_CATEGORY_SEARCH, "Ученый") in page.filled
+    assert (RESUME_CREATION_POSITION, "") in page.filled, "поле всё равно очищается перед набором"

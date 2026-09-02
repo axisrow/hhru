@@ -139,6 +139,7 @@
 | resume_page.RESUME_CREATION_POSITION | `[data-qa='resume-profile-position-input']` | — | — | — | live_dom |
 | resume_page.RESUME_CREATION_POSITION_CHIP_POPULAR | `[data-qa='resume-profile-position-chip-popular']` | — | — | — | live_dom |
 | resume_page.RESUME_CREATION_POSITION_CLEAR | `[data-qa='input-clearable-button']` | — | — | — | live_dom |
+| resume_page.RESUME_CREATION_POSITION_SUGGEST | `[data-qa='suggest-item-cell']` | — | — | — | live_dom |
 | resume_page.RESUME_CREATION_SELECT_JOB | `[data-qa='resume-profile-card-select-job']` | — | — | — | live_dom |
 | resume_page.RESUME_DELETE_BUTTON | `[data-qa='resume-delete']` | — | — | — | live_dom |
 | resume_page.RESUME_DELETE_CLOSE | `[data-qa='resume-delete-close']` | — | — | — | documented_live |
