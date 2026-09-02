@@ -313,12 +313,25 @@ def select_wizard_catalog_leaf(
             # правило проекта "перечень профессий брать из живого каталога, не
             # вшивать литералом".
             seen: dict[str, None] = {}
-            for candidate in candidates:
-                text = (candidate.text_content() or "").strip()
-                if text:
-                    seen.setdefault(text, None)
+            read_failed = False
+            try:
+                for candidate in candidates:
+                    text = (candidate.text_content(timeout=2000) or "").strip()
+                    if text:
+                        seen.setdefault(text, None)
+            except PlaywrightError:
+                # Хэндл мог быть отсоединён тем же перерендером, который
+                # оставил снимок дерева устаревшим. Не ждать дефолтные 30s и
+                # не превращать контролируемый отказ в generic-ошибку.
+                refusal = (
+                    "не удалось прочитать предложения каталога "
+                    "(дерево перерендерилось); повторите попытку"
+                )
+                read_failed = True
             offered = list(seen)
-            if offered:
+            if read_failed:
+                pass
+            elif offered:
                 options = "; ".join(offered)
                 refusal = (
                     f"профессия «{area}» не найдена в каталоге визарда резюме; "
@@ -343,7 +356,10 @@ def select_wizard_catalog_leaf(
             f"профессия «{area}» не найдена однозначно в каталоге визарда "
             f"резюме (совпадений: {len(matches)})"
         )
-    qa = matches[0].get_attribute("data-qa") or ""
+    try:
+        qa = matches[0].get_attribute("data-qa", timeout=2000) or ""
+    except PlaywrightError:
+        return "не удалось подтвердить лист каталога (дерево перерендерилось); повторите попытку"
     match = re.search(r"tree-selector-item-text-(\d+)$", qa)
     if not match:
         return f"пункт каталога визарда «{area}» не является leaf-профессией"
@@ -372,7 +388,29 @@ def select_wizard_catalog_leaf(
     # ``tabindex="-1"``, и Playwright падает с «Clicking the checkbox did not
     # change its state» (живой прогон #778). Кликается видимая строка
     # профессии — тот же узел, по которому выше определён leaf.
-    matches[0].click()
+    # ``matches[0]`` — позиционный Locator из снимка дерева и после
+    # перерендера может указывать на уже другую строку. Сначала заново
+    # резолвим immutable data-qa, затем проверяем актуальный текст тем же
+    # гардом, который был использован для batch-снимка, и только после этого
+    # кликаем. Это особенно важно для fallback без expected_role_id.
+    expected_leaf_text = normalize(area) if not fuzzy_matched else normalize(texts[0])
+    # hh.ru stores a stable role-specific token alongside the generic
+    # ``tree-selector-item-text`` token in data-qa.
+    live_leaf_selector = f"[data-qa~='tree-selector-item-text-{match.group(1)}']"
+    live_leaf, live_reason = _one(page, live_leaf_selector, f"лист профессии «{area}»")
+    if live_reason:
+        return live_reason
+    try:
+        live_text_raw = _require(live_leaf).text_content(timeout=2000) or ""
+        live_text = normalize(live_text_raw)
+    except PlaywrightError:
+        return (
+            "не удалось подтвердить актуальный лист каталога "
+            "(дерево перерендерилось); повторите попытку"
+        )
+    if live_text != expected_leaf_text:
+        return f"лист профессии «{area}» изменился при перерисовке каталога; повторите попытку"
+    _require(live_leaf).click()
     # #837 (боевой прогон 2026-08-30, 2 из 3 живых фейлов): клик запускает
     # асинхронное React-обновление checked-состояния, а is_checked() сразу
     # после click() — синхронное чтение без ожидания. Живой замер: 2 из 6
@@ -393,13 +431,7 @@ def select_wizard_catalog_leaf(
         # Только здесь «принят» — правда: leaf подтверждён, role_id (если
         # согласован) совпал, чекбокс отмечен. До этой точки фолбэк #920 мог
         # отказаться на любом гарде выше.
-        try:
-            accepted_text = (matches[0].text_content(timeout=2000) or "").strip()
-        except PlaywrightError:
-            # Тот же класс гонки #837, но ПОСЛЕ клика: generic-краш здесь
-            # выглядел бы как отказ с фантом-подсказкой, хотя leaf уже
-            # подтверждён чекбоксом — в лог идёт имя запроса.
-            accepted_text = area
+        accepted_text = live_text_raw.strip()
         logger.info(
             "профессия «%s» не совпала с листом каталога точно; "
             "принят единственный кандидат фильтра: «%s»",
@@ -784,7 +816,15 @@ def create_resume_on_hh(
         # see count=0 before the SPA hydrates (same #304 race guarded above).
         page.locator(RESUME_CREATION_NEXT).first.wait_for(state="visible", timeout=15000)
         dismiss_cookie_banner(page)
-        reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
+        try:
+            reason = _click_one(page, RESUME_CREATION_NEXT, "кнопка продолжения визарда")
+        except PlaywrightError as exc:
+            # Ошибка в самом клике не доказывает, что событие не ушло: первый
+            # NEXT уже мог материализовать фантомный черновик (#920).
+            return CreateResumeResult(
+                False,
+                reason=f"ошибка до сохранения резюме: {exc}{_phantom_draft_hint(title)}",
+            )
         if reason:
             return CreateResumeResult(False, reason=reason)
     except PlaywrightError as exc:

@@ -94,10 +94,14 @@ class Locator:
             return [TreeItem(AREA, "tree-selector-item-text-96", self.page)]
         return [self]
 
-    def text_content(self):
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        if "tree-selector-item-text-" in self.selector:
+            return AREA
         return ""
 
-    def get_attribute(self, name):  # noqa: ARG002
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        if name == "data-qa" and "tree-selector-item-text-" in self.selector:
+            return self.selector.rsplit("tree-selector-item-text-", 1)[1].split("'")[0]
         return None
 
     def is_disabled(self):
@@ -474,6 +478,8 @@ class HydrationLocator(Locator):
         self.page.clicks.append(self.selector)
         if self.selector == RESUME_CREATION_SELECT_JOB:
             self.page.select_job_clicks += 1
+        if "tree-selector-item-text-" in self.selector:
+            self.page.checked = True
 
 
 def test_click_on_unhydrated_card_is_retried(monkeypatch):
@@ -768,6 +774,96 @@ class CompositeLeafLocator(HydrationLocator):
     def all(self):
         self.page.tree_reads += 1
         return self.page._leaves  # noqa: SLF001 — тестовый двойник, не production API
+
+    def _live_leaf(self):
+        prefix = "[data-qa~='"
+        suffix = "']"
+        if self.selector.startswith(prefix) and self.selector.endswith(suffix):
+            qa = self.selector[len(prefix) : -len(suffix)]
+            return next((leaf for leaf in self.page._leaves if leaf._qa == qa), None)  # noqa: SLF001
+        return None
+
+    def text_content(self, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        return leaf._text if leaf is not None else ""  # noqa: SLF001
+
+    def get_attribute(self, name, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        return leaf._qa if leaf is not None and name == "data-qa" else None  # noqa: SLF001
+
+    def click(self, *, timeout=None):  # noqa: ARG002
+        leaf = self._live_leaf()
+        if leaf is not None:
+            leaf.click()
+        else:
+            super().click()
+
+
+class RerenderBeforeLeafClickPage(CompositeLeafPage):
+    """The positional snapshot is replaced before the stable-id re-resolve."""
+
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if self.TREE in selector:
+            return RerenderBeforeLeafClickLocator(self, selector, count)
+        return HydrationLocator(self, selector, count)
+
+
+class RerenderBeforeLeafClickLocator(CompositeLeafLocator):
+    def all(self):
+        if not hasattr(self.page, "_snapshot_leaves"):
+            self.page._snapshot_leaves = self.page._leaves  # noqa: SLF001
+        self.page.tree_reads += 1
+        leaves = self.page._snapshot_leaves  # noqa: SLF001
+        if self.page.tree_reads == 2:
+            self.page._leaves = [TreeItem("Другой лист", leaves[0]._qa, self.page)]  # noqa: SLF001
+        return leaves
+
+
+def test_live_leaf_text_mismatch_refuses_before_click(monkeypatch):
+    """A rerendered same-id leaf must not be clicked on the old text guard."""
+    page = RerenderBeforeLeafClickPage()
+
+    reason = _real_select(
+        cast(PlaywrightPage, cast(object, page)),
+        "Плотник",
+        filter_timeout=0.05,
+    )
+
+    assert "изменился при перерисовке" in reason
+    assert page.clicks == []
+
+
+class FirstNextClickErrorLocator(HydrationLocator):
+    def click(self, *, timeout=None):  # noqa: ARG002
+        raise PlaywrightError("Locator.click: detached during first NEXT")
+
+
+class FirstNextClickErrorPage(CompositeLeafPage):
+    def locator(self, selector):
+        count = 0 if selector == RESUME_LIST_CARD else 1
+        if selector == RESUME_CREATION_NEXT:
+            return FirstNextClickErrorLocator(self, selector, count)
+        return super().locator(selector)
+
+
+def test_first_next_click_error_warns_about_phantom_draft(monkeypatch):
+    """An exception from the first NEXT click may still leave a draft behind."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+    page = FirstNextClickErrorPage()
+
+    result = create.create_resume_on_hh(
+        cast(PlaywrightPage, cast(object, page)),
+        area="Плотник",
+        title=TITLE,
+        dry_run=False,
+    )
+
+    assert not result.success
+    assert not result.uncertain
+    assert "ошибка до сохранения резюме" in result.reason
+    assert "черновик" in result.reason
+    assert TITLE in result.reason
 
 
 def _run_area(page, area, monkeypatch, *, before_click=None):
