@@ -1357,12 +1357,125 @@ class _RejectedSavePage(_SavePage):
         return super().locator(selector)
 
 
-def test_edit_experience_save_rejected_by_validation_reports_definite_failure(monkeypatch):
-    """#958 follow-up: Save on an empty form never navigates — hh.ru renders
-    form-helper-error texts ("Пожалуйста, укажите") and stays on the editor
-    URL. That is a definite non-mutation, so the row result is a plain failed
-    carrying the validation text — NOT the navigation-timeout uncertain that
-    locks the resume_id against retries."""
+class _WipeOnceLocator(_Locator):
+    """#956 wipe-window model: the value survives every pre-save read but is
+    gone once the save click lands; a refill holds it."""
+
+    def __init__(self):
+        super().__init__(count=1)
+        self._wiped = False
+
+    def input_value(self):
+        if self._wiped:
+            return ""
+        return getattr(self, "_filled_value", "")
+
+    def fill(self, value):
+        self._wiped = False
+        super().fill(value)
+
+    def wipe(self):
+        self._wiped = True
+
+
+class _WipeAlwaysLocator(_WipeOnceLocator):
+    """A field that holds until the save click wipes it and that even a
+    refill cannot hold afterwards — the fail-closed refill check must stop
+    the retry before a blind second save."""
+
+    def input_value(self):
+        if self._wiped:
+            return ""
+        return getattr(self, "_filled_value", "")
+
+    def fill(self, value):
+        # record like the base class, but a wiped field never recovers
+        self._filled_value = value
+
+
+class _RejectionRetryPage(_SavePage):
+    """Save click #1 is rejected by client-side validation (no navigation,
+    form-helper-error visible), exactly like the live #956 wipe-window run.
+    ``reject_clicks`` = how many consecutive save clicks hh.ru rejects;
+    the first rejection arms a one-off wipe of the description field, the
+    refill the retry performs must restore it."""
+
+    def __init__(self, indexes, reject_clicks=1, wipe_holds=True, **kwargs):
+        super().__init__(indexes, **kwargs)
+        self._reject_clicks = reject_clicks
+        self.save_clicks = 0
+        self._description = _WipeOnceLocator() if wipe_holds else _WipeAlwaysLocator()
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        if self.save_clicks <= self._reject_clicks:
+            raise PlaywrightError(
+                f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
+            )
+
+    def locator(self, selector):
+        if selector == "validation-errors":
+            if self.save_clicks <= self._reject_clicks:
+                return _ValidationErrorsLocator(["Пожалуйста, укажите"])
+            return _Locator(count=0)
+        if selector == "[data-qa='resume-editor-experience-description-input']":
+            return self._description
+        if selector == "[data-qa='resume-partial-edit-save']":
+
+            class _SaveButton(_Locator):
+                def __init__(self, page):
+                    super().__init__(count=1)
+                    self._page = page
+
+                def click(self, *, timeout=None, **_kwargs):
+                    self._page.save_clicks += 1
+                    if self._page.save_clicks == 1:
+                        # the #956 async wipe lands between the last
+                        # verification and the submit
+                        self._page._description.wipe()
+
+            return _SaveButton(self)
+        return super().locator(selector)
+
+
+def test_edit_experience_save_rejection_retry_refills_wiped_field_and_saves(monkeypatch):
+    """Live 2026-09-03 (dump-confirmed): hh.ru rejected the save over ONE
+    empty field although every pre-save check had just passed — the #956
+    wipe landed between the last verification and the submit. The rejection
+    must be answered with ONE bounded refill+verify pass and a second save
+    click, which here navigates: success, no uncertain, no silent loss."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1, grow_indexes_on_reload=[2])
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 2
+    assert page._description.input_value() == "Готовил хлеб"
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+    assert dumps == [0]
+
+
+def test_edit_experience_save_rejected_after_retry_reports_definite_failure(monkeypatch):
+    """A rejection that SURVIVES the refill pass is final: plain failed with
+    the validation text (retryable, no uncertain lock), never a blind third
+    save click."""
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
     monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
     monkeypatch.setattr(
@@ -1374,23 +1487,55 @@ def test_edit_experience_save_rejected_by_validation_reports_definite_failure(mo
         lambda page, index, exc: dumps.append(index),
     )
 
-    page = _RejectedSavePage(indexes=[], error_texts=["Пожалуйста, укажите"] * 4)
+    page = _RejectionRetryPage(indexes=[], reject_clicks=2)
     results = edit_experience_on_hh(
         page,
         "resume-1",
-        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
         dry_run=False,
     )
 
+    assert page.save_clicks == 2
     assert len(results) == 1
     assert not results[0].success
     assert not results[0].uncertain
-    assert "hh.ru отклонил сохранение" in results[0].reason
+    assert "после дозаполнения" in results[0].reason
     assert "Пожалуйста, укажите" in results[0].reason
-    assert "полей с ошибкой: 4" in results[0].reason
-    # The dump fires on the rejection path too: the generic validation text
-    # does not name the rejected field, so the HTML is the only way to
-    # identify it for the next run.
+    assert dumps == [0, 0]
+
+
+def test_edit_experience_refill_failure_after_rejection_never_re_saves(monkeypatch):
+    """If the refilled value cannot hold (settle check fails), the retry
+    stops BEFORE the second save click — a guaranteed-empty form must not be
+    resubmitted."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1, wipe_holds=False)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 1
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "не удерживает значение" in results[0].reason
     assert dumps == [0]
 
 
