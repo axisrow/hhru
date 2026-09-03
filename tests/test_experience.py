@@ -1388,7 +1388,10 @@ def test_edit_experience_save_rejected_by_validation_reports_definite_failure(mo
     assert "hh.ru отклонил сохранение" in results[0].reason
     assert "Пожалуйста, укажите" in results[0].reason
     assert "полей с ошибкой: 4" in results[0].reason
-    assert dumps == []
+    # The dump fires on the rejection path too: the generic validation text
+    # does not name the rejected field, so the HTML is the only way to
+    # identify it for the next run.
+    assert dumps == [0]
 
 
 def test_edit_experience_save_timeout_without_validation_stays_uncertain(monkeypatch):

@@ -1264,6 +1264,15 @@ def edit_experience_on_hh(
                     # uncertain lock on the resume_id.
                     rejection = _read_save_validation_errors(page)
                     if rejection is not None:
+                        # Dump here too: the validation text is generic
+                        # ("Пожалуйста, укажите") and does not name the field,
+                        # so without the HTML the rejected field is unprovable
+                        # and the next run repeats blind.
+                        _dump_experience_save_failure(
+                            page,
+                            index,
+                            RuntimeError(f"hh.ru отклонил сохранение: {rejection}"),
+                        )
                         return results + [
                             ExperienceResult(
                                 f"строка {index}: hh.ru отклонил сохранение — "
