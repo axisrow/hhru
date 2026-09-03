@@ -102,6 +102,17 @@ EXPERIENCE_END_YEAR = _selector("resume_experience.EXPERIENCE_END_YEAR")
 # EXPERIENCE_END_YEAR/#800) — is_enabled() must be checked the same way.
 EXPERIENCE_START_MONTH = _selector("resume_experience.EXPERIENCE_START_MONTH")
 EXPERIENCE_END_MONTH = _selector("resume_experience.EXPERIENCE_END_MONTH")
+# #956 (live dump 2026-09-03, experience_row_0_save_failure.html): the THIRD
+# shape (shared-profile add-form, /profile/edit/experience?resumeFrom=...)
+# carries NO resume-editor-experience-*-month-input data-qa at all — its two
+# month comboboxes are bare `[data-qa='magritte-select-activator']` divs
+# (start=nth 0, end=nth 1, end disabled while "Работаю сейчас" is checked).
+# The popup/options after a click are the SAME magritte-select-option-{01..12}
+# as the other shapes. Positional addressing is the only handle: the start
+# trigger is the first activator on the form and the (disabled) end trigger
+# is the second.
+SHARED_EXPERIENCE_START_MONTH = _selector("resume_experience.SHARED_EXPERIENCE_START_MONTH")
+SHARED_EXPERIENCE_END_MONTH = _selector("resume_experience.SHARED_EXPERIENCE_END_MONTH")
 # Month option inside the opened listbox popup, addressed directly by its
 # 2-digit month number (01..12) — same identity-bound pattern as
 # apply_form.APPLY_RESUME_OPTION (data-qa already carries the value, no
@@ -266,3 +277,17 @@ EXPERIENCE_SHARED_NEW_ROW_POSITION = _selector(
 # copy-pasted string from a design doc/screenshot.
 EXPERIENCE_RESUME_PANEL_SCOPE = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE")
 EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND")
+
+# #958 follow-up (live capture 2026-09-03): clicking Save on an EMPTY
+# experience form never navigates — hh.ru rejects the submit client-side and
+# renders a magritte form-helper-error element (text "Пожалуйста, укажите")
+# under every required field (observed 4: company, position, start date,
+# duties), URL unchanged on /resume/edit/{resume_id}/experience. That state
+# is a DEFINITE non-mutation, so experience.py reads these elements after an
+# unconfirmed save click and reports a plain failed with the validation text
+# instead of an opaque navigation-timeout uncertain (which would needlessly
+# lock the resume_id against retries). The namespace is the generic magritte
+# form-helper one, so the same read covers the shared-profile editor shapes
+# as well. count()==0 was observed on the same form before any submit, so a
+# non-empty read after a failed save is the rejection signal, not noise.
+EXPERIENCE_SAVE_VALIDATION_ERRORS = _selector("resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS")

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -42,6 +43,7 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_RESUME_PANEL_EXPAND,
     EXPERIENCE_RESUME_PANEL_SCOPE,
     EXPERIENCE_SAVE,
+    EXPERIENCE_SAVE_VALIDATION_ERRORS,
     EXPERIENCE_SHARED_NEW_ROW_COMPANY,
     EXPERIENCE_SHARED_NEW_ROW_POSITION,
     EXPERIENCE_START_MONTH,
@@ -51,6 +53,8 @@ from .selector_groups.resume_experience import (
     FIRST_EXPERIENCE_CURRENT_CHECKBOX,
     FIRST_EXPERIENCE_POSITION,
     FIRST_EXPERIENCE_SAVE,
+    SHARED_EXPERIENCE_END_MONTH,
+    SHARED_EXPERIENCE_START_MONTH,
 )
 
 logger = logging.getLogger("hhru_bot.experience")
@@ -299,6 +303,36 @@ def _fill(locator, value: str) -> None:
     locator.fill(value)
 
 
+# #956: the shared-profile experience editor's form state is overwritten by
+# an async draft-data load ONCE at a nondeterministic moment in the first
+# ~10s after the form opens, clearing whatever fill() wrote (live drills
+# 2026-09-03: values wiped between t+0.3s and t+2.3s in one run, stable from
+# the start in another). After the wipe has landed, fills stick permanently.
+# So a fill is only trusted once the value survives one 4-second window
+# (two 2s checks); before that it is refilled within the budget. Same
+# defect class as the education editor fix in resume_education.py.
+FIELD_SETTLE_TIMEOUT_MS = 15_000
+FIELD_SETTLE_WAIT_MS = 2_000
+
+
+def _fill_stable(page: Page, locator, value: str) -> None:
+    if locator.count() != 1:
+        raise ValueError(f"поле определяется неоднозначно ({locator.count()})")
+    deadline = time.monotonic() + FIELD_SETTLE_TIMEOUT_MS / 1000
+    while True:
+        locator.fill(value)
+        survived = True
+        for _ in range(2):
+            page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
+            if locator.input_value().strip() != value.strip():
+                survived = False
+                break
+        if survived:
+            return
+        if time.monotonic() >= deadline:
+            raise ValueError("поле не удерживает значение (React сбрасывает ввод)")
+
+
 def _read(locator) -> str:
     if locator.count() != 1:
         raise ValueError(f"поле определяется неоднозначно ({locator.count()})")
@@ -324,6 +358,75 @@ def _read_month(locator) -> str:
         return str(MONTH_NAMES.index(label) + 1)
     except ValueError:
         return ""
+
+
+def _dump_experience_save_failure(page: Page, index: int, exc: Exception) -> None:
+    """Best-effort DOM/screenshot dump when a save click is unconfirmed (#956).
+
+    Mirrors resume_education._dump_save_failure: without the dump the only
+    way to diagnose a silently swallowed save is another live attempt.
+    """
+    from .logging_setup import LOG_DIR
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"experience_row_{index}_save_failure"
+    try:
+        (LOG_DIR / f"{stem}.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=LOG_DIR / f"{stem}.png", full_page=True)
+        logger.warning("experience: строка %s — дамп сохранён (%s)", index, exc)
+    except Exception:  # noqa: BLE001 - dump is best-effort
+        logger.warning("experience: дамп не удался", exc_info=True)
+
+
+def _read_save_validation_errors(page: Page) -> str | None:
+    """Read hh.ru's inline validation messages after a rejected save click.
+
+    Live capture 2026-09-03 (#958 follow-up): Save on an EMPTY experience
+    form never navigates — hh.ru rejects the submit client-side, stays on
+    the editor URL and renders form-helper-error texts ("Пожалуйста,
+    укажите") under every required field. That is a DEFINITE non-mutation:
+    the form is still open and nothing reached hh.ru, so the caller can
+    report a plain failed (retryable) instead of the opaque navigation-
+    timeout uncertain that locks the resume_id.
+
+    Returns None when the page cannot be read or no visible validation
+    messages are present — the caller keeps the fail-closed uncertain path
+    in that case. Hidden helpers (inner_text() == "") are ignored, so a
+    healthy form never reads as a rejection.
+    """
+    try:
+        if not _still_on_experience_editor(page):
+            return None
+        helpers = page.locator(EXPERIENCE_SAVE_VALIDATION_ERRORS)
+        count = helpers.count()
+        if count == 0:
+            return None
+        texts = []
+        for i in range(count):
+            text = helpers.nth(i).inner_text().strip()
+            if text:
+                texts.append(text)
+        if not texts:
+            return None
+        distinct = "; ".join(sorted(set(texts)))
+        return f"{distinct} (полей с ошибкой: {len(texts)})"
+    except PlaywrightError:
+        return None
+
+
+def _still_on_experience_editor(page: Page) -> bool:
+    """True when page.url is still one of the experience editor routes.
+
+    Guards the validation-rejection read: form-helper-error elements on an
+    unrelated page (login redirect, drifted navigation) must not be reported
+    as "hh.ru отклонил сохранение" for this form. Confirmed editor paths:
+    /resume/edit/{resume_id}/experience (first entry), /profile/edit/
+    experience[/{rowId}] (shared profile editor, indexed rows included).
+    """
+    path = urlsplit(page.url).path.rstrip("/")
+    return path.startswith("/profile/edit/experience") or (
+        path.startswith("/resume/edit/") and path.endswith("/experience")
+    )
 
 
 def _select_month(page: Page, locator, month: str) -> None:
@@ -352,6 +455,20 @@ def _select_month(page: Page, locator, month: str) -> None:
         raise ValueError(f"опция месяца {month_number:02d} определяется неоднозначно")
     option.click()
     page.locator(EXPERIENCE_MONTH_LISTBOX).wait_for(state="hidden", timeout=MONTH_OPTION_TIMEOUT_MS)
+
+
+def _select_month_stable(page: Page, locator, month: str) -> None:
+    """_select_month + the #956 settle check: the async draft-data wipe can
+    also reset a combobox selection, so the choice must survive one settle
+    wait (and be re-picked otherwise) before it is trusted."""
+    deadline = time.monotonic() + FIELD_SETTLE_TIMEOUT_MS / 1000
+    while True:
+        _select_month(page, locator, month)
+        page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
+        if _read_month(locator) == str(int(month)):
+            return
+        if time.monotonic() >= deadline:
+            raise ValueError("комбобокс месяца не удерживает выбор (React сбрасывает)")
 
 
 ROW_HYDRATION_TIMEOUT_MS = 5_000
@@ -540,6 +657,7 @@ def _reconcile_experience_resume_panel(
             f"панель 'Резюме с этим местом работы' не найдена однозначно ({scope.count()})"
         )
     expand = page.locator(EXPERIENCE_RESUME_PANEL_EXPAND)
+    panel_expanded = False
     if expand.count() == 1:
         # #782: with more than 2 resumes on the account the panel collapses
         # to 2 visible rows and the rest are absent from the DOM entirely —
@@ -547,6 +665,7 @@ def _reconcile_experience_resume_panel(
         # documented for EXPERIENCE_EXPAND_BUTTON, but this is a distinct
         # control scoped to this panel.
         try:
+            before_checkbox_count = scope.get_by_role("checkbox").count()
             expand.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
             _wait_for_react_hydration(page, expand, timeout_ms=PANEL_TIMEOUT_MS)
             last_exc: PlaywrightError | None = None
@@ -564,6 +683,23 @@ def _reconcile_experience_resume_panel(
                     page.wait_for_timeout(EXPAND_RETRY_DELAY_MS)
             if last_exc is not None:
                 raise last_exc
+            # The expand control disappearing is necessary but not sufficient:
+            # a hydrated button can accept a click while its handler is still
+            # ineffective. Confirm that the panel actually gained rows before
+            # allowing the known omission of unrelated checkboxes below.
+            expand_deadline = time.monotonic() + PANEL_TIMEOUT_MS / 1000
+            while True:
+                after_checkbox_count = scope.get_by_role("checkbox").count()
+                if after_checkbox_count > before_checkbox_count:
+                    break
+                if time.monotonic() >= expand_deadline:
+                    raise ResumePanelReconciliationError(
+                        "разворот панели не подтверждён: число чекбоксов не выросло"
+                    )
+                page.wait_for_timeout(EXPAND_RETRY_DELAY_MS)
+            panel_expanded = True
+        except ResumePanelReconciliationError:
+            raise
         except PlaywrightError as exc:
             raise ResumePanelReconciliationError(
                 f"не удалось развернуть панель 'Резюме с этим местом работы': {exc}"
@@ -586,25 +722,48 @@ def _reconcile_experience_resume_panel(
         # labels in this codebase (professional_roles.py, resume_position.py).
         box = scope.get_by_role("checkbox", name=title, exact=True)
         if box.count() != 1:
+            # #956: the expanded rows mount asynchronously -- count() is
+            # instantaneous, so a not-yet-rendered checkbox reads 0 right
+            # after "Развернуть". Wait bounded for the row before deciding.
+            try:
+                box.first.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
+            except PlaywrightError:
+                pass
+        if box.count() == 1:
+            checkboxes[title] = box
+        elif title == target_title:
+            # The target's own binding is the whole point of reconciliation —
+            # without it the row cannot be safely bound. Always fail closed.
+            raise ResumePanelReconciliationError(
+                f"чекбокс целевого резюме {title!r} в панели не найден однозначно ({box.count()})"
+            )
+        elif panel_expanded:
+            # #956 (live, 2026-09-03): hh.ru's panel legitimately OMITS some
+            # account resumes even after a confirmed expand — the freshly
+            # created 'Хирург' draft rendered no row/checkbox at all (not in
+            # the panel DOM, not in the panel's SSR resumesHash), while
+            # list_resume_cards on /applicant/resumes still lists it. A
+            # checkbox that is absent from the DOM cannot be pre-checked
+            # either, so skipping it is the safe action; refusing the whole
+            # save made every add-row run fail on such accounts.
+            logger.warning(
+                "resume panel: чекбокс резюме %r отсутствует в панели после "
+                "разворота (hh.ru не рендерит часть резюме, #956); пропуск",
+                title,
+            )
+        else:
+            # No expand step ran, so the panel should have been fully
+            # rendered already — a missing checkbox here is unconfirmed
+            # drift, not a known hh.ru omission. Fail closed (#782).
             raise ResumePanelReconciliationError(
                 f"чекбокс резюме {title!r} в панели не найден однозначно ({box.count()})"
             )
-        checkboxes[title] = box
-    # Fail-closed count check (#782): the panel must expose exactly one
-    # checkbox per account resume title resolved above — anything else means
-    # the list did not actually expand, a title collided, or the panel
-    # otherwise drifted from what the caller expected, and reconciling a
-    # partial set is unsafe (an unaccounted-for resume's checkbox would be
-    # left in its default/unknown state).
-    if len(checkboxes) != len(all_titles):
-        raise ResumePanelReconciliationError(
-            f"число чекбоксов панели ({len(checkboxes)}) не совпало с числом резюме "
-            f"аккаунта ({len(all_titles)})"
-        )
 
     if is_new_row:
         for title in other_titles:
-            box = checkboxes[title]
+            box = checkboxes.get(title)
+            if box is None:
+                continue
             if box.is_checked():
                 box.click()
                 if box.is_checked():
@@ -794,6 +953,25 @@ def edit_experience_on_hh(
                     "привязки не передано — добавление новой записи отклонено (#782)"
                 )
             ]
+        # codex review (PR #958 round 2): on a NEW row every account resume is
+        # pre-checked by default, and reconciliation can only uncheck resumes
+        # whose panel title it can resolve. A resume with an unconfirmed
+        # (empty) title from list_resume_cards is silently dropped from
+        # other_titles by the `and title` filter below — its checkbox would
+        # stay checked and the save would over-bind the row to a resume the
+        # caller never named. That is exactly the partial reconciliation the
+        # fail-closed contract forbids: refuse the save up front instead.
+        unconfirmed_titles = sorted(
+            rid for rid, title in (resume_titles or {}).items() if rid != resume_id and not title
+        )
+        if via_add_button and unconfirmed_titles:
+            return results + [
+                ExperienceResult(
+                    f"строка опыта {index}: название резюме {unconfirmed_titles[0]} "
+                    "в панели привязки не подтверждено — привязка новой записи "
+                    "к неразобранным резюме недопустима, добавление отклонено"
+                )
+            ]
         # #796: snapshot the row count BEFORE opening the form for this entry
         # — taking it after save cannot distinguish a bound save from a
         # silent no-op, since both leave the count read at the same time.
@@ -909,14 +1087,28 @@ def edit_experience_on_hh(
                         f"неоднозначно ({page.locator(company_selector).count()})"
                     )
                 ]
-            _fill(page.locator(company_selector), entry.company)
-            _fill(page.locator(position_selector), entry.position)
-            _fill(page.locator(EXPERIENCE_START_YEAR), entry.start_year)
-            start_month_locator = page.locator(EXPERIENCE_START_MONTH)
+            company_locator = page.locator(company_selector)
+            position_locator = page.locator(position_selector)
+            start_year_locator = page.locator(EXPERIENCE_START_YEAR)
+            _fill_stable(page, company_locator, entry.company)
+            _fill_stable(page, position_locator, entry.position)
+            _fill_stable(page, start_year_locator, entry.start_year)
+            # #956: on the shared add-form (via_add_button) the month
+            # triggers carry NO resume-editor-*-month-input data-qa — they
+            # are the two bare magritte-select-activators (start=nth 0,
+            # end=nth 1). Using the wrong locator here reads count()==0 and
+            # SILENTLY SKIPS the month pick, after which hh.ru no-ops the
+            # save (live: validation "Пожалуйста, укажите" on the start
+            # month, no navigation, false uncertain).
+            if via_add_button:
+                start_month_locator = page.locator(SHARED_EXPERIENCE_START_MONTH)
+                end_month_locator = page.locator(SHARED_EXPERIENCE_END_MONTH)
+            else:
+                start_month_locator = page.locator(EXPERIENCE_START_MONTH)
+                end_month_locator = page.locator(EXPERIENCE_END_MONTH)
             if start_month_locator.count() == 1 and entry.start_month:
-                _select_month(page, start_month_locator, entry.start_month)
+                _select_month_stable(page, start_month_locator, entry.start_month)
             end_year_locator = page.locator(EXPERIENCE_END_YEAR)
-            end_month_locator = page.locator(EXPERIENCE_END_MONTH)
             if end_year_locator.count() == 1:
                 # #800: the end-year field is disabled while the "Работаю
                 # сейчас" checkbox is checked (checked by default on a new
@@ -933,7 +1125,7 @@ def edit_experience_on_hh(
                 elif end_year_enabled:
                     _fill(end_year_locator, entry.end_year)
                     if end_month_locator.count() == 1 and entry.end_month:
-                        _select_month(page, end_month_locator, entry.end_month)
+                        _select_month_stable(page, end_month_locator, entry.end_month)
                 elif first_entry:
                     # Checkbox selector is confirmed only on the first-row
                     # editor's distinct DOM shape (#800) — uncheck it to
@@ -954,7 +1146,7 @@ def edit_experience_on_hh(
                     # nothing further is needed here.
                     _fill(end_year_locator, entry.end_year)
                     if end_month_locator.count() == 1 and entry.end_month:
-                        _select_month(page, end_month_locator, entry.end_month)
+                        _select_month_stable(page, end_month_locator, entry.end_month)
                 else:
                     # Indexed row editor: no confirmed checkbox selector for
                     # this DOM shape — fail closed rather than guess.
@@ -964,7 +1156,8 @@ def edit_experience_on_hh(
                             "'Работаю сейчас' для этой формы не подтверждён"
                         )
                     ]
-            _fill(page.locator(EXPERIENCE_DESCRIPTION), entry.description())
+            description_locator = page.locator(EXPERIENCE_DESCRIPTION)
+            _fill_stable(page, description_locator, entry.description())
             if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
                 _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
             if dry_run:
@@ -996,26 +1189,192 @@ def edit_experience_on_hh(
                         )
                     except ResumePanelReconciliationError as exc:
                         return results + [ExperienceResult(f"строка {index}: {exc}")]
-                save = page.locator(save_selector)
-                if save.count() != 1:
-                    return results + [
-                        ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
-                    ]
-                save_attempted = True
-                save.click()
-                try:
-                    page.wait_for_url(
-                        f"**/resume/{resume_id}",
-                        wait_until="commit",
-                        timeout=SAVE_TIMEOUT_MS,
+                # #956: run this pass after panel reconciliation because
+                # checkbox clicks can trigger the same controlled-input
+                # remount that clears the form. Include every value written.
+                stable_fields = [
+                    (company_locator, entry.company),
+                    (position_locator, entry.position),
+                    (start_year_locator, entry.start_year),
+                    (description_locator, entry.description()),
+                ]
+                if entry.company_url:
+                    company_url_locator = page.locator(EXPERIENCE_COMPANY_URL)
+                    if company_url_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: поле URL компании не подтверждено, "
+                                "save не нажат (#956)"
+                            )
+                        ]
+                    stable_fields.append((company_url_locator, entry.company_url))
+                if end_year_locator.count() == 1:
+                    stable_fields.append(
+                        (end_year_locator, "" if entry.current else entry.end_year)
                     )
-                except PlaywrightError as exc:
+                month_fields = []
+                if entry.start_month:
+                    if start_month_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: месяц начала не подтверждён, save не нажат (#956)"
+                            )
+                        ]
+                    month_fields.append((start_month_locator, entry.start_month))
+                if entry.end_month and not entry.current:
+                    if end_month_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: месяц окончания не подтверждён, "
+                                "save не нажат (#956)"
+                            )
+                        ]
+                    month_fields.append((end_month_locator, entry.end_month))
+
+                def _refill_and_verify_fields(
+                    stable_fields=stable_fields, month_fields=month_fields
+                ) -> bool:
+                    """Idempotent refill of every tracked control + one bounded
+                    settle pass (#956). Used before the first save click AND
+                    after a validation rejection — the async wipe can land in
+                    the window between the last verification and the submit
+                    itself (live 2026-09-03, dump-confirmed: description wiped
+                    in that window, 1x "Пожалуйста, укажите" on the rejected
+                    form although every pre-save check had just passed).
+                    Returns False when a value does not survive the settle
+                    wait — the caller fails closed without a blind re-save.
+                    """
+                    for stable_locator, stable_value in stable_fields:
+                        if stable_locator.input_value().strip() != stable_value.strip():
+                            stable_locator.fill(stable_value)
+                    for month_locator, month_value in month_fields:
+                        if _read_month(month_locator) != str(int(month_value)):
+                            _select_month(page, month_locator, month_value)
+                    page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
+                    return not any(
+                        stable_locator.input_value().strip() != stable_value.strip()
+                        for stable_locator, stable_value in stable_fields
+                    ) and not any(
+                        _read_month(month_locator) != str(int(month_value))
+                        for month_locator, month_value in month_fields
+                    )
+
+                if not _refill_and_verify_fields():
                     return results + [
                         ExperienceResult(
-                            f"строка {index}: сохранение не подтверждено после клика: {exc}",
-                            uncertain=True,
+                            f"строка {index}: форма сбросила значение перед "
+                            "сохранением, save не нажат (#956)"
                         )
                     ]
+                save_attempted = True
+                rejection_retried = False
+                while True:
+                    save = page.locator(save_selector)
+                    if save.count() != 1:
+                        return results + [
+                            ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
+                        ]
+                    save.click()
+                    try:
+                        # Trailing "*" (#958 follow-up): the post-save redirect
+                        # carries a query suffix (live log 2026-09-03: navigated
+                        # to ".../resume/{id}?hhtmFrom=profile_experience") and a
+                        # bare glob is a FULL match, so the save was recorded as
+                        # an uncertain after a 30s timeout although Playwright's
+                        # own log showed the navigation had happened. "*" matches
+                        # the query/fragment suffix but not a "/" path segment,
+                        # so a genuinely different page still fails the wait;
+                        # resume_identity_matches() below re-checks identity.
+                        page.wait_for_url(
+                            f"**/resume/{resume_id}*",
+                            wait_until="commit",
+                            timeout=SAVE_TIMEOUT_MS,
+                        )
+                        break
+                    except PlaywrightError as exc:
+                        # #958 follow-up (live capture 2026-09-03): before falling
+                        # back to the opaque navigation-timeout uncertain, check
+                        # whether hh.ru REJECTED the save client-side — visible
+                        # form-helper-error messages while still on the editor
+                        # URL are a definite non-mutation ("Пожалуйста, укажите"
+                        # under every empty required field, no navigation), so a
+                        # plain failed is reported instead: retryable, no
+                        # uncertain lock on the resume_id.
+                        rejection = _read_save_validation_errors(page)
+                        if rejection is not None and not rejection_retried:
+                            # The #956 wipe window is not observable from the
+                            # outside: the rejection may be a one-off wipe that
+                            # landed between the last verification and THIS
+                            # submit (live 2026-09-03: exactly that, on the
+                            # description field). Answer it with ONE bounded
+                            # refill+verify pass and a second save click before
+                            # reporting a failure — a second rejection (or a
+                            # refill that fails its own settle check) is final.
+                            rejection_retried = True
+                            _dump_experience_save_failure(
+                                page,
+                                index,
+                                RuntimeError(f"hh.ru отклонил сохранение: {rejection}"),
+                            )
+                            logger.warning(
+                                "experience: строка %s — save отклонён валидацией (%s); "
+                                "дозаполнение и один повторный save",
+                                index,
+                                rejection,
+                            )
+                            try:
+                                refill_ok = _refill_and_verify_fields()
+                            except (PlaywrightError, ValueError) as refill_exc:
+                                # The refill runs INSIDE this except handler, so
+                                # a throw here would escape the whole try uncaught
+                                # (Python handlers do not catch exceptions raised
+                                # in sibling handlers). A save click has already
+                                # happened, so the outcome is uncertain, not a
+                                # crash.
+                                return results + [
+                                    ExperienceResult(
+                                        f"строка {index}: дозаполнение после отклонения "
+                                        f"save не удалось: {refill_exc}",
+                                        uncertain=True,
+                                    )
+                                ]
+                            if not refill_ok:
+                                return results + [
+                                    ExperienceResult(
+                                        f"строка {index}: поле не удерживает значение "
+                                        f"после отклонения save: {rejection}"
+                                    )
+                                ]
+                            continue
+                        if rejection is not None:
+                            # Dump here too: the validation text is generic
+                            # ("Пожалуйста, укажите") and does not name the field,
+                            # so without the HTML the rejected field is unprovable
+                            # and the next run repeats blind.
+                            _dump_experience_save_failure(
+                                page,
+                                index,
+                                RuntimeError(f"hh.ru отклонил сохранение: {rejection}"),
+                            )
+                            return results + [
+                                ExperienceResult(
+                                    f"строка {index}: hh.ru отклонил сохранение после "
+                                    f"дозаполнения — валидация формы: {rejection}"
+                                )
+                            ]
+                        # #956: dump the page at the moment of the failed save so
+                        # the next investigation is reproducible without another
+                        # live attempt (same pattern as resume_education's
+                        # _dump_save_failure). The dump shows whether the form
+                        # still holds the values and whether a validation message
+                        # or an overlay absorbed the click.
+                        _dump_experience_save_failure(page, index, exc)
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: сохранение не подтверждено после клика: {exc}",
+                                uncertain=True,
+                            )
+                        ]
                 if not resume_identity_matches(page, resume_id):
                     return results + [
                         ExperienceResult(

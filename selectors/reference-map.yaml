@@ -2275,7 +2275,7 @@ selectors:
       source: src/hhru_bot/selector_groups/resume_experience.py:48
       note: 'Issue #811 live confirmation: month combobox popup uses role="listbox"; count() drops to 0 once an option is
         picked, used the same way as apply_form.APPLY_RESUME_DROPDOWN closes.'
-    last_verified_at: '2026-08-30'
+    last_verified_at: '2026-09-03'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_MONTH_OPTION:
@@ -2413,6 +2413,31 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS:
+    value: '[data-qa=''form-helper-error'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:293
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - form-helper-error
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:293
+      note: 'Live capture 2026-09-03 (#958 follow-up, first-entry editor on a draft resume): clicking SAVE on the EMPTY form
+        is rejected client-side - no navigation, URL stays on /resume/edit/{resume_id}/experience, and four form-helper-error
+        elements (text: "Пожалуйста, укажите") render under the required fields (company, position, start date, duties). Definite
+        non-mutation state: experience.py reads these after an unconfirmed save click and reports a plain failed with the
+        validation text instead of an opaque navigation-timeout uncertain. Generic magritte form-helper namespace, expected
+        on every hh.ru form shape; count()==0 observed on the same form before any submit.'
+    last_verified_at: '2026-09-03'
+    verified_flow: authenticated_experience_editor_rejection_observed (draft resume, empty form, no mutation)
+    verified_by: agent
   resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY:
     value: '[data-qa^=''resume-profile-experience-specific-company-input-'']'
     criticality: write
@@ -2659,6 +2684,27 @@ selectors:
     last_verified_at: '2026-08-30'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
+  resume_experience.SHARED_EXPERIENCE_END_MONTH:
+    value: '[data-qa=''magritte-select-activator''] >> nth=1'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:115
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - data-qa=magritte-select-activator (nth 1, end month trigger, disabled while current job checked)
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:115
+      note: 'Issue #956 live dump 2026-09-03: second magritte-select-activator on the shared add-form; disabled while the
+        "Работаю сейчас" checkbox is checked, same gating as EXPERIENCE_END_MONTH.'
+    last_verified_at: '2026-09-03'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
   resume_experience.SHARED_EXPERIENCE_SAVE:
     value: '[data-qa=''profile-layout-save-button'']'
     criticality: write
@@ -2680,6 +2726,28 @@ selectors:
         Save/cancel share the profile-layout-* namespace, distinct from both other experience-editor shapes. Not clicked —
         clicking save was out of scope for this read-only+JS confirmation (no mutation reached hh.ru).'
     last_verified_at: '2026-08-30'
+    verified_flow: authenticated_experience_editor_read_only
+    verified_by: claude
+  resume_experience.SHARED_EXPERIENCE_START_MONTH:
+    value: '[data-qa=''magritte-select-activator''] >> nth=0'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:114
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - data-qa=magritte-select-activator (nth 0, start month trigger on the shared add-form)
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:114
+      note: 'Issue #956 live dump 2026-09-03 (experience_row_0_save_failure.html): the shared-profile add-form has NO resume-editor-experience-start-month-input
+        data-qa; its start month trigger is the first bare magritte-select-activator on the form. Popup/options identical
+        to the other shapes.'
+    last_verified_at: '2026-09-03'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_list.RESUME_DUPLICATE_INLINE:

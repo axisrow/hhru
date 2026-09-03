@@ -109,6 +109,7 @@
 | resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND | `xpath=//button[contains(., 'Развернуть')]` | — | — | — | documented_live |
 | resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE | `xpath=//h3[contains(text(), 'этим местом работы')]/ancestor::div[2]` | — | — | — | documented_live |
 | resume_experience.EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS | `[data-qa='form-helper-error']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY | `[data-qa^='resume-profile-experience-specific-company-input-']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION | `[data-qa^='resume-profile-experience-specific-position-input-']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_START_MONTH | `[data-qa='resume-editor-experience-start-month-input']` | — | — | — | live_dom |
@@ -119,7 +120,9 @@
 | resume_experience.FIRST_EXPERIENCE_POSITION | `[data-qa='resume-editor-experience-position-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | live_dom |
 | resume_experience.SHARED_EXPERIENCE_CANCEL | `[data-qa='profile-layout-cancel-button']` | — | — | — | live_dom |
+| resume_experience.SHARED_EXPERIENCE_END_MONTH | `[data-qa='magritte-select-activator'] >> nth=1` | — | — | — | live_dom |
 | resume_experience.SHARED_EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
+| resume_experience.SHARED_EXPERIENCE_START_MONTH | `[data-qa='magritte-select-activator'] >> nth=0` | — | — | — | live_dom |
 | resume_list.RESUME_DUPLICATE_INLINE | `[data-qa='resume-dublicate']` | — | — | — | live_dom |
 | resume_list.RESUME_DUPLICATE_MENU_ITEM | `[data-qa='operations-list-duplicate-resume']` | — | — | — | documented_live |
 | resume_list.RESUME_LIST_ACTION_MORE | `[data-qa='resume-list-action-more']` | — | — | — | live_dom |

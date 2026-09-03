@@ -2,6 +2,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.experience import (
+    MONTH_NAMES,
     ExperienceEntry,
     ExperiencePlan,
     ExperienceResult,
@@ -161,8 +162,10 @@ class _Locator:
     def wait_for(self, *, timeout=None, state=None):
         return None
 
-    def fill(self, _value):
-        return None
+    def fill(self, value):
+        # #956: _fill_stable verifies through input_value(), so the fake
+        # remembers what it was filled with (like the real controlled input).
+        self._filled_value = value
 
     def click(self, *, timeout=None, **_kwargs):
         return None
@@ -171,7 +174,7 @@ class _Locator:
         return None
 
     def input_value(self):
-        return ""
+        return getattr(self, "_filled_value", "")
 
     def inner_text(self):
         return self._text
@@ -225,6 +228,9 @@ class _Page:
 
     def __init__(self):
         self.url = "https://hh.ru/resume/resume-1"
+
+    def wait_for_timeout(self, _ms):
+        return None
 
     def locator(self, selector):
         assert selector is not None
@@ -302,12 +308,26 @@ class _PanelScopeLocator(_Locator):
     ``checkboxes`` dict keyed by title (a resume's accessible name), the
     same lookup Playwright's role locator performs internally."""
 
-    def __init__(self, checkboxes: dict[str, _PanelCheckbox], *, count=1):
+    def __init__(
+        self,
+        checkboxes: dict[str, _PanelCheckbox],
+        *,
+        count=1,
+        visible_count: int | None = None,
+        is_expanded=None,
+    ):
         super().__init__(count=count)
         self._checkboxes = checkboxes
+        self._visible_count = visible_count
+        self._is_expanded = is_expanded
 
-    def get_by_role(self, role, *, name, exact=False):
+    def get_by_role(self, role, *, name=None, exact=False):
         assert role == "checkbox"
+        if name is None:
+            count = len(self._checkboxes)
+            if self._visible_count is not None and not self._is_expanded():
+                count = self._visible_count
+            return _Locator(count=count)
         assert exact is True
         return self._checkboxes.get(name, _Locator(count=0))
 
@@ -786,6 +806,15 @@ class _MonthSavePage(_SavePage):
                 def click(self, *, timeout=None, **_kwargs):
                     pass
 
+                def inner_text(self):
+                    # #956: _select_month_stable re-reads the trigger through
+                    # _read_month; reflect the selection like the real
+                    # combobox does ("Месяц\n<Название>").
+                    if page.start_month_selected:
+                        number = int(page.start_month_selected)
+                        return f"Месяц\n{MONTH_NAMES[number - 1]}"
+                    return "Месяц"
+
             return _StartMonthLocator(count=1)
         if "magritte-select-option-" in selector:
             page = self
@@ -993,7 +1022,8 @@ class _AddButtonPage:
             class _ExpandLocator(_Locator):
                 def click(self, *, timeout=None, **_kwargs):
                     page.expand_attempts += 1
-                    page.expand_clicked = True
+                    if page.expand_attempts > page._expand_swallowed_clicks:
+                        page.expand_clicked = True
 
                 def wait_for(self, *, timeout=None, state=None):
                     if state == "hidden" and page.expand_attempts <= page._expand_swallowed_clicks:
@@ -1002,7 +1032,11 @@ class _AddButtonPage:
 
             return _ExpandLocator(count=1)
         if selector.startswith("xpath=") and "этим местом работы" in selector:
-            return _PanelScopeLocator(self._panel_checkboxes)
+            return _PanelScopeLocator(
+                self._panel_checkboxes,
+                visible_count=2,
+                is_expanded=lambda: self.expand_clicked,
+            )
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
@@ -1025,6 +1059,34 @@ def _add_button_fixture(monkeypatch, page):
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
     monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+
+def test_edit_experience_via_add_button_refuses_unconfirmed_other_title(monkeypatch):
+    """Codex review (PR #958 round 2): a resume whose panel title could not
+    be confirmed (empty string from list_resume_cards) is dropped from
+    other_titles by the `and title` filter, so reconciliation would never
+    uncheck it — on a NEW row its pre-checked box would silently over-bind
+    the entry. The save must be refused up front instead."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True},
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "other-1": ""},
+    )
+
+    assert page.add_clicked is False
+    assert len(results) == 1
+    assert not results[0].success
+    assert "не подтверждено" in results[0].reason
+    assert "other-1" in results[0].reason
 
 
 def test_edit_experience_via_add_button_unchecks_other_resumes_before_save(monkeypatch):
@@ -1285,3 +1347,350 @@ def test_shared_experience_reuses_indexed_company_position_and_month_selectors()
     )
     assert EXPERIENCE_MONTH_OPTION == "[data-qa='magritte-select-option-{month}']"
     assert EXPERIENCE_MONTH_LISTBOX == "[role='listbox']"
+
+
+class _ValidationErrorsLocator(_Locator):
+    """Fake for the form-helper-error group locator (#958 follow-up):
+    count()==len(texts), nth(i) serves each message via inner_text()."""
+
+    def __init__(self, texts):
+        super().__init__(count=len(texts))
+        self._texts = list(texts)
+
+    def nth(self, i):
+        return _Locator(count=1, text=self._texts[i])
+
+
+class _RejectedSavePage(_SavePage):
+    """#958 follow-up (live capture 2026-09-03): the save click does not
+    navigate — wait_for_url times out Playwright-style while hh.ru keeps the
+    editor URL and renders inline validation errors under the empty required
+    fields. ``error_texts=None`` models a timeout with NO readable messages
+    (the true-unknown outcome that must stay uncertain)."""
+
+    def __init__(self, indexes, error_texts, **kwargs):
+        super().__init__(indexes, **kwargs)
+        self._error_texts = error_texts
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        raise PlaywrightError(
+            f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
+        )
+
+    def locator(self, selector):
+        if selector == "validation-errors":
+            if self._error_texts is None:
+                return _Locator(count=0)
+            return _ValidationErrorsLocator(self._error_texts)
+        return super().locator(selector)
+
+
+class _WipeOnceLocator(_Locator):
+    """#956 wipe-window model: the value survives every pre-save read but is
+    gone once the save click lands; a refill holds it."""
+
+    def __init__(self):
+        super().__init__(count=1)
+        self._wiped = False
+
+    def input_value(self):
+        if self._wiped:
+            return ""
+        return getattr(self, "_filled_value", "")
+
+    def fill(self, value):
+        self._wiped = False
+        super().fill(value)
+
+    def wipe(self):
+        self._wiped = True
+
+
+class _WipeAlwaysLocator(_WipeOnceLocator):
+    """A field that holds until the save click wipes it and that even a
+    refill cannot hold afterwards — the fail-closed refill check must stop
+    the retry before a blind second save."""
+
+    def input_value(self):
+        if self._wiped:
+            return ""
+        return getattr(self, "_filled_value", "")
+
+    def fill(self, value):
+        # record like the base class, but a wiped field never recovers
+        self._filled_value = value
+
+
+class _RejectionRetryPage(_SavePage):
+    """Save click #1 is rejected by client-side validation (no navigation,
+    form-helper-error visible), exactly like the live #956 wipe-window run.
+    ``reject_clicks`` = how many consecutive save clicks hh.ru rejects;
+    the first rejection arms a one-off wipe of the description field, the
+    refill the retry performs must restore it."""
+
+    def __init__(self, indexes, reject_clicks=1, wipe_holds=True, **kwargs):
+        super().__init__(indexes, **kwargs)
+        self._reject_clicks = reject_clicks
+        self.save_clicks = 0
+        self._description = _WipeOnceLocator() if wipe_holds else _WipeAlwaysLocator()
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        if self.save_clicks <= self._reject_clicks:
+            raise PlaywrightError(
+                f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
+            )
+
+    def locator(self, selector):
+        if selector == "validation-errors":
+            if self.save_clicks <= self._reject_clicks:
+                return _ValidationErrorsLocator(["Пожалуйста, укажите"])
+            return _Locator(count=0)
+        if selector == "[data-qa='resume-editor-experience-description-input']":
+            return self._description
+        if selector == "[data-qa='resume-partial-edit-save']":
+
+            class _SaveButton(_Locator):
+                def __init__(self, page):
+                    super().__init__(count=1)
+                    self._page = page
+
+                def click(self, *, timeout=None, **_kwargs):
+                    self._page.save_clicks += 1
+                    if self._page.save_clicks == 1:
+                        # the #956 async wipe lands between the last
+                        # verification and the submit
+                        self._page._description.wipe()
+
+            return _SaveButton(self)
+        return super().locator(selector)
+
+
+def test_edit_experience_save_rejection_retry_refills_wiped_field_and_saves(monkeypatch):
+    """Live 2026-09-03 (dump-confirmed): hh.ru rejected the save over ONE
+    empty field although every pre-save check had just passed — the #956
+    wipe landed between the last verification and the submit. The rejection
+    must be answered with ONE bounded refill+verify pass and a second save
+    click, which here navigates: success, no uncertain, no silent loss."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1, grow_indexes_on_reload=[2])
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 2
+    assert page._description.input_value() == "Готовил хлеб"
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+    assert dumps == [0]
+
+
+class _DetachingRefillLocator(_Locator):
+    """A control the remount removes entirely, but only AFTER the first save
+    click: input_value() raises the same PlaywrightError the real "not
+    attached" state produces, so the pre-save pass (which must keep working)
+    sees a normal filled field and the post-rejection refill hits the crash."""
+
+    def __init__(self, page):
+        super().__init__(count=1)
+        self._page = page
+
+    def input_value(self):
+        if self._page.save_clicks >= 1:
+            raise PlaywrightError("Element is not attached to the DOM")
+        return getattr(self, "_filled_value", "")
+
+    def wipe(self):
+        # the base _RejectionRetryPage save-click hook calls this; a detached
+        # node needs no state change — reads already raise past this point
+        return None
+
+
+def test_edit_experience_refill_crash_after_rejection_reports_uncertain(monkeypatch):
+    """The refill pass runs INSIDE the save-timeout except handler, so a
+    PlaywrightError/ValueError raised there must not escape uncaught and
+    crash the command (Python handlers do not catch exceptions raised in
+    sibling handlers) — a save click already happened, so the row outcome
+    is uncertain, not a traceback."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1)
+    page._description = _DetachingRefillLocator(page)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 1
+    assert len(results) == 1
+    assert not results[0].success
+    assert results[0].uncertain
+    assert "дозаполнение после отклонения" in results[0].reason
+    assert dumps == [0]
+
+
+def test_edit_experience_save_rejected_after_retry_reports_definite_failure(monkeypatch):
+    """A rejection that SURVIVES the refill pass is final: plain failed with
+    the validation text (retryable, no uncertain lock), never a blind third
+    save click."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=2)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 2
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "после дозаполнения" in results[0].reason
+    assert "Пожалуйста, укажите" in results[0].reason
+    assert dumps == [0, 0]
+
+
+def test_edit_experience_refill_failure_after_rejection_never_re_saves(monkeypatch):
+    """If the refilled value cannot hold (settle check fails), the retry
+    stops BEFORE the second save click — a guaranteed-empty form must not be
+    resubmitted."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1, wipe_holds=False)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 1
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "не удерживает значение" in results[0].reason
+    assert dumps == [0]
+
+
+def test_edit_experience_save_timeout_without_validation_stays_uncertain(monkeypatch):
+    """The rejection read is fail-safe: when the navigation wait times out
+    and NO visible validation messages can be read, the outcome is genuinely
+    unknown — the pre-existing uncertain + dump path is preserved."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectedSavePage(indexes=[], error_texts=None)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert results[0].uncertain
+    assert "сохранение не подтверждено после клика" in results[0].reason
+    assert dumps == [0]
+
+
+class _QuerySuffixNavPage(_SavePage):
+    """wait_for_url with real full-match glob semantics (fnmatch): the
+    post-save redirect lands on /resume/{id}?hhtmFrom=profile_experience,
+    the exact live-observed shape (#958 follow-up)."""
+
+    def wait_for_url(self, pattern, *, wait_until=None, timeout=None):
+        import fnmatch
+
+        target = "https://hh.ru/resume/resume-1?hhtmFrom=profile_experience"
+        if not fnmatch.fnmatch(target, pattern):
+            raise PlaywrightError(
+                f"Timeout {timeout}ms exceeded.\n"
+                f"waiting for navigation to \"{pattern}\" until '{wait_until}'"
+            )
+        self.url = target
+
+
+def test_edit_experience_save_redirect_with_query_suffix_is_success(monkeypatch):
+    """#958 follow-up (live log 2026-09-03): hh.ru redirects a SUCCESSFUL
+    save to ".../resume/{id}?hhtmFrom=profile_experience"; a bare
+    "**/resume/{id}" glob is a full match, so wait_for_url timed out and the
+    save was recorded uncertain although Playwright's own log showed the
+    navigation ("navigated to ..."). The wait pattern must match the query
+    suffix; identity/binding re-verification below still guards the result."""
+    import fnmatch  # noqa: F401 - mirrors the fake's matching semantics
+
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _QuerySuffixNavPage(indexes=[], grow_indexes_on_reload=[2])
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
