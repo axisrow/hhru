@@ -308,12 +308,26 @@ class _PanelScopeLocator(_Locator):
     ``checkboxes`` dict keyed by title (a resume's accessible name), the
     same lookup Playwright's role locator performs internally."""
 
-    def __init__(self, checkboxes: dict[str, _PanelCheckbox], *, count=1):
+    def __init__(
+        self,
+        checkboxes: dict[str, _PanelCheckbox],
+        *,
+        count=1,
+        visible_count: int | None = None,
+        is_expanded=None,
+    ):
         super().__init__(count=count)
         self._checkboxes = checkboxes
+        self._visible_count = visible_count
+        self._is_expanded = is_expanded
 
-    def get_by_role(self, role, *, name, exact=False):
+    def get_by_role(self, role, *, name=None, exact=False):
         assert role == "checkbox"
+        if name is None:
+            count = len(self._checkboxes)
+            if self._visible_count is not None and not self._is_expanded():
+                count = self._visible_count
+            return _Locator(count=count)
         assert exact is True
         return self._checkboxes.get(name, _Locator(count=0))
 
@@ -1008,7 +1022,8 @@ class _AddButtonPage:
             class _ExpandLocator(_Locator):
                 def click(self, *, timeout=None, **_kwargs):
                     page.expand_attempts += 1
-                    page.expand_clicked = True
+                    if page.expand_attempts > page._expand_swallowed_clicks:
+                        page.expand_clicked = True
 
                 def wait_for(self, *, timeout=None, state=None):
                     if state == "hidden" and page.expand_attempts <= page._expand_swallowed_clicks:
@@ -1017,7 +1032,11 @@ class _AddButtonPage:
 
             return _ExpandLocator(count=1)
         if selector.startswith("xpath=") and "этим местом работы" in selector:
-            return _PanelScopeLocator(self._panel_checkboxes)
+            return _PanelScopeLocator(
+                self._panel_checkboxes,
+                visible_count=2,
+                is_expanded=lambda: self.expand_clicked,
+            )
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):

@@ -605,7 +605,7 @@ def _reconcile_experience_resume_panel(
             f"панель 'Резюме с этим местом работы' не найдена однозначно ({scope.count()})"
         )
     expand = page.locator(EXPERIENCE_RESUME_PANEL_EXPAND)
-    panel_expanded = expand.count() == 1
+    panel_expanded = False
     if expand.count() == 1:
         # #782: with more than 2 resumes on the account the panel collapses
         # to 2 visible rows and the rest are absent from the DOM entirely —
@@ -613,6 +613,7 @@ def _reconcile_experience_resume_panel(
         # documented for EXPERIENCE_EXPAND_BUTTON, but this is a distinct
         # control scoped to this panel.
         try:
+            before_checkbox_count = scope.get_by_role("checkbox").count()
             expand.wait_for(state="visible", timeout=PANEL_TIMEOUT_MS)
             _wait_for_react_hydration(page, expand, timeout_ms=PANEL_TIMEOUT_MS)
             last_exc: PlaywrightError | None = None
@@ -630,6 +631,23 @@ def _reconcile_experience_resume_panel(
                     page.wait_for_timeout(EXPAND_RETRY_DELAY_MS)
             if last_exc is not None:
                 raise last_exc
+            # The expand control disappearing is necessary but not sufficient:
+            # a hydrated button can accept a click while its handler is still
+            # ineffective. Confirm that the panel actually gained rows before
+            # allowing the known omission of unrelated checkboxes below.
+            expand_deadline = time.monotonic() + PANEL_TIMEOUT_MS / 1000
+            while True:
+                after_checkbox_count = scope.get_by_role("checkbox").count()
+                if after_checkbox_count > before_checkbox_count:
+                    break
+                if time.monotonic() >= expand_deadline:
+                    raise ResumePanelReconciliationError(
+                        "разворот панели не подтверждён: число чекбоксов не выросло"
+                    )
+                page.wait_for_timeout(EXPAND_RETRY_DELAY_MS)
+            panel_expanded = True
+        except ResumePanelReconciliationError:
+            raise
         except PlaywrightError as exc:
             raise ResumePanelReconciliationError(
                 f"не удалось развернуть панель 'Резюме с этим местом работы': {exc}"

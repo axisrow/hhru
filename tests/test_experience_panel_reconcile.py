@@ -42,17 +42,31 @@ class _AsyncCheckbox:
 
 
 class _AsyncScopeLocator:
-    def __init__(self, checkboxes, count=1):
+    def __init__(self, checkboxes, count=1, *, expanded=False):
         self._checkboxes = checkboxes
         self._count = count
+        self._expanded = expanded
 
     def count(self):
         return self._count
 
-    def get_by_role(self, role, *, name, exact=False):
+    def get_by_role(self, role, *, name=None, exact=False):
         assert role == "checkbox"
+        if name is None:
+            return _CheckboxGroupLocator(self._checkboxes, expanded=self._expanded)
         assert exact is True
         return self._checkboxes.get(name) or _MissingCheckbox()
+
+
+class _CheckboxGroupLocator:
+    def __init__(self, checkboxes, *, expanded):
+        self._checkboxes = checkboxes
+        self._expanded = expanded
+
+    def count(self):
+        if self._expanded:
+            return len(self._checkboxes)
+        return 1
 
 
 class _MissingCheckbox:
@@ -87,6 +101,9 @@ class _AsyncPanelPage:
     def count(self):
         return 1
 
+    def wait_for_timeout(self, _timeout):
+        return None
+
     def get_by_role(self, role, *, name, exact=False):
         assert role == "checkbox"
         assert exact is True
@@ -119,9 +136,11 @@ def _page_with_expanded_panel(monkeypatch, checkboxes):
         def __init__(self, checkboxes):
             super().__init__(checkboxes)
             self.expand_clicks = 0
+            self.expand_effective = True
 
         def locator(self, selector):
             if selector == "panel-scope":
+                self._scope._expanded = self.expand_clicks > 0
                 return self._scope
             if selector == "panel-expand":
                 return _ExpandLocator(self)
@@ -147,6 +166,8 @@ def _page_with_expanded_panel(monkeypatch, checkboxes):
 
         def click(self, *, timeout=None, **_kwargs):
             self._page.expand_clicks += 1
+            if self._page.expand_effective:
+                self._page._scope._expanded = True
 
     monkeypatch.setattr("hhru_bot.experience.EXPERIENCE_RESUME_PANEL_SCOPE", "panel-scope")
     monkeypatch.setattr("hhru_bot.experience.EXPERIENCE_RESUME_PANEL_EXPAND", "panel-expand")
@@ -161,6 +182,7 @@ def test_missing_other_checkbox_is_skipped_after_confirmed_expand(monkeypatch):
     skip (absent from DOM => cannot be pre-checked), not a failure."""
     checkboxes = {
         "Дворник": _AsyncCheckbox(),
+        "Опубликованное резюме": _AsyncCheckbox(),
         # 'Хирург' has NO checkbox in the panel at all.
     }
     page = _page_with_expanded_panel(monkeypatch, checkboxes)
@@ -176,6 +198,24 @@ def test_missing_other_checkbox_is_skipped_after_confirmed_expand(monkeypatch):
     assert checkboxes["Дворник"].is_checked() is True
 
 
+def test_expand_without_structural_change_fails_closed(monkeypatch):
+    """A disappearing button alone must not authorize omission skips."""
+    checkboxes = {"Дворник": _AsyncCheckbox()}
+    page = _page_with_expanded_panel(monkeypatch, checkboxes)
+    page.expand_effective = False
+    monkeypatch.setattr("hhru_bot.experience.PANEL_TIMEOUT_MS", 0)
+
+    from hhru_bot.experience import ResumePanelReconciliationError
+
+    with pytest.raises(ResumePanelReconciliationError, match="число чекбоксов не выросло"):
+        _reconcile_experience_resume_panel(
+            page,
+            target_title="Дворник",
+            other_titles=["Хирург"],
+            is_new_row=True,
+        )
+
+
 def test_missing_target_checkbox_always_fails_closed(monkeypatch):
     from hhru_bot.experience import ResumePanelReconciliationError
 
@@ -184,6 +224,7 @@ def test_missing_target_checkbox_always_fails_closed(monkeypatch):
         "Хирург": _AsyncCheckbox(),
     }
     page = _page_with_expanded_panel(monkeypatch, checkboxes)
+    monkeypatch.setattr("hhru_bot.experience.PANEL_TIMEOUT_MS", 0)
 
     with pytest.raises(ResumePanelReconciliationError):
         _reconcile_experience_resume_panel(
