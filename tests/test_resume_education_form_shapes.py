@@ -146,8 +146,10 @@ def test_additional_block_trigger_shape_fills_by_data_qa(monkeypatch):
 
     assert result.success, result.reason
     # Trigger shape: filled through the confirmed data-qa, never through
-    # get_by_label (empty label bindings, live-dumped #857).
-    assert page.filled == [
+    # get_by_label (empty label bindings, live-dumped #857). The #956
+    # pre-save stability pass may refill a field whose fake locator was
+    # resolved empty, so pin the FIRST full pass, not the exact total.
+    assert page.filled[:4] == [
         ("[data-qa='profile-education-additional-name']", "Курсы"),
         ("[data-qa='profile-education-additional-organization']", "Организация"),
         ("[data-qa='profile-education-additional-specialty']", "Специализация"),

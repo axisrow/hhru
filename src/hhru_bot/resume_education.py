@@ -163,6 +163,9 @@ POST_SAVE_RESUME_WAIT_TIMEOUT_MS = 15_000
 # best-effort `.fill()`.
 FIELD_VERIFY_TIMEOUT_MS = 3_000
 FIELD_VERIFY_POLL_MS = 200
+# #956: budget for the all-fields re-check right before the Save click.
+PRE_SAVE_STABLE_TIMEOUT_MS = 5_000
+PRE_SAVE_STABLE_POLL_MS = 250
 
 
 @dataclass(frozen=True)
@@ -311,10 +314,53 @@ def _fill_and_verify(page, locator, value: str) -> bool:
     while True:
         locator.fill(value)
         if locator.input_value().strip() == expected:
-            return True
+            # #956: an async React re-render can remount the controlled input
+            # AFTER the immediate check -- the DOM value fill() wrote is then
+            # replaced by the (often empty) React state, and Save submits an
+            # empty form (live failure 2026-09-03: save-failure dump showed
+            # "Пожалуйста, укажите" on fields _fill_and_verify had confirmed).
+            # Wait one poll interval past the match and re-check before
+            # trusting the value.
+            page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
+            if locator.input_value().strip() == expected:
+                return True
         if time.monotonic() >= deadline:
             return False
         page.wait_for_timeout(FIELD_VERIFY_POLL_MS)
+
+
+def _pre_save_stable(
+    page, filled: list[tuple[str, str]], *, additional: bool, trigger_shape: bool
+) -> bool:
+    """Re-check every filled field right before the Save click (#956).
+
+    Each field is verified at fill time, but the clearing re-render may land
+    after the LAST field was verified -- the live save-failure dump showed ALL
+    fields empty with client-side validation marks at the click. Refill
+    whatever the form reset and require one full clean pass before saving.
+    """
+    deadline = time.monotonic() + PRE_SAVE_STABLE_TIMEOUT_MS / 1000
+    resolved: list[tuple[Any, str]] = []
+    for name, value in filled:
+        resolved.append(
+            (
+                _field_locator(page, name, additional=additional, trigger_shape=trigger_shape),
+                value,
+            )
+        )
+    while True:
+        cleared = [
+            (locator, value)
+            for locator, value in resolved
+            if locator.input_value().strip() != value.strip()
+        ]
+        if not cleared:
+            return True
+        for locator, value in cleared:
+            locator.fill(value)
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(PRE_SAVE_STABLE_POLL_MS)
 
 
 def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:
@@ -510,6 +556,32 @@ def _edit_block(
                         uncertain=saved_count > 0,
                         saved=saved_count,
                     )
+            # #956: per-field verification happened during the loop above, but
+            # the clearing re-render may land after the LAST field was verified
+            # (live dump: every field empty at the click). Fail closed BEFORE
+            # clicking Save if the form would not hold the values.
+            filled_fields = [
+                (name, getattr(record, name)) for name in field_names if getattr(record, name)
+            ]
+            if not _pre_save_stable(
+                page,
+                filled_fields,
+                additional=additional,
+                trigger_shape=additional and not direct_route,
+            ):
+                _dump_save_failure(
+                    page,
+                    index,
+                    kind,
+                    RuntimeError("форма сбросила значения полей перед сохранением"),
+                )
+                return EducationResult(
+                    kind,
+                    False,
+                    f"строка {index}: поля сброшены формой перед сохранением, Save не нажат",
+                    uncertain=saved_count > 0,
+                    saved=saved_count,
+                )
             if dry_run:
                 page.locator(row_cancel_selector).first.click()
             else:

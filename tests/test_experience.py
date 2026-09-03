@@ -2,6 +2,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from hhru_bot.experience import (
+    MONTH_NAMES,
     ExperienceEntry,
     ExperiencePlan,
     ExperienceResult,
@@ -161,8 +162,10 @@ class _Locator:
     def wait_for(self, *, timeout=None, state=None):
         return None
 
-    def fill(self, _value):
-        return None
+    def fill(self, value):
+        # #956: _fill_stable verifies through input_value(), so the fake
+        # remembers what it was filled with (like the real controlled input).
+        self._filled_value = value
 
     def click(self, *, timeout=None, **_kwargs):
         return None
@@ -171,7 +174,7 @@ class _Locator:
         return None
 
     def input_value(self):
-        return ""
+        return getattr(self, "_filled_value", "")
 
     def inner_text(self):
         return self._text
@@ -225,6 +228,9 @@ class _Page:
 
     def __init__(self):
         self.url = "https://hh.ru/resume/resume-1"
+
+    def wait_for_timeout(self, _ms):
+        return None
 
     def locator(self, selector):
         assert selector is not None
@@ -785,6 +791,15 @@ class _MonthSavePage(_SavePage):
             class _StartMonthLocator(_Locator):
                 def click(self, *, timeout=None, **_kwargs):
                     pass
+
+                def inner_text(self):
+                    # #956: _select_month_stable re-reads the trigger through
+                    # _read_month; reflect the selection like the real
+                    # combobox does ("Месяц\n<Название>").
+                    if page.start_month_selected:
+                        number = int(page.start_month_selected)
+                        return f"Месяц\n{MONTH_NAMES[number - 1]}"
+                    return "Месяц"
 
             return _StartMonthLocator(count=1)
         if "magritte-select-option-" in selector:
