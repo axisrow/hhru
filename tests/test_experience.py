@@ -1472,6 +1472,63 @@ def test_edit_experience_save_rejection_retry_refills_wiped_field_and_saves(monk
     assert dumps == [0]
 
 
+class _DetachingRefillLocator(_Locator):
+    """A control the remount removes entirely, but only AFTER the first save
+    click: input_value() raises the same PlaywrightError the real "not
+    attached" state produces, so the pre-save pass (which must keep working)
+    sees a normal filled field and the post-rejection refill hits the crash."""
+
+    def __init__(self, page):
+        super().__init__(count=1)
+        self._page = page
+
+    def input_value(self):
+        if self._page.save_clicks >= 1:
+            raise PlaywrightError("Element is not attached to the DOM")
+        return getattr(self, "_filled_value", "")
+
+    def wipe(self):
+        # the base _RejectionRetryPage save-click hook calls this; a detached
+        # node needs no state change — reads already raise past this point
+        return None
+
+
+def test_edit_experience_refill_crash_after_rejection_reports_uncertain(monkeypatch):
+    """The refill pass runs INSIDE the save-timeout except handler, so a
+    PlaywrightError/ValueError raised there must not escape uncaught and
+    crash the command (Python handlers do not catch exceptions raised in
+    sibling handlers) — a save click already happened, so the row outcome
+    is uncertain, not a traceback."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectionRetryPage(indexes=[], reject_clicks=1)
+    page._description = _DetachingRefillLocator(page)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 1
+    assert len(results) == 1
+    assert not results[0].success
+    assert results[0].uncertain
+    assert "дозаполнение после отклонения" in results[0].reason
+    assert dumps == [0]
+
+
 def test_edit_experience_save_rejected_after_retry_reports_definite_failure(monkeypatch):
     """A rejection that SURVIVES the refill pass is final: plain failed with
     the validation text (retryable, no uncertain lock), never a blind third

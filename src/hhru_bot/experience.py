@@ -1303,7 +1303,23 @@ def edit_experience_on_hh(
                                 index,
                                 rejection,
                             )
-                            if not _refill_and_verify_fields():
+                            try:
+                                refill_ok = _refill_and_verify_fields()
+                            except (PlaywrightError, ValueError) as refill_exc:
+                                # The refill runs INSIDE this except handler, so
+                                # a throw here would escape the whole try uncaught
+                                # (Python handlers do not catch exceptions raised
+                                # in sibling handlers). A save click has already
+                                # happened, so the outcome is uncertain, not a
+                                # crash.
+                                return results + [
+                                    ExperienceResult(
+                                        f"строка {index}: дозаполнение после отклонения "
+                                        f"save не удалось: {refill_exc}",
+                                        uncertain=True,
+                                    )
+                                ]
+                            if not refill_ok:
                                 return results + [
                                     ExperienceResult(
                                         f"строка {index}: поле не удерживает значение "
