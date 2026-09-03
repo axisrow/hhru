@@ -14,8 +14,10 @@
 2. **Поток после передачи файла трёхшаговый:** crop-редактор
    (``photo-editor-apply`` — мутирующий клик, запускает upload) -> модалка
    «Все загруженные фото» (``photo-viewer-action-assign-current`` — назначает
-   фото на это резюме) -> ``img`` в блоке аватара (подтверждённый маркер
-   успеха, 2026-09-02).
+   фото на это резюме) -> ``img`` в блоке аватара (ОПТИМИСТИЧНЫЙ маркер:
+   рисуется до консолидации assign на сервере) -> перезагрузка страницы и
+   повторная проверка img — единственное подтверждение успеха (readback,
+   #955).
 3. Клик по ``resume-avatar-edit-button`` сам по себе файл не загружает —
    он только открывает модалку вьювера УЖЕ гидратированного микрофроненда.
 
@@ -71,10 +73,11 @@ _ASSIGN_WAIT_TIMEOUT_MS = 30_000
 # overlay'а перехватывает клики (боевой кейс 2026-09-03 — uncertain при
 # открытой модалке).
 _ASSIGN_MODAL_SETTLE_MS = 2_500
-# Пауза после появления маркера до объявления успеха: assign-запрос должен
-# уйти и подтвердиться, иначе закрытие браузера прямо после маркера может
-# оборвать его (боевой кейс 2026-09-02: img на месте, hasPhoto на сервере
-# остался false).
+# Пауза после появления маркера до readback-перезагрузки: маркер рисуется
+# оптимистично, до консолидации assign-запроса на сервере (боевой кейс
+# 2026-09-02: img на месте, hasPhoto на сервере остался false). Пауза не
+# доказательство, а снижение частоты ложного uncertain: если assign не
+# уложился, readback после перезагрузки честно вернёт uncertain.
 _ASSIGN_SETTLE_MS = 5_000
 
 _MAGIC: tuple[tuple[bytes, str], ...] = (
@@ -266,9 +269,51 @@ def upload_photo_on_hh(
     # Маркер в DOM появляется ОПТИМИСТИЧНО: hh.ru рисует <img> до того,
     # как assign-запрос консолидировался на сервере (боевой кейс
     # 2026-09-02: браузер закрылся сразу после маркера — img остался,
-    # а hasPhoto на сервере остался false; фикс живым прогоном).
+    # а hasPhoto на сервере остался false). Успех подтверждает только
+    # readback персистентного состояния: перезагрузка страницы резюме.
     page.wait_for_timeout(_ASSIGN_SETTLE_MS)
-    return UploadPhotoResult(success=True, reason="фото загружено и назначено", photo_present=True)
+    confirmed, readback_reason = _readback_photo_persisted(page, resume.resume_url)
+    if confirmed is True:
+        return UploadPhotoResult(
+            success=True,
+            reason="фото загружено и назначено (подтверждено перезагрузкой страницы)",
+            photo_present=True,
+        )
+    if confirmed is False:
+        # Страница перечитана, img отсутствует: назначение на сервере не
+        # произошло (файл мог остаться в галерее) — fail-closed uncertain.
+        return UploadPhotoResult(
+            reason=(
+                "assign отправлен, но readback не подтвердил: "
+                f"{readback_reason}; файл мог остаться в галерее фото"
+            ),
+            uncertain=True,
+            photo_present=False,
+        )
+    return _uncertain(f"assign отправлен, но readback не выполнился: {readback_reason}")
+
+
+def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None, str]:
+    """Перечитать страницу резюме и проверить персистентный признак фото.
+
+    Возвращает (confirmed, reason): True — img аватара есть на свежезагруженной
+    странице (серверное состояние, не оптимистичный DOM); False — страница
+    прочитана, но img отсутствует; None — страница не прочитана (навигация или
+    отрисовка не удались).
+    """
+    try:
+        goto_hh(page, resume_url)
+    except PlaywrightError as exc:
+        return None, f"страница резюме не перечиталась: {exc}"
+    try:
+        page.locator(RESUME_AVATAR_BLOCK).first.wait_for(
+            state="visible", timeout=_AVATAR_WAIT_TIMEOUT_MS
+        )
+    except PlaywrightError as exc:
+        return None, f"блок аватара не отрисовался при перечитывании: {exc}"
+    if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
+        return True, ""
+    return False, "img в блоке аватара отсутствует на свежезагруженной странице"
 
 
 def _uncertain(reason: str) -> UploadPhotoResult:

@@ -4,7 +4,8 @@
 живым DOM и боевым прогоном 2026-09-02 (см. модуль группы), здесь
 проверяется только логика решений: dry-run без кликов, fail-closed отказы
 до точки невозврата, порядок before_click и uncertain-исходы после
-передачи файла (гидратация, редактор, назначение).
+передачи файла (гидратация, редактор, назначение), readback персистентного
+состояния после перезагрузки вместо оптимистичного img-маркера (#955).
 """
 
 from __future__ import annotations
@@ -64,17 +65,32 @@ class FakePage:
         editor_visible=True,
         assign_visible=True,
         marker_after_assign=1,
+        readback_image_count=1,
+        readback_page_ok=True,
     ):
         self.set_files: list[tuple[str, str]] = []
         self.clicks: list[str] = []
         self.marker_count = 0
+        self._nav_calls = 0
+        self.reloaded = False
         self._avatar_count = avatar_count
         self._file_input_count = file_input_count
         self._hydrated = hydrated
         self._editor_visible = editor_visible
         self._assign_visible = assign_visible
         self._marker_after_assign = marker_after_assign
+        self._readback_image_count = readback_image_count
+        self._readback_page_ok = readback_page_ok
         self.url = "https://hh.ru/resume/rid"
+
+    def on_reload(self):
+        """Вызывается заглушкой goto_hh; вторая навигация = readback (#955)."""
+        self._nav_calls += 1
+        if self._nav_calls < 2:
+            return  # первичный переход на страницу резюме
+        if not self._readback_page_ok:
+            raise PlaywrightError("fake: readback navigation failed")
+        self.reloaded = True
 
     def on_click(self, selector):
         # assign-клик назначает фото: маркер появляется по факту клика
@@ -91,7 +107,10 @@ class FakePage:
         if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
             return FakeLocator(self, selector, count=1, visible=self._assign_visible)
         if selector == resume_photo.RESUME_AVATAR_IMAGE:
-            return FakeLocator(self, selector, count=self.marker_count)
+            # после readback-перезагрузки DOM свежий: оптимистичный маркер
+            # заменяется персистентным состоянием readback_image_count
+            count = self._readback_image_count if self.reloaded else self.marker_count
+            return FakeLocator(self, selector, count=count)
         return FakeLocator(self, selector, count=0)
 
     def evaluate(self, script, arg=None):  # noqa: ARG002
@@ -120,7 +139,9 @@ PHOTO = PhotoFile(path=Path("/tmp/x.jpg"), size_bytes=100, kind="jpeg")
 @pytest.fixture(autouse=True)
 def _no_navigation(monkeypatch):
     """goto/auth/cookie — реальный браузерный слой; в unit-тестах заглушки."""
-    monkeypatch.setattr(resume_photo, "goto_hh", lambda page, url: None)
+    monkeypatch.setattr(
+        resume_photo, "goto_hh", lambda page, url: getattr(page, "on_reload", lambda: None)()
+    )
     monkeypatch.setattr(resume_photo, "require_authenticated_page", lambda page: None)
     monkeypatch.setattr(resume_photo, "dismiss_cookie_banner", lambda page: None)
 
@@ -241,6 +262,7 @@ def test_happy_path_order_and_success(monkeypatch):
     result = _run(page, before_click=before_click)
     assert result.success
     assert result.photo_present is True
+    assert page.reloaded  # успех подтверждён readback-перезагрузкой
     # первая мутация — set_input_files, потом редактор, потом назначение
     assert order == ["before_click", "set_files"]
     assert page.clicks == [
@@ -248,6 +270,28 @@ def test_happy_path_order_and_success(monkeypatch):
         resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
     ]
     assert page.set_files == [(resume_photo.RESUME_PHOTO_FILE_INPUT, str(PHOTO.path))]
+
+
+def test_marker_optimistic_readback_absent_is_uncertain():
+    """Оптимистичный img есть, но после перезагрузки фото отсутствует (#955)."""
+    page = FakePage(readback_image_count=0)
+    result = _run(page, before_click=lambda: None)
+    assert not result.success
+    assert result.uncertain is True
+    assert result.photo_present is False
+    assert page.reloaded
+    assert "readback" in result.reason
+
+
+def test_readback_page_unreadable_is_uncertain():
+    """Страница при readback не перечиталась — состояние не подтверждено."""
+    page = FakePage(readback_page_ok=False)
+    result = _run(page, before_click=lambda: None)
+    assert not result.success
+    assert result.uncertain is True
+    assert result.photo_present is None
+    assert not page.reloaded
+    assert "не перечиталась" in result.reason
 
 
 def test_playwright_error_on_transfer_is_uncertain(monkeypatch):
