@@ -130,7 +130,9 @@ def test_guard_passes_target_and_own_resume_identity(env, capsys, tmp_path, monk
 
     monkeypatch.setattr("hhru_bot.resume_titles.account_duplicate_reason", _spy)
     monkeypatch.setattr(
-        hhru_bot.resume_position, "apply_position", lambda page, plan, current=None: None
+        hhru_bot.resume_position,
+        "apply_position",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(cmd, "_click_save_and_wait", lambda page: None)
 
@@ -152,7 +154,9 @@ def test_no_title_change_skips_guard(env, capsys, tmp_path, monkeypatch):
 
     monkeypatch.setattr("hhru_bot.resume_titles.account_duplicate_reason", _spy)
     monkeypatch.setattr(
-        hhru_bot.resume_position, "apply_position", lambda page, plan, current=None: None
+        hhru_bot.resume_position,
+        "apply_position",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(cmd, "_click_save_and_wait", lambda page: None)
 

@@ -572,7 +572,8 @@ def test_resume_position_grey_zone_post_click_failure_is_uncertain_not_failed(
         ),
     )
     monkeypatch.setattr(
-        "hhru_bot.resume_position.apply_position", lambda page, plan, current=None: None
+        "hhru_bot.resume_position.apply_position",
+        lambda *_args, **_kwargs: None,
     )
 
     history_path = tmp_path / "history.db"
@@ -822,7 +823,8 @@ def test_chip_popular_unavailable_falls_back_to_wizard_minimum_and_succeeds(
         lambda *_args, **_kwargs: ResumeState(status="not_finished"),
     )
     monkeypatch.setattr(
-        "hhru_bot.resume_position.apply_position", lambda _page, _plan, current=None: None
+        "hhru_bot.resume_position.apply_position",
+        lambda *_args, **_kwargs: None,
     )
 
     history_path = tmp_path / "history.db"
@@ -1231,7 +1233,8 @@ def test_direct_save_chip_popular_still_falls_back_to_wizard_minimum(
         lambda *_args, **_kwargs: ResumeState(status="not_finished"),
     )
     monkeypatch.setattr(
-        "hhru_bot.resume_position.apply_position", lambda _page, _plan, current=None: None
+        "hhru_bot.resume_position.apply_position",
+        lambda *_args, **_kwargs: None,
     )
 
     args = _draft_position_args(tmp_path / "history.db")

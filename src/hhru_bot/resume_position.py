@@ -19,7 +19,8 @@ from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import (
     HH_BASE_URL,
@@ -30,7 +31,7 @@ from .browser import (
     resume_identity_matches,
 )
 from .config import ResumeConfig
-from .create_resume import select_wizard_catalog_leaf
+from .create_resume import OTHER_ROLE_LABEL, select_wizard_catalog_leaf
 from .logging_setup import LOG_DIR
 from .resume_state import ResumeState, parse_resume_state
 from .selector_groups.resume_page import (
@@ -69,6 +70,14 @@ from .selector_groups.resume_page import (
 )
 
 logger = logging.getLogger("hhru_bot.resume_position")
+
+
+class SpecializationLeafMissing(RuntimeError):
+    """The editor's specialization tree confirmed it will never render the
+    exact label: bounded wait_for(state="visible") timed out (#950, #822).
+    The only PlaywrightError shape the --fallback-other placeholder is allowed
+    to cover — search.fill drift or a click failure on an already-confirmed
+    leaf is NOT this and propagates unchanged (ревью #952)."""
 
 
 class ChipPopularUnavailable(RuntimeError):
@@ -998,7 +1007,43 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
         raise
 
 
-def _set_specializations(page: Page, values: list[str]) -> None:
+def _pick_specialization(page: Page, search: Locator, value: str) -> None:
+    """Select one specialization leaf by exact label through the search filter.
+
+    Raises RuntimeError when the tree never renders the exact label (missing
+    leaf) or renders it under more than one data-qa id (genuine ambiguity).
+    """
+    search.fill(value)
+    option = page.locator(SPECIALIZATION_OPTION).filter(
+        has_text=re.compile(rf"^{re.escape(value)}$")
+    )
+    # search.fill() triggers an async React re-render of the filtered tree
+    # (#822 live repro): reading option.count() right after fill() is a
+    # race and can observe either the still-unfiltered default category
+    # rows or a not-yet-rendered empty list, in both cases 0 matches for
+    # a leaf that is genuinely present. Waiting for the first match (or a
+    # bounded timeout confirming it never renders) turns that race into a
+    # deterministic read, matching the wait_for(state="visible") pattern
+    # this project already uses after every action that starts a React
+    # render (CLAUDE.md, resume_position.py's own _set_control).
+    try:
+        option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    except PlaywrightTimeoutError as exc:
+        # Именно здесь «лист отсутствует» (#950): bounded-таймаут подтверждает,
+        # что дерево так и не отрисовало метку. Только таймаут — детач/ошибка
+        # протокола из wait_for и ошибки fill/клика ниже — это НЕ отсутствие
+        # листа и наружу не превращаются (ревью #952, цикл 2).
+        raise SpecializationLeafMissing(f"лист специализации не отрендерился: {value}") from exc
+    option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
+    # The same leaf is rendered once under every matching parent category;
+    # its data-qa id is the stable identity.  Different ids with the same
+    # label are genuinely ambiguous because the CLI accepts labels only.
+    if not option_ids or len(option_ids) != 1:
+        raise RuntimeError(f"вариант специализации не найден однозначно: {value}")
+    option.first.click()
+
+
+def _set_specializations(page: Page, values: list[str], fallback_other: bool = False) -> None:
     """Replace specializations through the confirmed nested tree selector."""
     if page.locator(SPECIALIZATION_ADD).count() != 1:
         raise RuntimeError("селектор добавления специализации не подтверждён")
@@ -1019,30 +1064,27 @@ def _set_specializations(page: Page, values: list[str]) -> None:
         raise RuntimeError("селектор панели специализаций не подтверждён")
 
     for value in values:
-        search.fill(value)
-        option = page.locator(SPECIALIZATION_OPTION).filter(
-            has_text=re.compile(rf"^{re.escape(value)}$")
-        )
-        # search.fill() triggers an async React re-render of the filtered tree
-        # (#822 live repro): reading option.count() right after fill() is a
-        # race and can observe either the still-unfiltered default category
-        # rows or a not-yet-rendered empty list, in both cases 0 matches for
-        # a leaf that is genuinely present. Waiting for the first match (or a
-        # bounded timeout confirming it never renders) turns that race into a
-        # deterministic read, matching the wait_for(state="visible") pattern
-        # this project already uses after every action that starts a React
-        # render (CLAUDE.md, resume_position.py's own _set_control).
         try:
-            option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
-        except PlaywrightError as exc:
-            raise RuntimeError(f"специализация не найдена в дереве резюме: {value}") from exc
-        option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
-        # The same leaf is rendered once under every matching parent category;
-        # its data-qa id is the stable identity.  Different ids with the same
-        # label are genuinely ambiguous because the CLI accepts labels only.
-        if not option_ids or len(option_ids) != 1:
-            raise RuntimeError(f"вариант специализации не найден однозначно: {value}")
-        option.first.click()
+            _pick_specialization(page, search, value)
+        except SpecializationLeafMissing as exc:
+            # Leaf never rendered — this is the ONLY failure mode the explicit
+            # fallback covers (#950): the tree confirmed the label is absent, so
+            # «Другое» (id 40) is the deliberate placeholder choice, not a
+            # silent filter degeneration. Other PlaywrightErrors (search.fill
+            # drift, a click failure on an already-confirmed leaf) propagate —
+            # an indeterminate page state must not become a confident wrong
+            # write (ревью #952). Ambiguity (RuntimeError) still fails
+            # closed: a wrong unique-ish pick is a real mutation.
+            if fallback_other and value != OTHER_ROLE_LABEL:
+                logger.info(
+                    "специализация «%s» не найдена в дереве резюме — "
+                    "фоллбэк «%s» (--fallback-other, #950)",
+                    value,
+                    OTHER_ROLE_LABEL,
+                )
+                _pick_specialization(page, search, OTHER_ROLE_LABEL)
+            else:
+                raise RuntimeError(f"специализация не найдена в дереве резюме: {value}") from exc
 
     submit.click()
     # Waiting for the option itself is insufficient: hh.ru keeps the panel
@@ -1050,7 +1092,12 @@ def _set_specializations(page: Page, values: list[str]) -> None:
     modal.wait_for(state="hidden", timeout=10_000)
 
 
-def apply_position(page: Page, plan: PositionValues, current: PositionValues | None = None) -> None:
+def apply_position(
+    page: Page,
+    plan: PositionValues,
+    current: PositionValues | None = None,
+    fallback_other: bool = False,
+) -> None:
     """Fill fields only. Caller owns confirmation and must click SAVE explicitly.
 
     ``current`` is the value already on the draft (from the just-opened form/
@@ -1079,7 +1126,7 @@ def apply_position(page: Page, plan: PositionValues, current: PositionValues | N
             "сохраняются все переданные значения. Передайте одно значение."
         )
     if plan.specializations:
-        _set_specializations(page, plan.specializations)
+        _set_specializations(page, plan.specializations, fallback_other=fallback_other)
     if plan.title is not None:
         page.locator(TITLE).fill(plan.title)
     if plan.salary is not None:
