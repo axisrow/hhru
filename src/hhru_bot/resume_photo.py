@@ -67,6 +67,10 @@ _HYDRATION_TIMEOUT_MS = 20_000
 _AVATAR_WAIT_TIMEOUT_MS = 15_000
 _EDITOR_WAIT_TIMEOUT_MS = 15_000
 _ASSIGN_WAIT_TIMEOUT_MS = 30_000
+# Пауза после появления модалки назначения до клика assign: анимация
+# overlay'а перехватывает клики (боевой кейс 2026-09-03 — uncertain при
+# открытой модалке).
+_ASSIGN_MODAL_SETTLE_MS = 2_500
 # Пауза после появления маркера до объявления успеха: assign-запрос должен
 # уйти и подтвердиться, иначе закрытие браузера прямо после маркера может
 # оборвать его (боевой кейс 2026-09-02: img на месте, hasPhoto на сервере
@@ -235,6 +239,10 @@ def upload_photo_on_hh(
             "crop-apply отправлен, но модалка назначения не открылась за "
             f"{_ASSIGN_WAIT_TIMEOUT_MS / 1000:.0f}с — фото могло загрузиться в галерею: {exc}"
         )
+    # Модалка анимируется: overlay перехватывает pointer events, Playwright
+    # ретраит клик и падает по таймауту (бои 2026-09-02 и 2026-09-03:
+    # explore-пауза 2500мс пропускала клик, командная без неё — нет).
+    page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
     try:
         assign_btn.click()
     except PlaywrightError as exc:
