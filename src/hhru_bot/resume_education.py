@@ -354,13 +354,17 @@ def _pre_save_stable(
             for locator, value in resolved
             if locator.input_value().strip() != value.strip()
         ]
-        if not cleared:
-            return True
-        for locator, value in cleared:
-            locator.fill(value)
+        if cleared:
+            for locator, value in cleared:
+                locator.fill(value)
+        # A matching value can still be replaced by the controlled-input
+        # remount immediately after this check. Require the complete set to
+        # survive one poll before allowing Save.
         if time.monotonic() >= deadline:
             return False
         page.wait_for_timeout(PRE_SAVE_STABLE_POLL_MS)
+        if all(locator.input_value().strip() == value.strip() for locator, value in resolved):
+            return True
 
 
 def _dump_save_failure(page, index: int, kind: str, exc: Exception) -> None:

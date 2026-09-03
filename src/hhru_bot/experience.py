@@ -1089,9 +1089,14 @@ def edit_experience_on_hh(
                     _stable_value.strip()
                 ):
                     _stable_locator.fill(_stable_value)
+            # The controlled editor can remount after an instantaneous match,
+            # including after panel reconciliation. Require one settled poll
+            # before the durable save click.
+            page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
             if entry.start_month and start_month_locator.count() == 1:
                 if _read_month(start_month_locator) != str(int(entry.start_month)):
                     _select_month(page, start_month_locator, entry.start_month)
+                page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
             for _stable_locator, _stable_value in _stable_fields:
                 if _stable_locator.count() == 1 and _stable_locator.input_value().strip() != (
                     _stable_value.strip()
