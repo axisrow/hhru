@@ -1061,6 +1061,34 @@ def _add_button_fixture(monkeypatch, page):
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
 
+def test_edit_experience_via_add_button_refuses_unconfirmed_other_title(monkeypatch):
+    """Codex review (PR #958 round 2): a resume whose panel title could not
+    be confirmed (empty string from list_resume_cards) is dropped from
+    other_titles by the `and title` filter, so reconciliation would never
+    uncheck it — on a NEW row its pre-checked box would silently over-bind
+    the entry. The save must be refused up front instead."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage(
+        [2, 3],
+        panel_titles={"Target Resume": True},
+    )
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[7],
+        resume_titles={"resume-1": "Target Resume", "other-1": ""},
+    )
+
+    assert page.add_clicked is False
+    assert len(results) == 1
+    assert not results[0].success
+    assert "не подтверждено" in results[0].reason
+    assert "other-1" in results[0].reason
+
+
 def test_edit_experience_via_add_button_unchecks_other_resumes_before_save(monkeypatch):
     """#782: the core silent-over-binding fix — a new row on a non-empty
     resume must have every OTHER account resume's checkbox unchecked before

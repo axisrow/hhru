@@ -953,6 +953,25 @@ def edit_experience_on_hh(
                     "привязки не передано — добавление новой записи отклонено (#782)"
                 )
             ]
+        # codex review (PR #958 round 2): on a NEW row every account resume is
+        # pre-checked by default, and reconciliation can only uncheck resumes
+        # whose panel title it can resolve. A resume with an unconfirmed
+        # (empty) title from list_resume_cards is silently dropped from
+        # other_titles by the `and title` filter below — its checkbox would
+        # stay checked and the save would over-bind the row to a resume the
+        # caller never named. That is exactly the partial reconciliation the
+        # fail-closed contract forbids: refuse the save up front instead.
+        unconfirmed_titles = sorted(
+            rid for rid, title in (resume_titles or {}).items() if rid != resume_id and not title
+        )
+        if via_add_button and unconfirmed_titles:
+            return results + [
+                ExperienceResult(
+                    f"строка опыта {index}: название резюме {unconfirmed_titles[0]} "
+                    "в панели привязки не подтверждено — привязка новой записи "
+                    "к неразобранным резюме недопустима, добавление отклонено"
+                )
+            ]
         # #796: snapshot the row count BEFORE opening the form for this entry
         # — taking it after save cannot distinguish a bound save from a
         # silent no-op, since both leave the count read at the same time.
