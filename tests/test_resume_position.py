@@ -1006,6 +1006,44 @@ def test_set_specializations_fallback_does_not_mask_ambiguity():
         resume_position._set_specializations(page, ["Аналитик"], fallback_other=True)
 
 
+def test_set_specializations_no_fallback_on_click_error_of_confirmed_leaf(monkeypatch):
+    """Ревью #952: ошибка клика по УЖЕ подтверждённому уникальному листу —
+    не «лист отсутствует»; фоллбэк не срабатывает, PlaywrightError наружу."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=["tree-selector-item tree-selector-item-10"]
+    )
+    option.first.click.side_effect = PlaywrightError("click intercepted")
+
+    with pytest.raises(PlaywrightError):
+        resume_position._set_specializations(page, ["Аналитик"], fallback_other=True)
+
+    # Фоллбэк не активировался: fill с фоллбэк-значением не вызывался
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == ["Аналитик"]
+    option.first.click.assert_called_once()
+
+
+def test_set_specializations_no_fallback_on_search_fill_error(monkeypatch):
+    """Ревью #952: дрейф селектора поиска (ошибка fill) — не «лист
+    отсутствует»; ошибка распространяется, плейсхолдер не подставляется."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=["tree-selector-item tree-selector-item-10"]
+    )
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    search.fill.side_effect = PlaywrightError("element detached")
+
+    with pytest.raises(PlaywrightError):
+        resume_position._set_specializations(page, ["Аналитик"], fallback_other=True)
+
+    option.first.click.assert_not_called()
+
+
 def test_set_specializations_no_fallback_without_flag(monkeypatch):
     """Без --fallback-other поведение прежнее: честный отказ."""
     from playwright.sync_api import Error as PlaywrightError

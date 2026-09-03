@@ -48,18 +48,20 @@ def run(args: argparse.Namespace):
         return True
 
     history = History(args.history)
+    # Гейт до confirm_write: пользователя нельзя сначала спрашивать подтверждение
+    # боя и только потом отказывать по незакрытой неопределённости (ревью #952).
+    if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, "upload_photo"):
+        print(
+            f"[FAIL] {resume.id} — предыдущая загрузка фото не подтверждена (uncertain). "
+            "Проверьте фото на hh.ru вручную перед повтором."
+        )
+        return True
     if not args.dry_run and not confirm_write(
         args.force, prompt=f"Загрузить фото в резюме '{resume.id}' на hh.ru?"
     ):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
             "Ничего не загружено."
-        )
-        return True
-    if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, "upload_photo"):
-        print(
-            f"[FAIL] {resume.id} — предыдущая загрузка фото не подтверждена (uncertain). "
-            "Проверьте фото на hh.ru вручную перед повтором."
         )
         return True
 

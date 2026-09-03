@@ -71,6 +71,14 @@ from .selector_groups.resume_page import (
 logger = logging.getLogger("hhru_bot.resume_position")
 
 
+class SpecializationLeafMissing(RuntimeError):
+    """The editor's specialization tree confirmed it will never render the
+    exact label: bounded wait_for(state="visible") timed out (#950, #822).
+    The only PlaywrightError shape the --fallback-other placeholder is allowed
+    to cover — search.fill drift or a click failure on an already-confirmed
+    leaf is NOT this and propagates unchanged (ревью #952)."""
+
+
 class ChipPopularUnavailable(RuntimeError):
     """The wizard role screen (resume_wizard_roles, #908) cannot confirm
     the exact vacancy-search catalog specialization (#881/#889, #913): the
@@ -1017,7 +1025,13 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
     # deterministic read, matching the wait_for(state="visible") pattern
     # this project already uses after every action that starts a React
     # render (CLAUDE.md, resume_position.py's own _set_control).
-    option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    try:
+        option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        # Именно здесь «лист отсутствует» (#950): bounded-таймаут подтверждает,
+        # что дерево так и не отрисовало метку. Ошибки fill/клика ниже — это
+        # НЕ отсутствие листа и наружу не превращаются (ревью #952).
+        raise SpecializationLeafMissing(f"лист специализации не отрендерился: {value}") from exc
     option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
     # The same leaf is rendered once under every matching parent category;
     # its data-qa id is the stable identity.  Different ids with the same
@@ -1050,11 +1064,14 @@ def _set_specializations(page: Page, values: list[str], fallback_other: bool = F
     for value in values:
         try:
             _pick_specialization(page, search, value)
-        except PlaywrightError as exc:
-            # Leaf never rendered — this is the only failure mode the explicit
-            # fallback covers (#950): the tree told us the label is absent, so
+        except SpecializationLeafMissing as exc:
+            # Leaf never rendered — this is the ONLY failure mode the explicit
+            # fallback covers (#950): the tree confirmed the label is absent, so
             # «Другое» (id 40) is the deliberate placeholder choice, not a
-            # silent filter degeneration. Ambiguity (RuntimeError) still fails
+            # silent filter degeneration. Other PlaywrightErrors (search.fill
+            # drift, a click failure on an already-confirmed leaf) propagate —
+            # an indeterminate page state must not become a confident wrong
+            # write (ревью #952). Ambiguity (RuntimeError) still fails
             # closed: a wrong unique-ish pick is a real mutation.
             if fallback_other and value != OTHER_ROLE_LABEL:
                 logger.info(
