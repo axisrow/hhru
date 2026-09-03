@@ -1319,3 +1319,145 @@ def test_shared_experience_reuses_indexed_company_position_and_month_selectors()
     )
     assert EXPERIENCE_MONTH_OPTION == "[data-qa='magritte-select-option-{month}']"
     assert EXPERIENCE_MONTH_LISTBOX == "[role='listbox']"
+
+
+class _ValidationErrorsLocator(_Locator):
+    """Fake for the form-helper-error group locator (#958 follow-up):
+    count()==len(texts), nth(i) serves each message via inner_text()."""
+
+    def __init__(self, texts):
+        super().__init__(count=len(texts))
+        self._texts = list(texts)
+
+    def nth(self, i):
+        return _Locator(count=1, text=self._texts[i])
+
+
+class _RejectedSavePage(_SavePage):
+    """#958 follow-up (live capture 2026-09-03): the save click does not
+    navigate — wait_for_url times out Playwright-style while hh.ru keeps the
+    editor URL and renders inline validation errors under the empty required
+    fields. ``error_texts=None`` models a timeout with NO readable messages
+    (the true-unknown outcome that must stay uncertain)."""
+
+    def __init__(self, indexes, error_texts, **kwargs):
+        super().__init__(indexes, **kwargs)
+        self._error_texts = error_texts
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        raise PlaywrightError(
+            f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
+        )
+
+    def locator(self, selector):
+        if selector == "validation-errors":
+            if self._error_texts is None:
+                return _Locator(count=0)
+            return _ValidationErrorsLocator(self._error_texts)
+        return super().locator(selector)
+
+
+def test_edit_experience_save_rejected_by_validation_reports_definite_failure(monkeypatch):
+    """#958 follow-up: Save on an empty form never navigates — hh.ru renders
+    form-helper-error texts ("Пожалуйста, укажите") and stays on the editor
+    URL. That is a definite non-mutation, so the row result is a plain failed
+    carrying the validation text — NOT the navigation-timeout uncertain that
+    locks the resume_id against retries."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectedSavePage(indexes=[], error_texts=["Пожалуйста, укажите"] * 4)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "hh.ru отклонил сохранение" in results[0].reason
+    assert "Пожалуйста, укажите" in results[0].reason
+    assert "полей с ошибкой: 4" in results[0].reason
+    assert dumps == []
+
+
+def test_edit_experience_save_timeout_without_validation_stays_uncertain(monkeypatch):
+    """The rejection read is fail-safe: when the navigation wait times out
+    and NO visible validation messages can be read, the outcome is genuinely
+    unknown — the pre-existing uncertain + dump path is preserved."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _RejectedSavePage(indexes=[], error_texts=None)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert results[0].uncertain
+    assert "сохранение не подтверждено после клика" in results[0].reason
+    assert dumps == [0]
+
+
+class _QuerySuffixNavPage(_SavePage):
+    """wait_for_url with real full-match glob semantics (fnmatch): the
+    post-save redirect lands on /resume/{id}?hhtmFrom=profile_experience,
+    the exact live-observed shape (#958 follow-up)."""
+
+    def wait_for_url(self, pattern, *, wait_until=None, timeout=None):
+        import fnmatch
+
+        target = "https://hh.ru/resume/resume-1?hhtmFrom=profile_experience"
+        if not fnmatch.fnmatch(target, pattern):
+            raise PlaywrightError(
+                f"Timeout {timeout}ms exceeded.\n"
+                f"waiting for navigation to \"{pattern}\" until '{wait_until}'"
+            )
+        self.url = target
+
+
+def test_edit_experience_save_redirect_with_query_suffix_is_success(monkeypatch):
+    """#958 follow-up (live log 2026-09-03): hh.ru redirects a SUCCESSFUL
+    save to ".../resume/{id}?hhtmFrom=profile_experience"; a bare
+    "**/resume/{id}" glob is a full match, so wait_for_url timed out and the
+    save was recorded uncertain although Playwright's own log showed the
+    navigation ("navigated to ..."). The wait pattern must match the query
+    suffix; identity/binding re-verification below still guards the result."""
+    import fnmatch  # noqa: F401 - mirrors the fake's matching semantics
+
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _QuerySuffixNavPage(indexes=[], grow_indexes_on_reload=[2])
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]

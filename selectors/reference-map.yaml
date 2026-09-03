@@ -2413,6 +2413,31 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS:
+    value: '[data-qa=''form-helper-error'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:293
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - form-helper-error
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:293
+      note: 'Live capture 2026-09-03 (#958 follow-up, first-entry editor on a draft resume): clicking SAVE on the EMPTY form
+        is rejected client-side - no navigation, URL stays on /resume/edit/{resume_id}/experience, and four form-helper-error
+        elements (text: "Пожалуйста, укажите") render under the required fields (company, position, start date, duties). Definite
+        non-mutation state: experience.py reads these after an unconfirmed save click and reports a plain failed with the
+        validation text instead of an opaque navigation-timeout uncertain. Generic magritte form-helper namespace, expected
+        on every hh.ru form shape; count()==0 observed on the same form before any submit.'
+    last_verified_at: '2026-09-03'
+    verified_flow: authenticated_experience_editor_rejection_observed (draft resume, empty form, no mutation)
+    verified_by: agent
   resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY:
     value: '[data-qa^=''resume-profile-experience-specific-company-input-'']'
     criticality: write

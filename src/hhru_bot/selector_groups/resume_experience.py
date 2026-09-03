@@ -277,3 +277,17 @@ EXPERIENCE_SHARED_NEW_ROW_POSITION = _selector(
 # copy-pasted string from a design doc/screenshot.
 EXPERIENCE_RESUME_PANEL_SCOPE = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE")
 EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND")
+
+# #958 follow-up (live capture 2026-09-03): clicking Save on an EMPTY
+# experience form never navigates — hh.ru rejects the submit client-side and
+# renders a magritte form-helper-error element (text "Пожалуйста, укажите")
+# under every required field (observed 4: company, position, start date,
+# duties), URL unchanged on /resume/edit/{resume_id}/experience. That state
+# is a DEFINITE non-mutation, so experience.py reads these elements after an
+# unconfirmed save click and reports a plain failed with the validation text
+# instead of an opaque navigation-timeout uncertain (which would needlessly
+# lock the resume_id against retries). The namespace is the generic magritte
+# form-helper one, so the same read covers the shared-profile editor shapes
+# as well. count()==0 was observed on the same form before any submit, so a
+# non-empty read after a failed save is the rejection signal, not noise.
+EXPERIENCE_SAVE_VALIDATION_ERRORS = _selector("resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS")

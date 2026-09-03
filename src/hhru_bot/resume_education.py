@@ -612,8 +612,13 @@ def _edit_block(
                 save.click()
                 navigation_error: PlaywrightError | None = None
                 try:
+                    # Trailing "*" (#958 follow-up): the post-save redirect
+                    # carries a query suffix (live log 2026-09-03, experience
+                    # editor: navigated to ".../resume/{id}?hhtmFrom=
+                    # profile_experience") and a bare glob is a FULL match —
+                    # the same latent false-uncertain as experience.py.
                     page.wait_for_url(
-                        f"**/resume/{resume_id}", wait_until="commit", timeout=SAVE_TIMEOUT_MS
+                        f"**/resume/{resume_id}*", wait_until="commit", timeout=SAVE_TIMEOUT_MS
                     )
                 except PlaywrightError as exc:
                     # #825: раньше здесь не было явного timeout -- Playwright

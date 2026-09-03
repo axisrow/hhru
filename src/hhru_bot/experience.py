@@ -43,6 +43,7 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_RESUME_PANEL_EXPAND,
     EXPERIENCE_RESUME_PANEL_SCOPE,
     EXPERIENCE_SAVE,
+    EXPERIENCE_SAVE_VALIDATION_ERRORS,
     EXPERIENCE_SHARED_NEW_ROW_COMPANY,
     EXPERIENCE_SHARED_NEW_ROW_POSITION,
     EXPERIENCE_START_MONTH,
@@ -375,6 +376,57 @@ def _dump_experience_save_failure(page: Page, index: int, exc: Exception) -> Non
         logger.warning("experience: строка %s — дамп сохранён (%s)", index, exc)
     except Exception:  # noqa: BLE001 - dump is best-effort
         logger.warning("experience: дамп не удался", exc_info=True)
+
+
+def _read_save_validation_errors(page: Page) -> str | None:
+    """Read hh.ru's inline validation messages after a rejected save click.
+
+    Live capture 2026-09-03 (#958 follow-up): Save on an EMPTY experience
+    form never navigates — hh.ru rejects the submit client-side, stays on
+    the editor URL and renders form-helper-error texts ("Пожалуйста,
+    укажите") under every required field. That is a DEFINITE non-mutation:
+    the form is still open and nothing reached hh.ru, so the caller can
+    report a plain failed (retryable) instead of the opaque navigation-
+    timeout uncertain that locks the resume_id.
+
+    Returns None when the page cannot be read or no visible validation
+    messages are present — the caller keeps the fail-closed uncertain path
+    in that case. Hidden helpers (inner_text() == "") are ignored, so a
+    healthy form never reads as a rejection.
+    """
+    try:
+        if not _still_on_experience_editor(page):
+            return None
+        helpers = page.locator(EXPERIENCE_SAVE_VALIDATION_ERRORS)
+        count = helpers.count()
+        if count == 0:
+            return None
+        texts = []
+        for i in range(count):
+            text = helpers.nth(i).inner_text().strip()
+            if text:
+                texts.append(text)
+        if not texts:
+            return None
+        distinct = "; ".join(sorted(set(texts)))
+        return f"{distinct} (полей с ошибкой: {len(texts)})"
+    except PlaywrightError:
+        return None
+
+
+def _still_on_experience_editor(page: Page) -> bool:
+    """True when page.url is still one of the experience editor routes.
+
+    Guards the validation-rejection read: form-helper-error elements on an
+    unrelated page (login redirect, drifted navigation) must not be reported
+    as "hh.ru отклонил сохранение" for this form. Confirmed editor paths:
+    /resume/edit/{resume_id}/experience (first entry), /profile/edit/
+    experience[/{rowId}] (shared profile editor, indexed rows included).
+    """
+    path = urlsplit(page.url).path.rstrip("/")
+    return path.startswith("/profile/edit/experience") or (
+        path.startswith("/resume/edit/") and path.endswith("/experience")
+    )
 
 
 def _select_month(page: Page, locator, month: str) -> None:
@@ -1187,12 +1239,37 @@ def edit_experience_on_hh(
                 save_attempted = True
                 save.click()
                 try:
+                    # Trailing "*" (#958 follow-up): the post-save redirect
+                    # carries a query suffix (live log 2026-09-03: navigated
+                    # to ".../resume/{id}?hhtmFrom=profile_experience") and a
+                    # bare glob is a FULL match, so the save was recorded as
+                    # an uncertain after a 30s timeout although Playwright's
+                    # own log showed the navigation had happened. "*" matches
+                    # the query/fragment suffix but not a "/" path segment,
+                    # so a genuinely different page still fails the wait;
+                    # resume_identity_matches() below re-checks identity.
                     page.wait_for_url(
-                        f"**/resume/{resume_id}",
+                        f"**/resume/{resume_id}*",
                         wait_until="commit",
                         timeout=SAVE_TIMEOUT_MS,
                     )
                 except PlaywrightError as exc:
+                    # #958 follow-up (live capture 2026-09-03): before falling
+                    # back to the opaque navigation-timeout uncertain, check
+                    # whether hh.ru REJECTED the save client-side — visible
+                    # form-helper-error messages while still on the editor
+                    # URL are a definite non-mutation ("Пожалуйста, укажите"
+                    # under every empty required field, no navigation), so a
+                    # plain failed is reported instead: retryable, no
+                    # uncertain lock on the resume_id.
+                    rejection = _read_save_validation_errors(page)
+                    if rejection is not None:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: hh.ru отклонил сохранение — "
+                                f"валидация формы: {rejection}"
+                            )
+                        ]
                     # #956: dump the page at the moment of the failed save so
                     # the next investigation is reproducible without another
                     # live attempt (same pattern as resume_education's
