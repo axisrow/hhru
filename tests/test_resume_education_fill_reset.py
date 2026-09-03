@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from hhru_bot.resume_education import _fill_and_verify
+from hhru_bot.resume_education import _fill_and_verify, _pre_save_stable
 
 pytestmark = pytest.mark.unit
 
@@ -60,4 +60,27 @@ def test_fill_and_verify_survives_async_reset():
     assert locator.input_value() == "Медицинский университет"
     # Old code returned True after the immediate match without ever waiting,
     # so the async reset landed AFTER verification and Save submitted empty.
+    assert page.ticks >= 1
+
+
+def test_pre_save_stable_survives_reset_after_last_fill(monkeypatch):
+    """The final guard must cover the reset window after the last field fill."""
+    page = TickPage()
+    locator = ResettingLocator(page)
+    page.attach(locator)
+    monkeypatch.setattr(
+        "hhru_bot.resume_education._field_locator",
+        lambda page, name, **kwargs: locator,  # noqa: ARG005
+    )
+
+    assert (
+        _pre_save_stable(
+            page,
+            [("institution", "Медицинский университет")],
+            additional=False,
+            trigger_shape=False,
+        )
+        is True
+    )
+    assert locator.input_value() == "Медицинский университет"
     assert page.ticks >= 1
