@@ -1071,50 +1071,6 @@ def edit_experience_on_hh(
             _fill_stable(page, description_locator, entry.description())
             if entry.company_url and page.locator(EXPERIENCE_COMPANY_URL).count() == 1:
                 _fill(page.locator(EXPERIENCE_COMPANY_URL), entry.company_url)
-            # #956 pre-save stability: the clearing re-render may land after
-            # the last _fill_stable returned (live: the panel reconciliation
-            # clicks themselves trigger it); re-check the identity fields
-            # right before the save click, refill whatever was reset, and
-            # fail closed rather than submit an emptied form. The SAME
-            # locator objects are reused so the check reads the filled
-            # controls, not fresh instances.
-            _stable_fields = (
-                (company_locator, entry.company),
-                (position_locator, entry.position),
-                (start_year_locator, entry.start_year),
-                (description_locator, entry.description()),
-            )
-            for _stable_locator, _stable_value in _stable_fields:
-                if _stable_locator.count() == 1 and _stable_locator.input_value().strip() != (
-                    _stable_value.strip()
-                ):
-                    _stable_locator.fill(_stable_value)
-            # The controlled editor can remount after an instantaneous match,
-            # including after panel reconciliation. Require one settled poll
-            # before the durable save click.
-            page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
-            if entry.start_month and start_month_locator.count() == 1:
-                if _read_month(start_month_locator) != str(int(entry.start_month)):
-                    _select_month(page, start_month_locator, entry.start_month)
-                page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
-            for _stable_locator, _stable_value in _stable_fields:
-                if _stable_locator.count() == 1 and _stable_locator.input_value().strip() != (
-                    _stable_value.strip()
-                ):
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: форма сбросила значение поля перед "
-                            "сохранением, save не нажат (#956)"
-                        )
-                    ]
-            if entry.start_month and start_month_locator.count() == 1:
-                if _read_month(start_month_locator) != str(int(entry.start_month)):
-                    return results + [
-                        ExperienceResult(
-                            f"строка {index}: форма сбросила выбор месяца перед "
-                            "сохранением, save не нажат (#956)"
-                        )
-                    ]
             if dry_run:
                 results.append(ExperienceResult(f"строка {index}: предложено, save не нажат", True))
                 page.locator(cancel_selector).click()
@@ -1144,6 +1100,67 @@ def edit_experience_on_hh(
                         )
                     except ResumePanelReconciliationError as exc:
                         return results + [ExperienceResult(f"строка {index}: {exc}")]
+                # #956: run this pass after panel reconciliation because
+                # checkbox clicks can trigger the same controlled-input
+                # remount that clears the form. Include every value written.
+                stable_fields = [
+                    (company_locator, entry.company),
+                    (position_locator, entry.position),
+                    (start_year_locator, entry.start_year),
+                    (description_locator, entry.description()),
+                ]
+                if entry.company_url:
+                    company_url_locator = page.locator(EXPERIENCE_COMPANY_URL)
+                    if company_url_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: поле URL компании не подтверждено, "
+                                "save не нажат (#956)"
+                            )
+                        ]
+                    stable_fields.append((company_url_locator, entry.company_url))
+                if end_year_locator.count() == 1:
+                    stable_fields.append(
+                        (end_year_locator, "" if entry.current else entry.end_year)
+                    )
+                month_fields = []
+                if entry.start_month:
+                    if start_month_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: месяц начала не подтверждён, save не нажат (#956)"
+                            )
+                        ]
+                    month_fields.append((start_month_locator, entry.start_month))
+                if entry.end_month and not entry.current:
+                    if end_month_locator.count() != 1:
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: месяц окончания не подтверждён, "
+                                "save не нажат (#956)"
+                            )
+                        ]
+                    month_fields.append((end_month_locator, entry.end_month))
+                for stable_locator, stable_value in stable_fields:
+                    if stable_locator.input_value().strip() != stable_value.strip():
+                        stable_locator.fill(stable_value)
+                for month_locator, month_value in month_fields:
+                    if _read_month(month_locator) != str(int(month_value)):
+                        _select_month(page, month_locator, month_value)
+                page.wait_for_timeout(FIELD_SETTLE_WAIT_MS)
+                if any(
+                    stable_locator.input_value().strip() != stable_value.strip()
+                    for stable_locator, stable_value in stable_fields
+                ) or any(
+                    _read_month(month_locator) != str(int(month_value))
+                    for month_locator, month_value in month_fields
+                ):
+                    return results + [
+                        ExperienceResult(
+                            f"строка {index}: форма сбросила значение перед "
+                            "сохранением, save не нажат (#956)"
+                        )
+                    ]
                 save = page.locator(save_selector)
                 if save.count() != 1:
                     return results + [
