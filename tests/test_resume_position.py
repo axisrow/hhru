@@ -950,7 +950,72 @@ def test_apply_position_sets_confirmed_specializations(monkeypatch):
 
     resume_position.apply_position(page, PositionValues(specializations=["Аналитик"]))
 
-    set_specializations.assert_called_once_with(page, ["Аналитик"])
+    set_specializations.assert_called_once_with(page, ["Аналитик"], fallback_other=False)
+
+
+def test_apply_position_passes_fallback_other(monkeypatch):
+    """#950: CLI-флаг --fallback-other доходит до _set_specializations."""
+
+    page = MagicMock()
+    set_specializations = MagicMock()
+    monkeypatch.setattr(resume_position, "_set_specializations", set_specializations)
+
+    resume_position.apply_position(
+        page, PositionValues(specializations=["Врач-хирург"]), fallback_other=True
+    )
+
+    set_specializations.assert_called_once_with(page, ["Врач-хирург"], fallback_other=True)
+
+
+def test_set_specializations_falls_back_to_other_on_missing_leaf(monkeypatch):
+    """#950: leaf не отрендерился (PlaywrightError) + fallback_other=True —
+    выбирается явный плейсхолдер «Другое», а не отказ."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=["tree-selector-item tree-selector-item-40"]
+    )
+    option.first.wait_for.side_effect = [PlaywrightError("Timeout 5000ms exceeded."), None]
+
+    resume_position._set_specializations(page, ["Врач-хирург"], fallback_other=True)
+
+    # search.fill вызывался дважды: исходное значение и фоллбэк «Другое»
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == [
+        "Врач-хирург",
+        resume_position.OTHER_ROLE_LABEL,
+    ]
+    option.first.click.assert_called_once()
+
+
+def test_set_specializations_fallback_does_not_mask_ambiguity():
+    """#950: совпадение отрендерилось, но под двумя id — подлинная
+    неоднозначность; фоллбэк её не маскирует (fail-closed)."""
+
+    page = MagicMock()
+    _mock_specialization_locators(
+        page,
+        option_data_qa=[
+            "tree-selector-item tree-selector-item-10",
+            "tree-selector-item tree-selector-item-20",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="не найден однозначно"):
+        resume_position._set_specializations(page, ["Аналитик"], fallback_other=True)
+
+
+def test_set_specializations_no_fallback_without_flag(monkeypatch):
+    """Без --fallback-other поведение прежнее: честный отказ."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(page, option_data_qa=[])
+    option.first.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):
+        resume_position._set_specializations(page, ["Несуществующая специальность"])
 
 
 def _mock_specialization_locators(page, *, option_data_qa):

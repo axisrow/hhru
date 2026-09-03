@@ -81,6 +81,14 @@ def register(subparsers) -> None:
             "автоматически опубликовать резюме"
         ),
     )
+    p.add_argument(
+        "--fallback-other",
+        action="store_true",
+        help=(
+            "Если специализация не найдена в дереве резюме — выбрать "
+            "роль-плейсхолдер «Другое» (id 40) вместо отказа (#950)"
+        ),
+    )
     p.set_defaults(func=run)
 
 
@@ -454,6 +462,10 @@ def _run(args: argparse.Namespace, progress) -> bool:
                                 "wizard-minimum сохранён, но форма не перешла в editor-режим"
                             ) from None
                         try:
+                            # --fallback-other сознательно НЕ пробрасывается сюда:
+                            # verify_wizard_save ниже проверяет точный role.label,
+                            # подмена листа плейсхолдером создала бы рассинхрон
+                            # «что применили» vs «что проверяем» (#950).
                             apply_position(page, plan, current=fixup_flow.values)
                             _click_save_and_wait(page)
                             verified_state = verify_wizard_save(
@@ -490,7 +502,9 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     print(published_note)
                 return False
             progress.begin_attempt()
-            apply_position(page, plan, current=current)
+            apply_position(
+                page, plan, current=current, fallback_other=getattr(args, "fallback_other", False)
+            )
             try:
                 _click_save_and_wait(page)
             except Exception as exc:  # click already landed; result is uncertain
