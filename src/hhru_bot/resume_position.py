@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .browser import (
     HH_BASE_URL,
@@ -1027,10 +1028,11 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
     # render (CLAUDE.md, resume_position.py's own _set_control).
     try:
         option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
-    except PlaywrightError as exc:
+    except PlaywrightTimeoutError as exc:
         # Именно здесь «лист отсутствует» (#950): bounded-таймаут подтверждает,
-        # что дерево так и не отрисовало метку. Ошибки fill/клика ниже — это
-        # НЕ отсутствие листа и наружу не превращаются (ревью #952).
+        # что дерево так и не отрисовало метку. Только таймаут — детач/ошибка
+        # протокола из wait_for и ошибки fill/клика ниже — это НЕ отсутствие
+        # листа и наружу не превращаются (ревью #952, цикл 2).
         raise SpecializationLeafMissing(f"лист специализации не отрендерился: {value}") from exc
     option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
     # The same leaf is rendered once under every matching parent category;

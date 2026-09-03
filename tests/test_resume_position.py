@@ -968,15 +968,15 @@ def test_apply_position_passes_fallback_other(monkeypatch):
 
 
 def test_set_specializations_falls_back_to_other_on_missing_leaf(monkeypatch):
-    """#950: leaf не отрендерился (PlaywrightError) + fallback_other=True —
+    """#950: leaf не отрендерился (TimeoutError из wait_for) + fallback_other=True —
     выбирается явный плейсхолдер «Другое», а не отказ."""
-    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
     option = _mock_specialization_locators(
         page, option_data_qa=["tree-selector-item tree-selector-item-40"]
     )
-    option.first.wait_for.side_effect = [PlaywrightError("Timeout 5000ms exceeded."), None]
+    option.first.wait_for.side_effect = [PlaywrightTimeoutError("Timeout 5000ms exceeded."), None]
 
     resume_position._set_specializations(page, ["Врач-хирург"], fallback_other=True)
 
@@ -1046,14 +1046,31 @@ def test_set_specializations_no_fallback_on_search_fill_error(monkeypatch):
 
 def test_set_specializations_no_fallback_without_flag(monkeypatch):
     """Без --fallback-other поведение прежнее: честный отказ."""
-    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
     option = _mock_specialization_locators(page, option_data_qa=[])
-    option.first.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
     with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):
         resume_position._set_specializations(page, ["Несуществующая специальность"])
+
+
+def test_set_specializations_no_fallback_on_nontimeout_wait_error(monkeypatch):
+    """Ревью #952 цикл 2: не-таймаутная PlaywrightError из wait_for (детач,
+    ошибка протокола) — не «лист отсутствует»; наружу, без фоллбэка."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=["tree-selector-item tree-selector-item-10"]
+    )
+    option.first.wait_for.side_effect = PlaywrightError("Target closed")
+
+    with pytest.raises(PlaywrightError):
+        resume_position._set_specializations(page, ["Аналитик"], fallback_other=True)
+
+    option.first.click.assert_not_called()
 
 
 def _mock_specialization_locators(page, *, option_data_qa):
@@ -1116,11 +1133,11 @@ def test_set_specializations_waits_out_the_filter_render_race():
 def test_set_specializations_reports_missing_leaf_after_timeout():
     """No match ever renders (not a race) — a distinct, honest message from
     the ambiguous-match case below."""
-    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
     option = _mock_specialization_locators(page, option_data_qa=[])
-    option.first.wait_for.side_effect = PlaywrightError("Timeout 5000ms exceeded.")
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
     with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):
         resume_position._set_specializations(page, ["Несуществующая специальность"])
