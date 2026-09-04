@@ -1728,21 +1728,27 @@ class _OutcomePage:
 def test_expected_editor_accepts_only_this_resumes_confirmed_shapes():
     """#960 contract: first entry is the exact /resume/edit/{id}/experience
     path (trailing slash tolerated), shared profile is
-    /profile/edit/experience[/{rowId}] with an empty query or exactly
+    /profile/edit/experience[/{rowId}] carrying exactly
     ?resumeFrom={resume_id} (#840/#844 live shapes). Anything else — another
-    resume's editor, a foreign query — is not the confirmed editor."""
+    resume's editor, an empty query, a foreign query — is not the confirmed
+    editor."""
     assert _expected_editor(_OutcomePage("/resume/edit/00001/experience"), "00001", True)
     assert _expected_editor(_OutcomePage("/resume/edit/00001/experience/"), "00001", True)
     assert not _expected_editor(_OutcomePage("/resume/edit/00002/experience"), "00001", True)
     assert not _expected_editor(_OutcomePage("/resume/00001"), "00001", True)
 
-    assert _expected_editor(_OutcomePage("/profile/edit/experience"), "00001", False)
     assert _expected_editor(
         _OutcomePage("/profile/edit/experience?resumeFrom=00001"), "00001", False
     )
     assert _expected_editor(
         _OutcomePage("/profile/edit/experience/12345?resumeFrom=00001"), "00001", False
     )
+    # An empty query carries no resume-specific signal — the same URL may be
+    # showing ANOTHER resume's editor (#787 live capture: hh.ru drops
+    # resumeFrom exactly when no binding is established; #960 review,
+    # round 3). It must never gate the retry click.
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience/12345"), "00001", False)
     # Another resume's binding (drifted tab) or a foreign query — not ours.
     assert not _expected_editor(
         _OutcomePage("/profile/edit/experience?resumeFrom=00002"), "00001", False
@@ -1818,6 +1824,10 @@ def test_classify_save_outcome_drifted_is_another_resumes_editor(monkeypatch):
     outcome = _classify_save_outcome(
         _OutcomePage("/profile/edit/experience?resumeFrom=00002"), "00001", False
     )
+    assert outcome.kind == "drifted"
+    # Empty-query shared editor: no resume-specific signal (#787 live drop,
+    # #960 review round 3) — could be any resume's editor, never ours.
+    outcome = _classify_save_outcome(_OutcomePage("/profile/edit/experience"), "00001", False)
     assert outcome.kind == "drifted"
     # The first-entry editor while saving an indexed (shared-profile) row.
     outcome = _classify_save_outcome(_OutcomePage("/resume/edit/00001/experience"), "00001", False)

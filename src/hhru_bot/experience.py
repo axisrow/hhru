@@ -440,13 +440,17 @@ def _expected_editor(page: Page, resume_id: str, first_entry: bool) -> bool:
     cycle 3 cannot come up here. Confirmed shapes:
     - first entry: exactly ``/resume/edit/{resume_id}/experience`` (#787);
     - shared profile: exactly ``/profile/edit/experience`` or with a single
-      ``/{rowId}`` segment (#844), with an empty query or
-      ``?resumeFrom={resume_id}`` (#840). A similarly named sibling route
-      (``/profile/edit/experience-notes``) or a deeper path
-      (``/experience/{row}/extra``) is NOT the confirmed editor — the
-      path-segment boundary is enforced, not a bare ``startswith`` (#960
-      review); any other query means the page is not in the state hh.ru
-      opened it in — fail closed.
+      ``/{rowId}`` segment (#844), and ALWAYS with
+      ``?resumeFrom={resume_id}`` (#840) — both code-driven entry points
+      carry the param. ``resumeFrom`` is the only resume-specific signal
+      the URL has: an empty query is exactly what hh.ru shows when NO
+      binding was established (#787 live capture: the param dropped on the
+      suggestion-chip route), so an empty-query editor could be ANY
+      resume's editor and must never gate the retry click (#960 review,
+      round 3). A similarly named sibling route
+      (``/profile/edit/experience-notes``), a deeper path
+      (``/experience/{row}/extra``) or any other query — not the confirmed
+      editor, fail closed.
     """
     parts = urlsplit(page.url)
     path = parts.path.rstrip("/")
@@ -465,7 +469,7 @@ def _expected_editor(page: Page, resume_id: str, first_entry: bool) -> bool:
         # sibling route like "-notes" shares the prefix but not the route.
         and (not remainder or remainder.startswith("/"))
         and len(segments_after_base) <= 1
-        and parts.query in ("", f"resumeFrom={resume_id}")
+        and parts.query == f"resumeFrom={resume_id}"
     )
 
 
