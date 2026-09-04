@@ -1071,11 +1071,13 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
             # затёр бы валидную близкую специализацию (#954). Счётчик —
             # точный SPECIALIZATION_OPTION (число листьев), а не все дети
             # контейнера: заголовки групп не «варианты» (ревью PR #964).
+            # Отказ перечисляет реально отрисованные листы (принцип #836,
+            # канал #950): перезапуск с первого раза, а не перебор вслепую.
+            evaluation = evaluate_leaf(value, _poll_specialization_labels(page))
             option_count = page.locator(SPECIALIZATION_OPTION).count()
             raise RuntimeError(
                 f"результат фильтра непуст (совпадений: {option_count}), но точного "
-                f"листа «{value}» среди них нет — передайте точное имя листа из "
-                "live-каталога (составные имена вида «Столяр, плотник»)"
+                f"листа «{value}» среди них нет — {format_candidates(evaluation)}"
             ) from exc
         raise SpecializationTreeIndeterminate(
             f"дерево специализаций не отрисовалось за "
