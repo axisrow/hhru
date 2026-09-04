@@ -1262,6 +1262,55 @@ def test_edit_experience_via_add_button_fails_closed_when_all_expand_clicks_swal
     assert "не удалось развернуть панель" in results[0].reason
 
 
+def test_edit_experience_append_only_forces_add_shape_on_index_collision(monkeypatch):
+    """#957: append_only forces the shared add shape even when the requested
+    index COLLIDES with an existing row (trigger.count()==1). Without it the
+    plan would land on that row's editor and overwrite it (the #815 trap the
+    manual path used to refuse outright); the colliding index must not
+    address anything under append_only."""
+    _add_button_fixture(monkeypatch, None)
+    page = _AddButtonPage([0, 3], panel_titles={"Target Resume": True, "python": True})
+
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[0],
+        resume_titles={"resume-1": "Target Resume", "other": "python"},
+        append_only=True,
+    )
+
+    assert page.add_clicked is True
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+def test_edit_experience_via_add_button_fails_closed_when_row_set_does_not_grow(monkeypatch):
+    """#957: the add shape CREATES a row, so the post-save row set must grow
+    exactly like first_entry — a flat set after reload means the row was not
+    created or not bound to THIS resume, and must be a definite failure, not
+    a silent success."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _SavePage(indexes=[3], panel_titles={"Target Resume": True})
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+        indexes=[5],
+        resume_titles={"resume-1": "Target Resume"},
+    )
+
+    assert page._reloaded is True
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].uncertain
+    assert "не привязалась к резюме" in results[0].reason
+
+
 def test_edit_experience_via_add_button_fails_closed_when_checkbox_count_mismatches(monkeypatch):
     """#782 fail-closed guard: if the panel does not expose exactly one
     checkbox per expected account resume title (e.g. the list never

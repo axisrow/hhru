@@ -888,6 +888,7 @@ def edit_experience_on_hh(
     dry_run: bool,
     indexes=None,
     resume_titles: dict[str, str] | None = None,
+    append_only: bool = False,
 ):
     """Apply a plan to one or more rows; return structural row outcomes.
 
@@ -909,6 +910,15 @@ def edit_experience_on_hh(
     at all) — callers must supply it up front rather than have this function
     guess or fetch it mid-form, since fetching it requires navigating away
     from an already-open, unsaved form.
+
+    ``append_only`` (#957): every entry is APPENDED as a NEW row. On a
+    non-empty resume the shared-profile add shape (EXPERIENCE_ADD_BUTTON)
+    is forced even when the requested index happens to collide with an
+    existing row's internal React counter — landing there would open the
+    EXISTING row's editor and overwrite it (manual plans have no
+    protected-field merge, #327/#815). The manual ``--entry`` CLI path sets
+    this; the LLM fill path leaves it False because it re-saves existing
+    rows in place by their real indexes.
     """
     try:
         open_confirmed_resume(page, resume_id)
@@ -944,7 +954,12 @@ def edit_experience_on_hh(
         # instead of refusing outright. It still fails closed below if the
         # add trigger, the target title, or the panel itself cannot be
         # confirmed.
-        via_add_button = not first_entry and trigger.count() == 0
+        # #957: append_only additionally forces this shape when the requested
+        # index COLLIDES with an existing row (count()==1) — a manual plan
+        # would otherwise open that row's editor and overwrite it. The index
+        # under append_only carries no addressing meaning at all; only the
+        # add shape is used.
+        via_add_button = not first_entry and (append_only or trigger.count() == 0)
         if via_add_button and target_title is None:
             return results + [
                 ExperienceResult(
@@ -1387,10 +1402,11 @@ def edit_experience_on_hh(
                 # found saves that silently went to the shared profile
                 # instead. Reload and re-read the actual row set rather than
                 # trusting the in-memory DOM state right after save. This
-                # only applies to a genuinely new row (first_entry): editing
-                # an EXISTING row in place (fill mode re-saves the same
-                # index) must not be flagged just because the row set didn't
-                # change.
+                # applies to a genuinely new row (first_entry AND the
+                # via_add_button add shape — both CREATE a row, so the row
+                # set must grow): editing an EXISTING row in place (fill mode
+                # re-saves the same index) must not be flagged just because
+                # the row set didn't change.
                 #
                 # #815 review: a bare count() comparison (before vs. after)
                 # is a weak positive signal — a resume that lost one row and
@@ -1421,7 +1437,7 @@ def edit_experience_on_hh(
                             uncertain=True,
                         )
                     ]
-                if first_entry and not (after_indexes - before_indexes):
+                if (first_entry or via_add_button) and not (after_indexes - before_indexes):
                     return results + [
                         ExperienceResult(
                             f"строка {index}: запись не привязалась к резюме "

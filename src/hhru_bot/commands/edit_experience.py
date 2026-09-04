@@ -64,7 +64,10 @@ def register(subparsers) -> None:
             '"end_year":..., "end_month":..., "current":..., "duties":..., '
             '"achievements":[...], "company_url":...}\'. '
             "start_month обязателен (число 1-12 строкой) — форма опыта hh.ru "
-            "не сохраняется без месяца начала работы (#811)."
+            "не сохраняется без месяца начала работы (#811). Записи только "
+            "ДОБАВЛЯЮТСЯ к резюме (#957): существующие строки печатаются перед "
+            "записью и не меняются, а дубликат (та же компания+должность+начало) "
+            "отклоняется."
         ),
     )
     parser.add_argument(
@@ -132,6 +135,41 @@ def _load_entries(raw_entries: list[str] | None):
             )
         entries.append(entry)
     return entries
+
+
+def _entry_identity(entry) -> tuple[str, ...]:
+    """Identity of an experience row for duplicate detection (#957).
+
+    Rows read back from hh.ru and manual --entry JSON carry the same fields,
+    so a re-run of a plan whose earlier attempt actually saved (e.g. a false
+    uncertain) matches itself instead of adding a second copy."""
+    return (
+        entry.company.strip(),
+        entry.position.strip(),
+        entry.start_year.strip(),
+        entry.start_month.strip(),
+    )
+
+
+def _month_year(month: str, year: str) -> str:
+    if month and year:
+        try:
+            return f"{int(month):02d}.{year}"
+        except ValueError:
+            return year
+    return year or month
+
+
+def _row_label(entry) -> str:
+    """One-line human rendering of an experience row for the live-state
+    listing and the duplicate refusal (#957)."""
+    start = _month_year(entry.start_month, entry.start_year)
+    if entry.current:
+        period = f"{start} — по настоящее время" if start else "по настоящее время"
+    else:
+        end = _month_year(entry.end_month, entry.end_year)
+        period = f"{start}–{end}" if start and end else (start or end or "даты не указаны")
+    return f"{entry.company} — {entry.position} ({period})"
 
 
 def _run(args: argparse.Namespace, progress) -> bool:
@@ -216,7 +254,12 @@ def _run(args: argparse.Namespace, progress) -> bool:
     if plan.used_fallback:
         print(f"[INFO] {plan.reason}; безопасный fallback: существующие записи без изменений")
     print(json.dumps([entry.__dict__ for entry in plan.entries], ensure_ascii=False, indent=2))
-    if args.dry_run:
+    # #957: a MANUAL dry-run still opens the browser below to read and print
+    # the live row set (read-only, no form is opened) — that listing is the
+    # state check the caller needs before authorizing a battle run, and the
+    # duplicate guard below runs in dry-run too. The LLM dry-run keeps its
+    # browserless early exit.
+    if args.dry_run and not manual:
         print("[DRY-RUN] save не нажат; изменений на hh.ru нет")
         return False
     if plan.used_fallback or not plan.entries:
@@ -231,41 +274,48 @@ def _run(args: argparse.Namespace, progress) -> bool:
             page = context.new_page()
             indexes = None
             if manual:
-                # Manual entries have no protected-field merge (#327): reusing an
-                # existing row's index would silently blank any field the manual
-                # JSON omitted. Always append after the live row count instead.
-                #
-                # #815 review round 2: this used to build `indexes` as
-                # range(existing_count, existing_count + N) — an arithmetic
-                # GUESS at a free index, based on the same contiguous-from-0
-                # assumption this PR disproves everywhere else. hh.ru's
-                # edit-trigger index is an internal React counter that can
-                # equal existing_count by coincidence (e.g. a resume with
-                # exactly one row whose real index happens to be 1):
-                # edit_experience_on_hh()'s fail-closed check only fires when
-                # the guessed index is NOT among the existing ones
-                # (trigger.count()==0) — a coincidental collision instead
-                # silently lands on the ordinary edit-existing-row path and
-                # OVERWRITES that row's content as if it were a fresh entry,
-                # the exact class of data loss the fail-closed guard exists
-                # to prevent for the other route. There is no reliable way
-                # to predict a free index from client-side arithmetic, so
-                # rather than gamble on a guess, fail closed explicitly here
-                # whenever the resume already has ANY row — this is a
-                # confirmed, not merely a suspected, unsafe path (see
-                # resume_experience.py's module docstring for the CREATE
-                # route this would otherwise fall through to).
-                existing_count = len(read_experience_on_hh(page, resume.resume_id))
-                if existing_count > 0:
+                # Manual entries are APPEND-only: they have no protected-field
+                # merge (#327), so landing on an existing row's editor would
+                # overwrite that row. Until #957 this path refused outright
+                # whenever the resume had ANY row, because a guessed free index
+                # could collide with an existing one (#815 review round 2 —
+                # hh.ru's edit-trigger index is an internal React counter that
+                # no client-side arithmetic can predict). edit_experience_on_hh
+                # now has a confirmed create-new-row shape for non-empty
+                # resumes (#840/#856/#958, via EXPERIENCE_ADD_BUTTON), so
+                # --entry appends through it (append_only=True) instead of
+                # refusing — the requested index no longer addresses anything.
+                # Two guards keep that append safe:
+                #   * the live row set is printed first: every run (dry-run
+                #     included) shows the resume's actual experience state —
+                #     also the read-only fact the caller needs before
+                #     authorizing a battle run;
+                #   * a manual entry duplicating an existing row
+                #     (company+position+start) is rejected: re-running a plan
+                #     after an uncertain outcome must not add a second copy of
+                #     a row the earlier attempt already saved (#957).
+                existing = read_experience_on_hh(page, resume.resume_id)
+                if existing:
+                    print(f"[INFO] существующий опыт на hh.ru ({len(existing)}):")
+                    for row_number, row in enumerate(existing):
+                        print(f"[INFO]   {row_number}: {_row_label(row)}")
+                else:
+                    print("[INFO] существующий опыт на hh.ru: записей нет")
+                existing_identities = {_entry_identity(row) for row in existing}
+                duplicates = [
+                    entry for entry in plan.entries if _entry_identity(entry) in existing_identities
+                ]
+                if duplicates:
                     print(
-                        "[FAIL] --entry не поддерживает добавление записи к резюме, "
-                        f"где опыт уже есть (существующих строк: {existing_count}) — "
-                        "hh.ru не даёт клиенту предсказать свободный индекс новой "
-                        "строки, а угаданный индекс может случайно совпасть с "
-                        "существующей строкой и перезаписать её (#815)"
+                        f"[FAIL] запись уже существует ({_row_label(duplicates[0])}): "
+                        "добавление дубля отклонено — путь --entry только добавляет "
+                        "записи и не изменяет существующие"
                     )
                     return True
                 indexes = list(range(len(plan.entries)))
+                if args.dry_run:
+                    print("[DRY-RUN] save не нажат; изменений на hh.ru нет")
+                    return False
             # #782: the "Резюме с этим местом работы" binding panel needs
             # every account resume's display title up front — it must be
             # read BEFORE the experience form is opened, since fetching it
@@ -289,6 +339,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 dry_run=False,
                 indexes=indexes,
                 resume_titles=resume_titles,
+                append_only=manual,
             )
     except BrowserLaunchError:
         # #465 review round 3: re-raise so cli.py's dedicated handler
