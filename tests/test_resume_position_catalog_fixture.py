@@ -81,11 +81,18 @@ def test_resume_catalog_reuses_one_leaf_id_across_categories():
 @pytest.mark.parametrize("value", ["Учитель", "Несуществующая специализация"])
 @pytest.mark.browser_unit
 def test_resume_catalog_rejects_non_leaf_or_missing_specialization(monkeypatch, value):
+    """#954: фикстура — характеристика живого DOM #867, в котором empty-state
+    маркер никогда не снимался, поэтому его здесь нет. Без позитивного
+    empty-state таймаут честно классифицируется как indeterminate, а не
+    «лист отсутствует»: реальное «Ничего не найдено» hh.ru появится в
+    фикстуре вместе с подтверждённым селектором (замер #954)."""
     monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
     playwright, browser, page = _page()
     try:
         page.locator(resume_position.SPECIALIZATION_ADD).click()
-        with pytest.raises(RuntimeError, match="специализация не найдена в дереве резюме"):
+        with pytest.raises(
+            resume_position.SpecializationTreeIndeterminate, match="отсутствие листа не доказано"
+        ):
             resume_position._set_specializations(page, [value])
     finally:
         browser.close()

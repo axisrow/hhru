@@ -172,6 +172,7 @@ VALUES: dict[str, str] = {
     "resume_page.RESUME_SKILLS_TAG_IN_GROUP": "[data-qa^='skill-tag-']",
     "resume_page.RESUME_SPECIALIZATION_ADD": "[data-qa='resume-position-professional-role-add-button']",
     "resume_page.RESUME_SPECIALIZATION_DELETE": "[data-qa='resume-position-professional-role-card-delete']",
+    "resume_page.RESUME_SPECIALIZATION_EMPTY_STATE": "[data-qa='resume-specialization-empty-state__UNCONFIRMED-954']",
     "resume_page.RESUME_SPECIALIZATION_MODAL": "[data-qa='professional-roles-modal']",
     "resume_page.RESUME_SPECIALIZATION_OPTION": "[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']",
     "resume_page.RESUME_SPECIALIZATION_SEARCH": "[data-qa='tree-selector-search-input']",

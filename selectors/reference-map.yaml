@@ -3936,6 +3936,28 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SPECIALIZATION_EMPTY_STATE:
+    value: '[data-qa=''resume-specialization-empty-state__UNCONFIRMED-954'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:128
+    decision: safety_guard
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: needs_live_evidence
+    bindings: {}
+    status: needs-live-evidence
+    origin: manual
+    verification: unverified
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:128
+      note: '#954 SENTINEL, not a real selector: the positive empty-state marker of the specialization tree filter. Deliberately
+        matches nothing on hh.ru so that an unconfirmed marker reads as fail-closed indeterminate, never as "leaf missing"
+        — absence of this selector never authorizes the --fallback-other write. To be replaced with the live-DOM value (read-only
+        measurement of the /resume/edit/{id}/position modal, issue #954) together with this provenance row.'
+    last_verified_at: '2026-09-04'
+    verified_flow: read_only_selector_contract_audit (live evidence not collected)
+    verified_by: hhru-461
   resume_page.RESUME_SPECIALIZATION_MODAL:
     value: '[data-qa=''professional-roles-modal'']'
     criticality: write

@@ -175,6 +175,7 @@
 | resume_page.RESUME_SKILLS_TAG_IN_GROUP | `[data-qa^='skill-tag-']` | — | — | — | live_dom |
 | resume_page.RESUME_SPECIALIZATION_ADD | `[data-qa='resume-position-professional-role-add-button']` | — | — | — | live_dom |
 | resume_page.RESUME_SPECIALIZATION_DELETE | `[data-qa='resume-position-professional-role-card-delete']` | — | — | — | live_dom |
+| resume_page.RESUME_SPECIALIZATION_EMPTY_STATE | `[data-qa='resume-specialization-empty-state__UNCONFIRMED-954']` | — | — | — | safety_guard |
 | resume_page.RESUME_SPECIALIZATION_MODAL | `[data-qa='professional-roles-modal']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_OPTION | `[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_SEARCH | `[data-qa='tree-selector-search-input']` | — | — | — | documented_live |
