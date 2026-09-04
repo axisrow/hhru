@@ -1753,6 +1753,11 @@ def test_expected_editor_accepts_only_this_resumes_confirmed_shapes():
     assert not _expected_editor(
         _OutcomePage("/resume/edit/00001/experience?resumeFrom=00001"), "00001", False
     )
+    # Path-segment boundary (#960 review): a similarly named sibling route
+    # and a deeper-than-{rowId} path share the prefix but are not the
+    # confirmed editor — the gate of the second save click must reject them.
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience-notes"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience/123/extra"), "00001", False)
 
 
 def test_classify_save_outcome_saved_requires_path_and_identity(monkeypatch):

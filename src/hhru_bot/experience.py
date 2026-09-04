@@ -439,17 +439,28 @@ def _expected_editor(page: Page, resume_id: str, first_entry: bool) -> bool:
     ``*``-vs-``**``-vs-trailing-slash question class from PR #958 review
     cycle 3 cannot come up here. Confirmed shapes:
     - first entry: exactly ``/resume/edit/{resume_id}/experience`` (#787);
-    - shared profile: ``/profile/edit/experience[/{rowId}]`` (#844) with an
-      empty query or ``?resumeFrom={resume_id}`` (#840). Any other query
-      means the page is not in the state hh.ru opened it in — fail closed.
+    - shared profile: exactly ``/profile/edit/experience`` or with a single
+      ``/{rowId}`` segment (#844), with an empty query or
+      ``?resumeFrom={resume_id}`` (#840). A similarly named sibling route
+      (``/profile/edit/experience-notes``) or a deeper path
+      (``/experience/{row}/extra``) is NOT the confirmed editor — the
+      path-segment boundary is enforced, not a bare ``startswith`` (#960
+      review); any other query means the page is not in the state hh.ru
+      opened it in — fail closed.
     """
     parts = urlsplit(page.url)
     path = parts.path.rstrip("/")
     if first_entry:
         return path == f"/resume/edit/{resume_id}/experience"
-    return path.startswith("/profile/edit/experience") and parts.query in (
-        "",
-        f"resumeFrom={resume_id}",
+    base = "/profile/edit/experience"
+    remainder = path[len(base) :]
+    segments_after_base = [part for part in remainder.split("/") if part]
+    return (
+        # The next character after the base must be nothing or a "/" — a
+        # sibling route like "-notes" shares the prefix but not the route.
+        (not remainder or remainder.startswith("/"))
+        and len(segments_after_base) <= 1
+        and parts.query in ("", f"resumeFrom={resume_id}")
     )
 
 
