@@ -30,6 +30,15 @@ JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 12
 PNG_HEAD = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
 
 
+class FakeKeyboard:
+    def __init__(self, page):
+        self._page = page
+
+    def press(self, key):  # noqa: ARG002
+        # клавиатурный фолбэк активирует assign-кнопку так же, как клик
+        self._page.on_click(resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT)
+
+
 class FakeLocator:
     def __init__(self, page, selector, count=1, visible=True):
         self._page = page
@@ -47,6 +56,11 @@ class FakeLocator:
 
     def scroll_into_view_if_needed(self, *, timeout=None):  # noqa: ARG002
         self._page.scrolls.append(self._selector)
+
+    def focus(self):  # noqa: ARG002
+        if getattr(self._page, "keyboard_disabled", False):
+            raise PlaywrightError("fake: focus failed")
+        self._page.scrolls.append("focus:" + self._selector)
 
     def click(self, *, timeout=None):  # noqa: ARG002
         self._page.clicks.append(self._selector)
@@ -75,6 +89,8 @@ class FakePage:
         self.set_files: list[tuple[str, str]] = []
         self.clicks: list[str] = []
         self.scrolls: list[str] = []
+        self.keyboard = FakeKeyboard(self)
+        self.keyboard_disabled = False
         self.marker_count = 0
         self._nav_calls = 0
         self.reloaded = False
@@ -405,8 +421,28 @@ def test_assign_missing_after_apply_is_uncertain():
     assert page.clicks == [resume_photo.RESUME_PHOTO_EDITOR_APPLY]
 
 
-def test_assign_click_failure_is_uncertain(monkeypatch):
+def test_assign_click_falls_back_to_keyboard_and_succeeds(monkeypatch):
+    """Боевой кейс 2026-09-04: клик по assign вне вьюпорта падает —
+    клавиатурный фолбэк (focus+Enter) активирует кнопку, маркер появляется,
+    исход — success."""
     page = FakePage()
+    orig_click = FakeLocator.click
+
+    def failing_click(self, *, timeout=None):  # noqa: ARG002
+        if self._selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            raise PlaywrightError("fake assign click failed (outside viewport)")
+        orig_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", failing_click)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert "focus:" + resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT in page.scrolls
+
+
+def test_assign_click_and_keyboard_failing_is_uncertain(monkeypatch):
+    page = FakePage()
+    page.keyboard_disabled = True
     orig_click = FakeLocator.click
 
     def failing_click(self, *, timeout=None):  # noqa: ARG002
@@ -418,6 +454,7 @@ def test_assign_click_failure_is_uncertain(monkeypatch):
     result = _run(page, before_click=lambda: None)
     assert not result.success
     assert result.uncertain is True
+    assert "клавиатурный фолбэк" in result.reason
 
 
 def test_marker_missing_after_assign_is_uncertain(monkeypatch):

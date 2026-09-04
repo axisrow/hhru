@@ -286,16 +286,26 @@ def upload_photo_on_hh(
         print(f"[INFO] assign-кнопка не проскроллилась (клик продолжается): {exc}")
     try:
         assign_btn.click()
-    except PlaywrightError as exc:
-        # Боевые прогоны 2026-09-04 (#955, дважды): кнопка stable, но клик
-        # падает «outside of the viewport» — авто-скролл и явный скролл не
-        # помогают. Дамп модалки — единственный артефакт для разбора
-        # реального позиционирования (два сгоревших прогона без доказательств).
-        dump_path = dump_page_html(page, "photo_assign_click_uncertain")
-        reason = f"модалка назначения открыта, клик assign не удался: {exc}"
-        if dump_path is not None:
-            reason += f"; дамп: {dump_path}"
-        return _uncertain(reason)
+    except PlaywrightError as click_exc:
+        # Боевые прогоны 2026-09-04 (#955): кнопка assign — иконочная ссылка
+        # в шапке модалки-bottom-sheet; при viewport 1366x900 она вне
+        # вьюпорта, скролл блокирует overflow контейнера (дамп
+        # photo_assign_click_uncertain_20260904_*). Клавиатурный фолбэк:
+        # focus + Enter активирует <button> без позиционного клика;
+        # исход классифицирует маркерное ожидание ниже.
+        try:
+            assign_btn.focus()
+            page.keyboard.press("Enter")
+            print("[INFO] клик assign не удался, отправлен клавиатурный Enter")
+        except PlaywrightError as exc:
+            dump_path = dump_page_html(page, "photo_assign_click_uncertain")
+            reason = (
+                "модалка назначения открыта, клик assign не удался "
+                f"(и клавиатурный фолбэк): {click_exc}; focus/Enter: {exc}"
+            )
+            if dump_path is not None:
+                reason += f"; дамп: {dump_path}"
+            return _uncertain(reason)
 
     try:
         # Маркер — появление <img> в DOM («attached», не «visible»: сам блок
