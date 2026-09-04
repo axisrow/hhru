@@ -33,7 +33,12 @@ def run(args: argparse.Namespace):
     from ..browser import launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..history import History
-    from ..resume_photo import photo_upload_plan, upload_photo_on_hh, validate_photo
+    from ..resume_photo import (
+        PHOTO_VIEWPORT,
+        photo_upload_plan,
+        upload_photo_on_hh,
+        validate_photo,
+    )
 
     try:
         photo = validate_photo(args.photo)
@@ -73,7 +78,10 @@ def run(args: argparse.Namespace):
         )
         try:
             with launch_context(
-                config.storage_state_file, headless=args.headless, user_agent=config.user_agent
+                config.storage_state_file,
+                headless=args.headless,
+                user_agent=config.user_agent,
+                viewport=PHOTO_VIEWPORT,
             ) as context:
                 result = upload_photo_on_hh(
                     context.new_page(),

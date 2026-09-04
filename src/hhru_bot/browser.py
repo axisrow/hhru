@@ -399,12 +399,17 @@ def launch_context(
     storage_state_file: Path | None,
     headless: bool = False,
     user_agent: str | None = None,
+    viewport: dict | None = None,
 ):
     """Контекст браузера с сохранённой сессией.
 
     user_agent: None (по умолчанию) — пусть Playwright ставит свой родной UA;
     строка — переопределить UA (если требует hh.ru). Хардкода Chrome/xxx здесь
     намеренно нет.
+
+    viewport: None (по умолчанию) — дефолтные 1366x900; dict — переопределить
+    для конкретного потока (например, высокий viewport в upload-photo: шапка
+    модалки назначения стабильно вне дефолтного вьюпорта, см. resume_photo).
     """
     with sync_playwright() as p:
         # --disable-blink-features=AutomationControlled убирает главный флаг, по
@@ -412,7 +417,7 @@ def launch_context(
         # Приём из YAMAKAYAMACO/hh-autoresponder (рабочий против hh.ru).
         browser: Browser = launch_browser(p, headless=headless)
         context_kwargs: dict = {
-            "viewport": {"width": 1366, "height": 900},
+            "viewport": viewport or {"width": 1366, "height": 900},
             "locale": "ru-RU",
         }
         if user_agent:

@@ -96,6 +96,14 @@ _MAGIC: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "png"),
 )
 
+# Viewport контекста upload-photo. Модалка назначения — Magritte MediaViewer
+# (aria-modal, z-index 1170), assign-кнопка — иконочная кнопка в правом слоте
+# её шапки; при дефолтных 1366x900 шапка стабильно «outside of the viewport»,
+# скролл блокирует overflow контейнера (4 боевых прогона 2026-09-04, дампы
+# photo_assign_click_uncertain_*). Высокий viewport — легитимный сценарий
+# большого монитора: шапка помещается целиком при любом положении модалки.
+PHOTO_VIEWPORT = {"width": 1366, "height": 2400}
+
 
 @dataclass(frozen=True)
 class PhotoFile:
@@ -276,10 +284,18 @@ def upload_photo_on_hh(
     # ретраит клик и падает по таймауту (бои 2026-09-02 и 2026-09-03:
     # explore-пауза 2500мс пропускала клик, командная без неё — нет).
     page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
-    # Боевой кейс 2026-09-04: кнопка assign резолвилась и была stable, но
-    # стабильно «outside of the viewport» — 57 ретраев клика вхолостую.
-    # Явный скролл перед кликом; ошибка скролла не фатальна — клик сам
-    # классифицирует исход.
+    # Боевой кейс 2026-09-04 (#955, прогоны 1-7): кнопка assign в шапке
+    # MediaViewer резолвилась и была stable, но стабильно «outside of the
+    # viewport» — 57 ретраев клика вхолостую. Перед кликом нормализуем
+    # геометрию двумя независимыми способами: скролл документа наверх
+    # (гипотеза по дампу: шапка вьювера абсолютна к документу, а страница
+    # проскроллена вниз нашим scrollIntoView MFE-контейнера) и явный
+    # scroll_into_view самой кнопки. Обе ошибки не фатальны — исход
+    # классифицирует маркер.
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+    except PlaywrightError as exc:
+        print(f"[INFO] скролл документа наверх не удался (клик продолжается): {exc}")
     try:
         assign_btn.scroll_into_view_if_needed(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
     except PlaywrightError as exc:
@@ -287,21 +303,29 @@ def upload_photo_on_hh(
     try:
         assign_btn.click()
     except PlaywrightError as click_exc:
-        # Боевые прогоны 2026-09-04 (#955): кнопка assign — иконочная ссылка
-        # в шапке модалки-bottom-sheet; при viewport 1366x900 она вне
-        # вьюпорта, скролл блокирует overflow контейнера (дамп
-        # photo_assign_click_uncertain_20260904_*). Клавиатурный фолбэк:
-        # focus + Enter активирует <button> без позиционного клика;
-        # исход классифицирует маркерное ожидание ниже.
+        # Позиционный клик не удался. Дальше — два фолбэка активации без
+        # геометрии, оба best-effort: focus+Enter (боевой прогон 7 показал,
+        # что Enter отправляется без ошибки, но кнопку НЕ активирует — как
+        # и на другом компоненте hh.ru, experience.py:859) и dispatch_event,
+        # который не требует попадания элемента во вьюпорт вовсе. Если оба
+        # РАНИЛИСЬ без исключения — исход всё равно честно классифицирует
+        # маркерное ожидание ниже; если оба БРОСИЛИ — дамп и uncertain.
+        kb_error: str | None = None
         try:
             assign_btn.focus()
             page.keyboard.press("Enter")
             print("[INFO] клик assign не удался, отправлен клавиатурный Enter")
         except PlaywrightError as exc:
+            kb_error = str(exc)
+        try:
+            assign_btn.dispatch_event("click")
+            print("[INFO] отправлен dispatch_event('click') по assign-кнопке")
+        except PlaywrightError as dispatch_exc:
             dump_path = dump_page_html(page, "photo_assign_click_uncertain")
             reason = (
                 "модалка назначения открыта, клик assign не удался "
-                f"(и клавиатурный фолбэк): {click_exc}; focus/Enter: {exc}"
+                f"(клавиатурный фолбэк и dispatch_event тоже): {click_exc}; "
+                f"focus/Enter: {kb_error}; dispatch_event: {dispatch_exc}"
             )
             if dump_path is not None:
                 reason += f"; дамп: {dump_path}"

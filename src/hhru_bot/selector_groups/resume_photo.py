@@ -98,6 +98,16 @@ RESUME_PHOTO_EDITOR_APPLY = _selector("resume_photo.RESUME_PHOTO_EDITOR_APPLY")
 # клик привёл к появлению <img> в аватаре (дамп photo_assign_final_*).
 # Модалка анимируется: кликать после затухания overlay, иначе Playwright
 # ретраит и падает по таймауту (наблюдено).
+# ГЕОМЕТРИЯ (боевые прогоны 2026-09-04 #955, дампы
+# photo_assign_click_uncertain_*): модалка — Magritte MediaViewer
+# (aria-modal, z-index 1170), кнопка — иконочная, в правом слоте шапки
+# (magritte-actions-right-slot). При viewport 1366x900 шапка стабильно
+# «outside of the viewport», скролл блокирует overflow контейнера;
+# клавиатурный focus+Enter отправляется без ошибки, но кнопку НЕ активирует
+# (прогон 7; тот же негативный паттерн, что experience.py:859). Цепочка
+# активации в resume_photo: скролл документа наверх + scroll_into_view +
+# позиционный клик -> focus+Enter -> dispatch_event('click') без геометрии;
+# исход в любом случае подтверждает только readback (#955).
 RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT")
 
 # Модалка «8 фото — это максимум»: галерея фото ПЕРЕПОЛНЕНА. Подтверждена
