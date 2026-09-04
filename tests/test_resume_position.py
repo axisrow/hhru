@@ -1033,14 +1033,17 @@ def test_set_specializations_no_fallback_on_near_miss_filter():
     """#954: непустой результат фильтра без точного совпадения (неточное имя
     листа — имена каталога составные, «Столяр, плотник») — НЕ пустой фильтр;
     «Другое» не подставляется даже с флагом: плейсхолдер затёр бы валидную
-    близкую специализацию."""
+    близкую специализацию. Счётчик в сообщении — число листьев
+    (SPECIALIZATION_OPTION), не всех детей контейнера (ревью PR #964)."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
-    option = _mock_specialization_locators(page, option_data_qa=[], container_children=3)
+    option = _mock_specialization_locators(
+        page, option_data_qa=[], container_children=3, rendered_options=2
+    )
     option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
-    with pytest.raises(RuntimeError, match="фильтр непуст"):
+    with pytest.raises(RuntimeError, match=r"результат фильтра непуст \(совпадений: 2\)"):
         resume_position._set_specializations(page, ["Учитель"], fallback_other=True)
 
     search = page.locator(resume_position.SPECIALIZATION_SEARCH)
@@ -1134,7 +1137,9 @@ def test_set_specializations_no_fallback_on_nontimeout_wait_error(monkeypatch):
     option.first.click.assert_not_called()
 
 
-def _mock_specialization_locators(page, *, option_data_qa, container_children: int | None = 0):
+def _mock_specialization_locators(
+    page, *, option_data_qa, container_children: int | None = 0, rendered_options: int | None = None
+):
     """Common scaffolding for _set_specializations tests below.
 
     Mocks every locator _set_specializations touches; option_data_qa controls
@@ -1162,6 +1167,12 @@ def _mock_specialization_locators(page, *, option_data_qa, container_children: i
         get_attribute=lambda _name: option_data_qa[i]
     )
     option_tree.filter.return_value = option
+    # Unfiltered count of rendered leaves, read by the near-miss branch
+    # (review PR #964): distinct from option_data_qa, which models the
+    # exact-label-filtered subset.
+    option_tree.count.return_value = (
+        len(option_data_qa) if rendered_options is None else rendered_options
+    )
     container = MagicMock()
     container.count.return_value = 0 if container_children is None else 1
     container.first.locator.return_value.count.return_value = container_children or 0
