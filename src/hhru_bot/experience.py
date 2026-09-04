@@ -456,9 +456,14 @@ def _expected_editor(page: Page, resume_id: str, first_entry: bool) -> bool:
     remainder = path[len(base) :]
     segments_after_base = [part for part in remainder.split("/") if part]
     return (
-        # The next character after the base must be nothing or a "/" — a
+        # Explicit prefix check first: a shorter unrelated path ("/login",
+        # "/profile/edit") slices to an empty remainder and would otherwise
+        # pass the empty-remainder test below as the base editor (#960
+        # review, round 2).
+        path.startswith(base)
+        # The character right after the base must be nothing or a "/" — a
         # sibling route like "-notes" shares the prefix but not the route.
-        (not remainder or remainder.startswith("/"))
+        and (not remainder or remainder.startswith("/"))
         and len(segments_after_base) <= 1
         and parts.query in ("", f"resumeFrom={resume_id}")
     )

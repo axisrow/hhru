@@ -1758,6 +1758,11 @@ def test_expected_editor_accepts_only_this_resumes_confirmed_shapes():
     # confirmed editor — the gate of the second save click must reject them.
     assert not _expected_editor(_OutcomePage("/profile/edit/experience-notes"), "00001", False)
     assert not _expected_editor(_OutcomePage("/profile/edit/experience/123/extra"), "00001", False)
+    # Shorter unrelated paths slice to an empty remainder past the base
+    # (#960 review, round 2): without the explicit prefix check, "/login"
+    # with its empty query would pass as the base shared-profile editor.
+    assert not _expected_editor(_OutcomePage("/login"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit"), "00001", False)
 
 
 def test_classify_save_outcome_saved_requires_path_and_identity(monkeypatch):
