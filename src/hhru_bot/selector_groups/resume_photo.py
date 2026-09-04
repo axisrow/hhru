@@ -111,6 +111,15 @@ RESUME_PHOTO_EDITOR_APPLY = _selector("resume_photo.RESUME_PHOTO_EDITOR_APPLY")
 # dispatch_event]; исход подтверждает только readback (#955).
 RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT")
 
+# Кнопка подтверждения назначения во вьювере (второй вид assign-кнопки).
+# Подтверждена живыми дампами 2026-09-04/05 (photo_upload_uncertain_
+# 20260904_233024 и 20260905_003039): в отличие от assign-current
+# (detached NavBar, активация мертва после crop-upload) она в теле
+# модалки и появляется в переоткрытом карандашом вьювере для свежей
+# загрузки — подтверждение «назначить это фото». Фолбэк resume_photo
+# ждёт ЛЮБУЮ из двух и активирует по фактическому data-qa.
+RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT")
+
 # Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён
 # живыми дампами 2026-09-04 (photo_assign_click_uncertain_*/photo_upload_*
 # — data-qa='photo-viewer-close' в одном NavBar с assign-кнопкой; live-замер

@@ -4215,6 +4215,28 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
     verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT:
+    value: '[data-qa=''photo-viewer-assign-submit'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:112
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:112
+      note: Кнопка подтверждения назначения во вьювере (второй вид assign-кнопки). Подтверждена живыми дампами 2026-09-04/05
+        (photo_upload_uncertain_20260904_233024 и 20260905_003039) — в теле модалки, не в detached NavBar. Появляется в переоткрытом
+        карандашом вьювере для свежей загрузки. Фолбэк resume_photo ждёт любую из assign-кнопок и активирует по фактическому
+        data-qa.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
   resume_photo.RESUME_PHOTO_VIEWER_CLOSE:
     value: '[data-qa=''photo-viewer-close'']'
     criticality: read

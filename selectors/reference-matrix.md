@@ -188,6 +188,7 @@
 | resume_photo.RESUME_PHOTO_FILE_INPUT | `input[data-qa='resume-photo-proxy-gallery-input']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_MFE_CONTAINER | `[class*='ContainerForMicroFrontend-resumePhotoViewer']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT | `[data-qa='photo-viewer-action-assign-current']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT | `[data-qa='photo-viewer-assign-submit']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_CLOSE | `[data-qa='photo-viewer-close']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_LIMIT | `[data-qa='photo-viewer-limit']` | — | — | — | documented_live |
 | resume_position.BUSINESS_TRIPS | `[data-qa='resume-edit-business-trip-readiness']` | — | — | — | live_dom |

@@ -56,6 +56,7 @@ from .selector_groups.resume_photo import (
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
     RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT,
     RESUME_PHOTO_VIEWER_CLOSE,
     RESUME_PHOTO_VIEWER_LIMIT,
 )
@@ -441,25 +442,36 @@ def _assign_via_viewer_reopen(page: Page) -> bool:
     except PlaywrightError as exc:
         print(f"[INFO] фолбэк: клик по карандашу не удался: {exc}")
         return False
-    # 3. assign-current в переоткрытом вьювере: settle -> гидратация ->
-    #    dispatch (тот же паттерн, что диагностика; кнопка может быть в
-    #    detached NavBar — позиционный клик не используем).
+    # 3. после переоткрытия assign-кнопка бывает в ДВУХ видах (дампы
+    #    photo_upload_uncertain_20260904_233024/20260905_003039):
+    #    assign-current в detached NavBar (бои 8-9 — активация мертва для
+    #    blob) или assign-submit в теле модалки — подтверждение «назначить
+    #    это фото» именно для свежей загрузки. Ждём любую из двух и
+    #    активируем по фактическому data-qa: сначала позиционный клик
+    #    (in-body кнопка досягаема), при отказе — dispatch_event.
     try:
-        btn = page.locator(RESUME_PHOTO_VIEWER_ASSIGN_CURRENT).first
-        btn.wait_for(state="attached", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+        combined = page.locator(
+            f"{RESUME_PHOTO_VIEWER_ASSIGN_CURRENT}, {RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT}"
+        ).first
+        combined.wait_for(state="attached", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
         page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
+        resolved_qa = combined.get_attribute("data-qa")
+        resolved_selector = f"[data-qa='{resolved_qa}']"
         if not wait_for_react_hydration(
-            page, RESUME_PHOTO_VIEWER_ASSIGN_CURRENT, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS
+            page, resolved_selector, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS
         ):
             print(
                 "[INFO] фолбэк: React-привязка assign-кнопки не подтверждена — "
                 "активация всё равно отправлена"
             )
-        btn.dispatch_event("click")
+        try:
+            combined.click(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+        except PlaywrightError:
+            combined.dispatch_event("click")
     except PlaywrightError as exc:
         print(f"[INFO] фолбэк: активация assign после переоткрытия не удалась: {exc}")
         return False
-    print("[INFO] фолбэк: переоткрытый вьювер, dispatch_event по assign отправлен")
+    print("[INFO] фолбэк: переоткрытый вьювер, активация assign отправлена")
     return True
 
 

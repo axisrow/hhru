@@ -29,6 +29,13 @@ pytestmark = pytest.mark.unit
 JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 12
 PNG_HEAD = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
 
+# комбинированный локатор assign-кнопок фолбэка переоткрытия (см.
+# resume_photo._assign_via_viewer_reopen)
+ASSIGN_COMBINED = (
+    f"{resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT}, "
+    f"{resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT}"
+)
+
 
 class FakeKeyboard:
     def __init__(self, page):
@@ -78,6 +85,10 @@ class FakeLocator:
 
     def set_input_files(self, files):
         self._page.set_files.append((self._selector, files))
+
+    def get_attribute(self, name):  # noqa: ARG002
+        # комбинированный локатор фолбэка резолвится в assign-current
+        return "photo-viewer-action-assign-current"
 
 
 class FakePage:
@@ -155,7 +166,10 @@ class FakePage:
         # после переоткрытия вьювера через карандаш.
         if selector == resume_photo.RESUME_AVATAR_EDIT_BUTTON:
             self.pencil_reopened = True
-        if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+        if selector in (
+            resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+            ASSIGN_COMBINED,
+        ):
             if self.assign_works_only_after_reopen and not self.pencil_reopened:
                 return
             self.marker_count = self._marker_after_assign
@@ -171,6 +185,9 @@ class FakePage:
             return FakeLocator(self, selector, count=1, visible=self._assign_visible)
         if selector == resume_photo.RESUME_PHOTO_VIEWER_LIMIT:
             return FakeLocator(self, selector, count=1 if self.limit_modal else 0)
+        if selector == ASSIGN_COMBINED:
+            # после переоткрытия доступна одна из assign-кнопок
+            return FakeLocator(self, selector, count=1, visible=True)
         if selector == resume_photo.RESUME_AVATAR_IMAGE:
             # после readback-перезагрузки DOM свежий: оптимистичный маркер
             # заменяется персистентным состоянием readback_image_count
@@ -575,14 +592,17 @@ def test_marker_missing_reopen_fallback_assigns_and_succeeds(monkeypatch):
     assert result.success
     assert result.photo_present is True
     assert page.reloaded
-    # круг 1: dispatch по assign (мёртвый для blob); фолбэк: close + assign
+    # круг 1: dispatch по assign (мёртвый для blob); фолбэк: close dispatch,
+    # карандаш позиционным кликом, assign-кнопка позиционным кликом
     assert page.dispatches == [
         resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
         resume_photo.RESUME_PHOTO_VIEWER_CLOSE,
-        resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
     ]
-    # вьювер переоткрыт позиционным кликом по карандашу
-    assert resume_photo.RESUME_AVATAR_EDIT_BUTTON in page.clicks
+    assert page.clicks == [
+        resume_photo.RESUME_PHOTO_EDITOR_APPLY,
+        resume_photo.RESUME_AVATAR_EDIT_BUTTON,
+        ASSIGN_COMBINED,
+    ]
     assert page.pencil_reopened
     # гидратация assign-кнопки проверялась в обоих кругах (+ MFE-инпут)
     assert page.wait_fn_calls == 3
