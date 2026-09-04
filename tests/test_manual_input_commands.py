@@ -250,6 +250,10 @@ def test_edit_experience_manual_entry_rejects_duplicate_row(tmp_path, capsys, mo
         raise AssertionError("edit_experience_on_hh must not be called for a duplicate row")
 
     monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fail_if_called)
+    # review PR #965: the month format differs between the two sides — the
+    # readback yields canonical "1".."12" while the CLI happily accepts "01"
+    # (valid for _select_month's int()); identity must normalize or the same
+    # plan re-run with a zero-padded month slips past the gate.
     assert (
         edit_experience_cmd.run(
             _args(
@@ -261,7 +265,7 @@ def test_edit_experience_manual_entry_rejects_duplicate_row(tmp_path, capsys, mo
                 existing=None,
                 entry=[
                     '{"company": "ТСЖ Дом", "position": "Дворник", '
-                    '"start_year": "2024", "start_month": "1", "current": true}'
+                    '"start_year": "2024", "start_month": "01", "current": true}'
                 ],
             )
         )

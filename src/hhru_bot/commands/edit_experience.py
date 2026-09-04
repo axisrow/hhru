@@ -142,12 +142,23 @@ def _entry_identity(entry) -> tuple[str, ...]:
 
     Rows read back from hh.ru and manual --entry JSON carry the same fields,
     so a re-run of a plan whose earlier attempt actually saved (e.g. a false
-    uncertain) matches itself instead of adding a second copy."""
+    uncertain) matches itself instead of adding a second copy. start_month is
+    normalized through int() (review PR #965): the readback side yields the
+    canonical "1".."12" while the CLI side accepts "01" (equally valid for
+    _select_month) — a raw string compare would let the same plan re-run with
+    "01" slip past the gate and add a second copy of the row. start_year is
+    left as free text on both sides, no normalization needed."""
+    start_month = entry.start_month.strip()
+    if start_month:
+        try:
+            start_month = str(int(start_month))
+        except ValueError:
+            pass
     return (
         entry.company.strip(),
         entry.position.strip(),
         entry.start_year.strip(),
-        entry.start_month.strip(),
+        start_month,
     )
 
 
