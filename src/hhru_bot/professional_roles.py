@@ -633,12 +633,26 @@ def search_professional_roles(page: Page, queries: list[str]) -> list[Profession
 
 
 def resolve_explicit_role(page: Page, label: str) -> ProfessionalRole:
+    from .create_resume import OTHER_ROLE_LABEL
+
     roles = search_professional_roles(page, [label])
     matches = [role for role in roles if normalize(role.label) == normalize(label)]
     if len(matches) != 1:
+        # #950: отказ ведёт к цели — перечисляем, что фильтр реально предложил
+        # по запросу (принцип #836), чтобы перезапуск был точным с первого раза.
+        # «Другое» предложением не является: точный save по плейсхолдеру —
+        # отказ по дизайну (#913), а не повторная цель.
+        offered = list(
+            dict.fromkeys(
+                role.label
+                for role in roles
+                if role.label != OTHER_ROLE_LABEL and normalize(role.label) != normalize(label)
+            )
+        )
+        detail = f"; фильтр предлагает: {'; '.join(offered)}" if offered else ""
         raise RuntimeError(
             f"профессия «{label}» не найдена однозначно в live-каталоге поиска вакансий "
-            f"(совпадений: {len(matches)})"
+            f"(совпадений: {len(matches)}){detail}"
         )
     return matches[0]
 

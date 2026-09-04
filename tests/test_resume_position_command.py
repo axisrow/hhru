@@ -81,6 +81,16 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(hhru_bot.browser, "launch_context", fake_launch)
 
+    # #950: dry-run editor-пути валидирует --specialization по живому дереву —
+    # на двойнике проход; refusal-сценарии переопределяют в тестах ниже.
+    validated: list[list[str]] = []
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "validate_specializations_against_tree",
+        lambda page, values: (validated.append(list(values)), [])[1],
+    )
+    monkeypatch.setattr(hhru_bot.browser, "goto_hh", lambda page, url: None)
+
     # Editor-режим с текущим заголовком «QA»: ручной --title без LLM.
     flow = SimpleNamespace(
         kind="editor",
@@ -93,7 +103,7 @@ def env(monkeypatch, tmp_path):
         "open_position_form",
         lambda page, resume, enter_wizard=True: flow,
     )
-    return SimpleNamespace(clicks=clicks)
+    return SimpleNamespace(clicks=clicks, validated=validated)
 
 
 def test_duplicate_title_refused_before_save(env, capsys, tmp_path, monkeypatch):
@@ -209,3 +219,68 @@ def test_editor_dry_run_without_title_keeps_honest_none(env, capsys, tmp_path, m
     out = capsys.readouterr().out
     assert "title: None" in out
     assert "[INFO] Ничего не записано на hh.ru." in out
+
+
+def test_editor_dry_run_validates_specializations_against_tree(env, capsys, tmp_path):
+    """#950: dry-run editor-пути сверяет --specialization с живым деревом."""
+    assert (
+        cmd.run(
+            _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
+        )
+        is False
+    )
+
+    assert env.validated == [["Инженер по тестированию"]]
+    assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out
+
+
+def test_editor_dry_run_refuses_missing_specialization_before_any_click(
+    env, capsys, tmp_path, monkeypatch
+):
+    """Отказ перечисляет кандидатов и не доходит ни до CANCEL, ни до записи."""
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "validate_specializations_against_tree",
+        lambda page, values: [
+            "специализация не найдена в дереве резюме (dry-run сверка до записи, "
+            "#950): Врач-хирург; ближайшие доступные листы: Врач"
+        ],
+    )
+
+    assert (
+        cmd.run(_args(tmp_path, title=None, specialization=["Врач-хирург"], dry_run=True)) is True
+    )
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "Врач-хирург" in out
+    assert "Врач" in out
+    assert "[INFO] Ничего не записано" not in out
+    # Панель закрыта уходом со страницы; кликов по форме в dry-run нет.
+    assert env.clicks == []
+
+
+def test_editor_dry_run_skips_tree_validation_for_wizard_flow(env, capsys, tmp_path, monkeypatch):
+    """Wizard-поток не открывает editor-форму — его валидатором является
+    live-каталог поиска вакансий (resolve_explicit_role), не дерево резюме."""
+    flow = SimpleNamespace(
+        kind="wizard",
+        resume_id=RESUME_ID,
+        values=PositionValues(title="QA"),
+        state=SimpleNamespace(next_incomplete_screen_id="professional_role"),
+    )
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "open_position_form",
+        lambda page, resume, enter_wizard=True: flow,
+    )
+    monkeypatch.setattr("hhru_bot.resume_titles.account_duplicate_reason", lambda *a, **kw: "")
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.resolve_explicit_role",
+        lambda page, label: SimpleNamespace(role_id="148", label=label, category="Медицина"),
+    )
+
+    assert cmd.run(_args(tmp_path, title=None, specialization=["Инженер"], dry_run=True)) is False
+
+    assert env.validated == []
+    assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out

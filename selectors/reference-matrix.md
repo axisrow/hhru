@@ -95,24 +95,24 @@
 | resume_education._PRIMARY_FIELDS.year | `[data-qa='profile-education-year-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_ADD_BUTTON | `[data-qa='resume-list-card-experience'] [data-qa='link']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_CANCEL | `[data-qa='profile-layout-cancel-button']` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_COMPANY | `[data-qa='resume-profile-experience-specific-company-input-{index}']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_COMPANY | `[data-qa~='resume-profile-experience-specific-company-input-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_COMPANY_URL | `[data-qa='resume-editor-experience-company-url-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_DESCRIPTION | `[data-qa='resume-editor-experience-description-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_EDIT_BUTTON | `[data-qa='edit-experience-button-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_EDIT_BUTTONS_ALL | `[data-qa^='edit-experience-button-']:not([data-qa$='-svg'])` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_END_MONTH | `[data-qa='resume-editor-experience-end-month-input']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_END_MONTH | `[data-qa='magritte-select-activator'] >> nth=1` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_END_YEAR | `[data-qa='resume-editor-experience-end-year-input']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_EXPAND_BUTTON | `[data-qa='resume-list-card-experience'] button:has-text('Развернуть')` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_MONTH_LISTBOX | `[role='listbox']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_MONTH_OPTION | `[data-qa='magritte-select-option-{month}']` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_POSITION | `[data-qa='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_POSITION | `[data-qa~='resume-profile-experience-specific-position-input-{index}']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND | `xpath=//button[contains(., 'Развернуть')]` | — | — | — | documented_live |
 | resume_experience.EXPERIENCE_RESUME_PANEL_SCOPE | `xpath=//h3[contains(text(), 'этим местом работы')]/ancestor::div[2]` | — | — | — | documented_live |
 | resume_experience.EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS | `[data-qa='form-helper-error']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_COMPANY | `[data-qa^='resume-profile-experience-specific-company-input-']` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION | `[data-qa^='resume-profile-experience-specific-position-input-']` | — | — | — | live_dom |
-| resume_experience.EXPERIENCE_START_MONTH | `[data-qa='resume-editor-experience-start-month-input']` | — | — | — | live_dom |
+| resume_experience.EXPERIENCE_START_MONTH | `[data-qa='magritte-select-activator'] >> nth=0` | — | — | — | live_dom |
 | resume_experience.EXPERIENCE_START_YEAR | `[data-qa='resume-editor-experience-start-year-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_COMPANY | `[data-qa='resume-editor-experience-company-input']` | — | — | — | live_dom |
@@ -179,6 +179,7 @@
 | resume_page.RESUME_SPECIALIZATION_OPTION | `[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_SEARCH | `[data-qa='tree-selector-search-input']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_SUBMIT | `[data-qa='professional-roles-submit']` | — | — | — | documented_live |
+| resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER | `[data-qa='tree-selector-container']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_BLOCK | `[data-qa='resume-avatar']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_EDIT_BUTTON | `[data-qa='resume-avatar-edit-button']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_IMAGE | `[data-qa='resume-avatar'] img` | — | — | — | documented_live |

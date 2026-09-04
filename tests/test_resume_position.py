@@ -968,13 +968,17 @@ def test_apply_position_passes_fallback_other(monkeypatch):
 
 
 def test_set_specializations_falls_back_to_other_on_missing_leaf(monkeypatch):
-    """#950: leaf не отрендерился (TimeoutError из wait_for) + fallback_other=True —
-    выбирается явный плейсхолдер «Другое», а не отказ."""
+    """#950/#954: лист не отрендерился И дерево ПОЗИТИВНО подтвердило пустой
+    результат (единственный контейнер дерева прикреплён и полностью пуст —
+    живой замер 2026-09-04) + fallback_other=True — выбирается явный
+    плейсхолдер «Другое», а не отказ."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
     option = _mock_specialization_locators(
-        page, option_data_qa=["tree-selector-item tree-selector-item-40"]
+        page,
+        option_data_qa=["tree-selector-item tree-selector-item-40"],
+        container_children=0,
     )
     option.first.wait_for.side_effect = [PlaywrightTimeoutError("Timeout 5000ms exceeded."), None]
 
@@ -987,6 +991,64 @@ def test_set_specializations_falls_back_to_other_on_missing_leaf(monkeypatch):
         resume_position.OTHER_ROLE_LABEL,
     ]
     option.first.click.assert_called_once()
+
+
+def test_set_specializations_never_falls_back_on_indeterminate_timeout():
+    """#954 (ядро): таймаут с неприкреплённым контейнером дерева доказывает
+    только «не успело отрисоваться», не «листа нет». «Другое» не выбирается
+    даже с --fallback-other — медленный рендер не должен затирать валидную
+    специализацию плейсхолдером. Отказ fail-closed, ничего не кликнуто."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(page, option_data_qa=[], container_children=None)
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(
+        resume_position.SpecializationTreeIndeterminate, match="отсутствие листа не доказано"
+    ):
+        resume_position._set_specializations(page, ["Врач-хирург"], fallback_other=True)
+
+    # Фоллбэк не активировался: fill с «Другое» не вызывался, кликов нет
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == ["Врач-хирург"]
+    option.first.click.assert_not_called()
+
+
+def test_set_specializations_indeterminate_without_flag_is_not_leaf_missing():
+    """#954: без флага голый таймаут тоже не объявляется «лист отсутствует» —
+    прежнее сообщение «не найдена в дереве резюме» на нерендер-таймауте было
+    ложью о состоянии hh.ru; indeterminate-отказ различается типом."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(page, option_data_qa=[], container_children=None)
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(resume_position.SpecializationTreeIndeterminate):
+        resume_position._set_specializations(page, ["Несуществующая специальность"])
+
+
+def test_set_specializations_no_fallback_on_near_miss_filter():
+    """#954: непустой результат фильтра без точного совпадения (неточное имя
+    листа — имена каталога составные, «Столяр, плотник») — НЕ пустой фильтр;
+    «Другое» не подставляется даже с флагом: плейсхолдер затёр бы валидную
+    близкую специализацию. Счётчик в сообщении — число листьев
+    (SPECIALIZATION_OPTION), не всех детей контейнера (ревью PR #964)."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=[], container_children=3, rendered_options=2
+    )
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(RuntimeError, match=r"результат фильтра непуст \(совпадений: 2\)"):
+        resume_position._set_specializations(page, ["Учитель"], fallback_other=True)
+
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == ["Учитель"]
+    option.first.click.assert_not_called()
 
 
 def test_set_specializations_fallback_does_not_mask_ambiguity():
@@ -1045,11 +1107,13 @@ def test_set_specializations_no_fallback_on_search_fill_error(monkeypatch):
 
 
 def test_set_specializations_no_fallback_without_flag(monkeypatch):
-    """Без --fallback-other поведение прежнее: честный отказ."""
+    """Без --fallback-other поведение прежнее: честный отказ — но только при
+    позитивно пустом контейнере дерева (#954); чистый таймаут см.
+    indeterminate-тест."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
-    option = _mock_specialization_locators(page, option_data_qa=[])
+    option = _mock_specialization_locators(page, option_data_qa=[], container_children=0)
     option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
     with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):
@@ -1073,12 +1137,18 @@ def test_set_specializations_no_fallback_on_nontimeout_wait_error(monkeypatch):
     option.first.click.assert_not_called()
 
 
-def _mock_specialization_locators(page, *, option_data_qa):
+def _mock_specialization_locators(
+    page, *, option_data_qa, container_children: int | None = 0, rendered_options: int | None = None
+):
     """Common scaffolding for _set_specializations tests below.
 
     Mocks every locator _set_specializations touches; option_data_qa controls
     what the filtered SPECIALIZATION_OPTION locator resolves to (its .first
     is what option.first.wait_for()/click() operate on).
+    container_children models the tree container state read on the timeout
+    boundary (#954): 0 = attached and completely empty (the live positive
+    «совпадений нет» evidence), a positive number = a non-empty near-miss
+    filter result, None = the container never attached (indeterminate).
     """
     add = MagicMock()
     add.count.return_value = 1
@@ -1097,6 +1167,15 @@ def _mock_specialization_locators(page, *, option_data_qa):
         get_attribute=lambda _name: option_data_qa[i]
     )
     option_tree.filter.return_value = option
+    # Unfiltered count of rendered leaves, read by the near-miss branch
+    # (review PR #964): distinct from option_data_qa, which models the
+    # exact-label-filtered subset.
+    option_tree.count.return_value = (
+        len(option_data_qa) if rendered_options is None else rendered_options
+    )
+    container = MagicMock()
+    container.count.return_value = 0 if container_children is None else 1
+    container.first.locator.return_value.count.return_value = container_children or 0
 
     def locate(selector):
         return {
@@ -1106,10 +1185,39 @@ def _mock_specialization_locators(page, *, option_data_qa):
             resume_position.SPECIALIZATION_SEARCH: search,
             resume_position.SPECIALIZATION_SUBMIT: submit,
             resume_position.SPECIALIZATION_OPTION: option_tree,
+            resume_position.SPECIALIZATION_TREE_CONTAINER: container,
         }[selector]
 
     page.locator.side_effect = locate
     return option
+
+
+def test_pick_specialization_positive_empty_state_means_missing_leaf():
+    """#954: на границе таймаута прикреплённый и полностью пустой контейнер
+    дерева — это SpecializationLeafMissing (пустой результат доказан самим
+    деревом, живой замер 2026-09-04), сообщение отличимо от
+    indeterminate-варианта."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option_tree = MagicMock()
+    option = MagicMock()
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+    option_tree.filter.return_value = option
+    container = MagicMock()
+    container.count.return_value = 1
+    container.first.locator.return_value.count.return_value = 0
+    page.locator.side_effect = lambda selector: (
+        option_tree if selector == resume_position.SPECIALIZATION_OPTION else container
+    )
+    search = MagicMock()
+
+    with pytest.raises(
+        resume_position.SpecializationLeafMissing, match="подтвердило пустой результат фильтра"
+    ):
+        resume_position._pick_specialization(page, search, "Несуществующая")
+
+    container.first.locator.assert_called_once_with("*")
 
 
 def test_set_specializations_waits_out_the_filter_render_race():
@@ -1131,12 +1239,13 @@ def test_set_specializations_waits_out_the_filter_render_race():
 
 
 def test_set_specializations_reports_missing_leaf_after_timeout():
-    """No match ever renders (not a race) — a distinct, honest message from
-    the ambiguous-match case below."""
+    """Позитивно пустой контейнер дерева: совпадений нет, дерево отрисовалось
+    (не race, не медленный рендер) — различимое честное сообщение, отличное
+    от случая неоднозначности ниже и от indeterminate-таймаута (#954)."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
-    option = _mock_specialization_locators(page, option_data_qa=[])
+    option = _mock_specialization_locators(page, option_data_qa=[], container_children=0)
     option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
     with pytest.raises(RuntimeError, match="не найдена в дереве резюме"):

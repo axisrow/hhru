@@ -2065,7 +2065,7 @@ selectors:
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
   resume_experience.EXPERIENCE_COMPANY:
-    value: '[data-qa=''resume-profile-experience-specific-company-input-{index}'']'
+    value: '[data-qa~=''resume-profile-experience-specific-company-input-{index}'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:10
     decision: live_dom
@@ -2074,6 +2074,7 @@ selectors:
     - resume-profile-experience-specific-company-input-1
     - resume-profile-experience-specific-company-input-2
     - resume-profile-experience-specific-company-input-3
+    - resume-profile-experience-specific-company-input-0 resume-profile-experience-specific-company-input
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -2082,11 +2083,14 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:10
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
-    last_verified_at: '2026-08-25'
+      note: 'Issue #957 live dump 2026-09-04 (experience_row_0_read_failure.html): hh.ru now renders the indexed editor''s
+        company field with TWO space-separated values in one data-qa attribute ("…company-input-0 resume-profile-experience-specific-company-input"),
+        so the exact-match [data-qa=''…-{index}''] stopped matching and read_experience_on_hh read every resume as 0 rows.
+        The whitespace word-match [data-qa~=''…-{index}''] matches the new two-value form AND the historical single-value
+        form.'
+    last_verified_at: '2026-09-04'
     verified_flow: authenticated_experience_editor_read_only
-    verified_by: codex
+    verified_by: claude
   resume_experience.EXPERIENCE_COMPANY_URL:
     value: '[data-qa=''resume-editor-experience-company-url-input'']'
     criticality: write
@@ -2190,13 +2194,14 @@ selectors:
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_END_MONTH:
-    value: '[data-qa=''resume-editor-experience-end-month-input'']'
+    value: '[data-qa=''magritte-select-activator''] >> nth=1'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:38
     decision: live_dom
     sources: {}
     live_matches:
     - resume-editor-experience-end-month-input
+    - data-qa=magritte-select-activator (nth 1, end month trigger)
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -2205,9 +2210,11 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:38
-      note: 'Issue #811 live confirmation (draft resume, /resume/edit/{resume_id}/experience): disabled by default while "Работаю
-        сейчас" is checked, enabled after unchecking it — same shape as EXPERIENCE_END_YEAR/#800.'
-    last_verified_at: '2026-08-30'
+      note: 'Issue #957 live dump 2026-09-04 (experience_row_0_read_failure.html, indexed row editor): same activator-shape
+        change as EXPERIENCE_START_MONTH — the end month trigger is the second bare magritte-select-activator, disabled while
+        "Работаю сейчас" is checked (#800/#811 shapes unchanged). First-entry form not separately re-verified, same fail-closed
+        note as EXPERIENCE_START_MONTH.'
+    last_verified_at: '2026-09-04'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_END_YEAR:
@@ -2311,7 +2318,7 @@ selectors:
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_POSITION:
-    value: '[data-qa=''resume-profile-experience-specific-position-input-{index}'']'
+    value: '[data-qa~=''resume-profile-experience-specific-position-input-{index}'']'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:11
     decision: live_dom
@@ -2320,6 +2327,7 @@ selectors:
     - resume-profile-experience-specific-position-input-1
     - resume-profile-experience-specific-position-input-2
     - resume-profile-experience-specific-position-input-3
+    - resume-profile-experience-specific-position-input-0 resume-profile-experience-specific-position-input
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -2328,11 +2336,11 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:11
-      note: Resume/account editor or profile control is intentionally local to HH.ru; the approved reference projects do not
-        provide a semantic counterpart.
-    last_verified_at: '2026-08-25'
+      note: 'Issue #957 live dump 2026-09-04: same two-space-separated-values data-qa change as EXPERIENCE_COMPANY (see its
+        note) — exact match stopped matching; the whitespace word-match [data-qa~=''…-{index}''] covers both forms.'
+    last_verified_at: '2026-09-04'
     verified_flow: authenticated_experience_editor_read_only
-    verified_by: codex
+    verified_by: claude
   resume_experience.EXPERIENCE_RESUME_PANEL_EXPAND:
     value: xpath=//button[contains(., 'Развернуть')]
     criticality: write
@@ -2488,13 +2496,14 @@ selectors:
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_START_MONTH:
-    value: '[data-qa=''resume-editor-experience-start-month-input'']'
+    value: '[data-qa=''magritte-select-activator''] >> nth=0'
     criticality: write
     declared_at: src/hhru_bot/selector_groups/resume_experience.py:37
     decision: live_dom
     sources: {}
     live_matches:
     - resume-editor-experience-start-month-input
+    - data-qa=magritte-select-activator (nth 0, start month trigger)
     active: true
     coverage_status: intentionally_local
     bindings: {}
@@ -2503,9 +2512,13 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:37
-      note: 'Issue #811 live confirmation (draft resume, /resume/edit/{resume_id}/experience): magritte role="combobox" trigger,
-        enabled by default, opens the same 12-option month listbox as EXPERIENCE_END_MONTH.'
-    last_verified_at: '2026-08-30'
+      note: 'Issue #957 live dump 2026-09-04 (experience_row_0_read_failure.html, indexed row editor): the indexed editor
+        no longer renders any resume-editor-experience-start-month-input data-qa — its start month trigger is the first bare
+        magritte-select-activator on the form, the SAME shape the #956 dump already showed for the shared add-form (SHARED_EXPERIENCE_START_MONTH,
+        2026-09-03). Popup/options unchanged (magritte-select-option-{01..12}). The first-entry form (/resume/edit/{resume_id}/experience)
+        was not separately re-verified on 2026-09-04; with no activators rendered there, count() reads 0 and the month pick
+        is skipped — the #811 save-time validation then rejects the form (fail-closed).'
+    last_verified_at: '2026-09-04'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: claude
   resume_experience.EXPERIENCE_START_YEAR:
@@ -4012,6 +4025,29 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER:
+    value: '[data-qa=''tree-selector-container'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:130
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:130
+      note: '#954 live read-only measurement 2026-09-04 (authenticated editor modal, filter probe without submit; reproducer
+        — tests/test_resume_position_empty_state_live.py): the specialization tree has NO dedicated empty-state node — an
+        empty filter result is expressed by the single attached tree-selector-container being completely empty (28 tree-selector-item
+        before the filter, 0 children after a non-matching query; dividers/spinner/aria-busy identical in both states). Positive
+        "rendered and empty" evidence for --fallback-other; absent or non-empty container is not.'
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_editor_modal_read_only
+    verified_by: hhru-461
   resume_photo.RESUME_AVATAR_BLOCK:
     value: '[data-qa=''resume-avatar'']'
     criticality: read
