@@ -75,6 +75,9 @@ _ASSIGN_WAIT_TIMEOUT_MS = 30_000
 # overlay'а перехватывает клики (боевой кейс 2026-09-03 — uncertain при
 # открытой модалке).
 _ASSIGN_MODAL_SETTLE_MS = 2_500
+# Явный скролл assign-кнопки перед кликом (боевой кейс 2026-09-04:
+# кнопка stable, но вне вьюпорта — 57 ретраев клика вхолостую).
+_ASSIGN_SCROLL_TIMEOUT_MS = 5_000
 # Пауза после появления маркера до readback-перезагрузки: маркер рисуется
 # оптимистично, до консолидации assign-запроса на сервере (боевой кейс
 # 2026-09-02: img на месте, hasPhoto на сервере остался false). Пауза не
@@ -253,6 +256,14 @@ def upload_photo_on_hh(
     # ретраит клик и падает по таймауту (бои 2026-09-02 и 2026-09-03:
     # explore-пауза 2500мс пропускала клик, командная без неё — нет).
     page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
+    # Боевой кейс 2026-09-04: кнопка assign резолвилась и была stable, но
+    # стабильно «outside of the viewport» — 57 ретраев клика вхолостую.
+    # Явный скролл перед кликом; ошибка скролла не фатальна — клик сам
+    # классифицирует исход.
+    try:
+        assign_btn.scroll_into_view_if_needed(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        print(f"[INFO] assign-кнопка не проскроллилась (клик продолжается): {exc}")
     try:
         assign_btn.click()
     except PlaywrightError as exc:

@@ -45,6 +45,9 @@ class FakeLocator:
         if self._count == 0 or not self._visible:
             raise PlaywrightError("fake: not visible")
 
+    def scroll_into_view_if_needed(self, *, timeout=None):  # noqa: ARG002
+        self._page.scrolls.append(self._selector)
+
     def click(self, *, timeout=None):  # noqa: ARG002
         self._page.clicks.append(self._selector)
         self._page.on_click(self._selector)
@@ -71,6 +74,7 @@ class FakePage:
     ):
         self.set_files: list[tuple[str, str]] = []
         self.clicks: list[str] = []
+        self.scrolls: list[str] = []
         self.marker_count = 0
         self._nav_calls = 0
         self.reloaded = False
@@ -87,6 +91,9 @@ class FakePage:
         # 0 = img доступен сразу. Ноль после исчерпания = плейсхолдер.
         self._readback_placeholder_after = readback_placeholder_after
         self._readback_polls = 0
+        # имитация «на странице нет ни img, ни плейсхолдера» (дрейф обоих
+        # селекторов) — readback обязан вернуть неопределённое состояние
+        self.hide_placeholder = False
         self.url = "https://hh.ru/resume/rid"
 
     def on_reload(self):
@@ -123,7 +130,7 @@ class FakePage:
         if selector == resume_photo.RESUME_AVATAR_PLACEHOLDER:
             # плейсхолдер «фото нет» подтверждается, когда лимит задержки
             # img исчерпан и персистентного img нет
-            if self.reloaded and not getattr(self, "_hide_placeholder", False):
+            if self.reloaded and not self.hide_placeholder:
                 has_img = self._readback_polls > self._readback_placeholder_after and (
                     self._readback_image_count > 0
                 )
@@ -293,6 +300,8 @@ def test_happy_path_order_and_success(monkeypatch):
         resume_photo.RESUME_PHOTO_EDITOR_APPLY,
         resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
     ]
+    # assign-кнопка явно скроллится перед кликом (боевой кейс 2026-09-04)
+    assert page.scrolls == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
     assert page.set_files == [(resume_photo.RESUME_PHOTO_FILE_INPUT, str(PHOTO.path))]
 
 
@@ -324,7 +333,7 @@ def test_readback_no_img_no_placeholder_is_uncertain():
     page = FakePage(readback_image_count=0)
     # имитируем «плейсхолдера тоже нет»: image_count=0, но плейсхолдер
     # фейк рисует только пока img отсутствует; гасим его отдельным флагом
-    page._hide_placeholder = True
+    page.hide_placeholder = True
     result = _run(page, before_click=lambda: None)
     assert not result.success
     assert result.uncertain is True
