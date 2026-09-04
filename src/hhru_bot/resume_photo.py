@@ -324,6 +324,10 @@ def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None,
     # ПОЗИТИВНЫЙ признак (img), и только после его исчерпания отсутствие
     # фото подтверждаем явным плейсхолдером. Ни того, ни другого —
     # состояние не определено.
+    # ОГРАНИЧЕНИЕ: плейсхолдер подтверждён только на мужском профиле
+    # (Magritte рендерит аватар по полу, селектор группы — см. комментарий
+    # у RESUME_AVATAR_PLACEHOLDER); на женском аккаунте absence-ветка
+    # выродится в honest uncertain, что fail-closed-корректно.
     deadline = time.monotonic() + _READBACK_CONFIRM_TIMEOUT_MS / 1000
     while time.monotonic() < deadline:
         if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
