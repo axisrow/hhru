@@ -360,6 +360,54 @@ def _read_month(locator) -> str:
         return ""
 
 
+def _dump_experience_row_read_failure(page: Page, index: int, exc: Exception) -> None:
+    """Best-effort dump of the OPENED row editor when a row read fails (#957).
+
+    The per-row skip in ``read_experience_on_hh`` used to be fully silent; a
+    drifted field selector on the opened form therefore read as "0 rows"
+    while the resume visibly had them (live 2026-09-04). Fixed stem per row
+    index — overwritten, not accumulated, same as the other dumps.
+    """
+    from .logging_setup import LOG_DIR
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"experience_row_{index}_read_failure"
+    try:
+        (LOG_DIR / f"{stem}.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=LOG_DIR / f"{stem}.png", full_page=True)
+        logger.warning(
+            "experience: строка %s не прочитана — дамп сохранён (%s.html): %s", index, stem, exc
+        )
+    except Exception:  # noqa: BLE001 - dump is best-effort
+        logger.warning("experience: дамп нечитаемой строки %s не удался", index, exc_info=True)
+
+
+def _dump_experience_read_empty(page: Page) -> None:
+    """Best-effort DOM/screenshot dump when a read returns zero rows (#957).
+
+    ``read_experience_on_hh`` cannot tell "this resume genuinely has no
+    experience rows" apart from "the selectors no longer match hh.ru's
+    markup" — an empty row-button set and an all-rows-skipped read both come
+    back as ``[]`` (CLAUDE.md decision #5: an empty result must not be
+    presented as confirmed without page-state proof). The dump is what makes
+    the difference diagnosable without another live attempt. It uses a FIXED
+    stem (overwritten on every empty read), so a legitimately empty resume
+    does not litter data/logs over time — live case that motivated this:
+    2026-09-04, every resume on the account (drafts and long-published
+    alike) read as 0 rows although rows demonstrably exist.
+    """
+    from .logging_setup import LOG_DIR
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stem = "experience_read_empty"
+    try:
+        (LOG_DIR / f"{stem}.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=LOG_DIR / f"{stem}.png", full_page=True)
+        logger.warning("experience: чтение вернуло 0 строк — дамп сохранён (%s.html)", stem)
+    except Exception:  # noqa: BLE001 - dump is best-effort
+        logger.warning("experience: дамп пустого чтения не удался", exc_info=True)
+
+
 def _dump_experience_save_failure(page: Page, index: int, exc: Exception) -> None:
     """Best-effort DOM/screenshot dump when a save click is unconfirmed (#956).
 
@@ -860,12 +908,16 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
                 ),
             )
             result.append(entry)
-        except (PlaywrightError, ValueError):
+        except (PlaywrightError, ValueError) as exc:
             # #796: a row can be unreadable in live DOM (drifted field, stray
             # non-experience card matching the indexed selector). Skip it
             # rather than failing the whole read — fill-mode stays usable
             # for the remaining rows instead of blocking on one bad row.
-            pass
+            # #957: the skip itself is dumped — a silently skipped row is how
+            # a wholesale selector drift reads as "0 rows" while the resume
+            # visibly has them (live case 2026-09-04: buttons present, the
+            # opened form's field data-qa no longer matched).
+            _dump_experience_row_read_failure(page, index, exc)
         # #844: EXPERIENCE_CANCEL does not work on this page shape (see
         # above) — navigate back to the resume page directly instead,
         # whether or not this row was read successfully, so the next
@@ -877,6 +929,15 @@ def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
             _expand_experience_list(page)
         except (PlaywrightError, ValueError):
             break
+    if not result:
+        # #957: an empty read is ambiguous in three ways the caller cannot
+        # tell apart — a genuinely empty resume (no row buttons), a drifted
+        # row-button selector (buttons absent although rows exist), or rows
+        # present but every one unreadable (the per-row skip above swallowed
+        # each failure silently, live case 2026-09-04). Dump the page so the
+        # difference is provable from the artifact instead of another live
+        # attempt.
+        _dump_experience_read_empty(page)
     return result
 
 
@@ -888,6 +949,7 @@ def edit_experience_on_hh(
     dry_run: bool,
     indexes=None,
     resume_titles: dict[str, str] | None = None,
+    append_only: bool = False,
 ):
     """Apply a plan to one or more rows; return structural row outcomes.
 
@@ -909,6 +971,15 @@ def edit_experience_on_hh(
     at all) — callers must supply it up front rather than have this function
     guess or fetch it mid-form, since fetching it requires navigating away
     from an already-open, unsaved form.
+
+    ``append_only`` (#957): every entry is APPENDED as a NEW row. On a
+    non-empty resume the shared-profile add shape (EXPERIENCE_ADD_BUTTON)
+    is forced even when the requested index happens to collide with an
+    existing row's internal React counter — landing there would open the
+    EXISTING row's editor and overwrite it (manual plans have no
+    protected-field merge, #327/#815). The manual ``--entry`` CLI path sets
+    this; the LLM fill path leaves it False because it re-saves existing
+    rows in place by their real indexes.
     """
     try:
         open_confirmed_resume(page, resume_id)
@@ -944,7 +1015,12 @@ def edit_experience_on_hh(
         # instead of refusing outright. It still fails closed below if the
         # add trigger, the target title, or the panel itself cannot be
         # confirmed.
-        via_add_button = not first_entry and trigger.count() == 0
+        # #957: append_only additionally forces this shape when the requested
+        # index COLLIDES with an existing row (count()==1) — a manual plan
+        # would otherwise open that row's editor and overwrite it. The index
+        # under append_only carries no addressing meaning at all; only the
+        # add shape is used.
+        via_add_button = not first_entry and (append_only or trigger.count() == 0)
         if via_add_button and target_title is None:
             return results + [
                 ExperienceResult(
@@ -1387,10 +1463,11 @@ def edit_experience_on_hh(
                 # found saves that silently went to the shared profile
                 # instead. Reload and re-read the actual row set rather than
                 # trusting the in-memory DOM state right after save. This
-                # only applies to a genuinely new row (first_entry): editing
-                # an EXISTING row in place (fill mode re-saves the same
-                # index) must not be flagged just because the row set didn't
-                # change.
+                # applies to a genuinely new row (first_entry AND the
+                # via_add_button add shape — both CREATE a row, so the row
+                # set must grow): editing an EXISTING row in place (fill mode
+                # re-saves the same index) must not be flagged just because
+                # the row set didn't change.
                 #
                 # #815 review: a bare count() comparison (before vs. after)
                 # is a weak positive signal — a resume that lost one row and
@@ -1421,7 +1498,7 @@ def edit_experience_on_hh(
                             uncertain=True,
                         )
                     ]
-                if first_entry and not (after_indexes - before_indexes):
+                if (first_entry or via_add_button) and not (after_indexes - before_indexes):
                     return results + [
                         ExperienceResult(
                             f"строка {index}: запись не привязалась к резюме "

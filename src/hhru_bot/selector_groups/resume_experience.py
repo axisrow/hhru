@@ -36,8 +36,10 @@ checkbox panel showed only this account's resumes, this one pre-checked).
 The form opened genuinely blank (no unrelated row silently loaded, unlike
 #815's finding for the other route) and uses a third data-qa namespace for
 its save/cancel controls (``SHARED_EXPERIENCE_SAVE``/``SHARED_EXPERIENCE_CANCEL``,
-``profile-layout-*-button``) while reusing the month-combobox constants
-unchanged for its other fields. Its company/position fields use the SAME
+``profile-layout-*-button``); its month triggers are the same positional
+bare ``magritte-select-activator`` pair that ``EXPERIENCE_START/END_MONTH``
+now resolve to everywhere (since #957, 2026-09-04 — see those constants'
+comment). Its company/position fields use the SAME
 ``resume-profile-experience-specific-{company,position}-input-{index}``
 data-qa pattern as the indexed row editor above, but the ``{index}`` is a
 fresh React counter unrelated to any requested row index (#840 observed
@@ -92,14 +94,22 @@ EXPERIENCE_POSITION = _selector("resume_experience.EXPERIENCE_POSITION")
 EXPERIENCE_COMPANY_URL = _selector("resume_experience.EXPERIENCE_COMPANY_URL")
 EXPERIENCE_START_YEAR = _selector("resume_experience.EXPERIENCE_START_YEAR")
 EXPERIENCE_END_YEAR = _selector("resume_experience.EXPERIENCE_END_YEAR")
-# #811: month comboboxes on the same first-row/full-page shape (confirmed
-# live 2026-08-30 on a draft resume, /resume/edit/{resume_id}/experience).
-# Both are magritte `role="combobox"` triggers; clicking one opens a
-# `role="listbox"` popup with 12 `role="option"` items whose data-qa is
-# `magritte-select-option-{01..12}` (confirmed live, see EXPERIENCE_MONTH_OPTION
-# below). start-month has no confirmed default; end-month starts disabled
-# (its "Работаю сейчас" checkbox is checked by default, same shape as
-# EXPERIENCE_END_YEAR/#800) — is_enabled() must be checked the same way.
+# Month comboboxes. HISTORICAL (#811, live 2026-08-30, first-row/full-page
+# shape /resume/edit/{resume_id}/experience): the triggers carried
+# `resume-editor-experience-{start,end}-month-input` data-qa; clicking one
+# opens a `role="listbox"` popup with 12 `role="option"` items whose data-qa
+# is `magritte-select-option-{01..12}` (see EXPERIENCE_MONTH_OPTION below);
+# end-month starts disabled while "Работаю сейчас" is checked (#800) —
+# is_enabled() must be checked the same way.
+# #957 (live 2026-09-04, indexed row editor dump experience_row_0_read_
+# failure.html): hh.ru dropped the month data-qa entirely — the triggers are
+# now the two bare `[data-qa='magritte-select-activator']` divs (start=nth 0,
+# end=nth 1), the SAME shape the #956 dump already showed for the shared
+# add-form. Popup/options unchanged. The first-entry form was NOT separately
+# re-verified: if it kept the old data-qa, count() reads 0 there, the month
+# pick is skipped, and the #811 save-time validation rejects the form
+# (fail-closed) — a live first-entry run is required before relying on that
+# path again (review PR #965).
 EXPERIENCE_START_MONTH = _selector("resume_experience.EXPERIENCE_START_MONTH")
 EXPERIENCE_END_MONTH = _selector("resume_experience.EXPERIENCE_END_MONTH")
 # #956 (live dump 2026-09-03, experience_row_0_save_failure.html): the THIRD

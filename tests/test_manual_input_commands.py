@@ -105,6 +105,7 @@ def _fake_launch_context(*_args, **_kwargs):
 
 def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr("hhru_bot.experience.read_experience_on_hh", lambda page, resume_id: [])
     result = edit_experience_cmd.run(
         _args(
             tmp_path,
@@ -120,6 +121,45 @@ def test_edit_experience_manual_entry_dry_run_without_ai(tmp_path, capsys, monke
     out = capsys.readouterr().out
     assert result is False
     assert "ООО Тест" in out
+    assert "[DRY-RUN] save не нажат" in out
+
+
+def test_edit_experience_manual_dry_run_prints_live_rows(tmp_path, capsys, monkeypatch):
+    """#957: a MANUAL dry-run reads the live resume (read-only) and prints the
+    existing row set before the [DRY-RUN] exit — that listing is the state
+    check the caller needs before authorizing a battle run. The LLM dry-run
+    keeps its browserless early exit (covered above)."""
+    from hhru_bot.experience import ExperienceEntry
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.experience.read_experience_on_hh",
+        lambda page, resume_id: [
+            ExperienceEntry(
+                company="Старая компания",
+                position="Старая должность",
+                start_year="2018",
+                start_month="3",
+                end_year="2023",
+                end_month="12",
+            )
+        ],
+    )
+    result = edit_experience_cmd.run(
+        _args(
+            tmp_path,
+            mode="fill",
+            career=None,
+            existing=None,
+            entry=[
+                '{"company": "Новая компания", "position": "Новая должность", "start_month": "1"}'
+            ],
+        )
+    )
+    out = capsys.readouterr().out
+    assert result is False
+    assert "существующий опыт на hh.ru (1)" in out
+    assert "Старая компания — Старая должность (03.2018–12.2023)" in out
     assert "[DRY-RUN] save не нажат" in out
 
 
@@ -183,22 +223,67 @@ def test_edit_experience_requires_career_or_entry(tmp_path, capsys):
     assert "--career" in capsys.readouterr().out
 
 
-def test_edit_experience_manual_entry_fails_closed_on_non_empty_resume(
-    tmp_path, capsys, monkeypatch
-):
-    """#815 review round 2: manual --entry used to build a guessed append index
-    as range(existing_count, existing_count + N) — the same contiguous-from-0
-    assumption the #815/#833 fix disproves elsewhere. hh.ru's row index is an
-    internal counter that can coincidentally equal existing_count (e.g. a
-    resume with exactly one row whose real index happens to be 1), which
-    would silently land the manual plan on the EXISTING row's edit path and
-    overwrite it instead of creating a new one — the guessed index has no
-    protected-field merge (#327), so any field missing from the manual JSON
-    blanks that existing row. There is no reliable way to predict a free
-    index client-side, so appending to a non-empty resume via --entry must
-    fail closed with a clear reason instead of guessing.
-    """
+def test_edit_experience_manual_entry_rejects_duplicate_row(tmp_path, capsys, monkeypatch):
+    """#957: --entry appends through the confirmed add shape instead of
+    refusing on a non-empty resume — but a manual entry that duplicates an
+    existing row's identity (company+position+start) must be rejected: a
+    re-run after an uncertain outcome must not add a second copy of a row
+    the earlier attempt already saved. No edit_experience_on_hh call may
+    happen (and no attempt counted)."""
     from hhru_bot.experience import ExperienceEntry
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
+    monkeypatch.setattr(
+        "hhru_bot.experience.read_experience_on_hh",
+        lambda page, resume_id: [
+            ExperienceEntry(
+                company="ТСЖ Дом",
+                position="Дворник",
+                start_year="2024",
+                start_month="1",
+                current=True,
+            )
+        ],
+    )
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("edit_experience_on_hh must not be called for a duplicate row")
+
+    monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fail_if_called)
+    # review PR #965: the month format differs between the two sides — the
+    # readback yields canonical "1".."12" while the CLI happily accepts "01"
+    # (valid for _select_month's int()); identity must normalize or the same
+    # plan re-run with a zero-padded month slips past the gate.
+    assert (
+        edit_experience_cmd.run(
+            _args(
+                tmp_path,
+                mode="fill",
+                dry_run=False,
+                force=True,
+                career=None,
+                existing=None,
+                entry=[
+                    '{"company": "ТСЖ Дом", "position": "Дворник", '
+                    '"start_year": "2024", "start_month": "01", "current": true}'
+                ],
+            )
+        )
+        is True
+    )
+    out = capsys.readouterr().out
+    assert "существующий опыт на hh.ru (1)" in out
+    assert "[FAIL] запись уже существует" in out
+    assert "добавление дубля отклонено" in out
+
+
+def test_edit_experience_manual_entry_appends_to_non_empty_resume(tmp_path, capsys, monkeypatch):
+    """#957: a NON-duplicate manual entry on a resume that already has rows is
+    appended via edit_experience_on_hh with append_only=True — the shared
+    add shape is forced, so a colliding row index can never route the plan
+    onto an existing row's editor (the #815 overwrite trap the old outright
+    refusal guarded against)."""
+    from hhru_bot.experience import ExperienceEntry, ExperienceResult
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
     monkeypatch.setattr(
@@ -207,35 +292,46 @@ def test_edit_experience_manual_entry_fails_closed_on_non_empty_resume(
             ExperienceEntry(company="Старая компания", position="Старая должность")
         ],
     )
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", lambda page: [])
+    captured = {}
 
-    def fail_if_called(page, resume_id, plan, *, dry_run, indexes=None):
-        raise AssertionError("edit_experience_on_hh must not be called for a non-empty resume")
+    def fake_edit_experience_on_hh(
+        page, resume_id, plan, *, dry_run, indexes=None, resume_titles=None, append_only=False
+    ):
+        captured["indexes"] = indexes
+        captured["append_only"] = append_only
+        return [ExperienceResult("строка 0: сохранено", success=True)]
 
-    monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fail_if_called)
-    edit_experience_cmd.run(
-        _args(
-            tmp_path,
-            mode="fill",
-            dry_run=False,
-            force=True,
-            career=None,
-            existing=None,
-            entry=[
-                '{"company": "Новая компания", "position": "Новая должность", "start_month": "5"}'
-            ],
+    monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fake_edit_experience_on_hh)
+    assert (
+        edit_experience_cmd.run(
+            _args(
+                tmp_path,
+                mode="fill",
+                dry_run=False,
+                force=True,
+                career=None,
+                existing=None,
+                entry=[
+                    '{"company": "Новая компания", "position": "Новая должность", "start_month": "5"}'
+                ],
+            )
         )
+        is False
     )
     out = capsys.readouterr().out
-    assert "[FAIL]" in out
-    assert "не поддерживает добавление записи" in out
+    assert "существующий опыт на hh.ru (1)" in out
+    assert "Старая компания — Старая должность" in out
+    assert captured["indexes"] == [0]
+    assert captured["append_only"] is True
 
 
 def test_edit_experience_manual_entry_creates_first_row_on_empty_resume(
     tmp_path, capsys, monkeypatch
 ):
-    """The fail-closed guard above applies only to a NON-empty resume — a
-    resume with zero existing rows must still be able to create its first
-    row via --entry (the one path #786/#787 confirmed safe)."""
+    """A resume with zero existing rows must still create its first row via
+    --entry through the #786/#787-confirmed route (append_only only forces
+    the add shape when there IS something to append after)."""
     from hhru_bot.experience import ExperienceResult
 
     monkeypatch.setattr("hhru_bot.browser.launch_context", _fake_launch_context)
@@ -244,9 +340,10 @@ def test_edit_experience_manual_entry_creates_first_row_on_empty_resume(
     captured = {}
 
     def fake_edit_experience_on_hh(
-        page, resume_id, plan, *, dry_run, indexes=None, resume_titles=None
+        page, resume_id, plan, *, dry_run, indexes=None, resume_titles=None, append_only=False
     ):
         captured["indexes"] = indexes
+        captured["append_only"] = append_only
         return [ExperienceResult("строка 0: сохранено", success=True)]
 
     monkeypatch.setattr("hhru_bot.experience.edit_experience_on_hh", fake_edit_experience_on_hh)
@@ -263,7 +360,10 @@ def test_edit_experience_manual_entry_creates_first_row_on_empty_resume(
             ],
         )
     )
+    out = capsys.readouterr().out
+    assert "существующий опыт на hh.ru: записей нет" in out
     assert captured["indexes"] == [0]
+    assert captured["append_only"] is True
 
 
 # --- about --text ------------------------------------------------------------
