@@ -333,6 +333,11 @@ def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None,
         if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
             return True, ""
         page.wait_for_timeout(_READBACK_POLL_MS)
+    # Оба uncertain-исхода readback — единственный путь после assign без
+    # артефакта (маркерный путь уже пишет photo_upload_uncertain): дамп
+    # перечитанной страницы — первый подозреваемый при дрейфе селектора.
+    dump_path = dump_page_html(page, "photo_readback_uncertain")
+    dump_note = "" if dump_path is None else f"; дамп: {dump_path}"
     if (
         page.locator(RESUME_AVATAR_IMAGE).count() == 0
         and page.locator(RESUME_AVATAR_PLACEHOLDER).count() > 0
@@ -340,11 +345,13 @@ def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None,
         return (
             False,
             "подтверждено состояние «фото нет» (плейсхолдер, img не появился "
-            f"за {_READBACK_CONFIRM_TIMEOUT_MS // 1000}с) на свежезагруженной странице",
+            f"за {_READBACK_CONFIRM_TIMEOUT_MS // 1000}с) "
+            f"на свежезагруженной странице{dump_note}",
         )
     return None, (
         "состояние фото не определено за "
         f"{_READBACK_CONFIRM_TIMEOUT_MS // 1000}с — ни img, ни плейсхолдера"
+        f"{dump_note}"
     )
 
 
