@@ -655,9 +655,7 @@ def test_marker_missing_resume_picker_assigns_and_succeeds(monkeypatch):
     assert result.success
     assert result.photo_present is True
     assert page.reloaded
-    checkbox = resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
-        resume_id="rid"
-    )
+    checkbox = resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(resume_id="rid")
     assert page.checks == [checkbox]
     assert page.picker_checkbox_checked
     assert page.clicks == [

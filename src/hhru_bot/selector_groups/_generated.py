@@ -185,6 +185,7 @@ VALUES: dict[str, str] = {
     "resume_photo.RESUME_PHOTO_FILE_INPUT": "input[data-qa='resume-photo-proxy-gallery-input']",
     "resume_photo.RESUME_PHOTO_MFE_CONTAINER": "[class*='ContainerForMicroFrontend-resumePhotoViewer']",
     "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT": "[data-qa='photo-viewer-action-assign-current']",
+    "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE": "[data-qa='photo-viewer-assign-resume-{resume_id}']",
     "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT": "[data-qa='photo-viewer-assign-submit']",
     "resume_photo.RESUME_PHOTO_VIEWER_CLOSE": "[data-qa='photo-viewer-close']",
     "resume_photo.RESUME_PHOTO_VIEWER_LIMIT": "[data-qa='photo-viewer-limit']",

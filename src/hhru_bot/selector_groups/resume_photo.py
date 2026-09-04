@@ -126,11 +126,11 @@ RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_
 # 2026-09-05 (photo_upload_uncertain_20260905_004737): чекбоксы
 # photo-viewer-assign-resume-<resume_id> на каждое резюме аккаунта
 # (все сняты) + кнопка photo-viewer-assign-submit «Выбрать и
-# установить» в футере, DISABLED до выбора строки. Это НЕ registered
-# селектор (значение параметризовано resume_id) — реестр хранит
-# литералы; происхождение задокументировано здесь.
-RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE = (
-    "[data-qa='photo-viewer-assign-resume-{resume_id}']"
+# установить» в футере, DISABLED до выбора строки. Значение
+# параметризовано resume_id (format в resume_photo) — единственный
+# шаблонный селектор в реестре.
+RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE = _selector(
+    "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE"
 )
 
 # Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён

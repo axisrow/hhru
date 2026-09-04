@@ -451,9 +451,7 @@ def _assign_via_resume_picker(page: Page, resume_id: str) -> bool:
     Все шаги best-effort: False = фолбэк не удался, решение за вызывающим
     (честный uncertain, fail-closed).
     """
-    checkbox_selector = RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
-        resume_id=resume_id
-    )
+    checkbox_selector = RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(resume_id=resume_id)
     try:
         checkbox = page.locator(checkbox_selector).first
         checkbox.wait_for(state="attached", timeout=_PICKER_WAIT_TIMEOUT_MS)

@@ -4215,6 +4215,28 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
     verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE:
+    value: '[data-qa=''photo-viewer-assign-resume-{resume_id}'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:133
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:133
+      note: Шаблон чекбокса строки резюме в пикере «Куда поставим фото?» (обычная in-body модалка после crop-upload). Подтверждён
+        живым дампом 2026-09-05 (photo_upload_uncertain_20260905_004737) — чекбоксы по строке на каждое резюме аккаунта +
+        футерная кнопка «Выбрать и установить», DISABLED до выбора. Единственный шаблонный селектор реестра — resume_photo
+        форматирует его своим resume_id.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
   resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT:
     value: '[data-qa=''photo-viewer-assign-submit'']'
     criticality: write
