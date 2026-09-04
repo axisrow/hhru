@@ -799,7 +799,11 @@ class _MonthSavePage(_SavePage):
         self.start_month_selected = None
 
     def locator(self, selector):
-        if selector == "[data-qa='resume-editor-experience-start-month-input']":
+        # #957: the indexed editor's month trigger is now the first bare
+        # magritte-select-activator (live 2026-09-04) — same value as
+        # SHARED_EXPERIENCE_START_MONTH; the fake matches the current selector
+        # strings instead of the retired resume-editor-*-month-input data-qa.
+        if selector == "[data-qa='magritte-select-activator'] >> nth=0":
             page = self
 
             class _StartMonthLocator(_Locator):
@@ -1262,6 +1266,23 @@ def test_edit_experience_via_add_button_fails_closed_when_all_expand_clicks_swal
     assert "не удалось развернуть панель" in results[0].reason
 
 
+def test_read_experience_dumps_page_when_empty(monkeypatch):
+    """#957: an empty read is ambiguous (genuinely empty resume vs a drifted
+    edit-button selector) — the page must be dumped so the difference is
+    provable from the artifact instead of another live attempt."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    dumped = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_read_empty", lambda page: dumped.append(page)
+    )
+
+    page = _Page()  # zero-row resume page
+    result = read_experience_on_hh(page, "resume-1")
+
+    assert result == []
+    assert dumped == [page]
+
+
 def test_edit_experience_append_only_forces_add_shape_on_index_collision(monkeypatch):
     """#957: append_only forces the shared add shape even when the requested
     index COLLIDES with an existing row (trigger.count()==1). Without it the
@@ -1386,13 +1407,20 @@ def test_shared_experience_reuses_indexed_company_position_and_month_selectors()
     and its month combobox popup was JS-confirmed to render the same
     magritte-select-option-{NN} / role=listbox structure as the already
     working EXPERIENCE_START_MONTH/END_MONTH — so no new constants were
-    needed for those fields, only for save/cancel."""
+    needed for those fields, only for save/cancel.
+
+    #957 live update (2026-09-04): hh.ru now renders the indexed editor's
+    company/position data-qa with TWO space-separated values
+    ("…-input-0 resume-profile-experience-specific-…-input"), so the exact
+    attribute match stopped matching — the whitespace word-match (~=) covers
+    both the new two-value and the historical single-value form."""
     assert (
-        EXPERIENCE_COMPANY == "[data-qa='resume-profile-experience-specific-company-input-{index}']"
+        EXPERIENCE_COMPANY
+        == "[data-qa~='resume-profile-experience-specific-company-input-{index}']"
     )
     assert (
         EXPERIENCE_POSITION
-        == "[data-qa='resume-profile-experience-specific-position-input-{index}']"
+        == "[data-qa~='resume-profile-experience-specific-position-input-{index}']"
     )
     assert EXPERIENCE_MONTH_OPTION == "[data-qa='magritte-select-option-{month}']"
     assert EXPERIENCE_MONTH_LISTBOX == "[role='listbox']"
