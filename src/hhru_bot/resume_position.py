@@ -1075,7 +1075,7 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
             # канал #950): перезапуск с первого раза, а не перебор вслепую.
             # Хвост формируется отдельно от format_candidates (ревью PR
             # #968): при расхождении семантик DOM-фильтра и substring-
-            # эвристики_candidates пуст, и «совпадений по подстроке не
+            # эвристики candidates пуст, и «совпадений по подстроке не
             # найдено» противоречило бы «результат фильтра непуст» — вместо
             # этого предлагаем перечитать видимое дерево командой.
             evaluation = evaluate_leaf(value, _poll_specialization_labels(page))

@@ -1059,6 +1059,28 @@ def test_set_specializations_no_fallback_on_near_miss_filter():
     option.first.click.assert_not_called()
 
 
+def test_set_specializations_near_miss_without_substring_candidates():
+    """Ревью PR #968: расхождение семантик — DOM-фильтр отрисовал листья,
+    substring-эвристика кандидатов не нашла (rendered_labels=[]). Хвост
+    отказа не противоречит «результат фильтра непуст»: вместо format_candidates
+    с «совпадений по подстроке не найдено» — указание перечитать каталог."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=[], container_children=3, rendered_options=2, rendered_labels=[]
+    )
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(RuntimeError, match=r"совпадений: 2\).+перечитайте live-каталог"):
+        resume_position._set_specializations(page, ["Менеджер"], fallback_other=True)
+        pytest.fail("near-miss должен отказать, а не подставлять «Другое»")
+
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == ["Менеджер"]
+    option.first.click.assert_not_called()
+
+
 def test_set_specializations_fallback_does_not_mask_ambiguity():
     """#950: совпадение отрендерилось, но под двумя id — подлинная
     неоднозначность; фоллбэк её не маскирует (fail-closed)."""
