@@ -12,6 +12,7 @@ import pytest
 import hhru_bot.browser
 import hhru_bot.commands.create_resume as cmd
 import hhru_bot.create_resume
+from hhru_bot.catalog_preflight import PreflightOutcome
 from hhru_bot.create_resume import CreateResumeResult
 from hhru_bot.history import History
 
@@ -28,6 +29,7 @@ def _args(tmp_path, **overrides):
         title="Backend developer",
         force=False,
         dry_run=False,
+        allow_unresolved_area=False,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -47,7 +49,15 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(hhru_bot.browser, "launch_context", launch)
     state = SimpleNamespace(result=CreateResumeResult(True, NEW_ID, "черновик создан"), calls=[])
 
-    def create(page, *, area, title, dry_run, before_click=None):
+    # #950: pre-flight сверка area с live-каталогом — на двойнике проход без
+    # предупреждения; конкретные refusal-сценарии — в тестах ниже и в
+    # test_catalog_preflight.py.
+    monkeypatch.setattr(
+        "hhru_bot.catalog_preflight.preflight_area",
+        lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(True, ""),
+    )
+
+    def create(page, *, area, title, dry_run, before_click=None, allow_unresolved_area=False):
         state.calls.append((area, title, dry_run))
         if not dry_run and (state.result.success or state.result.uncertain):
             before_click()
@@ -63,6 +73,56 @@ def test_dry_run_is_default_and_does_not_prompt(env, tmp_path, capsys, monkeypat
     output = capsys.readouterr().out
     assert "[DRY-RUN]" in output
     assert env.calls == [("it", "Backend developer", True)]
+
+
+def test_preflight_refusal_blocks_wizard_in_live_run(env, tmp_path, capsys, monkeypatch):
+    """#950: отказ по area наступает до входа в визард — create не вызывается."""
+    monkeypatch.setattr(
+        "hhru_bot.catalog_preflight.preflight_area",
+        lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
+            False,
+            "профессия «Хирург» не найдена в live-каталоге; ближайшие доступные "
+            "листы: Врач. Повторите с точным именем листа.",
+        ),
+    )
+
+    assert cmd.run(_args(tmp_path, force=True)) is True
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "Хирург" in out
+    assert "Врач" in out
+    assert env.calls == []
+
+
+def test_preflight_refusal_blocks_dry_run_before_wizard(env, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(
+        "hhru_bot.catalog_preflight.preflight_area",
+        lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
+            False, "профессия не найдена в live-каталоге"
+        ),
+    )
+
+    assert cmd.run(_args(tmp_path, dry_run=True)) is True
+
+    assert "[FAIL]" in capsys.readouterr().out
+    assert env.calls == []
+
+
+def test_preflight_allow_mode_passes_with_warning(env, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(
+        "hhru_bot.catalog_preflight.preflight_area",
+        lambda page, area, *, allow_unresolved_area=False: PreflightOutcome(
+            True, "профессия не найдена; будет выбрана роль-плейсхолдер «Другое» (id 40)."
+        ),
+    )
+
+    assert cmd.run(_args(tmp_path, force=True, allow_unresolved_area=True)) is False
+
+    out = capsys.readouterr().out
+    assert "[WARN]" in out
+    assert "«Другое» (id 40)" in out
+    assert env.calls == [("it", "Backend developer", False)]
 
 
 def test_force_prints_yaml_but_does_not_modify_config(env, tmp_path, capsys):

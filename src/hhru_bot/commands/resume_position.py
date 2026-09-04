@@ -139,7 +139,7 @@ def _click_save_and_wait(page) -> None:
 
 def _run(args: argparse.Namespace, progress) -> bool:
     from ..ai.llm_client import LLMClient
-    from ..browser import BrowserLaunchError, launch_context
+    from ..browser import HH_BASE_URL, BrowserLaunchError, goto_hh, launch_context
     from ..config import ConfigError, load_config_or_exit
     from ..resume_position import (
         CANCEL,
@@ -362,6 +362,23 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     queries=classification_queries,
                 )
             if args.dry_run:
+                # #950: dry-run editor-пути сверяет --specialization с живым
+                # деревом резюме ДО записи — отказ перечисляет листы, которые
+                # дерево реально отрисовало. Отказ и здесь, и в боевом пути
+                # наступает до клика сохранения.
+                refusals: list[str] = []
+                if not wizard and plan.specializations:
+                    from ..resume_position import validate_specializations_against_tree
+
+                    refusals = validate_specializations_against_tree(page, plan.specializations)
+                    # Панель выбора закрывается уходом со страницы: submit не
+                    # нажат, pending-правки отбрасываются; CANCEL под оверлеем
+                    # открытой панели недостижим.
+                    goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
+                if refusals:
+                    for refusal in refusals:
+                        print(f"[FAIL] {refusal}")
+                    return True
                 if not wizard:
                     page.locator(CANCEL).click()
                 print("[INFO] Ничего не записано на hh.ru.")

@@ -74,6 +74,23 @@ def test_resolve_explicit_role_rejects_duplicate_labels(monkeypatch):
         resolve_explicit_role(MagicMock(), "Аналитик")
 
 
+def test_resolve_explicit_role_missing_leaf_lists_offered_labels(monkeypatch):
+    """#950: отказ ведёт к цели — перечень листов, предложенных фильтром."""
+    monkeypatch.setattr(
+        "hhru_bot.professional_roles.search_professional_roles",
+        lambda page, queries: [
+            ProfessionalRole("148", "Врач", "Медицина"),
+            ProfessionalRole("40", "Другое", "Медицина"),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="фильтр предлагает: Врач$") as exc_info:
+        resolve_explicit_role(MagicMock(), "Врач-хирург")
+
+    # «Другое» — плейсхолдер, а не повторная цель (#913): в перечне его нет.
+    assert "Другое" not in str(exc_info.value)
+
+
 def _catalog(*, fetched_at: datetime | None = None) -> VacancySearchRoleCatalog:
     return VacancySearchRoleCatalog(
         fetched_at=fetched_at or datetime(2026, 8, 24, tzinfo=UTC),

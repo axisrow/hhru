@@ -90,3 +90,57 @@ def test_resume_catalog_rejects_non_leaf_or_missing_specialization(monkeypatch, 
     finally:
         browser.close()
         playwright.stop()
+
+
+@pytest.mark.browser_unit
+def test_set_specializations_missing_leaf_refusal_lists_visible_candidates(monkeypatch):
+    """#950: отказ при отсутствии листа перечисляет, что дерево реально
+    отрисовало по фильтру, — перезапуск с первого раза, а не перебор."""
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    playwright, browser, page = _page()
+    try:
+        page.locator(resume_position.SPECIALIZATION_ADD).click()
+        with pytest.raises(RuntimeError) as exc_info:
+            resume_position._set_specializations(page, ["Менеджер"])
+        message = str(exc_info.value)
+        assert "специализация не найдена в дереве резюме: Менеджер" in message
+        assert "ближайшие доступные листы: " in message
+        assert "Менеджер по продажам, менеджер по работе с клиентами" in message
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+@pytest.mark.browser_unit
+def test_validate_specializations_confirms_exact_leaf_without_submit(monkeypatch):
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    playwright, browser, page = _page()
+    try:
+        refusals = resume_position.validate_specializations_against_tree(
+            page, ["Водитель, экспедитор"]
+        )
+
+        assert refusals == []
+        # Панель не сабмитится: submit остаётся на месте, выбор не применён.
+        assert page.locator(resume_position.SPECIALIZATION_MODAL).is_visible()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+@pytest.mark.browser_unit
+def test_validate_specializations_refusal_lists_filtered_candidates(monkeypatch):
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    playwright, browser, page = _page()
+    try:
+        refusals = resume_position.validate_specializations_against_tree(
+            page, ["Менеджер", "Водитель, экспедитор"]
+        )
+
+        assert len(refusals) == 1
+        assert "Менеджер" in refusals[0]
+        assert "ближайшие доступные листы: " in refusals[0]
+        assert "Менеджер по продажам, менеджер по работе с клиентами" in refusals[0]
+    finally:
+        browser.close()
+        playwright.stop()
