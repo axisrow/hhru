@@ -111,6 +111,15 @@ RESUME_PHOTO_EDITOR_APPLY = _selector("resume_photo.RESUME_PHOTO_EDITOR_APPLY")
 # dispatch_event]; исход подтверждает только readback (#955).
 RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT")
 
+# Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён
+# живыми дампами 2026-09-04 (photo_assign_click_uncertain_*/photo_upload_*
+# — data-qa='photo-viewer-close' в одном NavBar с assign-кнопкой; live-замер
+# IAB: rect y=-48, тот же detached NavBar, позиционный клик невозможен).
+# Используется фолбэком «переоткрыть вьювер» (resume_photo): активация
+# assign-current в модалке после crop-upload молча не работает (бои 8-9),
+# а после переоткрытия через карандаш dispatch_event назначает фото.
+RESUME_PHOTO_VIEWER_CLOSE = _selector("resume_photo.RESUME_PHOTO_VIEWER_CLOSE")
+
 # Модалка «8 фото — это максимум»: галерея фото ПЕРЕПОЛНЕНА. Подтверждена
 # боевым прогоном 2026-09-04 (дамп photo_editor_missing_uncertain_20260904_*
 # в data/logs): после set_input_files вместо crop-редактора открылся

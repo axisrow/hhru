@@ -108,6 +108,10 @@ class FakePage:
         self.keyboard_activates = False
         # True = dispatch_event бросает PlaywrightError (имитация отказа)
         self.dispatch_disabled = False
+        # бои 8-9: активация assign работает только после переоткрытия
+        # вьювера карандашом (blob без photo id против персистентного фото)
+        self.assign_works_only_after_reopen = False
+        self.pencil_reopened = False
         self.marker_count = 0
         self._nav_calls = 0
         # гидратация assign-кнопки после неудачного клика (ленивый чанк
@@ -145,8 +149,15 @@ class FakePage:
         self.reloaded = True
 
     def on_click(self, selector):
-        # assign-клик назначает фото: маркер появляется по факту клика
+        # assign-клик назначает фото: маркер появляется по факту клика.
+        # Флаг assign_works_only_after_reopen моделирует бои 8-9: активация
+        # в модалке после crop-upload молча не работает, работает только
+        # после переоткрытия вьювера через карандаш.
+        if selector == resume_photo.RESUME_AVATAR_EDIT_BUTTON:
+            self.pencil_reopened = True
         if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            if self.assign_works_only_after_reopen and not self.pencil_reopened:
+                return
             self.marker_count = self._marker_after_assign
 
     def locator(self, selector: str):
@@ -542,6 +553,39 @@ def test_marker_missing_after_assign_is_uncertain(monkeypatch):
     assert result.uncertain is True
     assert result.photo_present is None
     assert len(page.set_files) == 1
+
+
+def test_marker_missing_reopen_fallback_assigns_and_succeeds(monkeypatch):
+    """Бои 8-9 (2026-09-04): активация assign-current в модалке после
+    crop-upload молча не работает (current — blob без photo id); фолбэк —
+    закрыть модалку, открыть вьювер карандашом (новейшее фото галереи),
+    dispatch_event по assign-current — фото назначено, success через
+    readback."""
+    page = FakePage()
+    page.assign_works_only_after_reopen = True
+    orig_click = FakeLocator.click
+
+    def failing_click(self, *, timeout=None):  # noqa: ARG002
+        if self._selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            raise PlaywrightError("fake assign click failed (outside viewport)")
+        orig_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", failing_click)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert page.reloaded
+    # круг 1: dispatch по assign (мёртвый для blob); фолбэк: close + assign
+    assert page.dispatches == [
+        resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+        resume_photo.RESUME_PHOTO_VIEWER_CLOSE,
+        resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    ]
+    # вьювер переоткрыт позиционным кликом по карандашу
+    assert resume_photo.RESUME_AVATAR_EDIT_BUTTON in page.clicks
+    assert page.pencil_reopened
+    # гидратация assign-кнопки проверялась в обоих кругах (+ MFE-инпут)
+    assert page.wait_fn_calls == 3
 
 
 def test_upload_result_defaults():

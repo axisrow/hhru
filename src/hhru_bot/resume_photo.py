@@ -49,12 +49,14 @@ from .browser import (
 from .selector_groups.resume_photo import (
     PHOTO_ACCEPTED_EXT,
     RESUME_AVATAR_BLOCK,
+    RESUME_AVATAR_EDIT_BUTTON,
     RESUME_AVATAR_IMAGE,
     RESUME_AVATAR_PLACEHOLDER,
     RESUME_PHOTO_EDITOR_APPLY,
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
     RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    RESUME_PHOTO_VIEWER_CLOSE,
     RESUME_PHOTO_VIEWER_LIMIT,
 )
 
@@ -354,16 +356,40 @@ def upload_photo_on_hh(
             state="attached", timeout=_CONFIRM_TIMEOUT_MS
         )
     except PlaywrightError:
-        dump_path = dump_page_html(page, "photo_upload_uncertain")
-        reason = (
-            "assign отправлен, но маркер успеха (img в блоке аватара) не появился "
-            f"за {_CONFIRM_TIMEOUT_MS // 1000}с"
-        )
-        if assign_click_error is not None:
-            reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
-        if dump_path is not None:
-            reason += f"; дамп: {dump_path}"
-        return _uncertain(reason)
+        # Бои 8-9 (2026-09-04, #955): активация assign-current в модалке
+        # ПОСЛЕ crop-upload молча не работает (файл ещё blob без photo id),
+        # но работает для персистентных фото галереи. Диагностика
+        # explore_photo_assign_activation: закрыть модалку, открыть вьювер
+        # карандашом (он показывает новейшее фото галереи — только что
+        # загруженное) и dispatch_event по assign-current — фото назначено.
+        if _assign_via_viewer_reopen(page):
+            try:
+                page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
+                    state="attached", timeout=_CONFIRM_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                dump_path = dump_page_html(page, "photo_upload_uncertain")
+                reason = (
+                    "фолбэк переоткрытия вьювера выполнен, но маркер успеха "
+                    f"(img в блоке аватара) не появился за {_CONFIRM_TIMEOUT_MS // 1000}с"
+                )
+                if assign_click_error is not None:
+                    reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
+                if dump_path is not None:
+                    reason += f"; дамп: {dump_path}"
+                return _uncertain(reason)
+        else:
+            dump_path = dump_page_html(page, "photo_upload_uncertain")
+            reason = (
+                "assign отправлен, но маркер успеха (img в блоке аватара) не появился "
+                f"за {_CONFIRM_TIMEOUT_MS // 1000}с; фолбэк переоткрытия вьювера не удался "
+                "(см. [INFO] в логе)"
+            )
+            if assign_click_error is not None:
+                reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
+            if dump_path is not None:
+                reason += f"; дамп: {dump_path}"
+            return _uncertain(reason)
     # Маркер в DOM появляется ОПТИМИСТИЧНО: hh.ru рисует <img> до того,
     # как assign-запрос консолидировался на сервере (боевой кейс
     # 2026-09-02: браузер закрылся сразу после маркера — img остался,
@@ -389,6 +415,52 @@ def upload_photo_on_hh(
             photo_present=False,
         )
     return _uncertain(f"assign отправлен, но readback не выполнился: {readback_reason}")
+
+
+def _assign_via_viewer_reopen(page: Page) -> bool:
+    """Фолбэк «переоткрыть вьювер»: назначить фото через карандаш.
+
+    Бои 8-9 (2026-09-04, #955): после crop-upload активация assign-current
+    в открытой модалке молча не работает (current — blob без photo id), а
+    для персистентных фото галереи тот же dispatch_event назначает фото
+    (диагностика explore_photo_assign_activation на «Дворнике»: modal
+    закрылась, маркер появился). Вьювер по карандашу открывается на
+    НОВЕЙШЕМ фото галереи — то есть на только что загруженном файле.
+    Все шаги best-effort: False = фолбэк не удался, решение за вызывающим
+    (честный uncertain, fail-closed).
+    """
+    # 1. Закрыть модалку (крестик в том же detached NavBar — только dispatch).
+    try:
+        page.locator(RESUME_PHOTO_VIEWER_CLOSE).first.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: не удалось закрыть модалку вьювера: {exc}")
+        return False
+    # 2. Открыть вьювер карандашом (MFE уже гидратирован на этом шаге).
+    try:
+        page.locator(RESUME_AVATAR_EDIT_BUTTON).first.click()
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: клик по карандашу не удался: {exc}")
+        return False
+    # 3. assign-current в переоткрытом вьювере: settle -> гидратация ->
+    #    dispatch (тот же паттерн, что диагностика; кнопка может быть в
+    #    detached NavBar — позиционный клик не используем).
+    try:
+        btn = page.locator(RESUME_PHOTO_VIEWER_ASSIGN_CURRENT).first
+        btn.wait_for(state="attached", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+        page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
+        if not wait_for_react_hydration(
+            page, RESUME_PHOTO_VIEWER_ASSIGN_CURRENT, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS
+        ):
+            print(
+                "[INFO] фолбэк: React-привязка assign-кнопки не подтверждена — "
+                "активация всё равно отправлена"
+            )
+        btn.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: активация assign после переоткрытия не удалась: {exc}")
+        return False
+    print("[INFO] фолбэк: переоткрытый вьювер, dispatch_event по assign отправлен")
+    return True
 
 
 def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None, str]:
