@@ -361,44 +361,28 @@ def upload_photo_on_hh(
             state="attached", timeout=_CONFIRM_TIMEOUT_MS
         )
     except PlaywrightError:
-        # Бои 8-11 (2026-09-04/05, #955): после crop-upload hh.ru показывает
+        # Бои 8-12 (2026-09-04/05, #955): после crop-upload hh.ru показывает
         # рядом с MediaViewer пикер «Куда поставим фото?» — чекбоксы строк
         # резюме (photo-viewer-assign-resume-<id>) + футерная кнопка
         # «Выбрать и установить», DISABLED до выбора. Это in-body модалка —
         # обычные клики работают; путь через assign-current NavBar мёртв
         # для blob. Порядок фолбэков: пикер -> переоткрытие вьювера.
+        # Бой 12: пикер РЕАЛЬНО назначил фото (live-readback IAB: аватар
+        # есть после перезагрузки), но аватар на странице под модалкой
+        # SPA не перерисовал за 30с — отсутствие маркера после фолбэка
+        # НЕ uncertain: решает readback персистентного состояния ниже
+        # (success только по свежему DOM, fail-closed не тронут).
         if _assign_via_resume_picker(page, resume.resume_id):
-            try:
-                page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
-                    state="attached", timeout=_CONFIRM_TIMEOUT_MS
-                )
-            except PlaywrightError:
-                dump_path = dump_page_html(page, "photo_upload_uncertain")
-                reason = (
-                    "пикер назначения выполнен, но маркер успеха (img в блоке "
-                    f"аватара) не появился за {_CONFIRM_TIMEOUT_MS // 1000}с"
-                )
-                if assign_click_error is not None:
-                    reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
-                if dump_path is not None:
-                    reason += f"; дамп: {dump_path}"
-                return _uncertain(reason)
+            pass
         elif _assign_via_viewer_reopen(page):
             try:
                 page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
                     state="attached", timeout=_CONFIRM_TIMEOUT_MS
                 )
             except PlaywrightError:
-                dump_path = dump_page_html(page, "photo_upload_uncertain")
-                reason = (
-                    "фолбэк переоткрытия вьювера выполнен, но маркер успеха "
-                    f"(img в блоке аватара) не появился за {_CONFIRM_TIMEOUT_MS // 1000}с"
-                )
-                if assign_click_error is not None:
-                    reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
-                if dump_path is not None:
-                    reason += f"; дамп: {dump_path}"
-                return _uncertain(reason)
+                # назначение могло консолидироваться без перерисовки —
+                # решает readback ниже
+                pass
         else:
             dump_path = dump_page_html(page, "photo_upload_uncertain")
             reason = (

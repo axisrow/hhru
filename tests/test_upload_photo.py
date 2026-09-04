@@ -589,13 +589,41 @@ def test_assign_click_and_keyboard_failing_is_uncertain(monkeypatch):
 
 
 def test_marker_missing_after_assign_is_uncertain(monkeypatch):
+    """Маркера нет, оба фолбэка «отправили» назначение, но readback
+    подтвердил «фото нет» — честный uncertain (photo_present=False)."""
     monkeypatch.setattr(resume_photo, "_CONFIRM_TIMEOUT_MS", 1)
-    page = FakePage(marker_after_assign=0)
+    page = FakePage(marker_after_assign=0, readback_image_count=0)
     result = _run(page, before_click=lambda: None)
     assert not result.success
     assert result.uncertain is True
-    assert result.photo_present is None
+    assert result.photo_present is False
+    assert page.reloaded  # решение по readback, не по маркеру
     assert len(page.set_files) == 1
+
+
+def test_picker_assigns_without_marker_readback_confirms(monkeypatch):
+    """Бой 12 (2026-09-05, «Повар 960»): пикер РЕАЛЬНО назначил фото, но
+    аватар на странице под модалкой SPA не перерисовал за 30с — отсутствие
+    маркера после пикера НЕ uncertain: readback подтверждает success
+    (персистентный img после перезагрузки)."""
+    monkeypatch.setattr(resume_photo, "_CONFIRM_TIMEOUT_MS", 1)
+    page = FakePage(marker_after_assign=0, readback_image_count=1)
+    page.assign_works_only_after_reopen = True  # assign-current мёртв для blob
+    page.picker_available = True
+    orig_click = FakeLocator.click
+
+    def failing_click(self, *, timeout=None):  # noqa: ARG002
+        if self._selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            raise PlaywrightError("fake assign click failed (overlay intercepts)")
+        orig_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", failing_click)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert page.reloaded  # success только по readback
+    assert page.picker_checkbox_checked
+    assert page.pencil_reopened is False
 
 
 def test_marker_missing_reopen_fallback_assigns_and_succeeds(monkeypatch):
