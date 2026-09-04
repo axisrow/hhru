@@ -56,6 +56,7 @@ from .selector_groups.resume_photo import (
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
     RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE,
     RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT,
     RESUME_PHOTO_VIEWER_CLOSE,
     RESUME_PHOTO_VIEWER_LIMIT,
@@ -87,6 +88,9 @@ _ASSIGN_SCROLL_TIMEOUT_MS = 5_000
 # dispatch_event ушли в пустоту — hasPhoto остался false). Ждём React-
 # привязку на самой кнопке перед фолбэк-активацией.
 _ASSIGN_HYDRATION_TIMEOUT_MS = 15_000
+# Пикер «Куда поставим фото?» (чекбоксы photo-viewer-assign-resume-<id>):
+# окно ожидания его появления после неудачного первого маркерного бюджета.
+_PICKER_WAIT_TIMEOUT_MS = 10_000
 # Пауза после появления маркера до readback-перезагрузки: маркер рисуется
 # оптимистично, до консолидации assign-запроса на сервере (боевой кейс
 # 2026-09-02: img на месте, hasPhoto на сервере остался false). Пауза не
@@ -357,13 +361,29 @@ def upload_photo_on_hh(
             state="attached", timeout=_CONFIRM_TIMEOUT_MS
         )
     except PlaywrightError:
-        # Бои 8-9 (2026-09-04, #955): активация assign-current в модалке
-        # ПОСЛЕ crop-upload молча не работает (файл ещё blob без photo id),
-        # но работает для персистентных фото галереи. Диагностика
-        # explore_photo_assign_activation: закрыть модалку, открыть вьювер
-        # карандашом (он показывает новейшее фото галереи — только что
-        # загруженное) и dispatch_event по assign-current — фото назначено.
-        if _assign_via_viewer_reopen(page):
+        # Бои 8-11 (2026-09-04/05, #955): после crop-upload hh.ru показывает
+        # рядом с MediaViewer пикер «Куда поставим фото?» — чекбоксы строк
+        # резюме (photo-viewer-assign-resume-<id>) + футерная кнопка
+        # «Выбрать и установить», DISABLED до выбора. Это in-body модалка —
+        # обычные клики работают; путь через assign-current NavBar мёртв
+        # для blob. Порядок фолбэков: пикер -> переоткрытие вьювера.
+        if _assign_via_resume_picker(page, resume.resume_id):
+            try:
+                page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
+                    state="attached", timeout=_CONFIRM_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                dump_path = dump_page_html(page, "photo_upload_uncertain")
+                reason = (
+                    "пикер назначения выполнен, но маркер успеха (img в блоке "
+                    f"аватара) не появился за {_CONFIRM_TIMEOUT_MS // 1000}с"
+                )
+                if assign_click_error is not None:
+                    reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
+                if dump_path is not None:
+                    reason += f"; дамп: {dump_path}"
+                return _uncertain(reason)
+        elif _assign_via_viewer_reopen(page):
             try:
                 page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
                     state="attached", timeout=_CONFIRM_TIMEOUT_MS
@@ -383,8 +403,8 @@ def upload_photo_on_hh(
             dump_path = dump_page_html(page, "photo_upload_uncertain")
             reason = (
                 "assign отправлен, но маркер успеха (img в блоке аватара) не появился "
-                f"за {_CONFIRM_TIMEOUT_MS // 1000}с; фолбэк переоткрытия вьювера не удался "
-                "(см. [INFO] в логе)"
+                f"за {_CONFIRM_TIMEOUT_MS // 1000}с; фолбэки (пикер, переоткрытие "
+                "вьювера) не удались (см. [INFO] в логе)"
             )
             if assign_click_error is not None:
                 reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
@@ -416,6 +436,51 @@ def upload_photo_on_hh(
             photo_present=False,
         )
     return _uncertain(f"assign отправлен, но readback не выполнился: {readback_reason}")
+
+
+def _assign_via_resume_picker(page: Page, resume_id: str) -> bool:
+    """Фолбэк «пикер назначения»: чекбокс нашего резюме + «Выбрать и установить».
+
+    Бои 8-11 (2026-09-04/05, #955): после crop-upload hh.ru показывает
+    модалку «Куда поставим фото?» (обычная in-body magritte-modal, дамп
+    photo_upload_uncertain_20260905_004737) — чекбоксы строк резюме
+    photo-viewer-assign-resume-<resume_id> и футерная кнопка
+    photo-viewer-assign-submit «Выбрать и установить», DISABLED до выбора
+    строки. В отличие от assign-current (detached NavBar, мёртвая
+    активация для blob) здесь работают обычные позиционные клики.
+    Все шаги best-effort: False = фолбэк не удался, решение за вызывающим
+    (честный uncertain, fail-closed).
+    """
+    checkbox_selector = RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
+        resume_id=resume_id
+    )
+    try:
+        checkbox = page.locator(checkbox_selector).first
+        checkbox.wait_for(state="attached", timeout=_PICKER_WAIT_TIMEOUT_MS)
+    except PlaywrightError:
+        return False  # пикера нет — пробуем следующий фолбэк
+    wait_for_react_hydration(page, checkbox_selector, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS)
+    try:
+        # Magritte input невидим (opacity:0), но имеет ненулевой bbox —
+        # Playwright check() кликает связанный контрол; при отказе — dispatch.
+        try:
+            checkbox.check(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+        except PlaywrightError:
+            checkbox.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк-пикер: чекбокс резюме не выбран: {exc}")
+        return False
+    try:
+        submit = page.locator(RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT).first
+        submit.wait_for(state="visible", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+        # кнопка DISABLED до выбора строки; click дождётся enabled в рамках
+        # таймаута и упадёт честно, если выбор не засчитался
+        submit.click(timeout=_CONFIRM_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк-пикер: клик «Выбрать и установить» не удался: {exc}")
+        return False
+    print("[INFO] фолбэк-пикер: резюме выбрано, «Выбрать и установить» отправлено")
+    return True
 
 
 def _assign_via_viewer_reopen(page: Page) -> bool:

@@ -83,6 +83,10 @@ class FakeLocator:
         self._page.dispatches.append(self._selector)
         self._page.on_click(self._selector)
 
+    def check(self, *, timeout=None):  # noqa: ARG002
+        self._page.checks.append(self._selector)
+        self._page.on_click(self._selector)
+
     def set_input_files(self, files):
         self._page.set_files.append((self._selector, files))
 
@@ -123,6 +127,10 @@ class FakePage:
         # вьювера карандашом (blob без photo id против персистентного фото)
         self.assign_works_only_after_reopen = False
         self.pencil_reopened = False
+        # бои 8-11: пикер «Куда поставим фото?» доступен и чекбокс выбран
+        self.picker_available = False
+        self.picker_checkbox_checked = False
+        self.checks: list[str] = []
         self.marker_count = 0
         self._nav_calls = 0
         # гидратация assign-кнопки после неудачного клика (ленивый чанк
@@ -166,6 +174,14 @@ class FakePage:
         # после переоткрытия вьювера через карандаш.
         if selector == resume_photo.RESUME_AVATAR_EDIT_BUTTON:
             self.pencil_reopened = True
+        if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
+            resume_id="rid"
+        ):
+            self.picker_checkbox_checked = True
+        if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT:
+            # «Выбрать и установить» активна только после выбора строки
+            if self.picker_checkbox_checked:
+                self.marker_count = self._marker_after_assign
         if selector in (
             resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
             ASSIGN_COMBINED,
@@ -187,6 +203,15 @@ class FakePage:
             return FakeLocator(self, selector, count=1 if self.limit_modal else 0)
         if selector == ASSIGN_COMBINED:
             # после переоткрытия доступна одна из assign-кнопок
+            return FakeLocator(self, selector, count=1, visible=True)
+        if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT:
+            # футерная кнопка пикера «Выбрать и установить»
+            return FakeLocator(self, selector, count=1, visible=True)
+        if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
+            resume_id="rid"
+        ):
+            if not self.picker_available:
+                return FakeLocator(self, selector, count=0)
             return FakeLocator(self, selector, count=1, visible=True)
         if selector == resume_photo.RESUME_AVATAR_IMAGE:
             # после readback-перезагрузки DOM свежий: оптимистичный маркер
@@ -233,6 +258,7 @@ class FakePage:
 
 class FakeResume:
     resume_url = "https://hh.ru/resume/rid"
+    resume_id = "rid"
 
 
 PHOTO = PhotoFile(path=Path("/tmp/x.jpg"), size_bytes=100, kind="jpeg")
@@ -605,6 +631,42 @@ def test_marker_missing_reopen_fallback_assigns_and_succeeds(monkeypatch):
     ]
     assert page.pencil_reopened
     # гидратация assign-кнопки проверялась в обоих кругах (+ MFE-инпут)
+    assert page.wait_fn_calls == 3
+
+
+def test_marker_missing_resume_picker_assigns_and_succeeds(monkeypatch):
+    """Бои 8-11 (2026-09-04/05): после crop-upload hh.ru показывает пикер
+    «Куда поставим фото?» — чекбокс строки нашего резюме + футерная кнопка
+    «Выбрать и установить» (DISABLED до выбора). Пикер — первый фолбэк:
+    обычная in-body модалка, позиционные клики работают; исход — success
+    через readback, переоткрытие вьювера не требуется."""
+    page = FakePage()
+    page.assign_works_only_after_reopen = True  # assign-current мёртв для blob
+    page.picker_available = True
+    orig_click = FakeLocator.click
+
+    def failing_click(self, *, timeout=None):  # noqa: ARG002
+        if self._selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            raise PlaywrightError("fake assign click failed (overlay intercepts)")
+        orig_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", failing_click)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert page.reloaded
+    checkbox = resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(
+        resume_id="rid"
+    )
+    assert page.checks == [checkbox]
+    assert page.picker_checkbox_checked
+    assert page.clicks == [
+        resume_photo.RESUME_PHOTO_EDITOR_APPLY,
+        resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT,
+    ]
+    assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
+    assert page.pencil_reopened is False  # до переоткрытия дело не дошло
+    # гидратация: MFE-инпут + assign-кнопка круга 1 + чекбокс пикера
     assert page.wait_fn_calls == 3
 
 

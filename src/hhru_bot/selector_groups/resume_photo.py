@@ -120,6 +120,19 @@ RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER
 # ждёт ЛЮБУЮ из двух и активирует по фактическому data-qa.
 RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT")
 
+# Шаблон чекбокса строки резюме в пикере «Куда поставим фото?» — обычная
+# in-body модалка (magritte-modal, футер с action-bar), появляющаяся
+# вместе с MediaViewer после crop-upload. Подтверждена живым дампом
+# 2026-09-05 (photo_upload_uncertain_20260905_004737): чекбоксы
+# photo-viewer-assign-resume-<resume_id> на каждое резюме аккаунта
+# (все сняты) + кнопка photo-viewer-assign-submit «Выбрать и
+# установить» в футере, DISABLED до выбора строки. Это НЕ registered
+# селектор (значение параметризовано resume_id) — реестр хранит
+# литералы; происхождение задокументировано здесь.
+RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE = (
+    "[data-qa='photo-viewer-assign-resume-{resume_id}']"
+)
+
 # Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён
 # живыми дампами 2026-09-04 (photo_assign_click_uncertain_*/photo_upload_*
 # — data-qa='photo-viewer-close' в одном NavBar с assign-кнопкой; live-замер
