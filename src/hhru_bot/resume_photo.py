@@ -267,7 +267,15 @@ def upload_photo_on_hh(
     try:
         assign_btn.click()
     except PlaywrightError as exc:
-        return _uncertain(f"модалка назначения открыта, клик assign не удался: {exc}")
+        # Боевые прогоны 2026-09-04 (#955, дважды): кнопка stable, но клик
+        # падает «outside of the viewport» — авто-скролл и явный скролл не
+        # помогают. Дамп модалки — единственный артефакт для разбора
+        # реального позиционирования (два сгоревших прогона без доказательств).
+        dump_path = dump_page_html(page, "photo_assign_click_uncertain")
+        reason = f"модалка назначения открыта, клик assign не удался: {exc}"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return _uncertain(reason)
 
     try:
         # Маркер — появление <img> в DOM («attached», не «visible»: сам блок
