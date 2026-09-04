@@ -238,7 +238,14 @@ def upload_photo_on_hh(
         editor_apply = page.locator(RESUME_PHOTO_EDITOR_APPLY).first
         editor_apply.wait_for(state="visible", timeout=_EDITOR_WAIT_TIMEOUT_MS)
     except PlaywrightError as exc:
-        return _uncertain(f"файл передан, но crop-редактор не открылся: {exc}")
+        # Боевой прогон 2026-09-04 (#955, прогон 3 на черновике с непустой
+        # галереей): crop-редактор не открылся — дамп для разбора альтернативного
+        # UI (галерея с фото / предупреждение о дубле).
+        dump_path = dump_page_html(page, "photo_editor_missing_uncertain")
+        reason = f"файл передан, но crop-редактор не открылся: {exc}"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return _uncertain(reason)
     try:
         editor_apply.click()
     except PlaywrightError as exc:
