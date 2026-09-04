@@ -32,6 +32,7 @@ UI-механизм, не внутренний API hh.ru (граница бра�
 from __future__ import annotations
 
 import stat as stat_module
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from .selector_groups.resume_photo import (
     PHOTO_ACCEPTED_EXT,
     RESUME_AVATAR_BLOCK,
     RESUME_AVATAR_IMAGE,
+    RESUME_AVATAR_PLACEHOLDER,
     RESUME_PHOTO_EDITOR_APPLY,
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
@@ -79,6 +81,11 @@ _ASSIGN_MODAL_SETTLE_MS = 2_500
 # доказательство, а снижение частоты ложного uncertain: если assign не
 # уложился, readback после перезагрузки честно вернёт uncertain.
 _ASSIGN_SETTLE_MS = 5_000
+# Readback (#955): после видимости блока аватара img может быть ещё не
+# дорендерен (SPA вставляет асинхронно) — отсутствие подтверждаем ТОЛЬКО
+# явным плейсхолдером «фото нет», в пределах этого бюджета.
+_READBACK_CONFIRM_TIMEOUT_MS = 15_000
+_READBACK_POLL_MS = 500
 
 _MAGIC: tuple[tuple[bytes, str], ...] = (
     (b"\xff\xd8\xff", "jpeg"),
@@ -311,9 +318,30 @@ def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None,
         )
     except PlaywrightError as exc:
         return None, f"блок аватара не отрисовался при перечитывании: {exc}"
-    if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
-        return True, ""
-    return False, "img в блоке аватара отсутствует на свежезагруженной странице"
+    # Видимость блока не доказывает, что состояние фото дорендерено (SPA
+    # вставляет img асинхронно, а плейсхолдер «фото нет» виден и ДО вставки
+    # img — замечание ревью #962): сначала ограниченный бюджет ждём
+    # ПОЗИТИВНЫЙ признак (img), и только после его исчерпания отсутствие
+    # фото подтверждаем явным плейсхолдером. Ни того, ни другого —
+    # состояние не определено.
+    deadline = time.monotonic() + _READBACK_CONFIRM_TIMEOUT_MS / 1000
+    while time.monotonic() < deadline:
+        if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
+            return True, ""
+        page.wait_for_timeout(_READBACK_POLL_MS)
+    if (
+        page.locator(RESUME_AVATAR_IMAGE).count() == 0
+        and page.locator(RESUME_AVATAR_PLACEHOLDER).count() > 0
+    ):
+        return (
+            False,
+            "подтверждено состояние «фото нет» (плейсхолдер, img не появился "
+            f"за {_READBACK_CONFIRM_TIMEOUT_MS // 1000}с) на свежезагруженной странице",
+        )
+    return None, (
+        "состояние фото не определено за "
+        f"{_READBACK_CONFIRM_TIMEOUT_MS // 1000}с — ни img, ни плейсхолдера"
+    )
 
 
 def _uncertain(reason: str) -> UploadPhotoResult:

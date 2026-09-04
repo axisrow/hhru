@@ -182,6 +182,7 @@
 | resume_photo.RESUME_AVATAR_BLOCK | `[data-qa='resume-avatar']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_EDIT_BUTTON | `[data-qa='resume-avatar-edit-button']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_IMAGE | `[data-qa='resume-avatar'] img` | — | — | — | documented_live |
+| resume_photo.RESUME_AVATAR_PLACEHOLDER | `[data-qa='resume-avatar'] [data-qa='placeholder-male']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_EDITOR_APPLY | `[data-qa='photo-editor-apply']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_FILE_INPUT | `input[data-qa='resume-photo-proxy-gallery-input']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_MFE_CONTAINER | `[class*='ContainerForMicroFrontend-resumePhotoViewer']` | — | — | — | documented_live |

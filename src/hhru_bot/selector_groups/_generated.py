@@ -179,6 +179,7 @@ VALUES: dict[str, str] = {
     "resume_photo.RESUME_AVATAR_BLOCK": "[data-qa='resume-avatar']",
     "resume_photo.RESUME_AVATAR_EDIT_BUTTON": "[data-qa='resume-avatar-edit-button']",
     "resume_photo.RESUME_AVATAR_IMAGE": "[data-qa='resume-avatar'] img",
+    "resume_photo.RESUME_AVATAR_PLACEHOLDER": "[data-qa='resume-avatar'] [data-qa='placeholder-male']",
     "resume_photo.RESUME_PHOTO_EDITOR_APPLY": "[data-qa='photo-editor-apply']",
     "resume_photo.RESUME_PHOTO_FILE_INPUT": "input[data-qa='resume-photo-proxy-gallery-input']",
     "resume_photo.RESUME_PHOTO_MFE_CONTAINER": "[class*='ContainerForMicroFrontend-resumePhotoViewer']",

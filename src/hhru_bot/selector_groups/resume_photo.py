@@ -71,6 +71,15 @@ RESUME_AVATAR_EDIT_BUTTON = _selector("resume_photo.RESUME_AVATAR_EDIT_BUTTON")
 # resume_photo._readback_photo_persisted).
 RESUME_AVATAR_IMAGE = _selector("resume_photo.RESUME_AVATAR_IMAGE")
 
+# Явный маркер состояния «фото нет»: плейсхолдер-иконка вместо <img> внутри
+# того же блока аватара. Подтверждён живым read-only дампом 2026-09-02
+# (explore_photo_full_*: data-qa='placeholder-male'; в дампе с фото
+# photo_assign_final_* отсутствует). Readback #955: отсутствие фото
+# считается подтверждённым только по этому маркеру — простое отсутствие
+# img в момент проверки не доказывает ничего (img может быть ещё не
+# дорендерен SPA).
+RESUME_AVATAR_PLACEHOLDER = _selector("resume_photo.RESUME_AVATAR_PLACEHOLDER")
+
 # Кнопка применения crop-редактора — второй шаг боевого потока, запускает
 # upload. Подтверждена боевым прогоном 2026-09-02 (модалка редактора
 # открылась после set_input_files, клик привёл к модалке назначения;

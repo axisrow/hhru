@@ -67,6 +67,7 @@ class FakePage:
         marker_after_assign=1,
         readback_image_count=1,
         readback_page_ok=True,
+        readback_placeholder_after=0,
     ):
         self.set_files: list[tuple[str, str]] = []
         self.clicks: list[str] = []
@@ -81,6 +82,11 @@ class FakePage:
         self._marker_after_assign = marker_after_assign
         self._readback_image_count = readback_image_count
         self._readback_page_ok = readback_page_ok
+        # после readback-перезагрузки img появляется только после стольких
+        # опросов состояния (задержка рендера SPA, замечание ревью #962);
+        # 0 = img доступен сразу. Ноль после исчерпания = плейсхолдер.
+        self._readback_placeholder_after = readback_placeholder_after
+        self._readback_polls = 0
         self.url = "https://hh.ru/resume/rid"
 
     def on_reload(self):
@@ -109,8 +115,21 @@ class FakePage:
         if selector == resume_photo.RESUME_AVATAR_IMAGE:
             # после readback-перезагрузки DOM свежий: оптимистичный маркер
             # заменяется персистентным состоянием readback_image_count
-            count = self._readback_image_count if self.reloaded else self.marker_count
-            return FakeLocator(self, selector, count=count)
+            if not self.reloaded:
+                return FakeLocator(self, selector, count=self.marker_count)
+            if self._readback_polls > self._readback_placeholder_after:
+                return FakeLocator(self, selector, count=self._readback_image_count)
+            return FakeLocator(self, selector, count=0)
+        if selector == resume_photo.RESUME_AVATAR_PLACEHOLDER:
+            # плейсхолдер «фото нет» подтверждается, когда лимит задержки
+            # img исчерпан и персистентного img нет
+            if self.reloaded and not getattr(self, "_hide_placeholder", False):
+                has_img = self._readback_polls > self._readback_placeholder_after and (
+                    self._readback_image_count > 0
+                )
+                if not has_img:
+                    return FakeLocator(self, selector, count=1)
+            return FakeLocator(self, selector, count=0)
         return FakeLocator(self, selector, count=0)
 
     def evaluate(self, script, arg=None):  # noqa: ARG002
@@ -123,7 +142,9 @@ class FakePage:
             raise PlaywrightError("fake: hydration timeout")
 
     def wait_for_timeout(self, ms):  # noqa: ARG002
-        pass
+        # опрос readback-цикла продвигает симулированное время рендера
+        if self.reloaded:
+            self._readback_polls += 1
 
     def content(self) -> str:
         return "<html></html>"  # для browser.dump_page_html в uncertain-исходах
@@ -144,6 +165,9 @@ def _no_navigation(monkeypatch):
     )
     monkeypatch.setattr(resume_photo, "require_authenticated_page", lambda page: None)
     monkeypatch.setattr(resume_photo, "dismiss_cookie_banner", lambda page: None)
+    # readback-бюджет реального времени в фейке не нужен длинным: цикл
+    # опроса не спит по-настоящему, 100мс хватает на десятки итераций
+    monkeypatch.setattr(resume_photo, "_READBACK_CONFIRM_TIMEOUT_MS", 100)
 
 
 def _jpeg(tmp_path, name="photo.jpg", data=JPEG_HEAD):
@@ -280,7 +304,31 @@ def test_marker_optimistic_readback_absent_is_uncertain():
     assert result.uncertain is True
     assert result.photo_present is False
     assert page.reloaded
-    assert "readback" in result.reason
+    assert "плейсхолдер" in result.reason
+
+
+def test_readback_img_rendered_late_is_success(monkeypatch):
+    """Регрессия ревью #962: img вставляется SPA с задержкой после видимости
+    блока — мгновенный подсчёт давал ложный uncertain при успехе."""
+    monkeypatch.setattr(resume_photo, "_READBACK_CONFIRM_TIMEOUT_MS", 2_000)
+    monkeypatch.setattr(resume_photo, "_READBACK_POLL_MS", 1)
+    page = FakePage(readback_placeholder_after=5, readback_image_count=1)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert page.reloaded
+
+
+def test_readback_no_img_no_placeholder_is_uncertain():
+    """Ни img, ни плейсхолдера за бюджет — состояние не определено."""
+    page = FakePage(readback_image_count=0)
+    # имитируем «плейсхолдера тоже нет»: image_count=0, но плейсхолдер
+    # фейк рисует только пока img отсутствует; гасим его отдельным флагом
+    page._hide_placeholder = True
+    result = _run(page, before_click=lambda: None)
+    assert not result.success
+    assert result.uncertain is True
+    assert result.photo_present is None
 
 
 def test_readback_page_unreadable_is_uncertain():

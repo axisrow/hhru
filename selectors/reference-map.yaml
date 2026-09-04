@@ -4072,6 +4072,28 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_submit_live_write
     verified_by: claude
+  resume_photo.RESUME_AVATAR_PLACEHOLDER:
+    value: '[data-qa=''resume-avatar''] [data-qa=''placeholder-male'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:78
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:78
+      note: Явный маркер состояния «фото нет» (плейсхолдер-иконка вместо img). Подтверждён живым read-only дампом explore_photo_full_20260902_100454.html
+        (data-qa='placeholder-male' внутри magritte-avatar блока resume-avatar); в дампе с фото photo_assign_final_110123.html
+        placeholder-male отсутствует. Используется readback'ом (ишью 955) как подтверждение отсутствия фото на свежезагруженной
+        странице.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
   resume_photo.RESUME_PHOTO_EDITOR_APPLY:
     value: '[data-qa=''photo-editor-apply'']'
     criticality: write
