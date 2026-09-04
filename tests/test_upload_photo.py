@@ -110,6 +110,10 @@ class FakePage:
         self.dispatch_disabled = False
         self.marker_count = 0
         self._nav_calls = 0
+        # гидратация assign-кнопки после неудачного клика (ленивый чанк
+        # модалки): False имитирует «чанк так и не гидратировался»
+        self.assign_hydrated = True
+        self.wait_fn_calls = 0
         self.reloaded = False
         self._avatar_count = avatar_count
         self._file_input_count = file_input_count
@@ -183,6 +187,10 @@ class FakePage:
     def wait_for_function(self, script, *, arg=None, timeout=None):  # noqa: ARG002
         # browser.wait_for_react_hydration поллит через wait_for_function;
         # таймаут в реальном Playwright — PlaywrightError.
+        self.wait_fn_calls += 1
+        # второй вызов — гидратация assign-кнопки после неудачного клика
+        if arg == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT and not self.assign_hydrated:
+            raise PlaywrightError("fake: assign button hydration timeout")
         if not self._hydrated:
             raise PlaywrightError("fake: hydration timeout")
 
@@ -464,9 +472,10 @@ def test_assign_click_falls_back_to_keyboard_and_succeeds(monkeypatch):
 
 
 def test_assign_click_keyboard_neutral_dispatch_succeeds(monkeypatch):
-    """Боевой прогон 7 (2026-09-04): Enter отправляется без ошибки, но кнопку
-    НЕ активирует (маркера нет) — dispatch_event('click') без геометрии
-    назначает фото, исход — success."""
+    """Боевой прогон 8 (2026-09-04): позиционный клик падает (NavBar модалки
+    над оверлеем), Enter не активирует — после НЕУДАЧНОГО клика код ждёт
+    гидратацию кнопки и отправляет dispatch_event('click'), который
+    назначает фото; исход — success."""
     page = FakePage()
     orig_click = FakeLocator.click
 
@@ -480,6 +489,29 @@ def test_assign_click_keyboard_neutral_dispatch_succeeds(monkeypatch):
     assert result.success
     assert result.photo_present is True
     assert page.reloaded  # success только через readback
+    assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
+    # гидратация assign-кнопки проверена ДО dispatch (MFE-инпут + кнопка)
+    assert page.wait_fn_calls == 2
+
+
+def test_assign_button_never_hydrated_still_attempts_dispatch(monkeypatch):
+    """Чанк модалки не гидратировался за бюджет — активация всё равно
+    отправлена, исход классифицирует маркер (fail-closed без раннего
+    отказа): dispatch назначает фото — success."""
+    page = FakePage()
+    page.assign_hydrated = False
+    orig_click = FakeLocator.click
+
+    def failing_click(self, *, timeout=None):  # noqa: ARG002
+        if self._selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
+            raise PlaywrightError("fake assign click failed (outside viewport)")
+        orig_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", failing_click)
+    result = _run(page, before_click=lambda: None)
+    assert result.success
+    assert result.photo_present is True
+    assert page.wait_fn_calls == 2
     assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
 
 
