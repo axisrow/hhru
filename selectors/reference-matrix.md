@@ -179,6 +179,7 @@
 | resume_page.RESUME_SPECIALIZATION_OPTION | `[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_SEARCH | `[data-qa='tree-selector-search-input']` | — | — | — | documented_live |
 | resume_page.RESUME_SPECIALIZATION_SUBMIT | `[data-qa='professional-roles-submit']` | — | — | — | documented_live |
+| resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER | `[data-qa='tree-selector-container']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_BLOCK | `[data-qa='resume-avatar']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_EDIT_BUTTON | `[data-qa='resume-avatar-edit-button']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_IMAGE | `[data-qa='resume-avatar'] img` | — | — | — | documented_live |

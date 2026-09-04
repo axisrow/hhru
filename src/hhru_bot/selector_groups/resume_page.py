@@ -117,6 +117,17 @@ RESUME_SPECIALIZATION_SEARCH = _selector("resume_page.RESUME_SPECIALIZATION_SEAR
 RESUME_SPECIALIZATION_OPTION = _selector("resume_page.RESUME_SPECIALIZATION_OPTION")
 RESUME_SPECIALIZATION_DELETE = _selector("resume_page.RESUME_SPECIALIZATION_DELETE")
 RESUME_SPECIALIZATION_SUBMIT = _selector("resume_page.RESUME_SPECIALIZATION_SUBMIT")
+# #954 (живой DOM 2026-09-04, read-only замер из
+# tests/test_resume_position_empty_state_live.py, дампы
+# data/logs/954_specialization_modal_*.html): у дерева специализаций НЕТ
+# отдельного empty-state узла — ни текста «ничего не найдено», ни
+# spinner/aria-busy. Пустой результат фильтра hh.ru выражается единственным
+# прикреплённым и ПОЛНОСТЬЮ пустым контейнером: до фильтра в нём 28
+# tree-selector-item, после запроса без совпадений — 0 дочерних элементов.
+# Позитивный признак «дерево отрисовалось, совпадений нет» для --fallback-other
+# = этот контейнер существует и пуст; отсутствующий или непустой контейнер
+# пустотой НЕ является (fail-closed, #954).
+RESUME_SPECIALIZATION_TREE_CONTAINER = _selector("resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER")
 
 # Language block and modal selectors confirmed on the authenticated read-only
 # DOM of /applicant/profile/me on 2026-08-20 (issue #265).  Languages are a

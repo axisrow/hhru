@@ -7,7 +7,9 @@
     </button>
     <section data-qa="professional-roles-modal" role="dialog" hidden>
       <input data-qa="tree-selector-search-input" aria-label="Поиск специализации">
-      <div id="catalog-options">
+      <!-- data-qa подтверждён живым замером #954 (2026-09-04): контейнер
+           дерева, полностью пустой при пустом результате фильтра. -->
+      <div id="catalog-options" data-qa="tree-selector-container">
       <div data-qa="tree-selector-category">Финансы</div>
       <div data-qa="tree-selector-item tree-selector-item-1 tree-selector-child-96" data-label="Бухгалтер"><span data-qa="cell-text-content">Бухгалтер</span></div>
       <div data-qa="tree-selector-category">Образование</div>

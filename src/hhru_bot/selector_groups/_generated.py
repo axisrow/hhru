@@ -176,6 +176,7 @@ VALUES: dict[str, str] = {
     "resume_page.RESUME_SPECIALIZATION_OPTION": "[data-qa^='tree-selector-item tree-selector-item-'][data-qa*='tree-selector-child-']",
     "resume_page.RESUME_SPECIALIZATION_SEARCH": "[data-qa='tree-selector-search-input']",
     "resume_page.RESUME_SPECIALIZATION_SUBMIT": "[data-qa='professional-roles-submit']",
+    "resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER": "[data-qa='tree-selector-container']",
     "resume_photo.RESUME_AVATAR_BLOCK": "[data-qa='resume-avatar']",
     "resume_photo.RESUME_AVATAR_EDIT_BUTTON": "[data-qa='resume-avatar-edit-button']",
     "resume_photo.RESUME_AVATAR_IMAGE": "[data-qa='resume-avatar'] img",

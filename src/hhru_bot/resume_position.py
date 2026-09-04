@@ -69,16 +69,31 @@ from .selector_groups.resume_page import (
 from .selector_groups.resume_page import (
     RESUME_SPECIALIZATION_SUBMIT as SPECIALIZATION_SUBMIT,
 )
+from .selector_groups.resume_page import (
+    RESUME_SPECIALIZATION_TREE_CONTAINER as SPECIALIZATION_TREE_CONTAINER,
+)
 
 logger = logging.getLogger("hhru_bot.resume_position")
 
 
 class SpecializationLeafMissing(RuntimeError):
-    """The editor's specialization tree confirmed it will never render the
-    exact label: bounded wait_for(state="visible") timed out (#950, #822).
-    The only PlaywrightError shape the --fallback-other placeholder is allowed
-    to cover — search.fill drift or a click failure on an already-confirmed
-    leaf is NOT this and propagates unchanged (ревью #952)."""
+    """The editor's specialization tree POSITIVELY confirmed the filter
+    result is empty: the single tree container is attached and completely
+    empty (live DOM 2026-09-04: the widget has no dedicated empty-state
+    node, #954). A wait timeout alone is NOT this — see
+    :class:`SpecializationTreeIndeterminate`. The only failure shape the
+    --fallback-other placeholder is allowed to cover; search.fill drift or
+    a click failure on an already-confirmed leaf is NOT this either and
+    propagates unchanged (ревью #952)."""
+
+
+class SpecializationTreeIndeterminate(RuntimeError):
+    """The tree container never attached within the bounded timeout (#954):
+    the only proven fact is «не успело отрисоваться», so «листа нет» is NOT
+    established. The --fallback-other placeholder must NOT fire on this (a
+    slow render would otherwise overwrite a valid specialization with
+    «Другое»); the command fails closed having saved nothing — the SAVE
+    click happens strictly after _set_specializations in apply_position."""
 
 
 class ChipPopularUnavailable(RuntimeError):
@@ -1011,8 +1026,12 @@ def _set_control(page: Page, selector: str, value: str, labels: dict[str, str]) 
 def _pick_specialization(page: Page, search: Locator, value: str) -> None:
     """Select one specialization leaf by exact label through the search filter.
 
-    Raises RuntimeError when the tree never renders the exact label (missing
-    leaf) or renders it under more than one data-qa id (genuine ambiguity).
+    Three terminal states (#954): the leaf renders (picked), the tree's
+    empty-state marker renders (:class:`SpecializationLeafMissing` — the
+    absence is positively confirmed), or neither does within the bounded
+    timeout (:class:`SpecializationTreeIndeterminate` — nothing proven,
+    fail-closed). A non-timeout PlaywrightError still propagates as-is
+    (ревью #952, цикл 2).
     """
     search.fill(value)
     option = page.locator(SPECIALIZATION_OPTION).filter(
@@ -1030,11 +1049,40 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
     try:
         option.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
     except PlaywrightTimeoutError as exc:
-        # Именно здесь «лист отсутствует» (#950): bounded-таймаут подтверждает,
-        # что дерево так и не отрисовало метку. Только таймаут — детач/ошибка
-        # протокола из wait_for и ошибки fill/клика ниже — это НЕ отсутствие
-        # листа и наружу не превращаются (ревью #952, цикл 2).
-        raise SpecializationLeafMissing(f"лист специализации не отрендерился: {value}") from exc
+        # Таймаут сам по себе доказывает только «не успело отрисоваться»
+        # (#954). Позитивный признак «дерево отрисовалось и совпадений нет»
+        # живой DOM даёт только одним способом: единственный контейнер
+        # дерева прикреплён и ПОЛНОСТЬЮ пуст (отдельного empty-state узла у
+        # виджета нет — живой замер 2026-09-04, см.
+        # selector_groups/resume_page.py). Рендер фильтра стабилизируется
+        # p95=250мс против 5с ожидания (замер #954), поэтому к моменту
+        # чтения контейнер давно осел: пустой контейнер на границе таймаута
+        # — подтверждённый пустой результат, а не гонка.
+        container = page.locator(SPECIALIZATION_TREE_CONTAINER)
+        children = container.first.locator("*").count() if container.count() == 1 else None
+        if children == 0:
+            raise SpecializationLeafMissing(
+                f"дерево специализаций подтвердило пустой результат фильтра: {value}"
+            ) from exc
+        if children:
+            # Непустой результат без точного совпадения — НЕ пустой фильтр:
+            # обычно неточное имя листа (имена каталога составные,
+            # «Столяр, плотник»). Фоллбэк «Другое» здесь запрещён — он
+            # затёр бы валидную близкую специализацию (#954). Счётчик —
+            # точный SPECIALIZATION_OPTION (число листьев), а не все дети
+            # контейнера: заголовки групп не «варианты» (ревью PR #964).
+            option_count = page.locator(SPECIALIZATION_OPTION).count()
+            raise RuntimeError(
+                f"результат фильтра непуст (совпадений: {option_count}), но точного "
+                f"листа «{value}» среди них нет — передайте точное имя листа из "
+                "live-каталога (составные имена вида «Столяр, плотник»)"
+            ) from exc
+        raise SpecializationTreeIndeterminate(
+            f"дерево специализаций не отрисовалось за "
+            f"{_CONTROL_WAIT_TIMEOUT_MS} мс: ни лист «{value}», ни "
+            "подтверждённо пустого контейнера дерева — отсутствие листа не "
+            "доказано, ничего не сохранено (#954)"
+        ) from exc
     option_ids = {option.nth(index).get_attribute("data-qa") for index in range(option.count())}
     # The same leaf is rendered once under every matching parent category;
     # its data-qa id is the stable identity.  Different ids with the same
@@ -1136,14 +1184,21 @@ def _set_specializations(page: Page, values: list[str], fallback_other: bool = F
         try:
             _pick_specialization(page, search, value)
         except SpecializationLeafMissing as exc:
-            # Leaf never rendered — this is the ONLY failure mode the explicit
-            # fallback covers (#950): the tree confirmed the label is absent, so
-            # «Другое» (id 40) is the deliberate placeholder choice, not a
-            # silent filter degeneration. Other PlaywrightErrors (search.fill
-            # drift, a click failure on an already-confirmed leaf) propagate —
-            # an indeterminate page state must not become a confident wrong
-            # write (ревью #952). Ambiguity (RuntimeError) still fails
-            # closed: a wrong unique-ish pick is a real mutation.
+            # Positive empty filter result (attached, completely empty tree
+            # container) — the ONLY failure mode the explicit fallback
+            # covers (#950, #954): the tree itself confirmed there are no
+            # matches, so «Другое» (id 40) is the deliberate placeholder
+            # choice, not a silent filter degeneration. A timeout WITHOUT
+            # that positive emptiness raises
+            # SpecializationTreeIndeterminate (tree never attached) or a
+            # near-miss RuntimeError (non-empty filter without the exact
+            # label) instead, and neither is caught here: a slow or partial
+            # render must not overwrite a valid specialization with
+            # «Другое» (#954). Other PlaywrightErrors (search.fill drift, a
+            # click failure on an already-confirmed leaf) propagate too —
+            # an indeterminate page state must not become a confident
+            # wrong write (ревью #952). Ambiguity (RuntimeError) still
+            # fails closed: a wrong unique-ish pick is a real mutation.
             if fallback_other and value != OTHER_ROLE_LABEL:
                 logger.info(
                     "специализация «%s» не найдена в дереве резюме — "

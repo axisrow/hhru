@@ -4025,6 +4025,29 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER:
+    value: '[data-qa=''tree-selector-container'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:130
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:130
+      note: '#954 live read-only measurement 2026-09-04 (authenticated editor modal, filter probe without submit; reproducer
+        — tests/test_resume_position_empty_state_live.py): the specialization tree has NO dedicated empty-state node — an
+        empty filter result is expressed by the single attached tree-selector-container being completely empty (28 tree-selector-item
+        before the filter, 0 children after a non-matching query; dividers/spinner/aria-busy identical in both states). Positive
+        "rendered and empty" evidence for --fallback-other; absent or non-empty container is not.'
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_editor_modal_read_only
+    verified_by: hhru-461
   resume_photo.RESUME_AVATAR_BLOCK:
     value: '[data-qa=''resume-avatar'']'
     criticality: read
