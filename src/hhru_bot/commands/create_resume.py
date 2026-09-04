@@ -93,6 +93,23 @@ def run(args: argparse.Namespace):
             with launch_context(
                 config.storage_state_file, headless=args.headless, user_agent=config.user_agent
             ) as context:
+                page = context.new_page()
+                # #950: сверка area с live-каталогом поиска вакансий ДО входа в
+                # визард — отказ наступает до любого клика (первый NEXT может
+                # материализовать фантом-черновик, #936) и перечисляет листы,
+                # которые фильтр реально предлагает. Чтение read-only.
+                from ..catalog_preflight import preflight_area
+
+                outcome = preflight_area(
+                    page,
+                    args.area,
+                    allow_unresolved_area=getattr(args, "allow_unresolved_area", False),
+                )
+                if not outcome.ok:
+                    print(f"[FAIL] {outcome.message}")
+                    return True
+                if outcome.message:
+                    print(f"[WARN] {outcome.message}")
                 create_kwargs = {
                     "area": args.area,
                     "title": args.title,
@@ -101,7 +118,7 @@ def run(args: argparse.Namespace):
                 }
                 if getattr(args, "allow_unresolved_area", False):
                     create_kwargs["allow_unresolved_area"] = True
-                result = create_resume_on_hh(context.new_page(), **create_kwargs)
+                result = create_resume_on_hh(page, **create_kwargs)
         except BaseException as exc:
             if attempt is not None:
                 attempt.interrupt(exc)

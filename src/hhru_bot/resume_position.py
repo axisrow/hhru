@@ -30,6 +30,7 @@ from .browser import (
     require_authenticated_page,
     resume_identity_matches,
 )
+from .catalog_preflight import evaluate_leaf, format_candidates
 from .config import ResumeConfig
 from .create_resume import OTHER_ROLE_LABEL, select_wizard_catalog_leaf
 from .logging_setup import LOG_DIR
@@ -1043,6 +1044,74 @@ def _pick_specialization(page: Page, search: Locator, value: str) -> None:
     option.first.click()
 
 
+def _read_specialization_labels(page: Page) -> list[str]:
+    """Labels of the specialization rows currently rendered in the open modal."""
+    try:
+        texts = page.locator(SPECIALIZATION_OPTION).all_inner_texts()
+    except PlaywrightError:
+        # Перерендер дерева между итерациями опроса отсоединяет хэндлы — сигнал
+        # повторить чтение (тот же принцип, что batch-снимок дерева в
+        # select_wizard_catalog_leaf), а не финальная ошибка.
+        return []
+    return [" ".join(text.split()) for text in texts if text.strip()]
+
+
+def _poll_specialization_labels(page: Page) -> list[str]:
+    """Два равных подряд снимка отфильтрованного дерева — консистентное чтение.
+
+    search.fill() запускает асинхронный React-ре-рендер отфильтрованного
+    дерева (#822): одиночное чтение видит либо прежнее (нефильтрованное)
+    дерево, либо недостроенный пустой список. Решение принимается только по
+    стабильному снимку (тот же принцип, что _poll_suggestion_texts в
+    create_resume); дедлайн — inline ``_CONTROL_WAIT_TIMEOUT_MS``.
+    """
+    deadline = time.monotonic() + _CONTROL_WAIT_TIMEOUT_MS / 1000
+    previous: list[str] | None = None
+    while True:
+        labels = _read_specialization_labels(page)
+        if labels == previous:
+            return labels
+        previous = labels
+        if time.monotonic() >= deadline:
+            return labels
+        page.wait_for_timeout(250)
+
+
+def validate_specializations_against_tree(page: Page, values: list[str]) -> list[str]:
+    """Read-only dry-run сверка специализаций с живым деревом резюме (#950).
+
+    Открывает панель выбора специализаций (единственный read-only клик по
+    ADD — панель выбора, не DELETE и не submit), читает дерево, отфильтрованное
+    каждым значением, и возвращает отказы для значений, которые дерево не
+    рендерит точным листом; отказ перечисляет реально предложенные листы.
+    Выход из экрана — обязанность вызывающего (уход со страницы или CANCEL,
+    никогда не submit). Боевой путь валидирует сам факт клика по листу в
+    ``_pick_specialization`` — здесь та же строгость, перенесённая до записи.
+    """
+    if page.locator(SPECIALIZATION_ADD).count() != 1:
+        raise RuntimeError("селектор добавления специализации не подтверждён")
+    page.locator(SPECIALIZATION_ADD).click()
+    modal = page.locator(SPECIALIZATION_MODAL)
+    try:
+        modal.first.wait_for(state="visible", timeout=_CONTROL_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError("панель выбора специализаций не открылась") from exc
+    search = page.locator(SPECIALIZATION_SEARCH)
+    if search.count() != 1:
+        raise RuntimeError("селектор панели специализаций не подтверждён")
+
+    refusals: list[str] = []
+    for value in values:
+        search.fill(value)
+        evaluation = evaluate_leaf(value, _poll_specialization_labels(page))
+        if not evaluation.exact:
+            refusals.append(
+                "специализация не найдена в дереве резюме "
+                f"(dry-run сверка до записи, #950): {value}; {format_candidates(evaluation)}"
+            )
+    return refusals
+
+
 def _set_specializations(page: Page, values: list[str], fallback_other: bool = False) -> None:
     """Replace specializations through the confirmed nested tree selector."""
     if page.locator(SPECIALIZATION_ADD).count() != 1:
@@ -1084,7 +1153,14 @@ def _set_specializations(page: Page, values: list[str], fallback_other: bool = F
                 )
                 _pick_specialization(page, search, OTHER_ROLE_LABEL)
             else:
-                raise RuntimeError(f"специализация не найдена в дереве резюме: {value}") from exc
+                # #950: панель ещё открыта — читаем, что дерево реально
+                # предлагает по запросу, чтобы отказ вёл к точному повтору
+                # (принцип #836), а не к перебору вслепую.
+                evaluation = evaluate_leaf(value, _poll_specialization_labels(page))
+                raise RuntimeError(
+                    f"специализация не найдена в дереве резюме: {value}; "
+                    f"{format_candidates(evaluation)}"
+                ) from exc
 
     submit.click()
     # Waiting for the option itself is insufficient: hh.ru keeps the panel
