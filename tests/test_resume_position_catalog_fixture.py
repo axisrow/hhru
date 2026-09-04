@@ -78,21 +78,26 @@ def test_resume_catalog_reuses_one_leaf_id_across_categories():
         playwright.stop()
 
 
-@pytest.mark.parametrize("value", ["Учитель", "Несуществующая специализация"])
+@pytest.mark.parametrize(
+    ("value", "expected_error"),
+    [
+        # Составное имя листа: «Учитель» — префикс, фильтр НЕ пуст, точного
+        # совпадения нет → отказ с требованием точного имени (#954).
+        ("Учитель", "фильтр непуст"),
+        # Совпадений нет вовсе: контейнер дерева пуст — позитивный empty-state
+        # живого DOM 2026-09-04 (замер #954).
+        ("Несуществующая специализация", "не найдена в дереве резюме"),
+    ],
+)
 @pytest.mark.browser_unit
-def test_resume_catalog_rejects_non_leaf_or_missing_specialization(monkeypatch, value):
-    """#954: фикстура — характеристика живого DOM #867, в котором empty-state
-    маркер никогда не снимался, поэтому его здесь нет. Без позитивного
-    empty-state таймаут честно классифицируется как indeterminate, а не
-    «лист отсутствует»: реальное «Ничего не найдено» hh.ru появится в
-    фикстуре вместе с подтверждённым селектором (замер #954)."""
+def test_resume_catalog_rejects_non_leaf_or_missing_specialization(
+    monkeypatch, value, expected_error
+):
     monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
     playwright, browser, page = _page()
     try:
         page.locator(resume_position.SPECIALIZATION_ADD).click()
-        with pytest.raises(
-            resume_position.SpecializationTreeIndeterminate, match="отсутствие листа не доказано"
-        ):
+        with pytest.raises(RuntimeError, match=expected_error):
             resume_position._set_specializations(page, [value])
     finally:
         browser.close()
