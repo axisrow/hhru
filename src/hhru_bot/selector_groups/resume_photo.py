@@ -100,6 +100,15 @@ RESUME_PHOTO_EDITOR_APPLY = _selector("resume_photo.RESUME_PHOTO_EDITOR_APPLY")
 # ретраит и падает по таймауту (наблюдено).
 RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT")
 
+# Модалка «8 фото — это максимум»: галерея фото ПЕРЕПОЛНЕНА. Подтверждена
+# боевым прогоном 2026-09-04 (дамп photo_editor_missing_uncertain_20260904_*
+# в data/logs): после set_input_files вместо crop-редактора открылся
+# alertdialog с data-qa='photo-viewer-limit' и кнопкой
+# photo-viewer-limit-ok; файл ОТКЛОНЁН, мутации нет. Галерея общая НА
+# АККАУНТ (не на резюме) — «чистый» черновик не спасает. Наличие модалки =
+# доказанный отказ загрузки: чистый fail, не uncertain.
+RESUME_PHOTO_VIEWER_LIMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_LIMIT")
+
 # Допустимые расширения — из подтверждённого accept-атрибута input выше
 # (живой DOM 2026-09-02), не из головы.
 PHOTO_ACCEPTED_EXT: tuple[str, ...] = (".jpg", ".jpeg", ".png")

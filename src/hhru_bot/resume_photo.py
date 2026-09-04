@@ -55,6 +55,7 @@ from .selector_groups.resume_photo import (
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
     RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    RESUME_PHOTO_VIEWER_LIMIT,
 )
 
 # Живая подсказка hh.ru про лимиты размера в дампе не встретилась — лимит
@@ -238,9 +239,21 @@ def upload_photo_on_hh(
         editor_apply = page.locator(RESUME_PHOTO_EDITOR_APPLY).first
         editor_apply.wait_for(state="visible", timeout=_EDITOR_WAIT_TIMEOUT_MS)
     except PlaywrightError as exc:
-        # Боевой прогон 2026-09-04 (#955, прогон 3 на черновике с непустой
-        # галереей): crop-редактор не открылся — дамп для разбора альтернативного
-        # UI (галерея с фото / предупреждение о дубле).
+        # Лимит галереи — ДОКАЗАННЫЙ отказ загрузки (боевой прогон 5,
+        # 2026-09-04, дамп photo_editor_missing_uncertain_*: модалка
+        # photo-viewer-limit «8 фото — это максимум», файл отклонён,
+        # мутации нет) — чистый fail без uncertain. Галерея фото общая
+        # НА АККАУНТ, не на резюме: «чистый» черновик не спасает.
+        if page.locator(RESUME_PHOTO_VIEWER_LIMIT).count() > 0:
+            return UploadPhotoResult(
+                reason=(
+                    "галерея фото аккаунта переполнена (лимит hh.ru): загрузка "
+                    "отклонена, фото не добавлено; освободите место в галерее "
+                    "и повторите"
+                ),
+                photo_present=False,
+            )
+        # Иная причина — дамп для разбора альтернативного UI.
         dump_path = dump_page_html(page, "photo_editor_missing_uncertain")
         reason = f"файл передан, но crop-редактор не открылся: {exc}"
         if dump_path is not None:

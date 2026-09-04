@@ -94,6 +94,8 @@ class FakePage:
         # имитация «на странице нет ни img, ни плейсхолдера» (дрейф обоих
         # селекторов) — readback обязан вернуть неопределённое состояние
         self.hide_placeholder = False
+        # имитация модалки «8 фото — это максимум» (галерея аккаунта полна)
+        self.limit_modal = False
         self.url = "https://hh.ru/resume/rid"
 
     def on_reload(self):
@@ -119,6 +121,8 @@ class FakePage:
             return FakeLocator(self, selector, count=1, visible=self._editor_visible)
         if selector == resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
             return FakeLocator(self, selector, count=1, visible=self._assign_visible)
+        if selector == resume_photo.RESUME_PHOTO_VIEWER_LIMIT:
+            return FakeLocator(self, selector, count=1 if self.limit_modal else 0)
         if selector == resume_photo.RESUME_AVATAR_IMAGE:
             # после readback-перезагрузки DOM свежий: оптимистичный маркер
             # заменяется персистентным состоянием readback_image_count
@@ -367,6 +371,20 @@ def test_editor_missing_after_transfer_is_uncertain():
     assert not result.success
     assert result.uncertain is True
     assert len(page.set_files) == 1  # файл уже передан
+
+
+def test_gallery_limit_is_clean_fail_not_uncertain(monkeypatch):
+    """Боевой прогон 5 (2026-09-04): модалка photo-viewer-limit вместо
+    crop-редактора — файл отклонён лимитом галереи аккаунта, мутации нет:
+    чистый fail, не uncertain."""
+    monkeypatch.setattr(resume_photo, "_EDITOR_WAIT_TIMEOUT_MS", 1)
+    page = FakePage(editor_visible=False)
+    page.limit_modal = True
+    result = _run(page, before_click=lambda: None)
+    assert not result.success
+    assert result.uncertain is False
+    assert result.photo_present is False
+    assert "переполнена" in result.reason
 
 
 def test_editor_click_failure_is_uncertain(monkeypatch):

@@ -4215,6 +4215,28 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
     verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_LIMIT:
+    value: '[data-qa=''photo-viewer-limit'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:90
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:90
+      note: Модалка «8 фото — это максимум» (галерея аккаунта переполнена). Подтверждена боевым прогоном 2026-09-04 — дамп
+        photo_editor_missing_uncertain_20260904_215520.html, alertdialog с этой data-qa после set_input_files вместо crop-редактора;
+        файл отклонён, мутации нет. Галерея общая на аккаунт, не на резюме. Наличие модалки = доказанный отказ загрузки (чистый
+        fail).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
   resume_position.BUSINESS_TRIPS:
     value: '[data-qa=''resume-edit-business-trip-readiness'']'
     criticality: write
