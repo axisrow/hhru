@@ -550,7 +550,7 @@ def save_common(
             timeout=_COMMON_SCREEN_NAV_TIMEOUT_MS,
         )
     except PlaywrightError as exc:
-        # Клик мог дойти (клик мог уйти, #176) — дампим экран: в нём виден
+        # Клик мог уйти на hh.ru (#176) — дампим экран: в нём виден
         # text form-helper-error, которым hh.ru объясняет отказ валидации,
         # и это единственная диагностика этого исхода (#989).
         try:
