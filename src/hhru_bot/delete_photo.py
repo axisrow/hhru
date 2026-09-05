@@ -130,10 +130,18 @@ def _open_more_menu(page: Page) -> tuple[tuple[MenuAction, ...] | None, str]:
     except PlaywrightError as exc:
         # Позиционный клик в NavBar может не пройти (detached-геометрия,
         # #955) — активация dispatch_event, как у assign/close в #953.
-        try:
-            more.dispatch_event("click")
-        except PlaywrightError as dispatch_exc:
-            return None, f"клик «Действия с фото» не удался: {exc}; dispatch: {dispatch_exc}"
+        # Но клик, упавший по таймауту, мог дойти с опозданием: панель —
+        # toggle, и повторная активация закрыла бы только что открывшееся
+        # меню, дав вводящий в заблуждение отказ «меню не открылось»
+        # (находка cycle-review PR #973). Перед повтором проверяем, не
+        # открылась ли панель уже.
+        if page.locator(RESUME_PHOTO_VIEWER_ACTION_DELETE).count() > 0:
+            print("[INFO] more: панель открылась после таймаута клика — повтор не нужен")
+        else:
+            try:
+                more.dispatch_event("click")
+            except PlaywrightError as dispatch_exc:
+                return None, f"клик «Действия с фото» не удался: {exc}; dispatch: {dispatch_exc}"
     try:
         page.locator(RESUME_PHOTO_VIEWER_ACTION_DELETE).first.wait_for(
             state="visible", timeout=_MENU_WAIT_TIMEOUT_MS

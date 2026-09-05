@@ -416,6 +416,27 @@ def test_delete_happy_path_click_order_and_readback():
     assert "удалено из библиотеки" in result.reason
 
 
+def test_more_click_timeout_but_menu_opened_skips_dispatch(monkeypatch):
+    # Находка cycle-review PR #973: клик more, упавший по таймауту, мог
+    # дойти с опозданием — повторная активация закрыла бы открывшуюся
+    # панель (toggle). Фикс: панель уже открыта → dispatch не отправляется.
+    page = DeleteFakePage(assigned_photo_id="100")
+    original_click = FakeLocator.click
+
+    def late_click(self, *, timeout=None):
+        if self._selector == delete_photo.RESUME_PHOTO_VIEWER_MORE:
+            original_click(self, timeout=timeout)  # клик дошёл: панель открылась
+            raise PlaywrightError("fake: click timeout")  # ...но Playwright упал
+        return original_click(self, timeout=timeout)
+
+    monkeypatch.setattr(FakeLocator, "click", late_click)
+    result = delete_photo_on_hh(page, FakeResume(), None, False, True)
+    assert result.success
+    # ровно один клик по more: без закрывающего dispatch-fолбэка
+    assert page.clicks.count(delete_photo.RESUME_PHOTO_VIEWER_MORE) == 1
+    assert not any(c.endswith(":dispatch") for c in page.clicks)
+
+
 def test_delete_dialog_not_opened_is_plain_fail():
     # Клик по пункту меню немутирующий (живой факт 2026-09-05) — повтор
     # разрешён без reconciliation: чистый fail, не uncertain.
