@@ -26,6 +26,7 @@ from .browser import (
     labelled_field,
     optional_labelled_field,
     require_authenticated_page,
+    wait_for_react_hydration,
 )
 from .config import ResumeConfig
 from .selector_groups import account_profile
@@ -75,6 +76,9 @@ COMMON_SCREEN_PATH = "/profile/resume/common"
 # wait_for_url, а не сам click().
 _COMMON_SCREEN_NAV_TIMEOUT_MS = 30_000
 _WAIT_MS = 5_000
+# #991: окно гидратации SAVE перед NEXT-кликом (одно ожидание). Две попытки
+# подряд в save_common дают суммарные ~30с — сопоставимо с бюджетом навигации.
+_SAVE_HYDRATION_TIMEOUT_MS = 15_000
 
 # Поля, без которых hh.ru не пускает черновик дальше к публикации (#982).
 # Авто-режим сохраняет предзаполненное только когда все они непусты.
@@ -531,18 +535,44 @@ def save_common(
 ) -> CommonResult:
     apply_common(page, values)
     save = _strict(page, SAVE, "кнопка сохранения common")
+    # #991: #990 сделал исход честным, но корневая причина боевых uncertain
+    # (#982/#986) — NEXT-клик до гидратации SPA (#858; живой аналог измерен в
+    # #840: активатор месяца гидрируется СЕКУНДЫ, клик в этом окне теряется).
+    # Гейт: до клика ждём React-привязку SAVE; две попытки без гидрации —
+    # клик не отправлялся вовсе, это честный failed (мутации точно не было),
+    # а не uncertain. Гейт — pre-click проверка (ревью #992: как launch_context/
+    # «форма не найдена» из #476), поэтому стоит ДО before_click: резерв
+    # uncertain-маркера не должен висеть всё 30с-окно ожидания гидрации,
+    # в котором клик структурно невозможен.
+    hydrated = False
+    for _attempt in range(2):
+        if wait_for_react_hydration(page, SAVE, timeout_ms=_SAVE_HYDRATION_TIMEOUT_MS):
+            hydrated = True
+            break
+    if not hydrated:
+        # Дамп покажет, жива ли форма и есть ли form-helper-error — иначе
+        # «не гидратирован» неотличим от «страница умерла».
+        try:
+            dump_page_html(page, "common_save_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна маскировать исход
+            pass
+        return CommonResult(
+            False,
+            f"SAVE не гидратирован за {2 * _SAVE_HYDRATION_TIMEOUT_MS // 1000}с — "
+            "клик не отправлялся (мутации нет)",
+        )
     if before_click:
         before_click()
-    # #989: два боевых uncertain показали, что NEXT-клик до гидратации SPA
-    # проглатывается (visible ≠ гидратирован), а ожидание скрытия формы за 5с
-    # окно медленной гидратации не покрывает в принципе. Тот же защищённый
-    # клик, что у confirm_common_screen (#986, паттерн #913): исход решает
-    # wait_for_url (уход с /profile/resume/common, бюджет 30с), падение
-    # click() при состоявшемся переходе — не ошибка.
+    # #989: тот же защищённый клик, что у confirm_common_screen (#986,
+    # паттерн #913): исход решает wait_for_url (уход с
+    # /profile/resume/common, бюджет 30с), падение click() при состоявшемся
+    # переходе — не ошибка. Текст падения клика сохраняется в reason при
+    # неуспехе (ревью #990: иначе «дошёл ли клик» недиагностируемо).
+    click_error: str | None = None
     try:
         save.click()
-    except PlaywrightError:
-        pass
+    except PlaywrightError as exc:
+        click_error = str(exc)
     try:
         page.wait_for_url(
             lambda url: urlsplit(str(url)).path != COMMON_SCREEN_PATH,
@@ -552,10 +582,15 @@ def save_common(
     except PlaywrightError as exc:
         # Клик мог уйти на hh.ru (#176) — дампим экран: в нём виден
         # text form-helper-error, которым hh.ru объясняет отказ валидации,
-        # и это единственная диагностика этого исхода (#989).
+        # и это единственная диагностика этого исхода (#989). Пустой дамп
+        # по ошибкам валидации = потерянный клик (#991) — см. дискриминатор
+        # в #991 для следующей итерации.
         try:
             dump_page_html(page, "common_save_failure")
         except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
             pass
-        return CommonResult(False, f"сохранение common не подтверждено: {exc}", True, True)
+        reason = f"сохранение common не подтверждено: {exc}; гидрация SAVE: ок"
+        if click_error is not None:
+            reason += f"; ошибка клика: {click_error[:300]}"
+        return CommonResult(False, reason, True, True)
     return CommonResult(True, "поля common сохранены", True)
