@@ -74,24 +74,22 @@ modal/dialog/toast/notification/cookie-баннеры, классифициру�
 до слушателя (см. #743). Полноценный агентский мост (Native Messaging) —
 второй этап #588, здесь его нет намеренно.
 
-## Что НЕ подтверждено живым DOM (честно)
+## Селекторы — статус проверки (#932, сверка с живым DOM 2026-09-05)
 
-Якоря классификации и close-маркеры — гипотезы, написанные по документации
-проекта (CLAUDE.md, #586) и структуре hh.ru, но **не снятые с живого DOM**:
+Формат — по образцу «Селекторы — статус проверки» из CLAUDE.md. Сверка
+строго read-only: анонимная главная через curl-дамп, залогиненный профиль —
+через живую вкладку (ценз видимых overlay + cross-check с реестром
+селекторов `selectors/reference-map.yaml`, все его записи `documented_live`).
 
-- фактические классы/aria-label/data-qa крестиков модалок и тостов hh.ru;
-- реальный DOM тоста «Резюме доставлено» (transient UI — см. #586, popup
-  исчез до снятия селекторов);
-- close-маркеры cookie-баннера hh.ru (частично подтверждено живым DOM
-  2026-09-02, анонимная главная: баннер включается state-классом
-  `cookie-policy-banner-enabled` на `<body>` — отсюда страж, что `html`/`body`
-  никогда не регистрируются как overlay; сам элемент баннера самоудаляется
-  до осмотра, его крестик не снят).
-
-Первая боевая проверка — вручную через этот MVP в своём Chrome; системная
-read-only сверка — вынесена в follow-up (#932). При расхождении симптом такой:
-окно репортится как `ambiguous`/не закрывается — сверить DOM вкладки (F12) и
-поправить якоря в `content.js`.
+| Якорь / контрол | Статус | Живое доказательство |
+|---|---|---|
+| Cookie-информер: `div[data-qa="cookies-policy-informer"]`, класс `wrapper--*` (без «cookie»), кнопка «Понятно» `data-qa="cookies-policy-informer-accept"` | подтверждено живым DOM (анонимный curl-дамп 2026-09-05) | информер НЕ ловится `[class*="cookie"]` → в `OVERLAY_SELECTORS` добавлен `[data-qa*="cookie"]`; «Понятно» — не close-маркер, dismiss вернёт `no_close_control`, согласие не кликается никогда |
+| State-класс баннера `cookie-policy-banner-enabled` на `<body>` | подтверждено живым DOM 2026-09-02 (анонимная главная) | страж html/body в `reportIfNewlyVisible` |
+| Крестики модалок: `data-qa="profile-modal-button-close"`, `photo-viewer-close`, `bloko-modal-close`, `editor-modal-close-icon`, `resume-delete-close` | подтверждено живым DOM (профиль 2026-09-05 + реестр селекторов, все `documented_live`) | реальные крестики — всегда data-qa `*-close`, БЕЗ aria-label «закрыть» и без глифа × (svg-иконка); рабочее плечо `findCloseControls` — `/close/` по data-qa |
+| Нотификации: контейнер `Bloko-Notification-Manager notification-manager` присутствует на странице всегда, даже пустой | подтверждено живым DOM (профиль 2026-09-05) | детектор репортит его как `notification`/`safe` с `no_close_control` — шум, но безопасный (клик невозможен); фильтрация пустых контейнеров — осознанно НЕ делалась (не якорь, а логика) |
+| Кнопка удаления в нотификациях: `[data-qa='notification-close'] button[aria-label='Удалить']` | подтверждено реестром селекторов (живой DOM более ранних прогонов) | aria-label не виден в textContent → `collectText` теперь включают `aria-label` потомков: такая нотификация попадёт в `dangerous` (/удалить/i), автозакрытие исключено |
+| Форма отклика: `form#RESPONSE_MODAL_FORM_ID`, `data-qa*="vacancy-response"`, task-question/task-body | **UNCONFIRMED** | клик «Откликнуться» создаёт тему отклика (инцидент 2026-08-16) — живой DOM модалки не снимался; закроет боевой apply второго этапа |
+| Тост «Резюме доставлено» / «Отклик отправлен» | **UNCONFIRMED** | transient UI (#586: popup исчез до снятия); ловить только перехватом сразу после боевого действия |
 
 Permissions минимальны: `storage` (журнал диагностики в `storage.session`,
 переживает рестарт MV3 service worker) + host hh.ru. Диагностика подключения
