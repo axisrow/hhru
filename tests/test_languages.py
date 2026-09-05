@@ -173,6 +173,15 @@ class _StrictLastLocator:
         return self._dialog
 
 
+def _portal_option():
+    """#975: magritte-опции языка/уровня адресуются page-wide (portal-попап
+    вне dialog), а не через dialog.locator — мок для locator-side_effect."""
+    option = MagicMock()
+    option.count.return_value = 1
+    option.wait_for.return_value = None
+    return option
+
+
 def test_add_language_flow_uses_last_as_a_property_not_a_call(monkeypatch) -> None:
     """#265 code-review round 1 (Codex/claude): page.get_by_role(...).last()
     called Locator.last as a method; it is a property on the real API, and
@@ -208,6 +217,8 @@ def test_add_language_flow_uses_last_as_a_property_not_a_call(monkeypatch) -> No
             return card
         if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
             return add_button
+        if "magritte-select-option-" in selector:
+            return _portal_option()
         return MagicMock()
 
     page.locator.side_effect = locator_side_effect
@@ -391,6 +402,8 @@ def test_dialog_hidden_is_not_trusted_as_proof_of_persistence(monkeypatch) -> No
             return card
         if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
             return add_button
+        if "magritte-select-option-" in selector:
+            return _portal_option()
         return MagicMock()
 
     page.locator.side_effect = locator_side_effect
@@ -464,6 +477,8 @@ def _page_with_language_section(add_button, form_locator):
             return add_button
         if selector == resume_page.RESUME_LANGUAGE_ADD_FORM:
             return form_locator
+        if "magritte-select-option-" in selector:
+            return _portal_option()
         return MagicMock()
 
     page.locator.side_effect = locator
@@ -519,6 +534,8 @@ def test_lost_first_add_click_is_retried_and_succeeds(monkeypatch):
             return add_button
         if selector == rp.RESUME_LANGUAGE_ADD_FORM:
             return form_locator
+        if "magritte-select-option-" in selector:
+            return _portal_option()
         return MagicMock()
 
     page.locator.side_effect = locator
