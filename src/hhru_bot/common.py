@@ -7,9 +7,11 @@ data-qa handles confirmed during the read-only common-screen probe.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -30,6 +32,7 @@ FIRST_NAME = account_profile.RESUME_COMMON_FIRST_NAME
 LAST_NAME = account_profile.RESUME_COMMON_LAST_NAME
 BIRTHDAY = account_profile.RESUME_COMMON_BIRTHDAY_DAY
 GENDER = account_profile.RESUME_COMMON_GENDER_MALE
+GENDER_FEMALE = account_profile.RESUME_COMMON_GENDER_FEMALE
 PHONE = account_profile.RESUME_COMMON_PHONE
 AREA = "[data-qa='resume-edit-area']"
 METRO = "[data-qa='resume-edit-metro']"
@@ -60,6 +63,26 @@ WORK_FORMAT_LABELS = {"office": "Офис", "hybrid": "Гибрид", "remote": 
 SAVE = account_profile.RESUME_COMMON_NEXT
 CANCEL = account_profile.RESUME_COMMON_PREV
 _WAIT_MS = 5_000
+
+# Поля, без которых hh.ru не пускает черновик дальше к публикации (#982).
+# Авто-режим сохраняет предзаполненное только когда все они непусты.
+# Города (area) в списке нет: живой дамп 2026-09-06 (черновик владельца,
+# data/logs/common_failure_*.html) показывает, что этот shape экрана common
+# поле города не рендерит вовсе — требовать его неоткуда.
+REQUIRED_FIELDS = (
+    "first_name",
+    "last_name",
+    "birthday",
+    "gender",
+    "phone",
+    "citizenship",
+)
+# Состав даты рождения и гражданство на живом экране — magritte-combobox'ы
+# внутри контейнеров с этими data-qa (тот же дамп): у activator нет собственного
+# data-qa, читается его видимый текст.
+BIRTHDAY_MONTH = "[data-qa='resume-profile-common-birthday-month-selector']"
+BIRTHDAY_YEAR = "[data-qa='resume-profile-common-birthday-year-input']"
+CITIZENSHIP_SELECTOR = "[data-qa='resume-profile-common-citizenship-selector']"
 
 
 @dataclass(frozen=True)
@@ -133,15 +156,60 @@ def open_common_form(page: Page, resume: ResumeConfig):
 
 
 def read_common(page: Page) -> CommonValues:
-    """Read only the fields owned by this slice from an already-open form."""
+    """Read the actual state of the common screen, prefilled included (#982).
+
+    Часть полей живого shape отсутствует на некоторых экранах (живой дамп
+    2026-09-06: поля города на shape визарда нет) — такие читаются мягко:
+    отсутствующий элемент это пустое значение, а неоднозначный селектор,
+    как и везде в проекте, отказ (fail-closed), а не догадка.
+    """
 
     def value(selector: str) -> str:
         loc = _strict(page, selector, selector)
         return loc.input_value().strip()
 
+    def soft_value(selector: str, label: str) -> str:
+        loc = page.locator(selector)
+        count = loc.count()
+        if count == 0:
+            return ""
+        if count > 1:
+            raise RuntimeError(f"поле {label} не подтверждено однозначно")
+        return loc.first.input_value().strip()
+
+    def activator_value(selector: str, label: str) -> str:
+        """Видимый текст magritte-combobox внутри контейнера с data-qa."""
+        loc = page.locator(selector)
+        count = loc.count()
+        if count == 0:
+            return ""
+        if count > 1:
+            raise RuntimeError(f"поле {label} не подтверждено однозначно")
+        activator = loc.first.locator("[data-qa='magritte-select-activator']")
+        source = activator.first if activator.count() >= 1 else loc.first
+        return source.inner_text().replace(" ", " ").strip()
+
+    def gender_value() -> str:
+        male = page.locator(GENDER)
+        female = page.locator(GENDER_FEMALE)
+        # Radio-chips: значение — атрибут value у всех, состояние — checked.
+        if male.count() == 1 and male.first.is_checked():
+            return "male"
+        if female.count() == 1 and female.first.is_checked():
+            return "female"
+        return ""
+
     def labelled_value(label: str):
-        field = labelled_field(page, label)
-        tag = field.evaluate("e=>e.tagName")
+        # Живой shape визарда (дамп 2026-09-06) не содержит полей условий
+        # работы вовсе: отсутствующее поле это пустое значение, неоднозначное
+        # — отказ, как и везде.
+        field = page.get_by_label(label, exact=True)
+        count = field.count()
+        if count == 0:
+            return ""
+        if count > 1:
+            raise RuntimeError(f"поле {label!r} не найдено однозначно (совпадений: {count})")
+        tag = field.first.evaluate("e=>e.tagName")
         if tag == "SELECT" and field.get_attribute("multiple") is not None:
             return field.evaluate("e=>Array.from(e.selectedOptions).map(o=>o.value)")
         if tag in ("INPUT", "TEXTAREA"):
@@ -150,15 +218,25 @@ def read_common(page: Page) -> CommonValues:
         # input; its visible text is the readable state.
         return field.inner_text().strip()
 
+    birthday = " ".join(
+        part
+        for part in (
+            soft_value(BIRTHDAY, "birthday-day"),
+            activator_value(BIRTHDAY_MONTH, "birthday-month"),
+            activator_value(BIRTHDAY_YEAR, "birthday-year"),
+        )
+        if part
+    )
+    citizenship_text = activator_value(CITIZENSHIP_SELECTOR, "citizenship")
     return CommonValues(
         first_name=value(FIRST_NAME),
         last_name=value(LAST_NAME),
-        birthday=value(BIRTHDAY),
-        gender=value(GENDER),
+        birthday=birthday,
+        gender=gender_value(),
         phone=value(PHONE),
-        area=value(AREA),
+        area=soft_value(AREA, "area"),
         metro=None,
-        citizenship=None,
+        citizenship=[citizenship_text] if citizenship_text else None,
         work_ticket=labelled_value(WORK_TICKET),
         relocation=labelled_value(RELOCATION),
         schedule=labelled_value(SCHEDULE),
@@ -166,6 +244,44 @@ def read_common(page: Page) -> CommonValues:
         work_format=labelled_value(WORK_FORMAT),
         business_trip=labelled_value(BUSINESS_TRIP),
     )
+
+
+def _nonempty(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return any(isinstance(item, str) and item.strip() for item in value)
+
+
+def merge_prefilled(
+    requested: CommonValues, current: CommonValues
+) -> tuple[CommonValues, list[tuple[str, Any]]]:
+    """Оставить из запрошенного только поля, пустые на форме (#982).
+
+    hh.ru предзаполняет экран common из профиля аккаунта; предзаполненное —
+    источник истины, CLI его не затирает. Возвращает значения для заполнения
+    и перечень (поле, предзаполненное значение), который команда показывает
+    владельцу.
+    """
+    keep: dict[str, Any] = {}
+    skipped: list[tuple[str, Any]] = []
+    for field in dataclasses.fields(CommonValues):
+        name = field.name
+        wanted = getattr(requested, name)
+        if wanted is None:
+            continue
+        present = getattr(current, name)
+        if _nonempty(present):
+            skipped.append((name, present))
+        else:
+            keep[name] = wanted
+    return CommonValues(**keep), skipped
+
+
+def missing_required(current: CommonValues) -> list[str]:
+    """Обязательные поля, оставшиеся пустыми после предзаполнения hh.ru."""
+    return [name for name in REQUIRED_FIELDS if not _nonempty(getattr(current, name))]
 
 
 def _set_tree(page: Page, trigger_selector: str, values: list[str], label: str) -> None:
