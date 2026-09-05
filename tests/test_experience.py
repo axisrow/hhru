@@ -697,6 +697,44 @@ def test_read_experience_reads_all_rows_from_static_view_cards(monkeypatch):
     assert result[2].start_month == "5" and result[2].end_month == "9"
 
 
+def test_read_experience_skips_unparseable_card_instead_of_failing_whole_read(monkeypatch):
+    """#796/#957 контракт, перенесённый на карточки (#844): одна карточка с
+    непарсируемым текстом (дрейф разметки) пропускается с дампом, но не
+    ломает чтение остальных карточек того же резюме."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_row_read_failure",
+        lambda page, index, exc: dumps.append((index, exc)),
+    )
+    # Карточка без распознаваемого периода («Ноябрь 2021 — сейчас» потерял
+    # тире при дрейфе разметки) — ValueError в _read_view_card.
+    bad_card = _ViewCard("ООО Дрейф Веб-разработчик работал когда-то", "ООО Дрейф")
+    cards = [
+        _card(
+            "Фриланс / Open Source",
+            "Python-разработчик / Open Source контрибьютор",
+            "Ноябрь 2021 — сейчас",
+            "Независимая разработка на Python",
+        ),
+        bad_card,
+        _card(
+            "ООО МИГАС",
+            "Интернет-маркетолог",
+            "Май 2017 — Сентябрь 2018",
+            "Запуск контекстной рекламы",
+        ),
+    ]
+
+    result = read_experience_on_hh(_ViewCardsPage(cards), "resume-1")
+
+    assert [entry.company for entry in result] == ["Фриланс / Open Source", "ООО МИГАС"]
+    # Пропуск задокументирован дампом по индексу карточки, а не молчалив.
+    assert len(dumps) == 1
+    assert dumps[0][0] == 1
+    assert isinstance(dumps[0][1], ValueError)
+
+
 def test_read_month_parses_selected_label_confirmed_live():
     """#811: the trigger is not an <input> — inner_text() is "Месяц" (unset)
     or "Месяц\\nМарт" (selected), confirmed live 2026-08-30."""
