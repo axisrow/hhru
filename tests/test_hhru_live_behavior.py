@@ -265,3 +265,69 @@ def test_hhru_live_policy_obstruction_probe_off_viewport_is_not_checked():
     assert scenario["clearChecked"] is True and scenario["clearCovered"] is False
     assert scenario["coveredChecked"] is True and scenario["coveredValue"] is True
     assert scenario["offscreenChecked"] is False and scenario["offscreenCovered"] is None
+
+
+# ---------------------------------------------------------------------------
+# Policy-core напрямую (issue #929): classifyDisposition / findCloseControls
+# исполняются без content.js — через tests/js_harness/run_policy_scenario.js
+# <name>. Шесть сценариев покрывают fail-closed приоритет и живые якоря #932
+# (aria-label в danger-скане, data-qa *-close крестик, «Понятно» — не close).
+# ---------------------------------------------------------------------------
+
+POLICY_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_policy_scenario.js"
+
+
+def _run_policy_scenario(name: str) -> dict:
+    return _run_node_scenario(POLICY_RUNNER, [name])
+
+
+def test_hhru_live_policy_core_aria_label_delete_is_dangerous():
+    """#932: у реальной hh.ru-нотификации единственный «close»-контрол —
+    button[aria-label="Удалить"], текстом нигде не видимый. Без aria-label
+    в collectText она классифицировалась бы safe с кликабельным удалением."""
+    scenario = _run_policy_scenario("aria_label_delete_is_dangerous")
+    assert scenario["disposition"] == "dangerous"
+    assert scenario["dangerHit"] is False, "danger обязан прийти из aria-label, а не из textContent"
+
+
+def test_hhru_live_policy_core_cookie_informer_ponyatno_never_close():
+    """#932 (живой DOM): cookie-информер несёт «cookie» только в data-qa;
+    кнопка «Понятно» — согласие, а не close-контрол: кликаться не должна
+    никогда, окно остаётся safe/no_close_control."""
+    scenario = _run_policy_scenario("cookie_informer_ponyatno_never_close")
+    assert scenario["type"] == "cookie_banner"
+    assert scenario["disposition"] == "safe"
+    assert scenario["closeCount"] == 0
+    assert scenario["clickedAcceptSafe"] is True
+
+
+def test_hhru_live_policy_core_real_hhru_cross_via_data_qa():
+    """#932: реальные крестики hh.ru — data-qa *-close без aria-label и
+    глифов (svg-иконка); плечо /close/ по data-qa обязано их находить, а
+    «Сохранить» — не close-контрол."""
+    scenario = _run_policy_scenario("real_hhru_cross_via_data_qa")
+    assert scenario["closeCount"] == 1
+    assert scenario["onlyCross"] is True
+    assert scenario["disposition"] == "safe"
+
+
+def test_hhru_live_policy_core_danger_outranks_apply():
+    """Fail-closed приоритет: якоря опасности бьют apply-сигналы той же
+    модалки — «подтвердите/необратимо» поверх формы отклика => dangerous."""
+    scenario = _run_policy_scenario("danger_outranks_apply")
+    assert scenario["disposition"] == "dangerous"
+
+
+def test_hhru_live_policy_core_apply_step_structural():
+    """Структурные apply-якоря (form#RESPONSE_MODAL_FORM_ID + data-qa
+    vacancy-response) => apply_step, без danger-текста."""
+    scenario = _run_policy_scenario("apply_step_structural")
+    assert scenario["disposition"] == "apply_step"
+
+
+def test_hhru_live_policy_core_remote_work_not_dangerous():
+    """«удалённая работа» — не dangerous (голый стем-удал не якорь, PR #935
+    review); модалка без close-контроля уходит в ambiguous, не в угаданный
+    safe."""
+    scenario = _run_policy_scenario("remote_work_not_dangerous")
+    assert scenario["disposition"] == "ambiguous"
