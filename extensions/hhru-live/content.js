@@ -21,7 +21,13 @@ const ACTION_ALLOWLIST = new Set(['list_overlays', 'dismiss_overlay', 'check_ele
 const OVERLAY_SELECTORS = [
   '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
   '[class*="modal"]', '[class*="popup"]', '[class*="toast"]',
-  '[class*="notification"]', '[class*="cookie"]'
+  '[class*="notification"]', '[class*="cookie"]',
+  // #932, live DOM 2026-09-05 (анонимная главная): информер cookies — это
+  // div[data-qa="cookies-policy-informer"] с классом wrapper--* («cookie» в
+  // классе НЕТ), так что [class*="cookie"] его не находит. Внутри — кнопка
+  // «Понятно» (data-qa="cookies-policy-informer-accept", НЕ close-маркер:
+  // dismiss вернёт no_close_control и не кликнет согласие).
+  '[data-qa*="cookie"]'
 ];
 // Danger anchors are matched against the overlay's own + descendant text.
 // Intentionally narrow: a miss keeps the overlay merely blocked (safe side);
@@ -46,10 +52,24 @@ const DANGEROUS_TEXT = [
 // dismissible (PR #935 review). The response form itself is covered by the
 // structural anchors below.
 const APPLY_TEXT = [/сопроводительн/i, /тестовое задание/i, /анкет/i];
+// Статус #932 (2026-09-05): структурные apply-якоря (RESPONSE_MODAL_FORM_ID,
+// vacancy-response data-qa) и APPLY_TEXT остаются ГИПОТЕЗАМИ — живая модалка
+// отклика не снималась, потому что клик «Откликнуться» создаёт тему отклика
+// (инцидент 2026-08-16); подтверждение возможно только в боевом apply
+// (второй этап). Close-маркеры и cookie-информер при этом подтверждены
+// живым DOM — см. README, таблицу статусов.
 const APPLY_QA = /vacancy-response/i;
 const APPLY_CLASS = /task-question|task-body/i;
 const APPLY_FORM_ID = /RESPONSE_MODAL_FORM_ID/;
 const CLOSE_LABEL = /закрыт|close|dismiss/i;
+// #932, live DOM 2026-09-05 (залогиненный профиль + реестр селекторов):
+// реальные крестики hh.ru — это data-qa с суффиксом -close
+// (profile-modal-button-close, photo-viewer-close, bloko-modal-close,
+// editor-modal-close-icon, resume-delete-close); aria-label «закрыть» и
+// глифы ×/✕ на них НЕ встречаются (иконка — svg без текста). Значит
+// рабочее плечо здесь — именно /close/ по data-qa/class; label- и
+// glyph-плечи остаются как совместимость с прочими библиотечными
+// модалками, живых опровержений нет.
 // A lone latin "x" is weaker evidence than ×/✕: decorative spans with a
 // data-qa attribute and an x glyph exist on real pages, and it must not be
 // clickable just because of the attribute (PR #935 review).
@@ -88,9 +108,19 @@ function classify(element) {
 // element.textContent already includes the subtree (descendants double up,
 // harmless for regex matching); the per-node loop keeps the js-harness stub,
 // whose textContent is per-node, working with the same code path.
+// #932 (live DOM 2026-09-05): aria-label тоже в скане — в реестре селекторов
+// зафиксирована живая hh.ru-нотификация, чей единственный close-контрол —
+// button[aria-label="Удалить"] ([data-qa='notification-close'] button) —
+// текстом «удалить» нигде не виден, и без этого такая нотификация
+// классифицировалась бы safe с кликабельным «удалением».
 function collectText(element) {
   const parts = [element.textContent || ''];
-  walkDescendants(element, (node) => parts.push(node.textContent || ''));
+  walkDescendants(element, (node) => {
+    parts.push(node.textContent || '');
+    // aria-label — часть видимого пользователю смысла кнопки, хотя в
+    // textContent не попадает никогда.
+    parts.push(node.getAttribute ? (node.getAttribute('aria-label') || '') : '');
+  });
   return parts.join(' ').trim().replace(/\s+/g, ' ');
 }
 
