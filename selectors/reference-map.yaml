@@ -2582,7 +2582,7 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:330
       note: 'Live 2026-09-05: the first cell-text-content inside an experience view card is the company name ("Фриланс / Open
-        Source", "Клондайк Групп, ООО", "ООО МИГАС" on the python resume); the second one is the total duration text. Always
+        Source", "ООО Ромашка", "ООО Василёк" — sanitized placeholders, real employer names are not stored); the second one is the total duration text. Always
         resolve it scoped to a EXPERIENCE_VIEW_CARD and take the first match.'
     last_verified_at: '2026-09-05'
     verified_flow: authenticated_resume_view_read_only

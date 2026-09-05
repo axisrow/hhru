@@ -319,6 +319,7 @@ EXPERIENCE_SAVE_VALIDATION_ERRORS = _selector("resume_experience.EXPERIENCE_SAVE
 EXPERIENCE_VIEW_CARD = _selector("resume_experience.EXPERIENCE_VIEW_CARD")
 # Company name inside a view card — the first cell-text-content cell (the
 # second one holds the total duration text). Live 2026-09-05: on the python
-# resume the three cards resolved to "Фриланс / Open Source", "Клондайк Групп,
-# ООО", "ООО МИГАС".
+# resume the three cards resolved to three company names (заменены на
+# подставные: "ООО Ромашка", "ООО Василёк" — реальные работодатели в коде
+# не хранятся).
 EXPERIENCE_VIEW_COMPANY = _selector("resume_experience.EXPERIENCE_VIEW_COMPANY")

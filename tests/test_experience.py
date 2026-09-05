@@ -671,13 +671,13 @@ def test_read_experience_reads_all_rows_from_static_view_cards(monkeypatch):
             "Независимая разработка на Python",
         ),
         _card(
-            "Клондайк Групп, ООО",
+            "ООО Ромашка",
             "Ведущий специалист по маркетингу",
             "Октябрь 2018 — Октябрь 2021",
             "Работа с ключевыми клиентами",
         ),
         _card(
-            "ООО МИГАС",
+            "ООО Василёк",
             "Интернет-маркетолог",
             "Май 2017 — Сентябрь 2018",
             "Запуск контекстной рекламы",
@@ -719,7 +719,7 @@ def test_read_experience_skips_unparseable_card_instead_of_failing_whole_read(mo
         ),
         bad_card,
         _card(
-            "ООО МИГАС",
+            "ООО Василёк",
             "Интернет-маркетолог",
             "Май 2017 — Сентябрь 2018",
             "Запуск контекстной рекламы",
@@ -728,7 +728,7 @@ def test_read_experience_skips_unparseable_card_instead_of_failing_whole_read(mo
 
     result = read_experience_on_hh(_ViewCardsPage(cards), "resume-1")
 
-    assert [entry.company for entry in result] == ["Фриланс / Open Source", "ООО МИГАС"]
+    assert [entry.company for entry in result] == ["Фриланс / Open Source", "ООО Василёк"]
     # Пропуск задокументирован дампом по индексу карточки, а не молчалив.
     assert len(dumps) == 1
     assert dumps[0][0] == 1
