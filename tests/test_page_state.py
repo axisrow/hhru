@@ -34,7 +34,15 @@ def test_hhru_live_extension_manifest_and_detector_contract():
     assert manifest["manifest_version"] == 3
     assert manifest["permissions"] == ["storage"]
     assert manifest["background"]["service_worker"] == "background.js"
+    # #929: policy.js обязан грузиться ДО content.js — content.js потребляет
+    # его top-level биндинги (классификация) в том же isolated world.
+    assert manifest["content_scripts"][0]["js"] == ["policy.js", "content.js"]
     source = (root / "content.js").read_text()
+    policy = (root / "policy.js").read_text()
+    # policy.js ОПРЕДЕЛЯЕТ классификацию, content.js только потребляет.
+    assert "function classifyDisposition" in policy
+    assert "function classifyDisposition" not in source
+    assert "classifyDisposition(" in source
     for selector in (
         '[role="dialog"]',
         '[role="alertdialog"]',
@@ -79,11 +87,12 @@ def test_hhru_live_extension_danger_anchors_outrank_apply_anchors():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    # Обе метки — вызовы внутри classifyDisposition: DANGEROUS_TEXT.some там
-    # один, 'apply_step' впервые возвращается сразу после hasApplySignal.
-    danger_check = content.index("DANGEROUS_TEXT.some")
-    apply_check = content.index("return 'apply_step'")
+    policy = (root / "policy.js").read_text()
+    # Обе метки — вызовы внутри classifyDisposition (policy.js, #929):
+    # DANGEROUS_TEXT.some там один, 'apply_step' впервые возвращается
+    # сразу после hasApplySignal.
+    danger_check = policy.index("DANGEROUS_TEXT.some")
+    apply_check = policy.index("return 'apply_step'")
     assert danger_check < apply_check
 
 
@@ -97,10 +106,10 @@ def test_hhru_live_extension_danger_and_apply_text_anchors_are_narrow():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    assert "/удал/i" not in content
-    assert "/удалить|удалени/i" in content
-    assert "/отклик/i" not in content
+    policy = (root / "policy.js").read_text()
+    assert "/удал/i" not in policy
+    assert "/удалить|удалени/i" in policy
+    assert "/отклик/i" not in policy
 
 
 def test_hhru_live_extension_close_markers_exclude_action_buttons():
@@ -111,12 +120,13 @@ def test_hhru_live_extension_close_markers_exclude_action_buttons():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    # Страж смотрит только в findCloseControls: в шапке файла те же слова
-    # упомянуты легитимно — в описании того, куда кликать запрещено.
-    start = content.index("function findCloseControls")
-    end = content.index("function hasApplySignal")
-    close_marker_body = content[start:end]
+    policy = (root / "policy.js").read_text()
+    # Страж смотрит только в findCloseControls (policy.js, #929): в шапке
+    # файла те же слова упомянуты легитимно — в описании того, куда кликать
+    # запрещено.
+    start = policy.index("function findCloseControls")
+    end = policy.index("function hasApplySignal")
+    close_marker_body = policy[start:end]
     for word in ("Понятно", "Отмена", "Сохранить", "Принять"):
         assert word not in close_marker_body, (
             f"«{word}» не может быть close-маркером — только крестик/close-aria/data-qa"
@@ -215,9 +225,9 @@ def test_hhru_live_extension_classifies_cookie_banner_before_role_dialog():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    cookie_check = content.index("/cookie/i.test")
-    dialog_role_check = content.index("role === 'dialog'")
+    policy = (root / "policy.js").read_text()
+    cookie_check = policy.index("/cookie/i.test")
+    dialog_role_check = policy.index("role === 'dialog'")
     assert cookie_check < dialog_role_check, (
         "cookie-text classification must be checked before the dialog/modal "
         'role check, so a role="dialog" cookie banner is still classified '
@@ -287,9 +297,9 @@ def test_hhru_live_extension_collapses_whitespace_with_single_backslash_regex():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    assert ".replace(/\\s+/g, ' ')" in content
-    assert ".replace(/\\\\s+/g, ' ')" not in content
+    policy = (root / "policy.js").read_text()
+    assert ".replace(/\\s+/g, ' ')" in policy
+    assert ".replace(/\\\\s+/g, ' ')" not in policy
 
 
 def test_hhru_live_extension_reads_class_attribute_not_classname_property():
@@ -303,9 +313,12 @@ def test_hhru_live_extension_reads_class_attribute_not_classname_property():
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "extensions" / "hhru-live"
-    content = (root / "content.js").read_text()
-    assert "element.getAttribute('class')" in content
-    assert "typeof element.className" not in content
+    policy = (root / "policy.js").read_text()
+    assert "element.getAttribute('class')" in policy
+    assert "typeof element.className" not in policy
+    # #932: aria-label включён в danger-скан (collectText) — нотификация с
+    # кнопкой aria-label="Удалить" не должна быть safe.
+    assert "aria-label" in policy
 
 
 def test_hhru_live_extension_readme_does_not_overclaim_external_reachability():
