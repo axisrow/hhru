@@ -533,9 +533,29 @@ def save_common(
     save = _strict(page, SAVE, "кнопка сохранения common")
     if before_click:
         before_click()
+    # #989: два боевых uncertain показали, что NEXT-клик до гидратации SPA
+    # проглатывается (visible ≠ гидратирован), а ожидание скрытия формы за 5с
+    # окно медленной гидратации не покрывает в принципе. Тот же защищённый
+    # клик, что у confirm_common_screen (#986, паттерн #913): исход решает
+    # wait_for_url (уход с /profile/resume/common, бюджет 30с), падение
+    # click() при состоявшемся переходе — не ошибка.
     try:
         save.click()
-        page.locator(FORM).first.wait_for(state="hidden", timeout=_WAIT_MS)
-    except Exception as exc:  # click may have reached hh.ru: caller records uncertain
+    except PlaywrightError:
+        pass
+    try:
+        page.wait_for_url(
+            lambda url: urlsplit(str(url)).path != COMMON_SCREEN_PATH,
+            wait_until="commit",
+            timeout=_COMMON_SCREEN_NAV_TIMEOUT_MS,
+        )
+    except PlaywrightError as exc:
+        # Клик мог дойти (клик мог уйти, #176) — дампим экран: в нём виден
+        # text form-helper-error, которым hh.ru объясняет отказ валидации,
+        # и это единственная диагностика этого исхода (#989).
+        try:
+            dump_page_html(page, "common_save_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
+            pass
         return CommonResult(False, f"сохранение common не подтверждено: {exc}", True, True)
     return CommonResult(True, "поля common сохранены", True)
