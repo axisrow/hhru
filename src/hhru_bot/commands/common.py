@@ -69,7 +69,12 @@ def register(subparsers) -> None:
 
 
 def _print_current(current) -> None:
-    """Таблица фактического состояния common: предзаполнено hh.ru / пусто."""
+    """Таблица фактического состояния common: непусто / пусто.
+
+    Происхождение непустого значения (предзаполнил hh.ru при открытии или
+    сохранил ранее сам владелец) по одному снимку формы неразличимо, поэтому
+    колонка утверждает только факт заполненности, а не источник.
+    """
     from ..common import REQUIRED_FIELDS
     from ..report import _ascii_table
 
@@ -99,7 +104,7 @@ def _print_current(current) -> None:
         if not rendered.strip():
             state = "пусто"
         elif field in REQUIRED_FIELDS:
-            state = "предзаполнено hh.ru"
+            state = "заполнено (обязательное)"
         else:
             state = "заполнено"
         rows.append([label, rendered, state])
@@ -170,10 +175,17 @@ def _run(args: argparse.Namespace, progress) -> bool:
             if args.show:
                 print("[OK] Значения common показаны; read-only, изменений на hh.ru нет")
                 return False
+            requested_any = bool(values.provided())
             values, skipped = merge_prefilled(values, current)
             for field, prefilled in skipped:
-                print(f"[INFO] {field}: предзаполнено hh.ru ({prefilled!r}) — не трогаю")
+                print(f"[INFO] {field}: уже заполнено на hh.ru ({prefilled!r}) — не трогаю")
             if not values.provided():
+                if requested_any:
+                    print(
+                        "[INFO] Все указанные поля уже заполнены на hh.ru — "
+                        "заполнять нечего, сохранение не требуется."
+                    )
+                    return False
                 missing = missing_required(current)
                 if missing:
                     print(f"[FAIL] Обязательные поля common пусты: {', '.join(missing)}")

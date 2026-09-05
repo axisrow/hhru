@@ -19,8 +19,10 @@ from playwright.sync_api import Page
 
 from .browser import (
     HH_BASE_URL,
+    PageStateIndeterminate,
     goto_hh,
     labelled_field,
+    optional_labelled_field,
     require_authenticated_page,
 )
 from .config import ResumeConfig
@@ -174,7 +176,7 @@ def read_common(page: Page) -> CommonValues:
         if count == 0:
             return ""
         if count > 1:
-            raise RuntimeError(f"поле {label} не подтверждено однозначно")
+            raise PageStateIndeterminate(f"поле {label} не подтверждено однозначно")
         return loc.first.input_value().strip()
 
     def activator_value(selector: str, label: str) -> str:
@@ -184,7 +186,7 @@ def read_common(page: Page) -> CommonValues:
         if count == 0:
             return ""
         if count > 1:
-            raise RuntimeError(f"поле {label} не подтверждено однозначно")
+            raise PageStateIndeterminate(f"поле {label} не подтверждено однозначно")
         activator = loc.first.locator("[data-qa='magritte-select-activator']")
         source = activator.first if activator.count() >= 1 else loc.first
         return source.inner_text().replace(" ", " ").strip()
@@ -202,14 +204,11 @@ def read_common(page: Page) -> CommonValues:
     def labelled_value(label: str):
         # Живой shape визарда (дамп 2026-09-06) не содержит полей условий
         # работы вовсе: отсутствующее поле это пустое значение, неоднозначное
-        # — отказ, как и везде.
-        field = page.get_by_label(label, exact=True)
-        count = field.count()
-        if count == 0:
+        # — отказ через общий инвариант optional_labelled_field.
+        field = optional_labelled_field(page, label)
+        if field is None:
             return ""
-        if count > 1:
-            raise RuntimeError(f"поле {label!r} не найдено однозначно (совпадений: {count})")
-        tag = field.first.evaluate("e=>e.tagName")
+        tag = field.evaluate("e=>e.tagName")
         if tag == "SELECT" and field.get_attribute("multiple") is not None:
             return field.evaluate("e=>Array.from(e.selectedOptions).map(o=>o.value)")
         if tag in ("INPUT", "TEXTAREA"):

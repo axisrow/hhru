@@ -186,7 +186,7 @@ def test_common_show_prints_current_values_without_saving(monkeypatch, tmp_path,
     assert command._run(_args(tmp_path, show=True), MagicMock()) is False
     out = capsys.readouterr().out
     assert "Иван" in out
-    assert "предзаполнено hh.ru" in out
+    assert "заполнено (обязательное)" in out
     assert "пусто" in out
     assert "read-only" in out
     assert saved == []
@@ -246,9 +246,23 @@ def test_common_write_skips_prefilled_fields(monkeypatch, tmp_path, capsys):
         is False
     )
     out = capsys.readouterr().out
-    assert "предзаполнено hh.ru" in out
+    assert "уже заполнено на hh.ru" in out
     # last_name был пуст и передан — попадает в план заполнения.
     assert "lastName" in out
+
+
+def test_common_explicit_fields_all_prefilled_skips_save(monkeypatch, tmp_path, capsys):
+    current = CommonValues(first_name="Иван", phone="+7999")
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    saved = []
+    monkeypatch.setattr(common, "save_common", lambda *_a, **_k: saved.append(1))
+
+    result = command._run(_args(tmp_path, first_name="Пётр", dry_run=False), MagicMock())
+    assert result is False
+    out = capsys.readouterr().out
+    assert "заполнять нечего" in out
+    assert "Обязательные поля common пусты" not in out
+    assert saved == []
 
 
 def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
