@@ -67,11 +67,12 @@ def env(monkeypatch, tmp_path):
     clicks: list[str] = []
 
     class FakePage:
-        """Страница с маршрутом (#969): goto_hh НЕ мокается — настоящий
+        """Страница с маршрутом (#969/#971): goto_hh НЕ мокается — настоящий
         переход на вью-страницу /resume/{id} закрывает DOM частичного
         редактора, и клик по CANCEL там падает по таймауту, как живой
         Playwright. Прежний фейк (click всегда успешен) маскировал регрессию
-        «goto_hh → безусловный CANCEL» из #963."""
+        «goto_hh → безусловный CANCEL» из #963; модель маршрута объединяет
+        репродьюсер #971 (mark_navigated) с реальным переходом."""
 
         def __init__(self) -> None:
             self.url = f"https://hh.ru/resume/edit/{RESUME_ID}/position"
@@ -356,6 +357,26 @@ def test_editor_dry_run_fallback_other_still_fails_on_non_empty_filter(
     assert "[WARN]" not in out
     assert "[INFO] Ничего не записано" not in out
     assert env.clicks == []
+
+
+def test_editor_dry_run_with_specialization_skips_cancel_after_navigation(
+    env, capsys, tmp_path, monkeypatch
+):
+    """#963 follow-up: dry-run со spec-валидацией уходит с формы через goto_hh
+    (панель закрывается навигацией), после чего CANCEL на /resume/{id} не
+    существует — клик по нему валил бы dry-run по таймауту после УСПЕШНОЙ
+    сверки. В маршрутном фейке фикстуры goto_hh настоящий: после перехода
+    клик по CANCEL падает, как на живом DOM, — команда обязана его не делать."""
+    # Панель сверена, отказов нет: успешный dry-run обязан закончиться
+    # [INFO] без клика по исчезнувшей после навигации CANCEL.
+    assert (
+        cmd.run(
+            _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
+        )
+        is False
+    )
+
+    assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out
 
 
 def test_editor_dry_run_refuses_missing_specialization_before_any_click(

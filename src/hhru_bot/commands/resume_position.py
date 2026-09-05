@@ -367,7 +367,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 # дерево реально отрисовало. Отказ и здесь, и в боевом пути
                 # наступает до клика сохранения.
                 checks: list[SpecializationCheck] = []
-                editor_reset = False
+                left_the_form = False
                 if not wizard and plan.specializations:
                     from ..resume_position import (
                         SpecializationCheck,
@@ -375,19 +375,19 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     )
 
                     checks = validate_specializations_against_tree(page, plan.specializations)
-                    # Панель выбора и pending-правки сбрасываются уходом со
-                    # страницы: submit не нажат. Отдельный CANCEL после goto
-                    # не нужен — на вью-странице /resume/{id} его селектора
-                    # нет, безусловный клик ждал элемент 30с и ронял успешный
-                    # dry-run (#969), поэтому CANCEL кликается только пока
-                    # форма не покинута.
+                    # #963 follow-up / #969: после навигации мы на
+                    # /resume/{id} — формы редактора и её CANCEL там нет;
+                    # безусловный клик ждал бы элемент 30с и ронял успешный
+                    # dry-run. Отмена уже произошла самой навигацией (submit
+                    # не нажат, pending-правки отброшены), дублировать её
+                    # кликом не нужно.
                     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
-                    editor_reset = True
+                    left_the_form = True
                 # #952/#954: --fallback-other в боевом прогоне подставит
                 # «Другое» только при позитивном пустом результате фильтра
                 # (fallback_eligible); непустой фильтр без точного листа бой
                 # отклоняет даже с флагом — dry-run честно повторяет оба
-                # исхода вместо отказа «вообще».
+                # исхода вместо отказа «вообще» (#963, инлайн 2 ревью).
                 fallback_other = getattr(args, "fallback_other", False)
                 hard_failures = [
                     check.message
@@ -403,7 +403,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                         f"[WARN] {check.message}; боевой прогон выберет плейсхолдер "
                         "«Другое» (id 40) (--fallback-other)"
                     )
-                if not wizard and not editor_reset:
+                if not wizard and not left_the_form:
                     page.locator(CANCEL).click()
                 print("[INFO] Ничего не записано на hh.ru.")
                 return False
