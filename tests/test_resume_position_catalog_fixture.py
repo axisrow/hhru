@@ -106,9 +106,12 @@ def test_resume_catalog_rejects_non_leaf_or_missing_specialization(
 
 @pytest.mark.browser_unit
 def test_set_specializations_missing_leaf_refusal_lists_visible_candidates(monkeypatch):
-    """#950/#954: отказ при неточном листе называет число отрисованных
-    совпадений и требует точное имя из live-каталога, — перезапуск с первого
-    раза, а не перебор (контракт сообщения — #964)."""
+    """#950/#954: near-miss (фильтр отрисовал листы, точного нет) отказывается,
+    называя число совпадений и перечисляя реально отрисованных кандидатов, —
+    перезапуск с первого раза, а не перебор. Формулировка «результат фильтра
+    непуст…» — новая семантика #954: непустой фильтр не «лист отсутствует»,
+    фоллбэк «Другое» на нём не срабатывает; перечисление кандидатов сохранено
+    (#836, контракт сообщения — #964)."""
     monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
     playwright, browser, page = _page()
     try:
@@ -118,7 +121,8 @@ def test_set_specializations_missing_leaf_refusal_lists_visible_candidates(monke
         message = str(exc_info.value)
         assert "результат фильтра непуст" in message
         assert "точного листа «Менеджер» среди них нет" in message
-        assert "передайте точное имя листа из live-каталога" in message
+        assert "ближайшие доступные листы: " in message
+        assert "Менеджер по продажам, менеджер по работе с клиентами" in message
     finally:
         browser.close()
         playwright.stop()

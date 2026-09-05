@@ -1033,21 +1033,51 @@ def test_set_specializations_no_fallback_on_near_miss_filter():
     """#954: непустой результат фильтра без точного совпадения (неточное имя
     листа — имена каталога составные, «Столяр, плотник») — НЕ пустой фильтр;
     «Другое» не подставляется даже с флагом: плейсхолдер затёр бы валидную
-    близкую специализацию. Счётчик в сообщении — число листьев
-    (SPECIALIZATION_OPTION), не всех детей контейнера (ревью PR #964)."""
+    близкую специализацию. Счётчик — число листьев (SPECIALIZATION_OPTION),
+    не всех детей контейнера (ревью PR #964); отказ перечисляет реально
+    отрисованные листы (канал #950, принцип #836)."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     page = MagicMock()
     option = _mock_specialization_locators(
-        page, option_data_qa=[], container_children=3, rendered_options=2
+        page,
+        option_data_qa=[],
+        container_children=3,
+        rendered_options=2,
+        rendered_labels=[
+            "Учитель, преподаватель, педагог",
+            "Учитель начальных классов",
+        ],
     )
     option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
 
-    with pytest.raises(RuntimeError, match=r"результат фильтра непуст \(совпадений: 2\)"):
+    with pytest.raises(RuntimeError, match=r"совпадений: 2\).+ближайшие доступные листы"):
         resume_position._set_specializations(page, ["Учитель"], fallback_other=True)
 
     search = page.locator(resume_position.SPECIALIZATION_SEARCH)
     assert [call.args[0] for call in search.fill.call_args_list] == ["Учитель"]
+    option.first.click.assert_not_called()
+
+
+def test_set_specializations_near_miss_without_substring_candidates():
+    """Ревью PR #968: расхождение семантик — DOM-фильтр отрисовал листья,
+    substring-эвристика кандидатов не нашла (rendered_labels=[]). Хвост
+    отказа не противоречит «результат фильтра непуст»: вместо format_candidates
+    с «совпадений по подстроке не найдено» — указание перечитать каталог."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    page = MagicMock()
+    option = _mock_specialization_locators(
+        page, option_data_qa=[], container_children=3, rendered_options=2, rendered_labels=[]
+    )
+    option.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 5000ms exceeded.")
+
+    with pytest.raises(RuntimeError, match=r"совпадений: 2\).+перечитайте live-каталог"):
+        resume_position._set_specializations(page, ["Менеджер"], fallback_other=True)
+        pytest.fail("near-miss должен отказать, а не подставлять «Другое»")
+
+    search = page.locator(resume_position.SPECIALIZATION_SEARCH)
+    assert [call.args[0] for call in search.fill.call_args_list] == ["Менеджер"]
     option.first.click.assert_not_called()
 
 
@@ -1138,7 +1168,12 @@ def test_set_specializations_no_fallback_on_nontimeout_wait_error(monkeypatch):
 
 
 def _mock_specialization_locators(
-    page, *, option_data_qa, container_children: int | None = 0, rendered_options: int | None = None
+    page,
+    *,
+    option_data_qa,
+    container_children: int | None = 0,
+    rendered_options: int | None = None,
+    rendered_labels: list[str] | None = None,
 ):
     """Common scaffolding for _set_specializations tests below.
 
@@ -1169,10 +1204,12 @@ def _mock_specialization_locators(
     option_tree.filter.return_value = option
     # Unfiltered count of rendered leaves, read by the near-miss branch
     # (review PR #964): distinct from option_data_qa, which models the
-    # exact-label-filtered subset.
+    # exact-label-filtered subset. all_inner_texts feeds the refusal's
+    # candidate listing (_poll_specialization_labels -> evaluate_leaf).
     option_tree.count.return_value = (
         len(option_data_qa) if rendered_options is None else rendered_options
     )
+    option_tree.all_inner_texts.return_value = rendered_labels or []
     container = MagicMock()
     container.count.return_value = 0 if container_children is None else 1
     container.first.locator.return_value.count.return_value = container_children or 0
