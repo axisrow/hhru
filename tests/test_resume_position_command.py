@@ -65,7 +65,22 @@ def env(monkeypatch, tmp_path):
     clicks: list[str] = []
 
     class FakePage:
+        def __init__(self):
+            self._navigated = False
+
+        def mark_navigated(self):
+            # #963 follow-up: goto_hh уводит с формы редактора — CANCEL на
+            # целевой странице не существует, как и на живом DOM.
+            self._navigated = True
+
         def locator(self, selector):
+            if self._navigated and selector == hhru_bot.resume_position.CANCEL:
+                from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+                def click():
+                    raise PlaywrightTimeoutError("CANCEL vanished after navigation")
+
+                return SimpleNamespace(click=click)
             return SimpleNamespace(click=lambda: clicks.append(selector))
 
         def close(self):
@@ -231,6 +246,31 @@ def test_editor_dry_run_validates_specializations_against_tree(env, capsys, tmp_
     )
 
     assert env.validated == [["Инженер по тестированию"]]
+    assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out
+
+
+def test_editor_dry_run_with_specialization_skips_cancel_after_navigation(
+    env, capsys, tmp_path, monkeypatch
+):
+    """#963 follow-up: dry-run со spec-валидацией уходит с формы через goto_hh
+    (панель закрывается навигацией), после чего CANCEL на /resume/{id} не
+    существует — клик по нему валил бы dry-run по таймауту после УСПЕШНОЙ
+    сверки. Фейковая страница отражает живой DOM: после навигации клик по
+    CANCEL падает — команда обязана его не делать."""
+    monkeypatch.setattr(
+        hhru_bot.browser,
+        "goto_hh",
+        lambda page, url: page.mark_navigated(),
+    )
+    # Панель сверена, отказов нет: успешный dry-run обязан закончиться
+    # [INFO] без клика по исчезнувшей после навигации CANCEL.
+    assert (
+        cmd.run(
+            _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
+        )
+        is False
+    )
+
     assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out
 
 
