@@ -325,7 +325,10 @@ def _choose_language(page, form, name: str) -> None:
     if selector.count() != 1:
         raise PlaywrightError("поле выбора языка не найдено однозначно")
     selector.click()
-    _click_portal_option(page.get_by_role("option", name=name, exact=True).last)
+    _click_portal_option(
+        page.get_by_role("option", name=name, exact=True).last,
+        strict_label=f"языка '{name}'",
+    )
 
 
 def _choose_degree(page, form, level: str) -> None:

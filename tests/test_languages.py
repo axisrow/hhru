@@ -167,6 +167,9 @@ class _StrictLastLocator:
 
     def __init__(self, dialog: MagicMock) -> None:
         self._dialog = dialog
+        # #975 review: page-wide language option now passes the strict
+        # count() guard in _click_portal_option — satisfy it by default.
+        dialog.count.return_value = 1
 
     @property
     def last(self) -> MagicMock:
