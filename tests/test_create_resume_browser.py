@@ -1849,7 +1849,7 @@ def test_pre_next_failure_does_not_warn_about_phantom_draft(monkeypatch):
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 # Живой черновик #910: nextIncompleteScreenId=common (то же состояние, что у
-# резюме-свидетеля d7f3e582 из #978).
+# резюме-свидетеля «01234567…» из #978).
 READBACK_DRAFT_ID = "00007" + "0" * 34
 READBACK_COMMON_MARKUP = (FIXTURES_DIR / "resume_position_state_common_title_910.html").read_text(
     encoding="utf-8"
@@ -1859,9 +1859,11 @@ READBACK_COMMON_MARKUP = (FIXTURES_DIR / "resume_position_state_common_title_910
 class ReadbackPage(CheckboxWrapperPage):
     """Страница после успешного финального NEXT: readback читает bootstrap."""
 
-    def __init__(self, markup):
+    def __init__(self, markup, *, after_navigation_markup=None):
         super().__init__()
         self._markup = markup
+        self._after_navigation_markup = after_navigation_markup
+        self.navigated_urls: list[str] = []
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
         if not isinstance(url, str):
@@ -1872,16 +1874,32 @@ class ReadbackPage(CheckboxWrapperPage):
         return None
 
     def content(self):
+        if self._after_navigation_markup is not None and self.navigated_urls:
+            return self._after_navigation_markup
         return self._markup
 
 
 def _patch_readback(monkeypatch):
+    """Навигация readback без реального браузера: open_confirmed_resume пишет URL.
+
+    Parse-first (ревью PR #980): при записи в текущем контенте вызова
+    навигации не будет вовсе — это проверяет отдельный тест ниже.
+    """
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
 
     def _open(page, resume_id):
+        page.navigated_urls.append(f"https://hh.ru/resume/{resume_id}")
         page.url = f"https://hh.ru/resume/{resume_id}"
 
     monkeypatch.setattr(create, "open_confirmed_resume", _open)
+
+
+def _run_with_readback(page, before_click=None, **kwargs):
+    """Как вызывающий код команды: create → attempt.finish → apply_draft_readback."""
+    result = _run(page, before_click=before_click, **kwargs)
+    if result.success:
+        result = create.apply_draft_readback(page, result)
+    return result
 
 
 def test_success_ends_with_draft_started_verdict_when_common_incomplete(monkeypatch):
@@ -1890,7 +1908,7 @@ def test_success_ends_with_draft_started_verdict_when_common_incomplete(monkeypa
     _patch_readback(monkeypatch)
     page = ReadbackPage(READBACK_COMMON_MARKUP)
 
-    result = _run(page, before_click=lambda: None)
+    result = _run_with_readback(page, before_click=lambda: None)
 
     assert result.success, result.reason
     assert result.readiness == create.READINESS_DRAFT_STARTED
@@ -1899,16 +1917,76 @@ def test_success_ends_with_draft_started_verdict_when_common_incomplete(monkeypa
     assert "publish-resume откажет" in result.reason
 
 
+def test_parse_first_skips_navigation_when_current_page_carries_state(monkeypatch):
+    """Ревью PR #980: страница после финального NEXT уже несёт bootstrap —
+    полная навигация не выполняется (дешевле и уже окна прерывания/lease)."""
+    _patch_readback(monkeypatch)
+    page = ReadbackPage(READBACK_COMMON_MARKUP)
+
+    _run_with_readback(page, before_click=lambda: None)
+
+    assert page.navigated_urls == []
+
+
+def test_readback_falls_back_to_resume_page_when_current_page_has_no_record(monkeypatch):
+    """Нет записи в текущем контенте — readback навигирует на /resume/{id}
+    (identity-подтверждённый маршрут), а не читает пустую страницу."""
+    _patch_readback(monkeypatch)
+    page = ReadbackPage(
+        "<html>wizard без bootstrap записи</html>",
+        after_navigation_markup=READBACK_COMMON_MARKUP,
+    )
+
+    result = _run_with_readback(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert page.navigated_urls == [f"https://hh.ru/resume/{READBACK_DRAFT_ID}"]
+    assert result.readiness == create.READINESS_DRAFT_STARTED
+
+
 def test_success_ends_with_ready_verdict_when_no_incomplete_step(monkeypatch):
     _patch_readback(monkeypatch)
-    markup = '{"resume":{"hash":"' + READBACK_DRAFT_ID + '","status":"not_finished"}}'
+    markup = (
+        '{"resume":{"hash":"' + READBACK_DRAFT_ID + '","status":"not_finished",'
+        '"canPublishOrUpdate":true}}'
+    )
     page = ReadbackPage(markup)
 
-    result = _run(page, before_click=lambda: None)
+    result = _run_with_readback(page, before_click=lambda: None)
 
     assert result.success, result.reason
     assert result.readiness == create.READINESS_READY_TO_PUBLISH
     assert result.next_incomplete_screen_id is None
+
+
+def test_ready_verdict_requires_confirmed_can_publish_or_update(monkeypatch):
+    """Ревью PR #980: «Готово к публикации» = полный publish-гейт, не один
+    nextIncompleteScreenId — canPublishOrUpdate не подтверждён => unknown."""
+    _patch_readback(monkeypatch)
+    markup = '{"resume":{"hash":"' + READBACK_DRAFT_ID + '","status":"not_finished"}}'
+    page = ReadbackPage(markup)
+
+    result = _run_with_readback(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_UNKNOWN
+    assert "canPublishOrUpdate" in result.reason
+
+
+def test_auto_published_draft_gets_dedicated_verdict(monkeypatch):
+    """#900: закрытие последнего экрана публикует резюме автоматически —
+    это отдельный вердикт, а не «готово к публикации»."""
+    _patch_readback(monkeypatch)
+    markup = (
+        '{"resume":{"hash":"' + READBACK_DRAFT_ID + '","status":"finished","isSearchable":true}}'
+    )
+    page = ReadbackPage(markup)
+
+    result = _run_with_readback(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_ALREADY_PUBLISHED
+    assert "опубликовано" in result.reason
 
 
 def test_readback_failure_is_unknown_but_draft_still_created(monkeypatch):
@@ -1917,16 +1995,31 @@ def test_readback_failure_is_unknown_but_draft_still_created(monkeypatch):
     monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
 
     def _broken_open(page, resume_id):
-        raise RuntimeError("сессия отвергнута при readback")
+        raise RuntimeError("навигация readback не удалась")
 
     monkeypatch.setattr(create, "open_confirmed_resume", _broken_open)
-    page = ReadbackPage(READBACK_COMMON_MARKUP)
+    page = ReadbackPage("<html>пустая страница</html>")
 
-    result = _run(page, before_click=lambda: None)
+    result = _run_with_readback(page, before_click=lambda: None)
 
     assert result.success, result.reason
     assert result.readiness == create.READINESS_UNKNOWN
     assert "readback" in result.reason
+
+
+def test_readback_reraises_not_authenticated_for_session_expired_handler(monkeypatch):
+    """Ревью PR #980: NotAuthenticated из readback не глотается в unknown —
+    её ловит типизированный SESSION_EXPIRED-хендлер run_supervised_command."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _expired_open(page, resume_id):
+        raise create.NotAuthenticated("сессия истекла")
+
+    monkeypatch.setattr(create, "open_confirmed_resume", _expired_open)
+    page = ReadbackPage("<html>пустая страница</html>")
+
+    with pytest.raises(create.NotAuthenticated):
+        create.read_draft_readiness(page, READBACK_DRAFT_ID)
 
 
 def test_placeholder_path_keeps_placeholder_flag_with_verdict(monkeypatch):
@@ -1934,8 +2027,11 @@ def test_placeholder_path_keeps_placeholder_flag_with_verdict(monkeypatch):
     объединяется с вердиктом readback."""
     _patch_readback(monkeypatch)
     page = ReadbackPage(READBACK_COMMON_MARKUP)
+    created = create.CreateResumeResult(
+        True, new_resume_id=READBACK_DRAFT_ID, reason="черновик создан", placeholder_role=True
+    )
 
-    result = create._success_result(page, READBACK_DRAFT_ID, placeholder_role=True)
+    result = create.apply_draft_readback(page, created)
 
     assert result.success
     assert result.placeholder_role is True
@@ -1963,7 +2059,7 @@ def test_record_without_status_is_unknown_not_optimistic_ready(monkeypatch):
     markup = '{"resume":{"hash":"' + READBACK_DRAFT_ID + '"}}'
     page = ReadbackPage(markup)
 
-    result = _run(page, before_click=lambda: None)
+    result = _run_with_readback(page, before_click=lambda: None)
 
     assert result.success, result.reason
     assert result.readiness == create.READINESS_UNKNOWN

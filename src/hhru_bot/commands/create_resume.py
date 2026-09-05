@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 
-from ..create_resume import READINESS_DRAFT_STARTED, READINESS_READY_TO_PUBLISH
+from ..create_resume import (
+    READINESS_UNKNOWN,
+    apply_draft_readback,
+)
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 from .copy_resume import confirm_write, format_config_snippet
 
@@ -120,12 +123,18 @@ def run(args: argparse.Namespace):
                 if getattr(args, "allow_unresolved_area", False):
                     create_kwargs["allow_unresolved_area"] = True
                 result = create_resume_on_hh(page, **create_kwargs)
+                # #978 (ревью PR #980): attempt финализируется ДО readback'а —
+                # вердикт строго диагностический, прерывание в нём не
+                # превращает доказанное создание в uncertain и не держит
+                # command_runs-lease на время навигации readback.
+                if attempt is not None:
+                    attempt.finish(result)
+                if result.success and not dry_run:
+                    result = apply_draft_readback(page, result)
         except BaseException as exc:
             if attempt is not None:
                 attempt.interrupt(exc)
             raise
-        if attempt is not None:
-            attempt.finish(result)
         if not result.success:
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
             print(f"{prefix} {result.reason}")
@@ -134,28 +143,11 @@ def run(args: argparse.Namespace):
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
         else:
-            # #978: вердикт статусной модели вместо безусловного «создан» —
-            # молчаливый success в состоянии «Дополнить» исчезает как класс.
-            if result.readiness == READINESS_READY_TO_PUBLISH:
-                verdict = "[OK] Готово к публикации: незавершённых шагов нет."
-            elif result.readiness == READINESS_DRAFT_STARTED:
-                verdict = (
-                    "[OK] Черновик начат: незавершённый шаг "
-                    f"nextIncompleteScreenId={result.next_incomplete_screen_id} — "
-                    "publish-resume откажет до заполнения этого экрана."
-                )
-            else:
-                verdict = (
-                    "[WARN] Черновик создан, но readback статуса не удался — "
-                    "готовность к публикации не подтверждена; проверьте "
-                    "publish-resume --dry-run."
-                )
-            print(f"{verdict} Новый resume_id: {result.new_resume_id}")
-            if result.placeholder_role:
-                print(
-                    "[WARN] Профессия НЕ установлена — назначена роль-плейсхолдер "
-                    "«Другое» (id 40); замените её вручную через «Дополнить»."
-                )
+            # #978: вердикт статной модели вместо безусловного «создан». Текст
+            # единственный — reason, составленный в draft_verdict_result; CLI
+            # выбирает только префикс (ревью PR #980: без второго каталога).
+            prefix = "[WARN]" if result.readiness == READINESS_UNKNOWN else "[OK]"
+            print(f"{prefix} {result.reason} Новый resume_id: {result.new_resume_id}")
             print(format_config_snippet(result.new_resume_id))
         return False
 
