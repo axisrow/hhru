@@ -1138,16 +1138,37 @@ def _poll_specialization_labels(page: Page) -> list[str]:
         page.wait_for_timeout(250)
 
 
-def validate_specializations_against_tree(page: Page, values: list[str]) -> list[str]:
+@dataclass(frozen=True)
+class SpecializationCheck:
+    """Итог dry-run сверки одного значения с живым деревом резюме (#950).
+
+    ``fallback_eligible`` повторяет боевую семантику #954: ``--fallback-other``
+    подставляет «Другое» ТОЛЬКО при позитивном пустом результате фильтра;
+    непустой фильтр без точного листа боевой прогон отклоняет даже с флагом
+    (затёртая близкая специализация хуже честного отказа). Структурный
+    признак, не подстрока в сообщении — решение команды по нему такое же
+    строгое, как классификация uncertain (#465).
+    """
+
+    value: str
+    message: str
+    fallback_eligible: bool
+
+
+def validate_specializations_against_tree(
+    page: Page, values: list[str]
+) -> list[SpecializationCheck]:
     """Read-only dry-run сверка специализаций с живым деревом резюме (#950).
 
     Открывает панель выбора специализаций (единственный read-only клик по
     ADD — панель выбора, не DELETE и не submit), читает дерево, отфильтрованное
-    каждым значением, и возвращает отказы для значений, которые дерево не
-    рендерит точным листом; отказ перечисляет реально предложенные листы.
+    каждым значением, и возвращает чеки для значений, которые дерево не
+    рендерит точным листом; сообщение перечисляет реально предложенные листы.
     Выход из экрана — обязанность вызывающего (уход со страницы или CANCEL,
-    никогда не submit). Боевой путь валидирует сам факт клика по листу в
-    ``_pick_specialization`` — здесь та же строгость, перенесённая до записи.
+    никогда не submit). Классификация пустого результата повторяет боевую
+    логику ``_pick_specialization`` после #954: пустой контейнер —
+    подтверждённое отсутствие (fallback-eligible), непустой фильтр без
+    точного листа — отказ и в dry-run, и в бою.
     """
     if page.locator(SPECIALIZATION_ADD).count() != 1:
         raise RuntimeError("селектор добавления специализации не подтверждён")
@@ -1161,16 +1182,52 @@ def validate_specializations_against_tree(page: Page, values: list[str]) -> list
     if search.count() != 1:
         raise RuntimeError("селектор панели специализаций не подтверждён")
 
-    refusals: list[str] = []
+    checks: list[SpecializationCheck] = []
     for value in values:
         search.fill(value)
-        evaluation = evaluate_leaf(value, _poll_specialization_labels(page))
-        if not evaluation.exact:
-            refusals.append(
-                "специализация не найдена в дереве резюме "
-                f"(dry-run сверка до записи, #950): {value}; {format_candidates(evaluation)}"
+        labels = _poll_specialization_labels(page)
+        evaluation = evaluate_leaf(value, labels)
+        if evaluation.exact:
+            continue
+        container = page.locator(SPECIALIZATION_TREE_CONTAINER)
+        if container.count() == 1 and container.first.locator("*").count() == 0:
+            # Позитивный empty-state — тот же признак, по которому боевой
+            # путь (#954) разрешает --fallback-other: единственный контейнер
+            # дерева прикреплён и полностью пуст.
+            checks.append(
+                SpecializationCheck(
+                    value=value,
+                    message=(
+                        "специализация не найдена в дереве резюме "
+                        f"(dry-run сверка до записи, #950): {value}; "
+                        "дерево подтвердило пустой результат фильтра; "
+                        f"{format_candidates(evaluation)}"
+                    ),
+                    fallback_eligible=True,
+                )
             )
-    return refusals
+            continue
+        if not labels:
+            raise SpecializationTreeIndeterminate(
+                f"дерево специализаций не подтвердило ни лист «{value}», ни "
+                "пустой контейнер — отсутствие листа не доказано, dry-run "
+                "отказывает как боевой путь (#954)"
+            )
+        checks.append(
+            SpecializationCheck(
+                value=value,
+                message=(
+                    "специализация не найдена в дереве резюме "
+                    f"(dry-run сверка до записи, #950): {value}; "
+                    f"результат фильтра непуст (совпадений: {len(labels)}), но точного "
+                    f"листа «{value}» среди них нет — передайте точное имя листа из "
+                    f"live-каталога (составные имена вида «Столяр, плотник»); "
+                    f"{format_candidates(evaluation)}"
+                ),
+                fallback_eligible=False,
+            )
+        )
+    return checks
 
 
 def _set_specializations(page: Page, values: list[str], fallback_other: bool = False) -> None:

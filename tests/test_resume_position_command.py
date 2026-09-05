@@ -14,11 +14,12 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 import hhru_bot.browser
 import hhru_bot.commands.resume_position as cmd
 import hhru_bot.resume_position
-from hhru_bot.resume_position import PositionValues
+from hhru_bot.resume_position import PositionValues, SpecializationCheck
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +43,7 @@ def _args(tmp_path, **overrides):
         "commute": None,
         "business_trips": None,
         "mode": None,
+        "fallback_other": False,
         "command": "resume-position",
     }
     base.update(overrides)
@@ -65,26 +67,42 @@ def env(monkeypatch, tmp_path):
     clicks: list[str] = []
 
     class FakePage:
-        def __init__(self):
-            self._navigated = False
+        """Страница с маршрутом (#969/#971): goto_hh НЕ мокается — настоящий
+        переход на вью-страницу /resume/{id} закрывает DOM частичного
+        редактора, и клик по CANCEL там падает по таймауту, как живой
+        Playwright. Прежний фейк (click всегда успешен) маскировал регрессию
+        «goto_hh → безусловный CANCEL» из #963; модель маршрута объединяет
+        репродьюсер #971 (mark_navigated) с реальным переходом."""
 
-        def mark_navigated(self):
-            # #963 follow-up: goto_hh уводит с формы редактора — CANCEL на
-            # целевой странице не существует, как и на живом DOM.
-            self._navigated = True
+        def __init__(self) -> None:
+            self.url = f"https://hh.ru/resume/edit/{RESUME_ID}/position"
+            self.clicks = clicks
 
-        def locator(self, selector):
-            if self._navigated and selector == hhru_bot.resume_position.CANCEL:
-                from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-
-                def click():
-                    raise PlaywrightTimeoutError("CANCEL vanished after navigation")
-
-                return SimpleNamespace(click=click)
-            return SimpleNamespace(click=lambda: clicks.append(selector))
+        def goto(self, url, *, wait_until=None, timeout=None):
+            self.url = url
+            return SimpleNamespace(ok=True)
 
         def close(self):
             return None
+
+        def _form_available(self) -> bool:
+            return "/resume/edit/" in self.url
+
+        def locator(self, selector):
+            page = self
+
+            class _Locator:
+                def count(self):
+                    return 1 if page._form_available() else 0
+
+                def click(self):
+                    if not page._form_available():
+                        raise PlaywrightTimeoutError(
+                            f"Timeout 30000ms exceeded waiting for {selector}"
+                        )
+                    page.clicks.append(selector)
+
+            return _Locator()
 
     class FakeContext:
         def new_page(self):
@@ -104,7 +122,6 @@ def env(monkeypatch, tmp_path):
         "validate_specializations_against_tree",
         lambda page, values: (validated.append(list(values)), [])[1],
     )
-    monkeypatch.setattr(hhru_bot.browser, "goto_hh", lambda page, url: None)
 
     # Editor-режим с текущим заголовком «QA»: ручной --title без LLM.
     flow = SimpleNamespace(
@@ -237,7 +254,14 @@ def test_editor_dry_run_without_title_keeps_honest_none(env, capsys, tmp_path, m
 
 
 def test_editor_dry_run_validates_specializations_against_tree(env, capsys, tmp_path):
-    """#950: dry-run editor-пути сверяет --specialization с живым деревом."""
+    """#950: dry-run editor-пути сверяет --specialization с живым деревом.
+
+    #969: happy-path проходит настоящий goto_hh на вью-страницу, и CANCEL
+    после ухода НЕ кликается — на ней его DOM-а нет, прежний безусловный
+    клик падал 30с-таймаутом и ронял успешный dry-run. Фейк моделирует это:
+    клик после goto_hh кидает PlaywrightTimeoutError, поэтому багованный
+    код даёт [FAIL] и return True, а не [INFO].
+    """
     assert (
         cmd.run(
             _args(tmp_path, title=None, specialization=["Инженер по тестированию"], dry_run=True)
@@ -246,7 +270,93 @@ def test_editor_dry_run_validates_specializations_against_tree(env, capsys, tmp_
     )
 
     assert env.validated == [["Инженер по тестированию"]]
-    assert "[INFO] Ничего не записано на hh.ru." in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "[INFO] Ничего не записано на hh.ru." in out
+    assert "[FAIL]" not in out
+    # Ни одного клика: goto закрыл форму, CANCEL после ухода не нужен.
+    assert env.clicks == []
+
+
+def test_editor_dry_run_fallback_other_warns_for_empty_filter(env, capsys, tmp_path, monkeypatch):
+    """#952/#954: при позитивном пустом фильтре --fallback-other делает
+    боевой прогон успешным — dry-run предупреждает о плейсхолдере, не
+    отказывая (честное превью)."""
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "validate_specializations_against_tree",
+        lambda page, values: [
+            SpecializationCheck(
+                value="Врач-хирург",
+                message=(
+                    "специализация не найдена в дереве резюме "
+                    "(dry-run сверка до записи, #950): Врач-хирург; "
+                    "дерево подтвердило пустой результат фильтра"
+                ),
+                fallback_eligible=True,
+            )
+        ],
+    )
+
+    assert (
+        cmd.run(
+            _args(
+                tmp_path,
+                title=None,
+                specialization=["Врач-хирург"],
+                dry_run=True,
+                fallback_other=True,
+            )
+        )
+        is False
+    )
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" not in out
+    assert "[WARN]" in out
+    assert "«Другое» (id 40) (--fallback-other)" in out
+    assert "[INFO] Ничего не записано на hh.ru." in out
+    assert env.clicks == []
+
+
+def test_editor_dry_run_fallback_other_still_fails_on_non_empty_filter(
+    env, capsys, tmp_path, monkeypatch
+):
+    """#954: непустой фильтр без точного листа боевой прогон отклоняет даже
+    с --fallback-other — dry-run повторяет этот исход, а не обещает «Другое»."""
+    monkeypatch.setattr(
+        hhru_bot.resume_position,
+        "validate_specializations_against_tree",
+        lambda page, values: [
+            SpecializationCheck(
+                value="Учитель",
+                message=(
+                    "специализация не найдена в дереве резюме "
+                    "(dry-run сверка до записи, #950): Учитель; "
+                    "результат фильтра непуст (совпадений: 1), но точного листа нет"
+                ),
+                fallback_eligible=False,
+            )
+        ],
+    )
+
+    assert (
+        cmd.run(
+            _args(
+                tmp_path,
+                title=None,
+                specialization=["Учитель"],
+                dry_run=True,
+                fallback_other=True,
+            )
+        )
+        is True
+    )
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[WARN]" not in out
+    assert "[INFO] Ничего не записано" not in out
+    assert env.clicks == []
 
 
 def test_editor_dry_run_with_specialization_skips_cancel_after_navigation(
@@ -255,13 +365,8 @@ def test_editor_dry_run_with_specialization_skips_cancel_after_navigation(
     """#963 follow-up: dry-run со spec-валидацией уходит с формы через goto_hh
     (панель закрывается навигацией), после чего CANCEL на /resume/{id} не
     существует — клик по нему валил бы dry-run по таймауту после УСПЕШНОЙ
-    сверки. Фейковая страница отражает живой DOM: после навигации клик по
-    CANCEL падает — команда обязана его не делать."""
-    monkeypatch.setattr(
-        hhru_bot.browser,
-        "goto_hh",
-        lambda page, url: page.mark_navigated(),
-    )
+    сверки. В маршрутном фейке фикстуры goto_hh настоящий: после перехода
+    клик по CANCEL падает, как на живом DOM, — команда обязана его не делать."""
     # Панель сверена, отказов нет: успешный dry-run обязан закончиться
     # [INFO] без клика по исчезнувшей после навигации CANCEL.
     assert (
@@ -282,8 +387,15 @@ def test_editor_dry_run_refuses_missing_specialization_before_any_click(
         hhru_bot.resume_position,
         "validate_specializations_against_tree",
         lambda page, values: [
-            "специализация не найдена в дереве резюме (dry-run сверка до записи, "
-            "#950): Врач-хирург; ближайшие доступные листы: Врач"
+            SpecializationCheck(
+                value="Врач-хирург",
+                message=(
+                    "специализация не найдена в дереве резюме "
+                    "(dry-run сверка до записи, #950): Врач-хирург; "
+                    "ближайшие доступные листы: Врач"
+                ),
+                fallback_eligible=False,
+            )
         ],
     )
 

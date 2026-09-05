@@ -150,14 +150,37 @@ def test_validate_specializations_refusal_lists_filtered_candidates(monkeypatch)
     monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
     playwright, browser, page = _page()
     try:
-        refusals = resume_position.validate_specializations_against_tree(
+        checks = resume_position.validate_specializations_against_tree(
             page, ["Менеджер", "Водитель, экспедитор"]
         )
 
-        assert len(refusals) == 1
-        assert "Менеджер" in refusals[0]
-        assert "ближайшие доступные листы: " in refusals[0]
-        assert "Менеджер по продажам, менеджер по работе с клиентами" in refusals[0]
+        assert len(checks) == 1
+        # Непустой фильтр без точного листа (#954): боевой --fallback-other
+        # здесь НЕ подставит «Другое» — dry-run помечает чек не-eligible.
+        assert checks[0].fallback_eligible is False
+        assert "Менеджер" in checks[0].message
+        assert "результат фильтра непуст" in checks[0].message
+        assert "ближайшие доступные листы: " in checks[0].message
+        assert "Менеджер по продажам, менеджер по работе с клиентами" in checks[0].message
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+@pytest.mark.browser_unit
+def test_validate_specializations_empty_filter_is_fallback_eligible(monkeypatch):
+    """#954: позитивный empty-state (контейнер прикреплён и пуст) —
+    единственный случай, в котором боевой --fallback-other подставит
+    «Другое»; dry-run помечает такой чек fallback-eligible."""
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    playwright, browser, page = _page()
+    try:
+        checks = resume_position.validate_specializations_against_tree(page, ["qqqzzz-нет"])
+
+        assert len(checks) == 1
+        assert checks[0].fallback_eligible is True
+        assert "пустой результат фильтра" in checks[0].message
+        assert "qqqzzz-нет" in checks[0].message
     finally:
         browser.close()
         playwright.stop()

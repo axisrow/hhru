@@ -366,25 +366,43 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 # деревом резюме ДО записи — отказ перечисляет листы, которые
                 # дерево реально отрисовало. Отказ и здесь, и в боевом пути
                 # наступает до клика сохранения.
-                refusals: list[str] = []
+                checks: list[SpecializationCheck] = []
                 left_the_form = False
                 if not wizard and plan.specializations:
-                    from ..resume_position import validate_specializations_against_tree
+                    from ..resume_position import (
+                        SpecializationCheck,
+                        validate_specializations_against_tree,
+                    )
 
-                    refusals = validate_specializations_against_tree(page, plan.specializations)
-                    # Панель выбора закрывается уходом со страницы: submit не
-                    # нажат, pending-правки отбрасываются; CANCEL под оверлеем
-                    # открытой панели недостижим.
+                    checks = validate_specializations_against_tree(page, plan.specializations)
+                    # #963 follow-up / #969: после навигации мы на
+                    # /resume/{id} — формы редактора и её CANCEL там нет;
+                    # безусловный клик ждал бы элемент 30с и ронял успешный
+                    # dry-run. Отмена уже произошла самой навигацией (submit
+                    # не нажат, pending-правки отброшены), дублировать её
+                    # кликом не нужно.
                     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
-                    # #963 follow-up: после навигации мы на /resume/{id} —
-                    # формы редактора и её CANCEL там нет; клик по нему валил
-                    # бы успешный dry-run по таймауту. Отмена уже произошла
-                    # самой навигацией, дублировать её кликом не нужно.
                     left_the_form = True
-                if refusals:
-                    for refusal in refusals:
-                        print(f"[FAIL] {refusal}")
+                # #952/#954: --fallback-other в боевом прогоне подставит
+                # «Другое» только при позитивном пустом результате фильтра
+                # (fallback_eligible); непустой фильтр без точного листа бой
+                # отклоняет даже с флагом — dry-run честно повторяет оба
+                # исхода вместо отказа «вообще» (#963, инлайн 2 ревью).
+                fallback_other = getattr(args, "fallback_other", False)
+                hard_failures = [
+                    check.message
+                    for check in checks
+                    if not (fallback_other and check.fallback_eligible)
+                ]
+                if hard_failures:
+                    for message in hard_failures:
+                        print(f"[FAIL] {message}")
                     return True
+                for check in checks:
+                    print(
+                        f"[WARN] {check.message}; боевой прогон выберет плейсхолдер "
+                        "«Другое» (id 40) (--fallback-other)"
+                    )
                 if not wizard and not left_the_form:
                     page.locator(CANCEL).click()
                 print("[INFO] Ничего не записано на hh.ru.")
