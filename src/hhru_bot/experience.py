@@ -48,6 +48,8 @@ from .selector_groups.resume_experience import (
     EXPERIENCE_SHARED_NEW_ROW_POSITION,
     EXPERIENCE_START_MONTH,
     EXPERIENCE_START_YEAR,
+    EXPERIENCE_VIEW_CARD,
+    EXPERIENCE_VIEW_COMPANY,
     FIRST_EXPERIENCE_CANCEL,
     FIRST_EXPERIENCE_COMPANY,
     FIRST_EXPERIENCE_CURRENT_CHECKBOX,
@@ -916,115 +918,122 @@ def _reconcile_experience_resume_panel(
                 )
 
 
+# #844: period inside a view card's text — "Ноябрь 2021 — сейчас" or
+# "Октябрь 2018 — Октябрь 2021" (both months are capitalized MONTH_NAMES
+# entries, live 2026-09-05). Followed by an optional " (N года и M месяцев)"
+# duration that must NOT leak into duties.
+_VIEW_PERIOD_RE = re.compile(r"([А-ЯЁ][а-яё]+ \d{4})\s+—\s+(сейчас|[А-ЯЁ][а-яё]+ \d{4})")
+_VIEW_DURATION_RE = re.compile(
+    # longest-first alternation: bare "год"/"месяц" would otherwise match
+    # inside "года"/"месяцев" and leave the suffix in the position text
+    r"\d+\s+(?:года|лет|год)(?:\s+и\s+\d+\s+(?:месяцев|месяца|месяц))?"
+)
+
+
+def _view_month_number(label: str) -> str:
+    """Capitalize-insensitive MONTH_NAMES lookup → "1".."12" ("" if unknown)."""
+    try:
+        return str(MONTH_NAMES.index(label.strip().capitalize()) + 1)
+    except ValueError:
+        return ""
+
+
+def _read_view_card(card: Locator) -> ExperienceEntry:
+    """Parse one view-page experience card into an ExperienceEntry (#844).
+
+    The card's inner_text (live 2026-09-05, python resume) reads
+    ``"{company}{duration}{position}{Месяц ГГГГ} — {Месяц ГГГГ|сейчас}
+    ({duration}){duties}"``. The company is taken structurally (the first
+    ``EXPERIENCE_VIEW_COMPANY`` cell inside the card — the second one is the
+    total duration); position is whatever sits between the company/duration
+    prefix and the period; duties is everything after the period's duration
+    parenthetical. Any missed anchor raises ValueError — the caller skips
+    the card and dumps it.
+    """
+    company_cell = card.locator(EXPERIENCE_VIEW_COMPANY).first
+    # A view card's cells are plain <div>s, not form inputs — _read()'s
+    # input_value() raises "Node is not an <input>" on them (live 2026-09-05);
+    # the text is read via inner_text instead.
+    company = company_cell.inner_text().strip()
+    text = " ".join(card.inner_text().split())
+    if not text.startswith(company):
+        raise ValueError(f"карточка не начинается с компании {company!r}: {text[:80]!r}")
+    rest = text[len(company) :].lstrip()
+    # The total-duration cell follows the company before the position.
+    duration_match = _VIEW_DURATION_RE.match(rest)
+    if duration_match:
+        rest = rest[duration_match.end() :].lstrip()
+    period = _VIEW_PERIOD_RE.search(rest)
+    if period is None:
+        raise ValueError(f"период работы не найден в карточке: {text[:120]!r}")
+    position = rest[: period.start()].strip()
+    if not position:
+        raise ValueError(f"должность не найдена в карточке: {text[:120]!r}")
+    tail = rest[period.end() :].lstrip()
+    # Strip the period's own "(N года и M месяцев)" — a duties text legitimately
+    # contains parentheses of its own, so only a leading duration-shaped one goes.
+    tail_duration = _VIEW_DURATION_RE.match(tail[1:].strip()) if tail.startswith("(") else None
+    if tail_duration is not None:
+        closing = tail.index(")")
+        tail = tail[closing + 1 :].lstrip()
+    start_month_label, start_year = period.group(1).rsplit(" ", 1)
+    current = period.group(2) == "сейчас"
+    if current:
+        end_month, end_year = "", ""
+    else:
+        end_month_label, end_year = period.group(2).rsplit(" ", 1)
+        end_month = _view_month_number(end_month_label)
+    return ExperienceEntry(
+        company=company,
+        position=position,
+        start_year=start_year,
+        start_month=_view_month_number(start_month_label),
+        end_year=end_year,
+        end_month=end_month,
+        current=current,
+        duties=tail,
+    )
+
+
 def read_experience_on_hh(page: Page, resume_id: str) -> list[ExperienceEntry]:
-    """Read existing rows through their confirmed editor fields, without save."""
+    """Read existing experience rows from the resume page's static SSR cards.
+
+    open_confirmed_resume() proves the page is THIS resume; everything else
+    is plain DOM reading — no clicks, no writes.
+
+    #844 re-repro (live 2026-09-05): the previous implementation (#851) drove
+    a per-row loop — click ``edit-experience-button-{index}``, read the opened
+    editor's fields, navigate back. That loop is DEAD on today's hh.ru: the
+    view page serves its experience block as static SSR with no React
+    binding on the pencils (no ``__reactProps`` on the button, no React root
+    on the page), and they ignore synthetic AND trusted coordinate clicks —
+    the editor never opens, every row reads as empty, and the function
+    returned 0 entries on a 3-entry resume. The same block's company cards
+    (``EXPERIENCE_VIEW_CARD``) carry each row's full text in that static DOM,
+    so reading from the cards needs zero clicks and — because
+    ``open_confirmed_resume()`` already proved the page identity — keeps the
+    per-resume scope by construction.
+    """
     open_confirmed_resume(page, resume_id)
-    # #815: row indexes are a non-contiguous internal React counter, not a
-    # 0..N-1 range — iterate the actual indexes rather than range(count).
-    # The company/position fields only exist in the DOM once that row's form
-    # is open (count()==0 before the click), so a row's identity cannot be
-    # read ahead of clicking it — the loop below reads it right after the
-    # click instead. The SET of indexes itself was confirmed live to be
-    # STABLE across a full page reload/re-navigation (the same indexes come
-    # back), so it is safe to snapshot once before the loop; it is only each
-    # index's VISIBILITY (whether its button is in the collapsed-vs-expanded
-    # DOM) that is not stable and must be re-established per iteration — see
-    # below.
-    #
-    # #844 live trace (2026-08-30): EXPERIENCE_EDIT_BUTTON's click is a full
-    # SPA navigation to a separate page, /profile/edit/experience/{rowId}
-    # ?resumeFrom=..., not an in-page modal on /resume/{resume_id} — the
-    # third, previously unresearched experience-form DOM shape flagged as a
-    # follow-up in PR #843. Two things follow from that:
-    #   1. The company/position fields render only after that navigation
-    #      completes, which is not instant — a bare _read() right after the
-    #      click intermittently hit count()==0 (CLAUDE.md "commit is not
-    #      painted" race). An explicit wait_for(visible) closes that race.
-    #   2. On this page shape, clicking EXPERIENCE_CANCEL
-    #      (data-qa='profile-layout-cancel-button', the same layout button
-    #      reused by resume_education) was confirmed live to have NO effect
-    #      at all: no frame navigation, no network request, no DOM change,
-    #      tested via Playwright .click(), a native el.click() bypassing
-    #      Playwright's actionability pipeline, and keyboard activation —
-    #      the form and its unsaved company value stayed on screen for 30s+.
-    #      Every row after the first therefore found its edit button gone
-    #      (still parked on the unclosed form page) and read as empty. The
-    #      only confirmed way back to the row list is the same navigation
-    #      used to open it in the first place — open_confirmed_resume(),
-    #      not the cancel button.
-    #
-    # #844 PR review: open_confirmed_resume() is a fresh goto_hh(), which
-    # live-confirmed re-collapses the row list back to the first 3 buttons
-    # on any resume with more than 3 entries (_expand_experience_list()'s
-    # own docstring already documents this collapse-on-reload behavior —
-    # this fix's first draft missed that its own recovery step re-triggers
-    # it). Re-running _expand_experience_list(page) after every
-    # open_confirmed_resume() re-expands the list before the next row's
-    # button is addressed; the index SET itself does not need re-reading
-    # (see above), only its visibility.
-    indexes = _experience_row_indexes(page)
+    cards = page.locator(EXPERIENCE_VIEW_CARD)
+    # Cards are server-rendered and present as soon as the resume identity
+    # is proven; a 0-count here cannot be distinguished from a drifted card
+    # selector, so it is dumped exactly like the #957 empty-read case.
+    try:
+        cards.first.wait_for(state="attached", timeout=ROW_HYDRATION_TIMEOUT_MS)
+    except PlaywrightError:
+        pass
     result = []
-    for index in indexes:
+    for i in range(cards.count()):
+        card = cards.nth(i)
         try:
-            page.locator(EXPERIENCE_EDIT_BUTTON.format(index=index)).click()
-            company_locator = page.locator(EXPERIENCE_COMPANY.format(index=index))
-            company_locator.wait_for(state="visible", timeout=FORM_TIMEOUT_MS)
-            entry = ExperienceEntry(
-                company=_read(company_locator),
-                position=_read(page.locator(EXPERIENCE_POSITION.format(index=index))),
-                start_year=_read(page.locator(EXPERIENCE_START_YEAR)),
-                start_month=(
-                    _read_month(page.locator(EXPERIENCE_START_MONTH))
-                    if page.locator(EXPERIENCE_START_MONTH).count() == 1
-                    else ""
-                ),
-                end_year=(
-                    _read(page.locator(EXPERIENCE_END_YEAR))
-                    if page.locator(EXPERIENCE_END_YEAR).count() == 1
-                    else ""
-                ),
-                end_month=(
-                    _read_month(page.locator(EXPERIENCE_END_MONTH))
-                    if page.locator(EXPERIENCE_END_MONTH).count() == 1
-                    else ""
-                ),
-                duties=_read(page.locator(EXPERIENCE_DESCRIPTION)),
-                company_url=(
-                    _read(page.locator(EXPERIENCE_COMPANY_URL))
-                    if page.locator(EXPERIENCE_COMPANY_URL).count() == 1
-                    else ""
-                ),
-            )
-            result.append(entry)
+            result.append(_read_view_card(card))
         except (PlaywrightError, ValueError) as exc:
-            # #796: a row can be unreadable in live DOM (drifted field, stray
-            # non-experience card matching the indexed selector). Skip it
-            # rather than failing the whole read — fill-mode stays usable
-            # for the remaining rows instead of blocking on one bad row.
-            # #957: the skip itself is dumped — a silently skipped row is how
-            # a wholesale selector drift reads as "0 rows" while the resume
-            # visibly has them (live case 2026-09-04: buttons present, the
-            # opened form's field data-qa no longer matched).
-            _dump_experience_row_read_failure(page, index, exc)
-        # #844: EXPERIENCE_CANCEL does not work on this page shape (see
-        # above) — navigate back to the resume page directly instead,
-        # whether or not this row was read successfully, so the next
-        # iteration's edit button is present in the DOM. Re-expand the
-        # collapsed list too (#844 review): the fresh navigation re-collapses
-        # it on any resume with more than 3 rows, same as a reload.
-        try:
-            open_confirmed_resume(page, resume_id)
-            _expand_experience_list(page)
-        except (PlaywrightError, ValueError):
-            break
+            # Same fail-open-per-row contract as the #796/#957 loop: one
+            # unparseable card must not block the remaining rows, but the
+            # skip is dumped so a wholesale drift cannot read as "0 rows".
+            _dump_experience_row_read_failure(page, i, exc)
     if not result:
-        # #957: an empty read is ambiguous in three ways the caller cannot
-        # tell apart — a genuinely empty resume (no row buttons), a drifted
-        # row-button selector (buttons absent although rows exist), or rows
-        # present but every one unreadable (the per-row skip above swallowed
-        # each failure silently, live case 2026-09-04). Dump the page so the
-        # difference is provable from the artifact instead of another live
-        # attempt.
         _dump_experience_read_empty(page)
     return result
 

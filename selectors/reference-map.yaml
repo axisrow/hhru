@@ -2542,6 +2542,51 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_experience_editor_read_only
     verified_by: codex
+  resume_experience.EXPERIENCE_VIEW_CARD:
+    value: '[data-qa=''profile-experience-company-card'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:321
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - profile-experience-company-card
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:321
+      note: 'Live 2026-09-05 (#844 re-repro, view page of the python resume): the experience block is static SSR - the edit-experience-button
+        pencils carry no React binding and ignore synthetic and trusted clicks (the #851 read loop is dead), but each company
+        card carries the full row text ({company}{duration}{position}{period}{duties}) in the static DOM. Three cards observed
+        on a 3-entry resume; reading from them needs zero clicks and is scoped to the opened resume by construction.'
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_view_read_only
+    verified_by: claude
+  resume_experience.EXPERIENCE_VIEW_COMPANY:
+    value: '[data-qa=''cell-text-content'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_experience.py:330
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - cell-text-content
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_experience.py:330
+      note: 'Live 2026-09-05: the first cell-text-content inside an experience view card is the company name ("Фриланс / Open
+        Source", "ООО Ромашка", "ООО Василёк" — sanitized placeholders, real employer names are not stored); the second one is the total duration text. Always
+        resolve it scoped to a EXPERIENCE_VIEW_CARD and take the first match.'
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_view_read_only
+    verified_by: claude
   resume_experience.FIRST_EXPERIENCE_CANCEL:
     value: '[data-qa=''resume-partial-edit-cancel'']'
     criticality: write
