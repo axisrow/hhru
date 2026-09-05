@@ -282,6 +282,22 @@ def labelled_field(page: Page, label: str) -> Locator:
     return field
 
 
+def optional_labelled_field(page: Page, label: str) -> Locator | None:
+    """Same exact binding as ``labelled_field``, but a missing field is None.
+
+    Для чтения состояния экрана, где часть полей может отсутствовать целиком
+    (shape-зависимый DOM, #982): ноль совпадений — поля нет на экране, больше
+    одного — та же неоднозначность, что и у ``labelled_field`` (fail-closed).
+    """
+    field = page.get_by_label(label, exact=True)
+    count = field.count()
+    if count == 0:
+        return None
+    if count != 1:
+        raise PageStateIndeterminate(f"поле {label!r} не найдено однозначно (совпадений: {count})")
+    return field
+
+
 def resume_identity_matches(page: Page, resume_id: str) -> bool:
     """Return whether the current URL is exactly the requested resume page."""
     path = urlsplit(page.url).path.rstrip("/")
