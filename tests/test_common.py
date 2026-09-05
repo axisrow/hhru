@@ -582,3 +582,48 @@ def test_confirm_common_screen_no_navigation_is_uncertain(monkeypatch):
     result = common.confirm_common_screen(page, "00001")
     assert not result.success and result.acted and result.uncertain
     assert "переход с экрана common не подтверждён" in result.reason
+
+
+# --- #989: защищённый NEXT-клик + дамп экрана в save_common -------------------
+
+
+def test_save_common_succeeds_on_url_change(monkeypatch):
+    page, save, _locators = _confirm_page(monkeypatch)
+    monkeypatch.setattr(common, "dump_page_html", MagicMock())
+    result = common.save_common(page, common.CommonValues(), before_click=MagicMock())
+    assert result.success and result.acted and not result.uncertain
+    save.first.click.assert_called_once_with()
+    page.wait_for_url.assert_called_once()
+    common.dump_page_html.assert_not_called()
+
+
+def test_save_common_click_error_still_succeeds_on_url_change(monkeypatch):
+    # Паттерн #913: click() может упасть при состоявшемся переходе — исход
+    # решает wait_for_url, а не сам клик.
+    page, _save, _locators = _confirm_page(monkeypatch, click_error=True)
+    result = common.save_common(page, common.CommonValues())
+    assert result.success and result.acted
+
+
+def test_save_common_no_navigation_is_uncertain_and_dumps_screen(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    page, _save, _locators = _confirm_page(monkeypatch, nav_error=PlaywrightError("timeout"))
+    dump = MagicMock()
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    result = common.save_common(page, common.CommonValues())
+    assert not result.success and result.acted and result.uncertain
+    assert "сохранение common не подтверждено" in result.reason
+    dump.assert_called_once_with(page, "common_save_failure")
+
+
+def test_save_common_dump_failure_does_not_mask_uncertain(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    page, _save, _locators = _confirm_page(monkeypatch, nav_error=PlaywrightError("timeout"))
+    monkeypatch.setattr(
+        common, "dump_page_html", MagicMock(side_effect=RuntimeError("dump crashed"))
+    )
+    result = common.save_common(page, common.CommonValues())
+    assert not result.success and result.acted and result.uncertain
+    assert "сохранение common не подтверждено" in result.reason
