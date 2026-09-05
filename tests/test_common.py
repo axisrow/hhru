@@ -233,3 +233,103 @@ def test_read_common_supports_magritte_trigger_and_replaces_selection():
             assert page.locator("[role=option]").nth(1).get_attribute("aria-selected") == "true"
         finally:
             browser.close()
+
+
+# --- #985: подтверждение экрана common fresh-черновика ------------------------
+
+
+def _confirm_page(monkeypatch, **overrides):
+    """Двойник страницы на экране common визарда (живой DOM 2026-09-06)."""
+    from unittest.mock import MagicMock
+
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(common, "goto_hh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(common, "dismiss_cookie_banner", lambda *_args, **_kwargs: None)
+
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/common?resume=00001"
+    locators: dict = {}
+
+    def field(selector, *, value="x", checked=None, text=None, count=1):
+        loc = MagicMock()
+        loc.count.return_value = count
+        if value is not None:
+            loc.first.input_value.return_value = value
+        if checked is not None:
+            loc.first.is_checked.return_value = checked
+        if text is not None:
+            loc.first.inner_text.return_value = text
+        locators[selector] = loc
+        return loc
+
+    values = dict(
+        surname="Лукьянчук",
+        name="Алексей",
+        phone="+7 903 144-49-87",
+        male_checked=True,
+        female_checked=False,
+        citizenship="Россия",
+        birthday_year="1983",
+        nav_error=None,
+        click_error=False,
+    )
+    values.update(overrides)
+
+    field(common.FORM, value=None)
+    field(common.LAST_NAME, value=values["surname"])
+    field(common.FIRST_NAME, value=values["name"])
+    field(common.PHONE, value=values["phone"])
+    field(common.GENDER, checked=values["male_checked"])
+    field(
+        "[data-qa='resume-profile-common-gender-female-chip']",
+        checked=values["female_checked"],
+    )
+    field(f"{common.CITIZENSHIP_TRIGGER} {common.TRIGGER_VALUES}", text=values["citizenship"])
+    field(f"{common.BIRTHDAY_YEAR_TRIGGER} {common.TRIGGER_VALUES}", text=values["birthday_year"])
+    save = field(common.SAVE, value=None)
+    if values["click_error"]:
+        save.first.click.side_effect = PlaywrightError("pointer intercepted")
+    if values["nav_error"] is not None:
+        page.wait_for_url.side_effect = values["nav_error"]
+    page.locator.side_effect = lambda selector: locators[selector]
+    return page, save, locators
+
+
+def test_confirm_common_screen_clicks_next_and_requires_url_change(monkeypatch):
+    page, save, _locators = _confirm_page(monkeypatch)
+    before_click = MagicMock()
+    result = common.confirm_common_screen(page, "00001", before_click=before_click)
+    assert result.success and result.acted and not result.uncertain
+    before_click.assert_called_once_with()
+    save.first.click.assert_called_once_with()
+    page.wait_for_url.assert_called_once()
+
+
+def test_confirm_common_screen_refuses_before_click_on_missing_prefill(monkeypatch):
+    page, save, _locators = _confirm_page(monkeypatch, name="")
+    before_click = MagicMock()
+    result = common.confirm_common_screen(page, "00001", before_click=before_click)
+    assert not result.success and not result.acted and not result.uncertain
+    assert "имя" in result.reason
+    before_click.assert_not_called()
+    save.first.click.assert_not_called()
+    page.wait_for_url.assert_not_called()
+
+
+def test_confirm_common_screen_click_error_still_succeeds_on_url_change(monkeypatch):
+    # #913: click() может упасть при состоявшемся переходе — исход решает
+    # wait_for_url, а не сам клик.
+    page, save, _locators = _confirm_page(monkeypatch, click_error=True)
+    result = common.confirm_common_screen(page, "00001")
+    assert result.success and result.acted
+
+
+def test_confirm_common_screen_no_navigation_is_uncertain(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    page, _save, _locators = _confirm_page(monkeypatch, nav_error=PlaywrightError("timeout"))
+    result = common.confirm_common_screen(page, "00001")
+    assert not result.success and result.acted and result.uncertain
+    assert "переход с экрана common не подтверждён" in result.reason

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..create_resume import (
+    READINESS_DRAFT_STARTED,
     READINESS_UNKNOWN,
     apply_draft_readback,
 )
@@ -52,6 +53,18 @@ def register(subparsers) -> None:
     )
     p.add_argument("--dry-run", action="store_true", help="Показать план без создания")
     p.add_argument("--force", action="store_true", help="Подтвердить боевое создание")
+    p.add_argument(
+        "--fill-common",
+        action="store_true",
+        help=(
+            "#985: если readback после создания вернёт draft_started с "
+            "nextIncompleteScreenId=common — подтвердить экран common в том же "
+            "прогоне («Сохранить и продолжить»; hh.ru предзаполняет его из "
+            "профиля аккаунта) и перевести резюме к ready_to_publish. Значения "
+            "не выдумываются: незаполненное в профиле поле — честный отказ до "
+            "клика с вердиктом draft_started"
+        ),
+    )
     p.set_defaults(func=run)
 
 
@@ -88,6 +101,7 @@ def run(args: argparse.Namespace):
         raise SystemExit(1)
 
     def _body(progress: ApplyProgress) -> bool:
+        common_failure = None
         attempt = (
             None
             if dry_run
@@ -131,6 +145,42 @@ def run(args: argparse.Namespace):
                     attempt.finish(result)
                 if result.success and not dry_run:
                     result = apply_draft_readback(page, result)
+                # #985: замкнуть пайплайн create→publish — подтвердить экран
+                # common fresh-черновика в том же прогоне. Гейт строго по
+                # статусной модели #980 (ready_to_publish уже не трогаем,
+                # не-common экраны — вне периметра), источник значений —
+                # предзаполнение hh.ru из профиля аккаунта, не выдумывание.
+                if (
+                    result.success
+                    and not dry_run
+                    and getattr(args, "fill_common", False)
+                    and result.readiness == READINESS_DRAFT_STARTED
+                    and result.next_incomplete_screen_id == "common"
+                ):
+                    from ..common import confirm_common_screen
+
+                    print(
+                        "[INFO] Подтверждаю экран common: значения предзаполнены "
+                        "hh.ru из профиля аккаунта, нажимаю «Сохранить и продолжить»."
+                    )
+                    # Отдельная attempt для edit_common нового resume_id: клик
+                    # NEXT на экране визарда — мутация (#936), её uncertain-окно
+                    # не должно смешиваться с create_resume-попыткой выше.
+                    common_attempt = DurableMutationAttempt(
+                        history, progress, result.new_resume_id, "edit_common"
+                    )
+                    try:
+                        common_result = confirm_common_screen(
+                            page, result.new_resume_id, before_click=common_attempt.before_click
+                        )
+                    except BaseException as exc:
+                        common_attempt.interrupt(exc)
+                        raise
+                    common_attempt.finish(common_result)
+                    if common_result.success:
+                        result = apply_draft_readback(page, result)
+                    else:
+                        common_failure = common_result
         except BaseException as exc:
             if attempt is not None:
                 attempt.interrupt(exc)
@@ -142,6 +192,11 @@ def run(args: argparse.Namespace):
         if dry_run:
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
+            if getattr(args, "fill_common", False):
+                print(
+                    "[DRY-RUN] В боевом режиме --fill-common подтвердит экран common "
+                    "после создания (значения — предзаполнение из профиля аккаунта)."
+                )
         else:
             # #978: вердикт статной модели вместо безусловного «создан». Текст
             # единственный — reason, составленный в draft_verdict_result; CLI
@@ -149,6 +204,12 @@ def run(args: argparse.Namespace):
             prefix = "[WARN]" if result.readiness == READINESS_UNKNOWN else "[OK]"
             print(f"{prefix} {result.reason} Новый resume_id: {result.new_resume_id}")
             print(format_config_snippet(result.new_resume_id))
+        if common_failure is not None:
+            # #985: черновик создан (вердикт выше напечатан), но шаг --fill-common
+            # не выполнен — команда в целом считается неуспешной, причина видна.
+            prefix = "[FAIL] (uncertain)" if common_failure.uncertain else "[FAIL]"
+            print(f"{prefix} --fill-common: {common_failure.reason}")
+            return True
         return False
 
     return run_supervised_command(
