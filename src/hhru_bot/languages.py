@@ -14,13 +14,24 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .browser import HH_BASE_URL, LOGIN_FORM, goto_hh, has_auth_cookie, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    LOGIN_FORM,
+    dump_page_html,
+    goto_hh,
+    has_auth_cookie,
+    has_login_form,
+    wait_for_react_hydration,
+)
 from .config import ResumeConfig
 from .selector_groups import resume_page
 
 CEFR_LEVELS = frozenset(("A1", "A2", "B1", "B2", "C1", "C2"))
 _LANGUAGE_PROFILE_PATH = "/applicant/profile/me"
 _LANGUAGE_PROFILE_READY_SELECTOR = f"{resume_page.RESUME_LANGUAGE_CARD}:visible, {LOGIN_FORM}"
+_ADD_HYDRATION_TIMEOUT_MS = 15_000
+_ADD_FORM_TIMEOUT_MS = 15_000
+_ADD_CLICK_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -141,6 +152,39 @@ def _open_language_profile(page):
     return card
 
 
+def _open_add_form(page) -> None:
+    """Open the add-language form, surviving the hydration click window (#975).
+
+    Бои 2026-09-05 (#975): кнопка «Добавить язык» видима из SSR задолго до
+    гидрации (окно #858 — на холодном контексте CLI заметно дольше, чем в
+    тёплом браузере), клик в это окно молча теряется, и ожидание формы
+    падало по таймауту без какого-либо следа. Теперь перед кликом ждём
+    React-привязку кнопки, а пропавший клик повторяем: два клика подряд
+    безопасны, потому что после РЕАЛЬНО открытия модалки повторный клик
+    упрётся в оверлей и даст PlaywrightError, а не вторую модалку.
+    Провал обеих попыток — дамп страницы и внятная причина вместо
+    безликого таймаута.
+    """
+    add_button = page.locator(resume_page.RESUME_LANGUAGE_ADD_BUTTON)
+    form = page.locator(resume_page.RESUME_LANGUAGE_ADD_FORM).first
+    errors: list[str] = []
+    for attempt in range(1, _ADD_CLICK_ATTEMPTS + 1):
+        wait_for_react_hydration(
+            page, resume_page.RESUME_LANGUAGE_ADD_BUTTON, timeout_ms=_ADD_HYDRATION_TIMEOUT_MS
+        )
+        try:
+            add_button.click()
+            form.wait_for(state="visible", timeout=_ADD_FORM_TIMEOUT_MS)
+            return
+        except PlaywrightError as exc:
+            errors.append(f"попытка {attempt}: {exc}")
+    dump_path = dump_page_html(page, "language_add_form_timeout")
+    reason = f"форма добавления языка не открылась после {len(errors)} кликов ({'; '.join(errors)})"
+    if dump_path is not None:
+        reason += f"; дамп: {dump_path}"
+    raise RuntimeError(reason)
+
+
 def read_existing_languages(card) -> tuple[str, ...]:
     """Read the language names already on the (already-confirmed) card."""
     return tuple(
@@ -223,14 +267,9 @@ def edit_languages_on_hh(
         for item in additions:
             # unconfirmed (above) already proved every item.level is non-None.
             assert item.level is not None
-            add_button.click()
-            # The visible profile card may still be SSR-only when Add is
-            # clicked.  Wait for the hydrated form itself before inspecting
-            # the dialog or its fields; commit/visibility of the card does
-            # not prove that the React modal has rendered yet.
-            page.locator(resume_page.RESUME_LANGUAGE_ADD_FORM).first.wait_for(
-                state="visible", timeout=15_000
-            )
+            # Гидрация + ретрай клика внутри (#975): первый клик может уйти
+            # в SSR-кнопку и молча потеряться.
+            _open_add_form(page)
             dialog = page.get_by_role("dialog", name="Язык").last
             dialog.wait_for(state="visible", timeout=15_000)
             form = dialog.locator(resume_page.RESUME_LANGUAGE_ADD_FORM)
