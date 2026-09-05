@@ -324,6 +324,10 @@ REFERENCE_BINDING_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
 # Search results feed the irreversible apply path.  These selectors are read
 # from the DOM, but their reachability determines the vacancy identity and
 # safety scope, so they must not be eligible for read-only auto-updates.
+# Same reachability logic for photo-viewer action buttons whose click IS the
+# hh.ru mutation (assign / hide): infer_criticality has no "hide"/"assign"
+# write word, and a mis-inferred "read" would mark the mutation entry point
+# read-only in the risk map (review PR #973).
 WRITE_REACHABILITY_IDS = frozenset(
     {
         "search_page.VACANCY_CARD",
@@ -331,6 +335,8 @@ WRITE_REACHABILITY_IDS = frozenset(
         "search_page.VACANCY_CARD_COMPANY",
         "search_page.COMPANY_RATING_VALUE",
         "search_page.COMPANY_RATING_REVIEWS_COUNT",
+        "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT",
+        "resume_photo.RESUME_PHOTO_VIEWER_ACTION_HIDE",
     }
 )
 

@@ -72,15 +72,23 @@ _READBACK_SETTLE_MS = 5_000
 HIDE_ACTION = "hide_photo"
 DELETE_ACTION = "delete_photo"
 
-# Инвентарь пунктов more-меню: Magritte рендерит панель в портале body
-# (вне корня вьюера), поэтому скоуп — весь документ; data-qa-пункты
-# ``photo-viewer-action-*`` других экранов не имеют (живой DOM 2026-09-05).
-_MENU_ACTIONS_JS = """() => Array.from(
-  document.querySelectorAll("[data-qa^='photo-viewer-action-']"),
-).map((el) => ({
-  qa: el.getAttribute("data-qa") || "",
-  text: (el.textContent || "").trim().slice(0, 100),
-}))"""
+# Инвентарь пунктов more-меню: панель — magritte drop [data-qa='drop'] в
+# портале body (живой дамп 2026-09-05), скоупимся ею, чтобы не подтягивать
+# NavBar-кнопки того же префикса (assign-current/assigned — шапка вьюера, а
+# не пункты меню; замечание ревью PR #973). При дрейфе контейнера — фолбэк
+# на весь документ: инвентарь шире реальности лучше молча пустого.
+_MENU_ACTIONS_JS = """() => {
+  const scoped = document.querySelectorAll(
+    "[data-qa='drop'] [data-qa^='photo-viewer-action-']",
+  );
+  const nodes = scoped.length
+    ? scoped
+    : document.querySelectorAll("[data-qa^='photo-viewer-action-']");
+  return Array.from(nodes).map((el) => ({
+    qa: el.getAttribute("data-qa") || "",
+    text: (el.textContent || "").trim().slice(0, 100),
+  }));
+}"""
 
 
 @dataclass(frozen=True)

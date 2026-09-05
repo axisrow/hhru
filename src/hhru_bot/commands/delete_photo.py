@@ -17,10 +17,10 @@ def register(subparsers) -> None:
             "фото из резюме»; фото остаётся в библиотеке, возвращается "
             "select-photo). --from-library необратимо удаляет фото из "
             "библиотеки аккаунта — оно исчезает из ВСЕХ резюме, где "
-            "установлено. WRITE-hh-ru: по умолчанию dry-run (read-only "
-            "инвентарь библиотеки и пунктов more-меню «Действия с фото»); "
-            "боевой запуск требует --photo-id и --force или интерактивного "
-            "подтверждения."
+            "установлено. WRITE-hh-ru: dry-run включён по умолчанию "
+            "(read-only инвентарь библиотеки и пунктов more-меню «Действия "
+            "с фото»); боевой режим (необратимый при --from-library) "
+            "включает только --force и требует --photo-id."
         ),
     )
     parser.add_argument("--resume", required=True, help="Slug из конфига или resume_id HH.ru")
@@ -38,7 +38,13 @@ def register(subparsers) -> None:
         ),
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="Показать план и пункты меню, ничего не меняя"
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help=(
+            "Показать план и пункты меню, ничего не меняя (по умолчанию; "
+            "--force включает боевой режим)"
+        ),
     )
     parser.add_argument("--force", action="store_true", help="Подтвердить боевое удаление/скрытие")
     parser.set_defaults(func=run)
@@ -52,7 +58,11 @@ def run(args: argparse.Namespace):
     from ..resume_photo import PHOTO_VIEWPORT
 
     action = DELETE_ACTION if args.from_library else HIDE_ACTION
-    if not args.dry_run and not args.photo_id:
+    # Паттерн delete-resume: dry-run — единственный режим по умолчанию, и
+    # только --force выводит из него. Для необратимой мутации TTY-вопрос
+    # «[y/N] сразу выполняет бой» неприемлем (ревью PR #973).
+    dry_run = not args.force
+    if not dry_run and not args.photo_id:
         print("[FAIL] Боевой режим требует --photo-id (см. delete-photo --dry-run)")
         return True
     if args.photo_id and not args.photo_id.isdigit():
@@ -68,7 +78,7 @@ def run(args: argparse.Namespace):
     history = History(args.history)
     # Гейт до confirm_write: нельзя сначала спрашивать подтверждение боя и
     # только потом отказывать по незакрытой неопределённости (прецедент #952).
-    if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, action):
+    if not dry_run and history.has_unresolved_uncertain(resume.resume_id, action):
         print(
             f"[FAIL] {resume.id} — предыдущее действие с фото ({action}) не подтверждено "
             "(uncertain). Проверьте фото на hh.ru вручную перед повтором."
@@ -81,7 +91,7 @@ def run(args: argparse.Namespace):
         )
     else:
         prompt = f"Скрыть фото {args.photo_id} из резюме '{resume.id}' на hh.ru?"
-    if not args.dry_run and not confirm_write(args.force, prompt=prompt):
+    if not dry_run and not confirm_write(args.force, prompt=prompt):
         print(
             "[FAIL] Боевой режим требует --force или интерактивного подтверждения. "
             "Ничего не изменено."
@@ -90,9 +100,7 @@ def run(args: argparse.Namespace):
 
     def _body(progress: ApplyProgress) -> bool:
         attempt = (
-            None
-            if args.dry_run
-            else DurableMutationAttempt(history, progress, resume.resume_id, action)
+            None if dry_run else DurableMutationAttempt(history, progress, resume.resume_id, action)
         )
         try:
             with launch_context(
@@ -106,7 +114,7 @@ def run(args: argparse.Namespace):
                     resume,
                     args.photo_id,
                     args.from_library,
-                    args.dry_run,
+                    dry_run,
                     before_click=attempt.before_click if attempt is not None else None,
                 )
         except BaseException as exc:
@@ -119,7 +127,7 @@ def run(args: argparse.Namespace):
             prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
             print(f"{prefix} {resume.id} — {result.reason}")
             return True
-        if args.dry_run:
+        if dry_run:
             print(f"[DRY-RUN] {delete_photo_plan(resume.id, args.photo_id, args.from_library)}")
             if result.photos:
                 print(f"[INFO] Библиотека фото ({len(result.photos)}):")
