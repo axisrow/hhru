@@ -50,6 +50,7 @@ def test_browser_command_registry_is_complete() -> None:
         "search",
         "select-photo",
         "upload-photo",
+        "delete-photo",
     }
     for command in cli.BROWSER_COMMANDS - {
         "adaptive-resume",

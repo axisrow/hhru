@@ -167,6 +167,7 @@ def test_all_commands_registered():
         "report-vacancy",
         "select-photo",
         "upload-photo",
+        "delete-photo",
     }
 
 
@@ -244,6 +245,7 @@ def test_register_commands_returns_names():
         "report_vacancy",
         "select_photo",
         "upload_photo",
+        "delete_photo",
     }
 
 
