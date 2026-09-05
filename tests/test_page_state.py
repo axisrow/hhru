@@ -335,3 +335,34 @@ def test_hhru_live_extension_readme_does_not_overclaim_external_reachability():
     readme = (root / "README.md").read_text()
     assert "reachable only from an **external** caller" not in readme
     assert "#743" in readme
+
+
+def test_hhru_live_relay_is_exercised_by_background_scenario_runner():
+    """Issue #931: relay popup -> background -> hh.ru-вкладка должен не только
+    существовать (grep-гварды выше), но и исполняться харнестом — раннер
+    background-сценариев обязан покрывать обе доменные ошибки релея
+    (no_hhru_tab, content_script_unreachable), иначе удаление веток релея
+    пройдёт мимо тестов."""
+    from pathlib import Path
+
+    runner = Path(__file__).parents[1] / "tests" / "js_harness" / "run_background_scenario.js"
+    source = runner.read_text()
+    background = (
+        Path(__file__).parents[1] / "extensions" / "hhru-live" / "background.js"
+    ).read_text()
+    # Сценарии раннера по имени; ошибки релея они проверяют по факту ответа.
+    for scenario in (
+        "relay_no_hhru_tab",
+        "relay_content_script_unreachable",
+        "relay_rejects_foreign_sender",
+        "relay_rejects_unknown_action",
+        "diagnostics_stored",
+    ):
+        assert scenario in source, f"раннер обязан покрывать сценарий {scenario}"
+    for error in (
+        "no_hhru_tab",
+        "content_script_unreachable",
+        "sender_not_allowed",
+        "action_not_allowed",
+    ):
+        assert error in background, f"background.js должен содержать {error}"
