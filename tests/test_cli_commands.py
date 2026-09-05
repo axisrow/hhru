@@ -165,6 +165,7 @@ def test_all_commands_registered():
         "blacklist",
         "update",
         "report-vacancy",
+        "select-photo",
         "upload-photo",
     }
 
@@ -241,6 +242,7 @@ def test_register_commands_returns_names():
         "blacklist",
         "update",
         "report_vacancy",
+        "select_photo",
         "upload_photo",
     }
 

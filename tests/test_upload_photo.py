@@ -275,6 +275,8 @@ def _no_navigation(monkeypatch):
     # readback-бюджет реального времени в фейке не нужен длинным: цикл
     # опроса не спит по-настоящему, 100мс хватает на десятки итераций
     monkeypatch.setattr(resume_photo, "_READBACK_CONFIRM_TIMEOUT_MS", 100)
+    # диагностику инцидентов в файл не пишем
+    monkeypatch.setattr(resume_photo, "dump_page_html", lambda page, stem: None)
 
 
 def _jpeg(tmp_path, name="photo.jpg", data=JPEG_HEAD):
@@ -544,8 +546,9 @@ def test_assign_click_keyboard_neutral_dispatch_succeeds(monkeypatch):
     assert result.photo_present is True
     assert page.reloaded  # success только через readback
     assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
-    # гидратация assign-кнопки проверена ДО dispatch (MFE-инпут + кнопка)
-    assert page.wait_fn_calls == 2
+    # гидратация assign-кнопки проверена ДО dispatch (MFE-инпут + кнопка);
+    # +1 вызов — поллинг settle overlay (#953)
+    assert page.wait_fn_calls == 3
 
 
 def test_assign_button_never_hydrated_still_attempts_dispatch(monkeypatch):
@@ -565,7 +568,7 @@ def test_assign_button_never_hydrated_still_attempts_dispatch(monkeypatch):
     result = _run(page, before_click=lambda: None)
     assert result.success
     assert result.photo_present is True
-    assert page.wait_fn_calls == 2
+    assert page.wait_fn_calls == 3
     assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
 
 
@@ -658,8 +661,9 @@ def test_marker_missing_reopen_fallback_assigns_and_succeeds(monkeypatch):
         ASSIGN_COMBINED,
     ]
     assert page.pencil_reopened
-    # гидратация assign-кнопки проверялась в обоих кругах (+ MFE-инпут)
-    assert page.wait_fn_calls == 3
+    # гидратация assign-кнопки проверялась в обоих кругах (+ MFE-инпут);
+    # +1 вызов — поллинг settle overlay (#953)
+    assert page.wait_fn_calls == 4
 
 
 def test_marker_missing_resume_picker_assigns_and_succeeds(monkeypatch):
@@ -692,8 +696,9 @@ def test_marker_missing_resume_picker_assigns_and_succeeds(monkeypatch):
     ]
     assert page.dispatches == [resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT]
     assert page.pencil_reopened is False  # до переоткрытия дело не дошло
-    # гидратация: MFE-инпут + assign-кнопка круга 1 + чекбокс пикера
-    assert page.wait_fn_calls == 3
+    # гидратация: MFE-инпут + assign-кнопка круга 1 + чекбокс пикера;
+    # +1 вызов — поллинг settle overlay (#953)
+    assert page.wait_fn_calls == 4
 
 
 def test_upload_result_defaults():
