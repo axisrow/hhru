@@ -217,3 +217,70 @@ def test_unresolved_uncertain_blocks_retry(env, tmp_path, capsys):
     assert "uncertain" in output
     # No browser call was attempted -- the guard fires before _body runs.
     assert env.calls == []
+
+
+# --- #978: вердикты статусной модели в выводе команды ------------------------
+
+
+def _force_output(env, tmp_path, capsys, monkeypatch, readiness, **verdict_kwargs):
+    """Прогон команды с замоканным readback: вердикт целиком в reason
+    (единый каталог draft_verdict_result), CLI выбирает только префикс."""
+    import hhru_bot.commands.create_resume as command_module
+    from hhru_bot.create_resume import draft_verdict_result
+
+    monkeypatch.setattr(command_module, "apply_draft_readback", lambda page, result: result)
+    env.result = draft_verdict_result(
+        readiness,
+        verdict_kwargs.get("next_incomplete_screen_id"),
+        verdict_kwargs.get("detail", ""),
+        new_resume_id=NEW_ID,
+        placeholder_role=verdict_kwargs.get("placeholder_role", False),
+    )
+    cmd.run(_args(tmp_path, force=True))
+    return capsys.readouterr().out
+
+
+def test_draft_started_verdict_is_printed(env, tmp_path, capsys, monkeypatch):
+    out = _force_output(
+        env, tmp_path, capsys, monkeypatch, "draft_started", next_incomplete_screen_id="common"
+    )
+    assert "[OK] Черновик начат" in out
+    assert "nextIncompleteScreenId=common" in out
+    assert "publish-resume откажет" in out
+    assert f"Новый resume_id: {NEW_ID}" in out
+
+
+def test_ready_to_publish_verdict_is_printed(env, tmp_path, capsys, monkeypatch):
+    out = _force_output(env, tmp_path, capsys, monkeypatch, "ready_to_publish")
+    assert "[OK] Готово к публикации" in out
+    assert "Черновик начат" not in out
+
+
+def test_already_published_verdict_is_printed(env, tmp_path, capsys, monkeypatch):
+    out = _force_output(env, tmp_path, capsys, monkeypatch, "already_published")
+    assert "уже опубликовано" in out
+    assert "Готово к публикации:" not in out
+
+
+def test_unknown_readback_warns_with_failure_detail(env, tmp_path, capsys, monkeypatch):
+    """Ревью PR #980: [WARN] печатает result.reason ЦЕЛИКОМ — деталь readback
+    (почему именно не удался) доходит до терминала, а не только в history."""
+    out = _force_output(env, tmp_path, capsys, monkeypatch, "unknown", detail="timeout навигации")
+    assert "[WARN]" in out
+    assert "timeout навигации" in out
+    assert "не подтверждена" in out
+    assert "Готово к публикации" not in out
+
+
+def test_placeholder_warning_survives_inside_verdict_reason(env, tmp_path, capsys, monkeypatch):
+    out = _force_output(
+        env,
+        tmp_path,
+        capsys,
+        monkeypatch,
+        "draft_started",
+        next_incomplete_screen_id="common",
+        placeholder_role=True,
+    )
+    assert "плейсхолдер" in out
+    assert "Черновик начат" in out

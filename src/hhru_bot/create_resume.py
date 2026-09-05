@@ -14,12 +14,15 @@ from playwright.sync_api import Locator, Page
 from .browser import (
     HH_BASE_URL,
     RESUMES_FULL_LIST_URL,
+    NotAuthenticated,
     dismiss_cookie_banner,
     goto_hh,
+    open_confirmed_resume,
 )
 from .external_forms.detect import normalize
 from .resume_ids import RESUME_ID_FROM_PATH_OR_QUERY_RE
 from .resume_limits import resume_limit_reason
+from .resume_state import ResumeState, is_published, parse_resume_state
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -52,6 +55,17 @@ OTHER_ROLE_ID = "40"
 # плейсхолдером, черновик материализуется, профессию владелец меняет вручную
 # через «Дополнить»).
 OTHER_ROLE_LABEL = "Другое"
+
+# #978 (решение владельца): статусная модель результата create-resume.
+# «Черновик создан» без вердикта о готовности исчезает как класс — команда
+# обязана заканчивать readback'ом и возвращать один из этих вердиктов.
+# Источник истины один — nextIncompleteScreenId из identity-bound bootstrap,
+# тот же сигнал, по которому гейтит publish-resume (#225); параллельного
+# разбора «Дополнить» по DOM-тексту нет и быть не должно.
+READINESS_READY_TO_PUBLISH = "ready_to_publish"  # незавершённых шагов нет
+READINESS_DRAFT_STARTED = "draft_started"  # есть nextIncompleteScreenId
+READINESS_ALREADY_PUBLISHED = "already_published"  # автопубликация #900
+READINESS_UNKNOWN = "unknown"  # readback не удался; готовность НЕ доказана
 
 # #920 этап 2 (живая диагностика 2026-09-02): на ПЕРВОМ экране визарда поле
 # должности — combobox с подсказками автодополнения hh.ru; попап открывается
@@ -89,6 +103,10 @@ class CreateResumeResult:
     # роль закрыта плейсхолдером. Поле вместо снифа подстроки reason
     # (cycle 7): потребителю нужен структурированный факт, а не парсинг текста.
     placeholder_role: bool = False
+    # #978: вердикт статусной модели (READINESS_*). Пустая строка — только у
+    # результатов, не дошедших до материализации черновика (dry-run, отказы).
+    readiness: str = ""
+    next_incomplete_screen_id: str | None = None
 
 
 def _one(page: Page, selector: str, label: str) -> tuple[Locator | None, str]:
@@ -680,12 +698,122 @@ def _is_unresolved_area_reason(reason: str) -> bool:
     )
 
 
-def _placeholder_role_success_reason() -> str:
-    """Итог [OK] для флагового пути: роль закрыта плейсхолдером, не профессией."""
-    return (
-        "черновик создан; профессия НЕ установлена — назначена "
-        f"роль-плейсхолдер «{OTHER_ROLE_LABEL}» (id {OTHER_ROLE_ID}), "
-        "замените её на реальную вручную через «Дополнить»"
+def _classify_readiness(state: ResumeState) -> tuple[str, str | None, str]:
+    """Вердикт по спарсенному state — полный publish-гейт, не один сигнал.
+
+    Ревью PR #980: «Готово к публикации» обязано значить то же, что и для
+    publish-resume: подтверждённый status, отсутствие nextIncompleteScreenId
+    И canPublishOrUpdate=true. Неполное состояние — honest unknown, а не
+    оптимистичное ready (fail-closed).
+    """
+    if state.status is None:
+        return READINESS_UNKNOWN, None, "status резюме не подтверждён в bootstrap разметке"
+    if state.next_incomplete_screen_id:
+        return READINESS_DRAFT_STARTED, state.next_incomplete_screen_id, ""
+    if is_published(state):
+        # #900: закрытие последнего незавершённого экрана публикует резюме
+        # АВТОМАТИЧЕСКИ — «готово к публикации» для уже опубликованного
+        # резюме было бы неверным вердиктом.
+        return READINESS_ALREADY_PUBLISHED, None, ""
+    if state.can_publish_or_update is not True:
+        return (
+            READINESS_UNKNOWN,
+            None,
+            f"canPublishOrUpdate={state.can_publish_or_update} не подтверждён",
+        )
+    return READINESS_READY_TO_PUBLISH, None, ""
+
+
+def read_draft_readiness(page: Page, resume_id: str) -> tuple[str, str | None, str]:
+    """Read-only readback статуса только что материализованного черновика (#978).
+
+    Сначала дешёвый parse ТЕКУЩЕЙ страницы: после финального NEXT она уже
+    стоит на identity-bound URL и несёт тот же bootstrap (wizard-экраны тем же
+    способом читает verify_wizard_save в resume_position.py); полная навигация
+    через open_confirmed_resume — только если записи для resume_id на текущей
+    странице нет. Возвращает ``(READINESS_*, next_incomplete_screen_id | None,
+    деталь-причина)``; любая ошибка чтения — READINESS_UNKNOWN: черновик уже
+    материализован, но готовность к публикации НЕ доказана, и заявлять «готово»
+    нельзя (fail-closed). NotAuthenticated пробрасывается наверх: типизированную
+    классификацию SESSION_EXPIRED даёт run_supervised_command, а не молчаливый
+    unknown с советом, который сам упадёт по той же причине.
+    """
+    try:
+        state = parse_resume_state(page.content(), resume_id)
+    except Exception:  # noqa: BLE001 — parse-first: текущая страница записи может не нести
+        state = ResumeState()
+    if state.status is None and state.next_incomplete_screen_id is None:
+        try:
+            open_confirmed_resume(page, resume_id)
+            state = parse_resume_state(page.content(), resume_id)
+        except NotAuthenticated:
+            raise
+        except Exception as exc:  # noqa: BLE001 — readback диагностический: любая ошибка = unknown
+            return READINESS_UNKNOWN, None, str(exc)
+    return _classify_readiness(state)
+
+
+def draft_verdict_result(
+    readiness: str,
+    next_incomplete_screen_id: str | None,
+    detail: str,
+    *,
+    new_resume_id: str,
+    placeholder_role: bool = False,
+) -> CreateResumeResult:
+    """Единый каталог формулировок вердиктов #978 (ревью PR #980): и CLI, и
+    actions-строка получают один и тот же текст reason — второго каталога в
+    команде нет, детали readback не теряются между слоями."""
+    placeholder_note = (
+        f" Профессия НЕ установлена — назначена роль-плейсхолдер «{OTHER_ROLE_LABEL}» "
+        f"(id {OTHER_ROLE_ID}), замените её на реальную вручную через «Дополнить»."
+        if placeholder_role
+        else ""
+    )
+    if readiness == READINESS_DRAFT_STARTED:
+        reason = (
+            f"Черновик начат: незавершённый шаг nextIncompleteScreenId="
+            f"{next_incomplete_screen_id} — publish-resume откажет до заполнения экрана "
+            f"{next_incomplete_screen_id}.{placeholder_note}"
+        )
+    elif readiness == READINESS_READY_TO_PUBLISH:
+        reason = f"Готово к публикации: незавершённых шагов нет.{placeholder_note}"
+    elif readiness == READINESS_ALREADY_PUBLISHED:
+        reason = (
+            "Резюме уже опубликовано (автопубликация при закрытии последнего экрана "
+            f"визарда, #900) — publish-resume не требуется.{placeholder_note}"
+        )
+    else:
+        reason = (
+            "Черновик материализован, но readback статуса не удался: "
+            f"{detail or 'причина неизвестна'}. Готовность к публикации не "
+            f"подтверждена — проверьте publish-resume --dry-run.{placeholder_note}"
+        )
+    return CreateResumeResult(
+        True,
+        new_resume_id=new_resume_id,
+        reason=reason,
+        placeholder_role=placeholder_role,
+        readiness=readiness,
+        next_incomplete_screen_id=next_incomplete_screen_id,
+    )
+
+
+def apply_draft_readback(page: Page, result: CreateResumeResult) -> CreateResumeResult:
+    """Наложить readback-вердикт на успешный результат создания (#978).
+
+    Вызывающий код обязан вызвать это ПОСЛЕ DurableMutationAttempt.finish
+    (ревью PR #980, finding 1): readback строго диагностический — прерывание
+    здесь не превращает доказанное создание в uncertain и не держит
+    command_runs-lease на время навигации.
+    """
+    readiness, next_incomplete, detail = read_draft_readiness(page, result.new_resume_id)
+    return draft_verdict_result(
+        readiness,
+        next_incomplete,
+        detail,
+        new_resume_id=result.new_resume_id,
+        placeholder_role=result.placeholder_role,
     )
 
 
@@ -892,11 +1020,15 @@ def create_resume_on_hh(
         return CreateResumeResult(
             False, reason="новый resume_id не подтверждён после сохранения", uncertain=True
         )
+    # #978: молчаливый success в состоянии «Дополнить» исчезает как класс —
+    # вердикт накладывает вызывающий код через apply_draft_readback ПОСЛЕ
+    # финализации attempt (ревью PR #980: readback диагностический и не
+    # выполняется внутри DurableMutationAttempt-seam).
     if placeholder_role:
         return CreateResumeResult(
             True,
             new_resume_id=match.group(1),
-            reason=_placeholder_role_success_reason(),
+            reason="черновик создан",
             placeholder_role=True,
         )
     return CreateResumeResult(True, new_resume_id=match.group(1), reason="черновик создан")

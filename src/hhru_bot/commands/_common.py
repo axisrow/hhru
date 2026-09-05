@@ -523,6 +523,11 @@ class DurableMutationAttempt:
             getattr(result, "reason", None),
             reason_code=status,
         )
+        # #978 (ревью PR #980): после финализации попытка закрыта навсегда —
+        # исключение в диагностическом readback, который вызывающий код
+        # выполняет ПОСЛЕ finish, не должно попадать в interrupt() и
+        # перезаписывать доказанный успех как uncertain.
+        self.action_id = None
 
     def interrupt(self, exc: BaseException) -> None:
         if self.action_id is None:
