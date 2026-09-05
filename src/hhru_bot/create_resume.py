@@ -710,8 +710,11 @@ def read_draft_readiness(page: Page, resume_id: str) -> tuple[str, str | None, s
         state = parse_resume_state(page.content(), resume_id)
     except Exception as exc:  # noqa: BLE001 — readback диагностический: любая ошибка = unknown
         return READINESS_UNKNOWN, None, str(exc)
-    if state.status is None and state.next_incomplete_screen_id is None:
-        return READINESS_UNKNOWN, None, "состояние резюме не найдено в bootstrap разметке"
+    # «Запись есть, но status не подтверждён» — unknown, а не оптимистичное
+    # ready: publish-resume точно так же требует подтверждённого статуса,
+    # и заявлять готовность из неполного state нельзя (fail-closed, ревью PR #980).
+    if state.status is None:
+        return READINESS_UNKNOWN, None, "status резюме не найден в bootstrap разметке"
     if state.next_incomplete_screen_id:
         return READINESS_DRAFT_STARTED, state.next_incomplete_screen_id, ""
     return READINESS_READY_TO_PUBLISH, None, ""

@@ -1954,3 +1954,17 @@ def test_readback_without_resume_record_is_unknown(monkeypatch):
     assert readiness == create.READINESS_UNKNOWN
     assert next_incomplete is None
     assert detail
+
+
+def test_record_without_status_is_unknown_not_optimistic_ready(monkeypatch):
+    """Ревью PR #980: «запись есть, status не подтверждён» — unknown, а не
+    ready_to_publish: заявлять готовность из неполного state нельзя."""
+    _patch_readback(monkeypatch)
+    markup = '{"resume":{"hash":"' + READBACK_DRAFT_ID + '"}}'
+    page = ReadbackPage(markup)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_UNKNOWN
+    assert "status" in result.reason

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..create_resume import READINESS_DRAFT_STARTED, READINESS_READY_TO_PUBLISH
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 from .copy_resume import confirm_write, format_config_snippet
 
@@ -135,11 +136,6 @@ def run(args: argparse.Namespace):
         else:
             # #978: вердикт статусной модели вместо безусловного «создан» —
             # молчаливый success в состоянии «Дополнить» исчезает как класс.
-            from ..create_resume import (
-                READINESS_DRAFT_STARTED,
-                READINESS_READY_TO_PUBLISH,
-            )
-
             if result.readiness == READINESS_READY_TO_PUBLISH:
                 verdict = "[OK] Готово к публикации: незавершённых шагов нет."
             elif result.readiness == READINESS_DRAFT_STARTED:
