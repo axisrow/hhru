@@ -31,6 +31,7 @@ _LANGUAGE_PROFILE_PATH = "/applicant/profile/me"
 _LANGUAGE_PROFILE_READY_SELECTOR = f"{resume_page.RESUME_LANGUAGE_CARD}:visible, {LOGIN_FORM}"
 _ADD_HYDRATION_TIMEOUT_MS = 15_000
 _ADD_FORM_TIMEOUT_MS = 15_000
+_OPTION_TIMEOUT_MS = 15_000
 _ADD_CLICK_ATTEMPTS = 2
 
 
@@ -305,13 +306,29 @@ def edit_languages_on_hh(
         )
 
 
+def _click_portal_option(option, strict_label: str | None = None) -> None:
+    # #975 (live 2026-09-05): клик по активатору открывает magritte-попап,
+    # который рендерится в портале ВНЕ диалога role=dialog — опция внутри
+    # dialog.get_by_role("option") не появляется никогда (30s timeout).
+    # Паттерн experience._select_month / #826: опция адресуется page-wide и
+    # ждёт видимости после клика (commit не значит отрисовано); ожидание до
+    # строгого count() принципиально — без него count может увидеть 0 опций
+    # ещё не отрисованного попапа.
+    option.wait_for(state="visible", timeout=_OPTION_TIMEOUT_MS)
+    if strict_label is not None and option.count() != 1:
+        raise PlaywrightError(f"опция {strict_label} не найдена однозначно")
+    option.click()
+
+
 def _choose_language(page, form, name: str) -> None:
     selector = form.locator(resume_page.RESUME_LANGUAGE_FORM_LANGUAGE_SELECT)
     if selector.count() != 1:
         raise PlaywrightError("поле выбора языка не найдено однозначно")
     selector.click()
-    dialog = page.get_by_role("dialog", name="Язык").last
-    dialog.get_by_role("option", name=name, exact=True).click()
+    _click_portal_option(
+        page.get_by_role("option", name=name, exact=True).last,
+        strict_label=f"языка '{name}'",
+    )
 
 
 def _choose_degree(page, form, level: str) -> None:
@@ -319,11 +336,8 @@ def _choose_degree(page, form, level: str) -> None:
     if selector.count() != 1:
         raise PlaywrightError("поле выбора уровня не найдено однозначно")
     selector.click()
-    dialog = page.get_by_role("dialog", name="Язык").last
-    option = dialog.locator(resume_page.RESUME_LANGUAGE_DEGREE_OPTION.format(level.lower()))
-    if option.count() != 1:
-        raise PlaywrightError(f"опция уровня '{level}' не найдена однозначно")
-    option.click()
+    option = page.locator(resume_page.RESUME_LANGUAGE_DEGREE_OPTION.format(level.lower()))
+    _click_portal_option(option, strict_label=f"уровня '{level}'")
 
 
 def _language_save_button(dialog):
