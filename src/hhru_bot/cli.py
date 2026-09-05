@@ -21,7 +21,7 @@ from playwright.sync_api import Error as PlaywrightError
 from . import commands as _commands_pkg
 from .accounts import AccountError, resolve_account_paths
 from .apply.antibot import AntiBotChallengeDetected
-from .browser import BrowserLaunchError, ThrottledChannelDetected
+from .browser import BrowserLaunchError, ResumeUnavailable, ThrottledChannelDetected
 from .exit_codes import CommandExitCode
 from .logging_setup import setup_logging
 from .write_lock import WriteLockBusy, acquire_write_lock
@@ -449,6 +449,14 @@ def _execute(args: argparse.Namespace) -> None:
     except AntiBotChallengeDetected as exc:
         # #344: terminal apply/run state.  Do not render a traceback or continue
         # with another vacancy/resume (or bump in the combined ``run`` command).
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ResumeUnavailable as exc:
+        # #972 (PR #974 follow-up): пути, где детектор баннера бросает
+        # исключение (open_position_form, open_confirmed_resume →
+        # edit-experience/publish/delete), раньше доходили до generic
+        # except Exception → re-raise → сырой traceback. Тот же контракт, что
+        # у AntiBotChallengeDetected: [FAIL]-отказ, exit 1, без traceback.
         print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
