@@ -8,11 +8,17 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.resume_sections as resume_sections
+from hhru_bot.browser import RESUME_ERROR_BANNER
 from hhru_bot.config import ConfigError
 from hhru_bot.config_sections.resume_sections import parse_resume_sections
 from hhru_bot.resume_sections import Recommendation, ResumeSectionsPlan, apply_plan, parse_plan
 
 pytestmark = pytest.mark.unit
+
+# #972: apply_plan до триггеров читает баннер-детектор сбойного экрана
+# (div.attention.attention_bad + has_text). Пустой локатор = «баннера нет».
+_EMPTY_BANNER = MagicMock(name="empty_banner")
+_EMPTY_BANNER.filter.return_value.count.return_value = 0
 
 
 def test_config_rejects_unconfirmed_blocks() -> None:
@@ -77,6 +83,9 @@ def test_recommendation_text_is_rejected_before_opening_editor(monkeypatch) -> N
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.return_value = trigger
+    # #972: баннер-детектор apply_plan читает locator(BANNER).filter(...).count()
+    # через тот же return_value — настраиваем int-ответ «баннера нет».
+    trigger.filter.return_value.count.return_value = 0
     monkeypatch.setattr(resume_sections, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_sections, "has_auth_cookie", lambda _page: True)
     monkeypatch.setattr(resume_sections, "has_login_form", lambda _page: False)
@@ -102,6 +111,7 @@ def test_recommendation_dry_run_cancels_partial_editor(monkeypatch) -> None:
     partial_cancel.count.return_value = 1
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
@@ -135,6 +145,7 @@ def test_save_wait_timeout_is_recorded_as_row_error_not_raised(monkeypatch) -> N
     save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
@@ -172,6 +183,7 @@ def test_save_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> No
     save.click.side_effect = PlaywrightError("element is not attached to the DOM")
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
@@ -209,6 +221,7 @@ def test_cancel_click_error_is_recorded_as_row_error_not_raised(monkeypatch) -> 
     partial_cancel.click.side_effect = PlaywrightError("element is not attached to the DOM")
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
         "[data-qa='resume-partial-edit-cancel']": partial_cancel,
@@ -244,6 +257,7 @@ def test_save_confirmation_does_not_rely_on_url_already_matched(monkeypatch) -> 
     save.count.return_value = 1
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_attestations,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: trigger,
         "input[name='company']": ready,
@@ -282,6 +296,7 @@ def test_unconfirmed_save_stops_block_instead_of_clicking_next_row(monkeypatch) 
     save.wait_for.side_effect = PlaywrightError("timeout waiting for editor to close")
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
@@ -323,6 +338,7 @@ def test_ambiguous_save_button_stops_block_instead_of_leaving_editor_open(monkey
     ambiguous_save.count.return_value = 2
     ready = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: trigger,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_recommendations,
         f"[data-qa='{resume_sections.ATTESTATION_FIELDS[0]}']": ready,
@@ -417,6 +433,7 @@ def test_empty_section_opens_first_row_via_resume_scoped_route(
     cancel = MagicMock()
     cancel.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
@@ -469,6 +486,7 @@ def test_both_empty_sections_reset_to_resume_before_each_block(monkeypatch) -> N
     cancel = MagicMock()
     cancel.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: empty_marker,
@@ -517,6 +535,7 @@ def test_empty_section_requires_unique_live_marker(monkeypatch, marker_count) ->
     marker = MagicMock()
     marker.count.return_value = marker_count
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,
@@ -547,6 +566,7 @@ def test_empty_section_route_guard_rejects_other_resume(monkeypatch) -> None:
     marker = MagicMock()
     marker.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         resume_sections.RESUME_EDIT_BUTTON["attestations"]: no_rows,
         resume_sections.RESUME_EDIT_BUTTON["recommendations"]: no_rows,
         resume_sections.EMPTY_SECTION_MARKERS["attestations"]: marker,

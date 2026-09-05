@@ -331,6 +331,9 @@ def test_open_confirmed_resume_checks_auth_and_identity(monkeypatch):
     page = MagicMock(name="Page")
     page.url = "https://hh.ru/resume/123"
     page.context.cookies.return_value = [{"name": "hhtoken"}]
+    # #972: баннер-детектор (locator→filter→count) на живой странице — int;
+    # без этой настройки MagicMock-цепочка вернула бы MagicMock, упав в `> 0`.
+    page.locator.return_value.filter.return_value.count.return_value = 0
     monkeypatch.setattr(browser, "goto_hh", lambda page, url: None)
     monkeypatch.setattr(browser, "has_login_form", lambda page: False)
     open_confirmed_resume(page, "123")

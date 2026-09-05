@@ -87,6 +87,17 @@ class NotAuthenticated(PageStateIndeterminate):
     """The current page does not prove that the hh.ru session is valid."""
 
 
+class ResumeUnavailable(RuntimeError):
+    """hh.ru показал сбойный экран на /resume/{id} (#972).
+
+    Подтверждённое состояние страницы, а не неопределённость: сессия жива
+    (страница отрендерена под логином), но запрошенное резюме недоступно.
+    Pre-mutation терминальный сигнал (обычный failed/retry): клика не было,
+    поэтому исход принципиально не ``uncertain`` (#176) и не
+    ``NotAuthenticated`` — сессия действительна.
+    """
+
+
 class ThrottledChannelDetected(PlaywrightTimeoutError):
     """goto_hh timed out AFTER the server answered the navigation request.
 
@@ -242,6 +253,9 @@ def open_confirmed_resume(page: Page, resume_id: str) -> None:
         raise ValueError("resume_id is required")
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
     require_authenticated_page(page)
+    # #972: до identity-чека — сбойный экран держит URL /resume/{id}, поэтому
+    # resume_identity_matches его пропускает, а мутация падает таймаутом.
+    require_available_resume(page)
     if not resume_identity_matches(page, resume_id):
         raise ValueError("identity резюме не подтверждён")
 
@@ -493,6 +507,56 @@ def has_login_form(page: Page) -> bool:
     маркер: cookie есть, а сервер не отверг сессию формой входа.
     """
     return page.locator(LOGIN_FORM).count() > 0
+
+
+# Подтверждено живым DOM за логином 2026-09-05 (issue #972, read-only live-замер
+# tests/test_resume_error_banner_live.py, дамп
+# data/logs/972_resume_error_banner_000000.html): несуществующее/удалённое
+# резюме по прямому URL /resume/{id} рендерит сбойный экран
+# <div class="attention attention_bad">Произошла ошибка. Возникли неполадки,
+# но мы уже работаем над их устранением.</div> — data-qa на баннере НЕТ (как у
+# error boundary «Problem fetching content», #802), поэтому стабильный
+# bloko-класс + точный текст — двойной признак, отсекающий другие
+# attention_bad-баннеры на этой же странице. Экран тот же и для полностью
+# несуществующего id, и для удалённого резюме (скриншот владельца из #972).
+RESUME_ERROR_BANNER = "div.attention.attention_bad"
+RESUME_ERROR_BANNER_TEXT = "Произошла ошибка"
+# Формулировка по #972: констатирует наблюдаемый факт (баннер) и называет
+# вероятную причину, НЕ утверждая «удалено» — баннер является общим сбойным
+# экраном hh.ru. Без сверки со списком резюме.
+RESUME_UNAVAILABLE_REASON = (
+    "резюме недоступно: hh.ru показал баннер ошибки "
+    "(наиболее вероятная причина — резюме удалено владельцем; "
+    "баннер — общий сбойный экран hh.ru, удаление не доказано)"
+)
+
+
+def has_resume_error_banner(page: Page) -> bool:
+    """Сбойный экран hh.ru на /resume/{id}: видимый баннер ошибки (#972).
+
+    Ошибка чтения селектора — не доказательство отсутствия баннера: детектор
+    молчит, вызывающий путь продолжает свой обычный fail-closed (его
+    «кнопка/форма не найдена» останется прежним отказом). Намеренно
+    позитивный сигнал, как у ``has_login_form``. AttributeError — для
+    unit-факов без ``filter`` (паттерн ``detect_antibot_on_page``).
+    """
+    try:
+        return (
+            page.locator(RESUME_ERROR_BANNER).filter(has_text=RESUME_ERROR_BANNER_TEXT).count() > 0
+        )
+    except (AttributeError, PlaywrightError):
+        return False
+
+
+def require_available_resume(page: Page) -> None:
+    """Терминальный pre-mutation отказ, если страница резюме — сбойный экран.
+
+    Вызывается сразу после навигации на /resume/{id} и проверки сессии, до
+    любого клика/поиска формы: URL при баннере остаётся /resume/{id}, поэтому
+    identity-проверки его не отсекают.
+    """
+    if has_resume_error_banner(page):
+        raise ResumeUnavailable(RESUME_UNAVAILABLE_REASON)
 
 
 # #825: hh.ru рендерит информер о cookie-политике на каждой свежей навигации

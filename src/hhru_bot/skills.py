@@ -16,9 +16,11 @@ from playwright.sync_api import Page
 
 from .browser import (
     HH_BASE_URL,
+    RESUME_UNAVAILABLE_REASON,
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    has_resume_error_banner,
     open_hydrated_resume_editor,
 )
 from .config import ResumeConfig
@@ -317,6 +319,10 @@ def edit_skills_on_hh(
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     if not has_auth_cookie(page) or has_login_form(page):
         return SkillsResult(False, reason="сессия hh.ru не подтверждена")
+    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
+    # открытии редактора навыков. Pre-mutation, в actions не пишется.
+    if has_resume_error_banner(page):
+        return SkillsResult(False, reason=RESUME_UNAVAILABLE_REASON)
     edit_path = f"/resume/edit/{resume.resume_id}/keySkills"
     trigger = page.locator(resume_page.RESUME_SKILLS_EDIT_BUTTON)
     first_entry = trigger.count() == 0

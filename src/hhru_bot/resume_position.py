@@ -28,6 +28,7 @@ from .browser import (
     goto_hh,
     open_hydrated_resume_editor,
     require_authenticated_page,
+    require_available_resume,
     resume_identity_matches,
 )
 from .catalog_preflight import evaluate_leaf, format_candidates
@@ -491,6 +492,9 @@ def open_position_form(
     """
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
     require_authenticated_page(page)
+    # #972: сбойный экран держит URL /resume/{id} и прошёл бы identity-чек,
+    # уводя команду в таймауты. Pre-mutation отказ (команда печатает [FAIL]).
+    require_available_resume(page)
     if _is_wizard_path(getattr(page, "url", "")):
         if not enter_wizard:
             # state.title is the only title source on this read-only path:

@@ -14,10 +14,12 @@ from playwright.sync_api import Locator, Page
 
 from .browser import (
     HH_BASE_URL,
+    RESUME_UNAVAILABLE_REASON,
     PageStateIndeterminate,
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    has_resume_error_banner,
     labelled_field,
     open_hydrated_resume_editor,
 )
@@ -371,6 +373,10 @@ def apply_plan(page: Page, resume_id: str, plan: ResumeSectionsPlan, *, dry_run:
     goto_hh(page, f"{HH_BASE_URL}/resume/{resume_id}")
     if has_login_form(page):
         return ["hh.ru показал форму входа"]
+    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
+    # поиске триггеров секций. Pre-mutation, обычный failed/retry.
+    if has_resume_error_banner(page):
+        return [RESUME_UNAVAILABLE_REASON]
     errors = list(plan.skipped)
     errors += _apply_rows(
         page,

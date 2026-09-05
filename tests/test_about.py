@@ -12,10 +12,16 @@ from hhru_bot.about import (
     generate_about,
     open_about_editor,
 )
+from hhru_bot.browser import RESUME_ERROR_BANNER
 from hhru_bot.commands.about import draft_prefix
 from hhru_bot.config import bare_resume
 
 pytestmark = pytest.mark.unit
+
+# #972: open_about_editor до триггера читает баннер-детектор сбойного экрана
+# (div.attention.attention_bad + has_text). Пустой локатор = «баннера нет».
+_EMPTY_BANNER = MagicMock(name="empty_banner")
+_EMPTY_BANNER.filter.return_value.count.return_value = 0
 
 
 class Response:
@@ -108,6 +114,7 @@ def test_open_about_editor_retries_pre_hydration_noop_click(monkeypatch):
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -132,6 +139,7 @@ def test_open_about_editor_waits_for_hidden_but_present_field(monkeypatch):
     field.wait_for.return_value = None
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -160,6 +168,7 @@ def test_open_about_editor_accepts_draft_edit_route(monkeypatch):
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -184,6 +193,7 @@ def test_open_about_editor_accepts_draft_edit_route_with_query(monkeypatch):
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -208,6 +218,7 @@ def test_open_about_editor_rejects_wrong_route_with_empty_resume_id(monkeypatch)
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -234,6 +245,7 @@ def test_open_about_editor_still_fails_closed_on_unexpected_route(monkeypatch):
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -264,6 +276,7 @@ def test_open_about_editor_uses_edit_route_when_button_missing(monkeypatch):
         page.url = url
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -290,6 +303,7 @@ def test_open_about_editor_propagates_non_timeout_error(monkeypatch):
     )
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)
@@ -315,6 +329,7 @@ def test_open_about_editor_edit_route_rejects_wrong_resume(monkeypatch):
         page.url = "https://hh.ru/resume/edit/other-id/about"
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(about_module, "goto_hh", goto_side_effect)
@@ -341,6 +356,7 @@ def test_open_about_editor_edit_route_fails_closed_when_editor_absent(monkeypatc
         page.url = url
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
         about_module.resume_page.RESUME_ABOUT_EDITOR: field,
     }[selector]
@@ -359,6 +375,7 @@ def test_open_about_editor_fails_fast_when_button_ambiguous(monkeypatch):
     trigger.wait_for.return_value = None
 
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         about_module.resume_page.RESUME_EDIT_ABOUT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(about_module, "goto_hh", lambda *_args, **_kwargs: None)

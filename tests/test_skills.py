@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 import hhru_bot.skills as skills_module
+from hhru_bot.browser import RESUME_ERROR_BANNER
 from hhru_bot.config import bare_resume
 from hhru_bot.skills import (
     Skill,
@@ -18,6 +19,12 @@ from hhru_bot.skills import (
 )
 
 pytestmark = pytest.mark.unit
+
+# #972: edit_skills_on_hh до открытия редактора читает баннер-детектор
+# сбойного экрана (div.attention.attention_bad + has_text). Пустой локатор
+# = «баннера нет».
+_EMPTY_BANNER = MagicMock(name="empty_banner")
+_EMPTY_BANNER.filter.return_value.count.return_value = 0
 
 
 def test_parse_skill_plan_accepts_fenced_json_and_levels() -> None:
@@ -71,6 +78,7 @@ def test_edit_skills_retries_pre_hydration_noop_click(monkeypatch) -> None:
 
     trigger.click.side_effect = click_side_effect
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -107,6 +115,7 @@ def test_edit_skills_does_not_retry_after_navigation_to_editor(monkeypatch) -> N
 
     editor.wait_for.side_effect = navigate_then_timeout
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
     }[selector]
@@ -140,6 +149,7 @@ def test_edit_skills_rejects_editor_on_wrong_resume_route(monkeypatch) -> None:
     editor.wait_for.return_value = None
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -178,6 +188,7 @@ def test_edit_skills_accepts_correct_edit_route_on_first_attempt(monkeypatch) ->
     editor.wait_for.return_value = None
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -255,6 +266,7 @@ def test_edit_skills_reports_only_chips_observed_after_save(monkeypatch) -> None
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -309,6 +321,7 @@ def test_edit_skills_waits_for_each_chip_before_next_addition(monkeypatch) -> No
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: suggestion,
@@ -373,6 +386,7 @@ def test_edit_skills_stops_input_after_chip_commit_timeout(monkeypatch) -> None:
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -423,6 +437,7 @@ def test_edit_skills_marks_rejected_chip_as_uncertain(monkeypatch) -> None:
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -470,6 +485,7 @@ def test_edit_skills_post_save_wait_timeout_falls_through_to_strict_read(monkeyp
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -519,6 +535,7 @@ def test_edit_skills_normalizes_internal_whitespace_in_observed_chips(monkeypatc
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -565,6 +582,7 @@ def test_edit_skills_accepts_edit_route_with_query(monkeypatch) -> None:
     editor.wait_for.return_value = None
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -594,6 +612,7 @@ def test_edit_skills_rejects_wrong_route_with_empty_resume_id(monkeypatch) -> No
     editor.wait_for.return_value = None
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -636,6 +655,7 @@ def test_edit_skills_dedups_existing_chip_with_internal_whitespace(monkeypatch) 
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -678,6 +698,7 @@ def test_edit_skills_opens_editor_via_resume_scoped_route_on_empty_resume(monkey
     editor.wait_for.return_value = None
     cancel = MagicMock()
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_CANCEL: cancel,
@@ -714,6 +735,7 @@ def test_edit_skills_navigation_timeout_on_empty_resume_returns_failure(monkeypa
     trigger = MagicMock()
     trigger.count.return_value = 0
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
     }[selector]
     goto_attempt = 0
@@ -747,6 +769,7 @@ def test_edit_skills_wrong_route_after_navigation_on_empty_resume_returns_failur
     trigger = MagicMock()
     trigger.count.return_value = 0
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
     }[selector]
     monkeypatch.setattr(skills_module, "goto_hh", lambda *_args: None)
@@ -774,6 +797,7 @@ def test_edit_skills_editor_wait_timeout_on_empty_resume_returns_failure(monkeyp
     editor = MagicMock()
     editor.wait_for.side_effect = PlaywrightTimeoutError("editor hidden")
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_INPUT: editor,
     }[selector]
@@ -809,6 +833,7 @@ def test_confirm_skill_levels_clicks_matching_radio_and_saves() -> None:
     save = MagicMock()
     save.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         "input[name='SeleniumСредний']": radio,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
     }[selector]
@@ -836,6 +861,7 @@ def test_confirm_skill_levels_skips_missing_radio_without_failing() -> None:
     save = MagicMock()
     save.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         "input[name='SeleniumСредний']": missing_radio,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
     }[selector]
@@ -865,6 +891,7 @@ def test_confirm_skill_levels_skips_radio_when_count_raises() -> None:
     save = MagicMock()
     save.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         'input[name="Ruby\'QuoteСредний"]': broken_radio,
         skills_module.resume_page.RESUME_PARTIAL_EDIT_SAVE: save,
     }.get(selector, broken_radio)
@@ -919,6 +946,7 @@ def test_edit_skills_handles_levels_wizard_step_for_new_skill(monkeypatch) -> No
         if selector == "input[name='SeleniumСредний']":
             return levels_radio
         return {
+            RESUME_ERROR_BANNER: _EMPTY_BANNER,
             skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
             skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
             skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),
@@ -971,6 +999,7 @@ def test_edit_skills_marks_level_mismatch_as_uncertain_not_ok(monkeypatch) -> No
     trigger = MagicMock()
     trigger.count.return_value = 1
     page.locator.side_effect = lambda selector: {
+        RESUME_ERROR_BANNER: _EMPTY_BANNER,
         skills_module.resume_page.RESUME_SKILLS_EDIT_BUTTON: trigger,
         skills_module.resume_page.RESUME_SKILLS_CHIP_INPUT: input_,
         skills_module.resume_page.RESUME_SKILLS_SUGGEST_USER_INPUT: _mock_suggest_locator(),

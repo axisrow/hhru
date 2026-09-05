@@ -125,6 +125,7 @@ def test_open_position_form_reads_draft_wizard_title(monkeypatch):
     page.locator.side_effect = lambda selector: position
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     flow = resume_position.open_position_form(page, resume)
 
@@ -144,6 +145,7 @@ def test_open_position_form_can_inspect_wizard_without_entering_chip_screen(monk
     )
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     flow = resume_position.open_position_form(page, resume, enter_wizard=False)
 
@@ -178,6 +180,7 @@ def test_open_position_form_routes_profile_state_to_identity_bound_wizard(monkey
 
     monkeypatch.setattr(resume_position, "goto_hh", goto)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     flow = resume_position.open_position_form(page, resume)
 
@@ -196,6 +199,7 @@ def test_open_position_form_rejects_wrong_wizard_resume(monkeypatch):
     page.url = "https://hh.ru/profile/resume/professional_role?resume=other-id"
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     with pytest.raises(RuntimeError, match="не для того резюме"):
         resume_position.open_position_form(page, resume)
@@ -216,6 +220,7 @@ def test_open_position_form_rejects_ambiguous_wizard_entry_card(monkeypatch):
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     with pytest.raises(RuntimeError, match="карточка выбора профессии неоднозначна: 2"):
         resume_position.open_position_form(page, resume)
@@ -239,6 +244,7 @@ def test_open_position_form_retries_ssr_card_until_hydrated(monkeypatch):
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     flow = resume_position.open_position_form(page, resume)
 
@@ -268,6 +274,7 @@ def test_open_position_form_reloads_once_after_stalled_ssr_card(monkeypatch):
     monkeypatch.setattr(resume_position, "WIZARD_TRANSITION_ATTEMPTS", 2)
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
 
     flow = resume_position.open_position_form(page, resume)
 
@@ -613,6 +620,7 @@ def test_verify_wizard_minimum_save_returns_once_professional_role_clears(monkey
     page = MagicMock()
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda _page, _resume_id: True)
     states = [
         ResumeState(status="not_finished", next_incomplete_screen_id="professional_role"),
@@ -633,6 +641,7 @@ def test_verify_wizard_minimum_save_times_out_while_professional_role_persists(m
     state = ResumeState(status="not_finished", next_incomplete_screen_id="professional_role")
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(resume_position, "parse_resume_state", lambda *_args: state)
     monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0, 0, 31]))
@@ -1335,6 +1344,7 @@ def test_open_position_form_retries_pre_hydration_noop_click(monkeypatch):
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1376,6 +1386,7 @@ def test_open_position_form_rejects_form_on_wrong_resume_route(monkeypatch):
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1416,6 +1427,7 @@ def test_open_position_form_accepts_correct_edit_route_on_first_attempt(monkeypa
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1450,6 +1462,7 @@ def test_open_position_form_rejects_already_mounted_form_on_wrong_route(monkeypa
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1482,6 +1495,7 @@ def test_verify_wizard_save_polls_until_professional_role_clears(monkeypatch):
     )
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(resume_position, "parse_resume_state", lambda *_args: next(states))
     monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0, 0, 1]))
@@ -1518,6 +1532,7 @@ def test_verify_wizard_save_polls_until_resume_card_title_matches(monkeypatch):
     )
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(resume_position, "parse_resume_state", lambda *_args: state)
     monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0, 0, 1]))
@@ -1554,6 +1569,7 @@ def test_open_position_form_accepts_edit_route_with_query(monkeypatch):
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1586,6 +1602,7 @@ def test_open_position_form_rejects_wrong_route_with_empty_resume_id(monkeypatch
     }[selector]
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(
         resume_position,
@@ -1609,6 +1626,7 @@ def test_verify_wizard_save_never_accepts_persistent_professional_role(monkeypat
     state = ResumeState(status="not_finished", next_incomplete_screen_id="professional_role")
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(resume_position, "parse_resume_state", lambda *_args: state)
     monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0, 0, 31]))
@@ -1633,6 +1651,7 @@ def test_verify_wizard_save_rejects_wrong_server_role(monkeypatch):
     )
     monkeypatch.setattr(resume_position, "goto_hh", lambda *_args: None)
     monkeypatch.setattr(resume_position, "require_authenticated_page", lambda _page: None)
+    monkeypatch.setattr(resume_position, "require_available_resume", lambda _page: None)
     monkeypatch.setattr(resume_position, "resume_identity_matches", lambda *_args: True)
     monkeypatch.setattr(resume_position, "parse_resume_state", lambda *_args: state)
     monkeypatch.setattr(resume_position.time, "monotonic", MagicMock(side_effect=[0, 0, 31]))
