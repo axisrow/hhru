@@ -627,3 +627,76 @@ def test_save_common_dump_failure_does_not_mask_uncertain(monkeypatch):
     result = common.save_common(page, common.CommonValues())
     assert not result.success and result.acted and result.uncertain
     assert "сохранение common не подтверждено" in result.reason
+
+
+# --- #991: гидрационный гейт SAVE перед NEXT-кликом ---------------------------
+
+
+def _hydration(monkeypatch, sequence):
+    """Мок wait_for_react_hydration, отдающий значения из sequence по порядку."""
+    calls = []
+
+    def fake(page, selector, *, timeout_ms):
+        calls.append(timeout_ms)
+        return sequence.pop(0) if sequence else False
+
+    monkeypatch.setattr(common, "wait_for_react_hydration", fake)
+    return calls
+
+
+def test_save_common_hydrated_immediately_clicks_once(monkeypatch):
+    """Гидрация с первой попытки: клик один, исход не изменился (#990)."""
+    page, save, _locators = _confirm_page(monkeypatch)
+    calls = _hydration(monkeypatch, [True])
+    result = common.save_common(page, common.CommonValues())
+    assert result.success and result.acted and not result.uncertain
+    assert calls == [common._SAVE_HYDRATION_TIMEOUT_MS]
+    save.first.click.assert_called_once_with()
+
+
+def test_save_common_second_hydration_attempt_clicks(monkeypatch):
+    """Первая попытка гидрации не удалась — клик НЕ отправлялся; вторая
+    удалась → ровно один клик, success."""
+    page, save, _locators = _confirm_page(monkeypatch)
+    _hydration(monkeypatch, [False, True])
+    result = common.save_common(page, common.CommonValues())
+    assert result.success and result.acted
+    save.first.click.assert_called_once_with()
+
+
+def test_save_common_never_hydrated_fails_closed_without_click(monkeypatch):
+    """Гидрации нет за обе попытки: клик не отправлялся — честный failed
+    (acted=False, не uncertain), дамп страницы, факт в reason."""
+    page, save, _locators = _confirm_page(monkeypatch)
+    calls = _hydration(monkeypatch, [False, False])
+    dump = MagicMock()
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    result = common.save_common(page, common.CommonValues())
+    assert not result.success
+    assert result.acted is False and result.uncertain is False
+    save.first.click.assert_not_called()
+    assert len(calls) == 2
+    dump.assert_called_once_with(page, "common_save_failure")
+    assert "гидратирован" in result.reason
+    assert "клик не отправлялся" in result.reason
+
+
+def test_save_common_uncertain_reason_carries_hydration_and_click_error(monkeypatch):
+    """Гидрация ок, переход не случился: uncertain + в reason и факт гидрации,
+    и текст исключения клика (ревью #990: иначе «дошёл ли клик» неизвестно)."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    page, save, _locators = _confirm_page(monkeypatch, click_error=True)
+    monkeypatch.setattr(
+        common,
+        "wait_for_react_hydration",
+        lambda page, selector, *, timeout_ms: True,
+    )
+    page.wait_for_url.side_effect = PlaywrightError("Navigation timeout")
+    dump = MagicMock()
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    result = common.save_common(page, common.CommonValues())
+    assert not result.success and result.acted and result.uncertain
+    assert "гидрация SAVE: ок" in result.reason
+    assert "pointer intercepted" in result.reason
+    dump.assert_called_once_with(page, "common_save_failure")
