@@ -535,14 +535,15 @@ def save_common(
 ) -> CommonResult:
     apply_common(page, values)
     save = _strict(page, SAVE, "кнопка сохранения common")
-    if before_click:
-        before_click()
     # #991: #990 сделал исход честным, но корневая причина боевых uncertain
     # (#982/#986) — NEXT-клик до гидратации SPA (#858; живой аналог измерен в
     # #840: активатор месяца гидрируется СЕКУНДЫ, клик в этом окне теряется).
     # Гейт: до клика ждём React-привязку SAVE; две попытки без гидрации —
     # клик не отправлялся вовсе, это честный failed (мутации точно не было),
-    # а не uncertain.
+    # а не uncertain. Гейт — pre-click проверка (ревью #992: как launch_context/
+    # «форма не найдена» из #476), поэтому стоит ДО before_click: резерв
+    # uncertain-маркера не должен висеть всё 30с-окно ожидания гидрации,
+    # в котором клик структурно невозможен.
     hydrated = False
     for _attempt in range(2):
         if wait_for_react_hydration(page, SAVE, timeout_ms=_SAVE_HYDRATION_TIMEOUT_MS):
@@ -560,6 +561,8 @@ def save_common(
             f"SAVE не гидратирован за {2 * _SAVE_HYDRATION_TIMEOUT_MS // 1000}с — "
             "клик не отправлялся (мутации нет)",
         )
+    if before_click:
+        before_click()
     # #989: тот же защищённый клик, что у confirm_common_screen (#986,
     # паттерн #913): исход решает wait_for_url (уход с
     # /profile/resume/common, бюджет 30с), падение click() при состоявшемся

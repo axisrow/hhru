@@ -700,3 +700,14 @@ def test_save_common_uncertain_reason_carries_hydration_and_click_error(monkeypa
     assert "гидрация SAVE: ок" in result.reason
     assert "pointer intercepted" in result.reason
     dump.assert_called_once_with(page, "common_save_failure")
+
+
+def test_save_common_hydration_gate_precedes_before_click(monkeypatch):
+    """Гейт-отказ — pre-click состояние (#476, ревью #992): before_click
+    (резерв uncertain-маркера) не вызывается вовсе, клик не отправлялся."""
+    page, _save, _locators = _confirm_page(monkeypatch)
+    _hydration(monkeypatch, [False, False])
+    before_click = MagicMock()
+    result = common.save_common(page, common.CommonValues(), before_click=before_click)
+    assert not result.success and not result.acted and not result.uncertain
+    before_click.assert_not_called()
