@@ -151,6 +151,39 @@ RESUME_PHOTO_VIEWER_CLOSE = _selector("resume_photo.RESUME_PHOTO_VIEWER_CLOSE")
 # доказанный отказ загрузки: чистый fail, не uncertain.
 RESUME_PHOTO_VIEWER_LIMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_LIMIT")
 
+# --- Вьюер фото (select-photo, #953) ---------------------------------------
+# Карандашный поток открывает ПОЛНОЭКРАННЫЙ вьюер (magritte MediaViewer):
+# это role=dialog с классом magritte-media-viewer___..., БЕЗ data-qa
+# modal-overlay (живой дамп 2026-09-04, read-only dry-run select-photo;
+# бои 2026-09-02/03 — «инвентарь overlay пуст»).
+
+# Корень вьюера — маркер открытого вьюера вместо assign-current: у уже
+# назначенного фото кнопка назначения отсутствует (дамп 2026-09-04: вместо
+# неё disabled photo-viewer-action-assigned).
+RESUME_PHOTO_VIEWER_ROOT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ROOT")
+
+# Кнопка «Действия с фото» (три точки) в тулбаре вьюера. aria-label
+# «Действия с фото», data-qa подтверждён живым дампом 2026-09-04. Открывает
+# меню действий (назначение на резюме); содержимое меню — боевой дамп
+# 2026-09-02 (photo_flow_assign_modal_*): диалог с чекбоксами
+# photo-viewer-assign-resume-{resume_id} и кнопкой assign-submit.
+RESUME_PHOTO_VIEWER_MORE = _selector("resume_photo.RESUME_PHOTO_VIEWER_MORE")
+
+# Кнопка «Назначено» (disabled) — позитивный маркер того, что ТЕКУЩЕЕ фото
+# вьюера уже назначено этому резюме. Живой дамп 2026-09-04 (резюме с фото).
+RESUME_PHOTO_VIEWER_ASSIGNED = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGNED")
+
+# Лента миниатюр в футере вьюера (по одной на фото библиотеки, порядок =
+# порядок слайдера). Селектор по стабильному префиксу magritte-класса —
+# data-qa у миниатюр нет; подтверждён живым дампом 2026-09-04 («1 из 6»,
+# 6 img в ленте). Идентификатор фото — числовой id в пути src URL.
+RESUME_PHOTO_VIEWER_THUMBNAILS = _selector("resume_photo.RESUME_PHOTO_VIEWER_THUMBNAILS")
+
+# Стрелки слайдера вьюера — по aria-label (data-qa нет, живой дамп
+# 2026-09-04). Переключение фото вьюера — read-only, мутации не выполняет.
+RESUME_PHOTO_VIEWER_NEXT = _selector("resume_photo.RESUME_PHOTO_VIEWER_NEXT")
+RESUME_PHOTO_VIEWER_PREV = _selector("resume_photo.RESUME_PHOTO_VIEWER_PREV")
+
 # Допустимые расширения — из подтверждённого accept-атрибута input выше
 # (живой DOM 2026-09-02), не из головы.
 PHOTO_ACCEPTED_EXT: tuple[str, ...] = (".jpg", ".jpeg", ".png")

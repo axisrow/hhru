@@ -31,6 +31,7 @@ UI-механизм, не внутренний API hh.ru (граница бра�
 
 from __future__ import annotations
 
+import re
 import stat as stat_module
 import time
 from dataclasses import dataclass
@@ -60,6 +61,8 @@ from .selector_groups.resume_photo import (
     RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT,
     RESUME_PHOTO_VIEWER_CLOSE,
     RESUME_PHOTO_VIEWER_LIMIT,
+    RESUME_PHOTO_VIEWER_ROOT,
+    RESUME_PHOTO_VIEWER_THUMBNAILS,
 )
 
 # Живая подсказка hh.ru про лимиты размера в дампе не встретилась — лимит
@@ -295,6 +298,10 @@ def upload_photo_on_hh(
     # Модалка анимируется: overlay перехватывает pointer events, Playwright
     # ретраит клик и падает по таймауту (бои 2026-09-02 и 2026-09-03:
     # explore-пауза 2500мс пропускала клик, командная без неё — нет).
+    # Фикс #953: в дампе боевого прогона уходящий overlay держит
+    # magritte-animation-exit-*-active; ждём его исчезновения поллингом,
+    # потом оседающая пауза (пилюля #955 про геометрию кнопки — ниже).
+    _wait_overlays_settled(page, _OVERLAY_SETTLE_TIMEOUT_MS)
     page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
     assign_click_error: str | None = None
     # Боевой кейс 2026-09-04 (#955, прогоны 1-8): кнопка assign в шапке
@@ -574,6 +581,451 @@ def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None,
         "состояние фото не определено за "
         f"{_READBACK_CONFIRM_TIMEOUT_MS // 1000}с — ни img, ни плейсхолдера"
         f"{dump_note}"
+    )
+
+
+# Магриттовские overlay-анимации в дампах боевого прогона живут парами классов:
+# «уходит» — magritte-animation-exit-center___hash + magritte-animation-exit-
+# center-active___hash, «входит» — аналогично enter. Признак «overlay ещё
+# перехватывает клики» — класс с "animation-exit" И "-active" одновременно
+# (enter-active и хэш-хвосты не совпадают с этой парой). Верхняя модалка
+# стопки (бои 2026-09-03 при непустой библиотеке) гаснет не мгновенно:
+# фикс-пауза 2500мс в бою не помогла — ждём исчезновения exit-active
+# классов поллингом.
+_OVERLAY_SETTLE_TIMEOUT_MS = 10_000
+_OVERLAY_SETTLED_JS = """() => {
+  const overlays = document.querySelectorAll("[data-qa='modal-overlay']");
+  return !Array.from(overlays).some((el) =>
+    Array.from(el.classList).some(
+      (c) => c.includes("animation-exit") && c.includes("-active"),
+    ));
+}"""
+
+# Диагностический инвентарь стопки модалок (ишью #953: боевой кейс 2026-09-03
+# диагностировался по retry-логу именно из-за его отсутствия): сколько
+# overlay, какой z-index, какая анимация активна.
+_OVERLAY_INVENTORY_JS = """() => Array.from(
+  document.querySelectorAll("[data-qa='modal-overlay']"),
+).map((el) => ({
+  zIndex: el.style.zIndex || "",
+  exitActive: Array.from(el.classList).some(
+    (c) => c.includes("animation-exit") && c.includes("-active"),
+  ),
+}))"""
+
+
+def _wait_overlays_settled(page: Page, timeout_ms: int) -> bool:
+    """Дождаться, пока ни один modal-overlay не держит exit-анимацию.
+
+    False по таймауту — решение об отказе за вызывающим (клик всё равно
+    делаем: Playwright сам ретраит, а его падение даёт честный uncertain).
+    """
+    try:
+        page.wait_for_function(_OVERLAY_SETTLED_JS, timeout=timeout_ms)
+    except PlaywrightError:
+        return False
+    return True
+
+
+def _overlay_inventory(page) -> str:
+    try:
+        overlays = page.evaluate(_OVERLAY_INVENTORY_JS)
+    except PlaywrightError:
+        return "инвентарь modal-overlay недоступен"
+    if not overlays:
+        return "modal-overlay: 0 шт"
+    parts = [
+        f"z={item.get('zIndex', '?')} exit_active={item.get('exitActive')}" for item in overlays
+    ]
+    return f"modal-overlay x{len(overlays)}: " + "; ".join(parts)
+
+
+# --- Выбор фото из библиотеки (select-photo, #953) -------------------------
+
+# Идентичность фото в DOM — числовой id в пути URL (живой дамп боевого прогона
+# 2026-09-02: thumbnails модалки назначения, src вида
+# https://img.hhcdn.ru/photo/{id}.jpeg?t=...&h=... или относительный
+# /photo/{id}.jpeg?...). Один и тот же id рендерится с разными query (кропы/
+# размеры) — дедуп по id, порядок первый встречи.
+_PHOTO_ID_RE = re.compile(r"/photo/(\d+)")
+
+# Инвентарь библиотеки внутри вьюера: лента миниатюр футера (по одной на
+# фото, порядок = порядок слайдера), счётчик «N из M» и маркер «Назначено»
+# для ТЕКУЩЕГО слайда. Живой дамп 2026-09-04: вьюер — role=dialog
+# magritte-media-viewer, лента — magritte-preview-list, overlay нет.
+_VIEWER_STATE_JS = """() => {
+  const root = document.querySelector(
+    "[role='dialog'][class*='magritte-media-viewer___']",
+  );
+  if (!root) return null;
+  const photos = [];
+  root.querySelectorAll("[class*='magritte-preview-list___'] img").forEach(
+    (img) => {
+      const src = img.currentSrc || img.src || "";
+      const m = src.match(/\\/photo\\/(\\d+)/);
+      if (m) photos.push({photoId: m[1], src: src});
+    },
+  );
+  const counter = root.querySelector("[class*='magritte-counter-number___']");
+  const cm = counter ? counter.textContent.match(/(\\d+)\\s*из\\s*(\\d+)/) : null;
+  return {
+    photos: photos,
+    index: cm ? Number(cm[1]) : null,
+    total: cm ? Number(cm[2]) : null,
+    assigned: !!root.querySelector("[data-qa='photo-viewer-action-assigned']"),
+  };
+}"""
+
+
+@dataclass(frozen=True)
+class LibraryPhoto:
+    photo_id: str
+    src: str
+
+
+def parse_photo_id(src: str) -> str | None:
+    """Числовой id фото из URL (``/photo/{id}.jpeg?...``); None если не фото."""
+    match = _PHOTO_ID_RE.search(src)
+    return match.group(1) if match else None
+
+
+def parse_library_photos(items) -> tuple[LibraryPhoto, ...]:  # noqa: ANN001 - JS payload
+    """Дедуп JS-инвентаря по id с сохранением первого порядка встречи."""
+    photos: list[LibraryPhoto] = []
+    seen: set[str] = set()
+    for item in items:
+        photo_id = str(item.get("photoId", ""))
+        if not photo_id or photo_id in seen:
+            continue
+        seen.add(photo_id)
+        photos.append(LibraryPhoto(photo_id=photo_id, src=str(item.get("src", ""))))
+    return tuple(photos)
+
+
+@dataclass
+class SelectPhotoResult:
+    success: bool = False
+    reason: str = ""
+    uncertain: bool = False
+    photos: tuple[LibraryPhoto, ...] = ()  # инвентарь библиотеки (dry-run/list)
+    assigned_photo_id: str | None = None  # подтверждённый id после assign
+    avatar_src: str = ""  # src img аватара (dry-run: текущее фото резюме)
+
+
+def select_photo_plan(resume_id: str, photo_id: str | None) -> str:
+    target = f"photo {photo_id}" if photo_id else "инвентарь библиотеки фото"
+    return (
+        f"резюме {resume_id}: {target} — гидратация resumePhotoViewer, "
+        "клик resume-avatar-edit-button (read-only открывает вьюер), "
+        "выбор фото в галерее, photo-viewer-action-assign-current"
+    )
+
+
+def _hydrate_and_open_viewer(page: Page) -> UploadPhotoResult | None:
+    """Общая подготовка select-photo: гидратация MFE + открытие вьюера.
+
+    Возвращает None при успехе, иначе честный pre-mutation отказ (до
+    before_click — повтор разрешён без reconciliation).
+    """
+    page.evaluate(
+        """(sel) => {
+          const c = document.querySelector(sel);
+          if (c) c.scrollIntoView({block: "center"});
+        }""",
+        RESUME_PHOTO_MFE_CONTAINER,
+    )
+    if not wait_for_react_hydration(
+        page, RESUME_PHOTO_FILE_INPUT, timeout_ms=_HYDRATION_TIMEOUT_MS
+    ):
+        return UploadPhotoResult(
+            reason=(
+                "микрофронтенд resumePhotoViewer не гидратировался "
+                f"за {_HYDRATION_TIMEOUT_MS // 1000}с — кнопка карандаша "
+                "не откроет вьюер"
+            ),
+        )
+    try:
+        pencil = page.locator(RESUME_AVATAR_EDIT_BUTTON).first
+        # Паттерн «commit не значит отрисовано»: строгая проверка до
+        # ожидания видела бы count=0 после гидратации SPA.
+        pencil.wait_for(state="visible", timeout=_AVATAR_WAIT_TIMEOUT_MS)
+        pencil.click()
+    except PlaywrightError as exc:
+        return UploadPhotoResult(reason=f"кнопка карандаша не кликнулась: {exc}")
+    try:
+        # Маркер открытого вьюера — корень MediaViewer (живой дамп 2026-09-04).
+        # НЕ кнопка назначения: у уже назначенного фото вместо assign-current
+        # рендерится disabled photo-viewer-action-assigned (дамп 2026-09-04).
+        page.locator(RESUME_PHOTO_VIEWER_ROOT).first.wait_for(
+            state="visible", timeout=_ASSIGN_WAIT_TIMEOUT_MS
+        )
+    except PlaywrightError as exc:
+        dump_path = dump_page_html(page, "photo_viewer_open_failed")
+        reason = f"вьюер фото не открылся по кнопке карандаша ({_overlay_inventory(page)}): {exc}"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return UploadPhotoResult(reason=reason)
+    _wait_overlays_settled(page, _OVERLAY_SETTLE_TIMEOUT_MS)
+    return None
+
+
+def select_photo_on_hh(
+    page: Page,
+    resume,
+    photo_id: str | None,
+    dry_run: bool,
+    *,
+    before_click=None,
+) -> SelectPhotoResult:
+    """Выбрать фото из библиотеки и назначить резюме; dry-run — инвентарь.
+
+    Карандашный поток (бои 2026-09-02/03): открывает вьюер БЕЗ стопки
+    перехватывающих модалок. Клик по карандашу и переключение фото в галерее
+    — read-only; единственная мутация — клик assign-current, начиная с него
+    работает seam ``before_click`` (#476).
+    """
+    goto_hh(page, resume.resume_url)
+    require_authenticated_page(page)
+    dismiss_cookie_banner(page)
+    avatar = page.locator(RESUME_AVATAR_BLOCK).first
+    try:
+        avatar.wait_for(state="visible", timeout=_AVATAR_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        return SelectPhotoResult(reason=f"блок аватара не отрисовался на {page.url}: {exc}")
+    fail = _hydrate_and_open_viewer(page)
+    if fail is not None:
+        return SelectPhotoResult(reason=fail.reason, uncertain=fail.uncertain)
+    state = _read_viewer_state(page)
+    if state is None:
+        dump_path = dump_page_html(page, "photo_select_no_viewer")
+        reason = "вьюер фото не подтверждён после карандаша (корень MediaViewer не найден)"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return SelectPhotoResult(reason=reason)
+    photos = state.photos
+    if dry_run:
+        reason = select_photo_plan(resume.id, photo_id)
+        if photos:
+            ids = ", ".join(p.photo_id for p in photos)
+            reason += f"; в библиотеке {len(photos)} фото: {ids}"
+        else:
+            reason += "; библиотека пуста"
+        current = (
+            f"текущее фото: {state.thumb_ids[state.index - 1]}"
+            if state.index and 0 < state.index <= len(state.thumb_ids)
+            else "текущее фото: не определено"
+        )
+        reason += f"; слайд {state.index} из {state.total}; {current}; назначено: {state.assigned}"
+        # get_attribute — ждущий метод: на резюме без фото дал бы 30-секундный
+        # вис (ревью #967, раунд 4) — гейт по count(), как в upload-потоке.
+        avatar_loc = page.locator(RESUME_AVATAR_IMAGE)
+        avatar_src = avatar_loc.first.get_attribute("src") or "" if avatar_loc.count() > 0 else ""
+        return SelectPhotoResult(success=True, reason=reason, photos=photos, avatar_src=avatar_src)
+    return _select_and_assign(page, resume, state, photo_id, before_click)
+
+
+@dataclass
+class ViewerState:
+    photos: tuple[LibraryPhoto, ...]  # дедуп по id — для вывода dry-run
+    thumb_ids: tuple[str, ...]  # СЫРОЙ порядок ленты — индексы для nth()
+    index: int | None  # текущий слайд, 1-based («N из M»)
+    total: int | None
+    assigned: bool  # маркер «Назначено» для ТЕКУЩЕГО слайда
+
+
+def _read_viewer_state(page: Page) -> ViewerState | None:
+    try:
+        raw = page.evaluate(_VIEWER_STATE_JS)
+    except PlaywrightError:
+        return None
+    if not raw:
+        return None
+    return ViewerState(
+        photos=parse_library_photos(raw.get("photos", [])),
+        thumb_ids=tuple(str(item.get("photoId", "")) for item in raw.get("photos", [])),
+        index=raw.get("index"),
+        total=raw.get("total"),
+        assigned=bool(raw.get("assigned")),
+    )
+
+
+def _current_photo_id(state: ViewerState) -> str | None:
+    # Счётчик слайдера адресует СЫРОЙ порядок ленты (thumb_ids), не дедуп:
+    # при повторе id в ленте индексы после дубликата разъезжаются (ревью #967,
+    # раунд 3).
+    if state.index and 0 < state.index <= len(state.thumb_ids):
+        return state.thumb_ids[state.index - 1]
+    return None
+
+
+def _variant_sibling(avatar_id: str | None, target_id: str, state: ViewerState) -> str:
+    """Классификация серверного id после assign (боевой факт 2026-09-04).
+
+    hh.ru хранит каждую загрузку ПАРОЙ соседних id (N/N+1: 913960391/392,
+    912941964/965, 908279072/073, 637550758/759, 637549023/024): в ленте и
+    вьюере рендерится display-вариант, а назначает hh.ru канонический
+    СОСЕДНИЙ СТАРШИЙ id. Возврат: "same" — id совпал; "sibling" — avatar_id
+    == target + 1 (наблюдаемое направление боем 2026-09-04; направление −1
+    сознательно НЕ принято: при подряд выделенных парах A=N/N+1, B=N+2/N+3
+    промах по B при назначенном A дал бы ложный sibling) И avatar_id не
+    встречается в ленте как отдельное фото (защита от соседнего id чужой
+    загрузки); "other" — всё остальное (назначено не то).
+    """
+    if avatar_id is None:
+        return "other"
+    if avatar_id == target_id:
+        return "same"
+    strip_ids = set(state.thumb_ids) | {p.photo_id for p in state.photos}
+    try:
+        if int(avatar_id) == int(target_id) + 1 and avatar_id not in strip_ids:
+            return "sibling"
+    except ValueError:
+        pass
+    return "other"
+
+
+def _select_and_assign(
+    page: Page,
+    resume,
+    state: ViewerState,
+    photo_id: str | None,
+    before_click,
+) -> SelectPhotoResult:
+    """Боевой путь: выбор конкретного фото и назначение (см. select_photo_on_hh).
+
+    Идентичность назначаемого фото доказывается трижды: target найден в
+    сырой ленте (thumb_ids); после клика миниатюры слайдер стоит на этом id;
+    после перезагрузки страницы ``img`` аватара ведёт на тот же id или его
+    канонический sibling-вариант (``_variant_sibling``; серверное состояние,
+    не оптимистичный маркер).
+    """
+    if not photo_id:
+        return SelectPhotoResult(
+            reason="боевой режим требует --photo-id (идентификатор из dry-run инвентаря)"
+        )
+    if not state.photos:
+        return SelectPhotoResult(reason="библиотека фото пуста — назначать нечего")
+    # Однозначность — по различимым id (повтор того же id в ленте — это то
+    # же фото с другим query-кропом, не неоднозначность), а ИНДЕКС клика —
+    # по сырому порядку ленты: nth() локатора адресует сырой DOM, позиции
+    # после дубликата id в дедупе сдвигаются (ревью #967).
+    if photo_id not in state.thumb_ids:
+        return SelectPhotoResult(
+            reason=(
+                f"photo {photo_id} не подтверждён в ленте "
+                f"(0 из {len(state.thumb_ids)} миниатюр); запись запрещена"
+            )
+        )
+    raw_index = state.thumb_ids.index(photo_id)
+    try:
+        # Локатор скоупится корнем вьюера — тем же скоупом, что и JS-инвентарь.
+        thumbs = page.locator(RESUME_PHOTO_VIEWER_ROOT).locator(RESUME_PHOTO_VIEWER_THUMBNAILS)
+        thumbs.nth(raw_index).click()
+    except PlaywrightError as exc:
+        return SelectPhotoResult(reason=f"клик по миниатюре photo {photo_id} не удался: {exc}")
+    # Переключение слайда — React-рендер: строгая проверка до ожидания
+    # увидела бы прежний слайд («commit не значит отрисовано»). Поллим
+    # чтение состояния вьюера: каждый промах — честный fail-closed отказ
+    # до мутации, ранний отказ здесь дороже лишней секунды.
+    switched: ViewerState | None = None
+    for _ in range(5):
+        page.wait_for_timeout(1_000)
+        switched = _read_viewer_state(page)
+        if switched is not None and _current_photo_id(switched) == photo_id:
+            break
+    if switched is None or _current_photo_id(switched) != photo_id:
+        current = _current_photo_id(switched) if switched else None
+        return SelectPhotoResult(
+            reason=(
+                f"после клика по миниатюре слайдер не подтвердил photo {photo_id} "
+                f"(текущий: {current}); запись запрещена"
+            )
+        )
+    if switched.assigned:
+        return SelectPhotoResult(
+            success=True,
+            reason=f"photo {photo_id} уже назначен этому резюме (маркер «Назначено»)",
+            photos=switched.photos,
+            assigned_photo_id=photo_id,
+        )
+    try:
+        assign_btn = page.locator(RESUME_PHOTO_VIEWER_ASSIGN_CURRENT).first
+        assign_btn.wait_for(state="visible", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        # До before_click мутации не было — чистый fail-closed отказ
+        # (seam #476), uncertain здесь запрещён контрактом. Единственное
+        # опасение — поздний авто-assign; перечитываем маркер «Назначено»:
+        # если слайд успели назначить, это честный success no-op.
+        late = _read_viewer_state(page)
+        if late is not None and late.assigned and _current_photo_id(late) == photo_id:
+            return SelectPhotoResult(
+                success=True,
+                reason=f"photo {photo_id} назначен (маркер «Назначено» без клика)",
+                photos=late.photos,
+                assigned_photo_id=photo_id,
+            )
+        return SelectPhotoResult(
+            reason=f"кнопка назначения не появилась для photo {photo_id}: {exc}"
+        )
+    _wait_overlays_settled(page, _OVERLAY_SETTLE_TIMEOUT_MS)
+    if before_click is not None:
+        before_click()
+    try:
+        assign_btn.click()
+    except PlaywrightError as exc:
+        dump_path = dump_page_html(page, "photo_select_intercepted")
+        reason = f"клик assign не удался ({_overlay_inventory(page)}): {exc}"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return SelectPhotoResult(reason=reason, uncertain=True)
+
+    try:
+        # Оптимистичный маркер: <img> появляется в аватаре до консолидации.
+        page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
+            state="attached", timeout=_CONFIRM_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        dump_path = dump_page_html(page, "photo_select_uncertain")
+        reason = (
+            "assign отправлен, но маркер (img в аватаре) не появился "
+            f"за {_CONFIRM_TIMEOUT_MS // 1000}с"
+        )
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return SelectPhotoResult(reason=reason, uncertain=True)
+    page.wait_for_timeout(_ASSIGN_SETTLE_MS)
+    # Серверная сверка: перезагрузка и чтение img аватара (InitialState).
+    goto_hh(page, resume.resume_url)
+    require_authenticated_page(page)
+    try:
+        page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
+            state="attached", timeout=_AVATAR_WAIT_TIMEOUT_MS
+        )
+    except PlaywrightError:
+        return SelectPhotoResult(
+            reason="после перезагрузки фото в аватаре не подтвердилось сервером",
+            uncertain=True,
+        )
+    avatar_src = page.locator(RESUME_AVATAR_IMAGE).first.get_attribute("src") or ""
+    avatar_id = parse_photo_id(avatar_src)
+    variant = _variant_sibling(avatar_id, photo_id, state)
+    if variant == "other":
+        return SelectPhotoResult(
+            reason=(
+                f"на резюме подтверждено фото {avatar_id}, а не {photo_id}; "
+                "проверьте резюме на hh.ru вручную (reconciliation по протоколу CLAUDE.md)"
+            ),
+            uncertain=True,
+        )
+    return SelectPhotoResult(
+        success=True,
+        reason=(
+            f"назначено фото {photo_id} (подтверждено после перезагрузки"
+            + (f"; канонический id {avatar_id}" if variant == "sibling" else "")
+            + ")"
+        ),
+        photos=switched.photos,
+        assigned_photo_id=avatar_id or photo_id,
     )
 
 
