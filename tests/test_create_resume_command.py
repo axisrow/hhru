@@ -284,3 +284,122 @@ def test_placeholder_warning_survives_inside_verdict_reason(env, tmp_path, capsy
     )
     assert "плейсхолдер" in out
     assert "Черновик начат" in out
+
+
+# --- #985: --fill-common — подтверждение экрана common в том же прогоне -------
+
+
+def _draft_started_result():
+    from hhru_bot.create_resume import draft_verdict_result
+
+    return draft_verdict_result("draft_started", "common", "", new_resume_id=NEW_ID)
+
+
+def _fill_common_run(env, tmp_path, capsys, monkeypatch, common_result, verdicts):
+    """Боевой прогон с --fill-common: readback дважды, confirm — двойник."""
+    import hhru_bot.commands.create_resume as command_module
+    from hhru_bot.common import CommonResult
+
+    verdicts = list(verdicts)
+    monkeypatch.setattr(
+        command_module,
+        "apply_draft_readback",
+        lambda page, result: verdicts.pop(0) if verdicts else result,
+    )
+    confirm_calls = []
+
+    def confirm(page, resume_id, *, before_click=None):
+        confirm_calls.append(resume_id)
+        if isinstance(common_result, CommonResult) and common_result.acted:
+            before_click()
+        return common_result
+
+    monkeypatch.setattr(
+        "hhru_bot.common.confirm_common_screen",
+        confirm,
+    )
+    env.result = _draft_started_result()
+    ok = cmd.run(_args(tmp_path, force=True, fill_common=True))
+    return ok, capsys.readouterr().out, confirm_calls
+
+
+def test_fill_common_confirms_screen_and_rereads_ready_verdict(env, tmp_path, capsys, monkeypatch):
+    from hhru_bot.common import CommonResult
+    from hhru_bot.create_resume import draft_verdict_result
+
+    ready = draft_verdict_result("ready_to_publish", None, "", new_resume_id=NEW_ID)
+    ok, out, calls = _fill_common_run(
+        env,
+        tmp_path,
+        capsys,
+        monkeypatch,
+        CommonResult(True, "экран common подтверждён", True),
+        [_draft_started_result(), ready],
+    )
+    assert ok is False
+    assert calls == [NEW_ID]
+    assert "Подтверждаю экран common" in out
+    assert "[OK] Готово к публикации" in out
+    assert "[OK] Черновик начат" not in out
+
+
+def test_fill_common_prefill_refusal_keeps_draft_started_verdict(
+    env, tmp_path, capsys, monkeypatch
+):
+    from hhru_bot.common import CommonResult
+
+    ok, out, calls = _fill_common_run(
+        env,
+        tmp_path,
+        capsys,
+        monkeypatch,
+        CommonResult(False, "экран common не предзаполнен профилем аккаунта: имя"),
+        [_draft_started_result()],
+    )
+    assert ok is True
+    assert calls == [NEW_ID]
+    assert "[FAIL] --fill-common: экран common не предзаполнен" in out
+    # Вердикт создания напечатан и остался draft_started.
+    assert "[OK] Черновик начат" in out
+    assert f"Новый resume_id: {NEW_ID}" in out
+
+
+def test_fill_common_uncertain_records_edit_common_marker(env, tmp_path, capsys, monkeypatch):
+    from hhru_bot.common import CommonResult
+
+    ok, _out, _calls = _fill_common_run(
+        env,
+        tmp_path,
+        capsys,
+        monkeypatch,
+        CommonResult(False, "переход с экрана common не подтверждён", True, True),
+        [_draft_started_result()],
+    )
+    assert ok is True
+    history = History(tmp_path / "history.db")
+    assert history.has_unresolved_uncertain(NEW_ID, "edit_common")
+
+
+def test_fill_common_skipped_when_readiness_is_not_draft_started_common(
+    env, tmp_path, capsys, monkeypatch
+):
+    from hhru_bot.create_resume import draft_verdict_result
+
+    ready = draft_verdict_result("ready_to_publish", None, "", new_resume_id=NEW_ID)
+    ok, out, calls = _fill_common_run(env, tmp_path, capsys, monkeypatch, None, [ready])
+    assert ok is False
+    assert calls == []
+    assert "Подтверждаю экран common" not in out
+
+
+def test_fill_common_not_run_in_dry_run(env, tmp_path, capsys, monkeypatch):
+    confirm_calls = []
+    monkeypatch.setattr(
+        "hhru_bot.common.confirm_common_screen",
+        lambda *args, **kwargs: confirm_calls.append(1),
+    )
+    env.result = CreateResumeResult(True, reason="dry-run; визард найден, клики не выполнены")
+    cmd.run(_args(tmp_path, dry_run=True, fill_common=True))
+    out = capsys.readouterr().out
+    assert confirm_calls == []
+    assert "[DRY-RUN] В боевом режиме --fill-common" in out
