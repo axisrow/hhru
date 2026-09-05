@@ -331,3 +331,55 @@ def test_hhru_live_policy_core_remote_work_not_dangerous():
     safe."""
     scenario = _run_policy_scenario("remote_work_not_dangerous")
     assert scenario["disposition"] == "ambiguous"
+
+
+# ---------------------------------------------------------------------------
+# Транспорт agent-канала (issue #931): popup -> background relay -> активная
+# hh.ru-вкладка. Сценарии исполняют background.js по-настоящему через
+# tests/js_harness/run_background_scenario.js <name> (стаб chrome.tabs/
+# storage.session; до этого relay был покрыт только grep-гвардами).
+# ---------------------------------------------------------------------------
+
+BACKGROUND_RUNNER = REPO_ROOT / "tests" / "js_harness" / "run_background_scenario.js"
+
+
+def _run_background_scenario(name: str) -> dict:
+    return _run_node_scenario(BACKGROUND_RUNNER, [name])
+
+
+def test_hhru_live_relay_forwards_allowlisted_command_to_hhru_tab():
+    scenario = _run_background_scenario("relay_forwards_to_hhru_tab")
+    assert scenario["response"]["ok"] is True
+    assert scenario["sentToTabCount"] == 1
+    assert scenario["sentAction"] == "list_overlays"
+    assert scenario["tabReplyPreserved"]
+
+
+def test_hhru_live_relay_refuses_without_hhru_tab():
+    scenario = _run_background_scenario("relay_no_hhru_tab")
+    assert scenario["error"] == "no_hhru_tab"
+    assert scenario["sentToTabCount"] == 0
+
+
+def test_hhru_live_relay_reports_content_script_unreachable():
+    scenario = _run_background_scenario("relay_content_script_unreachable")
+    assert scenario["error"] == "content_script_unreachable"
+
+
+def test_hhru_live_relay_rejects_foreign_sender_and_unknown_action():
+    foreign = _run_background_scenario("relay_rejects_foreign_sender")
+    assert foreign["error"] == "sender_not_allowed"
+    assert foreign["sentToTabCount"] == 0
+    unknown = _run_background_scenario("relay_rejects_unknown_action")
+    assert unknown["error"] == "action_not_allowed"
+    assert unknown["sentToTabCount"] == 0
+
+
+def test_hhru_live_relay_keeps_diagnostics_storage_path():
+    stored = _run_background_scenario("diagnostics_stored")
+    assert stored["responseOk"] is True
+    assert stored["storedReports"] == 1
+    assert stored["storedKind"] == "overlay_detected"
+    foreign = _run_background_scenario("diagnostics_foreign_origin_rejected")
+    assert foreign["error"] == "sender_not_allowed"
+    assert foreign["storedReports"] == 0

@@ -73,6 +73,13 @@ modal/dialog/toast/notification/cookie-баннеры, классифициру�
 вкладку) → `content.js`. content.js принимает команды только от своего же
 расширения (`sender.id === chrome.runtime.id`).
 
+С #931 relay исполняется тестами по-настоящему: `run_background_scenario.js`
+(стаб chrome.tabs/storage.session) покрывает пересылку в hh.ru-таб и обе
+доменные ошибки (`no_hhru_tab`, `content_script_unreachable`), отказ чужому
+sender и действию вне allowlist, а также сохранность diagnostics-пути
+(`overlay_detected` → storage.session); ветки чужого происхождения — по
+образцу sender-validation #743.
+
 Канал `chrome.runtime.connect({name: "hhru-agent"})` по-прежнему **не
 достижим никем**: ни content.js, ни popup.js его не открывают, `background.js`
 регистрирует только `chrome.runtime.onConnect` (не `onConnectExternal`), в
