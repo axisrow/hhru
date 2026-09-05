@@ -347,7 +347,9 @@ def test_hhru_live_relay_is_exercised_by_background_scenario_runner():
 
     runner = Path(__file__).parents[1] / "tests" / "js_harness" / "run_background_scenario.js"
     source = runner.read_text()
-    background = (Path(__file__).parents[1] / "extensions" / "hhru-live" / "background.js").read_text()
+    background = (
+        Path(__file__).parents[1] / "extensions" / "hhru-live" / "background.js"
+    ).read_text()
     # Сценарии раннера по имени; ошибки релея они проверяют по факту ответа.
     for scenario in (
         "relay_no_hhru_tab",
@@ -357,5 +359,10 @@ def test_hhru_live_relay_is_exercised_by_background_scenario_runner():
         "diagnostics_stored",
     ):
         assert scenario in source, f"раннер обязан покрывать сценарий {scenario}"
-    for error in ("no_hhru_tab", "content_script_unreachable", "sender_not_allowed", "action_not_allowed"):
+    for error in (
+        "no_hhru_tab",
+        "content_script_unreachable",
+        "sender_not_allowed",
+        "action_not_allowed",
+    ):
         assert error in background, f"background.js должен содержать {error}"
