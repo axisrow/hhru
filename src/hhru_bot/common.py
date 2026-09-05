@@ -17,6 +17,8 @@ from playwright.sync_api import Page
 
 from .browser import (
     HH_BASE_URL,
+    dismiss_cookie_banner,
+    dump_page_html,
     goto_hh,
     labelled_field,
     require_authenticated_page,
@@ -59,6 +61,19 @@ EMPLOYMENT_LABELS = {
 WORK_FORMAT_LABELS = {"office": "Офис", "hybrid": "Гибрид", "remote": "Удалённо"}
 SAVE = account_profile.RESUME_COMMON_NEXT
 CANCEL = account_profile.RESUME_COMMON_PREV
+# #985: маршрут identity-bound экрана common визарда «Дополнить» —
+# /profile/resume?resume=<id> редиректит сюда (подтверждено живым DOM
+# 2026-09-06, read-only dump черновика-свидетеля #978).
+COMMON_SCREEN_PATH = "/profile/resume/common"
+# Magritte-триггеры (combobox без data-qa на самом значении): читается текст
+# выбранного значения в values-wrapper внутри data-qa-обёртки поля.
+CITIZENSHIP_TRIGGER = "[data-qa='resume-profile-common-citizenship-selector']"
+BIRTHDAY_YEAR_TRIGGER = "[data-qa='resume-profile-common-birthday-year-input']"
+TRIGGER_VALUES = "[data-qa='trigger-values-wrapper']"
+# Бюджет перехода после «Сохранить и продолжить» — тот же защищённый NEXT-клик,
+# что у визарда professional_role (resume_position #913): исход решает
+# wait_for_url, а не сам click().
+_COMMON_SCREEN_NAV_TIMEOUT_MS = 30_000
 _WAIT_MS = 5_000
 
 
@@ -119,22 +134,128 @@ def _strict(page: Page, selector: str, label: str):
 
 def open_common_form(page: Page, resume: ResumeConfig):
     """Open and identity-bind the common editor; never guess from a redirect."""
-    resume_id = resume.resume_id
+    return _open_common_screen(page, resume.resume_id)
+
+
+def _open_common_screen(page: Page, resume_id: str):
     goto_hh(page, f"{HH_BASE_URL}{account_profile.RESUME_COMMON_PATH}?resume={resume_id}")
     require_authenticated_page(page)
     editor = page.locator(FORM)
     if editor.count() != 1:
         raise RuntimeError("форма common не открылась")
     route = urlsplit(page.url)
-    if route.path != "/profile/resume/common" or parse_qs(route.query).get("resume") != [resume_id]:
+    if route.path != COMMON_SCREEN_PATH or parse_qs(route.query).get("resume") != [resume_id]:
         raise RuntimeError("форма common открыта не для запрошенного резюме")
     editor.first.wait_for(state="visible", timeout=_WAIT_MS)
     return editor
 
 
-def read_common(page: Page) -> CommonValues:
-    """Read only the fields owned by this slice from an already-open form."""
+def _wizard_prefill_problems(page: Page) -> list[str]:
+    """Незаполненные обязательные поля экрана common ДО клика (#985).
 
+    Живой DOM 2026-09-06 (read-only dump черновика-свидетеля #978): у
+    fresh-черновика экран common визарда УЖЕ предзаполнен hh.ru из профиля
+    аккаунта (ФИО/телефон/ДР/пол/гражданство) — «заполнение» сводится к
+    подтверждению экрана. Если какое-то поле в профиле отсутствует, клик
+    «Сохранить и продолжить» не выполняется: вердикт честно остаётся
+    draft_started, а не превращается в uncertain-окно после клика.
+    """
+    problems: list[str] = []
+    for selector, label in (
+        (LAST_NAME, "фамилия"),
+        (FIRST_NAME, "имя"),
+        (PHONE, "телефон"),
+    ):
+        loc = page.locator(selector)
+        if loc.count() != 1 or not (loc.first.input_value() or "").strip():
+            problems.append(label)
+    male = page.locator(GENDER)
+    female = page.locator(account_profile.RESUME_COMMON_GENDER_FEMALE)
+    if not (
+        male.count() == 1
+        and female.count() == 1
+        and (male.first.is_checked() or female.first.is_checked())
+    ):
+        problems.append("пол")
+    for selector, label in (
+        (CITIZENSHIP_TRIGGER, "гражданство"),
+        (BIRTHDAY_YEAR_TRIGGER, "год рождения"),
+    ):
+        values = page.locator(f"{selector} {TRIGGER_VALUES}")
+        if values.count() != 1 or not values.first.inner_text().strip():
+            problems.append(label)
+    return problems
+
+
+def confirm_common_screen(
+    page: Page,
+    resume_id: str,
+    *,
+    before_click: Callable[[], None] | None = None,
+) -> CommonResult:
+    """Подтвердить экран common fresh-черновика — перевести draft_started
+    дальше по пайплайну create→publish (#985).
+
+    Открывает identity-bound экран, проверяет предзаполнение из профиля
+    аккаунта (fail-closed ДО клика) и нажимает «Сохранить и продолжить» —
+    мутирующий клик (NEXT визарда, см. #936/#913), поэтому ``before_click``
+    ставится вызывающим кодом в DurableMutationAttempt-seam. Исход клика
+    решает ``wait_for_url`` (уход с /profile/resume/common): сам click()
+    может упасть при состоявшемся переходе (паттерн #913), а непереход в
+    пределах бюджета — uncertain (клик мог уйти, #176).
+    """
+    _open_common_screen(page, resume_id)
+    problems = _wizard_prefill_problems(page)
+    if problems:
+        return CommonResult(
+            False,
+            "экран common не предзаполнен профилем аккаунта: "
+            + ", ".join(problems)
+            + " — заполните вручную и повторите",
+        )
+    save = _strict(page, SAVE, "кнопка «Сохранить и продолжить» экрана common")
+    # Баннер закрывается ДО резервирования uncertain-маркера — семантика seam
+    # «маркер вплотную к мутирующему клику» (тот же порядок, что у
+    # create_resume._click_one(before_click=...) и _click_wizard_next).
+    dismiss_cookie_banner(page)
+    if before_click is not None:
+        before_click()
+    try:
+        save.click()
+    except PlaywrightError:
+        # Переход мог состояться (анимация модалки/оверлея перехватывает
+        # pointer events, #913) — исход решает wait_for_url ниже.
+        pass
+    try:
+        page.wait_for_url(
+            lambda url: urlsplit(str(url)).path != COMMON_SCREEN_PATH,
+            wait_until="commit",
+            timeout=_COMMON_SCREEN_NAV_TIMEOUT_MS,
+        )
+    except PlaywrightError as exc:
+        return CommonResult(False, f"переход с экрана common не подтверждён: {exc}", True, True)
+    return CommonResult(True, "экран common подтверждён", True)
+
+
+def read_common(page: Page) -> CommonValues:
+    """Read only the fields owned by this slice from an already-open form.
+
+    При любом отказе читатель дампирует HTML открытой формы (тот же
+    best-effort-принцип, что у семейства ``_dump_*_failure``): отказы strict-
+    чтения на fresh-черновиках — первый сигнал дрейфа DOM этой формы, без
+    дампа они недиагностируемы.
+    """
+    try:
+        return _read_common(page)
+    except Exception:
+        try:
+            dump_page_html(page, "common_read_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
+            pass
+        raise
+
+
+def _read_common(page: Page) -> CommonValues:
     def value(selector: str) -> str:
         loc = _strict(page, selector, selector)
         return loc.input_value().strip()
