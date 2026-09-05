@@ -48,6 +48,7 @@ def test_browser_command_registry_is_complete() -> None:
         "resume-views",
         "run",
         "search",
+        "select-photo",
         "upload-photo",
     }
     for command in cli.BROWSER_COMMANDS - {

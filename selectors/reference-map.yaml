@@ -4194,6 +4194,26 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
     verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGNED:
+    value: '[data-qa=''photo-viewer-action-assigned'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:174
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:174
+      note: Disabled-кнопка «Назначено» — маркер того, что текущее фото вьюера назначено этому резюме (у назначенного фото
+        assign-current отсутствует). Живой read-only дамп 2026-09-04 (резюме с фото).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
   resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT:
     value: '[data-qa=''photo-viewer-action-assign-current'']'
     criticality: read
@@ -4302,6 +4322,106 @@ selectors:
     verification: browser_observed
     last_verified_at: '2026-09-04'
     verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_MORE:
+    value: '[data-qa=''photo-viewer-more'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:170
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:170
+      note: Кнопка «Действия с фото» (три точки) в тулбаре вьюера; aria-label подтверждена. Открывает меню назначения на резюме.
+        Живой read-only дамп 2026-09-04.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_NEXT:
+    value: '[aria-label=''Следующее изображение'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:184
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:184
+      note: Стрелка «следующее фото» слайдера вьюера — по aria-label (data-qa нет). Переключение фото read-only. Живой read-only
+        дамп 2026-09-04.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_PREV:
+    value: '[aria-label=''Предыдущее изображение'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:185
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:185
+      note: Стрелка «предыдущее фото» слайдера вьюера — по aria-label (data-qa нет). Живой read-only дамп 2026-09-04.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ROOT:
+    value: '[role=''dialog''][class*=''magritte-media-viewer___'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:163
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:163
+      note: Корень полноэкранного вьюера фото (magritte MediaViewer), открывается кнопкой-карандашом БЕЗ modal-overlay. Живой
+        read-only дамп 2026-09-04 (photo_viewer_open_failed_20260904_131222.html, select-photo --dry-run).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_THUMBNAILS:
+    value: '[class*=''magritte-preview-list___''] img'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:180
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:180
+      note: Лента миниатюр в футере вьюера, по одной на фото библиотеки, порядок = порядок слайдера («1 из 6», 6 img). data-qa
+        у миниатюр нет — селектор по стабильному префиксу magritte-класса. Идентификатор фото — числовой id в пути src URL.
+        Живой read-only дамп 2026-09-04.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_resume_page_read_only
     verified_by: claude
   resume_position.BUSINESS_TRIPS:
     value: '[data-qa=''resume-edit-business-trip-readiness'']'

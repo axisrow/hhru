@@ -81,6 +81,7 @@ BROWSER_COMMANDS = frozenset(
         "resume-views",
         "run",
         "search",
+        "select-photo",
         "upload-photo",
     }
 )
@@ -120,6 +121,7 @@ WRITE_COMMANDS = frozenset(
         "blacklist",
         "update",
         "report-vacancy",
+        "select-photo",
         "upload-photo",
     }
 )
