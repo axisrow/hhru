@@ -109,6 +109,8 @@ Permissions минимальны: `storage` (журнал диагностики
 An MV3 extension cannot install or launch a local CLI: Chrome extension APIs do not provide arbitrary process execution. A future bridge can use **Native Messaging** (a separately installed host manifest and executable) or a CLI-owned local HTTP/WebSocket server. Native Messaging is the selected future option because it avoids exposing a listening network port; it is intentionally not part of this stage.
 
 Issue #588 status: первый этап реализован этим MVP — детект (#644/#743/#767) +
-классификация + allowlist-команды + закрытие безопасных + транспорт popup→relay.
-Вне первого этапа остались: read-only сверка якорей на живом DOM (#932) и
-агентский мост на Native Messaging (второй этап).
+классификация (#929: policy.js) + allowlist-команды + закрытие безопасных
+(#930: аудит 2026-09-05 подтвердил полное соответствие) + внутренний транспорт
+popup→relay (#931; MVP #935, тестовый добор — PR #984).
+Живая read-only сверка якорей — #932 (выполнена 2026-09-05). Остался только
+агентский мост на Native Messaging (второй этап эпика #588; отдельного issue нет).
