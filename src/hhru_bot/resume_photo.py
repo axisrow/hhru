@@ -884,6 +884,51 @@ def _variant_sibling(avatar_id: str | None, target_id: str, state: ViewerState) 
     return "other"
 
 
+def switch_viewer_photo(
+    page: Page,
+    state: ViewerState,
+    photo_id: str,
+) -> tuple[ViewerState | None, str]:
+    """Кликнуть миниатюру ``photo_id`` и подтвердить слайдер на нём (read-only).
+
+    Общий шаг select-photo/delete-photo: идентичность фото доказывается
+    лентой (до клика) и счётчиком слайдера (после), каждый отказ здесь —
+    честный fail-closed ДО любой мутации. Возвращает ``(ViewerState, "")``
+    при успехе либо ``(None, reason)``.
+    """
+    # Однозначность — по различимым id (повтор того же id в ленте — это то
+    # же фото с другим query-кропом, не неоднозначность), а ИНДЕКС клика —
+    # по сырому порядку ленты: nth() локатора адресует сырой DOM, позиции
+    # после дубликата id в дедупе сдвигаются (ревью #967).
+    if photo_id not in state.thumb_ids:
+        return None, (
+            f"photo {photo_id} не подтверждён в ленте "
+            f"(0 из {len(state.thumb_ids)} миниатюр); запись запрещена"
+        )
+    raw_index = state.thumb_ids.index(photo_id)
+    try:
+        # Локатор скоупится корнем вьюера — тем же скоупом, что и JS-инвентарь.
+        thumbs = page.locator(RESUME_PHOTO_VIEWER_ROOT).locator(RESUME_PHOTO_VIEWER_THUMBNAILS)
+        thumbs.nth(raw_index).click()
+    except PlaywrightError as exc:
+        return None, f"клик по миниатюре photo {photo_id} не удался: {exc}"
+    # Переключение слайда — React-рендер: строгая проверка до ожидания
+    # увидела бы прежний слайд («commit не значит отрисовано»). Поллим
+    # чтение состояния вьюера: каждый промах — честный fail-closed отказ
+    # до мутации, ранний отказ здесь дороже лишней секунды.
+    switched: ViewerState | None = None
+    for _ in range(5):
+        page.wait_for_timeout(1_000)
+        switched = _read_viewer_state(page)
+        if switched is not None and _current_photo_id(switched) == photo_id:
+            return switched, ""
+    current = _current_photo_id(switched) if switched else None
+    return None, (
+        f"после клика по миниатюре слайдер не подтвердил photo {photo_id} "
+        f"(текущий: {current}); запись запрещена"
+    )
+
+
 def _select_and_assign(
     page: Page,
     resume,
@@ -905,42 +950,9 @@ def _select_and_assign(
         )
     if not state.photos:
         return SelectPhotoResult(reason="библиотека фото пуста — назначать нечего")
-    # Однозначность — по различимым id (повтор того же id в ленте — это то
-    # же фото с другим query-кропом, не неоднозначность), а ИНДЕКС клика —
-    # по сырому порядку ленты: nth() локатора адресует сырой DOM, позиции
-    # после дубликата id в дедупе сдвигаются (ревью #967).
-    if photo_id not in state.thumb_ids:
-        return SelectPhotoResult(
-            reason=(
-                f"photo {photo_id} не подтверждён в ленте "
-                f"(0 из {len(state.thumb_ids)} миниатюр); запись запрещена"
-            )
-        )
-    raw_index = state.thumb_ids.index(photo_id)
-    try:
-        # Локатор скоупится корнем вьюера — тем же скоупом, что и JS-инвентарь.
-        thumbs = page.locator(RESUME_PHOTO_VIEWER_ROOT).locator(RESUME_PHOTO_VIEWER_THUMBNAILS)
-        thumbs.nth(raw_index).click()
-    except PlaywrightError as exc:
-        return SelectPhotoResult(reason=f"клик по миниатюре photo {photo_id} не удался: {exc}")
-    # Переключение слайда — React-рендер: строгая проверка до ожидания
-    # увидела бы прежний слайд («commit не значит отрисовано»). Поллим
-    # чтение состояния вьюера: каждый промах — честный fail-closed отказ
-    # до мутации, ранний отказ здесь дороже лишней секунды.
-    switched: ViewerState | None = None
-    for _ in range(5):
-        page.wait_for_timeout(1_000)
-        switched = _read_viewer_state(page)
-        if switched is not None and _current_photo_id(switched) == photo_id:
-            break
-    if switched is None or _current_photo_id(switched) != photo_id:
-        current = _current_photo_id(switched) if switched else None
-        return SelectPhotoResult(
-            reason=(
-                f"после клика по миниатюре слайдер не подтвердил photo {photo_id} "
-                f"(текущий: {current}); запись запрещена"
-            )
-        )
+    switched, switch_error = switch_viewer_photo(page, state, photo_id)
+    if switched is None:
+        return SelectPhotoResult(reason=switch_error)
     if switched.assigned:
         return SelectPhotoResult(
             success=True,

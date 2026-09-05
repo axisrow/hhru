@@ -187,11 +187,15 @@
 | resume_photo.RESUME_PHOTO_EDITOR_APPLY | `[data-qa='photo-editor-apply']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_FILE_INPUT | `input[data-qa='resume-photo-proxy-gallery-input']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_MFE_CONTAINER | `[class*='ContainerForMicroFrontend-resumePhotoViewer']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_ACTION_DELETE | `[data-qa='photo-viewer-action-delete']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_ACTION_HIDE | `[data-qa='photo-viewer-action-hide']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGNED | `[data-qa='photo-viewer-action-assigned']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT | `[data-qa='photo-viewer-action-assign-current']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE | `[data-qa='photo-viewer-assign-resume-{resume_id}']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT | `[data-qa='photo-viewer-assign-submit']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_CLOSE | `[data-qa='photo-viewer-close']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_DELETE_CONFIRM | `[data-qa='photo-viewer-delete-confirm']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_DELETE_DIALOG | `[data-qa='photo-viewer-delete']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_LIMIT | `[data-qa='photo-viewer-limit']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_MORE | `[data-qa='photo-viewer-more']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_NEXT | `[aria-label='Следующее изображение']` | — | — | — | documented_live |

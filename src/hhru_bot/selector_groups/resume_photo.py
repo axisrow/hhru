@@ -142,6 +142,17 @@ RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE = _selector(
 # а после переоткрытия через карандаш dispatch_event назначает фото.
 RESUME_PHOTO_VIEWER_CLOSE = _selector("resume_photo.RESUME_PHOTO_VIEWER_CLOSE")
 
+# Confirm-диалог удаления: role=alertdialog (aria-modal, z-index 2370 над
+# вьюером), контейнер содержимого photo-viewer-delete — h2[data-qa='title']
+# «Удалить фото?», title-description «Оно удалится из резюме, где было
+# установлено» (удаление бьёт по ВСЕМ резюме с этим фото), кнопки
+# photo-viewer-delete-confirm («Удалить», negative) и
+# photo-viewer-delete-cancel («Отменить»). Маркер открытого диалога после
+# клика по пункту меню удаления. Снят живым read-only прогоном 2026-09-05
+# (photo_delete_confirm_*): подтверждение НЕ нажималось.
+RESUME_PHOTO_VIEWER_DELETE_DIALOG = _selector("resume_photo.RESUME_PHOTO_VIEWER_DELETE_DIALOG")
+RESUME_PHOTO_VIEWER_DELETE_CONFIRM = _selector("resume_photo.RESUME_PHOTO_VIEWER_DELETE_CONFIRM")
+
 # Модалка «8 фото — это максимум»: галерея фото ПЕРЕПОЛНЕНА. Подтверждена
 # боевым прогоном 2026-09-04 (дамп photo_editor_missing_uncertain_20260904_*
 # в data/logs): после set_input_files вместо crop-редактора открылся
@@ -156,6 +167,25 @@ RESUME_PHOTO_VIEWER_LIMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_LIMIT")
 # это role=dialog с классом magritte-media-viewer___..., БЕЗ data-qa
 # modal-overlay (живой дамп 2026-09-04, read-only dry-run select-photo;
 # бои 2026-09-02/03 — «инвентарь overlay пуст»).
+
+# Пункт «Удалить» в more-меню «Действия с фото» (magritte drop-панель
+# [data-qa='drop'] вне корня вьюера; пункты появляются в DOM только при
+# открытой панели — в дампах вьюера без меню их нет вовсе). Стиль
+# negative (destructive). Клик сам НЕ мутирует: открывает confirm-диалог
+# RESUME_PHOTO_VIEWER_DELETE_DIALOG (живой read-only прогон 2026-09-05:
+# клик по пункту -> диалог открыт, подтверждение не нажималось, все 7 фото
+# библиотеки на месте при следующем прогоне). Пункт доступен для любого
+# фото библиотеки. Живой DOM 2026-09-05 (photo_more_menu_*).
+RESUME_PHOTO_VIEWER_ACTION_DELETE = _selector("resume_photo.RESUME_PHOTO_VIEWER_ACTION_DELETE")
+
+# Пункт «Скрыть фото из резюме» — рендерится ТОЛЬКО для фото, назначенного
+# текущему резюме (в одном меню с disabled photo-viewer-action-assigned);
+# у неназначенного вместо него photo-viewer-action-assign-current (дампы
+# 2026-09-05: 115923 — назначенное, пункт есть; 115747 — неназначенное,
+# отсутствует). Клик мутирует СРАЗУ, без confirm-диалога: в словаре
+# локализации MFE нет hide.confirm (обратимость — повторное назначение
+# select-photo), это точка невозврата потока скрытия.
+RESUME_PHOTO_VIEWER_ACTION_HIDE = _selector("resume_photo.RESUME_PHOTO_VIEWER_ACTION_HIDE")
 
 # Корень вьюера — маркер открытого вьюера вместо assign-current: у уже
 # назначенного фото кнопка назначения отсутствует (дамп 2026-09-04: вместо

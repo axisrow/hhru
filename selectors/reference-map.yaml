@@ -4194,6 +4194,51 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
     verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ACTION_DELETE:
+    value: '[data-qa=''photo-viewer-action-delete'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:163
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:163
+      note: Пункт «Удалить» в more-меню «Действия с фото» (magritte drop-панель [data-qa='drop'] вне корня вьюера, style-negative).
+        Клик сам НЕ мутирует — открывает confirm-диалог photo-viewer-delete (живой read-only прогон 2026-09-05 — клик открыл
+        диалог, подтверждение не нажималось, сессия закрыта, все 7 фото библиотеки на месте при следующем прогоне). Пункт
+        доступен для любого фото библиотеки. Живой DOM 2026-09-05 (photo_more_menu_20260905_*).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ACTION_HIDE:
+    value: '[data-qa=''photo-viewer-action-hide'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:171
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:171
+      note: Пункт «Скрыть фото из резюме» — рендерится ТОЛЬКО для фото, назначенного текущему резюме (в одном меню с disabled
+        photo-viewer-action-assigned); у неназначенного вместо него photo-viewer-action-assign-current. Клик мутирует СРАЗУ,
+        без confirm-диалога (в словаре локализации MFE нет hide.confirm; обратимость — повторное назначение select-photo).
+        Живой DOM 2026-09-05 (photo_more_menu_20260905_115923 — назначенное фото, пункт присутствует; 115747 — неназначенное,
+        отсутствует).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
   resume_photo.RESUME_PHOTO_VIEWER_ASSIGNED:
     value: '[data-qa=''photo-viewer-action-assigned'']'
     criticality: read
@@ -4300,6 +4345,48 @@ selectors:
     verification: browser_observed
     last_verified_at: '2026-09-04'
     verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_DELETE_CONFIRM:
+    value: '[data-qa=''photo-viewer-delete-confirm'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:198
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:198
+      note: Кнопка «Удалить» (style-negative) в confirm-диалоге photo-viewer-delete — единственная точка невозврата потока
+        удаления, удаляет фото из библиотеки аккаунта и из ВСЕХ резюме, где оно установлено. Снята живым read-only прогоном
+        2026-09-05 (photo_delete_confirm_20260905_120203) — клик по пункту меню открыл диалог, кнопка НЕ нажималась.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_DELETE_DIALOG:
+    value: '[data-qa=''photo-viewer-delete'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:190
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:190
+      note: Контейнер содержимого confirm-диалога удаления (role=alertdialog, aria-modal, z-index 2370 над вьюером) — h2[data-qa='title']
+        «Удалить фото?», title-description «Оно удалится из резюме, где было установлено», кнопки photo-viewer-delete-confirm
+        и photo-viewer-delete-cancel. Маркер открытого диалога после клика по пункту меню удаления. Живой read-only дамп 2026-09-05.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_resume_page_read_only
     verified_by: claude
   resume_photo.RESUME_PHOTO_VIEWER_LIMIT:
     value: '[data-qa=''photo-viewer-limit'']'
