@@ -12,7 +12,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -475,6 +475,94 @@ def _still_on_experience_editor(page: Page) -> bool:
     return path.startswith("/profile/edit/experience") or (
         path.startswith("/resume/edit/") and path.endswith("/experience")
     )
+
+
+def _expected_editor(page: Page, resume_id: str, first_entry: bool) -> bool:
+    """True while the page is THIS resume's confirmed experience editor (#960).
+
+    This predicate IS the mutation boundary of the save loop below: attempt 2
+    re-checks it right before the only allowed second save click, so a tab
+    that drifted to another resume's editor can never receive a re-click.
+    Exact path/query comparison replaces the old glob semantics — the
+    ``*``-vs-``**``-vs-trailing-slash question class from PR #958 review
+    cycle 3 cannot come up here. Confirmed shapes:
+    - first entry: exactly ``/resume/edit/{resume_id}/experience`` (#787);
+    - shared profile: exactly ``/profile/edit/experience`` or with a single
+      ``/{rowId}`` segment (#844), and ALWAYS with
+      ``?resumeFrom={resume_id}`` (#840) — both code-driven entry points
+      carry the param. ``resumeFrom`` is the only resume-specific signal
+      the URL has: an empty query is exactly what hh.ru shows when NO
+      binding was established (#787 live capture: the param dropped on the
+      suggestion-chip route), so an empty-query editor could be ANY
+      resume's editor and must never gate the retry click (#960 review,
+      round 3). A similarly named sibling route
+      (``/profile/edit/experience-notes``), a deeper path
+      (``/experience/{row}/extra``) or any other query — not the confirmed
+      editor, fail closed.
+    """
+    parts = urlsplit(page.url)
+    path = parts.path.rstrip("/")
+    if first_entry:
+        return path == f"/resume/edit/{resume_id}/experience"
+    base = "/profile/edit/experience"
+    remainder = path[len(base) :]
+    segments_after_base = [part for part in remainder.split("/") if part]
+    return (
+        # Explicit prefix check first: a shorter unrelated path ("/login",
+        # "/profile/edit") slices to an empty remainder and would otherwise
+        # pass the empty-remainder test below as the base editor (#960
+        # review, round 2).
+        path.startswith(base)
+        # The character right after the base must be nothing or a "/" — a
+        # sibling route like "-notes" shares the prefix but not the route.
+        and (not remainder or remainder.startswith("/"))
+        and len(segments_after_base) <= 1
+        and parts.query == f"resumeFrom={resume_id}"
+    )
+
+
+SaveOutcomeKind = Literal["saved", "rejected", "drifted", "unconfirmed"]
+
+
+@dataclass(frozen=True)
+class SaveOutcome:
+    """Classified result of one save click (#960).
+
+    Exactly one ``kind`` per outcome; the flat save loop maps every kind to
+    exactly one ledger state (saved → binding verification, rejected after
+    the refill retry → failed, everything else → uncertain)."""
+
+    kind: SaveOutcomeKind
+    detail: str = ""
+
+
+def _classify_save_outcome(page: Page, resume_id: str, first_entry: bool) -> SaveOutcome:
+    """Classify the page state after a save click (#960).
+
+    saved — the browser is on ``/resume/{resume_id}`` (trailing slash and
+      query suffix do not disqualify: explicit path comparison, not glob)
+      AND the resume identity probe confirms it;
+    rejected — still on the confirmed editor with visible inline validation
+      texts, i.e. a definite non-mutation hh.ru refused client-side
+      (#959, live capture 2026-09-03);
+    drifted — still an experience editor, but not the confirmed one for
+      THIS resume (another resume's editor, a foreign ``resumeFrom``);
+    unconfirmed — everything else: the click's effect is genuinely unknown
+      and the caller must report uncertain.
+    """
+    path = urlsplit(page.url).path.rstrip("/")
+    if path == f"/resume/{resume_id}" and resume_identity_matches(page, resume_id):
+        return SaveOutcome("saved")
+    if _expected_editor(page, resume_id, first_entry):
+        rejection = _read_save_validation_errors(page)
+        if rejection is not None:
+            return SaveOutcome("rejected", rejection)
+        return SaveOutcome(
+            "unconfirmed", f"форма не навигировала и валидации не показала ({page.url})"
+        )
+    if _still_on_experience_editor(page):
+        return SaveOutcome("drifted", page.url)
+    return SaveOutcome("unconfirmed", f"страница не редактор опыта и не резюме ({page.url})")
 
 
 def _select_month(page: Page, locator, month: str) -> None:
@@ -1122,7 +1210,7 @@ def edit_experience_on_hh(
                         f"строка опыта {index}: не удалось открыть новую запись: {exc}"
                     )
                 ]
-            if urlsplit(page.url).path.rstrip("/") != edit_path:
+            if not _expected_editor(page, resume_id, True):
                 return results + [
                     ExperienceResult(
                         f"строка опыта {index}: форма открыта не для того резюме ({page.url})"
@@ -1342,119 +1430,126 @@ def edit_experience_on_hh(
                             "сохранением, save не нажат (#956)"
                         )
                     ]
-                save_attempted = True
-                rejection_retried = False
-                while True:
+                # #960: the save loop is flat and bounded. The invariant reads
+                # locally: the ONLY mutating click is `save.click()` below, it
+                # happens at most twice, and each iteration re-confirms —
+                # before clicking — that the page is still THIS resume's
+                # confirmed editor (_expected_editor; the attempt-2 re-check
+                # closes PR #958 cycle 3's drifted-retry finding). Every
+                # outcome leaves the loop in exactly one ledger state:
+                # saved → binding verification below, rejected after the
+                # refill retry → failed, anything else → uncertain.
+                save_attempted = False
+                for attempt in (1, 2):
                     save = page.locator(save_selector)
                     if save.count() != 1:
                         return results + [
                             ExperienceResult(f"строка {index}: save-кнопка не подтверждена")
                         ]
-                    save.click()
-                    try:
-                        # Trailing "*" (#958 follow-up): the post-save redirect
-                        # carries a query suffix (live log 2026-09-03: navigated
-                        # to ".../resume/{id}?hhtmFrom=profile_experience") and a
-                        # bare glob is a FULL match, so the save was recorded as
-                        # an uncertain after a 30s timeout although Playwright's
-                        # own log showed the navigation had happened. "*" matches
-                        # the query/fragment suffix but not a "/" path segment,
-                        # so a genuinely different page still fails the wait;
-                        # resume_identity_matches() below re-checks identity.
-                        page.wait_for_url(
-                            f"**/resume/{resume_id}*",
-                            wait_until="commit",
-                            timeout=SAVE_TIMEOUT_MS,
-                        )
-                        break
-                    except PlaywrightError as exc:
-                        # #958 follow-up (live capture 2026-09-03): before falling
-                        # back to the opaque navigation-timeout uncertain, check
-                        # whether hh.ru REJECTED the save client-side — visible
-                        # form-helper-error messages while still on the editor
-                        # URL are a definite non-mutation ("Пожалуйста, укажите"
-                        # under every empty required field, no navigation), so a
-                        # plain failed is reported instead: retryable, no
-                        # uncertain lock on the resume_id.
-                        rejection = _read_save_validation_errors(page)
-                        if rejection is not None and not rejection_retried:
-                            # The #956 wipe window is not observable from the
-                            # outside: the rejection may be a one-off wipe that
-                            # landed between the last verification and THIS
-                            # submit (live 2026-09-03: exactly that, on the
-                            # description field). Answer it with ONE bounded
-                            # refill+verify pass and a second save click before
-                            # reporting a failure — a second rejection (or a
-                            # refill that fails its own settle check) is final.
-                            rejection_retried = True
-                            _dump_experience_save_failure(
-                                page,
-                                index,
-                                RuntimeError(f"hh.ru отклонил сохранение: {rejection}"),
-                            )
-                            logger.warning(
-                                "experience: строка %s — save отклонён валидацией (%s); "
-                                "дозаполнение и один повторный save",
-                                index,
-                                rejection,
-                            )
-                            try:
-                                refill_ok = _refill_and_verify_fields()
-                            except (PlaywrightError, ValueError) as refill_exc:
-                                # The refill runs INSIDE this except handler, so
-                                # a throw here would escape the whole try uncaught
-                                # (Python handlers do not catch exceptions raised
-                                # in sibling handlers). A save click has already
-                                # happened, so the outcome is uncertain, not a
-                                # crash.
-                                return results + [
-                                    ExperienceResult(
-                                        f"строка {index}: дозаполнение после отклонения "
-                                        f"save не удалось: {refill_exc}",
-                                        uncertain=True,
-                                    )
-                                ]
-                            if not refill_ok:
-                                return results + [
-                                    ExperienceResult(
-                                        f"строка {index}: поле не удерживает значение "
-                                        f"после отклонения save: {rejection}"
-                                    )
-                                ]
-                            continue
-                        if rejection is not None:
-                            # Dump here too: the validation text is generic
-                            # ("Пожалуйста, укажите") and does not name the field,
-                            # so without the HTML the rejected field is unprovable
-                            # and the next run repeats blind.
-                            _dump_experience_save_failure(
-                                page,
-                                index,
-                                RuntimeError(f"hh.ru отклонил сохранение: {rejection}"),
-                            )
-                            return results + [
-                                ExperienceResult(
-                                    f"строка {index}: hh.ru отклонил сохранение после "
-                                    f"дозаполнения — валидация формы: {rejection}"
-                                )
-                            ]
-                        # #956: dump the page at the moment of the failed save so
-                        # the next investigation is reproducible without another
-                        # live attempt (same pattern as resume_education's
-                        # _dump_save_failure). The dump shows whether the form
-                        # still holds the values and whether a validation message
-                        # or an overlay absorbed the click.
-                        _dump_experience_save_failure(page, index, exc)
+                    if save_attempted and not _expected_editor(page, resume_id, first_entry):
+                        # A save click already happened and its effect is
+                        # unknown — uncertain, never a blind re-click on an
+                        # unconfirmed form.
                         return results + [
                             ExperienceResult(
-                                f"строка {index}: сохранение не подтверждено после клика: {exc}",
+                                f"строка {index}: повторный save отменён: редактор не подтверждён",
                                 uncertain=True,
                             )
                         ]
-                if not resume_identity_matches(page, resume_id):
+                    save_attempted = True
+                    save.click()
+                    # wait_for_url is only the bounded timer that gives hh.ru
+                    # time to navigate; the verdict comes from
+                    # _classify_save_outcome's explicit path comparison below,
+                    # so a timeout here is not read as a failure (an SPA
+                    # pushState navigation need not raise the lifecycle event
+                    # wait_for_url waits for, #825). The trailing "**" matches
+                    # both the query suffix (live log 2026-09-03:
+                    # ".../resume/{id}?hhtmFrom=profile_experience") and a
+                    # trailing slash — the full-match-glob false-uncertains
+                    # from PR #958 review cycle 3.
+                    nav_error: PlaywrightError | None = None
+                    try:
+                        page.wait_for_url(
+                            f"**/resume/{resume_id}**",
+                            wait_until="commit",
+                            timeout=SAVE_TIMEOUT_MS,
+                        )
+                    except PlaywrightError as exc:
+                        nav_error = exc
+                    outcome = _classify_save_outcome(page, resume_id, first_entry)
+                    if outcome.kind == "saved":
+                        break
+                    if outcome.kind == "rejected" and attempt == 1:
+                        # Definite non-mutation: hh.ru refused the submit
+                        # client-side (#959). Answer it with ONE bounded
+                        # refill+verify pass and the second — and only —
+                        # re-click before reporting a failure; the #956 wipe
+                        # may have landed between the last verification and
+                        # THIS submit (live 2026-09-03, dump-confirmed).
+                        _dump_experience_save_failure(
+                            page,
+                            index,
+                            RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
+                        )
+                        logger.warning(
+                            "experience: строка %s — save отклонён валидацией (%s); "
+                            "дозаполнение и один повторный save",
+                            index,
+                            outcome.detail,
+                        )
+                        try:
+                            refill_ok = _refill_and_verify_fields()
+                        except (PlaywrightError, ValueError) as refill_exc:
+                            # A save click has already happened, so the outcome
+                            # is uncertain, not a crash (PR #958 cycle 1).
+                            return results + [
+                                ExperienceResult(
+                                    f"строка {index}: дозаполнение после отклонения "
+                                    f"save не удалось: {refill_exc}",
+                                    uncertain=True,
+                                )
+                            ]
+                        if not refill_ok:
+                            return results + [
+                                ExperienceResult(
+                                    f"строка {index}: поле не удерживает значение "
+                                    f"после отклонения save: {outcome.detail}"
+                                )
+                            ]
+                        continue
+                    if outcome.kind == "rejected":
+                        # Dump here too: the validation text is generic
+                        # ("Пожалуйста, укажите") and does not name the field,
+                        # so without the HTML the rejected field is unprovable
+                        # and the next run repeats blind.
+                        _dump_experience_save_failure(
+                            page,
+                            index,
+                            RuntimeError(f"hh.ru отклонил сохранение: {outcome.detail}"),
+                        )
+                        return results + [
+                            ExperienceResult(
+                                f"строка {index}: hh.ru отклонил сохранение после "
+                                f"дозаполнения — валидация формы: {outcome.detail}"
+                            )
+                        ]
+                    # #956: dump the page at the moment of the unconfirmed save
+                    # (drifted editor, another page, unreadable state) so the
+                    # next investigation is reproducible without another live
+                    # attempt. nav_error (the raw Playwright timeout text) goes
+                    # into the dump/log; the CLI reason carries the classifier's
+                    # page-state detail.
+                    _dump_experience_save_failure(
+                        page,
+                        index,
+                        nav_error
+                        if nav_error is not None
+                        else RuntimeError(f"save не подтверждён: {outcome.detail}"),
+                    )
                     return results + [
                         ExperienceResult(
-                            f"строка {index}: после save identity резюме не подтверждён",
+                            f"строка {index}: сохранение не подтверждено: {outcome.detail}",
                             uncertain=True,
                         )
                     ]

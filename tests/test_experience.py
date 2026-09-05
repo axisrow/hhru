@@ -6,6 +6,9 @@ from hhru_bot.experience import (
     ExperienceEntry,
     ExperiencePlan,
     ExperienceResult,
+    SaveOutcome,
+    _classify_save_outcome,
+    _expected_editor,
     _experience_row_indexes,
     _merge_fill_plan,
     build_prompt,
@@ -399,7 +402,10 @@ class _SavePage:
         return _Locator(count=1)
 
     def wait_for_url(self, url, *, wait_until=None, timeout=None):
-        return None
+        # #960: the save loop's verdict comes from _classify_save_outcome
+        # reading page.url, so a successful wait must model the navigation
+        # itself (all fixtures in this file save resume-1).
+        self.url = "https://hh.ru/resume/resume-1"
 
     def wait_for_function(self, _fn, *, arg=None, timeout=None):
         return None
@@ -1516,6 +1522,9 @@ class _RejectionRetryPage(_SavePage):
             raise PlaywrightError(
                 f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
             )
+        # #960: a non-rejected click navigates to the resume page — the
+        # classifier reads page.url, so the fake must model it.
+        self.url = "https://hh.ru/resume/resume-1"
 
     def locator(self, selector):
         if selector == "validation-errors":
@@ -1727,7 +1736,10 @@ def test_edit_experience_save_timeout_without_validation_stays_uncertain(monkeyp
     assert len(results) == 1
     assert not results[0].success
     assert results[0].uncertain
-    assert "сохранение не подтверждено после клика" in results[0].reason
+    # #960: the uncertain reason now carries the classifier's page-state
+    # detail (the raw Playwright timeout text goes to the dump/log instead).
+    assert "сохранение не подтверждено" in results[0].reason
+    assert "валидации не показала" in results[0].reason
     assert dumps == [0]
 
 
@@ -1763,6 +1775,244 @@ def test_edit_experience_save_redirect_with_query_suffix_is_success(monkeypatch)
     monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
 
     page = _QuerySuffixNavPage(indexes=[], grow_indexes_on_reload=[2])
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan([ExperienceEntry(company="Acme", position="Engineer")]),
+        dry_run=False,
+    )
+
+    assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
+
+
+# --- #960: _expected_editor / _classify_save_outcome unit contracts ---
+
+
+class _OutcomePage:
+    """Minimal fake for the #960 classifier: only page.url and the
+    validation-error locator group matter to it."""
+
+    def __init__(self, url, error_texts=None):
+        self.url = url
+        self._error_texts = error_texts
+
+    def locator(self, selector):
+        if selector == "validation-errors":
+            return _ValidationErrorsLocator(self._error_texts or [])
+        return _Locator(count=0)
+
+
+def test_expected_editor_accepts_only_this_resumes_confirmed_shapes():
+    """#960 contract: first entry is the exact /resume/edit/{id}/experience
+    path (trailing slash tolerated), shared profile is
+    /profile/edit/experience[/{rowId}] carrying exactly
+    ?resumeFrom={resume_id} (#840/#844 live shapes). Anything else — another
+    resume's editor, an empty query, a foreign query — is not the confirmed
+    editor."""
+    assert _expected_editor(_OutcomePage("/resume/edit/00001/experience"), "00001", True)
+    assert _expected_editor(_OutcomePage("/resume/edit/00001/experience/"), "00001", True)
+    assert not _expected_editor(_OutcomePage("/resume/edit/00002/experience"), "00001", True)
+    assert not _expected_editor(_OutcomePage("/resume/00001"), "00001", True)
+
+    assert _expected_editor(
+        _OutcomePage("/profile/edit/experience?resumeFrom=00001"), "00001", False
+    )
+    assert _expected_editor(
+        _OutcomePage("/profile/edit/experience/12345?resumeFrom=00001"), "00001", False
+    )
+    # An empty query carries no resume-specific signal — the same URL may be
+    # showing ANOTHER resume's editor (#787 live capture: hh.ru drops
+    # resumeFrom exactly when no binding is established; #960 review,
+    # round 3). It must never gate the retry click.
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience/12345"), "00001", False)
+    # Another resume's binding (drifted tab) or a foreign query — not ours.
+    assert not _expected_editor(
+        _OutcomePage("/profile/edit/experience?resumeFrom=00002"), "00001", False
+    )
+    assert not _expected_editor(
+        _OutcomePage("/profile/edit/experience?resumeFrom=00001&foo=bar"), "00001", False
+    )
+    assert not _expected_editor(
+        _OutcomePage("/resume/edit/00001/experience?resumeFrom=00001"), "00001", False
+    )
+    # Path-segment boundary (#960 review): a similarly named sibling route
+    # and a deeper-than-{rowId} path share the prefix but are not the
+    # confirmed editor — the gate of the second save click must reject them.
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience-notes"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit/experience/123/extra"), "00001", False)
+    # Shorter unrelated paths slice to an empty remainder past the base
+    # (#960 review, round 2): without the explicit prefix check, "/login"
+    # with its empty query would pass as the base shared-profile editor.
+    assert not _expected_editor(_OutcomePage("/login"), "00001", False)
+    assert not _expected_editor(_OutcomePage("/profile/edit"), "00001", False)
+
+
+def test_classify_save_outcome_saved_requires_path_and_identity(monkeypatch):
+    """saved = explicit /resume/{id} path (trailing slash and query suffix do
+    not disqualify — the glob question class from PR #958 cycle 3) AND the
+    identity probe confirming this resume."""
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, rid: True)
+    assert _classify_save_outcome(
+        _OutcomePage("https://hh.ru/resume/00001?hhtmFrom=profile_experience"), "00001", True
+    ) == SaveOutcome("saved")
+    assert _classify_save_outcome(
+        _OutcomePage("https://hh.ru/resume/00001/"), "00001", False
+    ) == SaveOutcome("saved")
+    # Same path but identity not confirmed — NOT saved (uncertain upstream).
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, rid: False)
+    assert (
+        _classify_save_outcome(_OutcomePage("/resume/00001"), "00001", True).kind == "unconfirmed"
+    )
+
+
+def test_classify_save_outcome_rejected_reads_visible_validation(monkeypatch):
+    """rejected = still on the confirmed editor AND visible form-helper-error
+    texts (#959 live capture) — a definite non-mutation."""
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, rid: False)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    outcome = _classify_save_outcome(
+        _OutcomePage("/resume/edit/00001/experience", error_texts=["Пожалуйста, укажите"]),
+        "00001",
+        True,
+    )
+    assert outcome.kind == "rejected"
+    assert "Пожалуйста, укажите" in outcome.detail
+
+    outcome = _classify_save_outcome(
+        _OutcomePage(
+            "/profile/edit/experience/9?resumeFrom=00001", error_texts=["Пожалуйста, укажите"]
+        ),
+        "00001",
+        False,
+    )
+    assert outcome.kind == "rejected"
+
+
+def test_classify_save_outcome_drifted_is_another_resumes_editor(monkeypatch):
+    """drifted = an experience editor route, but not the confirmed one for
+    THIS resume (the PR #958 cycle 3 drifted-retry finding)."""
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, rid: False)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    outcome = _classify_save_outcome(
+        _OutcomePage("/profile/edit/experience?resumeFrom=00002"), "00001", False
+    )
+    assert outcome.kind == "drifted"
+    # Empty-query shared editor: no resume-specific signal (#787 live drop,
+    # #960 review round 3) — could be any resume's editor, never ours.
+    outcome = _classify_save_outcome(_OutcomePage("/profile/edit/experience"), "00001", False)
+    assert outcome.kind == "drifted"
+    # The first-entry editor while saving an indexed (shared-profile) row.
+    outcome = _classify_save_outcome(_OutcomePage("/resume/edit/00001/experience"), "00001", False)
+    assert outcome.kind == "drifted"
+
+
+def test_classify_save_outcome_unconfirmed_is_everything_else(monkeypatch):
+    """unconfirmed = neither the resume page nor an experience editor (login
+    redirect, unrelated page) and also an editor whose validation read came
+    back empty — genuinely unknown outcomes."""
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, rid: False)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    assert (
+        _classify_save_outcome(_OutcomePage("https://hh.ru/account/login"), "00001", True).kind
+        == "unconfirmed"
+    )
+    assert (
+        _classify_save_outcome(_OutcomePage("/applicant/resumes"), "00001", False).kind
+        == "unconfirmed"
+    )
+    # On the confirmed editor but no readable validation: unknown, uncertain.
+    outcome = _classify_save_outcome(_OutcomePage("/resume/edit/00001/experience"), "00001", True)
+    assert outcome.kind == "unconfirmed"
+    assert "валидации не показала" in outcome.detail
+
+
+# --- #960: flat bounded save loop ---
+
+
+class _DriftBeforeRetryPage(_RejectionRetryPage):
+    """The first save click is rejected (#956 wipe), but while the refill
+    runs hh.ru navigates the tab to ANOTHER resume's shared-profile editor
+    (session drift). The attempt-2 guard must cancel the re-click instead of
+    mutating whatever form is now on screen."""
+
+    def __init__(self, indexes, **kwargs):
+        super().__init__(indexes, **kwargs)
+        self._save_locator_resolutions = 0
+
+    def locator(self, selector):
+        if selector == "[data-qa='resume-partial-edit-save']":
+            self._save_locator_resolutions += 1
+            if self._save_locator_resolutions == 2:
+                # The second resolution is the retry loop re-addressing the
+                # save button on attempt 2 — by then the tab has drifted.
+                self.url = "/profile/edit/experience/9?resumeFrom=other-resume"
+        return super().locator(selector)
+
+
+def test_edit_experience_drifted_retry_cancels_second_save_click(monkeypatch):
+    """#960 mutation boundary: before the only allowed second save click the
+    loop re-confirms THIS resume's editor; a drifted tab yields one uncertain
+    and NO second click."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr(
+        "hhru_bot.experience.EXPERIENCE_SAVE_VALIDATION_ERRORS", "validation-errors"
+    )
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+    dumps = []
+    monkeypatch.setattr(
+        "hhru_bot.experience._dump_experience_save_failure",
+        lambda page, index, exc: dumps.append(index),
+    )
+
+    page = _DriftBeforeRetryPage(indexes=[], reject_clicks=1)
+    results = edit_experience_on_hh(
+        page,
+        "resume-1",
+        ExperiencePlan(
+            [ExperienceEntry(company="Acme", position="Engineer", duties="Готовил хлеб")]
+        ),
+        dry_run=False,
+    )
+
+    assert page.save_clicks == 1
+    assert len(results) == 1
+    assert not results[0].success
+    assert results[0].uncertain
+    assert "повторный save отменён" in results[0].reason
+    assert dumps == [0]
+
+
+class _TrailingSlashNavPage(_SavePage):
+    """The post-save redirect lands on /resume/{id}/ (trailing slash) and the
+    wait deliberately times out — wait_for_url is only a timer (#960), the
+    classifier's explicit path comparison must still recognize the save."""
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):
+        self.url = "https://hh.ru/resume/resume-1/"
+        raise PlaywrightError(
+            f"Timeout {timeout}ms exceeded.\nwaiting for navigation to {url} until '{wait_until}'"
+        )
+
+
+def test_edit_experience_trailing_slash_redirect_is_success(monkeypatch):
+    """PR #958 review cycle 3: a "/resume/{id}/" redirect shape must not
+    false-uncertain a successful save — the classifier strips the trailing
+    slash instead of relying on glob semantics."""
+    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+    monkeypatch.setattr("hhru_bot.experience.goto_hh", _fake_goto_to_edit_path)
+    monkeypatch.setattr("hhru_bot.experience.resume_identity_matches", lambda page, resume_id: True)
+    monkeypatch.setattr("hhru_bot.experience.require_authenticated_page", lambda page: None)
+
+    page = _TrailingSlashNavPage(indexes=[], grow_indexes_on_reload=[2])
     results = edit_experience_on_hh(
         page,
         "resume-1",
