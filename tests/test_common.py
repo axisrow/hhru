@@ -6,7 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 
 import hhru_bot.common as common
-from hhru_bot.common import CommonValues, apply_common, read_common
+from hhru_bot.common import (
+    CommonValues,
+    apply_common,
+    merge_prefilled,
+    missing_required,
+    read_common,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -18,6 +24,31 @@ def test_common_values_exposes_only_first_slice():
         "lastName": "Lovelace",
         "gender": "female",
     }
+
+
+def test_merge_prefilled_keeps_hh_prefilled_fields_untouched():
+    requested = CommonValues(first_name="Ada", last_name="Lovelace", phone="+7")
+    current = CommonValues(first_name="Иван", last_name="", phone="+7999")
+    effective, skipped = merge_prefilled(requested, current)
+    # Поля, которые hh.ru предзаполнил из профиля, не затираются (#982).
+    assert effective.provided() == {"lastName": "Lovelace"}
+    assert dict(skipped) == {"first_name": "Иван", "phone": "+7999"}
+
+
+def test_merge_prefilled_treats_blank_and_none_as_empty():
+    requested = CommonValues(first_name="Ada", schedule=["full_day"])
+    current = CommonValues(first_name="   ", schedule=[], citizenship=None)
+    effective, skipped = merge_prefilled(requested, current)
+    assert effective.provided() == {
+        "firstName": "Ada",
+        "schedule": ["full_day"],
+    }
+    assert skipped == []
+
+
+def test_missing_required_lists_only_blank_fields():
+    current = CommonValues(first_name="Иван", last_name="", phone="+7999")
+    assert missing_required(current) == ["last_name", "birthday", "gender", "citizenship"]
 
 
 def test_apply_common_fills_inputs_and_selects_gender():
@@ -86,6 +117,152 @@ def test_read_common_fails_closed_on_ambiguous_selector():
 
     with pytest.raises(RuntimeError, match="не подтверждено однозначно"):
         read_common(page)
+
+
+def _command_harness(monkeypatch, tmp_path, *, current, page=None):
+    """Общий mock-стенд команды common без браузера (#982)."""
+    from hhru_bot import browser, config
+    from hhru_bot.commands import _common
+    from hhru_bot.commands import common as command
+    from hhru_bot.config import bare_resume
+
+    resume = bare_resume("00001")
+    fake_config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):
+            return page if page is not None else MagicMock()
+
+    monkeypatch.setattr(config, "load_config_or_exit", lambda _path: fake_config)
+    monkeypatch.setattr(browser, "launch_context", lambda *_args, **_kwargs: Context())
+    monkeypatch.setattr(_common, "resolve_resume", lambda *_args, **_kwargs: resume)
+    monkeypatch.setattr(common, "open_common_form", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(common, "read_common", lambda *_page: current)
+    return command, resume
+
+
+def _args(tmp_path, **overrides):
+    base = dict(
+        config="config.yaml",
+        history=str(tmp_path / "history.db"),
+        resume="00001",
+        first_name=None,
+        last_name=None,
+        birthday=None,
+        gender=None,
+        phone=None,
+        area=None,
+        metro=None,
+        citizenship=None,
+        work_ticket=None,
+        relocation=None,
+        schedule=None,
+        employment=None,
+        work_format=None,
+        business_trip=None,
+        show=False,
+        dry_run=True,
+        force=False,
+        headless=True,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_common_show_prints_current_values_without_saving(monkeypatch, tmp_path, capsys):
+    current = CommonValues(
+        first_name="Иван", last_name="Иванов", phone="+7999", birthday="", gender="", area=""
+    )
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    saved = []
+    monkeypatch.setattr(common, "save_common", lambda *_a, **_k: saved.append(1))
+
+    assert command._run(_args(tmp_path, show=True), MagicMock()) is False
+    out = capsys.readouterr().out
+    assert "Иван" in out
+    assert "заполнено (обязательное)" in out
+    assert "пусто" in out
+    assert "read-only" in out
+    assert saved == []
+
+
+def test_common_auto_mode_fails_closed_on_missing_required(monkeypatch, tmp_path, capsys):
+    current = CommonValues(first_name="Иван", last_name="", phone="")
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    saved = []
+    monkeypatch.setattr(common, "save_common", lambda *_a, **_k: saved.append(1))
+
+    assert command._run(_args(tmp_path), MagicMock()) is True
+    out = capsys.readouterr().out
+    assert "last_name" in out
+    assert "Ничего не сохранено" in out
+    assert saved == []
+
+
+def test_common_auto_mode_saves_prefilled_when_required_complete(monkeypatch, tmp_path):
+    current = CommonValues(
+        first_name="Иван",
+        last_name="Иванов",
+        birthday="01.01.1990",
+        gender="male",
+        phone="+7999",
+        citizenship=["Россия"],
+    )
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    monkeypatch.setattr(command, "confirm_write", lambda *_a, **_k: True)
+    captured = {}
+
+    def fake_save(_page, values, **_kwargs):
+        captured["values"] = values
+        return common.CommonResult(True, "поля common сохранены", True)
+
+    monkeypatch.setattr(common, "save_common", fake_save)
+
+    assert command._run(_args(tmp_path, dry_run=False), MagicMock()) is False
+    assert captured["values"].provided() == {}
+
+
+def test_common_write_skips_prefilled_fields(monkeypatch, tmp_path, capsys):
+    current = CommonValues(first_name="Иван", last_name="", phone="+7999")
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    captured = {}
+
+    def fake_save(_page, values, **_kwargs):
+        captured["values"] = values
+        return common.CommonResult(True, "поля common сохранены", True)
+
+    monkeypatch.setattr(common, "save_common", fake_save)
+
+    assert (
+        command._run(
+            _args(tmp_path, first_name="Пётр", last_name="Петров", dry_run=True), MagicMock()
+        )
+        is False
+    )
+    out = capsys.readouterr().out
+    assert "уже заполнено на hh.ru" in out
+    # last_name был пуст и передан — попадает в план заполнения.
+    assert "lastName" in out
+
+
+def test_common_explicit_fields_all_prefilled_skips_save(monkeypatch, tmp_path, capsys):
+    current = CommonValues(first_name="Иван", phone="+7999")
+    command, _resume = _command_harness(monkeypatch, tmp_path, current=current)
+    saved = []
+    monkeypatch.setattr(common, "save_common", lambda *_a, **_k: saved.append(1))
+
+    result = command._run(_args(tmp_path, first_name="Пётр", dry_run=False), MagicMock())
+    assert result is False
+    out = capsys.readouterr().out
+    assert "заполнять нечего" in out
+    assert "Обязательные поля common пусты" not in out
+    assert saved == []
 
 
 def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
