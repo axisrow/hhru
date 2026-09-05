@@ -41,9 +41,11 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from .browser import (
+    RESUME_UNAVAILABLE_REASON,
     dismiss_cookie_banner,
     dump_page_html,
     goto_hh,
+    has_resume_error_banner,
     require_authenticated_page,
     wait_for_react_hydration,
 )
@@ -187,6 +189,10 @@ def upload_photo_on_hh(
     goto_hh(page, resume.resume_url)
     require_authenticated_page(page)
     dismiss_cookie_banner(page)
+    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
+    # ожидании блока аватара. Pre-mutation (файл никуда не передан).
+    if has_resume_error_banner(page):
+        return UploadPhotoResult(reason=RESUME_UNAVAILABLE_REASON, photo_present=None)
     avatar = page.locator(RESUME_AVATAR_BLOCK).first
     try:
         # SPA-страница: блок аватара появляется после гидратации React
@@ -787,6 +793,10 @@ def select_photo_on_hh(
     goto_hh(page, resume.resume_url)
     require_authenticated_page(page)
     dismiss_cookie_banner(page)
+    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
+    # ожидании блока аватара. Pre-mutation (карандаш/галерея не тронуты).
+    if has_resume_error_banner(page):
+        return SelectPhotoResult(reason=RESUME_UNAVAILABLE_REASON)
     avatar = page.locator(RESUME_AVATAR_BLOCK).first
     try:
         avatar.wait_for(state="visible", timeout=_AVATAR_WAIT_TIMEOUT_MS)

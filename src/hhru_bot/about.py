@@ -17,7 +17,13 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh, open_hydrated_resume_editor
+from .browser import (
+    HH_BASE_URL,
+    RESUME_UNAVAILABLE_REASON,
+    goto_hh,
+    has_resume_error_banner,
+    open_hydrated_resume_editor,
+)
 from .selector_groups import resume_page
 
 if TYPE_CHECKING:
@@ -134,6 +140,11 @@ def open_about_editor(page: Page, resume: ResumeConfig) -> str:
     the trigger to become visible before the strict count check.
     """
     goto_hh(page, resume.resume_url)
+    # #972: сбойный экран /resume/{id} — доменная ошибка модуля (команда
+    # ловит только AboutGenerationError), внятный отказ вместо ухода в
+    # edit-route и таймаута. Pre-mutation.
+    if has_resume_error_banner(page):
+        raise AboutGenerationError(RESUME_UNAVAILABLE_REASON)
     trigger = page.locator(resume_page.RESUME_EDIT_ABOUT_BUTTON)
     try:
         trigger.wait_for(state="visible", timeout=10_000)

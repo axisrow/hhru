@@ -690,6 +690,30 @@ def test_antibot_terminal_state_prints_fail_without_traceback(monkeypatch, capsy
     logging.getLogger("hhru_bot").handlers.clear()
 
 
+def test_resume_unavailable_prints_fail_without_traceback(monkeypatch, capsys):
+    """#972: сбойный экран hh.ru вместо страницы резюме — тот же контракт, что
+    у AntiBotChallengeDetected: [FAIL]-отказ, exit 1, без traceback. До
+    cli-ветки ResumeUnavailable улетал в generic except Exception → re-raise
+    (сырой traceback на путях open_position_form/open_confirmed_resume)."""
+    from hhru_bot.browser import RESUME_UNAVAILABLE_REASON, ResumeUnavailable
+
+    def _unavailable(_args: argparse.Namespace) -> bool:
+        raise ResumeUnavailable(RESUME_UNAVAILABLE_REASON)
+
+    import hhru_bot.commands.whoami as whoami_module
+
+    monkeypatch.setattr(whoami_module, "run", _unavailable)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["whoami"])
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "[FAIL] резюме недоступно" in stderr
+    assert "удалено владельцем" in stderr
+    assert "Traceback" not in stderr
+    logging.getLogger("hhru_bot").handlers.clear()
+
+
 def test_network_connection_failure_prints_environment_without_traceback(monkeypatch, capsys):
     """#747: сетевой сбой соединения (нет доступа до hh.ru — прокси/GFW/etc,
     причина не устанавливается) должен получать тот же структурированный

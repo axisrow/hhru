@@ -8,7 +8,13 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import selectors as sel
-from .browser import HH_BASE_URL, goto_hh, has_login_form
+from .browser import (
+    HH_BASE_URL,
+    RESUME_UNAVAILABLE_REASON,
+    goto_hh,
+    has_login_form,
+    has_resume_error_banner,
+)
 from .config import ResumeConfig, is_resume_url_placeholder
 
 logger = logging.getLogger("hhru_bot.bump")
@@ -60,6 +66,11 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
             False,
             "Сессия недействительна: страница содержит форму входа. Выполните login.",
         )
+    # #972: сбойный экран /resume/{id} — внятный отказ вместо таймаута на
+    # поиске кнопки поднятия. Ранний выход до действия: acted=False (#163),
+    # в actions не пишется, обычный failed/retry.
+    if has_resume_error_banner(page):
+        return BumpResult(resume.id, False, RESUME_UNAVAILABLE_REASON)
 
     # #139: гонка рендера — раньше hint читался сразу через count() > 0, без
     # ожидания. Непрогрузившаяся страница резюме давала 0 совпадений (не

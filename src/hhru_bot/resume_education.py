@@ -28,6 +28,7 @@ from .browser import (
     labelled_field,
     open_hydrated_resume_editor,
     require_authenticated_page,
+    require_available_resume,
     resume_identity_matches,
 )
 from .config_sections.education import EducationRecord
@@ -798,6 +799,9 @@ def edit_education_on_hh(
         raise ValueError("resume_url не содержит однозначный resume_id")
     resume_id = path_parts[1]
     goto_hh(page, resume_url)
+    # #972: сбойный экран /resume/{id} держит URL — внятный отказ вместо
+    # таймаута на поиске секций образования. Pre-mutation, failed/retry.
+    require_available_resume(page)
     results = []
     if section in ("primary", "both"):
         results.append(
