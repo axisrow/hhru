@@ -367,6 +367,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 # дерево реально отрисовало. Отказ и здесь, и в боевом пути
                 # наступает до клика сохранения.
                 refusals: list[str] = []
+                left_the_form = False
                 if not wizard and plan.specializations:
                     from ..resume_position import validate_specializations_against_tree
 
@@ -375,11 +376,16 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     # нажат, pending-правки отбрасываются; CANCEL под оверлеем
                     # открытой панели недостижим.
                     goto_hh(page, f"{HH_BASE_URL}/resume/{resume.resume_id}")
+                    # #963 follow-up: после навигации мы на /resume/{id} —
+                    # формы редактора и её CANCEL там нет; клик по нему валил
+                    # бы успешный dry-run по таймауту. Отмена уже произошла
+                    # самой навигацией, дублировать её кликом не нужно.
+                    left_the_form = True
                 if refusals:
                     for refusal in refusals:
                         print(f"[FAIL] {refusal}")
                     return True
-                if not wizard:
+                if not wizard and not left_the_form:
                     page.locator(CANCEL).click()
                 print("[INFO] Ничего не записано на hh.ru.")
                 return False
