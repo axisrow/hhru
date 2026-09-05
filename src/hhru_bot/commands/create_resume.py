@@ -166,6 +166,13 @@ def run(args: argparse.Namespace):
                     # Отдельная attempt для edit_common нового resume_id: клик
                     # NEXT на экране визарда — мутация (#936), её uncertain-окно
                     # не должно смешиваться с create_resume-попыткой выше.
+                    # Ревью PR #986: повторный create-resume гейтится ТОЛЬКО по
+                    # create_resume/account — у нового прогона ещё нет resume_id,
+                    # по которому стоил бы прошлый edit_common-маркер, так что
+                    # uncertain подтверждения не блокирует новое создание
+                    # (осознанный компромисс). Блокируемый повтор — команда
+                    # common того же resume_id: её гейт проверяет
+                    # has_unresolved_uncertain(resume_id, "edit_common").
                     common_attempt = DurableMutationAttempt(
                         history, progress, result.new_resume_id, "edit_common"
                     )
