@@ -4108,6 +4108,28 @@ selectors:
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_submit_live_write
     verified_by: claude
+  resume_photo.RESUME_AVATAR_PLACEHOLDER:
+    value: '[data-qa=''resume-avatar''] [data-qa=''placeholder-male'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:78
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:78
+      note: Явный маркер состояния «фото нет» (плейсхолдер-иконка вместо img). Подтверждён живым read-only дампом explore_photo_full_20260902_100454.html
+        (data-qa='placeholder-male' внутри magritte-avatar блока resume-avatar); в дампе с фото photo_assign_final_110123.html
+        placeholder-male отсутствует. Используется readback'ом (ишью 955) как подтверждение отсутствия фото на свежезагруженной
+        странице.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-02'
+    verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
   resume_photo.RESUME_PHOTO_EDITOR_APPLY:
     value: '[data-qa=''photo-editor-apply'']'
     criticality: write
@@ -4192,6 +4214,94 @@ selectors:
     verification: browser_observed
     last_verified_at: '2026-09-02'
     verified_flow: authenticated_resume_page_read_only
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE:
+    value: '[data-qa=''photo-viewer-assign-resume-{resume_id}'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:133
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:133
+      note: Шаблон чекбокса строки резюме в пикере «Куда поставим фото?» (обычная in-body модалка после crop-upload). Подтверждён
+        живым дампом 2026-09-05 (photo_upload_uncertain_20260905_004737) — чекбоксы по строке на каждое резюме аккаунта +
+        футерная кнопка «Выбрать и установить», DISABLED до выбора. Единственный шаблонный селектор реестра — resume_photo
+        форматирует его своим resume_id.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT:
+    value: '[data-qa=''photo-viewer-assign-submit'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:112
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:112
+      note: Кнопка подтверждения назначения во вьювере (второй вид assign-кнопки). Подтверждена живыми дампами 2026-09-04/05
+        (photo_upload_uncertain_20260904_233024 и 20260905_003039) — в теле модалки, не в detached NavBar. Появляется в переоткрытом
+        карандашом вьювере для свежей загрузки. Фолбэк resume_photo ждёт любую из assign-кнопок и активирует по фактическому
+        data-qa.
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_CLOSE:
+    value: '[data-qa=''photo-viewer-close'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:111
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:111
+      note: Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён живыми дампами 2026-09-04 (photo_assign_click_uncertain_*/photo_upload_uncertain_*
+        — data-qa в одном NavBar с assign-кнопкой; live-замер IAB 2026-09-04 — rect y=-48, тот же detached NavBar). Используется
+        фолбэком переоткрытия вьювера в resume_photo — активация assign-current после crop-upload молча не работает (бои 8-9),
+        после переоткрытия через карандаш dispatch_event назначает фото (диагностика explore_photo_assign_activation).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_submit_live_write
+    verified_by: claude
+  resume_photo.RESUME_PHOTO_VIEWER_LIMIT:
+    value: '[data-qa=''photo-viewer-limit'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/resume_photo.py:90
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_photo.py:90
+      note: Модалка «8 фото — это максимум» (галерея аккаунта переполнена). Подтверждена боевым прогоном 2026-09-04 — дамп
+        photo_editor_missing_uncertain_20260904_215520.html, alertdialog с этой data-qa после set_input_files вместо crop-редактора;
+        файл отклонён, мутации нет. Галерея общая на аккаунт, не на резюме. Наличие модалки = доказанный отказ загрузки (чистый
+        fail).
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-04'
+    verified_flow: authenticated_submit_live_write
     verified_by: claude
   resume_position.BUSINESS_TRIPS:
     value: '[data-qa=''resume-edit-business-trip-readiness'']'

@@ -14,8 +14,10 @@
 2. **Поток после передачи файла трёхшаговый:** crop-редактор
    (``photo-editor-apply`` — мутирующий клик, запускает upload) -> модалка
    «Все загруженные фото» (``photo-viewer-action-assign-current`` — назначает
-   фото на это резюме) -> ``img`` в блоке аватара (подтверждённый маркер
-   успеха, 2026-09-02).
+   фото на это резюме) -> ``img`` в блоке аватара (ОПТИМИСТИЧНЫЙ маркер:
+   рисуется до консолидации assign на сервере) -> перезагрузка страницы и
+   повторная проверка img — единственное подтверждение успеха (readback,
+   #955).
 3. Клик по ``resume-avatar-edit-button`` сам по себе файл не загружает —
    он только открывает модалку вьювера УЖЕ гидратированного микрофроненда.
 
@@ -30,6 +32,7 @@ UI-механизм, не внутренний API hh.ru (граница бра�
 from __future__ import annotations
 
 import stat as stat_module
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,11 +49,17 @@ from .browser import (
 from .selector_groups.resume_photo import (
     PHOTO_ACCEPTED_EXT,
     RESUME_AVATAR_BLOCK,
+    RESUME_AVATAR_EDIT_BUTTON,
     RESUME_AVATAR_IMAGE,
+    RESUME_AVATAR_PLACEHOLDER,
     RESUME_PHOTO_EDITOR_APPLY,
     RESUME_PHOTO_FILE_INPUT,
     RESUME_PHOTO_MFE_CONTAINER,
     RESUME_PHOTO_VIEWER_ASSIGN_CURRENT,
+    RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE,
+    RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT,
+    RESUME_PHOTO_VIEWER_CLOSE,
+    RESUME_PHOTO_VIEWER_LIMIT,
 )
 
 # Живая подсказка hh.ru про лимиты размера в дампе не встретилась — лимит
@@ -71,16 +80,41 @@ _ASSIGN_WAIT_TIMEOUT_MS = 30_000
 # overlay'а перехватывает клики (боевой кейс 2026-09-03 — uncertain при
 # открытой модалке).
 _ASSIGN_MODAL_SETTLE_MS = 2_500
-# Пауза после появления маркера до объявления успеха: assign-запрос должен
-# уйти и подтвердиться, иначе закрытие браузера прямо после маркера может
-# оборвать его (боевой кейс 2026-09-02: img на месте, hasPhoto на сервере
-# остался false).
+# Явный скролл assign-кнопки перед кликом (боевой кейс 2026-09-04:
+# кнопка stable, но вне вьюпорта — 57 ретраев клика вхолостую).
+_ASSIGN_SCROLL_TIMEOUT_MS = 5_000
+# Ленивая гидратация чанка модалки назначения: активация ДО неё теряется
+# молча (боевой прогон 8, 2026-09-04: focus дошёл до кнопки, Enter и
+# dispatch_event ушли в пустоту — hasPhoto остался false). Ждём React-
+# привязку на самой кнопке перед фолбэк-активацией.
+_ASSIGN_HYDRATION_TIMEOUT_MS = 15_000
+# Пикер «Куда поставим фото?» (чекбоксы photo-viewer-assign-resume-<id>):
+# окно ожидания его появления после неудачного первого маркерного бюджета.
+_PICKER_WAIT_TIMEOUT_MS = 10_000
+# Пауза после появления маркера до readback-перезагрузки: маркер рисуется
+# оптимистично, до консолидации assign-запроса на сервере (боевой кейс
+# 2026-09-02: img на месте, hasPhoto на сервере остался false). Пауза не
+# доказательство, а снижение частоты ложного uncertain: если assign не
+# уложился, readback после перезагрузки честно вернёт uncertain.
 _ASSIGN_SETTLE_MS = 5_000
+# Readback (#955): после видимости блока аватара img может быть ещё не
+# дорендерен (SPA вставляет асинхронно) — отсутствие подтверждаем ТОЛЬКО
+# явным плейсхолдером «фото нет», в пределах этого бюджета.
+_READBACK_CONFIRM_TIMEOUT_MS = 15_000
+_READBACK_POLL_MS = 500
 
 _MAGIC: tuple[tuple[bytes, str], ...] = (
     (b"\xff\xd8\xff", "jpeg"),
     (b"\x89PNG\r\n\x1a\n", "png"),
 )
+
+# Viewport контекста upload-photo. Модалка назначения — Magritte MediaViewer
+# (aria-modal, z-index 1170), assign-кнопка — иконочная кнопка в правом слоте
+# её шапки; при дефолтных 1366x900 шапка стабильно «outside of the viewport»,
+# скролл блокирует overflow контейнера (4 боевых прогона 2026-09-04, дампы
+# photo_assign_click_uncertain_*). Высокий viewport — легитимный сценарий
+# большого монитора: шапка помещается целиком при любом положении модалки.
+PHOTO_VIEWPORT = {"width": 1366, "height": 2400}
 
 
 @dataclass(frozen=True)
@@ -225,7 +259,26 @@ def upload_photo_on_hh(
         editor_apply = page.locator(RESUME_PHOTO_EDITOR_APPLY).first
         editor_apply.wait_for(state="visible", timeout=_EDITOR_WAIT_TIMEOUT_MS)
     except PlaywrightError as exc:
-        return _uncertain(f"файл передан, но crop-редактор не открылся: {exc}")
+        # Лимит галереи — ДОКАЗАННЫЙ отказ загрузки (боевой прогон 5,
+        # 2026-09-04, дамп photo_editor_missing_uncertain_*: модалка
+        # photo-viewer-limit «8 фото — это максимум», файл отклонён,
+        # мутации нет) — чистый fail без uncertain. Галерея фото общая
+        # НА АККАУНТ, не на резюме: «чистый» черновик не спасает.
+        if page.locator(RESUME_PHOTO_VIEWER_LIMIT).count() > 0:
+            return UploadPhotoResult(
+                reason=(
+                    "галерея фото аккаунта переполнена (лимит hh.ru): загрузка "
+                    "отклонена, фото не добавлено; освободите место в галерее "
+                    "и повторите"
+                ),
+                photo_present=False,
+            )
+        # Иная причина — дамп для разбора альтернативного UI.
+        dump_path = dump_page_html(page, "photo_editor_missing_uncertain")
+        reason = f"файл передан, но crop-редактор не открылся: {exc}"
+        if dump_path is not None:
+            reason += f"; дамп: {dump_path}"
+        return _uncertain(reason)
     try:
         editor_apply.click()
     except PlaywrightError as exc:
@@ -243,10 +296,63 @@ def upload_photo_on_hh(
     # ретраит клик и падает по таймауту (бои 2026-09-02 и 2026-09-03:
     # explore-пауза 2500мс пропускала клик, командная без неё — нет).
     page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
+    assign_click_error: str | None = None
+    # Боевой кейс 2026-09-04 (#955, прогоны 1-8): кнопка assign в шапке
+    # MediaViewer резолвилась и была stable, но стабильно «outside of the
+    # viewport»: NavBar модалки отрисован НАД оверлеем (живой замер IAB
+    # 2026-09-04: top = -56px при любом viewport), скролл ничего не решает.
+    # Перед кликом нормализуем геометрию (скролл документа наверх + явный
+    # scroll_into_view) — для конфигураций, где кнопка досягаема (успех
+    # 2026-09-02). Ошибки скролла не фатальны — исход классифицирует маркер.
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+    except PlaywrightError as exc:
+        print(f"[INFO] скролл документа наверх не удался (клик продолжается): {exc}")
+    try:
+        assign_btn.scroll_into_view_if_needed(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        print(f"[INFO] assign-кнопка не проскроллилась (клик продолжается): {exc}")
     try:
         assign_btn.click()
-    except PlaywrightError as exc:
-        return _uncertain(f"модалка назначения открыта, клик assign не удался: {exc}")
+    except PlaywrightError as click_exc:
+        # Позиционный клик не удался (кнопка вне вьюпорта). Активация без
+        # геометрии, но ТОЛЬКО после гидратации: ленивый чанк модалки
+        # привязывает обработчики ПОСЛЕ открытия, и активация до неё
+        # теряется молча (прогон 8: focus дошёл до кнопки — focus-visible
+        # в дампе — но Enter и dispatch_event в негидратированный DOM
+        # не сработали; живой замер IAB: гидратированная кнопка
+        # назначает фото по программному клику). Исход в любом случае
+        # классифицирует маркерное ожидание ниже; без маркера — честный
+        # uncertain с дампом (fail-closed #955).
+        assign_click_error = str(click_exc)
+        hydrated = wait_for_react_hydration(
+            page, RESUME_PHOTO_VIEWER_ASSIGN_CURRENT, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS
+        )
+        if not hydrated:
+            print(
+                "[INFO] React-привязка assign-кнопки не подтверждена за "
+                f"{_ASSIGN_HYDRATION_TIMEOUT_MS // 1000}с — активация всё равно отправлена"
+            )
+        kb_error: str | None = None
+        try:
+            assign_btn.focus()
+            page.keyboard.press("Enter")
+            print("[INFO] клик assign не удался, отправлен клавиатурный Enter")
+        except PlaywrightError as exc:
+            kb_error = str(exc)
+        try:
+            assign_btn.dispatch_event("click")
+            print("[INFO] отправлен dispatch_event('click') по assign-кнопке")
+        except PlaywrightError as dispatch_exc:
+            dump_path = dump_page_html(page, "photo_assign_click_uncertain")
+            reason = (
+                "модалка назначения открыта, клик assign не удался "
+                f"(клавиатурный фолбэк и dispatch_event тоже): {click_exc}; "
+                f"focus/Enter: {kb_error}; dispatch_event: {dispatch_exc}"
+            )
+            if dump_path is not None:
+                reason += f"; дамп: {dump_path}"
+            return _uncertain(reason)
 
     try:
         # Маркер — появление <img> в DOM («attached», не «visible»: сам блок
@@ -255,20 +361,220 @@ def upload_photo_on_hh(
             state="attached", timeout=_CONFIRM_TIMEOUT_MS
         )
     except PlaywrightError:
-        dump_path = dump_page_html(page, "photo_upload_uncertain")
-        reason = (
-            "assign отправлен, но маркер успеха (img в блоке аватара) не появился "
-            f"за {_CONFIRM_TIMEOUT_MS // 1000}с"
-        )
-        if dump_path is not None:
-            reason += f"; дамп: {dump_path}"
-        return _uncertain(reason)
+        # Бои 8-12 (2026-09-04/05, #955): после crop-upload hh.ru показывает
+        # рядом с MediaViewer пикер «Куда поставим фото?» — чекбоксы строк
+        # резюме (photo-viewer-assign-resume-<id>) + футерная кнопка
+        # «Выбрать и установить», DISABLED до выбора. Это in-body модалка —
+        # обычные клики работают; путь через assign-current NavBar мёртв
+        # для blob. Порядок фолбэков: пикер -> переоткрытие вьювера.
+        # Бой 12: пикер РЕАЛЬНО назначил фото (live-readback IAB: аватар
+        # есть после перезагрузки), но аватар на странице под модалкой
+        # SPA не перерисовал за 30с — отсутствие маркера после фолбэка
+        # НЕ uncertain: решает readback персистентного состояния ниже
+        # (success только по свежему DOM, fail-closed не тронут).
+        if _assign_via_resume_picker(page, resume.resume_id):
+            pass
+        elif _assign_via_viewer_reopen(page):
+            try:
+                page.locator(RESUME_AVATAR_IMAGE).first.wait_for(
+                    state="attached", timeout=_CONFIRM_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                # назначение могло консолидироваться без перерисовки —
+                # решает readback ниже
+                pass
+        else:
+            dump_path = dump_page_html(page, "photo_upload_uncertain")
+            reason = (
+                "assign отправлен, но маркер успеха (img в блоке аватара) не появился "
+                f"за {_CONFIRM_TIMEOUT_MS // 1000}с; фолбэки (пикер, переоткрытие "
+                "вьювера) не удались (см. [INFO] в логе)"
+            )
+            if assign_click_error is not None:
+                reason += f"; позиционный клик не удался: {assign_click_error[:300]}"
+            if dump_path is not None:
+                reason += f"; дамп: {dump_path}"
+            return _uncertain(reason)
     # Маркер в DOM появляется ОПТИМИСТИЧНО: hh.ru рисует <img> до того,
     # как assign-запрос консолидировался на сервере (боевой кейс
     # 2026-09-02: браузер закрылся сразу после маркера — img остался,
-    # а hasPhoto на сервере остался false; фикс живым прогоном).
+    # а hasPhoto на сервере остался false). Успех подтверждает только
+    # readback персистентного состояния: перезагрузка страницы резюме.
     page.wait_for_timeout(_ASSIGN_SETTLE_MS)
-    return UploadPhotoResult(success=True, reason="фото загружено и назначено", photo_present=True)
+    confirmed, readback_reason = _readback_photo_persisted(page, resume.resume_url)
+    if confirmed is True:
+        return UploadPhotoResult(
+            success=True,
+            reason="фото загружено и назначено (подтверждено перезагрузкой страницы)",
+            photo_present=True,
+        )
+    if confirmed is False:
+        # Страница перечитана, img отсутствует: назначение на сервере не
+        # произошло (файл мог остаться в галерее) — fail-closed uncertain.
+        return UploadPhotoResult(
+            reason=(
+                "assign отправлен, но readback не подтвердил: "
+                f"{readback_reason}; файл мог остаться в галерее фото"
+            ),
+            uncertain=True,
+            photo_present=False,
+        )
+    return _uncertain(f"assign отправлен, но readback не выполнился: {readback_reason}")
+
+
+def _assign_via_resume_picker(page: Page, resume_id: str) -> bool:
+    """Фолбэк «пикер назначения»: чекбокс нашего резюме + «Выбрать и установить».
+
+    Бои 8-11 (2026-09-04/05, #955): после crop-upload hh.ru показывает
+    модалку «Куда поставим фото?» (обычная in-body magritte-modal, дамп
+    photo_upload_uncertain_20260905_004737) — чекбоксы строк резюме
+    photo-viewer-assign-resume-<resume_id> и футерная кнопка
+    photo-viewer-assign-submit «Выбрать и установить», DISABLED до выбора
+    строки. В отличие от assign-current (detached NavBar, мёртвая
+    активация для blob) здесь работают обычные позиционные клики.
+    Все шаги best-effort: False = фолбэк не удался, решение за вызывающим
+    (честный uncertain, fail-closed).
+    """
+    checkbox_selector = RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE.format(resume_id=resume_id)
+    try:
+        checkbox = page.locator(checkbox_selector).first
+        checkbox.wait_for(state="attached", timeout=_PICKER_WAIT_TIMEOUT_MS)
+    except PlaywrightError:
+        return False  # пикера нет — пробуем следующий фолбэк
+    wait_for_react_hydration(page, checkbox_selector, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS)
+    try:
+        # Magritte input невидим (opacity:0), но имеет ненулевой bbox —
+        # Playwright check() кликает связанный контрол; при отказе — dispatch.
+        try:
+            checkbox.check(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+        except PlaywrightError:
+            checkbox.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк-пикер: чекбокс резюме не выбран: {exc}")
+        return False
+    try:
+        submit = page.locator(RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT).first
+        submit.wait_for(state="visible", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+        # кнопка DISABLED до выбора строки; click дождётся enabled в рамках
+        # таймаута и упадёт честно, если выбор не засчитался
+        submit.click(timeout=_CONFIRM_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк-пикер: клик «Выбрать и установить» не удался: {exc}")
+        return False
+    print("[INFO] фолбэк-пикер: резюме выбрано, «Выбрать и установить» отправлено")
+    return True
+
+
+def _assign_via_viewer_reopen(page: Page) -> bool:
+    """Фолбэк «переоткрыть вьювер»: назначить фото через карандаш.
+
+    Бои 8-9 (2026-09-04, #955): после crop-upload активация assign-current
+    в открытой модалке молча не работает (current — blob без photo id), а
+    для персистентных фото галереи тот же dispatch_event назначает фото
+    (диагностика explore_photo_assign_activation на «Дворнике»: modal
+    закрылась, маркер появился). Вьювер по карандашу открывается на
+    НОВЕЙШЕМ фото галереи — то есть на только что загруженном файле.
+    Все шаги best-effort: False = фолбэк не удался, решение за вызывающим
+    (честный uncertain, fail-closed).
+    """
+    # 1. Закрыть модалку (крестик в том же detached NavBar — только dispatch).
+    try:
+        page.locator(RESUME_PHOTO_VIEWER_CLOSE).first.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: не удалось закрыть модалку вьювера: {exc}")
+        return False
+    # 2. Открыть вьювер карандашом (MFE уже гидратирован на этом шаге).
+    try:
+        page.locator(RESUME_AVATAR_EDIT_BUTTON).first.click()
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: клик по карандашу не удался: {exc}")
+        return False
+    # 3. после переоткрытия assign-кнопка бывает в ДВУХ видах (дампы
+    #    photo_upload_uncertain_20260904_233024/20260905_003039):
+    #    assign-current в detached NavBar (бои 8-9 — активация мертва для
+    #    blob) или assign-submit в теле модалки — подтверждение «назначить
+    #    это фото» именно для свежей загрузки. Ждём любую из двух и
+    #    активируем по фактическому data-qa: сначала позиционный клик
+    #    (in-body кнопка досягаема), при отказе — dispatch_event.
+    try:
+        combined = page.locator(
+            f"{RESUME_PHOTO_VIEWER_ASSIGN_CURRENT}, {RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT}"
+        ).first
+        combined.wait_for(state="attached", timeout=_ASSIGN_WAIT_TIMEOUT_MS)
+        page.wait_for_timeout(_ASSIGN_MODAL_SETTLE_MS)
+        resolved_qa = combined.get_attribute("data-qa")
+        resolved_selector = f"[data-qa='{resolved_qa}']"
+        if not wait_for_react_hydration(
+            page, resolved_selector, timeout_ms=_ASSIGN_HYDRATION_TIMEOUT_MS
+        ):
+            print(
+                "[INFO] фолбэк: React-привязка assign-кнопки не подтверждена — "
+                "активация всё равно отправлена"
+            )
+        try:
+            combined.click(timeout=_ASSIGN_SCROLL_TIMEOUT_MS)
+        except PlaywrightError:
+            combined.dispatch_event("click")
+    except PlaywrightError as exc:
+        print(f"[INFO] фолбэк: активация assign после переоткрытия не удалась: {exc}")
+        return False
+    print("[INFO] фолбэк: переоткрытый вьювер, активация assign отправлена")
+    return True
+
+
+def _readback_photo_persisted(page: Page, resume_url: str) -> tuple[bool | None, str]:
+    """Перечитать страницу резюме и проверить персистентный признак фото.
+
+    Возвращает (confirmed, reason): True — img аватара есть на свежезагруженной
+    странице (серверное состояние, не оптимистичный DOM); False — страница
+    прочитана, но img отсутствует; None — страница не прочитана (навигация или
+    отрисовка не удались).
+    """
+    try:
+        goto_hh(page, resume_url)
+    except PlaywrightError as exc:
+        return None, f"страница резюме не перечиталась: {exc}"
+    try:
+        page.locator(RESUME_AVATAR_BLOCK).first.wait_for(
+            state="visible", timeout=_AVATAR_WAIT_TIMEOUT_MS
+        )
+    except PlaywrightError as exc:
+        return None, f"блок аватара не отрисовался при перечитывании: {exc}"
+    # Видимость блока не доказывает, что состояние фото дорендерено (SPA
+    # вставляет img асинхронно, а плейсхолдер «фото нет» виден и ДО вставки
+    # img — замечание ревью #962): сначала ограниченный бюджет ждём
+    # ПОЗИТИВНЫЙ признак (img), и только после его исчерпания отсутствие
+    # фото подтверждаем явным плейсхолдером. Ни того, ни другого —
+    # состояние не определено.
+    # ОГРАНИЧЕНИЕ: плейсхолдер подтверждён только на мужском профиле
+    # (Magritte рендерит аватар по полу, селектор группы — см. комментарий
+    # у RESUME_AVATAR_PLACEHOLDER); на женском аккаунте absence-ветка
+    # выродится в honest uncertain, что fail-closed-корректно.
+    deadline = time.monotonic() + _READBACK_CONFIRM_TIMEOUT_MS / 1000
+    while time.monotonic() < deadline:
+        if page.locator(RESUME_AVATAR_IMAGE).count() > 0:
+            return True, ""
+        page.wait_for_timeout(_READBACK_POLL_MS)
+    # Оба uncertain-исхода readback — единственный путь после assign без
+    # артефакта (маркерный путь уже пишет photo_upload_uncertain): дамп
+    # перечитанной страницы — первый подозреваемый при дрейфе селектора.
+    dump_path = dump_page_html(page, "photo_readback_uncertain")
+    dump_note = "" if dump_path is None else f"; дамп: {dump_path}"
+    if (
+        page.locator(RESUME_AVATAR_IMAGE).count() == 0
+        and page.locator(RESUME_AVATAR_PLACEHOLDER).count() > 0
+    ):
+        return (
+            False,
+            "подтверждено состояние «фото нет» (плейсхолдер, img не появился "
+            f"за {_READBACK_CONFIRM_TIMEOUT_MS // 1000}с) "
+            f"на свежезагруженной странице{dump_note}",
+        )
+    return None, (
+        "состояние фото не определено за "
+        f"{_READBACK_CONFIRM_TIMEOUT_MS // 1000}с — ни img, ни плейсхолдера"
+        f"{dump_note}"
+    )
 
 
 def _uncertain(reason: str) -> UploadPhotoResult:

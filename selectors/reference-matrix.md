@@ -183,10 +183,15 @@
 | resume_photo.RESUME_AVATAR_BLOCK | `[data-qa='resume-avatar']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_EDIT_BUTTON | `[data-qa='resume-avatar-edit-button']` | — | — | — | documented_live |
 | resume_photo.RESUME_AVATAR_IMAGE | `[data-qa='resume-avatar'] img` | — | — | — | documented_live |
+| resume_photo.RESUME_AVATAR_PLACEHOLDER | `[data-qa='resume-avatar'] [data-qa='placeholder-male']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_EDITOR_APPLY | `[data-qa='photo-editor-apply']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_FILE_INPUT | `input[data-qa='resume-photo-proxy-gallery-input']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_MFE_CONTAINER | `[class*='ContainerForMicroFrontend-resumePhotoViewer']` | — | — | — | documented_live |
 | resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT | `[data-qa='photo-viewer-action-assign-current']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE | `[data-qa='photo-viewer-assign-resume-{resume_id}']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT | `[data-qa='photo-viewer-assign-submit']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_CLOSE | `[data-qa='photo-viewer-close']` | — | — | — | documented_live |
+| resume_photo.RESUME_PHOTO_VIEWER_LIMIT | `[data-qa='photo-viewer-limit']` | — | — | — | documented_live |
 | resume_position.BUSINESS_TRIPS | `[data-qa='resume-edit-business-trip-readiness']` | — | — | — | live_dom |
 | resume_position.CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_position.CURRENCY_TEMPLATE | `[data-qa='resume-currency-input-{code}']` | — | — | — | live_dom |

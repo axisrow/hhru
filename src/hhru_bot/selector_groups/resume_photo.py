@@ -24,10 +24,11 @@ React-привязки (нет ``__reactProps$`` на узле) — change-со�
 3. открывается crop-редактор -> клик ``photo-editor-apply`` (запускает upload);
 4. открывается модалка «Все загруженные фото» -> клик
    ``photo-viewer-action-assign-current`` (назначает фото на резюме);
-5. маркер успеха — ``<img>`` внутри ``resume-avatar``; НО маркер рисуется
-   оптимистично, до консолидации assign-запроса на сервере: после его
-   появления обязательна пауза несколько секунд до закрытия браузера
+5. маркер успеха — НЕ ``<img>`` внутри ``resume-avatar`` сам по себе: он
+   рисуется оптимистично, до консолидации assign-запроса на сервере
    (боевой кейс 2026-09-02: img остался, серверный ``hasPhoto`` — false).
+   Подтверждение успеха — readback (#955): перезагрузка страницы резюме и
+   повторное присутствие того же ``<img>`` в блоке аватара на свежем DOM.
 
 Клик по ``resume-avatar-edit-button`` открывает модалку вьювера только УЖЕ
 гидратированного микрофроненда и сам по себе загрузку не запускает.
@@ -62,10 +63,29 @@ RESUME_AVATAR_BLOCK = _selector("resume_photo.RESUME_AVATAR_BLOCK")
 # по себе загрузку не запускает (боевой поток идёт через set_input_files).
 RESUME_AVATAR_EDIT_BUTTON = _selector("resume_photo.RESUME_AVATAR_EDIT_BUTTON")
 
-# Позитивный маркер успешной загрузки: <img> внутри контейнера аватара.
-# Подтверждён БОЕВЫМ ПРОГОНОМ 2026-09-02: после assign-current <img>
-# появился в блоке аватара (дамп photo_assign_final_*).
+# <img> внутри контейнера аватара. Подтверждён БОЕВЫМ ПРОГОНОМ 2026-09-02:
+# после assign-current <img> появился в блоке аватара (дамп
+# photo_assign_final_*). Как КОМАНДНЫЙ сигнал успеха НЕ используется напрямую:
+# маркер оптимистичный (#955) — успехом считается только его наличие ПОСЛЕ
+# перезагрузки страницы (readback персистентного состояния,
+# resume_photo._readback_photo_persisted).
 RESUME_AVATAR_IMAGE = _selector("resume_photo.RESUME_AVATAR_IMAGE")
+
+# Явный маркер состояния «фото нет»: плейсхолдер-иконка вместо <img> внутри
+# того же блока аватара. Подтверждён живым read-only дампом 2026-09-02
+# (explore_photo_full_*: data-qa='placeholder-male'; в дампе с фото
+# photo_assign_final_* отсутствует). Readback #955: отсутствие фото
+# считается подтверждённым только по этому маркеру — простое отсутствие
+# img в момент проверки не доказывает ничего (img может быть ещё не
+# дорендерен SPA).
+# ОГРАНИЧЕНИЕ: подтверждено ТОЛЬКО на мужском профиле (Magritte-плейсхолдеры
+# аватара зависят от пола — класс magritte-male___). Вариант для женского
+# пола живым дампом не снимался; на таком аккаунте confirmed=False-ветка
+# недостижима, и неудачный прогон честно завершится uncertain «ни img, ни
+# плейсхолдера» (fail-closed, ложного успеха нет) — но с блокировкой повтора
+# до ручной reconciliation. Follow-up: снять женский вариант с живого DOM и
+# расширить пару селекторов.
+RESUME_AVATAR_PLACEHOLDER = _selector("resume_photo.RESUME_AVATAR_PLACEHOLDER")
 
 # Кнопка применения crop-редактора — второй шаг боевого потока, запускает
 # upload. Подтверждена боевым прогоном 2026-09-02 (модалка редактора
@@ -78,7 +98,58 @@ RESUME_PHOTO_EDITOR_APPLY = _selector("resume_photo.RESUME_PHOTO_EDITOR_APPLY")
 # клик привёл к появлению <img> в аватаре (дамп photo_assign_final_*).
 # Модалка анимируется: кликать после затухания overlay, иначе Playwright
 # ретраит и падает по таймауту (наблюдено).
+# ГЕОМЕТРИЯ И ГИДРАТАЦИЯ (боевые прогоны 1-8 и живой замер IAB 2026-09-04,
+# #955): модалка — Magritte MediaViewer (aria-modal, z-index 1170), кнопка —
+# иконочная в NavBar (magritte-actions-right-slot), который отрисован НАД
+# оверлеем (top = -56px при любом viewport) — позиционный клик невозможен,
+# скролл не помогает. Чанк модалки гидратируется ЛЕНИВО: активация ДО
+# привязки React теряется молча (прогон 8: focus дошёл до кнопки, Enter и
+# dispatch_event — без результата, hasPhoto false; живой замер: кнопка С
+# __reactProps назначает фото по программному клику). Цепочка в
+# resume_photo: settle -> scrollTo(0,0) -> scroll_into_view -> позиционный
+# клик -> [при отказе: wait_for_react_hydration кнопки -> focus+Enter ->
+# dispatch_event]; исход подтверждает только readback (#955).
 RESUME_PHOTO_VIEWER_ASSIGN_CURRENT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_CURRENT")
+
+# Кнопка подтверждения назначения во вьювере (второй вид assign-кнопки).
+# Подтверждена живыми дампами 2026-09-04/05 (photo_upload_uncertain_
+# 20260904_233024 и 20260905_003039): в отличие от assign-current
+# (detached NavBar, активация мертва после crop-upload) она в теле
+# модалки и появляется в переоткрытом карандашом вьювере для свежей
+# загрузки — подтверждение «назначить это фото». Фолбэк resume_photo
+# ждёт ЛЮБУЮ из двух и активирует по фактическому data-qa.
+RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_SUBMIT")
+
+# Шаблон чекбокса строки резюме в пикере «Куда поставим фото?» — обычная
+# in-body модалка (magritte-modal, футер с action-bar), появляющаяся
+# вместе с MediaViewer после crop-upload. Подтверждена живым дампом
+# 2026-09-05 (photo_upload_uncertain_20260905_004737): чекбоксы
+# photo-viewer-assign-resume-<resume_id> на каждое резюме аккаунта
+# (все сняты) + кнопка photo-viewer-assign-submit «Выбрать и
+# установить» в футере, DISABLED до выбора строки. Значение
+# параметризовано resume_id (format в resume_photo) — единственный
+# шаблонный селектор в реестре.
+RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE = _selector(
+    "resume_photo.RESUME_PHOTO_VIEWER_ASSIGN_RESUME_TEMPLATE"
+)
+
+# Крестик закрытия модалки вьювера (Magritte MediaViewer NavBar). Подтверждён
+# живыми дампами 2026-09-04 (photo_assign_click_uncertain_*/photo_upload_*
+# — data-qa='photo-viewer-close' в одном NavBar с assign-кнопкой; live-замер
+# IAB: rect y=-48, тот же detached NavBar, позиционный клик невозможен).
+# Используется фолбэком «переоткрыть вьювер» (resume_photo): активация
+# assign-current в модалке после crop-upload молча не работает (бои 8-9),
+# а после переоткрытия через карандаш dispatch_event назначает фото.
+RESUME_PHOTO_VIEWER_CLOSE = _selector("resume_photo.RESUME_PHOTO_VIEWER_CLOSE")
+
+# Модалка «8 фото — это максимум»: галерея фото ПЕРЕПОЛНЕНА. Подтверждена
+# боевым прогоном 2026-09-04 (дамп photo_editor_missing_uncertain_20260904_*
+# в data/logs): после set_input_files вместо crop-редактора открылся
+# alertdialog с data-qa='photo-viewer-limit' и кнопкой
+# photo-viewer-limit-ok; файл ОТКЛОНЁН, мутации нет. Галерея общая НА
+# АККАУНТ (не на резюме) — «чистый» черновик не спасает. Наличие модалки =
+# доказанный отказ загрузки: чистый fail, не uncertain.
+RESUME_PHOTO_VIEWER_LIMIT = _selector("resume_photo.RESUME_PHOTO_VIEWER_LIMIT")
 
 # Допустимые расширения — из подтверждённого accept-атрибута input выше
 # (живой DOM 2026-09-02), не из головы.
