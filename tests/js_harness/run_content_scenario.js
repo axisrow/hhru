@@ -9,9 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { createEnvironment } = require('./dom_stub');
-
-const contentJsPath = path.join(__dirname, '..', '..', 'extensions', 'hhru-live', 'content.js');
-const source = fs.readFileSync(contentJsPath, 'utf8');
+const { runExtensionInContext } = require('./load_extension');
 
 const env = createEnvironment();
 const context = vm.createContext({
@@ -34,7 +32,7 @@ banner._setVisible(false);
 env.document.documentElement.appendChild(banner);
 env.flush();
 
-vm.runInContext(source, context);
+runExtensionInContext(context);
 
 async function run() {
   await Promise.resolve(); // flush the initial-scan microtask, if any queued

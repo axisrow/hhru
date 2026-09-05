@@ -9,7 +9,7 @@
   "action": {"default_title": "HH.ru live diagnostics", "default_popup": "popup.html"},
   "content_scripts": [{
     "matches": ["https://hh.ru/*", "https://*.hh.ru/*"],
-    "js": ["content.js"],
+    "js": ["policy.js", "content.js"],
     "run_at": "document_idle"
   }]
 }
