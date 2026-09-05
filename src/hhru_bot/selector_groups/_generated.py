@@ -112,6 +112,8 @@ VALUES: dict[str, str] = {
     "resume_experience.EXPERIENCE_SHARED_NEW_ROW_POSITION": "[data-qa^='resume-profile-experience-specific-position-input-']",
     "resume_experience.EXPERIENCE_START_MONTH": "[data-qa='magritte-select-activator'] >> nth=0",
     "resume_experience.EXPERIENCE_START_YEAR": "[data-qa='resume-editor-experience-start-year-input']",
+    "resume_experience.EXPERIENCE_VIEW_CARD": "[data-qa='profile-experience-company-card']",
+    "resume_experience.EXPERIENCE_VIEW_COMPANY": "[data-qa='cell-text-content']",
     "resume_experience.FIRST_EXPERIENCE_CANCEL": "[data-qa='resume-partial-edit-cancel']",
     "resume_experience.FIRST_EXPERIENCE_COMPANY": "[data-qa='resume-editor-experience-company-input']",
     "resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX": "[data-qa='checkbox-container'] input",

@@ -301,3 +301,24 @@ EXPERIENCE_RESUME_PANEL_EXPAND = _selector("resume_experience.EXPERIENCE_RESUME_
 # as well. count()==0 was observed on the same form before any submit, so a
 # non-empty read after a failed save is the rejection signal, not noise.
 EXPERIENCE_SAVE_VALIDATION_ERRORS = _selector("resume_experience.EXPERIENCE_SAVE_VALIDATION_ERRORS")
+
+# #844 re-repro (live 2026-09-05): the resume VIEW page (/resume/{id}) serves
+# its experience block as STATIC SSR — the edit-experience-button-{index}
+# pencils carry no React binding at all (no __reactProps/__reactFiber on the
+# buttons, no React root on the page), ignore synthetic AND trusted
+# coordinate clicks, and never navigate to the row editor. The old
+# read_experience_on_hh loop (#851) therefore reads nothing on today's hh.ru.
+# The same block's company cards, however, carry every field's TEXT in the
+# static DOM — reading requires ZERO clicks:
+#   card text = "{company}{duration}{position}{Месяц ГГГГ} — {Месяц ГГГГ|сейчас}
+#   ({duration}){duties}"
+# with the company also present as the first [data-qa='cell-text-content']
+# inside the card. Reading from these cards re-grounds read_experience_on_hh
+# on the resume page itself (correct per-resume scope by construction, no
+# hydration races), replacing the dead per-row editor loop.
+EXPERIENCE_VIEW_CARD = _selector("resume_experience.EXPERIENCE_VIEW_CARD")
+# Company name inside a view card — the first cell-text-content cell (the
+# second one holds the total duration text). Live 2026-09-05: on the python
+# resume the three cards resolved to "Фриланс / Open Source", "Клондайк Групп,
+# ООО", "ООО МИГАС".
+EXPERIENCE_VIEW_COMPANY = _selector("resume_experience.EXPERIENCE_VIEW_COMPANY")

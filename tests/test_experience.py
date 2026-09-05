@@ -578,138 +578,123 @@ def test_edit_experience_current_false_unchecks_checkbox_to_unlock_end_year(monk
     assert results == [ExperienceResult("строка 0: сохранено и привязано к резюме", True)]
 
 
-class _UnreadableRowLocator(_Locator):
-    def input_value(self):
-        raise ValueError("поле определяется неоднозначно (0)")
+class _ViewCard:
+    """Одна SSR-карточка опыта на view-странице (#844, live 2026-09-05)."""
 
+    def __init__(self, text, company):
+        self._text = text
+        self._company = company
 
-class _ReadPage:
-    """Two experience rows at non-contiguous indexes 1 and 2 (#815: hh.ru's
-    row index is an internal counter, not a 0-based position). Row 1 is
-    confirmed unreadable (drifted field), row 2 reads normally — #796's
-    resilience fix must skip row 1, not fail the whole read."""
+    def inner_text(self):
+        return self._text
 
     def locator(self, selector):
-        if selector.startswith("[data-qa^='edit-experience-button-']"):
-            return _RowButtonsLocator([1, 2])
-        if "Развернуть" in selector:
-            return _Locator(count=0)
-        if "edit-experience-button" in selector:
-            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
-            return _Locator(count=1 if index in (1, 2) else 0)
-        if "specific-company-input-1" in selector:
-            return _UnreadableRowLocator(count=1)
+        from hhru_bot.selector_groups import resume_experience as rp
+
+        if selector == rp.EXPERIENCE_VIEW_COMPANY:
+            company = self._company
+
+            class _CompanyLocator(_Locator):
+                # view-card ячейки — div, текст читается inner_text (#844)
+                def __init__(self):
+                    super().__init__(count=1)
+                    self._text = company
+
+                def inner_text(self):
+                    return self._text
+
+            return _CompanyLocator()
         return _Locator(count=1)
 
 
-def test_read_experience_skips_unreadable_row_instead_of_failing_whole_read(monkeypatch):
-    monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
+class _ViewCardsLocator:
+    def __init__(self, cards):
+        self._cards = cards
 
-    result = read_experience_on_hh(_ReadPage(), "resume-1")
+    @property
+    def first(self):
+        page = self
 
-    assert len(result) == 1
+        class _First:
+            def wait_for(self, *, state, timeout):
+                if not page._cards:
+                    raise PlaywrightError("no cards attached")
+
+        return _First()
+
+    def count(self):
+        return len(self._cards)
+
+    def nth(self, i):
+        return self._cards[i]
 
 
-class _MultiRowReadPage:
-    """#844 live trace: EXPERIENCE_EDIT_BUTTON's click navigates to a
-    separate page (/profile/edit/experience/{rowId}), and EXPERIENCE_CANCEL
-    was confirmed live to have no effect there — the row list on
-    /resume/{resume_id} is only available again after a fresh navigation.
-    This fake never "closes" the form on cancel(); it only resets once
-    open_confirmed_resume() is called again, mirroring that finding.
+class _ViewCardsPage:
+    """View-страница резюме: опыт отдаётся статичными карточками
+    profile-experience-company-card; карандашей-редакторов больше нет
+    (#844 re-repro 2026-09-05: SSR без React, клики игнорируются)."""
 
-    #844 PR review: a fresh open_confirmed_resume() navigation was ALSO
-    confirmed live to re-collapse the row list to the first 3 buttons on
-    any resume with more than 3 rows (same as _expand_experience_list()'s
-    own documented reload-collapse behavior) — this fake models that too:
-    every open_confirmed_resume() call resets `_expanded` to False, and
-    only the first 3 indexes are visible until the "Развернуть" control is
-    clicked again.
-    """
-
-    COLLAPSE_THRESHOLD = 3
-
-    def __init__(self, indexes):
-        self._indexes = list(indexes)
-        self.open_confirmed_calls = 0
-        self._form_open_for: int | None = None
-        self._expanded = False
-
-    def _visible_indexes(self):
-        if self._expanded or len(self._indexes) <= self.COLLAPSE_THRESHOLD:
-            return self._indexes
-        return self._indexes[: self.COLLAPSE_THRESHOLD]
-
-    def open_confirmed_resume_hook(self):
-        """Called by the fake_open_confirmed_resume monkeypatch below."""
-        self._form_open_for = None
-        self._expanded = False
+    def __init__(self, cards):
+        self._cards = cards
 
     def locator(self, selector):
-        if selector.startswith("[data-qa^='edit-experience-button-']"):
-            if self._form_open_for is not None:
-                return _RowButtonsLocator([])
-            return _RowButtonsLocator(self._visible_indexes())
-        if "Развернуть" in selector:
-            if self._form_open_for is not None or self._expanded:
-                return _Locator(count=0)
-            if len(self._indexes) > self.COLLAPSE_THRESHOLD:
-                page = self
+        from hhru_bot.selector_groups import resume_experience as rp
 
-                class _ExpandLocator(_Locator):
-                    def click(self, *, timeout=None, **_kwargs):
-                        page._expanded = True
-
-                return _ExpandLocator(count=1)
-            return _Locator(count=0)
-        if "edit-experience-button" in selector:
-            index = int(selector.rsplit("-", 1)[-1].rstrip("]").strip("'"))
-            if self._form_open_for is not None:
-                return _Locator(count=0)
-            if index in self._visible_indexes():
-                page = self
-
-                class _EditButtonLocator(_Locator):
-                    def click(self, *, timeout=None, **_kwargs):
-                        page._form_open_for = index
-
-                return _EditButtonLocator(count=1)
-            return _Locator(count=0)
-        if f"specific-company-input-{self._form_open_for}" in selector:
-            return _Locator(count=1)
-        if "specific-company-input" in selector:
-            # Company field for any OTHER index only exists once its own
-            # edit button was clicked (#844: it does not exist in the DOM
-            # ahead of that navigation).
-            return _Locator(count=0)
+        if selector == rp.EXPERIENCE_VIEW_CARD:
+            return _ViewCardsLocator(list(self._cards))
         return _Locator(count=1)
 
 
-def test_read_experience_reads_all_rows_when_cancel_click_has_no_effect(monkeypatch):
-    """#844: EXPERIENCE_CANCEL's click was confirmed live to do nothing on
-    the row-editor page — read_experience_on_hh must not rely on it to get
-    back to the row list; every row must still be read, not just the first.
+def _card(company, position, period, duties):
+    duration = "4 года и 11 месяцев"
+    text = f"{company}{duration}{position}{period} ({duration}){duties}"
+    return _ViewCard(text, company)
 
-    6 rows on a resume (over the 3-row collapse threshold, matching the
-    live-observed [1,6,7,8,12,17] from the issue) also exercises the #844
-    PR-review finding: a fresh open_confirmed_resume() re-collapses the row
-    list, so the fix must re-expand it on every iteration, not just once
-    before the loop."""
-    calls = {"count": 0}
+
+def test_read_experience_reads_all_rows_from_static_view_cards(monkeypatch):
+    """#844 re-repro (2026-09-05): the view page serves experience as static
+    SSR cards; the #851 per-row editor loop is dead (pencils carry no React
+    binding and ignore even trusted clicks). Reading must parse the cards
+    with ZERO clicks — open_confirmed_resume is called exactly once and no
+    edit button is ever addressed."""
+    calls = {"open": 0}
 
     def fake_open_confirmed_resume(page, resume_id):
-        calls["count"] += 1
-        page.open_confirmed_resume_hook()
+        calls["open"] += 1
 
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", fake_open_confirmed_resume)
+    cards = [
+        _card(
+            "Фриланс / Open Source",
+            "Python-разработчик / Open Source контрибьютор",
+            "Ноябрь 2021 — сейчас",
+            "Независимая разработка на Python",
+        ),
+        _card(
+            "Клондайк Групп, ООО",
+            "Ведущий специалист по маркетингу",
+            "Октябрь 2018 — Октябрь 2021",
+            "Работа с ключевыми клиентами",
+        ),
+        _card(
+            "ООО МИГАС",
+            "Интернет-маркетолог",
+            "Май 2017 — Сентябрь 2018",
+            "Запуск контекстной рекламы",
+        ),
+    ]
+    result = read_experience_on_hh(_ViewCardsPage(cards), "resume-1")
 
-    page = _MultiRowReadPage([1, 6, 7, 8, 12, 17])
-    result = read_experience_on_hh(page, "resume-1")
-
-    assert len(result) == 6
-    # One open_confirmed_resume() call to enter + one per row to recover
-    # from the row editor page, since EXPERIENCE_CANCEL cannot be relied on.
-    assert calls["count"] == 1 + 6
+    assert calls["open"] == 1
+    assert len(result) == 3
+    assert result[0].company == "Фриланс / Open Source"
+    assert result[0].position == "Python-разработчик / Open Source контрибьютор"
+    assert result[0].start_month == "11" and result[0].start_year == "2021"
+    assert result[0].current is True and result[0].end_year == ""
+    assert result[0].duties == "Независимая разработка на Python"
+    assert result[1].end_month == "10" and result[1].end_year == "2021"
+    assert result[1].current is False
+    assert result[2].start_month == "5" and result[2].end_month == "9"
 
 
 def test_read_month_parses_selected_label_confirmed_live():
@@ -1273,20 +1258,18 @@ def test_edit_experience_via_add_button_fails_closed_when_all_expand_clicks_swal
 
 
 def test_read_experience_dumps_page_when_empty(monkeypatch):
-    """#957: an empty read is ambiguous (genuinely empty resume vs a drifted
-    edit-button selector) — the page must be dumped so the difference is
-    provable from the artifact instead of another live attempt."""
+    """Ноль карточек неоднозначен (пустое резюме vs дрейф селектора) — пустой
+    результат обязан сопровождаться дампом страницы (#957)."""
     monkeypatch.setattr("hhru_bot.experience.open_confirmed_resume", lambda page, resume_id: None)
-    dumped = []
+    dumps = []
     monkeypatch.setattr(
-        "hhru_bot.experience._dump_experience_read_empty", lambda page: dumped.append(page)
+        "hhru_bot.experience._dump_experience_read_empty", lambda page: dumps.append(page)
     )
 
-    page = _Page()  # zero-row resume page
-    result = read_experience_on_hh(page, "resume-1")
+    result = read_experience_on_hh(_ViewCardsPage([]), "resume-1")
 
     assert result == []
-    assert dumped == [page]
+    assert len(dumps) == 1
 
 
 def test_edit_experience_append_only_forces_add_shape_on_index_collision(monkeypatch):
