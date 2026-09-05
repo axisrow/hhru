@@ -312,6 +312,57 @@ def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
         command._run(args, MagicMock())
 
 
+def test_common_uncertain_marker_blocks_repeat(monkeypatch, tmp_path, capsys):
+    """Ревью PR #986: uncertain-маркер edit_common (его пишет и этот seam, и
+    create-resume --fill-common) гейтит повтор команды для того же resume_id —
+    fail-closed инвариант #176/#476, раньше гейта не было вовсе."""
+    from hhru_bot import browser, config
+    from hhru_bot.commands import _common
+    from hhru_bot.commands import common as command
+    from hhru_bot.config import bare_resume
+    from hhru_bot.history import History
+
+    resume = bare_resume("00001")
+    history = History(tmp_path / "history.db")
+    history.record_action(
+        resume.resume_id, resume.resume_id, "edit_common", "uncertain", "клик мог уйти"
+    )
+    fake_config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):  # pragma: no cover - гейт срабатывает до браузера
+            raise AssertionError("гейт обязан сработать до открытия браузера")
+
+    monkeypatch.setattr(config, "load_config_or_exit", lambda _path: fake_config)
+    monkeypatch.setattr(command, "confirm_write", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(browser, "launch_context", lambda *_args, **_kwargs: Context())
+    monkeypatch.setattr(_common, "resolve_resume", lambda *_args, **_kwargs: resume)
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        history=str(tmp_path / "history.db"),
+        resume="00001",
+        first_name="Ada",
+        last_name=None,
+        birthday=None,
+        gender=None,
+        phone=None,
+        dry_run=False,
+        force=True,
+        headless=True,
+    )
+    assert command._run(args, MagicMock()) is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "uncertain" in out
+
+
 def test_common_values_exposes_work_conditions():
     values = CommonValues(
         work_ticket="true",
@@ -410,3 +461,124 @@ def test_read_common_supports_magritte_trigger_and_replaces_selection():
             assert page.locator("[role=option]").nth(1).get_attribute("aria-selected") == "true"
         finally:
             browser.close()
+
+
+# --- #985: подтверждение экрана common fresh-черновика ------------------------
+
+
+def _confirm_page(monkeypatch, **overrides):
+    """Двойник страницы на экране common визарда (живой DOM 2026-09-06).
+
+    Префицилл-проверка #985 переиспользует чтение #982 (read_common):
+    двойник обязан поддерживать и инпуты, и magritte-контейнеры
+    (birthday/citizenship), и отсутствующие необязательные labelled-поля."""
+    from unittest.mock import MagicMock
+
+    from playwright.sync_api import Error as PlaywrightError
+
+    monkeypatch.setattr(common, "goto_hh", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(common, "dismiss_cookie_banner", lambda *_args, **_kwargs: None)
+
+    page = MagicMock()
+    page.url = "https://hh.ru/profile/resume/common?resume=00001"
+    locators: dict = {}
+
+    def field(selector, *, value="x", checked=None, text=None, count=1):
+        loc = MagicMock()
+        loc.count.return_value = count
+        if value is not None:
+            loc.first.input_value.return_value = value
+        if checked is not None:
+            loc.first.is_checked.return_value = checked
+        if text is not None:
+            # magritte-контейнер: activator-поиск внутри — пусто, значение —
+            # видимый текст самого контейнера (та же деградация, что в read_common).
+            loc.first.locator.return_value.count.return_value = 0
+            loc.first.inner_text.return_value = text
+        locators[selector] = loc
+        return loc
+
+    values = dict(
+        # очевидно фейковые значения: реальные ФИО/телефон владельца в коде и
+        # тестах запрещены (#828, тот же принцип что и для resume_id)
+        surname="Тестов",
+        name="Тест",
+        phone="+7 000 000-00-00",
+        male_checked=True,
+        female_checked=False,
+        citizenship="Россия",
+        birthday_month="Января",
+        birthday_year="1990",
+        nav_error=None,
+        click_error=False,
+    )
+    values.update(overrides)
+
+    field(common.FORM, value=None)
+    field(common.LAST_NAME, value=values["surname"])
+    field(common.FIRST_NAME, value=values["name"])
+    field(common.PHONE, value=values["phone"])
+    field(common.GENDER, checked=values["male_checked"])
+    field(common.GENDER_FEMALE, checked=values["female_checked"])
+    field(common.BIRTHDAY, value="1")
+    field(common.BIRTHDAY_MONTH, text=values["birthday_month"])
+    field(common.BIRTHDAY_YEAR, text=values["birthday_year"])
+    field(common.CITIZENSHIP_SELECTOR, text=values["citizenship"])
+    # необязательные labelled-поля условий работы на shape визарда отсутствуют
+    absent = MagicMock()
+    absent.count.return_value = 0
+    page.get_by_label.return_value = absent
+    save = field(common.SAVE, value=None)
+    if values["click_error"]:
+        save.first.click.side_effect = PlaywrightError("pointer intercepted")
+    if values["nav_error"] is not None:
+        page.wait_for_url.side_effect = values["nav_error"]
+
+    def locate(selector):
+        if selector not in locators:
+            # отсутствующее на shape визарда поле (area и т.п.) — мягкое чтение
+            # #982 трактует как пустое значение, а не ошибку двойника
+            locators[selector] = field(selector, count=0)
+        return locators[selector]
+
+    page.locator.side_effect = locate
+    return page, save, locators
+
+
+def test_confirm_common_screen_clicks_next_and_requires_url_change(monkeypatch):
+    page, save, _locators = _confirm_page(monkeypatch)
+    before_click = MagicMock()
+    result = common.confirm_common_screen(page, "00001", before_click=before_click)
+    assert result.success and result.acted and not result.uncertain
+    before_click.assert_called_once_with()
+    save.first.click.assert_called_once_with()
+    page.wait_for_url.assert_called_once()
+
+
+def test_confirm_common_screen_refuses_before_click_on_missing_prefill(monkeypatch):
+    page, save, _locators = _confirm_page(monkeypatch, name="")
+    before_click = MagicMock()
+    result = common.confirm_common_screen(page, "00001", before_click=before_click)
+    assert not result.success and not result.acted and not result.uncertain
+    assert "first_name" in result.reason
+    before_click.assert_not_called()
+    save.first.click.assert_not_called()
+    page.wait_for_url.assert_not_called()
+
+
+def test_confirm_common_screen_click_error_still_succeeds_on_url_change(monkeypatch):
+    # #913: click() может упасть при состоявшемся переходе — исход решает
+    # wait_for_url, а не сам клик.
+    page, save, _locators = _confirm_page(monkeypatch, click_error=True)
+    result = common.confirm_common_screen(page, "00001")
+    assert result.success and result.acted
+
+
+def test_confirm_common_screen_no_navigation_is_uncertain(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    page, _save, _locators = _confirm_page(monkeypatch, nav_error=PlaywrightError("timeout"))
+    result = common.confirm_common_screen(page, "00001")
+    assert not result.success and result.acted and result.uncertain
+    assert "переход с экрана common не подтверждён" in result.reason

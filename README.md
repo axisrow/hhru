@@ -577,6 +577,7 @@ READ hh.ru: competitors collect --text QUERY [--search-in SCOPE] [--max-pages N]
 - `--allow-unresolved-area, --allow-unresolved` — Если area не найдена в каталоге — создать черновик с ролью-плейсхолдером «Другое» (id 40), профессия заменяется вручную (синоним: --allow-unresolved)
 - `--dry-run` — Показать план без создания
 - `--force` — Подтвердить боевое создание
+- `--fill-common` — #985: если readback после создания вернёт draft_started с nextIncompleteScreenId=common — подтвердить экран common в том же прогоне («Сохранить и продолжить»; hh.ru предзаполняет его из профиля аккаунта) и перевести резюме к ready_to_publish. Значения не выдумываются: незаполненное в профиле поле — честный отказ до клика с вердиктом draft_started
 
 ### `delete-education-entry`
 
