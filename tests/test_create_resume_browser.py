@@ -11,6 +11,7 @@ NEXT, выбор leaf — мутацию не совершает, и ошибк�
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -1842,3 +1843,114 @@ def test_pre_next_failure_does_not_warn_about_phantom_draft(monkeypatch):
     assert not result.success
     assert not result.uncertain
     assert "черновик" not in result.reason
+
+
+# --- #978: readback-вердикт статусной модели после материализации ------------
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+# Живой черновик #910: nextIncompleteScreenId=common (то же состояние, что у
+# резюме-свидетеля d7f3e582 из #978).
+READBACK_DRAFT_ID = "00007" + "0" * 34
+READBACK_COMMON_MARKUP = (FIXTURES_DIR / "resume_position_state_common_title_910.html").read_text(
+    encoding="utf-8"
+)
+
+
+class ReadbackPage(CheckboxWrapperPage):
+    """Страница после успешного финального NEXT: readback читает bootstrap."""
+
+    def __init__(self, markup):
+        super().__init__()
+        self._markup = markup
+
+    def wait_for_url(self, url, *, wait_until=None, timeout=None):  # noqa: ARG002
+        if not isinstance(url, str):
+            self.url = (
+                f"https://hh.ru/profile/resume/educations?resume={READBACK_DRAFT_ID}"
+                "&hhtmFrom=my_resumes&hhtmFromLabel=create_resume_header"
+            )
+        return None
+
+    def content(self):
+        return self._markup
+
+
+def _patch_readback(monkeypatch):
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _open(page, resume_id):
+        page.url = f"https://hh.ru/resume/{resume_id}"
+
+    monkeypatch.setattr(create, "open_confirmed_resume", _open)
+
+
+def test_success_ends_with_draft_started_verdict_when_common_incomplete(monkeypatch):
+    """Боевой кейс #978: черновик материализован, экран common не заполнен —
+    молчаливого success больше нет, вердикт «черновик начат»."""
+    _patch_readback(monkeypatch)
+    page = ReadbackPage(READBACK_COMMON_MARKUP)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_DRAFT_STARTED
+    assert result.next_incomplete_screen_id == "common"
+    assert "nextIncompleteScreenId=common" in result.reason
+    assert "publish-resume откажет" in result.reason
+
+
+def test_success_ends_with_ready_verdict_when_no_incomplete_step(monkeypatch):
+    _patch_readback(monkeypatch)
+    markup = '{"resume":{"hash":"' + READBACK_DRAFT_ID + '","status":"not_finished"}}'
+    page = ReadbackPage(markup)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_READY_TO_PUBLISH
+    assert result.next_incomplete_screen_id is None
+
+
+def test_readback_failure_is_unknown_but_draft_still_created(monkeypatch):
+    """Readback не удался — готовность НЕ доказана (fail-closed unknown),
+    но материализация черновика уже факт: success не отзывается."""
+    monkeypatch.setattr(create, "goto_hh", lambda page, url: page.goto(url))
+
+    def _broken_open(page, resume_id):
+        raise RuntimeError("сессия отвергнута при readback")
+
+    monkeypatch.setattr(create, "open_confirmed_resume", _broken_open)
+    page = ReadbackPage(READBACK_COMMON_MARKUP)
+
+    result = _run(page, before_click=lambda: None)
+
+    assert result.success, result.reason
+    assert result.readiness == create.READINESS_UNKNOWN
+    assert "readback" in result.reason
+
+
+def test_placeholder_path_keeps_placeholder_flag_with_verdict(monkeypatch):
+    """Флаговый путь #936 (#978): плейсхолдер-предупреждение сохраняется и
+    объединяется с вердиктом readback."""
+    _patch_readback(monkeypatch)
+    page = ReadbackPage(READBACK_COMMON_MARKUP)
+
+    result = create._success_result(page, READBACK_DRAFT_ID, placeholder_role=True)
+
+    assert result.success
+    assert result.placeholder_role is True
+    assert result.readiness == create.READINESS_DRAFT_STARTED
+    assert "плейсхолдер" in result.reason
+    assert "nextIncompleteScreenId=common" in result.reason
+
+
+def test_readback_without_resume_record_is_unknown(monkeypatch):
+    """Bootstrap без записи этого резюме — не «готово», а честный unknown."""
+    _patch_readback(monkeypatch)
+    page = ReadbackPage("<html>пустая страница</html>")
+
+    readiness, next_incomplete, detail = create.read_draft_readiness(page, READBACK_DRAFT_ID)
+
+    assert readiness == create.READINESS_UNKNOWN
+    assert next_incomplete is None
+    assert detail

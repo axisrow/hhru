@@ -133,8 +133,33 @@ def run(args: argparse.Namespace):
             print(f"[DRY-RUN] Создание резюме: area={args.area}, title={args.title}")
             print(f"[INFO] {result.reason}")
         else:
-            detail = f" {result.reason}." if result.placeholder_role else ""
-            print(f"[OK] Черновик резюме создан.{detail} Новый resume_id: {result.new_resume_id}")
+            # #978: вердикт статусной модели вместо безусловного «создан» —
+            # молчаливый success в состоянии «Дополнить» исчезает как класс.
+            from ..create_resume import (
+                READINESS_DRAFT_STARTED,
+                READINESS_READY_TO_PUBLISH,
+            )
+
+            if result.readiness == READINESS_READY_TO_PUBLISH:
+                verdict = "[OK] Готово к публикации: незавершённых шагов нет."
+            elif result.readiness == READINESS_DRAFT_STARTED:
+                verdict = (
+                    "[OK] Черновик начат: незавершённый шаг "
+                    f"nextIncompleteScreenId={result.next_incomplete_screen_id} — "
+                    "publish-resume откажет до заполнения этого экрана."
+                )
+            else:
+                verdict = (
+                    "[WARN] Черновик создан, но readback статуса не удался — "
+                    "готовность к публикации не подтверждена; проверьте "
+                    "publish-resume --dry-run."
+                )
+            print(f"{verdict} Новый resume_id: {result.new_resume_id}")
+            if result.placeholder_role:
+                print(
+                    "[WARN] Профессия НЕ установлена — назначена роль-плейсхолдер "
+                    "«Другое» (id 40); замените её вручную через «Дополнить»."
+                )
             print(format_config_snippet(result.new_resume_id))
         return False
 

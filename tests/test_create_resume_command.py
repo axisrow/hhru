@@ -217,3 +217,50 @@ def test_unresolved_uncertain_blocks_retry(env, tmp_path, capsys):
     assert "uncertain" in output
     # No browser call was attempted -- the guard fires before _body runs.
     assert env.calls == []
+
+
+# --- #978: вердикты статусной модели в выводе команды ------------------------
+
+
+def _force_output(env, tmp_path, capsys, **fields):
+    from hhru_bot.create_resume import CreateResumeResult as Result
+
+    env.result = Result(True, NEW_ID, "reason", **fields)
+    cmd.run(_args(tmp_path, force=True))
+    return capsys.readouterr().out
+
+
+def test_draft_started_verdict_is_printed(env, tmp_path, capsys):
+    out = _force_output(
+        env, tmp_path, capsys, readiness="draft_started", next_incomplete_screen_id="common"
+    )
+    assert "Черновик начат" in out
+    assert "nextIncompleteScreenId=common" in out
+    assert "publish-resume откажет" in out
+    assert f"Новый resume_id: {NEW_ID}" in out
+
+
+def test_ready_to_publish_verdict_is_printed(env, tmp_path, capsys):
+    out = _force_output(env, tmp_path, capsys, readiness="ready_to_publish")
+    assert "Готово к публикации" in out
+    assert "Черновик начат" not in out
+
+
+def test_unknown_readback_warns_instead_of_claiming_ready(env, tmp_path, capsys):
+    out = _force_output(env, tmp_path, capsys, readiness="unknown")
+    assert "[WARN]" in out
+    assert "не подтверждена" in out
+    assert "Готово к публикации" not in out
+
+
+def test_placeholder_warning_survives_with_verdict(env, tmp_path, capsys):
+    out = _force_output(
+        env,
+        tmp_path,
+        capsys,
+        readiness="draft_started",
+        next_incomplete_screen_id="common",
+        placeholder_role=True,
+    )
+    assert "плейсхолдер" in out
+    assert "Черновик начат" in out

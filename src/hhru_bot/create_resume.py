@@ -16,10 +16,12 @@ from .browser import (
     RESUMES_FULL_LIST_URL,
     dismiss_cookie_banner,
     goto_hh,
+    open_confirmed_resume,
 )
 from .external_forms.detect import normalize
 from .resume_ids import RESUME_ID_FROM_PATH_OR_QUERY_RE
 from .resume_limits import resume_limit_reason
+from .resume_state import parse_resume_state
 from .resume_titles import duplicate_title_reason, read_account_titles
 from .selector_groups.resume_page import (
     RESUME_CREATE_BUTTON,
@@ -52,6 +54,16 @@ OTHER_ROLE_ID = "40"
 # плейсхолдером, черновик материализуется, профессию владелец меняет вручную
 # через «Дополнить»).
 OTHER_ROLE_LABEL = "Другое"
+
+# #978 (решение владельца): статусная модель результата create-resume.
+# «Черновик создан» без вердикта о готовности исчезает как класс — команда
+# обязана заканчивать readback'ом и возвращать один из этих вердиктов.
+# Источник истины один — nextIncompleteScreenId из identity-bound bootstrap,
+# тот же сигнал, по которому гейтит publish-resume (#225); параллельного
+# разбора «Дополнить» по DOM-тексту нет и быть не должно.
+READINESS_READY_TO_PUBLISH = "ready_to_publish"  # незавершённых шагов нет
+READINESS_DRAFT_STARTED = "draft_started"  # есть nextIncompleteScreenId
+READINESS_UNKNOWN = "unknown"  # readback не удался; готовность НЕ доказана
 
 # #920 этап 2 (живая диагностика 2026-09-02): на ПЕРВОМ экране визарда поле
 # должности — combobox с подсказками автодополнения hh.ru; попап открывается
@@ -89,6 +101,10 @@ class CreateResumeResult:
     # роль закрыта плейсхолдером. Поле вместо снифа подстроки reason
     # (cycle 7): потребителю нужен структурированный факт, а не парсинг текста.
     placeholder_role: bool = False
+    # #978: вердикт статусной модели (READINESS_*). Пустая строка — только у
+    # результатов, не дошедших до материализации черновика (dry-run, отказы).
+    readiness: str = ""
+    next_incomplete_screen_id: str | None = None
 
 
 def _one(page: Page, selector: str, label: str) -> tuple[Locator | None, str]:
@@ -680,12 +696,62 @@ def _is_unresolved_area_reason(reason: str) -> bool:
     )
 
 
-def _placeholder_role_success_reason() -> str:
-    """Итог [OK] для флагового пути: роль закрыта плейсхолдером, не профессией."""
-    return (
-        "черновик создан; профессия НЕ установлена — назначена "
-        f"роль-плейсхолдер «{OTHER_ROLE_LABEL}» (id {OTHER_ROLE_ID}), "
-        "замените её на реальную вручную через «Дополнить»"
+def read_draft_readiness(page: Page, resume_id: str) -> tuple[str, str | None, str]:
+    """Read-only readback статуса только что материализованного черновика (#978).
+
+    Открывает страницу резюме и читает тот же identity-bound bootstrap-сигнал
+    ``nextIncompleteScreenId``, по которому publish-resume гейтит клик (#225).
+    Возвращает ``(READINESS_*, next_incomplete_screen_id | None, деталь-причина)``;
+    любая ошибка чтения — READINESS_UNKNOWN: черновик уже материализован, но
+    готовность к публикации НЕ доказана, и заявлять «готово» нельзя (fail-closed).
+    """
+    try:
+        open_confirmed_resume(page, resume_id)
+        state = parse_resume_state(page.content(), resume_id)
+    except Exception as exc:  # noqa: BLE001 — readback диагностический: любая ошибка = unknown
+        return READINESS_UNKNOWN, None, str(exc)
+    if state.status is None and state.next_incomplete_screen_id is None:
+        return READINESS_UNKNOWN, None, "состояние резюме не найдено в bootstrap разметке"
+    if state.next_incomplete_screen_id:
+        return READINESS_DRAFT_STARTED, state.next_incomplete_screen_id, ""
+    return READINESS_READY_TO_PUBLISH, None, ""
+
+
+def _success_result(
+    page: Page,
+    new_resume_id: str,
+    *,
+    placeholder_role: bool,
+) -> CreateResumeResult:
+    """Хвост успешного создания: readback статуса + вердикт статусной модели #978."""
+    readiness, next_incomplete, readback_detail = read_draft_readiness(page, new_resume_id)
+    placeholder_note = (
+        f" Профессия НЕ установлена — назначена роль-плейсхолдер «{OTHER_ROLE_LABEL}» "
+        f"(id {OTHER_ROLE_ID}), замените её на реальную вручную через «Дополнить»."
+        if placeholder_role
+        else ""
+    )
+    if readiness == READINESS_DRAFT_STARTED:
+        reason = (
+            f"черновик начат: незавершённый шаг nextIncompleteScreenId="
+            f"{next_incomplete} — publish-resume откажет до заполнения экрана "
+            f"{next_incomplete}.{placeholder_note}"
+        )
+    elif readiness == READINESS_READY_TO_PUBLISH:
+        reason = f"готово к публикации: незавершённых шагов нет.{placeholder_note}"
+    else:
+        reason = (
+            f"черновик материализован, но readback статуса не удался: {readback_detail}. "
+            f"Готовность к публикации не подтверждена — проверьте publish-resume --dry-run."
+            f"{placeholder_note}"
+        )
+    return CreateResumeResult(
+        True,
+        new_resume_id=new_resume_id,
+        reason=reason,
+        placeholder_role=placeholder_role,
+        readiness=readiness,
+        next_incomplete_screen_id=next_incomplete,
     )
 
 
@@ -892,11 +958,6 @@ def create_resume_on_hh(
         return CreateResumeResult(
             False, reason="новый resume_id не подтверждён после сохранения", uncertain=True
         )
-    if placeholder_role:
-        return CreateResumeResult(
-            True,
-            new_resume_id=match.group(1),
-            reason=_placeholder_role_success_reason(),
-            placeholder_role=True,
-        )
-    return CreateResumeResult(True, new_resume_id=match.group(1), reason="черновик создан")
+    # #978: молчаливый success в состоянии «Дополнить» исчезает как класс —
+    # оба успешных пути (обычный и placeholder) заканчиваются readback'ом.
+    return _success_result(page, match.group(1), placeholder_role=placeholder_role)
