@@ -500,14 +500,16 @@ def _confirm_page(monkeypatch, **overrides):
         return loc
 
     values = dict(
-        surname="Лукьянчук",
-        name="Алексей",
-        phone="+7 903 144-49-87",
+        # очевидно фейковые значения: реальные ФИО/телефон владельца в коде и
+        # тестах запрещены (#828, тот же принцип что и для resume_id)
+        surname="Тестов",
+        name="Тест",
+        phone="+7 000 000-00-00",
         male_checked=True,
         female_checked=False,
         citizenship="Россия",
-        birthday_month="Февраля",
-        birthday_year="1983",
+        birthday_month="Января",
+        birthday_year="1990",
         nav_error=None,
         click_error=False,
     )
