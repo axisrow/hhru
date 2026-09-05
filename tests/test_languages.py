@@ -444,3 +444,128 @@ def test_existing_languages_are_read_from_cell_text_not_split_on_comma(monkeypat
 
     assert not result.success
     assert "пустого раздела" in result.reason
+
+
+def _page_with_language_section(add_button, form_locator):
+    """MagicMock page whose strict count() guards mirror the live selectors."""
+    from hhru_bot.selector_groups import resume_page
+
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+    card = MagicMock()
+    card.count.return_value = 1
+    card.locator.return_value.all.return_value = []
+    add_button.count.return_value = 1
+
+    def locator(selector):
+        if selector == resume_page.RESUME_LANGUAGE_CARD:
+            return card
+        if selector == resume_page.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        if selector == resume_page.RESUME_LANGUAGE_ADD_FORM:
+            return form_locator
+        return MagicMock()
+
+    page.locator.side_effect = locator
+    return page
+
+
+def _happy_dialog_chain(monkeypatch):
+    dialog = MagicMock()
+    form = MagicMock()
+    form.locator.return_value.count.return_value = 1
+    form.count.return_value = 1
+    dialog.locator.return_value = form
+    page_get_by_role = _StrictLastLocator(dialog)
+    return dialog, page_get_by_role
+
+
+def test_lost_first_add_click_is_retried_and_succeeds(monkeypatch):
+    """#975: the add button is visible from SSR long before hydration; a click
+    inside that window is silently lost and the form never opens. The first
+    attempt must be retried (after a hydration wait), not fail the run."""
+    from hhru_bot.selector_groups import resume_page as rp
+
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    add_button = MagicMock()
+    form_locator = MagicMock()
+    # First attempt: the click is lost (form never becomes visible),
+    # second attempt: the form opens.
+    form_locator.first.wait_for.side_effect = [
+        PlaywrightError("Timeout 15000ms exceeded"),
+        None,
+    ]
+    added_row = MagicMock()
+    added_row.locator.return_value.first.inner_text.return_value = "English"
+    add_button.count.return_value = 1
+
+    def make_card():
+        card = MagicMock()
+        card.count.return_value = 1
+        card.first.wait_for.return_value = None
+        # rows before the save: none; after: the saved language
+        card.locator.return_value.all.side_effect = lambda: (
+            [] if add_button.click.call_count < 2 else [added_row]
+        )
+        return card
+
+    page = MagicMock()
+    page.url = "https://hh.ru/applicant/profile/me"
+
+    def locator(selector):
+        if selector == rp.RESUME_LANGUAGE_CARD:
+            return make_card()
+        if selector == rp.RESUME_LANGUAGE_ADD_BUTTON:
+            return add_button
+        if selector == rp.RESUME_LANGUAGE_ADD_FORM:
+            return form_locator
+        return MagicMock()
+
+    page.locator.side_effect = locator
+    dialog, get_by_role = _happy_dialog_chain(monkeypatch)
+    page.get_by_role.return_value = get_by_role
+    monkeypatch.setattr(languages, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _p: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _p: False)
+    hydration_calls = []
+    monkeypatch.setattr(
+        languages,
+        "wait_for_react_hydration",
+        lambda _page, _sel, *, timeout_ms: hydration_calls.append(timeout_ms) or True,
+    )
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert result.success, result.reason
+    assert result.acted is True
+    assert add_button.click.call_count == 2
+    assert len(hydration_calls) == 2
+
+
+def test_add_form_never_opens_reports_reason_and_dump(monkeypatch):
+    """#975: both click attempts lost -> fail with a specific reason and a
+    page dump, not a bare locator timeout wrapped in a generic message."""
+    resume = type("Resume", (), {"resume_id": "abc", "id": "abc"})()
+    add_button = MagicMock()
+    form_locator = MagicMock()
+    form_locator.first.wait_for.side_effect = PlaywrightError("Timeout 15000ms exceeded")
+    page = _page_with_language_section(add_button, form_locator)
+    monkeypatch.setattr(languages, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(languages, "has_auth_cookie", lambda _p: True)
+    monkeypatch.setattr(languages, "has_login_form", lambda _p: False)
+    monkeypatch.setattr(languages, "wait_for_react_hydration", lambda *_a, **_k: True)
+    dump_path = MagicMock()
+    monkeypatch.setattr(languages, "dump_page_html", lambda _page, stem: dump_path)
+
+    result = edit_languages_on_hh(
+        page, resume, (Language("English", "B2"),), dry_run=False, mode="append"
+    )
+
+    assert not result.success
+    assert result.acted is False
+    assert "форма добавления языка не открылась" in result.reason
+    assert str(dump_path) in result.reason
+    assert "попытка 2" in result.reason
+    assert add_button.click.call_count == 2
