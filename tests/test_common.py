@@ -312,6 +312,57 @@ def test_common_preserves_expired_session_classification(monkeypatch, tmp_path):
         command._run(args, MagicMock())
 
 
+def test_common_uncertain_marker_blocks_repeat(monkeypatch, tmp_path, capsys):
+    """Ревью PR #986: uncertain-маркер edit_common (его пишет и этот seam, и
+    create-resume --fill-common) гейтит повтор команды для того же resume_id —
+    fail-closed инвариант #176/#476, раньше гейта не было вовсе."""
+    from hhru_bot import browser, config
+    from hhru_bot.commands import _common
+    from hhru_bot.commands import common as command
+    from hhru_bot.config import bare_resume
+    from hhru_bot.history import History
+
+    resume = bare_resume("00001")
+    history = History(tmp_path / "history.db")
+    history.record_action(
+        resume.resume_id, resume.resume_id, "edit_common", "uncertain", "клик мог уйти"
+    )
+    fake_config = SimpleNamespace(storage_state_file="session.json", user_agent=None)
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def new_page(self):  # pragma: no cover - гейт срабатывает до браузера
+            raise AssertionError("гейт обязан сработать до открытия браузера")
+
+    monkeypatch.setattr(config, "load_config_or_exit", lambda _path: fake_config)
+    monkeypatch.setattr(command, "confirm_write", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(browser, "launch_context", lambda *_args, **_kwargs: Context())
+    monkeypatch.setattr(_common, "resolve_resume", lambda *_args, **_kwargs: resume)
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        history=str(tmp_path / "history.db"),
+        resume="00001",
+        first_name="Ada",
+        last_name=None,
+        birthday=None,
+        gender=None,
+        phone=None,
+        dry_run=False,
+        force=True,
+        headless=True,
+    )
+    assert command._run(args, MagicMock()) is True
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "uncertain" in out
+
+
 def test_common_values_exposes_work_conditions():
     values = CommonValues(
         work_ticket="true",

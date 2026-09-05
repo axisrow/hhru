@@ -212,9 +212,12 @@ def confirm_common_screen(
             + " — заполните вручную и повторите",
         )
     save = _strict(page, SAVE, "кнопка «Сохранить и продолжить» экрана common")
+    # Баннер закрывается ДО резервирования uncertain-маркера — семантика seam
+    # «маркер вплотную к мутирующему клику» (тот же порядок, что у
+    # create_resume._click_one(before_click=...) и _click_wizard_next).
+    dismiss_cookie_banner(page)
     if before_click is not None:
         before_click()
-    dismiss_cookie_banner(page)
     try:
         save.click()
     except PlaywrightError:

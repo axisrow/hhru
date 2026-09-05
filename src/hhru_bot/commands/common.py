@@ -158,6 +158,17 @@ def _run(args: argparse.Namespace, progress) -> bool:
             "предзаполненное hh.ru и сохраню его, если обязательные поля непусты."
         )
     history = History(args.history)
+    # Ревью PR #986: uncertain-маркер edit_common (пишется и этим seam'ом, и
+    # create-resume --fill-common) обязан блокировать повтор мутации для того
+    # же resume_id до появления более поздней success-строки — тот же гейт,
+    # что у publish/copy (#176/#476). Разрешение — только ручная
+    # reconciliation через подтверждение на hh.ru.
+    if not args.dry_run and history.has_unresolved_uncertain(resume.resume_id, "edit_common"):
+        print(
+            "[FAIL] предыдущее изменение common для этого резюме не подтверждено "
+            "(uncertain). Проверьте состояние на hh.ru вручную перед повтором."
+        )
+        return True
     try:
         with launch_context(
             config.storage_state_file, headless=args.headless, user_agent=config.user_agent
