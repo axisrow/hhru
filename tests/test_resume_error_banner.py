@@ -73,16 +73,24 @@ def _attention_bad_nodes(html: str) -> list[_DOMNode]:
 
 
 class _ClassTextLocator:
-    """Локатор ровно под паттерн детектора: ``.filter(has_text=...)`` + count.
+    """Локатор ровно под паттерн детектора: ``.filter(has_text=, visible=)`` + count.
 
     Playwright-семантика has_text — подстрока в тексте элемента; здесь то же
     (inner_text узла включает его прямых потомков, как у реального браузера).
+    ``visible`` — no-op, как у FakeLocator в ``_fakes``: html.parser не знает
+    CSS display, все узлы фикстуры считаются видимыми (скрытые копии баннера
+    отсекает реальный Playwright-фильтр, а не этот фейк).
     """
 
     def __init__(self, nodes: list[_DOMNode]):
         self._nodes = nodes
 
-    def filter(self, *, has_text: str | None = None) -> _ClassTextLocator:
+    def filter(
+        self,
+        *,
+        has_text: str | None = None,
+        visible: bool | None = None,  # noqa: ARG002
+    ) -> _ClassTextLocator:
         if has_text is None:
             return self
         return _ClassTextLocator([n for n in self._nodes if has_text in n.inner_text()])

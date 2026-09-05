@@ -534,6 +534,10 @@ RESUME_UNAVAILABLE_REASON = (
 def has_resume_error_banner(page: Page) -> bool:
     """Сбойный экран hh.ru на /resume/{id}: видимый баннер ошибки (#972).
 
+    ``visible=True`` — гвард от скрытых (display:none) копий attention_bad
+    того же текста на живой странице резюме, по образцу
+    ``detect_antibot_on_page`` (dormant-шаблон не должен давать отказ
+    «резюме недоступно»; на снятом live-экране баннер один и видимый).
     Ошибка чтения селектора — не доказательство отсутствия баннера: детектор
     молчит, вызывающий путь продолжает свой обычный fail-closed (его
     «кнопка/форма не найдена» останется прежним отказом). Намеренно
@@ -542,7 +546,10 @@ def has_resume_error_banner(page: Page) -> bool:
     """
     try:
         return (
-            page.locator(RESUME_ERROR_BANNER).filter(has_text=RESUME_ERROR_BANNER_TEXT).count() > 0
+            page.locator(RESUME_ERROR_BANNER)
+            .filter(has_text=RESUME_ERROR_BANNER_TEXT, visible=True)
+            .count()
+            > 0
         )
     except (AttributeError, PlaywrightError):
         return False
