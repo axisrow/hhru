@@ -996,3 +996,23 @@ def test_open_common_unmounted_screen_dumps(monkeypatch):
         raised = exc
     assert raised is not None and "не смонтировался" in str(raised)
     dump.assert_called_once()
+
+
+def test_open_common_already_passed_screen_reports_fact(monkeypatch):
+    """#999: hh.ru автоподтверждает common у fresh-черновика, и визанд
+    встаёт на следующий экран (educations). Отказ должен называть факт
+    «уже пройден», а не «не смонтировался»."""
+    page = _OpenScreenPage(f"/profile/resume/educations?resume={'0' * 32}")
+    dump = MagicMock()
+    monkeypatch.setattr(common, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    try:
+        common._open_common_screen(page, "0" * 32)
+        raised = None
+    except RuntimeError as exc:
+        raised = exc
+    assert raised is not None
+    assert "уже пройден" in str(raised)
+    assert "educations" in str(raised)
+    dump.assert_called_once()
