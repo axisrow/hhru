@@ -43,6 +43,15 @@ WIZARD_BASE_PATH = "/profile/resume"
 # у своих владельцев; всё остальное — честный отказ без владельца.
 SUPPORTED_SCREENS = ("educations", "keyskills", "experience")
 
+# #1012: hh.ru публикует черновик сам ровно на ПОСЛЕДНЕМ незакрытом экране
+# (#900). Подтверждено двумя независимыми прогонами: #1009 («Дворник-бригадир»)
+# и «Повар» 2026-09-06 — оба прошли educations/keyskills без публикации,
+# автопубликация случилась на experience. Порядок экранов стабилен:
+# common → educations → keyskills → experience. Если hh.ru добавит экран
+# после experience, прогноз сломается в безопасную сторону: readback
+# wizard-next печатает автопубликацию фактом, а флаг просто не понадобился.
+PUBLISHABLE_SCREENS = (SUPPORTED_SCREENS[-1],)
+
 SCREEN_OWNERS = {
     "common": "hhru common --resume <id> --force",
     "professional_role": "hhru resume-position --resume <id> …",
@@ -76,6 +85,11 @@ def read_resume_state(page: Page, resume_id: str) -> ResumeState:
     """Identity-bound состояние резюме со страницы /resume/<id> (#225)."""
     open_confirmed_resume(page, resume_id)
     return parse_resume_state(page.content(), resume_id)
+
+
+def is_publishing_screen(target: str) -> bool:
+    """Прогноз #1012: сабмит этого экрана опубликует черновик (#900)."""
+    return target in PUBLISHABLE_SCREENS
 
 
 def resolve_target_screen(state: ResumeState, requested: str | None) -> str:

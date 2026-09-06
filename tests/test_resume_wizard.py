@@ -277,3 +277,12 @@ def test_inspect_refuses_ambiguous_next(monkeypatch):
     )
     with pytest.raises(rw.WizardScreenRefused, match="найдена 2 раз"):
         rw.inspect_wizard_screen(page, RESUME_ID, "educations")
+
+
+def test_is_publishing_screen_only_last_supported_screen():
+    """#1012: прогноз публикации — только последний экран SUPPORTED_SCREENS
+    (#900, прогоны #1009 и «Повар» 2026-09-06)."""
+    assert rw.is_publishing_screen("experience") is True
+    assert rw.is_publishing_screen("educations") is False
+    assert rw.is_publishing_screen("keyskills") is False
+    assert rw.is_publishing_screen("common") is False
