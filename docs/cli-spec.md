@@ -857,9 +857,13 @@ Checkpoint `--resume` привязан также к `items-per-page`: smoke н�
   `hhru resume-position`).
 - `skill_levels` — исключение по маршруту: экран визарда, вставший между
   `keyskills` и `experience` только у черновиков с навыками (живой факт
-  2026-09-07), живёт не на `/profile/resume/*` (прямой GET даёт пустой shell),
-  а в редакторе уровней `/resume/edit/<id>/skillsLevels?fromBlock=keySkills`
-  (#813) — сабмитится его Save-кнопкой, не NEXT визарда.
+  2026-09-07), живёт на динамическом маршруте
+  `/profile/resume/dynamic_screen?resume=<id>&screen_name=skill_levels` —
+  прямой GET `/profile/resume/skill_levels` даёт пустой shell (#1014), а
+  редактор уровней `/resume/edit/<id>/skillsLevels` (#813) тем же набором
+  радио флаг не двигает (Save персистит уровни, wizard-сабмит не засчитывает;
+  живой прогон PR #1015). Сабмит — обычный NEXT визарда; успех подтверждается
+  readback'ом флага.
 - Перед кликом читает `nextIncompleteScreenId` со страницы резюме (#225):
   отказ, если резюме опубликовано, флаг пуст (готов к публикации) или не
   совпадает с запрошенным экраном. Решение о переходе принимает

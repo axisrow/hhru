@@ -14,12 +14,16 @@ import pytest
 
 import hhru_bot.resume_wizard as rw
 from hhru_bot.resume_state import ResumeState
-from hhru_bot.selector_groups.resume_page import RESUME_CREATION_NEXT, RESUME_PARTIAL_EDIT_SAVE
+from hhru_bot.selector_groups.resume_page import RESUME_CREATION_NEXT
 
 pytestmark = pytest.mark.unit
 
 RESUME_ID = "a" * 38
-EDITOR_URL = f"https://hh.ru/resume/edit/{RESUME_ID}/skillsLevels?fromBlock=keySkills"
+
+# #1016: skill_levels живёт на динамическом маршруте (screen_name в query).
+DYNAMIC_URL = (
+    f"https://hh.ru/profile/resume/dynamic_screen?resume={RESUME_ID}&screen_name=skill_levels"
+)
 
 
 def _markup(
@@ -53,7 +57,7 @@ class _NextButton:
         return self
 
     def inner_text(self):
-        return self._page.button_label
+        return "Сохранить и продолжить"
 
     def click(self):
         self._page.clicks += 1
@@ -74,8 +78,6 @@ class _WizardPage:
         next_count=1,
         click_error=None,
         goto_override=None,
-        button_selector=RESUME_CREATION_NEXT,
-        button_label="Сохранить и продолжить",
     ):
         self.markup = markup
         self.url = url
@@ -85,16 +87,15 @@ class _WizardPage:
         self.click_error = click_error
         # #999: hh.ru может редиректить goto на другой экран визарда.
         self.goto_override = goto_override
-        # У экрана один сабмит: NEXT визарда или Save редактора skill_levels.
-        self.button_selector = button_selector
-        self.button_label = button_label
         self.clicks = 0
 
     def content(self):
         return self.markup
 
     def locator(self, selector):
-        assert selector == self.button_selector
+        # #1016: сабмит любого экрана, включая skill_levels на dynamic_screen,
+        # — стандартный NEXT визарда.
+        assert selector == RESUME_CREATION_NEXT
         return _NextButton(self)
 
     def wait_for_url(self, predicate, *, wait_until, timeout):  # noqa: ARG002
@@ -271,20 +272,27 @@ def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
     assert page.clicks == 0 and clicks == []
 
 
-# --- skill_levels: экран живёт в редакторе уровней, сабмит — его Save --------
+# --- skill_levels: dynamic_screen + обычный NEXT (#1016) ---------------------
 
 
-def test_submit_skill_levels_clicks_editor_save(monkeypatch):
-    """skill_levels открывается маршрутом редактора /resume/edit/{id}/skillsLevels
-    (#813) и сабмитится его Save-кнопкой, не NEXT визарда. Успех требует
-    readback'а: флаг ушёл с skill_levels (#1014)."""
+def test_screen_url_for_dynamic_and_regular_screens():
+    """#1016: skill_levels открывается dynamic_screen'ом с screen_name,
+    остальные экраны — прямыми путями /profile/resume/<screen>."""
+    assert rw._screen_url("skill_levels", RESUME_ID) == DYNAMIC_URL
+    assert rw._screen_url("educations", RESUME_ID) == (
+        f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}"
+    )
+
+
+def test_submit_skill_levels_clicks_wizard_next_on_dynamic_screen(monkeypatch):
+    """#1016: настоящий экран skill_levels — dynamic_screen с обычным NEXT
+    (гидратированным). Успех подтверждается readback'ом: флаг ушёл на
+    experience."""
     _install_nav_stubs(monkeypatch)
     page = _WizardPage(
         _markup(next_screen="experience"),
-        url=EDITOR_URL,
-        final_url=f"https://hh.ru/resume/{RESUME_ID}",
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
-        button_label="Сохранить",
+        url=DYNAMIC_URL,
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
     )
     clicks = []
     result = rw.submit_wizard_screen(
@@ -295,30 +303,27 @@ def test_submit_skill_levels_clicks_editor_save(monkeypatch):
 
 
 def test_submit_skill_levels_fails_when_flag_stays(monkeypatch):
-    """#1014, живой факт 2026-09-07: Save редактора уходит с маршрута, но флаг
-    не двигает — это честный failed (исход известен), не uncertain и не
-    ложный успех."""
+    """#1016: переход с dynamic_screen состоялся, но флаг не двигался —
+    честный failed с известным исходом, не uncertain и не ложный успех."""
     _install_nav_stubs(monkeypatch)
     page = _WizardPage(
         _markup(next_screen="skill_levels"),
-        url=EDITOR_URL,
-        final_url=f"https://hh.ru/resume/{RESUME_ID}",
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+        url=DYNAMIC_URL,
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
     )
     result = rw.submit_wizard_screen(page, _resume(), "skill_levels")
     assert not result.success and result.acted and not result.uncertain
     assert "nextIncompleteScreenId не двигается" in result.reason
-    assert "«Указать уровни»" in result.reason
+    assert "#1016" in result.reason
 
 
 def test_submit_skill_levels_refuses_when_redirected_away(monkeypatch):
-    """#999-семейство: hh.ru ушёл с маршрута редактора (флаг уже снят) — отказ
+    """#999-семейство: hh.ru ушёл с dynamic_screen (флаг уже снят) — отказ
     ДО before_click."""
     _install_nav_stubs(monkeypatch)
     page = _WizardPage(
         _markup(next_screen="skill_levels"),
         goto_override=lambda _u: f"https://hh.ru/resume/{RESUME_ID}",
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
     )
     clicks = []
     with pytest.raises(rw.WizardScreenRefused, match="не открыт"):
@@ -328,31 +333,24 @@ def test_submit_skill_levels_refuses_when_redirected_away(monkeypatch):
     assert page.clicks == 0 and clicks == []
 
 
-def test_submit_skill_levels_is_uncertain_when_url_stays_in_editor(monkeypatch):
-    """Save без перехода с редактора — та же семантика uncertain (#176):
+def test_submit_skill_levels_is_uncertain_when_url_stays_on_dynamic_screen(monkeypatch):
+    """NEXT без перехода с dynamic_screen — та же семантика uncertain (#176):
     клик мог уйти, дамп обязателен."""
     dumps = _install_nav_stubs(monkeypatch)
     page = _WizardPage(
         _markup(next_screen="skill_levels"),
-        url=EDITOR_URL,
-        final_url=EDITOR_URL,
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+        url=DYNAMIC_URL,
+        final_url=DYNAMIC_URL,
     )
     result = rw.submit_wizard_screen(page, _resume(), "skill_levels")
     assert not result.success and result.acted and result.uncertain
     assert dumps == ["wizard_next_failure"]
 
 
-def test_submit_skill_levels_requires_editor_save_button(monkeypatch):
-    """На экране skill_levels нет NEXT визарда — поиск идёт по Save редактора;
-    0 совпадений = экран не опознан, отказ до клика."""
+def test_submit_skill_levels_requires_next_button(monkeypatch):
+    """0 совпадений NEXT на dynamic_screen = экран не опознан, отказ до клика."""
     _install_nav_stubs(monkeypatch)
-    page = _WizardPage(
-        _markup(next_screen="skill_levels"),
-        url=EDITOR_URL,
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
-        next_count=0,
-    )
+    page = _WizardPage(_markup(next_screen="skill_levels"), url=DYNAMIC_URL, next_count=0)
     with pytest.raises(rw.WizardScreenRefused, match="найдена 0 раз"):
         rw.submit_wizard_screen(page, _resume(), "skill_levels")
 
@@ -377,23 +375,8 @@ def test_inspect_refuses_ambiguous_next(monkeypatch):
         rw.inspect_wizard_screen(page, RESUME_ID, "educations")
 
 
-def test_inspect_skill_levels_reports_editor_save_label(monkeypatch):
+def test_inspect_skill_levels_reports_wizard_next_label(monkeypatch):
+    """#1016: на dynamic_screen сабмит — обычный NEXT визарда."""
     _install_nav_stubs(monkeypatch)
-    page = _WizardPage(
-        _markup(next_screen="skill_levels"),
-        url=EDITOR_URL,
-        button_selector=RESUME_PARTIAL_EDIT_SAVE,
-        button_label="Сохранить",
-    )
-    assert rw.inspect_wizard_screen(page, RESUME_ID, "skill_levels") == "Сохранить"
-
-
-def test_is_publishing_screen_only_last_supported_screen():
-    """#1012: прогноз публикации — только последний экран SUPPORTED_SCREENS
-    (#900, прогоны #1009 и «Повар» 2026-09-06). skill_levels — промежуточный,
-    после него всегда остаётся experience (живой факт 2026-09-07)."""
-    assert rw.is_publishing_screen("experience") is True
-    assert rw.is_publishing_screen("educations") is False
-    assert rw.is_publishing_screen("keyskills") is False
-    assert rw.is_publishing_screen("skill_levels") is False
-    assert rw.is_publishing_screen("common") is False
+    page = _WizardPage(_markup(next_screen="skill_levels"), url=DYNAMIC_URL)
+    assert rw.inspect_wizard_screen(page, RESUME_ID, "skill_levels") == "Сохранить и продолжить"
