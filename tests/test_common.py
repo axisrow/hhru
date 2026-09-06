@@ -749,7 +749,8 @@ class _WizardShapePage:
         # locator(), чтобы тест ассертил клики по ним же.
         self.wizard_activator = MagicMock()
         self.wizard_activator.count.return_value = 1
-        self.wizard_activator.first.inner_text.return_value = "Да"
+        # #997: контрол — «Разрешение на работу», значение — страна
+        self.wizard_activator.first.inner_text.return_value = "Россия"
         self.wizard_activator.first.evaluate.return_value = "DIV"
 
         def _empty(selector):
@@ -790,7 +791,7 @@ class _WizardShapePage:
             m.count.return_value = 1
             m.first.input_value.return_value = "x"
             return m
-        if selector == ap.WORK_TICKET_WIZARD:
+        if selector == ap.WORK_PERMIT_WIZARD:
             return self._wizard_container
         if selector == resume_page.RESUME_POSITION_DROPDOWN:
             return self._popup
@@ -875,80 +876,30 @@ def _hydrated(monkeypatch, ok):
     return calls
 
 
-def test_wizard_work_ticket_falls_back_to_wizard_container(monkeypatch):
-    """«Наличие трудовой книжки» без <label>: фолбэк — каскад
-    WORK_TICKET_WIZARD (сначала внутри контейнера) → activator →
-    гидрационный гейт → magritte-попап → опция «Да» (#993, ревью #994)."""
-    from hhru_bot.selector_groups import account_profile as ap
-
-    page = _WizardShapePage()
-    hydration_calls = _hydrated(monkeypatch, ok=True)
-    common.apply_common(page, common.CommonValues(work_ticket="true"))
-    page.wizard_activator.first.click.assert_called_once()
-    assert hydration_calls == [ap.WORK_TICKET_WIZARD]
-
-
-def test_wizard_work_ticket_sibling_placement(monkeypatch):
-    """Второй вариант размещения (ревью #994): активатор доступен от родителя
-    контейнера — каскад находит его и гейтит гидрацией так же."""
+def test_wizard_work_ticket_refuses_and_never_touches_work_permit(monkeypatch):
+    """#997: контейнер work-ticket-selector на визарде — «Разрешение на
+    работу» (страна). Писать «Да/Нет» в него нельзя: даже гидратированный
+    активатор не кликается, отказ называет семантику контрола."""
     page = _WizardShapePage(placement="sibling")
-    _hydrated(monkeypatch, ok=True)
-    common.apply_common(page, common.CommonValues(work_ticket="true"))
-    page.wizard_activator.first.click.assert_called_once()
-
-
-def test_wizard_work_ticket_refuses_unhydrated(monkeypatch):
-    """Активатор не гидратирован (#858): клик потерялся бы молча — честный
-    pre-click отказ, клика нет (ревью #994)."""
     from hhru_bot.browser import PageStateIndeterminate
 
-    page = _WizardShapePage()
-    _hydrated(monkeypatch, ok=False)
+    page = _WizardShapePage(placement="sibling")
     raised = None
     try:
         common.apply_common(page, common.CommonValues(work_ticket="true"))
-        raised = None
     except PageStateIndeterminate as exc:
         raised = exc
     assert raised is not None
-    assert "не гидратирован" in str(raised)
+    assert "Разрешение на работу" in str(raised)
     page.wizard_activator.first.click.assert_not_called()
 
 
-def test_wizard_area_refuses_honestly(monkeypatch):
-    """Город на wizard-shape не рендерится: --area — внятный отказ, а не
-    «не подтверждено однозначно» (#993, боевой прогон RUN db3ae70b)."""
-    from hhru_bot.browser import PageStateIndeterminate
-
-    page = _WizardShapePage()
-    try:
-        common.apply_common(page, common.CommonValues(area="Москва"))
-        raised = None
-    except PageStateIndeterminate as exc:
-        raised = exc
-    assert raised is not None
-    assert "не рендерится" in str(raised)
-
-
-def test_wizard_condition_chip_refuses_honestly(monkeypatch):
-    """Условия работы (кроме трудовой книжки) на wizard-shape не рендерятся:
-    отказ называет экран (#993, RUN 7a795ced — чтение трудовой книжки)."""
-    from hhru_bot.browser import PageStateIndeterminate
-
-    page = _WizardShapePage()
-    try:
-        common.apply_common(page, common.CommonValues(relocation="ready"))
-        raised = None
-    except PageStateIndeterminate as exc:
-        raised = exc
-    assert raised is not None
-    assert "не рендерится на экране common визарда" in str(raised)
-
-
 def test_wizard_read_work_ticket_from_container(monkeypatch):
-    """read_common на wizard-shape читает трудовую книжку из контейнера."""
+    """#997: read_common на визарде — work_ticket пуст, «Разрешение на
+    работу» читается отдельным display-полем work_permit."""
     result = common._read_common(_WizardShapePage())
-    assert result.work_ticket == "Да"
+    assert result.work_ticket == ""
+    assert result.work_permit == "Россия"
 
 
 def test_open_common_published_resume_refuses_honestly(monkeypatch):

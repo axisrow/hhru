@@ -378,7 +378,7 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
-  account_profile.WORK_TICKET_WIZARD:
+  account_profile.WORK_PERMIT_WIZARD:
     value: '[data-qa=''resume-profile-common-work-ticket-selector'']'
     criticality: read
     declared_at: src/hhru_bot/selector_groups/account_profile.py:48
@@ -394,13 +394,11 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/account_profile.py:48
-      note: 'Live 2026-09-05 (#993, draft-wizard common screen /profile/resume/common, empty draft): the wizard renders "Наличие
-        трудовой книжки" as a magritte select WITHOUT a <label> - container data-qa resume-profile-common-work-ticket-selector,
-        hydrated; activator [data-qa=''magritte-select-activator''] - exact placement vs the container was not fixed by a
-        saved dump, common.py resolves it with a count==1 cascade (inside the container, then from its parent); popup role=option.
-        get_by_label("Наличие трудовой книжки") finds 0 labels - the #993 combat failure. Other work-condition chips and the
-        city field are NOT rendered on this screen at all.'
-    last_verified_at: '2026-09-05'
+      note: 'Live 2026-09-06 (#997, screenshot common_screen_996.png): the wizard control resume-profile-common-work-ticket-selector
+        is РАЗРЕШЕНИЕ НА РАБОТУ (a country magritte-select, value Росси¤->country), NOT Наличие трудовой книжки - writing
+        Yes/No into it is forbidden. Read as display-only CommonValues.work_permit. Other work-condition chips and the city
+        field are NOT rendered on this screen (#993; #998 refuted: text hits in the dump were JSON/i18n literals).'
+    last_verified_at: '2026-09-06'
     verified_flow: authenticated_draft_wizard_common_read_only
     verified_by: claude
   apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1:
