@@ -711,3 +711,179 @@ def test_save_common_hydration_gate_precedes_before_click(monkeypatch):
     result = common.save_common(page, common.CommonValues(), before_click=before_click)
     assert not result.success and not result.acted and not result.uncertain
     before_click.assert_not_called()
+
+
+# --- #993: wizard-shape экрана common (draft) --------------------------------
+
+
+_WIZARD_ACTIVATOR_SELECTOR = "[data-qa='magritte-select-activator']"
+
+
+class _WizardShapePage:
+    """Экран common визарда черновика (live 2026-09-05): работа-книжка —
+    magritte-select в контейнере WORK_TICKET_WIZARD (без <label>), поля
+    условий работы и город НЕ рендерятся. Точное размещение активатора
+    относительно контейнера дампом не зафиксировано (ревью #994):
+    placement="inside" мокает активатор внутри контейнера, "sibling" —
+    доступным от родителя; каскад common.py обязан находить оба."""
+
+    def __init__(self, placement="inside"):
+        from unittest.mock import MagicMock
+
+        self.url = "https://hh.ru/profile/resume/common?resume=00001"
+        self.mouse = MagicMock()
+        popup = MagicMock()
+        popup.get_by_role.return_value.count.return_value = 1
+        self._popup = popup
+        # Стабильные моки активатора: одни и те же объекты на каждый вызов
+        # locator(), чтобы тест ассертил клики по ним же.
+        self.wizard_activator = MagicMock()
+        self.wizard_activator.count.return_value = 1
+        self.wizard_activator.first.inner_text.return_value = "Да"
+        self.wizard_activator.first.evaluate.return_value = "DIV"
+
+        def _empty(selector):
+            m = MagicMock()
+            m.count.return_value = 0
+            return m
+
+        def _activator_scope(selector):
+            if selector == _WIZARD_ACTIVATOR_SELECTOR:
+                return self.wizard_activator
+            return _empty(selector)
+
+        container = MagicMock()
+        container.count.return_value = 1
+        if placement == "inside":
+            container.locator.side_effect = _activator_scope
+        else:
+            parent = MagicMock()
+            parent.locator.side_effect = _activator_scope
+            container.locator.side_effect = lambda selector: (
+                parent if selector == "xpath=.." else _empty(selector)
+            )
+        self._wizard_container = container
+
+    def locator(self, selector):
+        from hhru_bot.selector_groups import account_profile as ap
+        from hhru_bot.selector_groups import resume_page
+
+        m = MagicMock()
+        if selector == ap.RESUME_COMMON_FORM:
+            m.count.return_value = 1
+            return m
+        if selector in (
+            ap.RESUME_COMMON_FIRST_NAME,
+            ap.RESUME_COMMON_LAST_NAME,
+            ap.RESUME_COMMON_PHONE,
+        ):
+            m.count.return_value = 1
+            m.first.input_value.return_value = "x"
+            return m
+        if selector == ap.WORK_TICKET_WIZARD:
+            return self._wizard_container
+        if selector == resume_page.RESUME_POSITION_DROPDOWN:
+            return self._popup
+        # area и прочие отсутствующие на wizard-shape поля
+        m.count.return_value = 0
+        return m
+
+    def get_by_label(self, label, *, exact=False):
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        m.count.return_value = 0
+        return m
+
+    def get_by_role(self, role, *, name=None, exact=False):
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
+
+def _hydrated(monkeypatch, ok):
+    """Гейт гидрации под контролем теста; возвращает список селекторов."""
+    calls = []
+
+    def fake_hydration(page, selector, *, timeout_ms):
+        calls.append(selector)
+        return ok
+
+    monkeypatch.setattr(common, "wait_for_react_hydration", fake_hydration)
+    return calls
+
+
+def test_wizard_work_ticket_falls_back_to_wizard_container(monkeypatch):
+    """«Наличие трудовой книжки» без <label>: фолбэк — каскад
+    WORK_TICKET_WIZARD (сначала внутри контейнера) → activator →
+    гидрационный гейт → magritte-попап → опция «Да» (#993, ревью #994)."""
+    from hhru_bot.selector_groups import account_profile as ap
+
+    page = _WizardShapePage()
+    hydration_calls = _hydrated(monkeypatch, ok=True)
+    common.apply_common(page, common.CommonValues(work_ticket="true"))
+    page.wizard_activator.first.click.assert_called_once()
+    assert hydration_calls == [ap.WORK_TICKET_WIZARD]
+
+
+def test_wizard_work_ticket_sibling_placement(monkeypatch):
+    """Второй вариант размещения (ревью #994): активатор доступен от родителя
+    контейнера — каскад находит его и гейтит гидрацией так же."""
+    page = _WizardShapePage(placement="sibling")
+    _hydrated(monkeypatch, ok=True)
+    common.apply_common(page, common.CommonValues(work_ticket="true"))
+    page.wizard_activator.first.click.assert_called_once()
+
+
+def test_wizard_work_ticket_refuses_unhydrated(monkeypatch):
+    """Активатор не гидратирован (#858): клик потерялся бы молча — честный
+    pre-click отказ, клика нет (ревью #994)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    _hydrated(monkeypatch, ok=False)
+    raised = None
+    try:
+        common.apply_common(page, common.CommonValues(work_ticket="true"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не гидратирован" in str(raised)
+    page.wizard_activator.first.click.assert_not_called()
+
+
+def test_wizard_area_refuses_honestly(monkeypatch):
+    """Город на wizard-shape не рендерится: --area — внятный отказ, а не
+    «не подтверждено однозначно» (#993, боевой прогон RUN db3ae70b)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    try:
+        common.apply_common(page, common.CommonValues(area="Москва"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не рендерится" in str(raised)
+
+
+def test_wizard_condition_chip_refuses_honestly(monkeypatch):
+    """Условия работы (кроме трудовой книжки) на wizard-shape не рендерятся:
+    отказ называет экран (#993, RUN 7a795ced — чтение трудовой книжки)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    try:
+        common.apply_common(page, common.CommonValues(relocation="ready"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не рендерится на экране common визарда" in str(raised)
+
+
+def test_wizard_read_work_ticket_from_container(monkeypatch):
+    """read_common на wizard-shape читает трудовую книжку из контейнера."""
+    result = common._read_common(_WizardShapePage())
+    assert result.work_ticket == "Да"

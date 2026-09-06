@@ -79,6 +79,11 @@ _WAIT_MS = 5_000
 # #991: окно гидратации SAVE перед NEXT-кликом (одно ожидание). Две попытки
 # подряд в save_common дают суммарные ~30с — сопоставимо с бюджетом навигации.
 _SAVE_HYDRATION_TIMEOUT_MS = 15_000
+# Ревью #994: фолбэк-клик по активатору workTicket происходит ДО гейта SAVE
+# в save_common (apply_common исполняется раньше), и в --force-пути это
+# первое ожидание гидратации на экране. Magritte-активатор гидрируется
+# секунды (#840/#991), клик в этом окне теряется (#858) — свой бюджет.
+_WORK_TICKET_HYDRATION_TIMEOUT_MS = 15_000
 
 # Поля, без которых hh.ru не пускает черновик дальше к публикации (#982).
 # Авто-режим сохраняет предзаполненное только когда все они непусты.
@@ -309,6 +314,23 @@ def _read_common(page: Page) -> CommonValues:
         # input; its visible text is the readable state.
         return field.inner_text().strip()
 
+    def work_ticket_value():
+        # #993: на wizard-форме трудовая книжка живёт в контейнере
+        # WORK_TICKET_WIZARD без <label>; видимое значение — текст активатора.
+        field = optional_labelled_field(page, WORK_TICKET)
+        if field is not None:
+            return field.inner_text().strip()
+        activator = _wizard_ticket_activator(page)
+        if activator is None:
+            return ""
+        # Ревью #994: если незаполненный magritte-select рендерит
+        # placeholder-текст в активаторе, он прочтётся как «заполнено», и
+        # merge_prefilled пропустит реальное заполнение --work-ticket с
+        # пометкой «уже заполнено на hh.ru». Какой текст показывает активатор
+        # пустого селекта, фиксируется живым прогоном #993; до него чтение
+        # остаётся best-effort.
+        return activator.inner_text().strip()
+
     birthday = " ".join(
         part
         for part in (
@@ -328,7 +350,7 @@ def _read_common(page: Page) -> CommonValues:
         area=soft_value(AREA, "area"),
         metro=None,
         citizenship=[citizenship_text] if citizenship_text else None,
-        work_ticket=labelled_value(WORK_TICKET),
+        work_ticket=work_ticket_value(),
         relocation=labelled_value(RELOCATION),
         schedule=labelled_value(SCHEDULE),
         employment=labelled_value(EMPLOYMENT),
@@ -437,6 +459,14 @@ def apply_common(page: Page, values: CommonValues) -> None:
             else:
                 loc.fill(value)
     if values.area is not None:
+        # #993: на экране common визарда черновика поле города не рендерится
+        # вовсе (live 2026-09-05) — прежняя ошибка «не подтверждено
+        # однозначно» не объясняла, что делать.
+        if page.locator(AREA).count() == 0:
+            raise PageStateIndeterminate(
+                "поле «Город» не рендерится на экране common визарда черновика — "
+                "укажите город в резюме вручную или на другом экране"
+            )
         _set_tree(page, AREA, [values.area], "area")
     if values.metro is not None:
         _set_tree(page, METRO, values.metro, "metro")
@@ -444,6 +474,9 @@ def apply_common(page: Page, values: CommonValues) -> None:
         _set_tree(page, CITIZENSHIP, values.citizenship, "citizenship")
 
     controls = (
+        # #993: «Наличие трудовой книжки» на визарде существует, но без
+        # <label> — magritte-select в контейнере WORK_TICKET_WIZARD; фолбэк
+        # на него делает _work_ticket_field.
         (WORK_TICKET, values.work_ticket, {"true": "Да", "false": "Нет"}),
         (
             RELOCATION,
@@ -458,14 +491,95 @@ def apply_common(page: Page, values: CommonValues) -> None:
     )
     for label, value, labels in controls:
         if value is not None:
-            _set_control(page, labelled_field(page, label), value, labels)
+            field = (
+                _work_ticket_field(page) if label == WORK_TICKET else _condition_field(page, label)
+            )
+            _set_control(page, field, value, labels)
     for label, value, labels in (
         (SCHEDULE, values.schedule, SCHEDULE_LABELS),
         (EMPLOYMENT, values.employment, EMPLOYMENT_LABELS),
         (WORK_FORMAT, values.work_format, WORK_FORMAT_LABELS),
     ):
         if value is not None:
-            _set_many(page, labelled_field(page, label), value, labels)
+            _set_many(page, _condition_field(page, label), value, labels)
+
+
+def _on_wizard_common(page: Page) -> bool:
+    """True on the draft-wizard common screen (resume-profile-screen_common)."""
+    return page.locator(account_profile.RESUME_COMMON_FORM).count() == 1
+
+
+def _condition_field(page: Page, label: str):
+    """Resolve a work-condition control by its visible label, honestly.
+
+    #993: the draft-wizard common screen does not render these fields at all
+    (live 2026-09-05). A bare «не найдено однозначно (совпадений: 0)» left
+    the combat runs without an actionable reason — on the wizard shape the
+    refusal names the screen instead.
+    """
+    try:
+        return labelled_field(page, label)
+    except PageStateIndeterminate as exc:
+        if _on_wizard_common(page):
+            raise PageStateIndeterminate(
+                f"поле {label!r} не рендерится на экране common визарда черновика — "
+                "эти условия работы задаются на другом экране или вручную"
+            ) from exc
+        raise
+
+
+def _wizard_ticket_activator(page: Page):
+    """Активатор workTicket на wizard-shape или None.
+
+    Ревью #994: точное размещение активатора относительно контейнера
+    WORK_TICKET_WIZARD сохранённым дампом не зафиксировано (ценз 2026-09-05 —
+    read-only наблюдение без HTML). Ищем каскадом: сначала ВНУТРИ контейнера,
+    затем от его родителя (надмножество — покрывает и соседний случай). Каждый
+    шаг требует count()==1: второй magritte-активатор в общем родителе не даст
+    молча выбрать не тот элемент — каскад вернёт None, дальше отказ.
+    """
+    container = page.locator(account_profile.WORK_TICKET_WIZARD)
+    if container.count() != 1:
+        return None
+    for scope in (container, container.locator("xpath=..")):
+        activator = scope.locator("[data-qa='magritte-select-activator']")
+        if activator.count() == 1:
+            return activator.first
+    return None
+
+
+def _work_ticket_field(page: Page):
+    """Resolve «Наличие трудовой книжки» on either common-screen shape (#993).
+
+    Edit shape: a <label>-bound control (labelled_field, as before). Draft-
+    wizard shape (live 2026-09-05): NO <label> — a magritte select in the
+    WORK_TICKET_WIZARD container; _set_control's magritte branch drives its
+    activator (click → popup → role=option) unchanged. Ревью #994: клик идёт
+    ДО гейта SAVE, поэтому фолбэк несёт собственный гидрационный гейт —
+    клик по негидратированному активатору теряется молча (#858/#840/#991).
+    """
+    try:
+        return labelled_field(page, WORK_TICKET)
+    except PageStateIndeterminate as exc:
+        activator = _wizard_ticket_activator(page)
+        if activator is not None:
+            if not wait_for_react_hydration(
+                page,
+                account_profile.WORK_TICKET_WIZARD,
+                timeout_ms=_WORK_TICKET_HYDRATION_TIMEOUT_MS,
+            ):
+                raise PageStateIndeterminate(
+                    "активатор «Наличие трудовой книжки» не гидратирован за "
+                    f"{_WORK_TICKET_HYDRATION_TIMEOUT_MS // 1000}с — клик сейчас "
+                    "потеряется; повторите позже"
+                ) from exc
+            return activator
+        if _on_wizard_common(page):
+            raise PageStateIndeterminate(
+                "поле «Наличие трудовой книжки» не найдено на экране common "
+                "визарда черновика ни по label, ни по wizard-селектору"
+            ) from exc
+        raise
 
 
 def _set_control(page, field, value: str, labels: dict[str, str]) -> None:

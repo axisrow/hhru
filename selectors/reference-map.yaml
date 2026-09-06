@@ -378,6 +378,31 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_account_profile_read_only
     verified_by: codex
+  account_profile.WORK_TICKET_WIZARD:
+    value: '[data-qa=''resume-profile-common-work-ticket-selector'']'
+    criticality: read
+    declared_at: src/hhru_bot/selector_groups/account_profile.py:48
+    decision: documented_live
+    sources: {}
+    live_matches:
+    - resume-profile-common-work-ticket-selector
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/account_profile.py:48
+      note: 'Live 2026-09-05 (#993, draft-wizard common screen /profile/resume/common, empty draft): the wizard renders "Наличие
+        трудовой книжки" as a magritte select WITHOUT a <label> - container data-qa resume-profile-common-work-ticket-selector,
+        hydrated; activator [data-qa=''magritte-select-activator''] - exact placement vs the container was not fixed by a
+        saved dump, common.py resolves it with a count==1 cascade (inside the container, then from its parent); popup role=option.
+        get_by_label("Наличие трудовой книжки") finds 0 labels - the #993 combat failure. Other work-condition chips and the
+        city field are NOT rendered on this screen at all.'
+    last_verified_at: '2026-09-05'
+    verified_flow: authenticated_draft_wizard_common_read_only
+    verified_by: claude
   apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1:
     value: '[data-qa=''captcha'']'
     criticality: write
@@ -2582,8 +2607,8 @@ selectors:
     evidence:
       source: src/hhru_bot/selector_groups/resume_experience.py:330
       note: 'Live 2026-09-05: the first cell-text-content inside an experience view card is the company name ("Фриланс / Open
-        Source", "ООО Ромашка", "ООО Василёк" — sanitized placeholders, real employer names are not stored); the second one is the total duration text. Always
-        resolve it scoped to a EXPERIENCE_VIEW_CARD and take the first match.'
+        Source", "ООО Ромашка", "ООО Василёк" — sanitized placeholders, real employer names are not stored); the second one
+        is the total duration text. Always resolve it scoped to a EXPERIENCE_VIEW_CARD and take the first match.'
     last_verified_at: '2026-09-05'
     verified_flow: authenticated_resume_view_read_only
     verified_by: claude

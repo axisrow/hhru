@@ -24,6 +24,7 @@ VALUES: dict[str, str] = {
     "account_profile.RESUME_CONTACT_EMAIL": "[data-qa='resume-contact-email-value']",
     "account_profile.RESUME_CONTACT_PHONE": "[data-qa='resume-contact-phone-value-preferred']",
     "account_profile.RESUME_LIST_PROFILE_NAME": "[data-qa='profile-activator-fullname']",
+    "account_profile.WORK_TICKET_WIZARD": "[data-qa='resume-profile-common-work-ticket-selector']",
     "apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1": "[data-qa='captcha']",
     "apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1": "[data-qa='account-captcha-input']",
     "apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1": "[data-qa='account-captcha-picture']",
