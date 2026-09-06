@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 import hhru_bot.common as common
 from hhru_bot.common import (
@@ -532,8 +533,16 @@ def _confirm_page(monkeypatch, **overrides):
     save = field(common.SAVE, value=None)
     if values["click_error"]:
         save.first.click.side_effect = PlaywrightError("pointer intercepted")
-    if values["nav_error"] is not None:
-        page.wait_for_url.side_effect = values["nav_error"]
+
+    # wait_for_url уважает предикат (как реальный API): навигация-ошибка
+    # рождается только когда предикат НЕ удовлетворён текущим url (#995:
+    # один и тот же page.wait_for_url используют и _open_common_screen,
+    # и confirm/save с разными предикатами).
+    def _wait_for_url(predicate, *, wait_until=None, timeout=None):
+        if not predicate(page.url) and values["nav_error"] is not None:
+            raise values["nav_error"]
+
+    page.wait_for_url.side_effect = _wait_for_url
 
     def locate(selector):
         if selector not in locators:
@@ -553,7 +562,7 @@ def test_confirm_common_screen_clicks_next_and_requires_url_change(monkeypatch):
     assert result.success and result.acted and not result.uncertain
     before_click.assert_called_once_with()
     save.first.click.assert_called_once_with()
-    page.wait_for_url.assert_called_once()
+    assert page.wait_for_url.call_count == 2  # #995: один — _open_common_screen
 
 
 def test_confirm_common_screen_refuses_before_click_on_missing_prefill(monkeypatch):
@@ -564,7 +573,8 @@ def test_confirm_common_screen_refuses_before_click_on_missing_prefill(monkeypat
     assert "first_name" in result.reason
     before_click.assert_not_called()
     save.first.click.assert_not_called()
-    page.wait_for_url.assert_not_called()
+    # #995: единственный вызов — легитимный wait_for_url в _open_common_screen
+    assert page.wait_for_url.call_count == 1
 
 
 def test_confirm_common_screen_click_error_still_succeeds_on_url_change(monkeypatch):
@@ -801,6 +811,58 @@ class _WizardShapePage:
         return MagicMock()
 
 
+# --- #995: открытие экрана common (published-redirect и гонка монтирования) ---
+
+
+class _OpenScreenPage:
+    """Страница в момент открытия common: URL управляется тестом,
+    wait_for_url моделирует редирект hh.ru (live 2026-09-06: у черновика —
+    на /profile/resume/common, у опубликованного — на /resume/{hash})."""
+
+    def __init__(self, final_path, form_attached=True):
+
+        self.url = "https://hh.ru/profile/resume?resume=00001"
+        self._final_path = final_path
+        self._form_attached = form_attached
+        self.locators: dict = {}
+
+    def resolve_redirect(self):
+        self.url = f"https://hh.ru{self._final_path}"
+
+    def wait_for_url(self, predicate, *, wait_until=None, timeout=None):
+        from playwright.sync_api import Error as PlaywrightError
+
+        self.resolve_redirect()
+        if not predicate(self.url):
+            raise PlaywrightError("Navigation timeout")
+
+    def locator(self, selector):
+        from hhru_bot.selector_groups import account_profile as ap
+
+        loc = self.locators.get(selector)
+        if loc is None:
+            from unittest.mock import MagicMock
+
+            loc = MagicMock()
+            loc.count.return_value = 1
+            if selector == ap.RESUME_COMMON_FORM:
+                loc.first.wait_for.side_effect = (
+                    None if self._form_attached else PlaywrightError("not attached")
+                )
+            loc.first.inner_text.return_value = "x"
+            loc.first.input_value.return_value = "x"
+            loc.first.is_checked.return_value = True
+            self.locators[selector] = loc
+        return loc
+
+    def get_by_label(self, label, *, exact=False):
+        from unittest.mock import MagicMock
+
+        m = MagicMock()
+        m.count.return_value = 0
+        return m
+
+
 def _hydrated(monkeypatch, ok):
     """Гейт гидрации под контролем теста; возвращает список селекторов."""
     calls = []
@@ -887,3 +949,70 @@ def test_wizard_read_work_ticket_from_container(monkeypatch):
     """read_common на wizard-shape читает трудовую книжку из контейнера."""
     result = common._read_common(_WizardShapePage())
     assert result.work_ticket == "Да"
+
+
+def test_open_common_published_resume_refuses_honestly(monkeypatch):
+    """#995: у опубликованного резюме hh.ru редиректит на /resume/{hash} —
+    честный отказ «визанд только у черновиков» + дамп, а не «форма не
+    открылась»."""
+    page = _OpenScreenPage(f"/resume/{'0' * 32}")
+    dump = MagicMock()
+    monkeypatch.setattr(common, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    try:
+        common._open_common_screen(page, "0" * 32)
+        raised = None
+    except RuntimeError as exc:
+        raised = exc
+    assert raised is not None and "только у черновиков" in str(raised)
+    dump.assert_called_once()
+
+
+def test_open_common_redirect_timeout_dumps(monkeypatch):
+    """Редирект не разрешился за бюджет: отказ с URL + дамп (#995)."""
+    page = _OpenScreenPage("/profile/resume")
+    from playwright.sync_api import Error as PlaywrightError
+
+    page.wait_for_url = lambda *a, **k: (_ for _ in ()).throw(PlaywrightError("timeout"))
+    dump = MagicMock()
+    monkeypatch.setattr(common, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    try:
+        common._open_common_screen(page, "0" * 32)
+        raised = None
+    except RuntimeError as exc:
+        raised = exc
+    assert raised is not None and "редирект" in str(raised)
+    dump.assert_called_once()
+
+
+def test_open_common_draft_waits_for_spa_mount(monkeypatch):
+    """Черновик: редирект на /profile/resume/common, экран монтируется позже
+    DCL — wait_for(attached) вместо мгновенного count() (#995)."""
+    page = _OpenScreenPage(f"/profile/resume/common?resume={'0' * 32}")
+    monkeypatch.setattr(common, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_a, **_k: None)
+    editor = common._open_common_screen(page, "0" * 32)
+    # attached (монтирование, #995) + visible (финальное ожидание из #869)
+    assert [c.kwargs["state"] for c in editor.first.wait_for.call_args_list] == [
+        "attached",
+        "visible",
+    ]
+
+
+def test_open_common_unmounted_screen_dumps(monkeypatch):
+    """Форма не смонтировалась за бюджет: внятный отказ + дамп (#995)."""
+    page = _OpenScreenPage(f"/profile/resume/common?resume={'0' * 32}", form_attached=False)
+    dump = MagicMock()
+    monkeypatch.setattr(common, "goto_hh", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "require_authenticated_page", lambda *_a, **_k: None)
+    monkeypatch.setattr(common, "dump_page_html", dump)
+    try:
+        common._open_common_screen(page, "0" * 32)
+        raised = None
+    except RuntimeError as exc:
+        raised = exc
+    assert raised is not None and "не смонтировался" in str(raised)
+    dump.assert_called_once()

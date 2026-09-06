@@ -169,9 +169,56 @@ def open_common_form(page: Page, resume: ResumeConfig):
 def _open_common_screen(page: Page, resume_id: str):
     goto_hh(page, f"{HH_BASE_URL}{account_profile.RESUME_COMMON_PATH}?resume={resume_id}")
     require_authenticated_page(page)
+    # #995 (live 2026-09-06): редирект с /profile/resume?resume=… зависит от
+    # состояния резюме — у ЧЕРНОВИКА он ведёт на /profile/resume/common
+    # (визард), у ОПУБЛИКОВАННОГО — на /resume/{resume_id} (страница
+    # просмотра; визанда common у published не существует, а старый
+    # /applicant/resumes/edit/common отдаёт голый JSON). Дождаться
+    # разрешения редиректа, прежде чем судить о форме.
+    try:
+        page.wait_for_url(
+            lambda url: urlsplit(str(url)).path != account_profile.RESUME_COMMON_PATH,
+            wait_until="commit",
+            timeout=_COMMON_SCREEN_NAV_TIMEOUT_MS,
+        )
+    except PlaywrightError as exc:
+        try:
+            dump_page_html(page, "common_open_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
+            pass
+        raise RuntimeError(
+            f"форма common не открылась: редирект с /profile/resume не разрешился "
+            f"за {_COMMON_SCREEN_NAV_TIMEOUT_MS // 1000}с ({page.url})"
+        ) from exc
+    if urlsplit(page.url).path == f"/resume/{resume_id}":
+        # Опубликованное резюме (#995): честная семантика вместо
+        # «форма common не открылась».
+        try:
+            dump_page_html(page, "common_open_failure")
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError(
+            "экран common визарда существует только у черновиков: резюме "
+            "опубликовано, hh.ru редиректит на страницу просмотра — правки "
+            "common через визард невозможны"
+        )
+    # Гонка «DCL ≠ отрисовано»: SPA-экран монтируется после domcontentloaded —
+    # ждать монтирование (attached), а не судить по мгновенному count() (#995).
     editor = page.locator(FORM)
+    try:
+        editor.first.wait_for(state="attached", timeout=_WAIT_MS)
+    except PlaywrightError:
+        try:
+            dump_page_html(page, "common_open_failure")
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError("форма common не открылась: экран не смонтировался") from None
     if editor.count() != 1:
-        raise RuntimeError("форма common не открылась")
+        try:
+            dump_page_html(page, "common_open_failure")
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError("форма common не открылась: контейнер неоднозначен")
     route = urlsplit(page.url)
     if route.path != COMMON_SCREEN_PATH or parse_qs(route.query).get("resume") != [resume_id]:
         raise RuntimeError("форма common открыта не для запрошенного резюме")
