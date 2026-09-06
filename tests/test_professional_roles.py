@@ -468,6 +468,19 @@ class _GhostChevron(_Chevron):
         super().__init__(tree_item, leaves, ghost=True)
 
 
+class _SlowLeaves(_Leaves):
+    """Размонтирование медленнее одного цикла попытки, но в grace-окно
+    укладывается (ревью #1008): счётчик падает в ноль с третьего чтения."""
+
+    def __init__(self):
+        super().__init__()
+        self._reads = 0
+
+    def count(self):
+        self._reads += 1
+        return 4 if self._reads <= 2 else 0
+
+
 class _DeadChevron(_Chevron):
     """Клик есть, эффекта нет вообще (атрибут не меняется)."""
 
@@ -493,6 +506,22 @@ def test_collapse_wedge_carries_collected_roles(monkeypatch):
             MagicMock(), _Dialog(leaves), ProfessionalRoleCategory("11", "ИТ"), leaves
         )
     assert "leaf-строк осталось в DOM" in str(exc_info.value)
+    assert chevron.clicks == 1
+
+
+def test_collapse_tolerates_slow_unmount_within_grace_window(monkeypatch):
+    """Ревью #1008: быстрое, но не мгновенное размонтирование — не клин;
+    grace-окно дожидается факта пустого списка, и wedge не диагностируется."""
+    from hhru_bot.professional_roles import ProfessionalRoleCategory
+
+    leaves = _SlowLeaves()
+    chevron = _Chevron(_TreeItem("true"), leaves)
+    monkeypatch.setattr(professional_roles_module, "_find_category", lambda *_a: chevron)
+
+    professional_roles_module._collapse_category(
+        MagicMock(), _Dialog(leaves), ProfessionalRoleCategory("11", "ИТ"), leaves
+    )
+
     assert chevron.clicks == 1
 
 

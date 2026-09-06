@@ -46,6 +46,10 @@ _MAX_SCROLL_STEPS = 200
 _LEAF_ATTACH_TIMEOUT_MS = 5_000
 _COLLAPSE_POLL_MS = 100
 _COLLAPSE_ATTEMPTS = 3
+# Ревью #1008: быстрый, но не мгновенный размонтирующий рендер не должен
+# классифицироваться как клин (ложный клин = полный reload страницы). Настоящий
+# клин (дрилл 2026-09-06) не размонтирует строки ВОВСЕ — в окно не уложится.
+_WEDGE_GRACE_STEPS = 20  # 20 × _COLLAPSE_POLL_MS = 2 c
 # #858/#1004: окно гидрации тоггла «Фильтры» (SSR-кнопка видима до React).
 _FILTERS_HYDRATION_TIMEOUT_MS = 15_000
 
@@ -359,14 +363,19 @@ def _collapse_category(page: Page, dialog, category: ProfessionalRoleCategory, l
     этом состояние щёлкает честно в обоих направлениях (замер IAB 2026-09-06).
     """
     tree_item = None
-    for _attempt in range(_COLLAPSE_ATTEMPTS):
+    for _ in range(_COLLAPSE_ATTEMPTS):
         chevron = _find_category(page, dialog, category.category_id)
         tree_item = chevron.locator("xpath=ancestor::*[@role='treeitem'][1]")
         if tree_item.count() != 1:
             raise RuntimeError(f"строка категории «{category.label}» потеряна при схлопывании")
         if tree_item.get_attribute("aria-expanded") != "true":
-            if leaves.count() == 0:
-                return
+            # Ревью #1008: один цикл попытки (~300 мс) — слишком узкое окно для
+            # медленного, но нормального размонтирования. Ограда ниже отличает
+            # «медленно» от «клина»: клин уходит целиком в таймаут окна.
+            for _ in range(_WEDGE_GRACE_STEPS):
+                if leaves.count() == 0:
+                    return
+                page.wait_for_timeout(_COLLAPSE_POLL_MS)
             raise TreeVirtualizationWedge(
                 f"категория «{category.label}» свернута, но {leaves.count()} "
                 "leaf-строк осталось в DOM — виртуализатор не размонтирует список",
