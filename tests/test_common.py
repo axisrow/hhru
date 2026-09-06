@@ -883,7 +883,6 @@ def test_wizard_work_ticket_refuses_and_never_touches_work_permit(monkeypatch):
     page = _WizardShapePage(placement="sibling")
     from hhru_bot.browser import PageStateIndeterminate
 
-    page = _WizardShapePage(placement="sibling")
     raised = None
     try:
         common.apply_common(page, common.CommonValues(work_ticket="true"))
@@ -900,6 +899,36 @@ def test_wizard_read_work_ticket_from_container(monkeypatch):
     result = common._read_common(_WizardShapePage())
     assert result.work_ticket == ""
     assert result.work_permit == "Россия"
+
+
+def test_wizard_area_refuses_honestly(monkeypatch):
+    """Город на wizard-shape не рендерится: --area — внятный отказ, а не
+    «не подтверждено однозначно» (#993, боевой прогон RUN db3ae70b)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    try:
+        common.apply_common(page, common.CommonValues(area="Москва"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не рендерится" in str(raised)
+
+
+def test_wizard_condition_chip_refuses_honestly(monkeypatch):
+    """Условия работы на wizard-shape не рендерятся: отказ называет экран
+    (#993, RUN 7a795ced — чтение трудовой книжки)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    try:
+        common.apply_common(page, common.CommonValues(relocation="ready"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не рендерится на экране common визарда" in str(raised)
 
 
 def test_open_common_published_resume_refuses_honestly(monkeypatch):
