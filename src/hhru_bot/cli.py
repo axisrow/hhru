@@ -48,6 +48,7 @@ DEFAULT_HISTORY_PATH = Path("data") / "history.db"
 BROWSER_COMMANDS = frozenset(
     {
         "about",
+        "census",
         "adaptive-resume",
         "apply",
         "bump",
