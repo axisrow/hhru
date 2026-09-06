@@ -97,8 +97,13 @@ class _WizardPage:
         raise rw.PlaywrightError(f"wait_for_url: timeout {timeout}ms")
 
 
-def _install_nav_stubs(monkeypatch):
-    """Подменяем навигацию/аутентичность: URL живёт на самом дубле страницы."""
+def _install_nav_stubs(monkeypatch) -> list[str]:
+    """Подменяем навигацию/аутентичность: URL живёт на самом дубле страницы.
+
+    Возвращает список тегов dump_page_html: обе fail-ветки сабмита обязаны
+    дампить экран (см. save_common), тесты это проверяют.
+    """
+    dumps: list[str] = []
 
     def fake_open_confirmed(page, resume_id):
         page.url = f"https://hh.ru/resume/{resume_id}"
@@ -113,6 +118,8 @@ def _install_nav_stubs(monkeypatch):
     monkeypatch.setattr(
         rw, "wait_for_react_hydration", lambda page, sel, *, timeout_ms: page.hydrated
     )
+    monkeypatch.setattr(rw, "dump_page_html", lambda page, stem: dumps.append(stem))
+    return dumps
 
 
 def _resume():
@@ -187,7 +194,7 @@ def test_submit_success_calls_before_click_once(monkeypatch):
 
 def test_submit_without_hydration_is_honest_failed(monkeypatch):
     """#991: не гидратирован — клик не отправлялся; это failed, не uncertain."""
-    _install_nav_stubs(monkeypatch)
+    dumps = _install_nav_stubs(monkeypatch)
     page = _WizardPage(_markup(), hydrated=False)
     clicks = []
     result = rw.submit_wizard_screen(
@@ -196,6 +203,7 @@ def test_submit_without_hydration_is_honest_failed(monkeypatch):
     assert not result.success and not result.acted and not result.uncertain
     assert "клик не отправлялся" in result.reason
     assert page.clicks == 0 and clicks == []
+    assert dumps == ["wizard_next_failure"]
 
 
 def test_submit_swallows_click_error_when_navigation_happened(monkeypatch):
@@ -210,12 +218,29 @@ def test_submit_swallows_click_error_when_navigation_happened(monkeypatch):
 
 
 def test_submit_is_uncertain_when_url_never_leaves_screen(monkeypatch):
-    _install_nav_stubs(monkeypatch)
+    dumps = _install_nav_stubs(monkeypatch)
     page = _WizardPage(
         _markup(), final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}"
     )
     result = rw.submit_wizard_screen(page, _resume(), "educations")
     assert not result.success and result.acted and result.uncertain
+    assert dumps == ["wizard_next_failure"]
+
+
+def test_uncertain_reason_carries_click_error(monkeypatch):
+    """#990: текст падения клика доходит до reason — иначе «дошёл ли клик»
+    недиагностируем (uncertain блокирует повтор, reason в actions —
+    единственная улика)."""
+    dumps = _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
+        click_error="intercepted by overlay",
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "educations")
+    assert not result.success and result.acted and result.uncertain
+    assert "ошибка клика: intercepted by overlay" in result.reason
+    assert dumps == ["wizard_next_failure"]
 
 
 def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
@@ -227,7 +252,7 @@ def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
         goto_override=lambda _u: f"https://hh.ru/profile/resume/common?resume={RESUME_ID}",
     )
     clicks = []
-    with pytest.raises(rw.WizardScreenRefused, match="визанд стоит на «common»"):
+    with pytest.raises(rw.WizardScreenRefused, match="визард стоит на «common»"):
         rw.submit_wizard_screen(
             page, _resume(), "educations", before_click=lambda: clicks.append(1)
         )

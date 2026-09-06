@@ -27,6 +27,7 @@ from playwright.sync_api import Page
 from .browser import (
     HH_BASE_URL,
     dismiss_cookie_banner,
+    dump_page_html,
     goto_hh,
     open_confirmed_resume,
     require_authenticated_page,
@@ -118,7 +119,7 @@ def _open_screen(page: Page, resume_id: str, target: str) -> None:
     if route.path != screen_path(target) or parse_qs(route.query).get("resume") != [resume_id]:
         suffix = route.path.rstrip("/").rsplit("/", 1)[-1]
         raise WizardScreenRefused(
-            f"экран «{target}» не открыт: визанд стоит на «{suffix}» — hh.ru мог "
+            f"экран «{target}» не открыт: визард стоит на «{suffix}» — hh.ru мог "
             "автопродвинуть визард (#999); состояние: hhru publish-resume --resume "
             "<id> --dry-run"
         )
@@ -164,6 +165,12 @@ def submit_wizard_screen(
             hydrated = True
             break
     if not hydrated:
+        # Дамп покажет, жива ли форма и есть ли form-helper-error — иначе
+        # «не гидратирован» неотличим от «страница умерла».
+        try:
+            dump_page_html(page, "wizard_next_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна маскировать исход
+            pass
         return WizardAdvanceResult(
             target,
             False,
@@ -172,10 +179,11 @@ def submit_wizard_screen(
         )
     if before_click is not None:
         before_click()
+    click_error: str | None = None
     try:
         button.click()
-    except PlaywrightError:
-        pass
+    except PlaywrightError as exc:
+        click_error = str(exc)
     try:
         page.wait_for_url(
             lambda url: urlsplit(str(url)).path != screen_path(target),
@@ -183,11 +191,16 @@ def submit_wizard_screen(
             timeout=_SCREEN_NAV_TIMEOUT_MS,
         )
     except PlaywrightError as exc:
-        return WizardAdvanceResult(
-            target,
-            False,
-            f"переход с экрана «{target}» не подтверждён: {exc}",
-            acted=True,
-            uncertain=True,
-        )
+        # Клик мог уйти на hh.ru (#176) — дампим экран: в нём виден
+        # text form-helper-error, которым hh.ru объясняет отказ валидации.
+        try:
+            dump_page_html(page, "wizard_next_failure")
+        except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
+            pass
+        # #990: текст падения клика сохраняется — иначе «дошёл ли клик»
+        # недиагностируем (см. save_common).
+        reason = f"переход с экрана «{target}» не подтверждён: {exc}"
+        if click_error is not None:
+            reason += f"; ошибка клика: {click_error[:300]}"
+        return WizardAdvanceResult(target, False, reason, acted=True, uncertain=True)
     return WizardAdvanceResult(target, True, f"экран «{target}» подтверждён", acted=True)
