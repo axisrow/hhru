@@ -211,7 +211,9 @@ def test_submit_swallows_click_error_when_navigation_happened(monkeypatch):
 
 def test_submit_is_uncertain_when_url_never_leaves_screen(monkeypatch):
     _install_nav_stubs(monkeypatch)
-    page = _WizardPage(_markup(), final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}")
+    page = _WizardPage(
+        _markup(), final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}"
+    )
     result = rw.submit_wizard_screen(page, _resume(), "educations")
     assert not result.success and result.acted and result.uncertain
 

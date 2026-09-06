@@ -128,8 +128,7 @@ def run(args: argparse.Namespace):
                     print("[NEXT] 1. Статус в списке: hhru list-resumes")
                 elif after.next_incomplete_screen_id:
                     print(
-                        f"[INFO] Следующий незавершённый экран: "
-                        f"{after.next_incomplete_screen_id}"
+                        f"[INFO] Следующий незавершённый экран: {after.next_incomplete_screen_id}"
                     )
                     print(
                         f"[NEXT] 1. Следующий экран: hhru wizard-next --resume {resume.id} "

@@ -70,7 +70,9 @@ def env(monkeypatch, tmp_path):
             ResumeState(status="not_finished", next_incomplete_screen_id="educations"),
             ResumeState(status="not_finished", next_incomplete_screen_id="keyskills"),
         ],
-        result=WizardAdvanceResult("educations", True, "экран «educations» подтверждён", acted=True),
+        result=WizardAdvanceResult(
+            "educations", True, "экран «educations» подтверждён", acted=True
+        ),
         submit_calls=0,
         inspect_calls=0,
         launched=0,
