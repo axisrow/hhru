@@ -1,4 +1,4 @@
-"""CLI-владение wizard-экранами черновика: educations, keyskills, experience.
+"""CLI-владение wizard-экранами черновика: educations, keyskills, skill_levels, experience.
 
 Живой факт 2026-09-06 (#1010, прогон #865/#1009): флаг
 ``nextIncompleteScreenId`` двигается ТОЛЬКО сабмитом экранов визарда —
@@ -9,6 +9,13 @@
 «все экраны закрыты» и «опубликовано» у wizard-черновика нет. Поэтому каждый
 боевой клик этого модуля потенциально публикует резюме: командный слой
 требует явного --allow-auto-publish.
+
+Экран skill_levels — единственный, живущий НЕ на маршруте /profile/resume/*:
+прямой GET /profile/resume/skill_levels рендерит пустой shell без wizard-хрома
+(census 2026-09-07, оба регистра имени). Реальный экран — редактор уровней
+/resume/edit/{id}/skillsLevels?fromBlock=keySkills (#813, подтверждён живьём),
+куда с карточки черновика ведёт собственная кнопка hh.ru «Указать уровни»;
+его Save и сабмитит экран.
 
 Экраны common и professional_role здесь не сабмятся: у них собственные
 CLI-владельцы (``hhru common``, ``hhru resume-position``), и отказ называет
@@ -35,19 +42,24 @@ from .browser import (
 )
 from .config import ResumeConfig
 from .resume_state import ResumeState, is_published, parse_resume_state
-from .selector_groups.resume_page import RESUME_CREATION_NEXT
+from .selector_groups.resume_page import RESUME_CREATION_NEXT, RESUME_PARTIAL_EDIT_SAVE
 
 WIZARD_BASE_PATH = "/profile/resume"
 
 # Экраны, которые этот модуль умеет сабмитить. common/professional_role —
 # у своих владельцев; всё остальное — честный отказ без владельца.
-SUPPORTED_SCREENS = ("educations", "keyskills", "experience")
+# skill_levels встаёт между keyskills и experience ТОЛЬКО у черновиков
+# с навыками: прогоны #1012 «Повар» (без навыков) его не видели, живой
+# прогон 2026-09-07 «Сантехник» после edit-skills — получил. experience
+# остаётся последним, прогноз публикации #1012 не меняется.
+SUPPORTED_SCREENS = ("educations", "keyskills", "skill_levels", "experience")
 
 # #1012: hh.ru публикует черновик сам ровно на ПОСЛЕДНЕМ незакрытом экране
 # (#900). Подтверждено двумя независимыми прогонами: #1009 («Дворник-бригадир»)
 # и «Повар» 2026-09-06 — оба прошли educations/keyskills без публикации,
 # автопубликация случилась на experience. Порядок экранов стабилен:
-# common → educations → keyskills → experience. Если hh.ru добавит экран
+# common → educations → keyskills → (skill_levels — только у черновиков
+# с навыками, живой факт 2026-09-07) → experience. Если hh.ru добавит экран
 # после experience, прогноз сломается в безопасную сторону: readback
 # wizard-next печатает автопубликацию фактом, а флаг просто не понадобился.
 PUBLISHABLE_SCREENS = (SUPPORTED_SCREENS[-1],)
@@ -79,6 +91,40 @@ class WizardAdvanceResult:
 
 def screen_path(screen: str) -> str:
     return f"{WIZARD_BASE_PATH}/{screen}"
+
+
+_SKILL_LEVELS_SCREEN = "skill_levels"
+_SKILL_LEVELS_PATH = "/resume/edit/{resume_id}/skillsLevels"
+
+
+def _screen_url(screen: str, resume_id: str) -> str:
+    """URL открытия экрана: wizard-маршрут или редактор уровней для skill_levels."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return f"{HH_BASE_URL}{_SKILL_LEVELS_PATH.format(resume_id=resume_id)}?fromBlock=keySkills"
+    return f"{HH_BASE_URL}{screen_path(screen)}?resume={resume_id}"
+
+
+def _screen_route_path(screen: str, resume_id: str) -> str:
+    """Path-маршрут экрана — предикат ухода с экрана в wait_for_url."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return _SKILL_LEVELS_PATH.format(resume_id=resume_id)
+    return screen_path(screen)
+
+
+def _screen_submit_button(screen: str) -> str:
+    """Селектор сабмита: NEXT визарда у wizard-экранов, Save редактора (#813)
+    у skill_levels — тот же RESUME_PARTIAL_EDIT_SAVE, что кликает skills.py."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return RESUME_PARTIAL_EDIT_SAVE
+    return RESUME_CREATION_NEXT
+
+
+def _screen_location_ok(screen: str, resume_id: str, route) -> bool:
+    """Identity-проверка открытого маршрута (#999). У wizard-экранов resume_id
+    живёт в query (?resume=), у редактора skill_levels — в самом пути."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return route.path == _SKILL_LEVELS_PATH.format(resume_id=resume_id)
+    return route.path == screen_path(screen) and parse_qs(route.query).get("resume") == [resume_id]
 
 
 def read_resume_state(page: Page, resume_id: str) -> ResumeState:
@@ -127,10 +173,10 @@ def resolve_target_screen(state: ResumeState, requested: str | None) -> str:
 
 def _open_screen(page: Page, resume_id: str, target: str) -> None:
     """Открыть identity-bound экран; ушедший редирект — честный отказ (#999)."""
-    goto_hh(page, f"{HH_BASE_URL}{screen_path(target)}?resume={resume_id}")
+    goto_hh(page, _screen_url(target, resume_id))
     require_authenticated_page(page)
     route = urlsplit(page.url)
-    if route.path != screen_path(target) or parse_qs(route.query).get("resume") != [resume_id]:
+    if not _screen_location_ok(target, resume_id, route):
         suffix = route.path.rstrip("/").rsplit("/", 1)[-1]
         raise WizardScreenRefused(
             f"экран «{target}» не открыт: визард стоит на «{suffix}» — hh.ru мог "
@@ -140,14 +186,12 @@ def _open_screen(page: Page, resume_id: str, target: str) -> None:
 
 
 def inspect_wizard_screen(page: Page, resume_id: str, target: str) -> str:
-    """Read-only сверка экрана для --dry-run: identity + ровно одна NEXT."""
+    """Read-only сверка экрана для --dry-run: identity + ровно один сабмит."""
     _open_screen(page, resume_id, target)
-    button = page.locator(RESUME_CREATION_NEXT)
+    button = page.locator(_screen_submit_button(target))
     count = button.count()
     if count != 1:
-        raise WizardScreenRefused(
-            f"кнопка «Сохранить и продолжить» найдена {count} раз — экран не опознан"
-        )
+        raise WizardScreenRefused(f"кнопка сабмита экрана найдена {count} раз — экран не опознан")
     return (button.first.inner_text() or "").strip() or "Сохранить и продолжить"
 
 
@@ -158,7 +202,7 @@ def submit_wizard_screen(
     *,
     before_click: Callable[[], None] | None = None,
 ) -> WizardAdvanceResult:
-    """Сабмит одного экрана кликом «Сохранить и продолжить».
+    """Сабмит одного экрана: NEXT визарда или Save редактора skill_levels.
 
     Гидрационный гейт #991 стоит ДО ``before_click``: пока React не привязан
     (#858), клик теряется молча, и это честный failed («клик не отправлялся»),
@@ -167,15 +211,16 @@ def submit_wizard_screen(
     а непереход в пределах бюджета — uncertain (#176).
     """
     _open_screen(page, resume.resume_id, target)
-    button = page.locator(RESUME_CREATION_NEXT)
+    submit_selector = _screen_submit_button(target)
+    button = page.locator(submit_selector)
     if button.count() != 1:
         raise WizardScreenRefused(
-            f"кнопка «Сохранить и продолжить» найдена {button.count()} раз — экран не опознан"
+            f"кнопка сабмита экрана найдена {button.count()} раз — экран не опознан"
         )
     dismiss_cookie_banner(page)
     hydrated = False
     for _attempt in range(2):
-        if wait_for_react_hydration(page, RESUME_CREATION_NEXT, timeout_ms=_HYDRATION_TIMEOUT_MS):
+        if wait_for_react_hydration(page, submit_selector, timeout_ms=_HYDRATION_TIMEOUT_MS):
             hydrated = True
             break
     if not hydrated:
@@ -200,7 +245,7 @@ def submit_wizard_screen(
         click_error = str(exc)
     try:
         page.wait_for_url(
-            lambda url: urlsplit(str(url)).path != screen_path(target),
+            lambda url: urlsplit(str(url)).path != _screen_route_path(target, resume.resume_id),
             wait_until="commit",
             timeout=_SCREEN_NAV_TIMEOUT_MS,
         )

@@ -14,11 +14,12 @@ import pytest
 
 import hhru_bot.resume_wizard as rw
 from hhru_bot.resume_state import ResumeState
-from hhru_bot.selector_groups.resume_page import RESUME_CREATION_NEXT
+from hhru_bot.selector_groups.resume_page import RESUME_CREATION_NEXT, RESUME_PARTIAL_EDIT_SAVE
 
 pytestmark = pytest.mark.unit
 
 RESUME_ID = "a" * 38
+EDITOR_URL = f"https://hh.ru/resume/edit/{RESUME_ID}/skillsLevels?fromBlock=keySkills"
 
 
 def _markup(
@@ -52,7 +53,7 @@ class _NextButton:
         return self
 
     def inner_text(self):
-        return "Сохранить и продолжить"
+        return self._page.button_label
 
     def click(self):
         self._page.clicks += 1
@@ -73,6 +74,8 @@ class _WizardPage:
         next_count=1,
         click_error=None,
         goto_override=None,
+        button_selector=RESUME_CREATION_NEXT,
+        button_label="Сохранить и продолжить",
     ):
         self.markup = markup
         self.url = url
@@ -82,13 +85,16 @@ class _WizardPage:
         self.click_error = click_error
         # #999: hh.ru может редиректить goto на другой экран визарда.
         self.goto_override = goto_override
+        # У экрана один сабмит: NEXT визарда или Save редактора skill_levels.
+        self.button_selector = button_selector
+        self.button_label = button_label
         self.clicks = 0
 
     def content(self):
         return self.markup
 
     def locator(self, selector):
-        assert selector == RESUME_CREATION_NEXT
+        assert selector == self.button_selector
         return _NextButton(self)
 
     def wait_for_url(self, predicate, *, wait_until, timeout):  # noqa: ARG002
@@ -175,6 +181,12 @@ def test_resolve_accepts_matching_explicit_screen():
     assert rw.resolve_target_screen(state, "educations") == "educations"
 
 
+def test_resolve_accepts_skill_levels():
+    """skill_levels — валидный экран визарда, а не «нет владельца»."""
+    state = ResumeState(status="not_finished", next_incomplete_screen_id="skill_levels")
+    assert rw.resolve_target_screen(state, "skill_levels") == "skill_levels"
+
+
 # --- submit_wizard_screen: гейт гидрации и защищённый клик ------------------
 
 
@@ -259,6 +271,74 @@ def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
     assert page.clicks == 0 and clicks == []
 
 
+# --- skill_levels: экран живёт в редакторе уровней, сабмит — его Save --------
+
+
+def test_submit_skill_levels_clicks_editor_save(monkeypatch):
+    """skill_levels открывается маршрутом редактора /resume/edit/{id}/skillsLevels
+    (#813) и сабмитится его Save-кнопкой, не NEXT визарда."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        url=EDITOR_URL,
+        final_url=f"https://hh.ru/resume/{RESUME_ID}",
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+        button_label="Сохранить",
+    )
+    clicks = []
+    result = rw.submit_wizard_screen(
+        page, _resume(), "skill_levels", before_click=lambda: clicks.append(1)
+    )
+    assert result.success and result.acted and not result.uncertain
+    assert page.clicks == 1 and len(clicks) == 1
+
+
+def test_submit_skill_levels_refuses_when_redirected_away(monkeypatch):
+    """#999-семейство: hh.ru ушёл с маршрута редактора (флаг уже снят) — отказ
+    ДО before_click."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        goto_override=lambda _u: f"https://hh.ru/resume/{RESUME_ID}",
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+    )
+    clicks = []
+    with pytest.raises(rw.WizardScreenRefused, match="не открыт"):
+        rw.submit_wizard_screen(
+            page, _resume(), "skill_levels", before_click=lambda: clicks.append(1)
+        )
+    assert page.clicks == 0 and clicks == []
+
+
+def test_submit_skill_levels_is_uncertain_when_url_stays_in_editor(monkeypatch):
+    """Save без перехода с редактора — та же семантика uncertain (#176):
+    клик мог уйти, дамп обязателен."""
+    dumps = _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        url=EDITOR_URL,
+        final_url=EDITOR_URL,
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "skill_levels")
+    assert not result.success and result.acted and result.uncertain
+    assert dumps == ["wizard_next_failure"]
+
+
+def test_submit_skill_levels_requires_editor_save_button(monkeypatch):
+    """На экране skill_levels нет NEXT визарда — поиск идёт по Save редактора;
+    0 совпадений = экран не опознан, отказ до клика."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        url=EDITOR_URL,
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+        next_count=0,
+    )
+    with pytest.raises(rw.WizardScreenRefused, match="найдена 0 раз"):
+        rw.submit_wizard_screen(page, _resume(), "skill_levels")
+
+
 # --- inspect_wizard_screen: read-only сверка для --dry-run ------------------
 
 
@@ -279,10 +359,23 @@ def test_inspect_refuses_ambiguous_next(monkeypatch):
         rw.inspect_wizard_screen(page, RESUME_ID, "educations")
 
 
+def test_inspect_skill_levels_reports_editor_save_label(monkeypatch):
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        url=EDITOR_URL,
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+        button_label="Сохранить",
+    )
+    assert rw.inspect_wizard_screen(page, RESUME_ID, "skill_levels") == "Сохранить"
+
+
 def test_is_publishing_screen_only_last_supported_screen():
     """#1012: прогноз публикации — только последний экран SUPPORTED_SCREENS
-    (#900, прогоны #1009 и «Повар» 2026-09-06)."""
+    (#900, прогоны #1009 и «Повар» 2026-09-06). skill_levels — промежуточный,
+    после него всегда остаётся experience (живой факт 2026-09-07)."""
     assert rw.is_publishing_screen("experience") is True
     assert rw.is_publishing_screen("educations") is False
     assert rw.is_publishing_screen("keyskills") is False
+    assert rw.is_publishing_screen("skill_levels") is False
     assert rw.is_publishing_screen("common") is False

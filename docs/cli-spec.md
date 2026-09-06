@@ -849,11 +849,17 @@ Checkpoint `--resume` привязан также к `items-per-page`: smoke н�
 #### `wizard-next` — сабмитить экран визарда черновика
 
 - **Природа:** WRITE-hh-ru, опасная мутационная категория `live_write_danger` (требует ask)
-- **Сигнатура:** `hhru_bot wizard-next --resume <id> [--screen {educations,keyskills,experience}] [--dry-run] --force --allow-auto-publish`
-- Единственный CLI-владелец wizard-экранов `educations`/`keyskills`/`experience`
-  (#1010): кликает «Сохранить и продолжить» на identity-bound экране
-  `/profile/resume/<screen>?resume=<id>`. Экраны `common` и `professional_role`
-  не берёт — отказ называет владельца (`hhru common`, `hhru resume-position`).
+- **Сигнатура:** `hhru_bot wizard-next --resume <id> [--screen {educations,keyskills,skill_levels,experience}] [--dry-run] --force --allow-auto-publish`
+- Единственный CLI-владелец wizard-экранов `educations`/`keyskills`/
+  `skill_levels`/`experience` (#1010): кликает «Сохранить и продолжить» на
+  identity-bound экране `/profile/resume/<screen>?resume=<id>`. Экраны `common`
+  и `professional_role` не берёт — отказ называет владельца (`hhru common`,
+  `hhru resume-position`).
+- `skill_levels` — исключение по маршруту: экран визарда, вставший между
+  `keyskills` и `experience` только у черновиков с навыками (живой факт
+  2026-09-07), живёт не на `/profile/resume/*` (прямой GET даёт пустой shell),
+  а в редакторе уровней `/resume/edit/<id>/skillsLevels?fromBlock=keySkills`
+  (#813) — сабмитится его Save-кнопкой, не NEXT визарда.
 - Перед кликом читает `nextIncompleteScreenId` со страницы резюме (#225):
   отказ, если резюме опубликовано, флаг пуст (готов к публикации) или не
   совпадает с запрошенным экраном. Решение о переходе принимает
