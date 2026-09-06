@@ -1362,8 +1362,7 @@ def apply_position(
         currency_chip = currency_radio.locator("xpath=ancestor::label[1]")
         if currency_chip.count() != 1:
             raise RuntimeError(
-                f"чип валюты не подтверждён: {plan.currency} "
-                f"(«{CURRENCY_LABELS[plan.currency]}»)"
+                f"чип валюты не подтверждён: {plan.currency} («{CURRENCY_LABELS[plan.currency]}»)"
             )
         currency_chip.click()
     current_employment = current.employment if current else None

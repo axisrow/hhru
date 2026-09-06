@@ -37,9 +37,7 @@ def test_work_ticket_help_names_rendered_label():
 
     parser = build_parser()
     sub = parser._subparsers._group_actions[0].choices["common"]
-    opt = next(
-        a for a in sub._actions if "--work-ticket" in getattr(a, "option_strings", ())
-    )
+    opt = next(a for a in sub._actions if "--work-ticket" in getattr(a, "option_strings", ()))
     assert "Разрешение на работу" in opt.help
     assert "не рендерится" in opt.help
 

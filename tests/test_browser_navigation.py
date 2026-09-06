@@ -690,7 +690,14 @@ def test_rendered_controls_census_returns_rows_from_page(monkeypatch):
 
     page = MagicMock()
     page.evaluate.return_value = [
-        {"qa": "resume-profile-common-name-input", "tag": "input", "role": "", "label": "", "text": "", "visible": True},
+        {
+            "qa": "resume-profile-common-name-input",
+            "tag": "input",
+            "role": "",
+            "label": "",
+            "text": "",
+            "visible": True,
+        },
         {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
     ]
     rows = rendered_controls_census(page)
@@ -703,8 +710,22 @@ def test_census_table_renders_visibility_column():
 
     table = census_table(
         [
-            {"qa": "x-input", "tag": "input", "role": "", "label": "", "text": "Тестов", "visible": True},
-            {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
+            {
+                "qa": "x-input",
+                "tag": "input",
+                "role": "",
+                "label": "",
+                "text": "Тестов",
+                "visible": True,
+            },
+            {
+                "qa": "",
+                "tag": "div",
+                "role": "",
+                "label": "Город",
+                "text": "Город",
+                "visible": False,
+            },
         ]
     )
     assert "да" in table and "нет" in table
@@ -738,7 +759,14 @@ def test_dump_page_html_writes_census_companion(monkeypatch, tmp_path):
     page = MagicMock()
     page.content.return_value = "<html><body>дамп</body></html>"
     page.evaluate.return_value = [
-        {"qa": "name-input", "tag": "input", "role": "", "label": "", "text": "Тест", "visible": True},
+        {
+            "qa": "name-input",
+            "tag": "input",
+            "role": "",
+            "label": "",
+            "text": "Тест",
+            "visible": True,
+        },
     ]
     monkeypatch.setattr(browser, "LOG_DIR", tmp_path) if hasattr(browser, "LOG_DIR") else None
     dump = browser.dump_page_html(page, "census_companion_check")
