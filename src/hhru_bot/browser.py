@@ -698,13 +698,14 @@ _SUBTREE_CENSUS_JS = r"""(root) => {
     '[role="button"], [role="combobox"], [role="checkbox"], [role="radio"], [data-qa]';
   const seen = new Set();
   const rows = [];
+  let truncated = false;
   const els = (root.matches && root.matches(sel))
     ? [root, ...root.querySelectorAll(sel)]
     : [...root.querySelectorAll(sel)];
   for (const el of els) {
     if (seen.has(el)) continue;
     seen.add(el);
-    if (rows.length >= 120) break;
+    if (rows.length >= 120) { truncated = true; break; }
     const style = window.getComputedStyle(el);
     const visible = style.display !== 'none' && style.visibility !== 'hidden' &&
       (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
@@ -717,16 +718,20 @@ _SUBTREE_CENSUS_JS = r"""(root) => {
       visible,
     });
   }
-  return rows;
+  return {rows, truncated};
 }"""
 
 
-def subtree_controls_census(locator) -> list[dict]:
+def subtree_controls_census(locator) -> dict:
     """Census отрисованных контролов внутри одного элемента.
 
     Замена «RAW HTML fragment» в stdout (#998-класс): в сыром outerHTML
     скрытые узлы и литералы в атрибутах выглядят как поля. Дамп сырой
     разметки — только в файл (dump_page_html), в stdout — таблица.
+
+    Возвращает ``{"rows": [...], "truncated": bool}``: флаг честно сообщает
+    обрезку по лимиту 120 строк (переполнение реально для корня сообщений
+    чата), чтобы агент не принял «мало контролов» за полную картину.
     """
     return locator.evaluate(_SUBTREE_CENSUS_JS)
 

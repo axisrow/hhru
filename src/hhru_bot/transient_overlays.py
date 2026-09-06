@@ -122,8 +122,8 @@ def drain_transient_overlay_evidence(page: Page) -> list[dict[str, str]]:
     except Exception:  # diagnostics must not change the business result
         return []
     for item in result or []:
-        # В лог — только структура (text/role/qa/visible), не html: сырая
-        # разметка в логах читается агентом как «поля» (#998-класс).
+        # В лог — только структура (text/selector + html_bytes), не html:
+        # сырая разметка в логах читается агентом как «поля» (#998-класс).
         compact = {k: v for k, v in item.items() if k != "html"}
         if item.get("html"):
             compact["html_bytes"] = len(str(item["html"]))

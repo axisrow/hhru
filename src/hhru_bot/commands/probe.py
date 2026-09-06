@@ -1145,7 +1145,10 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             "атрибутах выглядят как поля, #998):"
         )
         if items.count():
-            print(census_table(subtree_controls_census(items.first)))
+            card_census = subtree_controls_census(items.first)
+            print(census_table(card_census["rows"]))
+            if card_census["truncated"]:
+                print("[WARN] census карточки обрезан по лимиту 120 строк")
 
         if args.topic:
             ref = next((r for r in refs if r.topic_id == str(args.topic)), None)
@@ -1182,5 +1185,8 @@ def run_negotiations(args: argparse.Namespace) -> bool:
             )
             message_roots = page.locator(negotiations.CHAT_MESSAGE_ROOT)
             if message_roots.count():
-                print(census_table(subtree_controls_census(message_roots.first)))
+                chat_census = subtree_controls_census(message_roots.first)
+                print(census_table(chat_census["rows"]))
+                if chat_census["truncated"]:
+                    print("[WARN] census корня сообщений обрезан по лимиту 120 строк")
     return False

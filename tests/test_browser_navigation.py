@@ -733,8 +733,9 @@ def test_census_table_renders_visibility_column():
 
 
 def test_subtree_census_passthrough_and_root_inclusion():
-    """subtree_controls_census: строки из evaluate отдаются как есть; JS
-    считает и сам корень, если он подходит под селектор контролов."""
+    """subtree_controls_census: возвращает {"rows", "truncated"} из evaluate
+    как есть; JS считает и сам корень, если он подходит под селектор
+    контролов, и честно флагует обрезку по лимиту 120."""
     from hhru_bot.browser import _SUBTREE_CENSUS_JS, subtree_controls_census
 
     rows = [{"qa": "card", "tag": "a", "role": "", "label": "", "text": "Отклик", "visible": True}]
@@ -743,12 +744,14 @@ def test_subtree_census_passthrough_and_root_inclusion():
     class FakeLocator:
         def evaluate(self, js):
             captured["js"] = js
-            return rows
+            return {"rows": rows, "truncated": False}
 
-    assert subtree_controls_census(FakeLocator()) == rows
+    result = subtree_controls_census(FakeLocator())
+    assert result == {"rows": rows, "truncated": False}
     assert captured["js"] == _SUBTREE_CENSUS_JS
     assert "root.matches" in _SUBTREE_CENSUS_JS
     assert "querySelectorAll" in _SUBTREE_CENSUS_JS
+    assert "truncated" in _SUBTREE_CENSUS_JS
 
 
 def test_dump_page_html_writes_census_companion(monkeypatch, tmp_path):
