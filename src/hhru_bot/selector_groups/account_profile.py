@@ -35,6 +35,17 @@ RESUME_COMMON_GENDER_FEMALE = _selector("account_profile.RESUME_COMMON_GENDER_FE
 RESUME_COMMON_PHONE = _selector("account_profile.RESUME_COMMON_PHONE")
 RESUME_COMMON_NEXT = _selector("account_profile.RESUME_COMMON_NEXT")
 RESUME_COMMON_PREV = _selector("account_profile.RESUME_COMMON_PREV")
+
+# #993 (live 2026-09-05, draft-wizard common screen /profile/resume/common,
+# черновик с пустыми полями): «Наличие трудовой книжки» на визарде существует,
+# но БЕЗ <label> — это magritte-select, чей контейнер несёт data-qa
+# resume-profile-common-work-ticket-selector (гидратирован; активатор —
+# [data-qa='magritte-select-activator'] внутри того же контейнера; открытие —
+# role='option' × N, как у прочих magritte-селектов). get_by_label по
+# «Наличие трудовой книжки» находит 0 label — это и есть боевой отказ #993
+# («совпадений: 0»). Прочие условия работы (переезд/график/занятость/формат/
+# командировки) и город на этом экране НЕ рендерятся вовсе.
+WORK_TICKET_WIZARD = _selector("account_profile.WORK_TICKET_WIZARD")
 ACCOUNT_PROFILE_READY = _selector("account_profile.ACCOUNT_PROFILE_READY")
 
 # Account-level fields from the authenticated live DOM observed on 2026-08-18.
