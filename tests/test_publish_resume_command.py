@@ -214,7 +214,9 @@ def test_professional_role_blocker_prints_actionable_cached_catalog_workflow(env
     assert "publish-resume --resume python --dry-run" in out
 
 
-def test_common_blocker_prints_actionable_manual_workflow(env, capsys, tmp_path):
+def test_common_blocker_prints_actionable_common_command_workflow(env, capsys, tmp_path):
+    """Guidance не зовёт в ручной режим (#998: поля должен заполнять CLI) —
+    единственный советуемый путь: команда hhru common."""
     env.result = PublishResumeResult(
         "python",
         False,
@@ -231,7 +233,8 @@ def test_common_blocker_prints_actionable_manual_workflow(env, capsys, tmp_path)
     assert "birthday" in out
     assert "firstName" in out
     assert "work_format" in out
-    assert "заполните экран «Основное» вручную" in out
+    assert "hhru common --resume python" in out
+    assert "вручную" not in out
     assert "publish-resume --resume python --dry-run" in out
 
 

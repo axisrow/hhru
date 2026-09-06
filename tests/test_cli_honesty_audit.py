@@ -13,6 +13,8 @@ from hhru_bot import resume_education
 from hhru_bot.browser import PageStateIndeterminate
 from hhru_bot.commands._common_resume_guidance import print_common_resume_guidance
 
+pytestmark = pytest.mark.unit
+
 
 class _Resume:
     id = "abc123"
