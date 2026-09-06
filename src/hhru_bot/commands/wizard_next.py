@@ -107,46 +107,51 @@ def run(args: argparse.Namespace):
                 result = resume_wizard.submit_wizard_screen(
                     page, resume, target, before_click=attempt.before_click
                 )
+                if attempt is not None:
+                    attempt.finish(result)
+                if not result.success:
+                    prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
+                    print(f"{prefix} {resume.id} — {result.reason}")
+                    return True
+                print(f"[OK] Экран «{result.screen}» подтверждён")
+                # #978: attempt финализирован ДО диагностического readback'а —
+                # сбой чтения не превращает подтверждённый сабмит в uncertain.
+                # Readback живёт ВНУТРИ контекста браузера: после выхода из
+                # with страница закрыта и чтение гарантированно падает.
+                try:
+                    after = resume_wizard.read_resume_state(page, resume.resume_id)
+                except Exception as exc:  # noqa: BLE001 — вердикт диагностический
+                    print(f"[INFO] Контрольное чтение состояния не удалось: {exc}")
+                    return False
+                if is_published(after):
+                    print("[INFO] hh.ru опубликовал резюме на этом экране (автопубликация #900)")
+                    print("[NEXT] 1. Статус в списке: hhru list-resumes")
+                elif after.next_incomplete_screen_id:
+                    print(
+                        f"[INFO] Следующий незавершённый экран: "
+                        f"{after.next_incomplete_screen_id}"
+                    )
+                    print(
+                        f"[NEXT] 1. Следующий экран: hhru wizard-next --resume {resume.id} "
+                        "--allow-auto-publish --force"
+                    )
+                    print(
+                        "[NEXT] 2. Проверка без клика: "
+                        f"hhru publish-resume --resume {resume.id} --dry-run"
+                    )
+                else:
+                    print("[INFO] Незавершённых экранов больше нет — черновик готов к публикации")
+                    print(f"[NEXT] hhru publish-resume --resume {resume.id} --dry-run")
+                return False
         except resume_wizard.WizardScreenRefused as exc:
             print(f"[FAIL] {resume.id} — {exc}")
             return True
         except BaseException as exc:
-            if attempt is not None:
+            # attempt уже финализирован finish() — прерывание после точки
+            # невозврата не переписывает подтверждённый исход (#978).
+            if attempt is not None and attempt.action_id is not None:
                 attempt.interrupt(exc)
             raise
-
-        if attempt is not None:
-            attempt.finish(result)
-
-        if not result.success:
-            prefix = "[FAIL] (uncertain)" if result.uncertain else "[FAIL]"
-            print(f"{prefix} {resume.id} — {result.reason}")
-            return True
-
-        print(f"[OK] Экран «{result.screen}» подтверждён")
-        # #978: attempt финализирован ДО диагностического readback'а —
-        # сбой чтения не превращает подтверждённый сабмит в uncertain.
-        try:
-            after = resume_wizard.read_resume_state(page, resume.resume_id)
-        except Exception as exc:  # noqa: BLE001 — вердикт диагностический
-            print(f"[INFO] Контрольное чтение состояния не удалось: {exc}")
-            return False
-        if is_published(after):
-            print("[INFO] hh.ru опубликовал резюме на этом экране (автопубликация #900)")
-            print("[NEXT] 1. Статус в списке: hhru list-resumes")
-        elif after.next_incomplete_screen_id:
-            print(f"[INFO] Следующий незавершённый экран: {after.next_incomplete_screen_id}")
-            print(
-                f"[NEXT] 1. Следующий экран: hhru wizard-next --resume {resume.id} "
-                "--allow-auto-publish --force"
-            )
-            print(
-                f"[NEXT] 2. Проверка без клика: hhru publish-resume --resume {resume.id} --dry-run"
-            )
-        else:
-            print("[INFO] Незавершённых экранов больше нет — черновик готов к публикации")
-            print(f"[NEXT] hhru publish-resume --resume {resume.id} --dry-run")
-        return False
 
     from ._common import run_supervised_command
 
