@@ -122,5 +122,10 @@ def drain_transient_overlay_evidence(page: Page) -> list[dict[str, str]]:
     except Exception:  # diagnostics must not change the business result
         return []
     for item in result or []:
-        logger.info("Transient overlay captured: %s", json.dumps(item, ensure_ascii=False))
+        # В лог — только структура (text/role/qa/visible), не html: сырая
+        # разметка в логах читается агентом как «поля» (#998-класс).
+        compact = {k: v for k, v in item.items() if k != "html"}
+        if item.get("html"):
+            compact["html_bytes"] = len(str(item["html"]))
+        logger.info("Transient overlay captured: %s", json.dumps(compact, ensure_ascii=False))
     return result or []
