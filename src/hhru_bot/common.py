@@ -205,6 +205,22 @@ def _open_common_screen(page: Page, resume_id: str):
             "опубликовано, hh.ru редиректит на страницу просмотра — правки "
             "common через визард невозможны",
         )
+    # #999 (бой 2026-09-06): hh.ru автоподтверждает common у
+    # fresh-черновика за секунды, и визанд встаёт на следующий экран
+    # (например, /profile/resume/educations). Это не поломка, а
+    # «common уже подтверждён» — отказ называет факт, а не
+    # «экран не смонтировался».
+    current = urlsplit(page.url).path
+    if (
+        current.startswith(f"{account_profile.RESUME_COMMON_PATH}/")
+        and current != COMMON_SCREEN_PATH
+    ):
+        _dump_and_raise(
+            page,
+            f"экран common уже пройден: визанд черновика стоит на "
+            f"«{current.rsplit('/', 1)[-1]}» — повторное подтверждение "
+            "common не требуется",
+        )
     # Гонка «DCL ≠ отрисовано»: SPA-экран монтируется после domcontentloaded —
     # ждать монтирование (attached), а не судить по мгновенному count() (#995).
     editor = page.locator(FORM)
