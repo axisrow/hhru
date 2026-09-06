@@ -430,9 +430,7 @@ def test_collect_category_honest_failure_when_leaves_never_appear(monkeypatch):
     monkeypatch.setattr(professional_roles_module, "_find_category", lambda *_a: chevron)
 
     with pytest.raises(RuntimeError, match="не раскрылась.*aria-expanded='false'"):
-        professional_roles_module._collect_category_roles(
-            MagicMock(), dialog, category
-        )
+        professional_roles_module._collect_category_roles(MagicMock(), dialog, category)
 
 
 def test_open_filters_requires_hydration_before_decision(monkeypatch):
@@ -548,22 +546,16 @@ def test_catalog_loop_recovers_from_wedge_by_reopening_dialog(monkeypatch):
         reopens.append("open")
         return object(), search
 
-    monkeypatch.setattr(
-        professional_roles_module, "_open_vacancy_search_catalog_dialog", fake_open
-    )
+    monkeypatch.setattr(professional_roles_module, "_open_vacancy_search_catalog_dialog", fake_open)
     calls = []
 
     def fake_collect(_page, _dialog, category):
         calls.append(category.category_id)
         if category.category_id == "11":
-            raise TreeVirtualizationWedge(
-                "клин", [ProfessionalRole("96", "Программист", "ИТ")]
-            )
+            raise TreeVirtualizationWedge("клин", [ProfessionalRole("96", "Программист", "ИТ")])
         return [ProfessionalRole("104", "Руководитель", "Менеджмент")]
 
-    monkeypatch.setattr(
-        professional_roles_module, "_collect_category_roles", fake_collect
-    )
+    monkeypatch.setattr(professional_roles_module, "_collect_category_roles", fake_collect)
 
     catalog = professional_roles_module.collect_vacancy_search_role_catalog(object())
 

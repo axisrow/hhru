@@ -363,9 +363,7 @@ def _collapse_category(page: Page, dialog, category: ProfessionalRoleCategory, l
         chevron = _find_category(page, dialog, category.category_id)
         tree_item = chevron.locator("xpath=ancestor::*[@role='treeitem'][1]")
         if tree_item.count() != 1:
-            raise RuntimeError(
-                f"строка категории «{category.label}» потеряна при схлопывании"
-            )
+            raise RuntimeError(f"строка категории «{category.label}» потеряна при схлопывании")
         if tree_item.get_attribute("aria-expanded") != "true":
             if leaves.count() == 0:
                 return

@@ -798,9 +798,5 @@ def test_wait_for_named_control_hydration_truth_table():
         def wait_for_function(self, _js, *, arg, timeout):  # noqa: ARG002
             raise PlaywrightError("Timeout 15000ms exceeded")
 
-    assert browser.wait_for_named_control_hydration(
-        OkPage(), "Фильтры", timeout_ms=15_000
-    )
-    assert not browser.wait_for_named_control_hydration(
-        TimeoutPage(), "Фильтры", timeout_ms=15_000
-    )
+    assert browser.wait_for_named_control_hydration(OkPage(), "Фильтры", timeout_ms=15_000)
+    assert not browser.wait_for_named_control_hydration(TimeoutPage(), "Фильтры", timeout_ms=15_000)
