@@ -79,6 +79,11 @@ _WAIT_MS = 5_000
 # #991: окно гидратации SAVE перед NEXT-кликом (одно ожидание). Две попытки
 # подряд в save_common дают суммарные ~30с — сопоставимо с бюджетом навигации.
 _SAVE_HYDRATION_TIMEOUT_MS = 15_000
+# Ревью #994: фолбэк-клик по активатору workTicket происходит ДО гейта SAVE
+# в save_common (apply_common исполняется раньше), и в --force-пути это
+# первое ожидание гидратации на экране. Magritte-активатор гидрируется
+# секунды (#840/#991), клик в этом окне теряется (#858) — свой бюджет.
+_WORK_TICKET_HYDRATION_TIMEOUT_MS = 15_000
 
 # Поля, без которых hh.ru не пускает черновик дальше к публикации (#982).
 # Авто-режим сохраняет предзаполненное только когда все они непусты.
@@ -315,14 +320,16 @@ def _read_common(page: Page) -> CommonValues:
         field = optional_labelled_field(page, WORK_TICKET)
         if field is not None:
             return field.inner_text().strip()
-        container = page.locator(account_profile.WORK_TICKET_WIZARD)
-        if container.count() == 1:
-            activator = container.locator("xpath=..").locator(
-                "[data-qa='magritte-select-activator']"
-            )
-            if activator.count() == 1:
-                return activator.first.inner_text().strip()
-        return ""
+        activator = _wizard_ticket_activator(page)
+        if activator is None:
+            return ""
+        # Ревью #994: если незаполненный magritte-select рендерит
+        # placeholder-текст в активаторе, он прочтётся как «заполнено», и
+        # merge_prefilled пропустит реальное заполнение --work-ticket с
+        # пометкой «уже заполнено на hh.ru». Какой текст показывает активатор
+        # пустого селекта, фиксируется живым прогоном #993; до него чтение
+        # остаётся best-effort.
+        return activator.inner_text().strip()
 
     birthday = " ".join(
         part
@@ -521,25 +528,52 @@ def _condition_field(page: Page, label: str):
         raise
 
 
+def _wizard_ticket_activator(page: Page):
+    """Активатор workTicket на wizard-shape или None.
+
+    Ревью #994: точное размещение активатора относительно контейнера
+    WORK_TICKET_WIZARD сохранённым дампом не зафиксировано (ценз 2026-09-05 —
+    read-only наблюдение без HTML). Ищем каскадом: сначала ВНУТРИ контейнера,
+    затем от его родителя (надмножество — покрывает и соседний случай). Каждый
+    шаг требует count()==1: второй magritte-активатор в общем родителе не даст
+    молча выбрать не тот элемент — каскад вернёт None, дальше отказ.
+    """
+    container = page.locator(account_profile.WORK_TICKET_WIZARD)
+    if container.count() != 1:
+        return None
+    for scope in (container, container.locator("xpath=..")):
+        activator = scope.locator("[data-qa='magritte-select-activator']")
+        if activator.count() == 1:
+            return activator.first
+    return None
+
+
 def _work_ticket_field(page: Page):
     """Resolve «Наличие трудовой книжки» on either common-screen shape (#993).
 
     Edit shape: a <label>-bound control (labelled_field, as before). Draft-
-    wizard shape (live 2026-09-05): NO <label> — a magritte select inside the
-    WORK_TICKET_WIZARD container; its activator is the sibling
-    magritte-select-activator, and _set_control's magritte branch drives it
-    (click → popup → role=option) unchanged.
+    wizard shape (live 2026-09-05): NO <label> — a magritte select in the
+    WORK_TICKET_WIZARD container; _set_control's magritte branch drives its
+    activator (click → popup → role=option) unchanged. Ревью #994: клик идёт
+    ДО гейта SAVE, поэтому фолбэк несёт собственный гидрационный гейт —
+    клик по негидратированному активатору теряется молча (#858/#840/#991).
     """
     try:
         return labelled_field(page, WORK_TICKET)
     except PageStateIndeterminate as exc:
-        container = page.locator(account_profile.WORK_TICKET_WIZARD)
-        if container.count() == 1:
-            activator = container.locator("xpath=..").locator(
-                "[data-qa='magritte-select-activator']"
-            )
-            if activator.count() == 1:
-                return activator.first
+        activator = _wizard_ticket_activator(page)
+        if activator is not None:
+            if not wait_for_react_hydration(
+                page,
+                account_profile.WORK_TICKET_WIZARD,
+                timeout_ms=_WORK_TICKET_HYDRATION_TIMEOUT_MS,
+            ):
+                raise PageStateIndeterminate(
+                    "активатор «Наличие трудовой книжки» не гидратирован за "
+                    f"{_WORK_TICKET_HYDRATION_TIMEOUT_MS // 1000}с — клик сейчас "
+                    "потеряется; повторите позже"
+                ) from exc
+            return activator
         if _on_wizard_common(page):
             raise PageStateIndeterminate(
                 "поле «Наличие трудовой книжки» не найдено на экране common "

@@ -396,9 +396,10 @@ selectors:
       source: src/hhru_bot/selector_groups/account_profile.py:48
       note: 'Live 2026-09-05 (#993, draft-wizard common screen /profile/resume/common, empty draft): the wizard renders "Наличие
         трудовой книжки" as a magritte select WITHOUT a <label> - container data-qa resume-profile-common-work-ticket-selector,
-        hydrated, activator [data-qa=''magritte-select-activator''] inside the same container, popup role=option. get_by_label("Наличие
-        трудовой книжки") finds 0 labels - the #993 combat failure. Other work-condition chips and the city field are NOT
-        rendered on this screen at all.'
+        hydrated; activator [data-qa=''magritte-select-activator''] - exact placement vs the container was not fixed by a
+        saved dump, common.py resolves it with a count==1 cascade (inside the container, then from its parent); popup role=option.
+        get_by_label("Наличие трудовой книжки") finds 0 labels - the #993 combat failure. Other work-condition chips and the
+        city field are NOT rendered on this screen at all.'
     last_verified_at: '2026-09-05'
     verified_flow: authenticated_draft_wizard_common_read_only
     verified_by: claude

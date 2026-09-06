@@ -716,12 +716,18 @@ def test_save_common_hydration_gate_precedes_before_click(monkeypatch):
 # --- #993: wizard-shape экрана common (draft) --------------------------------
 
 
+_WIZARD_ACTIVATOR_SELECTOR = "[data-qa='magritte-select-activator']"
+
+
 class _WizardShapePage:
     """Экран common визарда черновика (live 2026-09-05): работа-книжка —
     magritte-select в контейнере WORK_TICKET_WIZARD (без <label>), поля
-    условий работы и город НЕ рендерятся."""
+    условий работы и город НЕ рендерятся. Точное размещение активатора
+    относительно контейнера дампом не зафиксировано (ревью #994):
+    placement="inside" мокает активатор внутри контейнера, "sibling" —
+    доступным от родителя; каскад common.py обязан находить оба."""
 
-    def __init__(self):
+    def __init__(self, placement="inside"):
         from unittest.mock import MagicMock
 
         self.url = "https://hh.ru/profile/resume/common?resume=00001"
@@ -729,17 +735,34 @@ class _WizardShapePage:
         popup = MagicMock()
         popup.get_by_role.return_value.count.return_value = 1
         self._popup = popup
-        # workTicket-контейнер: стабильные моки (одни и те же объекты на
-        # каждый вызов locator()), чтобы тест мог ассертить по ним же
+        # Стабильные моки активатора: одни и те же объекты на каждый вызов
+        # locator(), чтобы тест ассертил клики по ним же.
         self.wizard_activator = MagicMock()
         self.wizard_activator.count.return_value = 1
-        self.wizard_activator.first.inner_text.return_value = "Россия"
+        self.wizard_activator.first.inner_text.return_value = "Да"
         self.wizard_activator.first.evaluate.return_value = "DIV"
-        wizard_parent = MagicMock()
-        wizard_parent.locator.return_value = self.wizard_activator
-        self._wizard_container = MagicMock()
-        self._wizard_container.count.return_value = 1
-        self._wizard_container.locator.return_value = wizard_parent
+
+        def _empty(selector):
+            m = MagicMock()
+            m.count.return_value = 0
+            return m
+
+        def _activator_scope(selector):
+            if selector == _WIZARD_ACTIVATOR_SELECTOR:
+                return self.wizard_activator
+            return _empty(selector)
+
+        container = MagicMock()
+        container.count.return_value = 1
+        if placement == "inside":
+            container.locator.side_effect = _activator_scope
+        else:
+            parent = MagicMock()
+            parent.locator.side_effect = _activator_scope
+            container.locator.side_effect = lambda selector: (
+                parent if selector == "xpath=.." else _empty(selector)
+            )
+        self._wizard_container = container
 
     def locator(self, selector):
         from hhru_bot.selector_groups import account_profile as ap
@@ -778,19 +801,56 @@ class _WizardShapePage:
         return MagicMock()
 
 
+def _hydrated(monkeypatch, ok):
+    """Гейт гидрации под контролем теста; возвращает список селекторов."""
+    calls = []
+
+    def fake_hydration(page, selector, *, timeout_ms):
+        calls.append(selector)
+        return ok
+
+    monkeypatch.setattr(common, "wait_for_react_hydration", fake_hydration)
+    return calls
+
+
 def test_wizard_work_ticket_falls_back_to_wizard_container(monkeypatch):
-    """«Наличие трудовой книжки» без <label>: фолбэк на контейнер
-    WORK_TICKET_WIZARD → activator → magritte-попап → опция «Да» (#993)."""
+    """«Наличие трудовой книжки» без <label>: фолбэк — каскад
+    WORK_TICKET_WIZARD (сначала внутри контейнера) → activator →
+    гидрационный гейт → magritte-попап → опция «Да» (#993, ревью #994)."""
+    from hhru_bot.selector_groups import account_profile as ap
 
     page = _WizardShapePage()
+    hydration_calls = _hydrated(monkeypatch, ok=True)
     common.apply_common(page, common.CommonValues(work_ticket="true"))
-    activator = (
-        page.locator("[data-qa='resume-profile-common-work-ticket-selector']")
-        .locator("xpath=..")
-        .locator("[data-qa='magritte-select-activator']")
-        .first
-    )
-    activator.click.assert_called_once()
+    page.wizard_activator.first.click.assert_called_once()
+    assert hydration_calls == [ap.WORK_TICKET_WIZARD]
+
+
+def test_wizard_work_ticket_sibling_placement(monkeypatch):
+    """Второй вариант размещения (ревью #994): активатор доступен от родителя
+    контейнера — каскад находит его и гейтит гидрацией так же."""
+    page = _WizardShapePage(placement="sibling")
+    _hydrated(monkeypatch, ok=True)
+    common.apply_common(page, common.CommonValues(work_ticket="true"))
+    page.wizard_activator.first.click.assert_called_once()
+
+
+def test_wizard_work_ticket_refuses_unhydrated(monkeypatch):
+    """Активатор не гидратирован (#858): клик потерялся бы молча — честный
+    pre-click отказ, клика нет (ревью #994)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = _WizardShapePage()
+    _hydrated(monkeypatch, ok=False)
+    raised = None
+    try:
+        common.apply_common(page, common.CommonValues(work_ticket="true"))
+        raised = None
+    except PageStateIndeterminate as exc:
+        raised = exc
+    assert raised is not None
+    assert "не гидратирован" in str(raised)
+    page.wizard_activator.first.click.assert_not_called()
 
 
 def test_wizard_area_refuses_honestly(monkeypatch):
@@ -826,4 +886,4 @@ def test_wizard_condition_chip_refuses_honestly(monkeypatch):
 def test_wizard_read_work_ticket_from_container(monkeypatch):
     """read_common на wizard-shape читает трудовую книжку из контейнера."""
     result = common._read_common(_WizardShapePage())
-    assert result.work_ticket == "Россия"
+    assert result.work_ticket == "Да"
