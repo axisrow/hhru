@@ -693,6 +693,38 @@ def rendered_controls_census(page: Page) -> list[dict]:
     return page.evaluate(_CENSUS_JS)
 
 
+def wait_for_named_control_hydration(
+    page: Page, name: str, *, timeout_ms: int, roles: tuple[str, ...] = ("button", "checkbox")
+) -> bool:
+    """Гидрация контрола с доступимым именем `name` (кнопки без data-qa).
+
+    #858/#1004: SSR-контролы видны до того, как React привяжет обработчики;
+    wait_for_react_hydration требует CSS-селектор, а тогглы вроде «Фильтры»
+    адресуются только ролью и текстом. Критерий тот же: __reactFiber и
+    __reactProps на самом элементе.
+    """
+    try:
+        page.wait_for_function(
+            """([names, roleList]) => {
+                const wanted = names.trim();
+                const sel = roleList.map((r) => `[role="${r}"], ${r}`).join(',');
+                for (const el of document.querySelectorAll(sel)) {
+                    if ((el.innerText || '').trim() !== wanted
+                        && (el.getAttribute('aria-label') || '') !== wanted) continue;
+                    const keys = Object.keys(el);
+                    if (keys.some((k) => k.startsWith('__reactFiber'))
+                        && keys.some((k) => k.startsWith('__reactProps'))) return true;
+                }
+                return false;
+            }""",
+            arg=[name, list(roles)],
+            timeout=timeout_ms,
+        )
+    except PlaywrightError:
+        return False
+    return True
+
+
 _SUBTREE_CENSUS_JS = r"""(root) => {
   const sel = 'input, textarea, select, button, a[href], label, ' +
     '[role="button"], [role="combobox"], [role="checkbox"], [role="radio"], [data-qa]';

@@ -470,6 +470,9 @@ def _set_tree(page: Page, trigger_selector: str, values: list[str], label: str) 
     # Keep the state probe independent from the option's compound data-qa
     # selector; hh.ru has used both a plain item class and the tree-item class
     # on selected rows across these pickers.
+    # #1004 (live IAB 2026-09-06): aria-selected строк tree-selector идёт в
+    # одну ногу с чекбоксом (замер в каталоге ролей: true при выборе, false
+    # при снятии) — читаем предвыбор по нему.
     selected = modal.locator("[aria-selected='true'][data-qa*='tree-selector-child-']")
     selected_ids = {
         selected.nth(index).get_attribute("data-qa") for index in range(selected.count())
@@ -662,6 +665,12 @@ def _set_many(page, field, values: list[str], labels: dict[str, str]) -> None:
     # A checkbox collection is returned by the exact labelled binding.  Set
     # the requested state explicitly, so repeated application is idempotent
     # and stale selections are removed rather than silently retained.
+    # #1004 (live IAB 2026-09-06): magritte в открытом попапе честно и
+    # мгновенно переключает aria-selected в обе стороны (замер на «Формате
+    # работы» редактора позиции: «Удалённо»=true на открытии, клик «Гибрид»
+    # даёт true тут же, повторный клик снимает) — решение о клике по
+    # атрибуту допустимо, но итог сверяется фактом ниже: потерянный клик
+    # (#858) не должен молча оставить полувыбранный набор.
     field.click()
     popup = page.locator(RESUME_POSITION_DROPDOWN)
     popup.wait_for(state="visible", timeout=_WAIT_MS)
@@ -680,6 +689,14 @@ def _set_many(page, field, values: list[str], labels: dict[str, str]) -> None:
             raise RuntimeError(f"вариант формы не найден: {value}")
         if option.first.get_attribute("aria-selected") != "true":
             option.first.click()
+    for index in range(options.count()):
+        option = options.nth(index)
+        text = option.inner_text().strip()
+        selected = option.get_attribute("aria-selected") == "true"
+        if selected and text not in wanted:
+            raise RuntimeError(f"лишний вариант остался выбранным в форме common: {text!r}")
+        if not selected and text in wanted:
+            raise RuntimeError(f"форма common не выбрала вариант: {text!r}")
     page.mouse.click(0, 0)
     popup.wait_for(state="hidden", timeout=_WAIT_MS)
 

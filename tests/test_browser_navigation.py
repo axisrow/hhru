@@ -787,3 +787,19 @@ def test_dump_page_html_survives_census_failure(monkeypatch, tmp_path):
     page.evaluate.side_effect = RuntimeError("census crashed")
     dump = browser.dump_page_html(page, "census_failure_check")
     assert dump is not None and dump.exists()
+
+
+def test_wait_for_named_control_hydration_truth_table():
+    """#858/#1004: True только когда React-привязки найдены; таймаут — False."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    class OkPage:
+        def wait_for_function(self, _js, *, arg, timeout):  # noqa: ARG002
+            assert arg == ["Фильтры", ["button", "checkbox"]]
+
+    class TimeoutPage:
+        def wait_for_function(self, _js, *, arg, timeout):  # noqa: ARG002
+            raise PlaywrightError("Timeout 15000ms exceeded")
+
+    assert browser.wait_for_named_control_hydration(OkPage(), "Фильтры", timeout_ms=15_000)
+    assert not browser.wait_for_named_control_hydration(TimeoutPage(), "Фильтры", timeout_ms=15_000)
