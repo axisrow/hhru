@@ -1,9 +1,10 @@
 """Тесты команды wizard-next (#1010): аудит в history, гейт --allow-auto-publish.
 
-WRITE-hh-ru команда: боевой режим требует --force И --allow-auto-publish (NEXT
-на последнем экране hh.ru публикует резюме сам, #900); --dry-run ничего не
-нажимает и ничего не пишет в history. Браузер не запускается: launch_context
-и функции resume_wizard подменяются, история — реальная SQLite.
+WRITE-hh-ru команда: боевой режим требует --force; --allow-auto-publish —
+только на последнем незакрытом экране, где hh.ru публикует резюме сам (#900,
+прогноз #1012 по двум прогонам); --dry-run ничего не нажимает и ничего не
+пишет в history. Браузер не запускается: launch_context и функции
+resume_wizard подменяются, история — реальная SQLite.
 """
 
 from __future__ import annotations
@@ -114,13 +115,50 @@ def test_run_without_force_exits_before_browser(env, tmp_path):
     assert env.launched == 0 and env.submit_calls == 0
 
 
-def test_run_without_allow_auto_publish_refuses_auto_publish_gate(env, capsys, tmp_path):
-    """#900: каждый NEXT визарда может оказаться последним экраном — гейт обязателен."""
-    with pytest.raises(SystemExit):
-        cmd.run(_args(tmp_path, force=True, allow_auto_publish=False))
+def test_intermediate_screen_passes_without_auto_publish_flag(env, capsys, tmp_path):
+    """#1012: промежуточный экран не публикует — флаг не требуется, прогноз
+    печатается."""
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=False)) is False
     out = capsys.readouterr().out
-    assert env.launched == 0 and env.submit_calls == 0
-    assert "--allow-auto-publish" in out
+    assert "Публикации не будет: после «educations» остались экраны: keyskills, experience" in out
+    assert env.submit_calls == 1
+
+
+def test_publishing_screen_without_flag_refuses_before_click(env, capsys, tmp_path):
+    """#1012: последний незакрытый экран (experience) публикует (#900) —
+    без флага честный отказ ДО мутирующего клика."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="experience"),
+    ]
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=False)) is True
+    out = capsys.readouterr().out
+    assert "hh.ru опубликует резюме сам" in out
+    assert "Ничего не нажато" in out
+    assert env.submit_calls == 0
+
+
+def test_publishing_screen_with_flag_proceeds(env, capsys, tmp_path):
+    """#1012: флаг на последнем экране разрешает публикацию."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="experience"),
+        ResumeState(status="finished", next_incomplete_screen_id=None),
+    ]
+    env.result = WizardAdvanceResult(
+        "experience", True, "экран «experience» подтверждён", acted=True
+    )
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=True)) is False
+    assert env.submit_calls == 1
+
+
+def test_dry_run_prints_publish_forecast(env, capsys, tmp_path):
+    """#1012: dry-run называет прогноз публикации для текущего экрана."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="educations"),
+    ]
+    assert cmd.run(_args(tmp_path, dry_run=True)) is False
+    out = capsys.readouterr().out
+    assert "Публикации не будет" in out
+    assert env.submit_calls == 0 and env.inspect_calls == 1
 
 
 def test_run_success_records_history_and_next_screen(env, capsys, tmp_path):

@@ -1,10 +1,10 @@
 """Команда wizard-next: сабмит одного экрана визарда черновика (#865/#1010).
 
 Единственный CLI-владелец экранов educations/keyskills/experience: до неё эти
-экраны приходилось кликать руками в браузере, что запрещено. Каждый боевой
-клик потенциально публикует резюме (#900), поэтому --allow-auto-publish
-обязателен вместе с --force; --dry-run ничего не нажимает и ничего не пишет
-в history.
+экраны приходилось кликать руками в браузере, что запрещено. Автопубликация
+(#900) происходит ровно на последнем незакрытом экране (#1012, два прогона),
+поэтому --allow-auto-publish требуется только для него; --dry-run ничего не
+нажимает и ничего не пишет в history.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ def register(subparsers) -> None:
         help="Сабмитить текущий экран визарда черновика (educations/keyskills/experience)",
         description=(
             "Кликает «Сохранить и продолжить» на незавершённом экране визарда "
-            "черновика. WRITE-hh-ru: боевой режим требует --force и "
-            "--allow-auto-publish — NEXT на последнем незакрытом экране hh.ru "
-            "публикует резюме сам (#900); --dry-run ничего не нажимает."
+            "черновика. WRITE-hh-ru: боевой режим требует --force; "
+            "--allow-auto-publish нужен только на последнем незакрытом экране — "
+            "hh.ru публикует резюме сам (#900, #1012); --dry-run ничего не нажимает."
         ),
     )
     p.add_argument(
@@ -41,8 +41,8 @@ def register(subparsers) -> None:
         "--allow-auto-publish",
         action="store_true",
         help=(
-            "Разрешить сабмит экрана, после которого hh.ru может автоматически "
-            "опубликовать резюме (#900)"
+            "Разрешить сабмит последнего незакрытого экрана: hh.ru опубликует "
+            "резюме сам (#900, #1012). На промежуточных экранах не требуется"
         ),
     )
     p.set_defaults(func=run)
@@ -64,13 +64,6 @@ def run(args: argparse.Namespace):
         sys.exit(1)
     if not args.dry_run and not args.force:
         print("[FAIL] Боевой режим требует --force. Ничего не нажато.")
-        sys.exit(1)
-    if not args.dry_run and not args.allow_auto_publish:
-        print(
-            "[FAIL] NEXT визарда может оказаться последним незакрытым экраном: "
-            "hh.ru опубликует резюме сам (#900). Ничего не нажато. Для явного "
-            "разрешения используйте --allow-auto-publish вместе с --force."
-        )
         sys.exit(1)
 
     history = History(args.history)
@@ -100,6 +93,28 @@ def run(args: argparse.Namespace):
                     print(f"[FAIL] {resume.id} — {exc}")
                     return True
                 print(f"[INFO] Незавершённый экран визарда: {target}")
+                # #1012: гейт — предсказание с источником, не «на всякий
+                # случай»: hh.ru публикует сам ровно на последнем незакрытом
+                # экране (#900; прогоны #1009 и «Повар» 2026-09-06). Отказ ДО
+                # attempt.before_click — попытка не засчитывается.
+                publishing = resume_wizard.is_publishing_screen(target)
+                if publishing:
+                    print(f"[INFO] Экран «{target}» последний: hh.ru опубликует резюме сам (#900)")
+                else:
+                    rest = resume_wizard.SUPPORTED_SCREENS[
+                        resume_wizard.SUPPORTED_SCREENS.index(target) + 1 :
+                    ]
+                    print(
+                        f"[INFO] Публикации не будет: после «{target}» остались экраны: "
+                        + ", ".join(rest)
+                    )
+                if not args.dry_run and publishing and not args.allow_auto_publish:
+                    print(
+                        f"[FAIL] сабмит экрана «{target}» — hh.ru опубликует резюме сам "
+                        "(#900, прогоны #1009 и «Повар» 2026-09-06). Ничего не нажато. "
+                        "Добавьте --allow-auto-publish."
+                    )
+                    return True
                 if args.dry_run:
                     label = resume_wizard.inspect_wizard_screen(page, resume.resume_id, target)
                     print(f"[DRY-RUN] Экран «{target}» открыт, «{label}» на месте; клика не было")
