@@ -276,10 +276,11 @@ def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
 
 def test_submit_skill_levels_clicks_editor_save(monkeypatch):
     """skill_levels открывается маршрутом редактора /resume/edit/{id}/skillsLevels
-    (#813) и сабмитится его Save-кнопкой, не NEXT визарда."""
+    (#813) и сабмитится его Save-кнопкой, не NEXT визарда. Успех требует
+    readback'а: флаг ушёл с skill_levels (#1014)."""
     _install_nav_stubs(monkeypatch)
     page = _WizardPage(
-        _markup(next_screen="skill_levels"),
+        _markup(next_screen="experience"),
         url=EDITOR_URL,
         final_url=f"https://hh.ru/resume/{RESUME_ID}",
         button_selector=RESUME_PARTIAL_EDIT_SAVE,
@@ -291,6 +292,23 @@ def test_submit_skill_levels_clicks_editor_save(monkeypatch):
     )
     assert result.success and result.acted and not result.uncertain
     assert page.clicks == 1 and len(clicks) == 1
+
+
+def test_submit_skill_levels_fails_when_flag_stays(monkeypatch):
+    """#1014, живой факт 2026-09-07: Save редактора уходит с маршрута, но флаг
+    не двигает — это честный failed (исход известен), не uncertain и не
+    ложный успех."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="skill_levels"),
+        url=EDITOR_URL,
+        final_url=f"https://hh.ru/resume/{RESUME_ID}",
+        button_selector=RESUME_PARTIAL_EDIT_SAVE,
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "skill_levels")
+    assert not result.success and result.acted and not result.uncertain
+    assert "nextIncompleteScreenId не двигается" in result.reason
+    assert "«Указать уровни»" in result.reason
 
 
 def test_submit_skill_levels_refuses_when_redirected_away(monkeypatch):

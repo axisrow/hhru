@@ -208,7 +208,10 @@ def submit_wizard_screen(
     (#858), клик теряется молча, и это честный failed («клик не отправлялся»),
     а не uncertain. Исход самого клика решает ``wait_for_url`` (уход с пути
     экрана): падение click() при состоявшемся переходе — не ошибка (#913),
-    а непереход в пределах бюджета — uncertain (#176).
+    а непереход в пределах бюджета — uncertain (#176). Для skill_levels
+    переход — необходимое, но не достаточное условие: успех дополнительно
+    доказывается identity-bound readback'ом флага (#1014, живой факт:
+    Save редактора флаг не двигает).
     """
     _open_screen(page, resume.resume_id, target)
     submit_selector = _screen_submit_button(target)
@@ -262,4 +265,21 @@ def submit_wizard_screen(
         if click_error is not None:
             reason += f"; ошибка клика: {click_error[:300]}"
         return WizardAdvanceResult(target, False, reason, acted=True, uncertain=True)
+    if target == _SKILL_LEVELS_SCREEN:
+        # v2 (#1014, живой факт 2026-09-07): Save редактора уровней кликается
+        # и уходит с маршрута, но nextIncompleteScreenId не двигает. Успех
+        # этого экрана доказывается только identity-bound readback'ом флага,
+        # а не фактом перехода; непрошедший флаг — честный failed (исход
+        # известен, не uncertain), повтор того же клика бессмыслен.
+        after_state = read_resume_state(page, resume.resume_id)
+        if after_state.next_incomplete_screen_id == _SKILL_LEVELS_SCREEN:
+            return WizardAdvanceResult(
+                target,
+                False,
+                "переход с редактора подтверждён, но экран «skill_levels» не закрыт: "
+                "nextIncompleteScreenId не двигается — Save редактора (#813) "
+                "wizard-флаг не сабмитит (#1014); настоящий сабмит, вероятно, "
+                "за кнопкой «Указать уровни» на карточке резюме",
+                acted=True,
+            )
     return WizardAdvanceResult(target, True, f"экран «{target}» подтверждён", acted=True)
