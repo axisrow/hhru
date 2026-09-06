@@ -16,6 +16,7 @@ tree (#913).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -27,8 +28,10 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh
+from .browser import HH_BASE_URL, goto_hh, wait_for_named_control_hydration
 from .external_forms.detect import normalize
+
+logger = logging.getLogger(__name__)
 
 SEARCH_URL = f"{HH_BASE_URL}/search/vacancy"
 FILTER_TRIGGER = "[data-qa='search-filter-professional-role-trigger']"
@@ -39,6 +42,12 @@ _ROLE_ID_RE = re.compile(r"(?:^|\s)tree-selector-input-(\d+)(?:\s|$)")
 _CATEGORY_ID_RE = re.compile(r"(?:^|\s)tree-selector-input-category-(\d+)(?:\s|$)")
 _WAIT_MS = 15_000
 _MAX_SCROLL_STEPS = 200
+# #1004: ожидание факта «leaf-строки появились/исчезли» после клика по шеврону.
+_LEAF_ATTACH_TIMEOUT_MS = 5_000
+_COLLAPSE_POLL_MS = 100
+_COLLAPSE_ATTEMPTS = 3
+# #858/#1004: окно гидрации тоггла «Фильтры» (SSR-кнопка видима до React).
+_FILTERS_HYDRATION_TIMEOUT_MS = 15_000
 
 CACHE_SCHEMA_VERSION = 1
 CACHE_SOURCE = SEARCH_URL
@@ -273,9 +282,23 @@ def _collect_category_roles(
     tree_item = chevron.locator("xpath=ancestor::*[@role='treeitem'][1]")
     if tree_item.count() != 1:
         raise RuntimeError(f"строка категории «{category.label}» неоднозначна")
-    if tree_item.get_attribute("aria-expanded") != "true":
+    # #1004 (live IAB 2026-09-06): aria-expanded на дереве ролей обновляется
+    # честно в обе стороны, но решение принимаем по ФАКТУ — отрисованным
+    # leaf-строкам: атрибут мог протухнуть к моменту решения (класс #840),
+    # а клик по уже раскрытой категории схлопнул бы её. Атрибут — подсказка,
+    # строки — доказательство; после клика факт дожидаетсяся, иначе честный
+    # отказ с состоянием атрибута.
+    leaves = dialog.locator("[role='treeitem'][aria-level='2']")
+    if tree_item.get_attribute("aria-expanded") != "true" or leaves.count() == 0:
         chevron.click()
-        page.wait_for_timeout(100)
+        try:
+            leaves.first.wait_for(state="attached", timeout=_LEAF_ATTACH_TIMEOUT_MS)
+        except PlaywrightError as exc:
+            raise RuntimeError(
+                f"категория «{category.label}» не раскрылась: leaf-строки не появились "
+                f"после клика по шеврону (aria-expanded="
+                f"{tree_item.get_attribute('aria-expanded')!r})"
+            ) from exc
 
     by_id: dict[str, ProfessionalRole] = {}
     seen_leaf = False
@@ -301,19 +324,75 @@ def _collect_category_roles(
     else:
         raise RuntimeError(f"обход профессий категории «{category.label}» не достиг конца")
 
-    # Collapse through the chevron (never the checkbox) to keep the next
-    # category traversal bounded and to leave the modal unsubmitted.
-    chevron = _find_category(page, dialog, category.category_id)
-    tree_item = chevron.locator("xpath=ancestor::*[@role='treeitem'][1]")
-    if tree_item.count() == 1 and tree_item.get_attribute("aria-expanded") == "true":
-        chevron.click()
-        page.wait_for_timeout(100)
+    # Collapse — bookkeeping после сбора: факт состояния дерева — aria-expanded
+    # (клик щёлкает его честно, замер 2026-09-06), а строки виртуализатор может
+    # НЕ размонтировать — см. _collapse_category.
+    try:
+        _collapse_category(page, dialog, category, leaves)
+    except TreeVirtualizationWedge as exc:
+        raise TreeVirtualizationWedge(str(exc), list(by_id.values())) from exc
     if not by_id:
         raise RuntimeError(f"категория «{category.label}» не вернула leaf-профессии")
     return list(by_id.values())
 
 
+class TreeVirtualizationWedge(RuntimeError):
+    """Дерево каталога заклинило: состояние щёлкает, список не перерисовывается.
+
+    Живой дрилл 2026-09-06 («Маркетинг, реклама, PR»): клик по шеврону честно
+    переводит категорию в aria-expanded=false, но виртуализатор hh.ru не
+    размонтирует leaf-строки; следующие раскрытия только ДОБАВЛЯЮТ строки.
+    Единственное известное лечение — переоткрыть диалог. Носит уже собранные
+    роли категории, чтобы переоткрытие не теряло данные.
+    """
+
+    def __init__(self, message: str, roles: list[ProfessionalRole]):
+        super().__init__(message)
+        self.roles = roles
+
+
+def _collapse_category(page: Page, dialog, category: ProfessionalRoleCategory, leaves) -> None:
+    """Свернуть категорию и проверить факт по aria-expanded (#1004).
+
+    Строки после клика — не доказательство: при клине виртуализатора они
+    остаются «призраками» (см. TreeVirtualizationWedge). aria-expanded при
+    этом состояние щёлкает честно в обоих направлениях (замер IAB 2026-09-06).
+    """
+    tree_item = None
+    for _attempt in range(_COLLAPSE_ATTEMPTS):
+        chevron = _find_category(page, dialog, category.category_id)
+        tree_item = chevron.locator("xpath=ancestor::*[@role='treeitem'][1]")
+        if tree_item.count() != 1:
+            raise RuntimeError(
+                f"строка категории «{category.label}» потеряна при схлопывании"
+            )
+        if tree_item.get_attribute("aria-expanded") != "true":
+            if leaves.count() == 0:
+                return
+            raise TreeVirtualizationWedge(
+                f"категория «{category.label}» свернута, но {leaves.count()} "
+                "leaf-строк осталось в DOM — виртуализатор не размонтирует список",
+                [],
+            )
+        chevron.click()
+        page.wait_for_timeout(_COLLAPSE_POLL_MS)
+    raise RuntimeError(
+        f"категория «{category.label}» не сворачивается за {_COLLAPSE_ATTEMPTS} попытки: "
+        f"aria-expanded={tree_item.get_attribute('aria-expanded')!r}"
+    )
+
+
 def _open_filters_if_needed(page: Page) -> None:
+    # #858/#1004: SSR-тоггл «Фильтры» виден до того, как React привязал к нему
+    # обработчики; is_visible() — не кликабельность (клик в окне гидрации
+    # теряется, #840). Гейт: гидрация тоггла до первого решения по контролам.
+    if not wait_for_named_control_hydration(
+        page, "Фильтры", timeout_ms=_FILTERS_HYDRATION_TIMEOUT_MS
+    ):
+        raise RuntimeError(
+            "страница поиска вакансий не гидратировалась: тоггл «Фильтры» без "
+            "React-привязок — клик был бы потерян"
+        )
     trigger = page.locator(FILTER_TRIGGER)
     # Desktop cycles through collapsed -> quick filters -> full filters; the
     # compact in-app layout opens the full panel in one click.
@@ -369,7 +448,22 @@ def collect_vacancy_search_role_catalog(page: Page) -> VacancySearchRoleCatalog:
     categories = _collect_categories(page, dialog)
     seen_by_id: dict[str, ProfessionalRole] = {}
     for category in categories:
-        for role in _collect_category_roles(page, dialog, category):
+        try:
+            roles = _collect_category_roles(page, dialog, category)
+        except TreeVirtualizationWedge as exc:
+            # #1004: клин виртуализатора лечится только переоткрытием диалога.
+            # Роли заклинившей категории уже собраны (исключение их несёт).
+            logger.warning(
+                "каталог ролей: после «%s» дерево заклинило (%s) — переоткрываю "
+                "диалог, собранные роли сохранены",
+                category.label,
+                exc,
+            )
+            roles = exc.roles
+            dialog, search = _open_vacancy_search_catalog_dialog(page)
+            search.fill("")
+            _wait_for_tree(page, dialog)
+        for role in roles:
             previous = seen_by_id.get(role.role_id)
             if previous is not None:
                 if normalize(previous.label) != normalize(role.label):

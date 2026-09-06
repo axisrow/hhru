@@ -1016,3 +1016,99 @@ def test_open_common_already_passed_screen_reports_fact(monkeypatch):
     assert "уже пройден" in str(raised)
     assert "educations" in str(raised)
     dump.assert_called_once()
+
+
+# --- #1004: потерянный клик в попапе common не проходит молча -----------------
+
+
+class _PopupOption:
+    def __init__(self, text, selected, stuck=False):
+        self.text = text
+        self._selected = selected
+        self.stuck = stuck  # клик теряется: атрибут не меняется (#858-класс)
+        self.clicks = 0
+
+    def inner_text(self):
+        return self.text
+
+    def get_attribute(self, name):  # noqa: ARG002
+        return "true" if self._selected else "false"
+
+    def click(self):
+        self.clicks += 1
+        if not self.stuck:
+            self._selected = not self._selected
+
+
+class _PopupOptions:
+    def __init__(self, options):
+        self.options = options
+
+    def count(self):
+        return len(self.options)
+
+    def nth(self, index):
+        return self.options[index]
+
+
+class _SetManyPage:
+    def __init__(self, options):
+        self.options = options
+        self.field = MagicMock()
+        self.field.evaluate.return_value = "DIV"
+        self.popup = MagicMock()
+
+        def _get_by_role(_role, *, name=None, exact=True):  # noqa: ARG002
+            if name is None:
+                return _PopupOptions(options)
+
+            class _Named:
+                first = next(o for o in options if o.text == name)
+
+                @staticmethod
+                def count():
+                    return sum(1 for o in options if o.text == name)
+
+            return _Named()
+
+        self.popup.get_by_role.side_effect = _get_by_role
+        self.mouse = MagicMock()
+
+    def locator(self, _selector):
+        return self.popup
+
+
+def _run_set_many(page, values):
+    common._set_many(page, page.field, values, common.WORK_FORMAT_LABELS)
+
+
+def test_set_many_verifies_final_selection_fact():
+    """Оба клика прошли: желаемый выбран, лишний снят — проверка факта молчит."""
+    options = [
+        _PopupOption("Удалённо", selected=False),
+        _PopupOption("Офис", selected=True),
+    ]
+    _run_set_many(_SetManyPage(options), ["remote"])
+    assert options[0]._selected is True
+    assert options[1]._selected is False
+
+
+def test_set_many_lost_click_on_wanted_option_fails_honestly():
+    """Клик по желаемому варианту потерян — раньше было бы молча; теперь
+    честный отказ с текстом варианта."""
+    options = [
+        _PopupOption("Удалённо", selected=False, stuck=True),
+        _PopupOption("Офис", selected=False),
+    ]
+    with pytest.raises(RuntimeError, match="не выбрала вариант: 'Удалённо'"):
+        _run_set_many(_SetManyPage(options), ["remote"])
+
+
+def test_set_many_lost_click_on_unwanted_option_fails_honestly():
+    """Лишний предвыбор не снялся (клик потерян) — честный отказ."""
+    options = [
+        _PopupOption("Удалённо", selected=False),
+        _PopupOption("Офис", selected=True, stuck=True),
+    ]
+    with pytest.raises(RuntimeError, match="лишний вариант остался выбранным.*'Офис'"):
+        _run_set_many(_SetManyPage(options), ["remote"])
