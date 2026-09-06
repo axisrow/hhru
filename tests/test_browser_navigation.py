@@ -679,3 +679,61 @@ def test_labelled_field_fails_closed_on_ambiguity(count: int) -> None:
 
     with pytest.raises(browser.PageStateIndeterminate):
         browser.labelled_field(page, "Название")
+
+
+# --- #1002: census отрисованных контролов + census-компаньон дампов ----------
+
+
+def test_rendered_controls_census_returns_rows_from_page(monkeypatch):
+    """census возвращает строки, отданные page.evaluate, без переработки."""
+    from hhru_bot.browser import rendered_controls_census
+
+    page = MagicMock()
+    page.evaluate.return_value = [
+        {"qa": "resume-profile-common-name-input", "tag": "input", "role": "", "label": "", "text": "", "visible": True},
+        {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
+    ]
+    rows = rendered_controls_census(page)
+    assert rows == page.evaluate.return_value
+    page.evaluate.assert_called_once()
+
+
+def test_census_table_renders_visibility_column():
+    from hhru_bot.browser import census_table
+
+    table = census_table(
+        [
+            {"qa": "x-input", "tag": "input", "role": "", "label": "", "text": "Тестов", "visible": True},
+            {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
+        ]
+    )
+    assert "да" in table and "нет" in table
+    assert "Городская" not in table  # литералы бандлов не попадают по построению
+
+
+def test_dump_page_html_writes_census_companion(monkeypatch, tmp_path):
+    """#1002: к каждому дампу пишется census-компаньон; сбой census не
+    ломает дамп."""
+    from hhru_bot import browser
+
+    page = MagicMock()
+    page.content.return_value = "<html><body>дамп</body></html>"
+    page.evaluate.return_value = [
+        {"qa": "name-input", "tag": "input", "role": "", "label": "", "text": "Тест", "visible": True},
+    ]
+    monkeypatch.setattr(browser, "LOG_DIR", tmp_path) if hasattr(browser, "LOG_DIR") else None
+    dump = browser.dump_page_html(page, "census_companion_check")
+    assert dump is not None and dump.exists()
+    companion = dump.with_suffix(".census.txt")
+    assert companion.exists()
+    assert "name-input" in companion.read_text(encoding="utf-8")
+
+
+def test_dump_page_html_survives_census_failure(monkeypatch, tmp_path):
+    from hhru_bot import browser
+
+    page = MagicMock()
+    page.content.return_value = "<html></html>"
+    page.evaluate.side_effect = RuntimeError("census crashed")
+    dump = browser.dump_page_html(page, "census_failure_check")
+    assert dump is not None and dump.exists()

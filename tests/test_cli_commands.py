@@ -103,6 +103,7 @@ def test_all_commands_registered():
     action = _subparser_actions(parser)
     assert set(action.choices) == {
         "account",
+        "census",
         "login",
         "login-code",
         "search",
@@ -182,6 +183,7 @@ def test_register_commands_returns_names():
     # Аналогично модуль list_resumes регистрирует команду 'list-resumes'.
     assert set(names) == {
         "account",
+        "census",
         "login",
         "login_code",
         "search",
@@ -828,3 +830,13 @@ def test_upload_photo_has_required_args():
         parser.parse_args(["upload-photo", "--photo", "/tmp/x.jpg"])
     with pytest.raises(SystemExit):
         parser.parse_args(["upload-photo", "--resume", "rid"])
+
+
+def test_census_is_read_only_command():
+    """#1002: census — «глаза» агента, read-only по построению: его нет
+    ни в WRITE_COMMANDS, ни в подкомандных guard-ах."""
+    from hhru_bot.cli import WRITE_COMMANDS, build_parser
+
+    assert "census" not in WRITE_COMMANDS
+    choices = build_parser()._subparsers._group_actions[0].choices
+    assert "census" in choices

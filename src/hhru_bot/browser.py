@@ -657,12 +657,73 @@ def wait_for_react_hydration(page: Page, selector: str, *, timeout_ms: int) -> b
     return True
 
 
+_CENSUS_JS = r"""() => {
+  const sel = 'input, textarea, select, button, a[href], label, ' +
+    '[role="button"], [role="combobox"], [role="checkbox"], [role="radio"], [data-qa]';
+  const seen = new Set();
+  const rows = [];
+  for (const el of document.querySelectorAll(sel)) {
+    if (seen.has(el)) continue;
+    seen.add(el);
+    const style = window.getComputedStyle(el);
+    const visible = style.display !== 'none' && style.visibility !== 'hidden' &&
+      (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+    rows.push({
+      qa: el.getAttribute('data-qa') || '',
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || '',
+      label: (el.getAttribute('aria-label') || '').slice(0, 80),
+      text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+      visible,
+    });
+  }
+  return rows;
+}"""
+
+
+def rendered_controls_census(page: Page) -> list[dict]:
+    """Что РЕАЛЬНО отрисовано на странице: интерактивные/подписанные элементы.
+
+    #1002: агенты «слепы» — сырой HTML-дамп неотличим от UI, и текстовые
+    литералы JSON-состояния/i18n-бандлов читаются как поля (ложные
+    «8 Городов» в #998). Census собирает только DOM-элементы — литералы
+    внутри <script> в дерево не входят, ложные улики невозможны по
+    построению. Видимость считается по layout+CSS (как isVisible).
+    """
+    return page.evaluate(_CENSUS_JS)
+
+
+def census_table(rows: list[dict]) -> str:
+    """ASCII-таблица census для stdout/файла (report._ascii_table, без цикла
+    импортов: report импортирует browser)."""
+    from .report import _ascii_table
+
+    header = ["data-qa", "tag", "role", "label", "text", "visible"]
+    rows_out = [
+        [
+            str(r.get("qa", "")),
+            str(r.get("tag", "")),
+            str(r.get("role", "")),
+            str(r.get("label", "")),
+            str(r.get("text", "")),
+            "да" if r.get("visible") else "нет",
+        ]
+        for r in rows
+    ]
+    return _ascii_table(header, rows_out)
+
+
 def dump_page_html(page: Page, stem: str) -> Path | None:
     """Best-effort дамп HTML страницы в LOG_DIR для разбора инцидента.
 
     Общий хелпер семейства ``_dump_*_failure`` (resume_education/
     resume_position): дубли выключенной диагностики недопустимы, но и
     падать из-за неё нельзя — любая OSError глушится, возвращается None.
+
+    #1002: рядом с .html пишется census-компаньон (rendered_controls_
+    census) — сырой HTML содержит JSON/i18n-литералы, неотличимые от UI
+    при текстовом поиске; разбор отказа обязан начинаться с честной
+    картинки отрисованных контролов.
     """
     from .logging_setup import LOG_DIR
 
@@ -670,6 +731,34 @@ def dump_page_html(page: Page, stem: str) -> Path | None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         path = LOG_DIR / f"{stem}_{time.strftime('%Y%m%d_%H%M%S')}.html"
         path.write_text(page.content(), encoding="utf-8")
+        try:
+            rows = rendered_controls_census(page)
+            census_path = path.with_suffix(".census.txt")
+            census_path.write_text(
+                "\n".join(
+                    [
+                        f"# census для {path.name}",
+                        "# rendered_controls_census: только отрисованные DOM-элементы;",
+                        "# вхождения строк в .html (JSON/i18n-бандлы) не являются полями.",
+                        census_table(rows),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            # Агент видит страницу ТОЛЬКО через текстовый вывод CLI (#1002):
+            # census видимых контролов печатается в лог сразу, чтобы никто
+            # не лез в дамп и не домысливал по JSON/i18n-литералам.
+            visible = [r for r in rows if r.get("visible")]
+            logger.warning(
+                "census для %s: видимых контролов %d из %d (полная таблица: %s)\n%s",
+                path.name,
+                len(visible),
+                len(rows),
+                census_path.name,
+                census_table(visible),
+            )
+        except Exception:  # noqa: BLE001 — компаньон не должен ломать сам дамп
+            pass
         return path
     except OSError:
         return None
