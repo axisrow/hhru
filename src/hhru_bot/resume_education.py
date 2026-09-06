@@ -118,6 +118,16 @@ _ADDITIONAL_LABELS = {
     "specialty": "Специализация",
     "year": "Год окончания",
 }
+# Человеческие подписи полей для сообщений об отказах: селектор в тексте
+# отказа — это адрес, а не семантика (#997-класс: агент не должен догадываться
+# о поле по имени data-qa).
+_EDUCATION_FIELD_LABELS = {
+    "institution": "Название учебного заведения",
+    "faculty": "Факультет",
+    "organization": "Проводившая организация",
+    "specialty": "Специализация",
+    "year": "Год окончания",
+}
 # #857 (live drill, 2026-08-30): the SAME semantic form opened through the
 # resume card's row trigger is a DIFFERENT shape -- its inputs carry data-qa
 # and their <label> elements bind with EMPTY text (dumped live on the trigger-
@@ -282,12 +292,18 @@ def _field_locator(page, name: str, *, additional: bool, trigger_shape: bool = F
             selector = _ADDITIONAL_TRIGGER_SHAPE_FIELDS[name]
             locator = page.locator(selector)
             if locator.count() != 1:
-                raise PageStateIndeterminate(f"поле {selector} не найдено однозначно")
+                raise PageStateIndeterminate(
+                    f"поле «{_EDUCATION_FIELD_LABELS[name]}» ({selector}) "
+                    "не найдено однозначно на форме доп. образования"
+                )
             return locator
         return labelled_field(page, _ADDITIONAL_LABELS[name])
     locator = page.locator(_PRIMARY_FIELDS[name])
     if locator.count() != 1:
-        raise PageStateIndeterminate(f"поле {_PRIMARY_FIELDS[name]} не найдено однозначно")
+        raise PageStateIndeterminate(
+            f"поле «{_EDUCATION_FIELD_LABELS[name]}» ({_PRIMARY_FIELDS[name]}) "
+            "не найдено однозначно на форме образования"
+        )
     return locator
 
 

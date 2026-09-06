@@ -35,7 +35,13 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from ..browser import PAGE_STATE, goto_hh, has_login_form
+from ..browser import (
+    PAGE_STATE,
+    census_table,
+    goto_hh,
+    has_login_form,
+    subtree_controls_census,
+)
 from ..config import is_resume_url_placeholder
 from ..exit_codes import CommandExitCode
 from ..history import CommandRunBusy, History
@@ -1133,9 +1139,16 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                 [[r.topic_id, r.chat_id, chat_url(r.chat_id)] for r in refs],
             )
         )
-        print("RAW HTML fragment (first card):")
+        print(
+            "Карточка отклика — census отрисованных контролов "
+            "(сырой HTML в stdout запрещён: скрытые узлы и литералы в "
+            "атрибутах выглядят как поля, #998):"
+        )
         if items.count():
-            print(items.first.evaluate("el => el.outerHTML")[:4000])
+            card_census = subtree_controls_census(items.first)
+            print(census_table(card_census["rows"]))
+            if card_census["truncated"]:
+                print("[WARN] census карточки обрезан по лимиту 120 строк")
 
         if args.topic:
             ref = next((r for r in refs if r.topic_id == str(args.topic)), None)
@@ -1166,8 +1179,14 @@ def run_negotiations(args: argparse.Namespace) -> bool:
                     ]
                 )
             print(_ascii_table(["message", "id", "author_marker", "text"], message_rows))
-            print("RAW HTML fragment (messages):")
+            print(
+                "Корень сообщений чата — census отрисованных контролов "
+                "(сырой HTML в stdout запрещён, #998):"
+            )
             message_roots = page.locator(negotiations.CHAT_MESSAGE_ROOT)
             if message_roots.count():
-                print(message_roots.first.evaluate("el => el.outerHTML")[:4000])
+                chat_census = subtree_controls_census(message_roots.first)
+                print(census_table(chat_census["rows"]))
+                if chat_census["truncated"]:
+                    print("[WARN] census корня сообщений обрезан по лимиту 120 строк")
     return False

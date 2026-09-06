@@ -29,7 +29,14 @@ def register(subparsers) -> None:
         action="append",
         help="Точное гражданство из live-каталога; можно повторять",
     )
-    parser.add_argument("--work-ticket", choices=("true", "false"), help="Трудовая книжка")
+    parser.add_argument(
+        "--work-ticket",
+        choices=("true", "false"),
+        help="«Наличие трудовой книжки» (true/false). Только в шейпе редактора "
+        "профиля: на common-визарде черновика поле не рендерится (честный "
+        "отказ), контрол work-ticket-selector визарда — это «Разрешение на "
+        "работу» (#997)",
+    )
     parser.add_argument(
         "--relocation", choices=("ready", "consider", "not_ready"), help="Готовность к переезду"
     )

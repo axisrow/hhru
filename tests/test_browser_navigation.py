@@ -690,7 +690,14 @@ def test_rendered_controls_census_returns_rows_from_page(monkeypatch):
 
     page = MagicMock()
     page.evaluate.return_value = [
-        {"qa": "resume-profile-common-name-input", "tag": "input", "role": "", "label": "", "text": "", "visible": True},
+        {
+            "qa": "resume-profile-common-name-input",
+            "tag": "input",
+            "role": "",
+            "label": "",
+            "text": "",
+            "visible": True,
+        },
         {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
     ]
     rows = rendered_controls_census(page)
@@ -703,12 +710,48 @@ def test_census_table_renders_visibility_column():
 
     table = census_table(
         [
-            {"qa": "x-input", "tag": "input", "role": "", "label": "", "text": "Тестов", "visible": True},
-            {"qa": "", "tag": "div", "role": "", "label": "Город", "text": "Город", "visible": False},
+            {
+                "qa": "x-input",
+                "tag": "input",
+                "role": "",
+                "label": "",
+                "text": "Тестов",
+                "visible": True,
+            },
+            {
+                "qa": "",
+                "tag": "div",
+                "role": "",
+                "label": "Город",
+                "text": "Город",
+                "visible": False,
+            },
         ]
     )
     assert "да" in table and "нет" in table
     assert "Городская" not in table  # литералы бандлов не попадают по построению
+
+
+def test_subtree_census_passthrough_and_root_inclusion():
+    """subtree_controls_census: возвращает {"rows", "truncated"} из evaluate
+    как есть; JS считает и сам корень, если он подходит под селектор
+    контролов, и честно флагует обрезку по лимиту 120."""
+    from hhru_bot.browser import _SUBTREE_CENSUS_JS, subtree_controls_census
+
+    rows = [{"qa": "card", "tag": "a", "role": "", "label": "", "text": "Отклик", "visible": True}]
+    captured = {}
+
+    class FakeLocator:
+        def evaluate(self, js):
+            captured["js"] = js
+            return {"rows": rows, "truncated": False}
+
+    result = subtree_controls_census(FakeLocator())
+    assert result == {"rows": rows, "truncated": False}
+    assert captured["js"] == _SUBTREE_CENSUS_JS
+    assert "root.matches" in _SUBTREE_CENSUS_JS
+    assert "querySelectorAll" in _SUBTREE_CENSUS_JS
+    assert "truncated" in _SUBTREE_CENSUS_JS
 
 
 def test_dump_page_html_writes_census_companion(monkeypatch, tmp_path):
@@ -719,7 +762,14 @@ def test_dump_page_html_writes_census_companion(monkeypatch, tmp_path):
     page = MagicMock()
     page.content.return_value = "<html><body>дамп</body></html>"
     page.evaluate.return_value = [
-        {"qa": "name-input", "tag": "input", "role": "", "label": "", "text": "Тест", "visible": True},
+        {
+            "qa": "name-input",
+            "tag": "input",
+            "role": "",
+            "label": "",
+            "text": "Тест",
+            "visible": True,
+        },
     ]
     monkeypatch.setattr(browser, "LOG_DIR", tmp_path) if hasattr(browser, "LOG_DIR") else None
     dump = browser.dump_page_html(page, "census_companion_check")

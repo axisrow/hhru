@@ -1349,13 +1349,21 @@ def apply_position(
         # from, so its bounding box is used to click through the label.
         currency_input = page.locator(CURRENCY[plan.currency])
         if currency_input.count() != 1:
-            raise RuntimeError(f"селектор валюты не подтверждён: {plan.currency}")
+            raise RuntimeError(
+                f"селектор валюты не подтверждён: {plan.currency} "
+                f"(«{CURRENCY_LABELS[plan.currency]}»)"
+            )
         currency_radio = page.get_by_role("radio", name=CURRENCY_LABELS[plan.currency], exact=True)
         if currency_radio.count() != 1:
-            raise RuntimeError(f"переключатель валюты не подтверждён: {plan.currency}")
+            raise RuntimeError(
+                f"переключатель валюты не подтверждён: {plan.currency} "
+                f"(«{CURRENCY_LABELS[plan.currency]}»)"
+            )
         currency_chip = currency_radio.locator("xpath=ancestor::label[1]")
         if currency_chip.count() != 1:
-            raise RuntimeError(f"чип валюты не подтверждён: {plan.currency}")
+            raise RuntimeError(
+                f"чип валюты не подтверждён: {plan.currency} («{CURRENCY_LABELS[plan.currency]}»)"
+            )
         currency_chip.click()
     current_employment = current.employment if current else None
     if plan.employment:
