@@ -166,12 +166,56 @@ def open_common_form(page: Page, resume: ResumeConfig):
     return _open_common_screen(page, resume.resume_id)
 
 
+def _dump_and_raise(page: Page, message: str, cause: BaseException | None = None):
+    """Дамп на отказе открытия common (#995): диагностика не должна
+    заменять исходную ошибку — упавший дамп не съедает отказ."""
+    try:
+        dump_page_html(page, "common_open_failure")
+    except Exception:  # noqa: BLE001 — см. докстринг
+        pass
+    raise RuntimeError(message) from cause
+
+
 def _open_common_screen(page: Page, resume_id: str):
     goto_hh(page, f"{HH_BASE_URL}{account_profile.RESUME_COMMON_PATH}?resume={resume_id}")
     require_authenticated_page(page)
+    # #995 (live 2026-09-06): редирект с /profile/resume?resume=… зависит от
+    # состояния резюме — у ЧЕРНОВИКА он ведёт на /profile/resume/common
+    # (визард), у ОПУБЛИКОВАННОГО — на /resume/{resume_id} (страница
+    # просмотра; визанда common у published не существует, а старый
+    # /applicant/resumes/edit/common отдаёт голый JSON). Дождаться
+    # разрешения редиректа, прежде чем судить о форме.
+    try:
+        page.wait_for_url(
+            lambda url: urlsplit(str(url)).path != account_profile.RESUME_COMMON_PATH,
+            wait_until="commit",
+            timeout=_COMMON_SCREEN_NAV_TIMEOUT_MS,
+        )
+    except PlaywrightError as exc:
+        _dump_and_raise(
+            page,
+            "форма common не открылась: редирект с /profile/resume не разрешился "
+            f"за {_COMMON_SCREEN_NAV_TIMEOUT_MS // 1000}с ({page.url})",
+            cause=exc,
+        )
+    if urlsplit(page.url).path == f"/resume/{resume_id}":
+        # Опубликованное резюме (#995): честная семантика вместо
+        # «форма common не открылась».
+        _dump_and_raise(
+            page,
+            "экран common визарда существует только у черновиков: резюме "
+            "опубликовано, hh.ru редиректит на страницу просмотра — правки "
+            "common через визард невозможны",
+        )
+    # Гонка «DCL ≠ отрисовано»: SPA-экран монтируется после domcontentloaded —
+    # ждать монтирование (attached), а не судить по мгновенному count() (#995).
     editor = page.locator(FORM)
+    try:
+        editor.first.wait_for(state="attached", timeout=_WAIT_MS)
+    except PlaywrightError as exc:
+        _dump_and_raise(page, "форма common не открылась: экран не смонтировался", cause=exc)
     if editor.count() != 1:
-        raise RuntimeError("форма common не открылась")
+        _dump_and_raise(page, "форма common не открылась: контейнер неоднозначен")
     route = urlsplit(page.url)
     if route.path != COMMON_SCREEN_PATH or parse_qs(route.query).get("resume") != [resume_id]:
         raise RuntimeError("форма common открыта не для запрошенного резюме")
