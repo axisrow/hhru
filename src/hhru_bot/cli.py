@@ -85,6 +85,7 @@ BROWSER_COMMANDS = frozenset(
         "search",
         "select-photo",
         "upload-photo",
+        "wizard-next",
     }
 )
 
@@ -126,6 +127,7 @@ WRITE_COMMANDS = frozenset(
         "report-vacancy",
         "select-photo",
         "upload-photo",
+        "wizard-next",
     }
 )
 

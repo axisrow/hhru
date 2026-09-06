@@ -169,6 +169,7 @@ def test_all_commands_registered():
         "select-photo",
         "upload-photo",
         "delete-photo",
+        "wizard-next",
     }
 
 
@@ -248,6 +249,7 @@ def test_register_commands_returns_names():
         "select_photo",
         "upload_photo",
         "delete_photo",
+        "wizard_next",
     }
 
 

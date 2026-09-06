@@ -113,6 +113,7 @@ def test_lock_covers_all_hhru_write_commands():
         "select-photo",
         "upload-photo",
         "delete-photo",
+        "wizard-next",
     }
 
 
