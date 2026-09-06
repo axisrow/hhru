@@ -1,17 +1,23 @@
-"""[NEXT]-советы для wizard-экранов educations/keyskills/experience (#1010).
+"""[NEXT]-советы для wizard-экранов (#1010).
 
-У этих экранов нет другого CLI-владельца: единственный путь —
-``hhru wizard-next``. Печатается ровно то, что выполнимо: флаг
-``--allow-auto-publish`` обязателен, потому что NEXT на последнем незакрытом
-экране hh.ru публикует резюме сам (#900, живой факт 2026-09-06).
+У экранов educations/keyskills/skill_levels/experience нет другого
+CLI-владельца: единственный путь — ``hhru wizard-next``. Печатается ровно то,
+что выполнимо: флаг ``--allow-auto-publish`` обязателен, потому что NEXT на
+последнем незакрытом экране hh.ru публикует резюме сам (#900, живой факт
+2026-09-06). Список экранов не дублируется литералом — источник один,
+``resume_wizard.SUPPORTED_SCREENS``.
 """
 
 from __future__ import annotations
 
 import shlex
 
-# Экраны, которыми владеет hhru wizard-next (resume_wizard.SUPPORTED_SCREENS).
-WIZARD_NEXT_SCREENS = ("educations", "keyskills", "experience")
+
+def is_wizard_next_screen(screen: str | None) -> bool:
+    """Владеет ли wizard-next этим экраном (ленивый импорт — CLI стартует без playwright)."""
+    from ..resume_wizard import SUPPORTED_SCREENS
+
+    return screen in SUPPORTED_SCREENS
 
 
 def print_wizard_next_guidance(resume, screen: str | None = None) -> None:

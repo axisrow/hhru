@@ -1,4 +1,4 @@
-"""CLI-владение wizard-экранами черновика: educations, keyskills, experience.
+"""CLI-владение wizard-экранами черновика: educations, keyskills, skill_levels, experience.
 
 Живой факт 2026-09-06 (#1010, прогон #865/#1009): флаг
 ``nextIncompleteScreenId`` двигается ТОЛЬКО сабмитом экранов визарда —
@@ -9,6 +9,17 @@
 «все экраны закрыты» и «опубликовано» у wizard-черновика нет. Поэтому каждый
 боевой клик этого модуля потенциально публикует резюме: командный слой
 требует явного --allow-auto-publish.
+
+Экран skill_levels — единственный, живущий на динамическом маршруте:
+прямой GET /profile/resume/skill_levels рендерит пустой shell без wizard-хрома
+(census 2026-09-07, оба регистра имени), а настоящий экран —
+/profile/resume/dynamic_screen?resume=<id>&screen_name=skill_levels с обычным
+NEXT-ом resume-profile-next-screen (живая съёмка #1016: и через редирект с
+базового /profile/resume?resume=<id>, и прямым GET). Редактор уровней
+/resume/edit/{id}/skillsLevels (#813) показывает те же радио, но его Save
+(#813-шаг edit-skills) уровни персистит, а wizard-флаг НЕ двигает — живой
+прогон PR #1015, поэтому он не сабмит. Гидрация NEXT на dynamic_screen длинная
+(~5-10с) — гейт #991 ниже держит 2x15с.
 
 Экраны common и professional_role здесь не сабмятся: у них собственные
 CLI-владельцы (``hhru common``, ``hhru resume-position``), и отказ называет
@@ -41,13 +52,18 @@ WIZARD_BASE_PATH = "/profile/resume"
 
 # Экраны, которые этот модуль умеет сабмитить. common/professional_role —
 # у своих владельцев; всё остальное — честный отказ без владельца.
-SUPPORTED_SCREENS = ("educations", "keyskills", "experience")
+# skill_levels встаёт между keyskills и experience ТОЛЬКО у черновиков
+# с навыками: прогоны #1012 «Повар» (без навыков) его не видели, живой
+# прогон 2026-09-07 «Сантехник» после edit-skills — получил. experience
+# остаётся последним, прогноз публикации #1012 не меняется.
+SUPPORTED_SCREENS = ("educations", "keyskills", "skill_levels", "experience")
 
 # #1012: hh.ru публикует черновик сам ровно на ПОСЛЕДНЕМ незакрытом экране
 # (#900). Подтверждено двумя независимыми прогонами: #1009 («Дворник-бригадир»)
 # и «Повар» 2026-09-06 — оба прошли educations/keyskills без публикации,
 # автопубликация случилась на experience. Порядок экранов стабилен:
-# common → educations → keyskills → experience. Если hh.ru добавит экран
+# common → educations → keyskills → (skill_levels — только у черновиков
+# с навыками, живой факт 2026-09-07) → experience. Если hh.ru добавит экран
 # после experience, прогноз сломается в безопасную сторону: readback
 # wizard-next печатает автопубликацию фактом, а флаг просто не понадобился.
 PUBLISHABLE_SCREENS = (SUPPORTED_SCREENS[-1],)
@@ -79,6 +95,44 @@ class WizardAdvanceResult:
 
 def screen_path(screen: str) -> str:
     return f"{WIZARD_BASE_PATH}/{screen}"
+
+
+_SKILL_LEVELS_SCREEN = "skill_levels"
+# #1016 (живая съёмка 2026-09-07): настоящий wizard-экран skill_levels живёт
+# на динамическом маршруте — имя экрана передаётся query-параметром
+# screen_name, путь у всех dynamic-экранов один. Прямой
+# /profile/resume/skill_levels — пустой shell (#1014).
+_DYNAMIC_SCREEN_PATH = "/profile/resume/dynamic_screen"
+
+
+def _screen_url(screen: str, resume_id: str) -> str:
+    """URL открытия экрана: обычный wizard-маршрут или dynamic_screen."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return (
+            f"{HH_BASE_URL}{_DYNAMIC_SCREEN_PATH}"
+            f"?resume={resume_id}&screen_name={screen}"
+        )
+    return f"{HH_BASE_URL}{screen_path(screen)}?resume={resume_id}"
+
+
+def _screen_route_path(screen: str) -> str:
+    """Path-маршрут экрана — предикат ухода с экрана в wait_for_url."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return _DYNAMIC_SCREEN_PATH
+    return screen_path(screen)
+
+
+def _screen_location_ok(screen: str, resume_id: str, route) -> bool:
+    """Identity-проверка открытого маршрута (#999). У dynamic-экранов имя
+    живёт в query (screen_name), у остальных — в самом пути; resume_id
+    везде в query."""
+    if screen == _SKILL_LEVELS_SCREEN:
+        return (
+            route.path == _DYNAMIC_SCREEN_PATH
+            and parse_qs(route.query).get("screen_name") == [screen]
+            and parse_qs(route.query).get("resume") == [resume_id]
+        )
+    return route.path == screen_path(screen) and parse_qs(route.query).get("resume") == [resume_id]
 
 
 def read_resume_state(page: Page, resume_id: str) -> ResumeState:
@@ -127,10 +181,10 @@ def resolve_target_screen(state: ResumeState, requested: str | None) -> str:
 
 def _open_screen(page: Page, resume_id: str, target: str) -> None:
     """Открыть identity-bound экран; ушедший редирект — честный отказ (#999)."""
-    goto_hh(page, f"{HH_BASE_URL}{screen_path(target)}?resume={resume_id}")
+    goto_hh(page, _screen_url(target, resume_id))
     require_authenticated_page(page)
     route = urlsplit(page.url)
-    if route.path != screen_path(target) or parse_qs(route.query).get("resume") != [resume_id]:
+    if not _screen_location_ok(target, resume_id, route):
         suffix = route.path.rstrip("/").rsplit("/", 1)[-1]
         raise WizardScreenRefused(
             f"экран «{target}» не открыт: визард стоит на «{suffix}» — hh.ru мог "
@@ -140,7 +194,7 @@ def _open_screen(page: Page, resume_id: str, target: str) -> None:
 
 
 def inspect_wizard_screen(page: Page, resume_id: str, target: str) -> str:
-    """Read-only сверка экрана для --dry-run: identity + ровно одна NEXT."""
+    """Read-only сверка экрана для --dry-run: identity + ровно один NEXT."""
     _open_screen(page, resume_id, target)
     button = page.locator(RESUME_CREATION_NEXT)
     count = button.count()
@@ -164,7 +218,11 @@ def submit_wizard_screen(
     (#858), клик теряется молча, и это честный failed («клик не отправлялся»),
     а не uncertain. Исход самого клика решает ``wait_for_url`` (уход с пути
     экрана): падение click() при состоявшемся переходе — не ошибка (#913),
-    а непереход в пределах бюджета — uncertain (#176).
+    а непереход в пределах бюджета — uncertain (#176). Для skill_levels
+    переход — необходимое, но не достаточное условие: успех дополнительно
+    доказывается identity-bound readback'ом флага (#1016: Save редактора
+    /resume/edit/{id}/skillsLevels флаг не двигает — сабмитом считается
+    только NEXT на dynamic_screen).
     """
     _open_screen(page, resume.resume_id, target)
     button = page.locator(RESUME_CREATION_NEXT)
@@ -200,7 +258,7 @@ def submit_wizard_screen(
         click_error = str(exc)
     try:
         page.wait_for_url(
-            lambda url: urlsplit(str(url)).path != screen_path(target),
+            lambda url: urlsplit(str(url)).path != _screen_route_path(target),
             wait_until="commit",
             timeout=_SCREEN_NAV_TIMEOUT_MS,
         )
@@ -217,4 +275,19 @@ def submit_wizard_screen(
         if click_error is not None:
             reason += f"; ошибка клика: {click_error[:300]}"
         return WizardAdvanceResult(target, False, reason, acted=True, uncertain=True)
+    if target == _SKILL_LEVELS_SCREEN:
+        # v2 (#1016): успех этого экрана доказывается identity-bound
+        # readback'ом флага, а не только фактом перехода. На dynamic_screen
+        # NEXT двигает флаг как на обычных экранах (редактор #813 — не сабмит,
+        # живой прогон PR #1015); если флаг вдруг остался — это честный
+        # failed с известным исходом, повтор того же клика бессмыслен.
+        after_state = read_resume_state(page, resume.resume_id)
+        if after_state.next_incomplete_screen_id == _SKILL_LEVELS_SCREEN:
+            return WizardAdvanceResult(
+                target,
+                False,
+                "переход с dynamic_screen подтверждён, но «skill_levels» не закрыт: "
+                "nextIncompleteScreenId не двигается — сабмит не принят hh.ru (#1016)",
+                acted=True,
+            )
     return WizardAdvanceResult(target, True, f"экран «{target}» подтверждён", acted=True)

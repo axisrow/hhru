@@ -120,7 +120,27 @@ def test_intermediate_screen_passes_without_auto_publish_flag(env, capsys, tmp_p
     печатается."""
     assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=False)) is False
     out = capsys.readouterr().out
-    assert "Публикации не будет: после «educations» остались экраны: keyskills, experience" in out
+    assert (
+        "Публикации не будет: после «educations» остались экраны: "
+        "keyskills, skill_levels, experience" in out
+    )
+    assert env.submit_calls == 1
+
+
+def test_skill_levels_is_intermediate_screen(env, capsys, tmp_path):
+    """skill_levels (редактор уровней #813) — промежуточный экран: без
+    --allow-auto-publish, прогноз «после него остался experience»."""
+    env.state_queue = [
+        ResumeState(status="not_finished", next_incomplete_screen_id="skill_levels"),
+        ResumeState(status="not_finished", next_incomplete_screen_id="experience"),
+    ]
+    env.result = WizardAdvanceResult(
+        "skill_levels", True, "экран «skill_levels» подтверждён", acted=True
+    )
+    assert cmd.run(_args(tmp_path, force=True, allow_auto_publish=False)) is False
+    out = capsys.readouterr().out
+    assert "Публикации не будет: после «skill_levels» остались экраны: experience" in out
+    assert "Экран «skill_levels» подтверждён" in out
     assert env.submit_calls == 1
 
 

@@ -16,7 +16,7 @@ import sys
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "wizard-next",
-        help="Сабмитить текущий экран визарда черновика (educations/keyskills/experience)",
+        help="Сабмитить экран визарда черновика (educations/keyskills/skill_levels/experience)",
         description=(
             "Кликает «Сохранить и продолжить» на незавершённом экране визарда "
             "черновика. WRITE-hh-ru: боевой режим требует --force; "
@@ -31,7 +31,7 @@ def register(subparsers) -> None:
     )
     p.add_argument(
         "--screen",
-        choices=("educations", "keyskills", "experience"),
+        choices=("educations", "keyskills", "skill_levels", "experience"),
         default=None,
         help="Явный экран; по умолчанию — текущий nextIncompleteScreenId",
     )
