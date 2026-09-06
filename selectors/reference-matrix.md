@@ -22,7 +22,7 @@
 | account_profile.RESUME_CONTACT_EMAIL | `[data-qa='resume-contact-email-value']` | — | — | — | live_dom |
 | account_profile.RESUME_CONTACT_PHONE | `[data-qa='resume-contact-phone-value-preferred']` | — | — | — | live_dom |
 | account_profile.RESUME_LIST_PROFILE_NAME | `[data-qa='profile-activator-fullname']` | — | — | — | live_dom |
-| account_profile.WORK_TICKET_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | documented_live |
+| account_profile.WORK_PERMIT_WIZARD | `[data-qa='resume-profile-common-work-ticket-selector']` | — | — | — | documented_live |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.0.1 | `[data-qa='captcha']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.1.1 | `[data-qa='account-captcha-input']` | — | — | — | safety_guard |
 | apply.antibot.ANTIBOT_MARKER_SELECTORS.2.1 | `[data-qa='account-captcha-picture']` | — | — | — | safety_guard |

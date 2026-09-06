@@ -87,6 +87,9 @@ def _print_current(current) -> None:
         ("phone", "Телефон"),
         ("area", "Город"),
         ("citizenship", "Гражданство"),
+        # #997: контрол work-ticket-selector на визарде — «Разрешение на
+        # работу» (display-only, записи нет); путать с трудовой книжкой нельзя.
+        ("work_permit", "Разрешение на работу"),
         ("work_ticket", "Трудовая книжка"),
         ("relocation", "Готовность к переезду"),
         ("schedule", "График работы"),

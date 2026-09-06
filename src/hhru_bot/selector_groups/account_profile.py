@@ -36,16 +36,14 @@ RESUME_COMMON_PHONE = _selector("account_profile.RESUME_COMMON_PHONE")
 RESUME_COMMON_NEXT = _selector("account_profile.RESUME_COMMON_NEXT")
 RESUME_COMMON_PREV = _selector("account_profile.RESUME_COMMON_PREV")
 
-# #993 (live 2026-09-05, draft-wizard common screen /profile/resume/common,
-# черновик с пустыми полями): «Наличие трудовой книжки» на визарде существует,
-# но БЕЗ <label> — это magritte-select, чей контейнер несёт data-qa
-# resume-profile-common-work-ticket-selector (гидратирован; активатор несёт
-# [data-qa='magritte-select-activator']; точное размещение относительно
-# контейнера дампом не зафиксировано — common.py ищет каскадом). Открытие —
-# role='option' × N, как у прочих magritte-селектов; get_by_label по
-# «Наличие трудовой книжки» находит 0 label (боевой отказ #993). Прочие
-# условия работы и город на этом экране НЕ рендерятся вовсе.
-WORK_TICKET_WIZARD = _selector("account_profile.WORK_TICKET_WIZARD")
+# #997 (live скриншот common_screen_996.png + дамп 2026-09-06): контрол
+# resume-profile-common-work-ticket-selector на wizard-shape — это
+# «РАЗРЕШЕНИЕ НА РАБОТУ» (magritte-select со страной, значение — страна, например «Россия»),
+# а НЕ «Наличие трудовой книжки»: писать в него «Да/Нет» запрещено.
+# Читается display-only как CommonValues.work_permit. Прочие условия работы
+# (переезд/график/занятость/формат/командировки) и город на этом экране
+# НЕ рендерятся вовсе (#993/#998-перепроверка).
+WORK_PERMIT_WIZARD = _selector("account_profile.WORK_PERMIT_WIZARD")
 ACCOUNT_PROFILE_READY = _selector("account_profile.ACCOUNT_PROFILE_READY")
 
 # Account-level fields from the authenticated live DOM observed on 2026-08-18.
