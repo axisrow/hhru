@@ -461,6 +461,50 @@ def test_open_filters_proceeds_after_hydration(monkeypatch):
     page.get_by_role.assert_not_called()  # клик по тогглу не понадобился
 
 
+def test_open_filters_waits_for_late_toggle_mount(monkeypatch):
+    """Свежий аккаунт 2026-09-07: кнопка «Фильтры» монтируется ПОЗЖЕ контейнера,
+    и мгновенное решение «0 контролов» — ложный отказ. Тоггл, появившийся в
+    окне бюджета, кликается."""
+    calls = {"n": 0}
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+
+    def fake_wait(ms):
+        calls["n"] += 1
+        if calls["n"] >= 3:  # на 3-м опросе кнопка смонтировалась
+            trigger.count.return_value = 1
+            trigger.is_visible.return_value = True
+
+    page = MagicMock()
+    page.locator.return_value = trigger
+    page.wait_for_timeout.side_effect = fake_wait
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_named_control_hydration",
+        lambda *_a, **_k: True,
+    )
+    professional_roles_module._open_filters_if_needed(page)
+    assert calls["n"] == 3
+
+
+def test_open_filters_fails_closed_when_toggle_never_mounts(monkeypatch):
+    """Тоггл не появился за бюджет — честный отказ, не «0 контролов»."""
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    toggle.count.return_value = 0
+    page = MagicMock()
+    page.locator.return_value = trigger
+    page.get_by_role.return_value = toggle
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_named_control_hydration",
+        lambda *_a, **_k: True,
+    )
+    with pytest.raises(RuntimeError, match="не появился за бюджет"):
+        professional_roles_module._open_filters_if_needed(page)
+
+
 class _GhostChevron(_Chevron):
     """Клин виртуализатора: aria щёлкает, строки не размонтируются."""
 

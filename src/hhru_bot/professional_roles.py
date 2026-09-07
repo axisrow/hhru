@@ -52,6 +52,13 @@ _COLLAPSE_ATTEMPTS = 3
 _WEDGE_GRACE_STEPS = 20  # 20 × _COLLAPSE_POLL_MS = 2 c
 # #858/#1004: окно гидрации тоггла «Фильтры» (SSR-кнопка видима до React).
 _FILTERS_HYDRATION_TIMEOUT_MS = 15_000
+# Гидрация контейнера «Фильтры» НЕ доказывает монтаж самой кнопки: на свежем
+# аккаунте кнопка появляется позже контейнера, и мгновенное решение «0
+# контролов» — ложный отказ (маркетинг-аккаунт 2026-09-07). Бюджет ожидания
+# монтанта тоггла/триггера до первого решения, тем же паттерном
+# «commit/гидрация не значит отрисовано».
+_FILTERS_MOUNT_POLL_MS = 250
+_FILTERS_MOUNT_ATTEMPTS = 20  # 20 × 250 мс = 5 c
 
 CACHE_SCHEMA_VERSION = 1
 CACHE_SOURCE = SEARCH_URL
@@ -404,16 +411,27 @@ def _open_filters_if_needed(page: Page) -> None:
     # Desktop cycles through collapsed -> quick filters -> full filters; the
     # compact in-app layout opens the full panel in one click.
     for _ in range(2):
-        if trigger.count() == 1 and trigger.is_visible():
-            return
-        toggles = (
-            page.get_by_role("button", name="Фильтры", exact=True),
-            page.get_by_role("checkbox", name="Фильтры", exact=True),
-        )
-        visible = [toggle for toggle in toggles if toggle.count() == 1 and toggle.is_visible()]
-        if len(visible) != 1:
-            raise RuntimeError(f"контрол read-only фильтров неоднозначен: {len(visible)}")
-        visible[0].click()
+        toggle = None
+        for _attempt in range(_FILTERS_MOUNT_ATTEMPTS):
+            if trigger.count() == 1 and trigger.is_visible():
+                return
+            toggles = (
+                page.get_by_role("button", name="Фильтры", exact=True),
+                page.get_by_role("checkbox", name="Фильтры", exact=True),
+            )
+            visible = [t for t in toggles if t.count() == 1 and t.is_visible()]
+            if len(visible) > 1:
+                raise RuntimeError(f"контрол read-only фильтров неоднозначен: {len(visible)}")
+            if len(visible) == 1:
+                toggle = visible[0]
+                break
+            page.wait_for_timeout(_FILTERS_MOUNT_POLL_MS)
+        if toggle is None:
+            raise RuntimeError(
+                "тоггл «Фильтры» не появился за бюджет "
+                f"{_FILTERS_MOUNT_ATTEMPTS * _FILTERS_MOUNT_POLL_MS} мс после гидрации"
+            )
+        toggle.click()
         page.wait_for_timeout(250)
 
 
