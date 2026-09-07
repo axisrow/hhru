@@ -50,7 +50,7 @@ VALUES: dict[str, str] = {
     "competitor_resume.PAGINATION_PAGE": "[data-qa*='pager-page'], [data-qa*='pagination-page']",
     "competitor_resume.SEARCH_AREA_AND_RELOCATION": "[data-qa='resume-serp_resume-item-area-and-relocation-content']",
     "competitor_resume.SEARCH_CARD": "[data-qa='resume-serp__resume']",
-    "competitor_resume.SEARCH_EMPTY": "[data-qa='resume-search-empty'], [data-qa='bloko-header-2']",
+    "competitor_resume.SEARCH_EMPTY": "[data-qa='empty-search-block']",
     "competitor_resume.SEARCH_RESULT_TITLE_LINK": "[data-qa='serp-item__title']",
     "create_resume.TREE_ITEM_TEXT": "[data-qa*='tree-selector-item-text-']",
     "negotiations.CHAT_AUTHOR_HINT": "[data-qa*='author'], [class*='author'], [aria-label], [title]",

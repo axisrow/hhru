@@ -320,11 +320,17 @@ def parse_search_page(
     try:
         links.first.wait_for(state="attached", timeout=RENDER_TIMEOUT_MS)
     except PlaywrightError:
-        # Applicant search currently has no stable empty data-qa across layouts.
-        # Accept an explicit zero-result phrase only; every other blank page is unknown.
-        main_text = page.locator("main").inner_text().casefold()
-        if "резюме не найден" in main_text or "ничего не найден" in main_text:
-            return []
+        # Пустая выдача подтверждается ТОЛЬКО локатором empty-state (#1006,
+        # live 2026-09-07: h2 «Ничего не нашлось» внутри
+        # [data-qa='empty-search-block']). Прежняя подстрочная проверка
+        # («резюме не найден» / «ничего не найден») живую формулировку не
+        # ловила вовсе; любая подстрока в <main> ещё и совпадала бы с чужими
+        # блоками. Всё остальное — неизвестное состояние.
+        try:
+            if page.locator(sel.SEARCH_EMPTY).count() > 0:
+                return []
+        except PlaywrightError:
+            pass
         raise CompetitorSearchIndeterminate(
             "карточки резюме или подтверждённый empty-state не появились"
         ) from None
