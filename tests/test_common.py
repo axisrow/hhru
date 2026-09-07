@@ -140,6 +140,22 @@ def test_apply_birthday_rejects_garbage_before_clicks(bad):
     assert loc.first.click.call_count == 0
 
 
+@pytest.mark.parametrize("bad_year", ["10.06.1899", "10.06.2013"])
+def test_apply_birthday_rejects_year_out_of_catalog_range_before_any_input(bad_year):
+    """Год вне каталога комбобокса (1900..2012) — отказ ДО fill дня: отказ
+    полностью безмутирующий, экран не тронут вовсе."""
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    page.locator.side_effect = lambda selector: loc
+
+    with pytest.raises(RuntimeError, match="год рождения вне"):
+        common._apply_birthday(page, bad_year)
+
+    assert loc.first.fill.call_count == 0
+    assert loc.first.click.call_count == 0
+
+
 def test_apply_phone_falls_back_to_sequential_typing(monkeypatch):
     """Маска сбросила fill -> посимвольный набор; если и он не принялся — отказ."""
     monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)

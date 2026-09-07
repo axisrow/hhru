@@ -198,6 +198,12 @@ def run(args: argparse.Namespace) -> None:
         has_login_form,
         launch_context,
     )
+
+    # Осознанный private-кросс-импорт: предикат принадлежит common.py (его
+    # write-гейтам), здесь — тот же детектор, чтобы не плодить второй.
+    # Прецедент в кодовой базе: commands/probe.py импортирует
+    # _build_letter_provider из ._common. Если таких импортов станет больше —
+    # вынести в маленький публичный хелпер.
     from ..common import _on_wizard_common
     from ..copy_resume import ResumeListIndeterminate, list_resume_cards, list_wizard_drafts
 

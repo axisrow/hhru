@@ -100,7 +100,11 @@ BIRTHDAY_MONTH = "[data-qa='resume-profile-common-birthday-month-selector']"
 BIRTHDAY_YEAR = "[data-qa='resume-profile-common-birthday-year-input']"
 CITIZENSHIP_SELECTOR = "[data-qa='resume-profile-common-citizenship-selector']"
 # Тексты-плейсхолдеры magritte-select-activator'ов, которые НЕ являются
-# выбранным значением (живой экран common визарда, 2026-09-08).
+# выбранным значением (живой экран common визарда, 2026-09-08). Хрупко к
+# смене локали/формулировок hh.ru: новая формулировка молча вернёт баг
+# «плейсхолдер читается как значение» (симптом: merge_prefilled скалит
+# заполнение, валидация hh.ru отвергает пустую дату при «заполненном»
+# --show) — при таком поведении проверять этот набор первым.
 _SELECT_PLACEHOLDER_TEXTS = {"Месяц", "Год"}
 
 
@@ -555,26 +559,49 @@ def _select_magritte_option(
     option.first.click()
 
 
-def _apply_birthday(page: Page, value: str) -> None:
-    """Заполнить ДР: день в input, месяц/год — magritte-комбобоксы.
+# Диапазон годов каталога ДР-комбобокса (живой DOM 2026-09-08:
+# magritte-select-option-{1900..2012}); проверяется ДО любого ввода.
+_BIRTHDAY_YEAR_MIN = 1900
+_BIRTHDAY_YEAR_MAX = 2012
+
+
+def _parse_birthday(value: str) -> tuple[str, int | None, str | None]:
+    """Распарсить и провалидировать ВЕСЬ ``--birthday`` до любого ввода.
 
     Формат ``DD.MM.YYYY`` (полный) или ``DD`` (только день — legacy-вызов без
-    month/year; экран сам держит месяц/год предзаполненными). Валидация до
-    первого клика: мусорная дата не должна открывать комбобоксы.
+    month/year; экран сам держит месяц/год предзаполненными). Отказ здесь
+    полностью безмутирующий: ни fill, ни клик по activator'у ещё не сделаны.
     """
     parts = [part.strip() for part in value.split(".")]
     day = parts[0]
     if not day.isdigit():
         raise RuntimeError(f"день рождения не число: {value!r} (формат DD.MM.YYYY)")
-    _hydrated_strict(page, BIRTHDAY, "birthday-day").fill(day)
     if len(parts) == 1:
-        return
+        return day, None, None
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
         raise RuntimeError(f"дата рождения не DD.MM.YYYY: {value!r}")
     month = int(parts[1])
     year = parts[2]
     if not 1 <= month <= 12:
         raise RuntimeError(f"месяц рождения вне 1..12: {value!r}")
+    if not _BIRTHDAY_YEAR_MIN <= int(year) <= _BIRTHDAY_YEAR_MAX:
+        raise RuntimeError(
+            f"год рождения вне {_BIRTHDAY_YEAR_MIN}..{_BIRTHDAY_YEAR_MAX} "
+            f"(диапазон комбобокса hh.ru): {value!r}"
+        )
+    return day, month, year
+
+
+def _apply_birthday(page: Page, value: str) -> None:
+    """Заполнить ДР: день в input, месяц/год — magritte-комбобоксы.
+
+    Вся строка валидируется ``_parse_birthday`` до первого ввода — мусорная
+    дата не мутирует экран вовсе (ни fill дня, ни открытие комбобоксов).
+    """
+    day, month, year = _parse_birthday(value)
+    _hydrated_strict(page, BIRTHDAY, "birthday-day").fill(day)
+    if month is None:
+        return
     _select_magritte_option(
         page, BIRTHDAY_MONTH, f"magritte-select-option-{month:02d}", "birthday-month"
     )
