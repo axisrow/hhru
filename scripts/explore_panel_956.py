@@ -4,8 +4,8 @@ in the DOM. No save is pressed; the form is left via Cancel."""
 
 from playwright.sync_api import sync_playwright
 
-STATE = "/Users/axisrow/Projects/hhru/data/storage_state/hh_session.json"
-RESUME = "4c263117ff110c845a0039ed1f525447414c53"
+STATE = "data/storage_state/hh_session.json"
+RESUME = "0000111122223333444455556666777788889999"
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)

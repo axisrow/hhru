@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 from hhru_bot.browser import goto_hh, require_authenticated_page
 from hhru_bot.config import load_config_or_exit
 
-CONFIG_PATH = "/Users/axisrow/Projects/hhru/data/config.yaml"
+CONFIG_PATH = ROOT / "data" / "config.yaml"
 TARGET_SLUG = "marketing"
 
 
@@ -81,7 +81,9 @@ def main() -> int:
                 for i in range(min(loc.count(), 5)):
                     try:
                         inp = loc.nth(i)
-                        print(f"  [{i}] visible={inp.is_visible()} value={inp.input_value()!r} placeholder={inp.get_attribute('placeholder')!r} name={inp.get_attribute('name')!r}")
+                        print(
+                            f"  [{i}] visible={inp.is_visible()} value={inp.input_value()!r} placeholder={inp.get_attribute('placeholder')!r} name={inp.get_attribute('name')!r}"
+                        )
                     except Exception as exc:
                         print(f"  [{i}] error: {exc}")
 
@@ -108,13 +110,15 @@ def main() -> int:
         for i in range(min(checkboxes.count(), 15)):
             cb = checkboxes.nth(i)
             try:
-                label = cb.evaluate('el => el.closest("label")?.innerText || el.getAttribute("aria-label") || ""')
+                label = cb.evaluate(
+                    'el => el.closest("label")?.innerText || el.getAttribute("aria-label") || ""'
+                )
                 print(f"  cb[{i}] checked={cb.is_checked()} label={label!r}")
             except Exception as exc:
                 print(f"  cb[{i}] error: {exc}")
 
         # Check if target resume is mentioned
-        for keyword in (resume.resume_id, "marketing", "Ведущий performance-маркетолог"):
+        for keyword in (resume.resume_id, "marketing", "маркетолог"):
             loc = page.locator(f':has-text("{keyword}")')
             if loc.count() > 0:
                 print(f"\nkeyword '{keyword}' count: {loc.count()}")
@@ -126,7 +130,9 @@ def main() -> int:
                         pass
 
         # Try to find and click cancel
-        cancel = page.locator('[data-qa="profile-layout-cancel-button"], button:has-text("Отмена"), button:has-text("Назад")')
+        cancel = page.locator(
+            '[data-qa="profile-layout-cancel-button"], button:has-text("Отмена"), button:has-text("Назад")'
+        )
         if cancel.count() > 0:
             print(f"\ncancel button found, clicking...")
             cancel.first.click()

@@ -4,8 +4,8 @@ read back what the DOM actually holds. No save is pressed."""
 
 from playwright.sync_api import sync_playwright
 
-STATE = "/Users/axisrow/Projects/hhru/data/storage_state/hh_session.json"
-RESUME = "4c263117ff110c845a0039ed1f525447414c53"
+STATE = "data/storage_state/hh_session.json"
+RESUME = "0000111122223333444455556666777788889999"
 COMPANY = "[data-qa*='resume-profile-experience-specific-company-input']"
 POSITION = "[data-qa*='resume-profile-experience-specific-position-input']"
 
@@ -28,9 +28,24 @@ with sync_playwright() as p:
         for label in ("С полями сразу",):
             pass
         page.wait_for_timeout(300)
-        print("t=0.3s company=", repr(comp.first.input_value()), "position=", repr(pos.first.input_value()))
+        print(
+            "t=0.3s company=",
+            repr(comp.first.input_value()),
+            "position=",
+            repr(pos.first.input_value()),
+        )
         page.wait_for_timeout(2000)
-        print("t=2.3s company=", repr(comp.first.input_value()), "position=", repr(pos.first.input_value()))
+        print(
+            "t=2.3s company=",
+            repr(comp.first.input_value()),
+            "position=",
+            repr(pos.first.input_value()),
+        )
         page.wait_for_timeout(5000)
-        print("t=7.3s company=", repr(comp.first.input_value()), "position=", repr(pos.first.input_value()))
+        print(
+            "t=7.3s company=",
+            repr(comp.first.input_value()),
+            "position=",
+            repr(pos.first.input_value()),
+        )
     browser.close()

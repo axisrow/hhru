@@ -42,13 +42,17 @@ def main() -> None:
                     ok = True
                     break
                 box = chevron.bounding_box()
-                hit = page.evaluate(
-                    """([x, y]) => {
+                hit = (
+                    page.evaluate(
+                        """([x, y]) => {
                         const t = document.elementFromPoint(x, y);
                         return t ? {tag: t.tagName, qa: (t.getAttribute('data-qa')||'').slice(0,60)} : null;
                     }""",
-                    [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
-                ) if box else None
+                        [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
+                    )
+                    if box
+                    else None
+                )
                 chevron.click()
                 for _ in range(30):
                     if leaves.count() == 0:

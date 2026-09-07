@@ -61,7 +61,9 @@ with launch_context(config.storage_state_file, headless=True) as context:
           if (c) c.scrollIntoView({block: "center"});
         }"""
     )
-    print("гидратация:", wait_react_props(page, "input[data-qa='resume-photo-proxy-gallery-input']"))
+    print(
+        "гидратация:", wait_react_props(page, "input[data-qa='resume-photo-proxy-gallery-input']")
+    )
     page.wait_for_timeout(1000)
 
     page.locator("[data-qa='resume-avatar-edit-button']").first.click()

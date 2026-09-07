@@ -60,6 +60,9 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
+# Архивные разведочные one-off скрипты (см. PR #1019): не сопровождаемый код,
+# длинные inline-JS строки для page.evaluate, импорты после sys.path-настройки.
+"scripts/explore_*" = ["E501", "E402", "B007", "F541", "I001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

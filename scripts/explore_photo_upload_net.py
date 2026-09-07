@@ -115,15 +115,21 @@ with launch_context(config.storage_state_file, headless=True) as context:
     if chooser is not None:
         chooser.set_files(PHOTO)
         time.sleep(5)
-        print(f"  после chooser: img={page.locator(RESUME_AVATAR_IMAGE).count()}, "
-              f"события={page.evaluate('() => window.__photoEvents')}")
+        print(
+            f"  после chooser: img={page.locator(RESUME_AVATAR_IMAGE).count()}, "
+            f"события={page.evaluate('() => window.__photoEvents')}"
+        )
     print(f"  новые сетевые: {observed[-10:]}")
     time.sleep(5)
     img_after = page.locator(RESUME_AVATAR_IMAGE).count()
     print(f"img финально: {img_after}")
-    print("файлы в инпуте:", page.evaluate(
-        "() => { const i = document.querySelector(\"input[data-qa='resume-photo-proxy-gallery-input']\");"
-        " return i && i.files ? i.files.length : 'gone'; }"))
+    print(
+        "файлы в инпуте:",
+        page.evaluate(
+            "() => { const i = document.querySelector(\"input[data-qa='resume-photo-proxy-gallery-input']\");"
+            " return i && i.files ? i.files.length : 'gone'; }"
+        ),
+    )
 
     html = page.content()
     out = LOG_DIR / f"photo_explore_net_{time.strftime('%Y%m%d_%H%M%S')}.html"

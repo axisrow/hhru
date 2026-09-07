@@ -4,22 +4,26 @@ each stage."""
 
 from playwright.sync_api import sync_playwright
 
-STATE = "/Users/axisrow/Projects/hhru/data/storage_state/hh_session.json"
-RESUME = "4c263117ff110c845a0039ed1f525447414c53"
+STATE = "data/storage_state/hh_session.json"
+RESUME = "0000111122223333444455556666777788889999"
 COMPANY = "[data-qa*='resume-profile-experience-specific-company-input']"
 POSITION = "[data-qa*='resume-profile-experience-specific-position-input']"
+
 
 def state(page, tag):
     comp = page.locator(COMPANY)
     pos = page.locator(POSITION)
     year = page.locator("[data-qa='resume-profile-experience-specific-year-input']")
     months = page.locator("[data-qa='magritte-select-activator']")
-    desc = page.locator("[data-qa*='resume-profile-experience-specific-description-input'], textarea")
+    desc = page.locator(
+        "[data-qa*='resume-profile-experience-specific-description-input'], textarea"
+    )
     print(
         f"[{tag}] company={comp.first.input_value()!r} position={pos.first.input_value()!r} "
         f"year={year.first.input_value() if year.count() else 'N/A'!r} "
         f"months={months.count()} desc={desc.count()}"
     )
+
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)

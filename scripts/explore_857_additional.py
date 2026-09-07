@@ -2,7 +2,7 @@
 
 from playwright.sync_api import sync_playwright
 
-RESUME_URL = "https://hh.ru/resume/c5434470ff1107824d0039ed1f465465324869"
+RESUME_URL = "https://hh.ru/resume/0000111122223333444455556666777788889999"
 STATE = "data/accounts/default/storage_state/hh_session.json"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 
@@ -25,7 +25,12 @@ with sync_playwright() as p:
         print(f"{m}: count={page.locator(attr).count()}")
         for i in range(min(page.locator(attr).count(), 3)):
             el = page.locator(attr).nth(i)
-            print("   visible:", el.is_visible(), "| text:", el.inner_text()[:120].replace("\n", " | "))
+            print(
+                "   visible:",
+                el.is_visible(),
+                "| text:",
+                el.inner_text()[:120].replace("\n", " | "),
+            )
     # any data-qa containing ducation or dditional
     qa = page.eval_on_selector_all(
         "[data-qa]",

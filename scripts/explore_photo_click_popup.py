@@ -32,9 +32,23 @@ class _R:
 
 resume = _R()
 
-MARKERS = ["modal-overlay", "role=dialog", "drop-base", "popup", "upload",
-           "crop", "gallery-input", "fileinput", "FileInput", "Portfolio",
-           "portfolio", "Загрузит", "загрузит", "Выберит", "выберит"]
+MARKERS = [
+    "modal-overlay",
+    "role=dialog",
+    "drop-base",
+    "popup",
+    "upload",
+    "crop",
+    "gallery-input",
+    "fileinput",
+    "FileInput",
+    "Portfolio",
+    "portfolio",
+    "Загрузит",
+    "загрузит",
+    "Выберит",
+    "выберит",
+]
 
 
 def scan(page, label):
@@ -64,9 +78,11 @@ with launch_context(config.storage_state_file, headless=True) as context:
     time.sleep(3)
     after_avatar = scan(page, "после клика avatar")
 
-    diff_keys = {k for k in set(after_btn) | set(after_avatar) if
-                 after_btn.get(k, 0) != before.get(k, 0)
-                 or after_avatar.get(k, 0) != before.get(k, 0)}
+    diff_keys = {
+        k
+        for k in set(after_btn) | set(after_avatar)
+        if after_btn.get(k, 0) != before.get(k, 0) or after_avatar.get(k, 0) != before.get(k, 0)
+    }
     print("изменившиеся маркеры:", diff_keys or "нет")
 
     html = page.content()
