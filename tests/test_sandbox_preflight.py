@@ -33,6 +33,7 @@ def test_browser_command_registry_is_complete() -> None:
         "edit-skills",
         "export-resume",
         "fill-form",
+        "import-resume",
         "login",
         "login-code",
         "probe",
