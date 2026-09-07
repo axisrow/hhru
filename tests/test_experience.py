@@ -19,10 +19,14 @@ from hhru_bot.experience import (
 )
 from hhru_bot.selector_groups.resume_experience import (
     EXPERIENCE_COMPANY,
+    EXPERIENCE_END_MONTH,
     EXPERIENCE_MONTH_LISTBOX,
     EXPERIENCE_MONTH_OPTION,
     EXPERIENCE_POSITION,
+    EXPERIENCE_START_MONTH,
     FIRST_EXPERIENCE_CURRENT_CHECKBOX,
+    FIRST_EXPERIENCE_END_MONTH,
+    FIRST_EXPERIENCE_START_MONTH,
     SHARED_EXPERIENCE_CANCEL,
     SHARED_EXPERIENCE_SAVE,
 )
@@ -828,11 +832,17 @@ class _MonthSavePage(_SavePage):
         self.start_month_selected = None
 
     def locator(self, selector):
-        # #957: the indexed editor's month trigger is now the first bare
+        # #957: the indexed/shared editors' month trigger is the first bare
         # magritte-select-activator (live 2026-09-04) — same value as
-        # SHARED_EXPERIENCE_START_MONTH; the fake matches the current selector
-        # strings instead of the retired resume-editor-*-month-input data-qa.
-        if selector == "[data-qa='magritte-select-activator'] >> nth=0":
+        # SHARED_EXPERIENCE_START_MONTH. 2026-09-07: the shapes DIVERGED —
+        # the first-entry editor kept its own resume-editor-*-month-input
+        # data-qa (FIRST_EXPERIENCE_START_MONTH), so the fake serves BOTH
+        # selector strings; which one a page shape uses decides
+        # edit_experience_on_hh, not this double.
+        if selector in (
+            "[data-qa='magritte-select-activator'] >> nth=0",
+            "[data-qa='resume-editor-experience-start-month-input']",
+        ):
             page = self
 
             class _StartMonthLocator(_Locator):
@@ -1425,6 +1435,21 @@ def test_shared_experience_save_cancel_use_distinct_profile_layout_namespace():
     }
     assert SHARED_EXPERIENCE_SAVE not in save_and_cancel_from_other_shapes
     assert SHARED_EXPERIENCE_CANCEL not in save_and_cancel_from_other_shapes
+
+
+def test_first_entry_month_selectors_diverged_from_indexed_shape():
+    """2026-09-07 (census, read-only): hh.ru's month triggers DIVERGED by
+    shape — the indexed/shared editors render bare magritte-select-activators
+    (#956/#957), while the first-entry editor kept its own
+    resume-editor-*-month-input data-qa (#811) and renders ZERO activators.
+    Pointing first_entry back at the positional pair re-breaks its save
+    (fail-closed «месяц начала не подтверждён», two live refusals
+    2026-09-07)."""
+    assert FIRST_EXPERIENCE_START_MONTH == "[data-qa='resume-editor-experience-start-month-input']"
+    assert FIRST_EXPERIENCE_END_MONTH == "[data-qa='resume-editor-experience-end-month-input']"
+    assert EXPERIENCE_START_MONTH == "[data-qa='magritte-select-activator'] >> nth=0"
+    assert EXPERIENCE_END_MONTH == "[data-qa='magritte-select-activator'] >> nth=1"
+    assert FIRST_EXPERIENCE_START_MONTH != EXPERIENCE_START_MONTH
 
 
 def test_shared_experience_reuses_indexed_company_position_and_month_selectors():
