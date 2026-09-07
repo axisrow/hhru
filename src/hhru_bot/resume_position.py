@@ -953,6 +953,9 @@ def verify_wizard_save(
     observed_roles = ", ".join(
         f"{role.role_id}:{role.label or '?'}" for role in state.professional_roles
     )
+    # (#1006) роли читаются из identity-bound state (JSON-бандл SSR), печатаем
+    # это явно, чтобы расхождение не искали в отрисованном DOM.
+    state_roles_suffix = " (state)" if observed_roles else ""
     if not any(
         role.role_id == expected_role_id
         and (role.label is None or role.label == expected_role_label)
@@ -960,8 +963,8 @@ def verify_wizard_save(
     ):
         raise RuntimeError(
             f"post-save professional role не совпал: ожидалось "
-            f"{expected_role_id}:{expected_role_label}, прочитано "
-            f"{observed_roles or '<пусто>'}"
+            f"{expected_role_id}:{expected_role_label}, прочитано"
+            f"{state_roles_suffix} {observed_roles or '<пусто>'}"
         )
     if len(matches) != 1:
         raise RuntimeError(f"post-save readback карточки резюме неоднозначен: {len(matches)}")

@@ -147,11 +147,16 @@ observer.observe(document.documentElement, {
 });
 
 function checkElement(selector) {
+  // matchCount (#1006): a found [0]-th element of an ambiguous selector must
+  // not silently read as "the" element — the agent sees only this report.
   if (!selector || typeof selector !== 'string') {
-    return { found: false, visible: false, obstructionChecked: false };
+    return { found: false, visible: false, obstructionChecked: false, matchCount: 0 };
   }
-  const element = document.querySelectorAll(selector)[0] || null;
-  if (!element) return { found: false, visible: false, obstructionChecked: false };
+  const matches = document.querySelectorAll(selector);
+  const element = matches[0] || null;
+  if (!element) {
+    return { found: false, visible: false, obstructionChecked: false, matchCount: 0 };
+  }
   const visible = isVisible(element);
   let covered = null;
   let obstructionChecked = false;
@@ -173,7 +178,7 @@ function checkElement(selector) {
       }
     }
   }
-  return { found: true, visible, covered, obstructionChecked };
+  return { found: true, visible, covered, obstructionChecked, matchCount: matches.length };
 }
 
 function waitForOverlayGone(element, onDone) {

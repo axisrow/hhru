@@ -196,11 +196,14 @@ def test_hhru_live_policy_unknown_action_rejected():
 
 def test_hhru_live_policy_check_element_confirms_next_step():
     """Подтверждение «следующий элемент доступен»: found/visible по селектору;
-    obstruction-проба в стабе недоступна и честно репортится как непроверенная."""
+    obstruction-проба в стабе недоступна и честно репортится как непроверенная.
+    matchCount (#1006): неоднозначный селектор не должен выглядеть как однозначный."""
     scenario = _run_command_scenario("check_element")
     assert scenario["found"] and scenario["visible"]
     assert scenario["obstructionChecked"] is False
+    assert scenario["matchCount"] == 2
     assert scenario["absentFound"] is False and scenario["noSelectorFound"] is False
+    assert scenario["absentMatchCount"] == 0 and scenario["noSelectorMatchCount"] == 0
 
 
 def test_hhru_live_policy_dismiss_hidden_overlay_does_not_click():

@@ -6,9 +6,12 @@ import stat
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
+from hhru_bot.apply.antibot import ANTIBOT_MARKER_SELECTORS
 from hhru_bot.auth_code import _read_code, login_with_code, mask_login
 
 pytestmark = pytest.mark.integration
+
+ANTIBOT_MARKER_SELECTORS_VALUES = frozenset(value for _name, value in ANTIBOT_MARKER_SELECTORS)
 
 
 def test_mask_login():
@@ -24,6 +27,9 @@ class _Locator:
 
     def count(self):
         return self._count() if callable(self._count) else self._count
+
+    def filter(self, *, visible=None):  # noqa: ARG002
+        return self
 
     @property
     def first(self):
@@ -90,8 +96,9 @@ class _Context:
 
 
 class _Page:
-    def __init__(self, body=""):
+    def __init__(self, body="", *, antibot_marker=False):
         self.body = body
+        self.antibot_marker = antibot_marker
         self.stage = "start"
         self.email_selected = False
         self.code = None
@@ -112,6 +119,8 @@ class _Page:
             return _Locator(self, count=0 if self.context and self.context._cookies else 1)
         if selector == "body":
             return _Locator(self)
+        if selector in ANTIBOT_MARKER_SELECTORS_VALUES:
+            return _Locator(self, count=int(self.antibot_marker))
         raise AssertionError(f"unexpected selector: {selector}")
 
     def wait_for_timeout(self, _milliseconds):
@@ -205,6 +214,37 @@ def test_login_with_code_browser_error_is_fail_closed(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="Ошибка браузера"):
         login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
     assert context.saved is None
+
+
+def test_login_with_code_visible_captcha_marker_is_fail_closed(monkeypatch, tmp_path):
+    """Видимый narrow-маркер #344 — капча, вход отменяется до запроса кода."""
+    page = _Page(antibot_marker=True)
+    context = _Context(page)
+    monkeypatch.setattr("hhru_bot.auth_code.launch_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr("hhru_bot.auth_code.goto_hh", lambda *_args: None)
+    code_file = tmp_path / "code.txt"
+    code_file.write_text("1234", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="требует капчу"):
+        login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
+    assert context.saved is None
+
+
+def test_login_with_code_captcha_word_in_body_text_does_not_block(monkeypatch, tmp_path):
+    """#1006: слово «капча» в тексте body без видимого маркера — НЕ капча.
+
+    Прежняя проверка искала подстроку в inner_text всего body и отказывала
+    во входе на любом нерелевантном упоминании; решение теперь по узким
+    маркерам detect_antibot_on_page (#344)."""
+    page = _Page(body="Что делать, если не приходит капча или код из SMS")
+    context = _Context(page)
+    monkeypatch.setattr("hhru_bot.auth_code.launch_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr("hhru_bot.auth_code.goto_hh", lambda *_args: None)
+    code_file = tmp_path / "code.txt"
+    code_file.write_text("1234\n", encoding="utf-8")
+
+    login_with_code(_config(tmp_path), "person@example.com", code_file=code_file)
+    assert context.saved is True
 
 
 def test_read_code_stdin_timeout(monkeypatch):

@@ -1,7 +1,7 @@
 {
   "name": "hhru",
   "metadata": {
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "interface": {
     "displayName": "HH.ru"
@@ -9,11 +9,11 @@
   "plugins": [
     {
       "name": "hhru-cc-plugin",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": {
         "source": "url",
         "url": "https://github.com/axisrow/hhru.git",
-        "ref": "v0.1.0"
+        "ref": "v0.1.1"
       },
       "policy": {
         "installation": "AVAILABLE",

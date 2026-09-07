@@ -1,6 +1,6 @@
 {
   "name": "hhru-cc-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safe hh.ru job-search workflows powered by the hhru CLI.",
   "author": {
     "name": "axisrow"
