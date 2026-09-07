@@ -49,7 +49,13 @@ IMPORT_SKILL_LEVEL = "intermediate"
 
 GALLERY_LIMIT = 8
 
-CURRENCY_SYMBOLS = (("RUR", "₽"), ("EUR", "€"), ("USD", "$"))
+# Валюта по текстовым маркерам в нижнем регистре: hh.ru пишет и «руб.»,
+# и код валюты текстом («EUR»), не только символ (#1028 review).
+CURRENCY_MARKERS = {
+    "RUR": ("₽", "руб"),
+    "EUR": ("€", "eur"),
+    "USD": ("$", "usd"),
+}
 
 RU_MONTHS = {
     "январь": 1,
@@ -106,24 +112,46 @@ def export_photos_on_disk(payload: dict) -> tuple[list[Path], list[str]]:
 
 
 def parse_salary_text(text: str | None) -> tuple[int | None, str | None]:
-    """«150 000 руб.» → (150000, 'RUR'); без цифр/валюты — (None, None)."""
+    """«150 000 руб.» → (150000, 'RUR'); без цифр/валюты — (None, None).
+
+    Валюта распознаётся и по символу (₽/€/$), и по текстовой форме hh.ru
+    («руб.», «EUR», «USD»): `resume-block-salary` использует оба вида.
+    """
     if not text:
         return None, None
     digits = re.sub(r"[^0-9]", "", text)
     salary = int(digits) if digits else None
-    currency = next((code for code, symbol in CURRENCY_SYMBOLS if symbol in text), None)
+    lowered = text.lower()
+    currency = next(
+        (
+            code
+            for code, markers in CURRENCY_MARKERS.items()
+            if any(marker in lowered for marker in markers)
+        ),
+        None,
+    )
     return salary, currency
 
 
-def _code_for(text: str | None, *label_maps: dict[str, str]) -> str | None:
-    """Код опции по отображаемому тексту (у hh.ru два набора лейблов на поле)."""
+def _codes_for(text: str | None, *label_maps: dict[str, str]) -> list[str]:
+    """Коды опций по отображаемому тексту (у hh.ru два набора лейблов на поле).
+
+    Многозначный текст hh.ru («Полная занятость, Подработка») даёт несколько
+    кодов; решение, что с ними делать (форма подтверждает одно значение),
+    принимает вызывающий код — здесь значения не теряются.
+    """
     if not text:
-        return None
-    for labels in label_maps:
-        for code, label in labels.items():
-            if label in text:
-                return code
-    return None
+        return []
+    codes: list[str] = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        for labels in label_maps:
+            for code, label in labels.items():
+                if label in part and code not in codes:
+                    codes.append(code)
+    return codes
 
 
 def plan_position(payload: dict) -> tuple[PositionValues, list[str]]:
@@ -140,19 +168,44 @@ def plan_position(payload: dict) -> tuple[PositionValues, list[str]]:
     salary, currency = parse_salary_text(position.get("salary_text"))
     if position.get("salary_text") and salary is None:
         unavailable.append("позиция: в salary_text нет числового значения")
+    if position.get("salary_text") and currency is None and salary is not None:
+        unavailable.append(f"позиция: валюта «{position.get('salary_text')}» не распознана")
     fields = {
         str(row.get("field")): row.get("text")
         for row in position.get("fields", [])
         if isinstance(row, dict) and row.get("field")
     }
-    employment = _code_for(fields.get("employmentForms"), DISPLAY_EMPLOYMENT, EMPLOYMENT_LABELS)
-    if fields.get("employmentForms") and employment is None:
+    employment_codes = _codes_for(
+        fields.get("employmentForms"), DISPLAY_EMPLOYMENT, EMPLOYMENT_LABELS
+    )
+    employment: str | None = None
+    if fields.get("employmentForms") and not employment_codes:
         unavailable.append(f"позиция: занятость «{fields['employmentForms']}» не распознана")
-    work_format = _code_for(fields.get("workFormats"), DISPLAY_WORK, WORK_LABELS)
-    if fields.get("workFormats") and work_format is None:
+    elif len(employment_codes) > 1:
+        # apply_position подтверждает только одно значение занятости (#526);
+        # второе и далее не теряем молча — поле целиком уходит в unavailable.
+        unavailable.append(
+            f"позиция: несколько значений занятости "
+            f"({', '.join(employment_codes)}) — форма подтверждает одно, "
+            "поле не перенесено"
+        )
+    elif employment_codes:
+        employment = employment_codes[0]
+    work_codes = _codes_for(fields.get("workFormats"), DISPLAY_WORK, WORK_LABELS)
+    work_format: str | None = None
+    if fields.get("workFormats") and not work_codes:
         unavailable.append(f"позиция: формат «{fields['workFormats']}» не распознан")
-    commute = _code_for(fields.get("travelTime"), TRAVEL_LABELS)
-    if fields.get("travelTime") and commute is None:
+    elif len(work_codes) > 1:
+        unavailable.append(
+            f"позиция: несколько значений формата работы "
+            f"({', '.join(work_codes)}) — форма подтверждает одно, "
+            "поле не перенесено"
+        )
+    elif work_codes:
+        work_format = work_codes[0]
+    commute_codes = _codes_for(fields.get("travelTime"), TRAVEL_LABELS)
+    commute = commute_codes[0] if len(commute_codes) == 1 else None
+    if fields.get("travelTime") and not commute_codes:
         unavailable.append(f"позиция: время в пути «{fields['travelTime']}» не распознано")
     trips_text = fields.get("businessTripReadiness")
     trips = (
@@ -346,10 +399,12 @@ def diff_export(source: dict, imported: dict) -> list[str]:
     imp_pos = imported.get("position") or {}
     if _norm(src_pos.get("title")) != _norm(imp_pos.get("title")):
         diffs.append(f"позиция: title «{src_pos.get('title')}» != «{imp_pos.get('title')}»")
-    src_salary, _ = parse_salary_text(src_pos.get("salary_text"))
-    imp_salary, _ = parse_salary_text(imp_pos.get("salary_text"))
+    src_salary, src_currency = parse_salary_text(src_pos.get("salary_text"))
+    imp_salary, imp_currency = parse_salary_text(imp_pos.get("salary_text"))
     if src_salary != imp_salary:
         diffs.append(f"позиция: зарплата {src_salary} != {imp_salary}")
+    if src_currency != imp_currency:
+        diffs.append(f"позиция: валюта {src_currency} != {imp_currency}")
     if _norm(source.get("about")) != _norm(imported.get("about")):
         diffs.append("о себе: текст не совпал")
     src_exp = [

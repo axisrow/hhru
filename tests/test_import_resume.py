@@ -81,9 +81,37 @@ def test_load_export_rejects_foreign_schema(tmp_path):
 
 def test_parse_salary_text_digits_and_currency():
     assert parse_salary_text("150 000 ₽") == (150000, "RUR")
+    assert parse_salary_text("150 000 руб.") == (150000, "RUR")
     assert parse_salary_text("2000$") == (2000, "USD")
+    assert parse_salary_text("2000 EUR") == (2000, "EUR")
     assert parse_salary_text("не указана") == (None, None)
     assert parse_salary_text(None) == (None, None)
+
+
+def test_plan_position_multi_value_field_is_not_silently_truncated():
+    payload = {
+        **PAYLOAD,
+        "position": {
+            "title": "Тест",
+            "salary_text": None,
+            "fields": [
+                {"field": "employmentForms", "text": "Постоянная работа, Подработка"},
+                {"field": "workFormats", "text": "Офис / Гибрид"},
+            ],
+        },
+    }
+    plan, unavailable = plan_position(payload)
+    assert plan.employment is None
+    assert plan.work_format is None
+    assert any("несколько значений занятости" in note for note in unavailable)
+    assert any("несколько значений формата" in note for note in unavailable)
+
+
+def test_diff_export_flags_currency_mismatch():
+    imported = json.loads(json.dumps(PAYLOAD))
+    imported["position"]["salary_text"] = "150 000 €"
+    diffs = diff_export(PAYLOAD, imported)
+    assert any("валюта" in d for d in diffs)
 
 
 def test_plan_position_maps_display_texts():

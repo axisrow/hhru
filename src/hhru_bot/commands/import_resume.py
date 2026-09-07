@@ -153,7 +153,10 @@ def run(args: argparse.Namespace):
             "Проверьте список резюме на hh.ru вручную перед повтором."
         )
         return True
-    if dry_run and photos and args.no_photos:
+    # --no-photos действует в ОБЕИХ ветках (dry-run и боевой): флаг очищает
+    # список до ветвления, иначе --force --no-photos молча загрузил бы фото
+    # (#1028 review).
+    if args.no_photos and photos:
         print("[WARN] --no-photos: фото из экспорта пропущены")
         photos = []
 
@@ -192,6 +195,25 @@ def _report(name: str, ok: bool, message: str, *, uncertain: bool, problems: lis
     prefix = "[WARN] (uncertain)" if uncertain else "[FAIL]"
     print(f"{prefix} {name}: {message}")
     problems.append(f"{name}: {message}")
+
+
+def _read_resume_titles(page, new_id: str, title: str):  # noqa: ANN001 - Page
+    """Полный map resume_id→title целевого аккаунта (read-only), или None.
+
+    ``list_resume_cards`` читает /applicant/resumes; полный список, включая
+    свежесозданный черновик, — RESUMES_FULL_LIST_URL. Неопределённое состояние
+    списка (анти-бот/дрейф) — None: вызывающий код отказывается от опыта
+    вместо риска over-binding #782.
+    """
+    from ..copy_resume import RESUMES_FULL_LIST_URL, ResumeListIndeterminate, list_resume_cards
+
+    try:
+        cards = list_resume_cards(page, navigate=True, url=RESUMES_FULL_LIST_URL)
+    except ResumeListIndeterminate:
+        return None
+    titles = {card.resume_id: card.title for card in cards}
+    titles[new_id] = title
+    return titles
 
 
 def _run_live(
@@ -316,16 +338,27 @@ def _run_live(
                         about_attempt.finish(True)
                         _report("о себе", True, "сохранено", uncertain=False, problems=problems)
 
-                # Опыт (append-only: у нового резюме записей нет)
+                # Опыт (append-only: у нового резюме записей нет).
+                # resume_titles — ПОЛНЫЙ map резюме целевого аккаунта (#782):
+                # второй+ запись идёт через shared-profile панель «Резюме с
+                # этим местом работы», где все резюме стартуют pre-checked;
+                # неполный map дал бы other_titles=[] и молчаливую привязку
+                # импорта ко ВСЕМ резюме аккаунта (#1028 review).
                 if experience_plan.entries:
                     exp_attempt = attempt(new_id, "edit_experience")
                     try:
+                        resume_titles = _read_resume_titles(page, new_id, position_plan.title)
+                        if resume_titles is None:
+                            raise RuntimeError(
+                                "список резюме целевого аккаунта не прочитан — "
+                                "опыт не переносится (риск over-binding #782)"
+                            )
                         rows = edit_experience_on_hh(
                             page,
                             new_id,
                             experience_plan,
                             dry_run=False,
-                            resume_titles={new_id: position_plan.title},
+                            resume_titles=resume_titles,
                             append_only=True,
                         )
                     except BaseException as exc:
