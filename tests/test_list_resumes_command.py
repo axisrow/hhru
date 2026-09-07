@@ -229,11 +229,14 @@ def test_registers_list_resumes_subparser():
 
 
 class _FakeCard:
-    def __init__(self, resume_id, title, status=None, ssr_unavailable=False):
+    def __init__(
+        self, resume_id, title, status=None, ssr_unavailable=False, unfinished_screen=None
+    ):
         self.resume_id = resume_id
         self.title = title
         self.status = status
         self.ssr_unavailable = ssr_unavailable
+        self.unfinished_screen = unfinished_screen
 
 
 class _StubThrottle:
@@ -547,6 +550,96 @@ def test_default_live_indeterminate_state_prints_fail_not_empty(capsys, tmp_path
     assert "не найдено" not in out
     # fallback на локальную таблицу не происходит
     assert "backend" not in out
+
+
+# --- визард-ветка (экран дозаполнения вместо списка, 2026-09-07) ---------------
+
+
+def _patch_wizard(monkeypatch, drafts, *, predicate=True):
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda page: predicate)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_wizard_drafts", lambda page: list(drafts))
+
+    def _boom(page, navigate=True):
+        raise AssertionError("в визард-ветке list_resume_cards не вызывается")
+
+    monkeypatch.setattr("hhru_bot.copy_resume.list_resume_cards", _boom)
+
+
+def test_wizard_mode_lists_draft_with_screen_hint(capsys, tmp_path, monkeypatch):
+    """Единственный незавершённый черновик: hh.ru рендерит экран дозаполнения
+    вместо карточек — команда читает черновик через list_wizard_drafts, печатает
+    таблицу с незавершённым экраном и подсказку дозаполнения, не [FAIL]."""
+    config = _live_env(tmp_path, monkeypatch)
+    drafts = [
+        _FakeCard(
+            "88888888",
+            "Тестировщик программного обеспечения",
+            status="not_finished",
+            unfinished_screen="common",
+        )
+    ]
+    _patch_wizard(monkeypatch, drafts)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" not in out
+    assert "88888888" in out
+    assert "Тестировщик программного обеспечения" in out
+    assert "черновик, незавершённый экран common" in out
+    assert "экран дозаполнения" in out
+    assert "wizard-next --resume" in out
+
+
+def test_wizard_mode_indeterminate_still_fails_closed(capsys, tmp_path, monkeypatch):
+    """Визард открыт, но черновики не прочитаны — прежний честный [FAIL],
+    не «резюме не найдено» и не пустая таблица."""
+    from hhru_bot.copy_resume import ResumeListIndeterminate
+
+    config = _live_env(tmp_path, monkeypatch)
+
+    def _raise(page):
+        raise ResumeListIndeterminate(
+            "экран дозаполнения черновика открыт, но resume_id не появился в URL"
+        )
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_wizard_drafts", _raise)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "resume_id не появился в URL" in out
+    assert "не найдено" not in out
+
+
+def test_no_wizard_keeps_card_list_path(capsys, tmp_path, monkeypatch):
+    """Предикат визарда False — прежний путь list_resume_cards; визард-ридер
+    не дёргается вовсе."""
+    config = _live_env(tmp_path, monkeypatch)
+    fake_cards = [_FakeCard("11111111", "Backend developer", "modified")]
+    _patch_live(monkeypatch, fake_cards)
+
+    def _boom_wizard(page):
+        raise AssertionError("вне визарда list_wizard_drafts не вызывается")
+
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda page: False)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_wizard_drafts", _boom_wizard)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "11111111" in out
+    assert "экран дозаполнения" not in out
 
 
 def test_default_live_stale_cookie_rejects_login_form(capsys, tmp_path, monkeypatch):
