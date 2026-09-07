@@ -49,10 +49,12 @@ def test_codex_repo_marketplace_points_to_a_release_not_floating_main():
     assert marketplace["name"] == "hhru"
     assert plugin["name"] == "hhru-cc-plugin"
     assert plugin["version"] == version
+    # ref следует за версией проекта: захардкоженный v0.1.0 ломал сюиту на
+    # каждом релизе (0.1.1 сломал её первым — CI main/PR #1024).
     assert plugin["source"] == {
         "source": "url",
         "url": "https://github.com/axisrow/hhru.git",
-        "ref": "v0.1.0",
+        "ref": f"v{version}",
     }
     assert plugin["policy"] == {
         "installation": "AVAILABLE",

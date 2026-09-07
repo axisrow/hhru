@@ -19,20 +19,26 @@ pytestmark = pytest.mark.smoke
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
+def _tag() -> str:
+    """Тег следует за версией pyproject: хардкод v0.1.0 ломал сюиту на
+    каждом релизе (0.1.1 сломал её первым — CI main/PR #1024)."""
+    return f"v{release_module._read_version(Path(__file__).parents[1])}"
+
+
 def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_path, monkeypatch):
     # The checkout may contain the real v0.1.0 tag after fetching origin. This
     # test deliberately uses a synthetic provenance SHA, so tag-object
     # validation is covered separately from bundle stamping.
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(Path(__file__).parents[1], tmp_path, "v0.1.0", COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, _tag(), COMMIT)
 
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())
     expected = {
-        "version": "0.1.0",
-        "release": "v0.1.0",
-        "tag": "v0.1.0",
+        "version": _tag().lstrip("v"),
+        "release": _tag(),
+        "tag": _tag(),
         "commit_sha": COMMIT,
     }
 
@@ -48,7 +54,7 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
 
 def test_release_validation_rejects_manifest_from_another_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(Path(__file__).parents[1], tmp_path, "v0.1.0", COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, _tag(), COMMIT)
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())
@@ -61,9 +67,9 @@ def test_release_validation_rejects_manifest_from_another_commit(tmp_path, monke
         validate_bundle(
             bundle,
             {
-                "version": "0.1.0",
-                "release": "v0.1.0",
-                "tag": "v0.1.0",
+                "version": _tag().lstrip("v"),
+                "release": _tag(),
+                "tag": _tag(),
                 "commit_sha": COMMIT,
             },
         )
