@@ -17,6 +17,7 @@ from playwright.sync_api import Error as PlaywrightError
 from .browser import (
     HH_BASE_URL,
     LOGIN_FORM,
+    PageStateIndeterminate,
     dump_page_html,
     goto_hh,
     has_auth_cookie,
@@ -205,9 +206,26 @@ def build_languages_prompt(
     )
     user = (
         f"Режим: {task}. Уже есть: {json.dumps(existing, ensure_ascii=False)}.\n"
-        f"Текст резюме:\n{page_text[:12000]}"
+        f"Карточка языков профиля:\n{page_text[:12000]}"
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def read_language_context(card) -> str:
+    """Текст карточки языков — LLM-контекст plan-а (#1005).
+
+    Замена ``page.locator('body').inner_text()``: на /applicant/profile/me
+    языки явно указаны только в самой карточке (подтверждено census 2026-09-07);
+    остальной body — шапка, список резюме, рекламные сервисные карточки, футер,
+    то есть ложные улики для модели. ``card`` — уже подтверждённый
+    ``_open_language_profile`` локатор; пустой текст подтверждённой карточки —
+    состояние не подтверждено, а не «языков нет» (инвариант
+    PageStateIndeterminate).
+    """
+    text = card.first.inner_text().strip()
+    if not text:
+        raise PageStateIndeterminate("карточка языков отрисована пустой — контекст не подтверждён")
+    return text
 
 
 def edit_languages_on_hh(

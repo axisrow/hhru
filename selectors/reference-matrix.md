@@ -135,6 +135,7 @@
 | resume_list.RESUME_LIST_CARD_LINK_PREFIX | `[data-qa^='resume-card-link-']` | — | — | — | live_dom |
 | resume_list.RESUME_LIST_CARD_LINK_TPL | `[data-qa='resume-card-link-{resume_id}']` | — | — | — | live_dom |
 | resume_list.RESUME_LIST_CARD_TITLE | `[data-qa='resume-title']` | — | — | — | live_dom |
+| resume_page.RESUME_ABOUT_CARD | `[data-qa='resume-about-card']` | — | — | — | documented_live |
 | resume_page.RESUME_ABOUT_EDITOR | `[data-qa='resume-editor-about']` | — | — | — | live_dom |
 | resume_page.RESUME_ABOUT_NO_EXPERIENCE_REASON | `[data-qa^='resume-editor-about-no-experience-reason-']` | — | — | — | live_dom |
 | resume_page.RESUME_BUMP_BUTTON | `[data-qa='resume-update-button']` | — | — | — | live_dom |
@@ -156,6 +157,7 @@
 | resume_page.RESUME_DELETE_HIDE_CONFIRM | `[data-qa='resume-hide-confirm']` | — | — | — | documented_live |
 | resume_page.RESUME_DELETE_TITLE | `[data-qa='resume-delete-title']` | — | — | — | documented_live |
 | resume_page.RESUME_EDIT_ABOUT_BUTTON | `[data-qa='resume-edit-button-about']` | — | — | — | live_dom |
+| resume_page.RESUME_EXPERIENCE_CARD | `[data-qa='resume-list-card-experience']` | — | — | — | documented_live |
 | resume_page.RESUME_LANGUAGE_ADD_BUTTON | `[data-qa='profile-language-add']` | — | — | — | documented_live |
 | resume_page.RESUME_LANGUAGE_ADD_FORM | `[data-qa='profile-language-add-form']` | — | — | — | documented_live |
 | resume_page.RESUME_LANGUAGE_CARD | `[data-qa='profile-language-card']` | — | — | — | documented_live |
@@ -167,8 +169,10 @@
 | resume_page.RESUME_LANGUAGE_SAVE | `[data-qa='profile-modal-button-save']` | — | — | — | documented_live |
 | resume_page.RESUME_PARTIAL_EDIT_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_page.RESUME_PARTIAL_EDIT_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | live_dom |
+| resume_page.RESUME_POSITION_CARD | `[data-qa='resume-position-card']` | — | — | — | documented_live |
 | resume_page.RESUME_POSITION_DROPDOWN | `[data-qa='drop-base']` | — | — | — | live_dom |
 | resume_page.RESUME_PUBLISH_BUTTON_DATA_QA | `[data-qa='resume-publish']` | — | — | — | unavailable |
+| resume_page.RESUME_SKILLS_CARD | `[data-qa='skills-card']` | — | — | — | documented_live |
 | resume_page.RESUME_SKILLS_CHIP | `[data-qa^='chips-trigger-chip-']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_CHIP_INPUT | `[data-qa='chips-trigger-input']` | — | — | — | live_dom |
 | resume_page.RESUME_SKILLS_DISPLAY_TAG | `[data-qa='skills-card'] [data-qa^='skill-tag-']` | — | — | — | live_dom |

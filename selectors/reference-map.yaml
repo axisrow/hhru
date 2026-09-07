@@ -3052,6 +3052,26 @@ selectors:
     last_verified_at: '2026-08-29'
     verified_flow: authenticated_resume_list_read_only (hh.ru/applicant/resumes)
     verified_by: human
+  resume_page.RESUME_ABOUT_CARD:
+    value: '[data-qa=''resume-about-card'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:143
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:143
+      note: '#1005: секция «О себе» страницы резюме — источник LLM-контекста edit-skills; data-qa подтверждён живым read-only
+        census 2026-09-07.'
+    last_verified_at: '2026-09-07'
+    verified_flow: read_only_selector_dom_observation
+    verified_by: claude
   resume_page.RESUME_ABOUT_EDITOR:
     value: '[data-qa=''resume-editor-about'']'
     criticality: write
@@ -3489,6 +3509,26 @@ selectors:
     last_verified_at: '2026-08-29'
     verified_flow: authenticated_resume_page_read_only (hh.ru/resume/fb6ef122ff11063b840039ed1f3857524a7a30)
     verified_by: human
+  resume_page.RESUME_EXPERIENCE_CARD:
+    value: '[data-qa=''resume-list-card-experience'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:141
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:141
+      note: '#1005: карточка опыта страницы резюме — источник LLM-контекста edit-skills; data-qa подтверждён живым read-only
+        census 2026-09-07.'
+    last_verified_at: '2026-09-07'
+    verified_flow: read_only_selector_dom_observation
+    verified_by: claude
   resume_page.RESUME_LANGUAGE_ADD_BUTTON:
     value: '[data-qa=''profile-language-add'']'
     criticality: write
@@ -3708,6 +3748,26 @@ selectors:
     last_verified_at: '2026-08-25'
     verified_flow: authenticated_resume_editor_read_only
     verified_by: codex
+  resume_page.RESUME_POSITION_CARD:
+    value: '[data-qa=''resume-position-card'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:140
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:140
+      note: '#1005: карточка должности страницы резюме — источник LLM-контекста edit-skills; data-qa подтверждён живым read-only
+        census 2026-09-07.'
+    last_verified_at: '2026-09-07'
+    verified_flow: read_only_selector_dom_observation
+    verified_by: claude
   resume_page.RESUME_POSITION_DROPDOWN:
     value: '[data-qa=''drop-base'']'
     criticality: write
@@ -3753,6 +3813,26 @@ selectors:
     last_verified_at: '2026-08-29'
     verified_flow: authenticated_resume_read_only (4 draft resumes + /applicant/resumes list)
     verified_by: human
+  resume_page.RESUME_SKILLS_CARD:
+    value: '[data-qa=''skills-card'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/resume_page.py:142
+    decision: documented_live
+    sources: {}
+    live_matches: []
+    active: true
+    coverage_status: intentionally_local
+    bindings: {}
+    status: intentionally local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/resume_page.py:142
+      note: '#1005: карточка ключевых навыков страницы резюме — источник LLM-контекста edit-skills; data-qa подтверждён живым
+        read-only census 2026-09-07 (ранее уже наблюдался в дампе #813).'
+    last_verified_at: '2026-09-07'
+    verified_flow: read_only_selector_dom_observation
+    verified_by: claude
   resume_page.RESUME_SKILLS_CHIP:
     value: '[data-qa^=''chips-trigger-chip-'']'
     criticality: write

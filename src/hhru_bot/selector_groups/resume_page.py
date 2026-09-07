@@ -129,6 +129,19 @@ RESUME_SPECIALIZATION_SUBMIT = _selector("resume_page.RESUME_SPECIALIZATION_SUBM
 # пустотой НЕ является (fail-closed, #954).
 RESUME_SPECIALIZATION_TREE_CONTAINER = _selector("resume_page.RESUME_SPECIALIZATION_TREE_CONTAINER")
 
+# Карточки секций страницы резюме, из которых read_resume_context собирает
+# LLM-контекст plan-а ключевых навыков (#1005). Все четыре data-qa подтверждены
+# живым census (read-only, 2026-09-07): resume-position-card, resume-list-card-
+# experience, skills-card, resume-about-card — единственные отрисованные
+# контейнеры секций резюме; body.inner_text() вместо них тянул шапку/меню/
+# футер/рекламные блоки как ложные улики для модели (класс #997/#998). Сырые
+# строковые константы (не _selector()) — тот же приём, что RESUME_PUBLISH_BUTTON
+# выше: значения получены собственным живым замером, а не reference-каталогом.
+RESUME_POSITION_CARD = "[data-qa='resume-position-card']"
+RESUME_EXPERIENCE_CARD = "[data-qa='resume-list-card-experience']"
+RESUME_SKILLS_CARD = "[data-qa='skills-card']"
+RESUME_ABOUT_CARD = "[data-qa='resume-about-card']"
+
 # Language block and modal selectors confirmed on the authenticated read-only
 # DOM of /applicant/profile/me on 2026-08-20 (issue #265).  Languages are a
 # profile-level entity, not a resume-level one: /resume/{id} never renders a

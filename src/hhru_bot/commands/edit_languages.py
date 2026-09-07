@@ -59,6 +59,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         edit_languages_on_hh,
         parse_language_plan,
         read_existing_languages,
+        read_language_context,
     )
 
     config = load_config_or_exit(args.config)
@@ -164,15 +165,19 @@ def _run(args: argparse.Namespace, progress) -> bool:
                 print(f"[FAIL] Карточка языков не подтверждена: {exc}")
                 return True
             try:
+                # #1005: контекст LLM — текст подтверждённой карточки языков
+                # (read_language_context), а не body.inner_text(): языки явно
+                # указаны только в карточке, остальной body — шапка, список
+                # резюме, рекламные блоки, футер.
                 response = LLMClient(config.ai).chat(
-                    build_languages_prompt(page.locator("body").inner_text(), existing, args.mode),
+                    build_languages_prompt(read_language_context(card), existing, args.mode),
                     temperature=0,
                 )
                 content = response.content if response and response.content else ""
                 proposed = parse_language_plan(content)
             except (ImportError, ValueError, RuntimeError, PlaywrightError) as exc:
-                # #465 review round 3: page.locator("body").inner_text() can
-                # also raise PlaywrightError, same as the card read above.
+                # #465 review round 3: card.inner_text() can also raise
+                # PlaywrightError, same as the card read above.
                 print(f"[FAIL] Не удалось построить безопасный план языков: {exc}")
                 return True
             # #265 code-review round 3: the LLM branch is a planner only, not

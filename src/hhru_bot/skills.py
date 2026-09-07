@@ -17,6 +17,7 @@ from playwright.sync_api import Page
 from .browser import (
     HH_BASE_URL,
     RESUME_UNAVAILABLE_REASON,
+    PageStateIndeterminate,
     goto_hh,
     has_auth_cookie,
     has_login_form,
@@ -152,10 +153,45 @@ def build_skills_prompt(
     task = "с нуля" if mode == "fresh" else "до-заполнения, сохраняя существующие"
     user = (
         f"Режим: {task}. Уже есть: {json.dumps(existing, ensure_ascii=False)}.\n"
-        "Извлеки релевантные ключевые навыки из текста резюме и предложи максимум 20.\n"
-        f"Текст резюме:\n{page_text[:12000]}"
+        "Извлеки релевантные ключевые навыки из отрисованных секций резюме "
+        "и предложи максимум 20.\n"
+        f"Секции резюме:\n{page_text[:12000]}"
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+# Секции страницы резюме, несущие содержимое, из которого извлекаются навыки
+# (селекторы и происхождение — см. selector_groups/resume_page.py, #1005).
+_RESUME_CONTEXT_SECTIONS = (
+    ("Должность", resume_page.RESUME_POSITION_CARD),
+    ("Опыт работы", resume_page.RESUME_EXPERIENCE_CARD),
+    ("Ключевые навыки", resume_page.RESUME_SKILLS_CARD),
+    ("О себе", resume_page.RESUME_ABOUT_CARD),
+)
+
+
+def read_resume_context(page: Page) -> str:
+    """Текст отрисованных карточек секций резюме — LLM-контекст plan-а (#1005).
+
+    Замена ``page.locator('body').inner_text()``: тот уносил в промпт шапку,
+    меню, футер и рекламные блоки — модель строила план по «полям», которых
+    на форме нет (мягкая форма #998). Контекст собирается только из
+    подтверждённых карточек секций; шапка/меню/футер в дерево карточек не
+    входят. Ни одна найденная секция — состояние страницы не подтверждено
+    (инвариант PageStateIndeterminate), а не «пустое резюме».
+    """
+    parts: list[str] = []
+    for title, selector in _RESUME_CONTEXT_SECTIONS:
+        cards = page.locator(selector)
+        for i in range(cards.count()):
+            text = cards.nth(i).inner_text().strip()
+            if text:
+                parts.append(f"=== {title} ===\n{text}")
+    if not parts:
+        raise PageStateIndeterminate(
+            "ни одна секция резюме не подтверждена в DOM — контекст для плана пуст"
+        )
+    return "\n\n".join(parts)
 
 
 def read_skills(page: Page) -> tuple[str, ...]:
