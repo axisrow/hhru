@@ -823,26 +823,32 @@ def test_select_month_fails_closed_on_ambiguous_option():
 
 
 class _MonthSavePage(_SavePage):
-    """#811: adds working start/end-month comboboxes on top of _SavePage's
+    """#811: adds a working start-month combobox on top of _SavePage's
     row-count tracking, so a save-path test can assert the month was
-    actually selected before save is clicked."""
+    actually selected before save is clicked.
+
+    #1017 (cycle-review round 1): the fake models the first-entry form
+    EXACTLY as the live DOM renders it (census 2026-09-07) — its own
+    resume-editor-experience-start-month-input trigger and ZERO bare
+    magritte-select-activators. The positional #957 pair therefore reads
+    count()==0 here (explicitly: the _SavePage default returns count=1 for
+    unknown selectors and would let a regression of edit_experience_on_hh
+    back to the positional pair pass this test silently), so such a
+    regression skips the month and the pre-save verification refuses to
+    save — exactly how the live form refused twice on 2026-09-07."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.start_month_selected = None
 
     def locator(self, selector):
-        # #957: the indexed/shared editors' month trigger is the first bare
-        # magritte-select-activator (live 2026-09-04) — same value as
-        # SHARED_EXPERIENCE_START_MONTH. 2026-09-07: the shapes DIVERGED —
-        # the first-entry editor kept its own resume-editor-*-month-input
-        # data-qa (FIRST_EXPERIENCE_START_MONTH), so the fake serves BOTH
-        # selector strings; which one a page shape uses decides
-        # edit_experience_on_hh, not this double.
         if selector in (
             "[data-qa='magritte-select-activator'] >> nth=0",
-            "[data-qa='resume-editor-experience-start-month-input']",
+            "[data-qa='magritte-select-activator'] >> nth=1",
         ):
+            # Bare activators do not exist on the first-entry form (#1017).
+            return _Locator(count=0)
+        if selector == "[data-qa='resume-editor-experience-start-month-input']":
             page = self
 
             class _StartMonthLocator(_Locator):
