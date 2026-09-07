@@ -3,12 +3,18 @@
 WRITE-команда с гейтами: по умолчанию только ``--dry-run`` (план без кликов),
 боевой запуск требует ``--force``. Мутации идут уже подтверждёнными путями
 существующих команд: каркас — визард создания (#936: seam ``before_click``
-на первом NEXT), позиция — строго editor ``/resume/edit/{id}/position``
-(НЕ hh.ru-копия), секции — ``edit_*_on_hh``, фото — ``upload_photo_on_hh``
-с проверкой лимита галереи 8 ДО первой загрузки (переполнение — честный отказ
-с планом, а не частичная тишина). Каждая мутация обёрнута в
-``DurableMutationAttempt``; ``uncertain`` блокирует повтор через
-``has_unresolved_uncertain``.
+на мутирующем клике визарда), позиция — строго editor
+``/resume/edit/{id}/position`` (НЕ hh.ru-копия), секции — ``edit_*_on_hh``,
+фото — ``upload_photo_on_hh`` с проверкой лимита галереи 8 ДО первой загрузки
+(переполнение — честный отказ с планом, а не частичная тишина).
+
+Durable-гейт ЧЕСТНО: seam ``before_click`` реально передан только туда, где
+вызываемая функция его принимает — ``create_resume_on_hh`` и
+``upload_photo_on_hh`` (uncertain-ledger защищает именно эти две мутации).
+Секции позиция/о себе/опыт/образование/навыки/языки ведут себя как их
+одиночные команды (``edit_position``/``about``/... ): durable-маркера у них
+нет, сбой посреди клика классифицируется по вердиктам секций, но
+``has_unresolved_uncertain`` их повтор не блокирует.
 
 Никаких удалений — ни в исходном, ни в целевом аккаунте. Финальный отчёт —
 сверка экспорт↔импорт (повторное чтение созданного резюме тем же read-путём,
@@ -285,6 +291,13 @@ def _run_live(
                 if not result.success:
                     prefix = "[WARN] (uncertain)" if result.uncertain else "[FAIL]"
                     print(f"{prefix} создание: {result.reason}")
+                    print(
+                        "[INFO] Подсказка: если резюме с таким title уже создано "
+                        "предыдущим (оборванным) прогоном, импорт не стартует с нуля — "
+                        "дозаполните существующее резюме отдельными edit-командами "
+                        "(resume-position, edit-experience, edit-education, edit-skills, "
+                        "edit-languages, about, upload-photo)."
+                    )
                     return True
                 print(f"[OK] создание: {result.reason} Новый resume_id: {result.new_resume_id}")
                 if result.placeholder_role:
@@ -446,56 +459,61 @@ def _run_live(
                 else:
                     print("[WARN] языки: переносимых нет — пропущено")
 
-                # Фото: лимит галереи проверяется ДО первой загрузки
+                # Фото: лимит галереи проверяется ДО первой загрузки. Гейт
+                # нечитаемого инвентаря — по inventory.success, НЕ по reason:
+                # успешный dry-run select_photo_on_hh всегда несёт непустой
+                # reason (текст плана), а пустая галерея свежего аккаунта —
+                # photos=() при success=True (ревью hhru-496).
                 if photos:
                     inventory = select_photo_on_hh(page, resume, None, True)
-                    existing = len(inventory.photos)
-                    free = GALLERY_LIMIT - existing
-                    if inventory.reason and not inventory.photos:
+                    if not inventory.success:
                         print(
                             "[FAIL] фото: инвентарь галереи не прочитан "
                             f"({inventory.reason}) — загрузка отменена целиком"
                         )
                         problems.append("фото: инвентарь галереи не прочитан")
-                    elif free <= 0:
-                        print(
-                            f"[FAIL] фото: галерея аккаунта полна "
-                            f"({existing}/{GALLERY_LIMIT}) — ни одно фото не перенесено. "
-                            "План: освободите слоты в галерее вручную и перенесите фото "
-                            "отдельным запуском upload-photo."
-                        )
-                        problems.append("фото: галерея переполнена, отказ с планом")
                     else:
-                        fitting, overflow = photos[:free], photos[free:]
-                        if overflow:
+                        existing = len(inventory.photos)
+                        free = GALLERY_LIMIT - existing
+                        if free <= 0:
                             print(
-                                f"[WARN] фото: свободных слотов {free}, файлов {len(photos)} — "
-                                f"{len(overflow)} не поместятся "
-                                f"({', '.join(p.name for p in overflow)}). Освободите слоты и "
-                                "перенесите их отдельным запуском upload-photo."
+                                "[FAIL] фото: галерея аккаунта полна "
+                                f"({existing}/{GALLERY_LIMIT}) — ни одно фото не перенесено. "
+                                "План: освободите слоты в галерее вручную и перенесите фото "
+                                "отдельным запуском upload-photo."
                             )
-                        for path in fitting:
-                            up_attempt = attempt(new_id, "upload_photo")
-                            try:
-                                photo_file = validate_photo(path)
-                                up = upload_photo_on_hh(
-                                    page,
-                                    resume,
-                                    photo_file,
-                                    False,
-                                    before_click=up_attempt.before_click,
+                            problems.append("фото: галерея переполнена, отказ с планом")
+                        else:
+                            fitting, overflow = photos[:free], photos[free:]
+                            if overflow:
+                                print(
+                                    f"[WARN] фото: свободных слотов {free}, файлов {len(photos)} — "
+                                    f"{len(overflow)} не поместятся "
+                                    f"({', '.join(p.name for p in overflow)}). Освободите слоты и "
+                                    "перенесите их отдельным запуском upload-photo."
                                 )
-                            except BaseException as exc:
-                                up_attempt.interrupt(exc)
-                                raise
-                            up_attempt.finish(up)
-                            _report(
-                                f"фото {path.name}",
-                                up.success,
-                                up.reason or "загружено и привязано",
-                                uncertain=up.uncertain,
-                                problems=problems,
-                            )
+                            for path in fitting:
+                                up_attempt = attempt(new_id, "upload_photo")
+                                try:
+                                    photo_file = validate_photo(path)
+                                    up = upload_photo_on_hh(
+                                        page,
+                                        resume,
+                                        photo_file,
+                                        False,
+                                        before_click=up_attempt.before_click,
+                                    )
+                                except BaseException as exc:
+                                    up_attempt.interrupt(exc)
+                                    raise
+                                up_attempt.finish(up)
+                                _report(
+                                    f"фото {path.name}",
+                                    up.success,
+                                    up.reason or "загружено и привязано",
+                                    uncertain=up.uncertain,
+                                    problems=problems,
+                                )
                 elif payload.get("photos") and not args.no_photos:
                     print("[WARN] фото: переносимых файлов нет — пропущено")
 

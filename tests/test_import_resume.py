@@ -88,6 +88,16 @@ def test_parse_salary_text_digits_and_currency():
     assert parse_salary_text(None) == (None, None)
 
 
+def test_plan_position_range_salary_is_refused():
+    payload = {
+        **PAYLOAD,
+        "position": {"title": "Тест", "salary_text": "от 150 000 до 200 000 ₽", "fields": []},
+    }
+    plan, unavailable = plan_position(payload)
+    assert plan.salary is None
+    assert any("числового значения" in note for note in unavailable)
+
+
 def test_plan_position_multi_value_field_is_not_silently_truncated():
     payload = {
         **PAYLOAD,
@@ -144,8 +154,15 @@ def test_parse_period_closed_and_current():
     assert parse_period("Март 2020 — Март 2024") == ("3", "2020", "3", "2024", False)
     assert parse_period("Июнь 2021 — по настоящее время") == ("6", "2021", "", "", True)
     assert parse_period("2020") is None
+    assert parse_period("Март 2020") is None  # одиночная дата — не открытый период
+    assert parse_period("Майор 2020 — Май 2024") is None  # «май» не матчит «майор»
     assert parse_period("") is None
     assert parse_period(None) is None
+
+
+def test_parse_salary_text_refuses_range():
+    # Диапазон не переносится: склейка цифр дала бы мусорное число.
+    assert parse_salary_text("от 150 000 до 200 000 ₽") == (None, None)
 
 
 def test_plan_experience_skips_unparsable_period():

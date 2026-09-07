@@ -47,6 +47,10 @@ from .skills import Skill
 # не молча.
 IMPORT_SKILL_LEVEL = "intermediate"
 
+# Лимит общей на аккаунт галереи фото hh.ru. Числовой константы в коде
+# проекта нет — единственный источник — модалка photo-viewer-limit
+# (RESUME_PHOTO_VIEWER_LIMIT, «8 фото — это максимум», бои 2026-09-02/03);
+# при изменении лимита hh.ru обновлять здесь.
 GALLERY_LIMIT = 8
 
 # Валюта по текстовым маркерам в нижнем регистре: hh.ru пишет и «руб.»,
@@ -119,8 +123,13 @@ def parse_salary_text(text: str | None) -> tuple[int | None, str | None]:
     """
     if not text:
         return None, None
-    digits = re.sub(r"[^0-9]", "", text)
-    salary = int(digits) if digits else None
+    compact = text.replace(" ", "").replace(" ", "")
+    digit_groups = re.findall(r"\d+", compact)
+    if len(digit_groups) > 1:
+        # Диапазон («от 150 000 до 200 000 ₽») склейкой цифр не переносится —
+        # честный отказ вызывающему коду через salary=None.
+        return None, None
+    salary = int(digit_groups[0]) if digit_groups else None
     lowered = text.lower()
     currency = next(
         (
@@ -245,7 +254,9 @@ def parse_period(period: str | None) -> tuple[str, str, str, str, bool] | None:
     if start is None:
         return None
     if len(parts) == 1:
-        return start[1], start[0], "", "", True
+        # Одиночная дата без тире не доказывает открытый период — не
+        # выдумываем current=True, честный отказ.
+        return None
     end_text = parts[1].lower()
     if any(marker in end_text for marker in CURRENT_PERIOD_MARKERS):
         return start[1], start[0], "", "", True
@@ -256,14 +267,19 @@ def parse_period(period: str | None) -> tuple[str, str, str, str, bool] | None:
 
 
 def _parse_month_year(text: str) -> tuple[str, str] | None:
-    """«Март 2020» → ('2020','3'); иначе None."""
-    cleaned = " ".join(text.split()).strip().rstrip(".")
-    lowered = cleaned.lower()
-    for name, number in RU_MONTHS.items():
-        if lowered.startswith(name):
-            year_match = re.search(r"(\d{4})", lowered)
-            return (year_match.group(1), str(number)) if year_match else None
-    return None
+    """«Март 2020» → ('2020','3'); иначе None.
+
+    Месяц сверяется со СЛОВОМ целиком (первый токен), не префиксом: «май»
+    не должен матчит «майор».
+    """
+    tokens = " ".join(text.split()).strip().rstrip(".").lower().split()
+    if not tokens:
+        return None
+    number = RU_MONTHS.get(tokens[0])
+    if number is None:
+        return None
+    year_match = re.search(r"(\d{4})", " ".join(tokens[1:]))
+    return (year_match.group(1), str(number)) if year_match else None
 
 
 def plan_experience(payload: dict) -> tuple[ExperiencePlan, list[str]]:
