@@ -438,7 +438,7 @@ def test_open_filters_requires_hydration_before_decision(monkeypatch):
     page = MagicMock()
     monkeypatch.setattr(
         professional_roles_module,
-        "wait_for_named_control_hydration",
+        "wait_for_react_hydration",
         lambda *_a, **_k: False,
     )
     with pytest.raises(RuntimeError, match="не гидратировалась"):
@@ -446,19 +446,96 @@ def test_open_filters_requires_hydration_before_decision(monkeypatch):
     page.locator.assert_not_called()
 
 
+def _page_with_trigger_and_toggle(trigger, toggle):
+    """#1030: локаторы по селекторам, а не общий return_value MagicMock."""
+    page = MagicMock()
+
+    def locator(selector):
+        if selector == professional_roles_module.FILTER_TRIGGER:
+            return trigger
+        assert selector == professional_roles_module.FILTERS_TOGGLE
+        return toggle
+
+    page.locator.side_effect = locator
+    return page
+
+
 def test_open_filters_proceeds_after_hydration(monkeypatch):
     trigger = MagicMock()
     trigger.count.return_value = 1
     trigger.is_visible.return_value = True
-    page = MagicMock()
-    page.locator.return_value = trigger
+    toggle = MagicMock()
+    page = _page_with_trigger_and_toggle(trigger, toggle)
     monkeypatch.setattr(
         professional_roles_module,
-        "wait_for_named_control_hydration",
+        "wait_for_react_hydration",
         lambda *_a, **_k: True,
     )
     professional_roles_module._open_filters_if_needed(page)
-    page.get_by_role.assert_not_called()  # клик по тогглу не понадобился
+    toggle.click.assert_not_called()  # клик по тогглу не понадобился
+
+
+def test_open_filters_waits_for_late_toggle_mount(monkeypatch):
+    """Свежий аккаунт 2026-09-07: кнопка «Фильтры» монтируется ПОЗЖЕ контейнера,
+    и мгновенное решение «0 контролов» — ложный отказ. Тоггл, появившийся в
+    окне бюджета, кликается."""
+    calls = {"n": 0}
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    toggle.count.return_value = 0
+
+    def fake_wait(ms):
+        calls["n"] += 1
+        if calls["n"] >= 3:  # на 3-м опросе кнопка смонтировалась
+            toggle.count.return_value = 1
+            toggle.is_visible.return_value = True
+
+    page = _page_with_trigger_and_toggle(trigger, toggle)
+    page.wait_for_timeout.side_effect = fake_wait
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_react_hydration",
+        lambda *_a, **_k: True,
+    )
+    professional_roles_module._open_filters_if_needed(page)
+    # 3 опроса до монтажа + ожидание 250 мс после каждого из двух кликов
+    # (desktop: collapsed -> quick filters -> full filters).
+    assert calls["n"] == 5
+    assert toggle.click.call_count == 2
+
+
+def test_open_filters_fails_closed_when_toggle_never_mounts(monkeypatch):
+    """Тоггл не появился за бюджет — честный отказ, не «0 контролов»."""
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    toggle.count.return_value = 0
+    page = _page_with_trigger_and_toggle(trigger, toggle)
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_react_hydration",
+        lambda *_a, **_k: True,
+    )
+    with pytest.raises(RuntimeError, match="не появился за бюджет"):
+        professional_roles_module._open_filters_if_needed(page)
+
+
+def test_open_filters_fails_closed_on_ambiguous_toggle(monkeypatch):
+    """#1030: больше одного тоггла — отказ вместо угадывания, без клика."""
+    trigger = MagicMock()
+    trigger.count.return_value = 0
+    toggle = MagicMock()
+    toggle.count.return_value = 2
+    page = _page_with_trigger_and_toggle(trigger, toggle)
+    monkeypatch.setattr(
+        professional_roles_module,
+        "wait_for_react_hydration",
+        lambda *_a, **_k: True,
+    )
+    with pytest.raises(RuntimeError, match="неоднозначен: 2"):
+        professional_roles_module._open_filters_if_needed(page)
+    toggle.click.assert_not_called()
 
 
 class _GhostChevron(_Chevron):

@@ -28,13 +28,20 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .browser import HH_BASE_URL, goto_hh, wait_for_named_control_hydration
+from .browser import HH_BASE_URL, goto_hh, wait_for_react_hydration
 from .external_forms.detect import normalize
 
 logger = logging.getLogger(__name__)
 
 SEARCH_URL = f"{HH_BASE_URL}/search/vacancy"
 FILTER_TRIGGER = "[data-qa='search-filter-professional-role-trigger']"
+# #1030: тоггл «Фильтры» на /search/vacancy. Адресация по data-qa, а не по
+# role+name: во время инцидента get_by_role("button", name="Фильтры") не
+# находил видимую кнопку (census её показывал). aria-label-гипотеза живым DOM
+# опровергнута (2026-09-07, marketing+default+IAB: атрибута нет), инцидент не
+# воспроизвёлся; data-qa снимает зависимость от accessible name и тайминга
+# монтирования сразу. Подтверждено живым DOM на обоих аккаунтах и в IAB.
+FILTERS_TOGGLE = "[data-qa='header-search-filters-button']"
 TREE_INPUT = "[data-qa~='tree-selector-input-{}']"
 TREE_INPUT_ANY = "input[data-qa*='tree-selector-input-']"
 TREE_LABEL = "[data-qa='cell-text-content']"
@@ -52,6 +59,12 @@ _COLLAPSE_ATTEMPTS = 3
 _WEDGE_GRACE_STEPS = 20  # 20 × _COLLAPSE_POLL_MS = 2 c
 # #858/#1004: окно гидрации тоггла «Фильтры» (SSR-кнопка видима до React).
 _FILTERS_HYDRATION_TIMEOUT_MS = 15_000
+# #1030: гидрация кнопки не доказывает её кликабельность (is_visible может
+# догонять React-привязку), а мгновенное решение «0 контролов» — ложный
+# отказ. Бюджет ожидания монтажа тоггла/триггера до первого решения,
+# тем же паттерном «commit/гидрация не значит отрисовано».
+_FILTERS_MOUNT_POLL_MS = 250
+_FILTERS_MOUNT_ATTEMPTS = 20  # 20 × 250 мс = 5 c
 
 CACHE_SCHEMA_VERSION = 1
 CACHE_SOURCE = SEARCH_URL
@@ -390,30 +403,37 @@ def _collapse_category(page: Page, dialog, category: ProfessionalRoleCategory, l
 
 
 def _open_filters_if_needed(page: Page) -> None:
-    # #858/#1004: SSR-тоггл «Фильтры» виден до того, как React привязал к нему
-    # обработчики; is_visible() — не кликабельность (клик в окне гидрации
-    # теряется, #840). Гейт: гидрация тоггла до первого решения по контролам.
-    if not wait_for_named_control_hydration(
-        page, "Фильтры", timeout_ms=_FILTERS_HYDRATION_TIMEOUT_MS
-    ):
+    # #858/#1004/#1030: SSR-тоггл «Фильтры» виден до того, как React привязал к
+    # нему обработчики; is_visible() — не кликабельность (клик в окне гидрации
+    # теряется, #840). Гейт: гидрация самого тоггла по data-qa, а не «любого
+    # контрола с текстом „Фильтры"» — во время инцидента #1030 текстовый гейт
+    # проходил, а get_by_role по имени кнопку не находил.
+    if not wait_for_react_hydration(page, FILTERS_TOGGLE, timeout_ms=_FILTERS_HYDRATION_TIMEOUT_MS):
         raise RuntimeError(
             "страница поиска вакансий не гидратировалась: тоггл «Фильтры» без "
             "React-привязок — клик был бы потерян"
         )
     trigger = page.locator(FILTER_TRIGGER)
+    toggle = page.locator(FILTERS_TOGGLE)
     # Desktop cycles through collapsed -> quick filters -> full filters; the
     # compact in-app layout opens the full panel in one click.
     for _ in range(2):
-        if trigger.count() == 1 and trigger.is_visible():
-            return
-        toggles = (
-            page.get_by_role("button", name="Фильтры", exact=True),
-            page.get_by_role("checkbox", name="Фильтры", exact=True),
-        )
-        visible = [toggle for toggle in toggles if toggle.count() == 1 and toggle.is_visible()]
-        if len(visible) != 1:
-            raise RuntimeError(f"контрол read-only фильтров неоднозначен: {len(visible)}")
-        visible[0].click()
+        found = None
+        for _attempt in range(_FILTERS_MOUNT_ATTEMPTS):
+            if trigger.count() == 1 and trigger.is_visible():
+                return
+            if toggle.count() > 1:
+                raise RuntimeError(f"контрол read-only фильтров неоднозначен: {toggle.count()}")
+            if toggle.count() == 1 and toggle.is_visible():
+                found = toggle
+                break
+            page.wait_for_timeout(_FILTERS_MOUNT_POLL_MS)
+        if found is None:
+            raise RuntimeError(
+                "тоггл «Фильтры» не появился за бюджет "
+                f"{_FILTERS_MOUNT_ATTEMPTS * _FILTERS_MOUNT_POLL_MS} мс после гидрации"
+            )
+        found.click()
         page.wait_for_timeout(250)
 
 

@@ -72,6 +72,7 @@ VALUES: dict[str, str] = {
     "negotiations.NEGOTIATION_ITEM": "[data-qa='negotiations-item']",
     "negotiations.NEGOTIATION_STATUS": "[data-qa^='negotiations-tag']",
     "negotiations.NEGOTIATION_VACANCY_LINK": "[data-qa='negotiations-item-vacancy']",
+    "professional_roles.FILTERS_TOGGLE": "[data-qa='header-search-filters-button']",
     "professional_roles.FILTER_TRIGGER": "[data-qa='search-filter-professional-role-trigger']",
     "professional_roles.TREE_CATEGORY_INPUT": "input[data-qa*='tree-selector-input-category-']",
     "professional_roles.TREE_CHEVRON": "[data-qa~='tree-selector-chevron-category-{category_id}']",
