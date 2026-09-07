@@ -105,11 +105,9 @@ EXPERIENCE_END_YEAR = _selector("resume_experience.EXPERIENCE_END_YEAR")
 # failure.html): hh.ru dropped the month data-qa entirely — the triggers are
 # now the two bare `[data-qa='magritte-select-activator']` divs (start=nth 0,
 # end=nth 1), the SAME shape the #956 dump already showed for the shared
-# add-form. Popup/options unchanged. The first-entry form was NOT separately
-# re-verified: if it kept the old data-qa, count() reads 0 there, the month
-# pick is skipped, and the #811 save-time validation rejects the form
-# (fail-closed) — a live first-entry run is required before relying on that
-# path again (review PR #965).
+# add-form. Popup/options unchanged. The first-entry form kept its own
+# data-qa — re-verified live 2026-09-07, see FIRST_EXPERIENCE_*_MONTH below:
+# the shapes have diverged, this positional pair is INDEXED/SHARED-only.
 EXPERIENCE_START_MONTH = _selector("resume_experience.EXPERIENCE_START_MONTH")
 EXPERIENCE_END_MONTH = _selector("resume_experience.EXPERIENCE_END_MONTH")
 # #956 (live dump 2026-09-03, experience_row_0_save_failure.html): the THIRD
@@ -323,3 +321,17 @@ EXPERIENCE_VIEW_CARD = _selector("resume_experience.EXPERIENCE_VIEW_CARD")
 # подставные: "ООО Ромашка", "ООО Василёк" — реальные работодатели в коде
 # не хранятся).
 EXPERIENCE_VIEW_COMPANY = _selector("resume_experience.EXPERIENCE_VIEW_COMPANY")
+# Month comboboxes of the FIRST-ENTRY editor only (/resume/edit/{id}/experience,
+# zero existing entries). The shapes have DIVERGED: #957 (2026-09-04) found the
+# indexed row editor's month triggers reduced to bare magritte-select-activators
+# and switched EXPERIENCE_START/END_MONTH to that positional pair, but the
+# first-entry form KEPT its own data-qa — re-verified live 2026-09-07 (census,
+# read-only): the month controls are div role="combobox" with
+# resume-editor-experience-{start,end}-month-input data-qa and the page renders
+# ZERO bare magritte-select-activator controls, so the #957 positional locator
+# reads count()==0 there and the pre-save verification fails closed
+# («месяц начала не подтверждён», save не нажат — два боевых отказа
+# 2026-09-07 до этого фикса). Popup/options after a click are expected to stay
+# magritte-select-option-{01..12} (#811), confirmed by the post-fix live run.
+FIRST_EXPERIENCE_START_MONTH = _selector("resume_experience.FIRST_EXPERIENCE_START_MONTH")
+FIRST_EXPERIENCE_END_MONTH = _selector("resume_experience.FIRST_EXPERIENCE_END_MONTH")

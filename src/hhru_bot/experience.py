@@ -53,8 +53,10 @@ from .selector_groups.resume_experience import (
     FIRST_EXPERIENCE_CANCEL,
     FIRST_EXPERIENCE_COMPANY,
     FIRST_EXPERIENCE_CURRENT_CHECKBOX,
+    FIRST_EXPERIENCE_END_MONTH,
     FIRST_EXPERIENCE_POSITION,
     FIRST_EXPERIENCE_SAVE,
+    FIRST_EXPERIENCE_START_MONTH,
     SHARED_EXPERIENCE_END_MONTH,
     SHARED_EXPERIENCE_START_MONTH,
 )
@@ -1276,6 +1278,14 @@ def edit_experience_on_hh(
             if via_add_button:
                 start_month_locator = page.locator(SHARED_EXPERIENCE_START_MONTH)
                 end_month_locator = page.locator(SHARED_EXPERIENCE_END_MONTH)
+            elif first_entry:
+                # 2026-09-07 (census, read-only): first-entry form KEPT its own
+                # month data-qa (#811) when the indexed/shared editors dropped
+                # theirs (#956/#957) — it renders ZERO bare
+                # magritte-select-activators, so the positional pair reads
+                # count()==0 here and the pre-save verification fails closed.
+                start_month_locator = page.locator(FIRST_EXPERIENCE_START_MONTH)
+                end_month_locator = page.locator(FIRST_EXPERIENCE_END_MONTH)
             else:
                 start_month_locator = page.locator(EXPERIENCE_START_MONTH)
                 end_month_locator = page.locator(EXPERIENCE_END_MONTH)

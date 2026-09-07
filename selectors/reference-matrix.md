@@ -120,8 +120,10 @@
 | resume_experience.FIRST_EXPERIENCE_CANCEL | `[data-qa='resume-partial-edit-cancel']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_COMPANY | `[data-qa='resume-editor-experience-company-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_CURRENT_CHECKBOX | `[data-qa='checkbox-container'] input` | — | — | — | documented_live |
+| resume_experience.FIRST_EXPERIENCE_END_MONTH | `[data-qa='resume-editor-experience-end-month-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_POSITION | `[data-qa='resume-editor-experience-position-input']` | — | — | — | live_dom |
 | resume_experience.FIRST_EXPERIENCE_SAVE | `[data-qa='resume-partial-edit-save']` | — | — | — | live_dom |
+| resume_experience.FIRST_EXPERIENCE_START_MONTH | `[data-qa='resume-editor-experience-start-month-input']` | — | — | — | live_dom |
 | resume_experience.SHARED_EXPERIENCE_CANCEL | `[data-qa='profile-layout-cancel-button']` | — | — | — | live_dom |
 | resume_experience.SHARED_EXPERIENCE_END_MONTH | `[data-qa='magritte-select-activator'] >> nth=1` | — | — | — | live_dom |
 | resume_experience.SHARED_EXPERIENCE_SAVE | `[data-qa='profile-layout-save-button']` | — | — | — | live_dom |
