@@ -408,9 +408,7 @@ def _open_filters_if_needed(page: Page) -> None:
     # теряется, #840). Гейт: гидрация самого тоггла по data-qa, а не «любого
     # контрола с текстом „Фильтры"» — во время инцидента #1030 текстовый гейт
     # проходил, а get_by_role по имени кнопку не находил.
-    if not wait_for_react_hydration(
-        page, FILTERS_TOGGLE, timeout_ms=_FILTERS_HYDRATION_TIMEOUT_MS
-    ):
+    if not wait_for_react_hydration(page, FILTERS_TOGGLE, timeout_ms=_FILTERS_HYDRATION_TIMEOUT_MS):
         raise RuntimeError(
             "страница поиска вакансий не гидратировалась: тоггл «Фильтры» без "
             "React-привязок — клик был бы потерян"
