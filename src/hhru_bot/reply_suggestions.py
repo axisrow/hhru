@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .ai.prompt_safety import UNTRUSTED_DATA_INSTRUCTION, wrap_untrusted
+
 
 class AmbiguousReplyContext(ValueError):
     """The topic cannot be mapped to exactly one vacancy/resume."""
@@ -35,21 +37,28 @@ def validate_context(contexts: list[ReplyContext]) -> ReplyContext:
 
 
 def build_prompt(context: ReplyContext) -> list[dict[str, str]]:
-    """Build an allow-listed prompt: exactly one message and vacancy context."""
+    """Build an allow-listed prompt: exactly one message and vacancy context.
+
+    #1026: входящее сообщение пишет живой человек — самый активный инъекционный
+    вектор среди free-text путей (аудит #1025), поэтому оно маркируется как
+    недоверенные данные.
+    """
     return [
         {
             "role": "system",
             "content": (
                 "Напиши короткий вежливый ответ рекрутеру на русском. "
-                "Не выдумывай факты, не отправляй сообщение и верни только текст ответа."
+                "Не выдумывай факты, не отправляй сообщение и верни только текст ответа.\n"
+                + UNTRUSTED_DATA_INSTRUCTION
             ),
         },
         {
             "role": "user",
             "content": (
                 f"Вакансия: {context.vacancy_title}\nКомпания: {context.employer or 'не указана'}\n"
-                f"Входящее сообщение рекрутера:\n{context.inbound_text}\n"
-                "Составь уместный ответ именно на это сообщение."
+                "Входящее сообщение рекрутера:\n"
+                + wrap_untrusted("сообщение рекрутера", context.inbound_text)
+                + "\nСоставь уместный ответ именно на это сообщение."
             ),
         },
     ]
