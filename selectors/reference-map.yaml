@@ -1606,6 +1606,27 @@ selectors:
     unavailable_reason: Read-only audit 2026-08-25 found no saved DOM snapshot and no approved reference source with a browser/UI
       withdrawal success selector control flow; selector remains unproven and cannot be used to report a destructive action
       as successful.
+  professional_roles.FILTERS_TOGGLE:
+    value: '[data-qa=''header-search-filters-button'']'
+    criticality: read
+    declared_at: src/hhru_bot/professional_roles.py:45
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - header-search-filters-button
+    evidence:
+      source: live DOM probes 2026-09-07 (hhru census + el.outerHTML, accounts marketing/default, plus in-app browser)
+      note: 'Toggle button on /search/vacancy; tag=button, innerText=Фильтры, aria-label attribute absent on both accounts.
+        #1030: get_by_role(name=''Фильтры'') returned 0 visible during the incident while census showed the button; addressing
+        moved to data-qa to drop the accessible-name and mount-timing dependence. Incident itself not reproduced on 2026-09-07.'
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    last_verified_at: '2026-09-07'
+    verified_flow: census_and_outerHTML_read_only_on_search_vacancy
+    verified_by: codex
   professional_roles.FILTER_TRIGGER:
     value: '[data-qa=''search-filter-professional-role-trigger'']'
     criticality: read

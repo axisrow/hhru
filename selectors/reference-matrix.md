@@ -74,6 +74,7 @@
 | negotiations.NEGOTIATION_WITHDRAW | `[data-qa='negotiations-item-withdraw']` | — | — | — | unavailable |
 | negotiations.NEGOTIATION_WITHDRAW_CONFIRM | `[data-qa='negotiations-withdraw-confirm']` | — | — | — | unavailable |
 | negotiations.NEGOTIATION_WITHDRAW_SUCCESS | `[data-qa='negotiations-item-withdrawn']` | — | — | — | unavailable |
+| professional_roles.FILTERS_TOGGLE | `[data-qa='header-search-filters-button']` | — | — | — | live_dom |
 | professional_roles.FILTER_TRIGGER | `[data-qa='search-filter-professional-role-trigger']` | — | — | — | workflow_live |
 | professional_roles.TREE_CATEGORY_INPUT | `input[data-qa*='tree-selector-input-category-']` | — | — | — | live_dom |
 | professional_roles.TREE_CHEVRON | `[data-qa~='tree-selector-chevron-category-{category_id}']` | — | — | — | live_dom |
