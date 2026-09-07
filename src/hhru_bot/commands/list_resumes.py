@@ -206,6 +206,7 @@ def run(args: argparse.Namespace) -> None:
     # вынести в маленький публичный хелпер.
     from ..common import _on_wizard_common
     from ..copy_resume import ResumeListIndeterminate, list_resume_cards, list_wizard_drafts
+    from ..responses import NotAuthenticated
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -250,6 +251,14 @@ def run(args: argparse.Namespace) -> None:
                 cards = list_wizard_drafts(page)
             else:
                 cards = list_resume_cards(page, navigate=False)
+        except NotAuthenticated as exc:
+            # В визард-ветке list_wizard_drafts делает identity-bound readback
+            # (open_confirmed_resume -> require_authenticated_page): сессия может
+            # протухнуть посреди команды, и это sibling ResumeListIndeterminate под
+            # PageStateIndeterminate — без явного лова был бы traceback вместо
+            # [FAIL] (конвенция: commands/delete_resume.py).
+            print(f"[FAIL] Сессия недействительна: {exc}")
+            return
         except ResumeListIndeterminate as e:
             # Timeout/интерстишл/дрейф селектора — не подтверждённо пустой
             # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py);

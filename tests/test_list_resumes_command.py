@@ -622,6 +622,30 @@ def test_wizard_mode_indeterminate_still_fails_closed(capsys, tmp_path, monkeypa
     assert "не найдено" not in out
 
 
+def test_wizard_mode_not_authenticated_fails_clean(capsys, tmp_path, monkeypatch):
+    """Сессия протухла посреди identity-bound readback визарда — [FAIL], а не
+    traceback: NotAuthenticated ловится явно (конвенция delete_resume)."""
+    from hhru_bot.responses import NotAuthenticated
+
+    config = _live_env(tmp_path, monkeypatch)
+
+    def _raise(page):
+        raise NotAuthenticated("страница резюме содержит форму входа")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **kw: _FakeContext())
+    monkeypatch.setattr("hhru_bot.browser.has_auth_cookie", lambda page: True)
+    monkeypatch.setattr("hhru_bot.browser.goto_hh", lambda page, url, **kw: None)
+    monkeypatch.setattr("hhru_bot.browser.has_login_form", lambda page: False)
+    monkeypatch.setattr("hhru_bot.common._on_wizard_common", lambda page: True)
+    monkeypatch.setattr("hhru_bot.copy_resume.list_wizard_drafts", _raise)
+
+    list_resumes_cmd.run(_args(config, tmp_path / "h.db"))
+
+    out = capsys.readouterr().out
+    assert "[FAIL] Сессия недействительна" in out
+    assert "Traceback" not in out
+
+
 def test_no_wizard_keeps_card_list_path(capsys, tmp_path, monkeypatch):
     """Предикат визарда False — прежний путь list_resume_cards; визард-ридер
     не дёргается вовсе."""
