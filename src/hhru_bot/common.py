@@ -99,6 +99,9 @@ REQUIRED_FIELDS = (
 BIRTHDAY_MONTH = "[data-qa='resume-profile-common-birthday-month-selector']"
 BIRTHDAY_YEAR = "[data-qa='resume-profile-common-birthday-year-input']"
 CITIZENSHIP_SELECTOR = "[data-qa='resume-profile-common-citizenship-selector']"
+# Тексты-плейсхолдеры magritte-select-activator'ов, которые НЕ являются
+# выбранным значением (живой экран common визарда, 2026-09-08).
+_SELECT_PLACEHOLDER_TEXTS = {"Месяц", "Год"}
 
 
 @dataclass(frozen=True)
@@ -157,6 +160,22 @@ def _strict(page: Page, selector: str, label: str):
     if loc.count() != 1:
         raise RuntimeError(f"поле {label} не подтверждено однозначно")
     return loc.first
+
+
+# #991/#840: поля common гидратируются СЕКУДЫ после видимости; fill/check/клик
+# в этом окне теряются при React-монтировании — форма остаётся пустой при
+# «успешно» выполненном вводе (живой факт 2026-09-08: surname/day/phone
+# value="" в post-save дампе при заполненных аргументах). Гейт — тот же, что
+# у SAVE (#991), но ДО каждого ввода.
+_FIELD_HYDRATION_TIMEOUT_MS = 10_000
+
+
+def _hydrated_strict(page: Page, selector: str, label: str):
+    """Поле строго + гейт гидрации ДО ввода: ввод в негидратированное поле
+    React молча отбрасывает при монтировании."""
+    if not wait_for_react_hydration(page, selector, timeout_ms=_FIELD_HYDRATION_TIMEOUT_MS):
+        raise RuntimeError(f"поле {label} не гидратировано — ввод был бы потерян")
+    return _strict(page, selector, label)
 
 
 def open_common_form(page: Page, resume: ResumeConfig):
@@ -382,12 +401,20 @@ def _read_common(page: Page) -> CommonValues:
             return None
         return activator.inner_text().strip() or None
 
+    # Плейсхолдеры activator'ов ДР («Месяц»/«Год») — НЕ значения: живой факт
+    # 2026-09-08 — пустая дата читалась как «Месяц Год», merge_prefilled считал
+    # её заполненной и скалил заполнение (валидация hh.ru затем отвергала
+    # пустую дату при «заполненном» отчёте).
+    def activator_state(selector: str, label: str) -> str:
+        text = activator_value(selector, label)
+        return "" if text in _SELECT_PLACEHOLDER_TEXTS else text
+
     birthday = " ".join(
         part
         for part in (
             soft_value(BIRTHDAY, "birthday-day"),
-            activator_value(BIRTHDAY_MONTH, "birthday-month"),
-            activator_value(BIRTHDAY_YEAR, "birthday-year"),
+            activator_state(BIRTHDAY_MONTH, "birthday-month"),
+            activator_state(BIRTHDAY_YEAR, "birthday-year"),
         )
         if part
     )
@@ -497,22 +524,112 @@ def _set_tree(page: Page, trigger_selector: str, values: list[str], label: str) 
     modal.first.wait_for(state="hidden", timeout=_WAIT_MS)
 
 
+def _select_magritte_option(
+    page: Page, container_selector: str, option_qa: str, label: str
+) -> None:
+    """Выбор в magritte-комбобоксе ДР-экрана: activator -> опция по data-qa.
+
+    Identity — data-qa опции: месяц ``magritte-select-option-{01..12}`` (тот же
+    magritte-виджет, что у month-комбобоксов опыта #840), год —
+    ``magritte-select-option-{1900..2012}`` (живой DOM 2026-09-08, визард
+    common черновика). Опция не появилась/неоднозначна — fail-closed отказ,
+    не клик по «похожей».
+    """
+    activator_selector = f"{container_selector} [data-qa='magritte-select-activator']"
+    hydrated = wait_for_react_hydration(
+        page, activator_selector, timeout_ms=_FIELD_HYDRATION_TIMEOUT_MS
+    )
+    if not hydrated:
+        raise RuntimeError(f"комбобокс {label} не гидратирован — клик был бы потерян")
+    activator = page.locator(activator_selector)
+    if activator.count() != 1:
+        raise RuntimeError(f"комбобокс {label} не подтверждён однозначно ({activator.count()})")
+    activator.first.click()
+    option = page.locator(f"[data-qa='{option_qa}']")
+    try:
+        option.first.wait_for(state="visible", timeout=_WAIT_MS)
+    except PlaywrightError as exc:
+        raise RuntimeError(f"опция {label} не появилась ({option_qa}): {exc}") from exc
+    if option.count() != 1:
+        raise RuntimeError(f"опция {label} неоднозначна ({option_qa}): {option.count()}")
+    option.first.click()
+
+
+def _apply_birthday(page: Page, value: str) -> None:
+    """Заполнить ДР: день в input, месяц/год — magritte-комбобоксы.
+
+    Формат ``DD.MM.YYYY`` (полный) или ``DD`` (только день — legacy-вызов без
+    month/year; экран сам держит месяц/год предзаполненными). Валидация до
+    первого клика: мусорная дата не должна открывать комбобоксы.
+    """
+    parts = [part.strip() for part in value.split(".")]
+    day = parts[0]
+    if not day.isdigit():
+        raise RuntimeError(f"день рождения не число: {value!r} (формат DD.MM.YYYY)")
+    _hydrated_strict(page, BIRTHDAY, "birthday-day").fill(day)
+    if len(parts) == 1:
+        return
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        raise RuntimeError(f"дата рождения не DD.MM.YYYY: {value!r}")
+    month = int(parts[1])
+    year = parts[2]
+    if not 1 <= month <= 12:
+        raise RuntimeError(f"месяц рождения вне 1..12: {value!r}")
+    _select_magritte_option(
+        page, BIRTHDAY_MONTH, f"magritte-select-option-{month:02d}", "birthday-month"
+    )
+    _select_magritte_option(page, BIRTHDAY_YEAR, f"magritte-select-option-{year}", "birthday-year")
+
+
+def _apply_phone(page: Page, value: str) -> None:
+    """Заполнить телефон; маскированный ввод обязан ПРИНЯТЬ значение.
+
+    Маска-инпут может молча сбросить ``fill`` (живой факт 2026-09-08: census
+    после save показал пустой input при заполненном аргументе) — поэтому после
+    заполнения значение проверяется, и при пустом вводе повторяется
+    посимвольным набором. Пустой результат — fail-closed отказ ДО save.
+    """
+    loc = _hydrated_strict(page, PHONE, "phone")
+    loc.fill(value)
+    if not (loc.input_value() or "").strip():
+        loc.fill("")
+        loc.press_sequentially(value, delay=30)
+    if not (loc.input_value() or "").strip():
+        raise RuntimeError(
+            "поле phone не приняло значение (маскированный ввод) — сохранение отменено"
+        )
+
+
+def _apply_gender(page: Page, value: str) -> None:
+    """Пол — radio-чип (Мужской/Женский), НЕ <select>: check(), не select_option.
+
+    select_option на radio-чипе падает «not a <select> element»; чип адресуется
+    своим data-qa строго (0/2 совпадений — отказ).
+    """
+    chip_selector = GENDER if value == "male" else GENDER_FEMALE
+    if not wait_for_react_hydration(page, chip_selector, timeout_ms=_FIELD_HYDRATION_TIMEOUT_MS):
+        raise RuntimeError(f"чип пола {value!r} не гидратирован — клик был бы потерян")
+    chip = page.locator(chip_selector)
+    if chip.count() != 1:
+        raise RuntimeError(f"чип пола {value!r} не подтверждён однозначно ({chip.count()})")
+    chip.first.check()
+
+
 def apply_common(page: Page, values: CommonValues) -> None:
     """Fill explicit values only; all controls must resolve exactly once."""
     selectors = {
         "first_name": (FIRST_NAME, values.first_name),
         "last_name": (LAST_NAME, values.last_name),
-        "birthday": (BIRTHDAY, values.birthday),
-        "gender": (GENDER, values.gender),
-        "phone": (PHONE, values.phone),
     }
     for name, (selector, value) in selectors.items():
         if value is not None:
-            loc = _strict(page, selector, name)
-            if name == "gender":
-                loc.select_option(value)
-            else:
-                loc.fill(value)
+            _hydrated_strict(page, selector, name).fill(value)
+    if values.birthday is not None:
+        _apply_birthday(page, values.birthday)
+    if values.gender is not None:
+        _apply_gender(page, values.gender)
+    if values.phone is not None:
+        _apply_phone(page, values.phone)
     if values.area is not None:
         # #993: на экране common визарда черновика поле города не рендерится
         # вовсе (live 2026-09-05) — прежняя ошибка «не подтверждено

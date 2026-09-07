@@ -19,7 +19,10 @@ def register(subparsers) -> None:
     parser.add_argument("--resume", required=True, help="Slug из конфига или resume_id HH.ru")
     parser.add_argument("--first-name", dest="first_name", help="Имя")
     parser.add_argument("--last-name", dest="last_name", help="Фамилия")
-    parser.add_argument("--birthday", help="Дата в формате, который принимает форма hh.ru")
+    parser.add_argument(
+        "--birthday",
+        help="Дата рождения DD.MM.YYYY (полностью; месяц/год — magritte-комбобоксы)",
+    )
     parser.add_argument("--gender", choices=("male", "female"), help="Пол")
     parser.add_argument("--phone", help="Телефон")
     parser.add_argument("--area", help="Точный leaf города из live-каталога hh.ru")
