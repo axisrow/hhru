@@ -186,7 +186,9 @@ def build_parser() -> argparse.ArgumentParser:
         # флаг не передан). Это тот же контракт, что раньше давал только
         # scripts/scheduled_run.sh, но теперь для любой команды CLI: плановые
         # задачи и одноразовые запуски резолвят аккаунт одинаково, без
-        # дублирования перевода env -> --account в обёртках.
+        # дублирования перевода env -> --account в обёртках. Осознанно: default
+        # вычисляется в момент build_parser(), а не parse_args() — для
+        # CLI-энтрипоинта это эквивалентно, чтение env после билда не учитывается.
         default=os.environ.get("HHRU_ACCOUNT") or None,
         help="Имя аккаунта (data/accounts/<name>/config.yaml + history.db); "
         "по умолчанию из HHRU_ACCOUNT",
