@@ -36,12 +36,18 @@ from ..apply.letter import (
 )
 from ..search import VacancyCard
 from .feedback import build_style_context
+from .prompt_safety import UNTRUSTED_DATA_INSTRUCTION, wrap_untrusted
 
 if TYPE_CHECKING:
     from ..config_sections.ai_profile import AIProfile
     from . import LLMClient
 
 logger = logging.getLogger("hhru_bot.ai.letters")
+
+# Бюджет длины описания вакансии в промпте (#1026 п.2): начало описания
+# (роль/требования) несёт почти всю пользу для письма, хвост только
+# раздувает промпт и стоимость запроса.
+VACANCY_DESCRIPTION_BUDGET = 4000
 
 
 class AICoverLetterProvider(CoverLetterProvider):
@@ -136,7 +142,8 @@ def _build_prompt(
     system = (
         "Ты помогаешь писать короткие сопроводительные письма для отклика на "
         "вакансии на hh.ru. Пиши на русском, вежливо, без воды и без выдуманных "
-        "фактов о кандидате. Только текст письма, без пояснений и без темы."
+        "фактов о кандидате. Только текст письма, без пояснений и без темы.\n"
+        + UNTRUSTED_DATA_INSTRUCTION
     )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system}]
@@ -163,7 +170,12 @@ def _build_prompt(
     lines = [f"Вакансия: {vacancy.title}.", f"Компания: {vacancy.company or 'не указана'}."]
     description = getattr(vacancy, "vacancy_description", "") or ""
     if description:
-        lines.append("Полное описание вакансии (источник — страница вакансии):\n" + description)
+        # #1026: описание вакансии пишет работодатель — недоверенный текст,
+        # маркируем ограничителями и ограничиваем бюджет длины.
+        lines.append(
+            "Полное описание вакансии (источник — страница вакансии):\n"
+            + wrap_untrusted("описание вакансии", description, limit=VACANCY_DESCRIPTION_BUDGET)
+        )
     if profile is not None:
         # Рандомизация {a|b|c} в каждом поле профиля — до подстановки в промпт.
         summary = _resolve_alternatives(profile.summary)

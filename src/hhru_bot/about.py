@@ -66,7 +66,16 @@ def _profile_lines(profile: AIProfile | None) -> list[str]:
 
 
 def build_about_prompt(existing: str, profile: AIProfile | None) -> list[dict[str, str]]:
-    """Build a conservative prompt: existing text is context, never a target to rewrite."""
+    """Build a conservative prompt: existing text is context, never a target to rewrite.
+
+    #1026 — задокументированный отказ от разметки недоверенного текста: весь
+    user-контент этого промпта (``existing`` — текст «Обо мне» собственного
+    резюме пользователя, поля профиля — его же конфиг) создаётся самим
+    пользователем; чужого недоверенного текста в этом пути нет, инъекция
+    возможна только от самого пользователя против себя. Разметка
+    (``ai.prompt_safety``) применена в путях с внешним текстом —
+    ``ai/letters.py`` и ``reply_suggestions.py``.
+    """
     mode = "до-заполнение" if existing.strip() else "с нуля"
     system = (
         "Ты помогаешь заполнить раздел «Обо мне» резюме на hh.ru. Пиши на русском, "
