@@ -216,6 +216,12 @@ def plan_position(payload: dict) -> tuple[PositionValues, list[str]]:
     commute = commute_codes[0] if len(commute_codes) == 1 else None
     if fields.get("travelTime") and not commute_codes:
         unavailable.append(f"позиция: время в пути «{fields['travelTime']}» не распознано")
+    elif len(commute_codes) > 1:
+        unavailable.append(
+            f"позиция: несколько значений времени в пути "
+            f"({', '.join(commute_codes)}) — форма подтверждает одно, "
+            "поле не перенесено"
+        )
     trips_text = fields.get("businessTripReadiness")
     trips = (
         True
@@ -321,9 +327,10 @@ def plan_experience(payload: dict) -> tuple[ExperiencePlan, list[str]]:
 def plan_education(payload: dict) -> tuple[EducationPlan, list[str]]:
     """План основного образования; экспортный элемент без institution — пропуск.
 
-    Экспорт страницы резюме не различает уровень/факультет надёжно: переносится
-    только то, что подтверждено элементом (institution=title, specialty из
-    description/subtitle). Уровень записи hh.ru в форме не имеет отдельного поля.
+    Экспорт страницы резюме не различает уровень/факультет/специальность
+    надёжно: переносится только подтверждённое — institution=title и год из
+    текста элемента (level/faculty/organization/specialty остаются пустыми,
+    не выдумываются). Уровня записи в форме hh.ru отдельного поля нет.
     """
     unavailable: list[str] = []
     records: list[EducationRecord] = []

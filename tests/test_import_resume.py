@@ -150,6 +150,20 @@ def test_plan_position_reports_unrecognized_field():
     assert any("занятость" in note for note in unavailable)
 
 
+def test_plan_position_multi_value_commute_is_not_silently_dropped():
+    payload = {
+        **PAYLOAD,
+        "position": {
+            "title": "Тест",
+            "salary_text": None,
+            "fields": [{"field": "travelTime", "text": "Не дольше 1 часа, Не дольше 2 часов"}],
+        },
+    }
+    plan, unavailable = plan_position(payload)
+    assert plan.commute is None
+    assert any("несколько значений времени в пути" in note for note in unavailable)
+
+
 def test_parse_period_closed_and_current():
     assert parse_period("Март 2020 — Март 2024") == ("3", "2020", "3", "2024", False)
     assert parse_period("Июнь 2021 — по настоящее время") == ("6", "2021", "", "", True)
