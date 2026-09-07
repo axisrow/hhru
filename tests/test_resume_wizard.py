@@ -380,3 +380,14 @@ def test_inspect_skill_levels_reports_wizard_next_label(monkeypatch):
     _install_nav_stubs(monkeypatch)
     page = _WizardPage(_markup(next_screen="skill_levels"), url=DYNAMIC_URL)
     assert rw.inspect_wizard_screen(page, RESUME_ID, "skill_levels") == "Сохранить и продолжить"
+
+
+def test_is_publishing_screen_only_last_supported_screen():
+    """#1012: прогноз публикации — только последний экран SUPPORTED_SCREENS
+    (#900, прогоны #1009 и «Повар» 2026-09-06); skill_levels (#1014) —
+    промежуточный, флага не требует."""
+    assert rw.is_publishing_screen("experience") is True
+    assert rw.is_publishing_screen("educations") is False
+    assert rw.is_publishing_screen("keyskills") is False
+    assert rw.is_publishing_screen("skill_levels") is False
+    assert rw.is_publishing_screen("common") is False

@@ -108,10 +108,7 @@ _DYNAMIC_SCREEN_PATH = "/profile/resume/dynamic_screen"
 def _screen_url(screen: str, resume_id: str) -> str:
     """URL открытия экрана: обычный wizard-маршрут или dynamic_screen."""
     if screen == _SKILL_LEVELS_SCREEN:
-        return (
-            f"{HH_BASE_URL}{_DYNAMIC_SCREEN_PATH}"
-            f"?resume={resume_id}&screen_name={screen}"
-        )
+        return f"{HH_BASE_URL}{_DYNAMIC_SCREEN_PATH}?resume={resume_id}&screen_name={screen}"
     return f"{HH_BASE_URL}{screen_path(screen)}?resume={resume_id}"
 
 

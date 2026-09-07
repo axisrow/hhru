@@ -475,13 +475,15 @@ experience; hh.ru публикует черновик сам при сабмит
 `nextIncompleteScreenId` двигается только сабмитом экрана: полностью
 предзаполненный common оставался `nextIncompleteScreenId=common`, пока экран
 не сабмичен (#1009) — «Город» при этом на экране отсутствует вовсе (#1002).
-Экран `skill_levels` — единственный, живущий НЕ на маршруте `/profile/resume/*`:
+Экран `skill_levels` живёт на динамическом маршруте, а не
+`/profile/resume/<screen>`: имя экрана — query-параметр
+(`dynamic_screen?resume=<id>&screen_name=skill_levels`, живая съёмка #1016),
 прямой GET `/profile/resume/skill_levels` рендерит пустой shell (census
-2026-09-07, оба регистра); реальный экран — редактор уровней
-`/resume/edit/{id}/skillsLevels?fromBlock=keySkills` (#813), куда с карточки
-черновика ведёт кнопка hh.ru «Указать уровни» (`skill-level-open-editor`);
-`wizard-next --screen skill_levels` сабмитит его Save-кнопку
-(`RESUME_PARTIAL_EDIT_SAVE`), не NEXT визарда.
+2026-09-07, оба регистра). Сабмит — обычный NEXT визарда, но успех
+доказывается readback'ом флага: Save редактора уровней
+`/resume/edit/{id}/skillsLevels` (#813, куда с карточки черновика ведёт
+кнопка hh.ru «Указать уровни», `skill-level-open-editor`) уровни персистит,
+а `nextIncompleteScreenId` не двигает — живой прогон PR #1015.
 
 Перед первым боевым `bump` (форма отклика уже сверена): пройти `login`, открыть страницу
 резюме в обычном браузере (F12 → Elements), сверить `data-qa` и поправить прямо в
