@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from hhru_bot.accounts import AccountError
 from hhru_bot.apply.antibot import AntiBotChallengeDetected, AntiBotDetection
 from hhru_bot.cli import (
     DEFAULT_CONFIG_PATH,
@@ -63,6 +64,58 @@ def test_account_paths_are_defaults_but_explicit_paths_win(tmp_path, monkeypatch
     assert args.account_dir is None
     assert DEFAULT_CONFIG_PATH == Path("data/config.yaml")
     assert DEFAULT_HISTORY_PATH == Path("data/history.db")
+
+
+def test_hhru_account_env_resolves_paths(tmp_path, monkeypatch):
+    """HHRU_ACCOUNT (#281) — env-дефолт --account для любой команды CLI."""
+    account = tmp_path / "data" / "accounts" / "work"
+    account.mkdir(parents=True)
+    (account / "config.yaml").touch()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HHRU_ACCOUNT", "work")
+    parser = _build()
+
+    args = parser.parse_args(["whoami"])
+    assert args.account == "work"
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == account / "config.yaml"
+    assert Path(args.history).resolve() == account / "history.db"
+
+
+def test_explicit_account_flag_beats_hhru_account_env(tmp_path, monkeypatch):
+    flag_account = tmp_path / "data" / "accounts" / "flag"
+    flag_account.mkdir(parents=True)
+    (flag_account / "config.yaml").touch()
+    env_account = tmp_path / "data" / "accounts" / "env"
+    env_account.mkdir(parents=True)
+    (env_account / "config.yaml").touch()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HHRU_ACCOUNT", "env")
+    parser = _build()
+
+    args = parser.parse_args(["--account", "flag", "whoami"])
+    assert args.account == "flag"
+    _resolve_paths(args)
+    assert Path(args.config).resolve() == flag_account / "config.yaml"
+    assert Path(args.history).resolve() == flag_account / "history.db"
+
+
+def test_no_hhru_account_env_keeps_global_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HHRU_ACCOUNT", raising=False)
+    args = _build().parse_args(["whoami"])
+    assert args.account is None
+    _resolve_paths(args)
+    assert args.config == str(DEFAULT_CONFIG_PATH)
+    assert args.history == str(DEFAULT_HISTORY_PATH)
+
+
+def test_hhru_account_env_missing_account_fails_explicitly(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HHRU_ACCOUNT", "ghost")
+    args = _build().parse_args(["whoami"])
+    with pytest.raises(AccountError):
+        _resolve_paths(args)
 
 
 def _subparser_actions(parser):

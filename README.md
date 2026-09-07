@@ -143,8 +143,9 @@ hhru account create marketing
 ./scripts/run.sh --account marketing apply --resume resume-name-1 --limit 5
 ```
 
-Для плановых задач то же самое делает `HHRU_ACCOUNT` (понимает
-`scripts/scheduled_run.sh`); явный `--account` в приоритете:
+То же самое для любой команды делает переменная окружения `HHRU_ACCOUNT`
+(дефолт флага `--account`; явный `--account` в приоритете). Её же понимает
+`scripts/scheduled_run.sh`:
 
 ```bash
 HHRU_ACCOUNT=marketing scripts/scheduled_run.sh --headless apply --limit 5
@@ -361,7 +362,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 
 - `--config` — Путь к config.yaml
 - `--history` — Путь к файлу истории (SQLite)
-- `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db)
+- `--account` — Имя аккаунта (data/accounts/<name>/config.yaml + history.db); по умолчанию из HHRU_ACCOUNT
 - `--headless` — Запустить браузер в headless-режиме
 - `--verbose` — Подробное логирование
 - `--quiet` — Не печатать поток прогресса
