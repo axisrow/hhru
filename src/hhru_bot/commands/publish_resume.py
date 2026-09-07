@@ -8,7 +8,7 @@ import sys
 from ._common import ApplyProgress, DurableMutationAttempt, run_supervised_command
 from ._common_resume_guidance import print_common_resume_guidance
 from ._professional_role_guidance import print_professional_role_guidance
-from ._wizard_next_guidance import WIZARD_NEXT_SCREENS, print_wizard_next_guidance
+from ._wizard_next_guidance import is_wizard_next_screen, print_wizard_next_guidance
 
 
 def register(subparsers) -> None:
@@ -95,7 +95,7 @@ def run(args: argparse.Namespace):
                 print_professional_role_guidance(resume, include_publish=True)
             elif result.next_incomplete_screen_id == "common":
                 print_common_resume_guidance(resume, include_publish=True)
-            elif result.next_incomplete_screen_id in WIZARD_NEXT_SCREENS:
+            elif is_wizard_next_screen(result.next_incomplete_screen_id):
                 # #1010: у этих экранов единственный CLI-владелец — wizard-next.
                 print_wizard_next_guidance(resume, result.next_incomplete_screen_id)
             return True
