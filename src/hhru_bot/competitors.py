@@ -327,7 +327,7 @@ def parse_search_page(
         # ловила вовсе; любая подстрока в <main> ещё и совпадала бы с чужими
         # блоками. Всё остальное — неизвестное состояние.
         try:
-            if page.locator(sel.SEARCH_EMPTY).count() > 0:
+            if page.locator(sel.SEARCH_EMPTY).filter(visible=True).count() > 0:
                 return []
         except PlaywrightError:
             pass
