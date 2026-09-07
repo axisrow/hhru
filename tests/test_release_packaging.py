@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -19,19 +20,14 @@ pytestmark = pytest.mark.smoke
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _project_version(root: Path) -> str:
-    import tomllib
-
-    with (root / "pyproject.toml").open("rb") as stream:
+def _project_version() -> str:
+    # (#1006 CI) версия берётся из pyproject, а не хардкодится: тесты
+    # иначе ломаются на каждом релизном bump (сломалось на 0.1.1).
+    with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as stream:
         return tomllib.load(stream)["project"]["version"]
 
 
-# Версия берётся из pyproject.toml, а не литералом: релиз 0.1.1 сломал эти
-# тесты именно потому, что литералы «0.1.0» не подняли вместе с версией
-# пакета. build_release всё равно валидирует tag == project version, поэтому
-# синтетический тег в тестах обязан следовать за pyproject.
-_ROOT = Path(__file__).parents[1]
-VERSION = _project_version(_ROOT)
+VERSION = _project_version()
 TAG = f"v{VERSION}"
 
 
@@ -40,7 +36,7 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
     # test deliberately uses a synthetic provenance SHA, so tag-object
     # validation is covered separately from bundle stamping.
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(_ROOT, tmp_path, TAG, COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, TAG, COMMIT)
 
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
@@ -64,7 +60,7 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
 
 def test_release_validation_rejects_manifest_from_another_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(_ROOT, tmp_path, TAG, COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, TAG, COMMIT)
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())

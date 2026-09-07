@@ -767,7 +767,10 @@ selectors:
     verification: browser_observed
     evidence:
       source: src/hhru_bot/selector_groups/apply_form.py:46
-      note: Approved reference binding for the active local selector.
+      note: 'SEMANTIC TRAP (#1006, по образцу WORK_PERMIT_WIZARD): qa-имя resume-title — это триггер пикера резюме в форме
+        отклика (свёрнутый выбранный вариант Magritte-select), а НЕ заголовок резюме и не поле ввода названия. Тот же data-qa
+        на /applicant/resumes обслуживает resume_list.RESUME_LIST_CARD_TITLE (карточка списка) — data-qa однозначно не определяет
+        смысл; решение по роли контрола на конкретном экране, не по имени атрибута.'
       references:
       - yamakayama
     last_verified_at: 2026-08-25
@@ -1040,24 +1043,29 @@ selectors:
     verified_flow: public_resume_search_read_only
     verified_by: codex
   competitor_resume.SEARCH_EMPTY:
-    value: '[data-qa=''resume-search-empty''], [data-qa=''bloko-header-2'']'
+    value: '[data-qa=''empty-search-block'']'
     criticality: read
-    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:6
-    decision: structural_read_fallback
+    declared_at: src/hhru_bot/selector_groups/competitor_resume.py:9
+    decision: live_dom
     sources: {}
-    live_matches: []
+    live_matches:
+    - empty-search-block
     evidence:
-      source: src/hhru_bot/selector_groups/competitor_resume.py:6
-      note: read-only empty-state union; callers still require confirmed page state
+      source: src/hhru_bot/selector_groups/competitor_resume.py:9
+      note: 'Live-подтверждено 2026-09-07 (#1006, census /search/resume?text=<несуществующее>&pos=position, нулевая выдача):
+        empty-state рендерится ровно один [data-qa=''empty-search-block''] с h2 «Ничего не нашлось» и подзаголовком «Попробуйте
+        изменить формулировку или фильтры». Прежний union (resume-search-empty / bloko-header-2) в живом DOM не подтверждён
+        и убран; подстрочный поиск «резюме не найден»/«ничего не найден» живую формулировку НЕ ловит.'
+      runtime_authoritative: true
     active: true
-    coverage_status: not_implemented_upstream
+    coverage_status: intentionally_local
     bindings: {}
-    status: not implemented upstream
+    status: intentionally local
     origin: browser_dom
     verification: browser_observed
-    last_verified_at: '2026-08-25'
-    verified_flow: public_resume_search_read_only
-    verified_by: codex
+    last_verified_at: '2026-09-07'
+    verified_flow: authenticated_applicant_search_empty_state_read_only
+    verified_by: claude
   competitor_resume.SEARCH_RESULT_TITLE_LINK:
     value: '[data-qa=''serp-item__title'']'
     criticality: read

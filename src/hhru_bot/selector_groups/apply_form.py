@@ -28,6 +28,12 @@ from ._generated import selector as _selector
 # ТРИГГЕР (для открытия), а не коллекция опций — см. новую сигнатуру
 # _select_resume_in_form() в apply/steps.py.
 #
+# SEMANTIC TRAP (#1006, по образцу WORK_PERMIT_WIZARD в reference-map):
+# qa-имя «resume-title» — это триггер пикера резюме в форме отклика, а НЕ
+# заголовок резюме. Тот же data-qa на /applicant/resumes обслуживает
+# resume_list.RESUME_LIST_CARD_TITLE — имя атрибута не определяет смысл,
+# решает роль контрола на конкретном экране.
+#
 # ВАЖНО (пересмотрено 2026-08-20 по боевым дампам). hh.ru рендерит форму отклика
 # в ДВУХ shape с похожим, но не идентичным DOM:
 #   * МОДАЛКА на самой странице вакансии — `form#RESPONSE_MODAL_FORM_ID`,
