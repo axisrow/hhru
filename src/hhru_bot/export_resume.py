@@ -497,6 +497,17 @@ def export_resume_on_hh(
                         f"вариант {variant.get('width')}x{variant.get('height')} — "
                         "оригинальный размер hh.ru не отдаёт"
                     )
+            else:
+                # Вьюер не отрисовал ни одного варианта этого фото: скачан src
+                # из инвентаря (лента миниатюр — по живому прогону 100x100).
+                # Размер не подтверждён — молча выдавать его за «фото» нельзя.
+                record["width"] = None
+                record["height"] = None
+                unavailable.append(
+                    f"фото {record['photo_id']}: вьюер не отрисовал ни одного "
+                    "варианта — скачан src из инвентаря, размер не подтверждён "
+                    "(вероятна миниатюра)"
+                )
             if record["status"] != "downloaded":
                 unavailable.append(f"фото {record['photo_id']}: не скачано ({record['reason']})")
         payload["photos"] = records
@@ -514,8 +525,3 @@ def export_resume_on_hh(
     result.unavailable = unavailable
     result.success = True
     return result
-
-
-def photo_inventory_note(photos: list[dict]) -> str:
-    downloaded = sum(1 for record in photos if record.get("status") == "downloaded")
-    return f"{downloaded}/{len(photos)}"

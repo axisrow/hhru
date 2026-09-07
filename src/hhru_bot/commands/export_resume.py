@@ -14,6 +14,8 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
+
 from ._common import add_common_args, resumes_from_args
 
 
@@ -45,6 +47,7 @@ def register(subparsers: Any) -> None:
 
 
 def run(args: argparse.Namespace) -> bool:
+    from ..apply.antibot import AntiBotChallengeDetected
     from ..browser import launch_context
     from ..config import load_config_or_exit
     from ..export_resume import export_resume_on_hh
@@ -60,12 +63,21 @@ def run(args: argparse.Namespace) -> bool:
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
     ) as context:
         for resume in resumes:
-            result = export_resume_on_hh(
-                context,
-                resume,
-                output_dir=args.output,
-                with_photos=not args.no_photos,
-            )
+            # Изоляция per-resume: сбой браузера/анти-бота на одном резюме не
+            # должен обрывать батч без вердикта — остальные получают свой
+            # [FAIL]/[OK], как в других мульти-resume командах.
+            try:
+                result = export_resume_on_hh(
+                    context,
+                    resume,
+                    output_dir=args.output,
+                    with_photos=not args.no_photos,
+                )
+            except (PlaywrightError, AntiBotChallengeDetected) as exc:
+                failures += 1
+                reason = str(exc).split("\n")[0][:300]
+                print(f"[FAIL] {resume.id} — браузерный сбой: {reason}")
+                continue
             if not result.success:
                 failures += 1
                 print(f"[FAIL] {resume.id} — {result.reason}")
