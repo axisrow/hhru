@@ -321,6 +321,7 @@ const SCENARIOS = {
   check_element: async () => {
     const next = el('button', { 'data-qa': 'next-button' }, 'Далее');
     append(next);
+    append(el('button', { 'data-qa': 'next-button' }, 'Далее (дубль)'));
     const present = await send({ action: 'check_element', selector: '[data-qa="next-button"]' });
     const absent = await send({ action: 'check_element', selector: '[data-qa="missing-button"]' });
     const noSelector = await send({ action: 'check_element' });
@@ -328,8 +329,11 @@ const SCENARIOS = {
       found: present.element?.found ?? null,
       visible: present.element?.visible ?? null,
       obstructionChecked: present.element?.obstructionChecked ?? null,
+      matchCount: present.element?.matchCount ?? null,
       absentFound: absent.element?.found ?? null,
+      absentMatchCount: absent.element?.matchCount ?? null,
       noSelectorFound: noSelector.element?.found ?? null,
+      noSelectorMatchCount: noSelector.element?.matchCount ?? null,
     };
   },
 };

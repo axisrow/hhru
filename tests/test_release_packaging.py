@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,15 @@ pytestmark = pytest.mark.smoke
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _tag() -> str:
-    """Тег следует за версией pyproject: хардкод v0.1.0 ломал сюиту на
-    каждом релизе (0.1.1 сломал её первым — CI main/PR #1024)."""
-    return f"v{release_module._read_version(Path(__file__).parents[1])}"
+def _project_version() -> str:
+    # (#1006 CI) версия берётся из pyproject, а не хардкодится: тесты
+    # иначе ломаются на каждом релизном bump (сломалось на 0.1.1).
+    with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as stream:
+        return tomllib.load(stream)["project"]["version"]
+
+
+VERSION = _project_version()
+TAG = f"v{VERSION}"
 
 
 def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_path, monkeypatch):
@@ -30,15 +36,15 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
     # test deliberately uses a synthetic provenance SHA, so tag-object
     # validation is covered separately from bundle stamping.
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(Path(__file__).parents[1], tmp_path, _tag(), COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, TAG, COMMIT)
 
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())
     expected = {
-        "version": _tag().lstrip("v"),
-        "release": _tag(),
-        "tag": _tag(),
+        "version": VERSION,
+        "release": TAG,
+        "tag": TAG,
         "commit_sha": COMMIT,
     }
 
@@ -54,7 +60,7 @@ def test_release_bundle_stamps_every_manifest_and_contains_installed_skill(tmp_p
 
 def test_release_validation_rejects_manifest_from_another_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(release_module, "_assert_tag_points_to_commit", lambda *_args: None)
-    archive = build_release(Path(__file__).parents[1], tmp_path, _tag(), COMMIT)
+    archive = build_release(Path(__file__).parents[1], tmp_path, TAG, COMMIT)
     with tarfile.open(archive, "r:gz") as opened:
         opened.extractall(tmp_path / "installed", filter="data")
     bundle = next((tmp_path / "installed").iterdir())
@@ -67,9 +73,9 @@ def test_release_validation_rejects_manifest_from_another_commit(tmp_path, monke
         validate_bundle(
             bundle,
             {
-                "version": _tag().lstrip("v"),
-                "release": _tag(),
-                "tag": _tag(),
+                "version": VERSION,
+                "release": TAG,
+                "tag": TAG,
                 "commit_sha": COMMIT,
             },
         )

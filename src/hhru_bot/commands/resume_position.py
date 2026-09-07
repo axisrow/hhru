@@ -102,10 +102,16 @@ def _professional_role_closes_resume(flow) -> bool:
     return flow.kind == "wizard" and flow.state.next_incomplete_screen_id == "professional_role"
 
 
-def _print_plan(plan) -> None:
+def _print_plan(plan, *, state_sourced=frozenset()) -> None:
     print("[DRY-RUN] Предложенные значения раздела желаемой работы:")
     for key, value in vars(plan).items():
-        print(f"  {key}: {value}")
+        if key in state_sourced and value not in (None, ""):
+            # (#1006) значение прочитано из identity-bound state (JSON-бандл
+            # SSR), а не с отрисованной формы — агент не должен принимать
+            # его за живой DOM.
+            print(f"  {key}: {value} (state)")
+        else:
+            print(f"  {key}: {value}")
 
 
 def _print_classification(role, *, reason: str = "", queries: list[str] | None = None) -> None:
@@ -352,9 +358,12 @@ def _run(args: argparse.Namespace, progress) -> bool:
             # записываемую должность (wizard-ветка выше назначает plan.title
             # явно через effective_title).
             display_plan = plan
+            state_sourced = frozenset()
             if plan.title is None and current.title:
                 display_plan = PositionValues(**{**vars(plan), "title": current.title})
-            _print_plan(display_plan)
+                if wizard:
+                    state_sourced = frozenset({"title"})
+            _print_plan(display_plan, state_sourced=state_sourced)
             if role is not None:
                 _print_classification(
                     role,

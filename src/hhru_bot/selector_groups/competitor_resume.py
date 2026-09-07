@@ -9,6 +9,11 @@ SEARCH_CARD = _selector("competitor_resume.SEARCH_CARD")
 SEARCH_RESULT_TITLE_LINK = _selector("competitor_resume.SEARCH_RESULT_TITLE_LINK")
 SEARCH_AREA_AND_RELOCATION = _selector("competitor_resume.SEARCH_AREA_AND_RELOCATION")
 SEARCH_EMPTY = _selector("competitor_resume.SEARCH_EMPTY")
+# Live-подтверждено 2026-09-07 (#1006, census нулевой выдачи /search/resume):
+# ровно один [data-qa='empty-search-block'] с h2 «Ничего не нашлось» и
+# подзаголовком «Попробуйте изменить формулировку или фильтры». Проверка
+# пустой выдачи — по этому локатору, а не по подстроке в <main>: живая
+# формулировка раньше НЕ совпадала ни с одной ожидаемой подстрокой.
 PAGINATION_NEXT = _selector("competitor_resume.PAGINATION_NEXT")
 PAGINATION_BLOCK = _selector("competitor_resume.PAGINATION_BLOCK")
 PAGINATION_PAGE = _selector("competitor_resume.PAGINATION_PAGE")

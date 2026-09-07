@@ -12,6 +12,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from .apply.antibot import detect_antibot_on_page
 from .browser import (
     HH_BASE_URL,
     goto_hh,
@@ -78,11 +79,15 @@ def _read_code(code_file: Path | None, timeout_seconds: int) -> str:
 
 
 def _raise_for_captcha_or_timeout(page) -> None:
+    # (#1006) Капча подтверждается только узкими маркерами #344 (видимый
+    # [data-qa='captcha'] / account-captcha-* / vendor-виджеты, URL-сегмент),
+    # а не подстрокой в inner_text всего body: слово «капча» в любом
+    # нерелевантном блоке страницы давало ложный отказ входа.
     try:
-        text = page.locator("body").inner_text().casefold()
+        detection = detect_antibot_on_page(page)
     except (PlaywrightError, PlaywrightTimeoutError) as exc:
         raise RuntimeError("Не удалось дождаться ответа hh.ru; вход отменён") from exc
-    if "captcha" in text or "капч" in text:
+    if detection is not None:
         raise RuntimeError("hh.ru требует капчу; сессия не сохранена")
 
 

@@ -81,11 +81,15 @@ def parse_resume_view_history(
     confidence, but implementing a check now would mean guessing an SSR
     field name with no live dump to confirm it exists — exactly the
     `_form_scope()` trap CLAUDE.md documents (a wrong guess either fails
-    closed on every run, or never fires and gives false confidence). Before
-    the first live `resume-views` run: open the page in a real browser
-    (F12 → Elements/Network), confirm whether `applicantResumeViewHistory`
-    carries a resume identity field, and wire the check here if it does —
-    same convention as the pending `bump` selector check in CLAUDE.md.
+    closed on every run, or never fires and gives false confidence).
+
+    #1006 (2026-09-07): the live check was attempted and is BLOCKED by route
+    drift — `/applicant/resumeview/history` returns hh.ru's "Ошибка 400"
+    page for an authenticated session (verified via census: logged-in header
+    rendered) in every probed variant (no params / resume= / page=0,1 /
+    resumeHash=). The identity field therefore still cannot be confirmed;
+    the cross-check remains unimplemented and the route's 400 keeps the
+    command fail-closed today.
     """
     state = parse_initial_state(html)
     history = _find_history(state)
