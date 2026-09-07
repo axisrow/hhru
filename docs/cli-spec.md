@@ -144,6 +144,7 @@ Crashpad/Mach-port сбоя, если среда не была распозна�
 | `account delete <name>` | план удаления аккаунта; боевое удаление `--force` (#723) | WRITE-local (`--force`) | `[INFO]`/`[DRY-RUN]`/`[OK]`/`[FAIL]` |
 | `schedule`  | генератор конфига launchd/cron (#18)         | READ           | текст (plist/crontab)          |
 | `competitors` | сбор профессиональных снимков резюме конкурентов | READ hh.ru / WRITE-local | текст + `[WARN]` |
+| `export-resume` | read-only экспорт живого резюме и фото в JSON (#1023) | READ hh.ru / WRITE-local | `[OK]`/`[INFO]`/`[WARN]`/`[FAIL]` |
 
 #### `account list` — состояние локальных аккаунтов
 
@@ -962,6 +963,37 @@ Checkpoint `--resume` привязан также к `items-per-page`: smoke н�
 - Успех доказывается readback персистентного состояния: скрытие —
   плейсхолдер «фото нет» на перечитанной странице резюме; удаление — фото
   исчезло из ленты заново открытого вьюера.
+
+---
+
+#### `export-resume` — read-only экспорт живого резюме и фото (#1023)
+
+- **Природа:** READ hh.ru / WRITE-local: только goto и чтение отрисованного DOM
+  страницы резюме (+ read-only клик-карандаш инвентаря галереи, как у
+  `select-photo --dry-run`); единственная запись — локальные файлы.
+- **Сигнатура:** `hhru_bot export-resume [--resume <slug|resume_id>] [--output <dir>] [--no-photos]`
+  (`--resume` опционален — по умолчанию все резюме конфига).
+- Снимает: позицию (`resume-block-title-position`, `resume-block-salary`,
+  `resume-position-field-*`), контакты (`resume-contact-*`), опыт (карточки
+  `.profile-experience-company-card`: компания, стаж, позиции с периодом и
+  описанием), образование и дополнительные блоки
+  (`resume-list-card-<block>[-item-<id>]`: recommendation,
+  additionalEducation, attestationEducation, certificate, portfolio, …),
+  навыки (`skill-tag-<id>` с id), языки, «о себе» (`resume-about-card`),
+  аватар. Селекторы сняты с живого DOM владельца (census 2026-09-07).
+- Результат: `data/exports/resume_<slug>_<timestamp>.json` (schema
+  `export-resume/v1`) + `photos/photo_<id>.<jpeg|png>` — оригиналы из галереи.
+  Байты фото получает браузер контекста (`page.goto` URL картинки +
+  `expect_response.body()`); прямого HTTP в коде нет (страж
+  `test_no_page_request.py`).
+- **Честные пропуски:** секция, которой нет на странице или чей DOM не
+  подтверждён однозначно, попадает в `unavailable` внутри JSON и в отчёт
+  (`[WARN] недоступно: …`); значения-заглушки запрещены. Свёрнутые описания
+  опыта («Развернуть») помечаются как возможно неполные.
+- Гейт идентичности: страница подтверждается `resume_identity_matches`;
+  экран недоступности резюме или форма входа — `[FAIL]` без частичного JSON.
+- Импорт в другой аккаунт — отдельный фоллоу-ап на `--account` (#281), не в
+  этой команде.
 
 ---
 
