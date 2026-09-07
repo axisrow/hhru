@@ -30,6 +30,7 @@ from .browser import (
     goto_hh,
     has_auth_cookie,
     has_login_form,
+    open_confirmed_resume,
 )
 from .config import ResumeConfig
 from .negotiations_probe import parse_initial_state
@@ -38,6 +39,13 @@ from .negotiations_probe import parse_initial_state
 # copy-resume-only variant; the command layer already treats this shared
 # PageStateIndeterminate subtype as an expired-session failure.
 from .responses import NotAuthenticated
+from .resume_ids import (
+    RESUME_ID_FROM_PATH_OR_QUERY_RE,
+    card_resume_id,
+    read_ssr_resume_items,
+    resume_card_locator,
+    resume_item_attrs,
+)
 
 # Имена `_card_hashes` и `_RESUME_HASH_RE` сохранены как тестируемый seam:
 # тесты monkeypatch'ат их в этом модуле, и вызовы copy_resume_on_hh обязаны
@@ -46,15 +54,10 @@ from .resume_ids import (
     RESUME_ID_FROM_PATH_RE as _RESUME_HASH_RE,
 )
 from .resume_ids import (
-    card_resume_id,
-    read_ssr_resume_items,
-    resume_card_locator,
-    resume_item_attrs,
-)
-from .resume_ids import (
     page_card_hashes as _card_hashes,
 )
 from .resume_limits import RESUME_QUOTA_UNREADABLE_REASON, resume_limit_reason
+from .resume_state import parse_resume_state
 from .selector_groups.resume_list import (
     RESUME_DUPLICATE_INLINE,
     RESUME_DUPLICATE_MENU_ITEM,
@@ -71,6 +74,11 @@ logger = logging.getLogger("hhru_bot.copy_resume")
 # operation at the dedicated, stable list surface (#311).
 RESUMES_LIST_URL = RESUMES_FULL_LIST_URL
 COPY_TIMEOUT_MS = 30_000
+# Визард дозаполнения: hh.ru переписывает URL на /profile/resume/common?resume=<id>
+# (живой факт 2026-09-07). goto_hh уже дождался load, но SPA-редирект на визард
+# может догонять — бюджет на появление resume= в URL до первого решения.
+_WIZARD_URL_SETTLE_POLL_MS = 250
+_WIZARD_URL_SETTLE_ATTEMPTS = 20  # 20 × 250 мс = 5 c
 PROFILE_STALL_SECONDS = 15.0
 PROFILE_ABSOLUTE_TIMEOUT_SECONDS = 300.0
 PROFILE_POLL_MS = 250
@@ -104,6 +112,10 @@ class ResumeCard:
     # searchable flag.  Do not infer visibility from publication status.
     is_searchable: bool | None = None
     ssr_unavailable: bool = False  # True если SSR данные недоступны или некорректны
+    # nextIncompleteScreenId черновика, прочитанный identity-bound readback'ом
+    # (list_wizard_drafts); None у обычных карточек списка — карточки списка
+    # этот экран не показывают.
+    unfinished_screen: str | None = None
 
 
 @dataclass(frozen=True)
@@ -471,6 +483,61 @@ def list_resume_cards(
             )
         )
     return cards
+
+
+def list_wizard_drafts(page: Page) -> list[ResumeCard]:
+    """Резюме аккаунта, когда hh.ru рендерит ВИЗАВД дозаполнения вместо списка.
+
+    Живой факт 2026-09-07 (marketing, census на /applicant/my_resumes): у
+    аккаунта с единственным незавершённым черновиком hh.ru не показывает
+    карточки [data-qa='resume'] вовсе — вместо списка рендерится экран
+    ``common`` визарда, и list_resume_cards честно падает по 30-секундному
+    таймауту. Карточек и SSR ``applicantResumes`` на этой странице нет
+    (живой probe 2026-09-07: InitialState визарда секцию не содержит);
+    источник идентичности — URL: hh.ru переписывает его на
+    ``/profile/resume/common?resume=<id>`` — та же query-форма ``resume=``,
+    которой create-resume доверяет с #778. Данные (title/статус/
+    nextIncompleteScreenId) дочитываются identity-bound readback'ом страницы
+    резюме (тот же путь, что доказывает черновик в create-resume:
+    open_confirmed_resume + parse_resume_state). READ-only: goto + чтение,
+    ничего не кликается. Ветка показывает Тот черновик, который визард
+    дозаполняет, — прочие (гипотетические) черновики не заявляются.
+
+    Fail-closed: resume_id не появился в URL за бюджет (редирект на визард
+    не завершился) — ResumeListIndeterminate (та же таксономия, что у
+    list_resume_cards): неподтверждённое состояние, а не «резюме нет».
+    """
+    resume_hash = ""
+    for _attempt in range(_WIZARD_URL_SETTLE_ATTEMPTS):
+        match = RESUME_ID_FROM_PATH_OR_QUERY_RE.search(page.url)
+        if match:
+            resume_hash = match.group(1)
+            break
+        page.wait_for_timeout(_WIZARD_URL_SETTLE_POLL_MS)
+    if not resume_hash:
+        raise ResumeListIndeterminate(
+            "экран дозаполнения черновика открыт вместо списка карточек, но "
+            f"resume_id не появился в URL за бюджет "
+            f"{_WIZARD_URL_SETTLE_ATTEMPTS * _WIZARD_URL_SETTLE_POLL_MS} мс "
+            f"(URL: {page.url}) — список не подтверждён"
+        )
+
+    # Identity-bound readback: открытая страница визарда не содержит title,
+    # поэтому черновик дочитывается на своей странице (goto + строгие
+    # auth/identity-проверки — как у create-resume).
+    open_confirmed_resume(page, resume_hash)
+    state = parse_resume_state(page.content(), resume_hash)
+    return [
+        ResumeCard(
+            resume_id=resume_hash,
+            title=state.title or "",
+            url=f"{HH_BASE_URL}/resume/{resume_hash}",
+            status=state.status,
+            is_searchable=state.is_searchable,
+            ssr_unavailable=False,
+            unfinished_screen=state.next_incomplete_screen_id,
+        )
+    ]
 
 
 class ResumeIdMapping(dict[str, str]):

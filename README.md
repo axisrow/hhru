@@ -512,7 +512,7 @@ Write-команды (`apply`/`bump`/`run`/...) сначала `--dry-run`, по
 - `--resume` — Slug из конфига или resume_id HH.ru
 - `--first-name` — Имя
 - `--last-name` — Фамилия
-- `--birthday` — Дата в формате, который принимает форма hh.ru
+- `--birthday` — Дата рождения DD.MM.YYYY (полностью; месяц/год — magritte-комбобоксы)
 - `--gender` — Пол
 - `--phone` — Телефон
 - `--area` — Точный leaf города из live-каталога hh.ru

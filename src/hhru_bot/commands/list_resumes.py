@@ -135,11 +135,15 @@ def _live_rows(cards, alias_by_hash: dict[str, str], with_status: bool, throttle
     """
     rows: list[list[str]] = []
     for card in cards:
+        status_cell = _format_status(card.status)
+        if getattr(card, "unfinished_screen", None):
+            # Черновик из визард-ветки: какой экран hh.ru считает незакрытым.
+            status_cell = f"{status_cell}, незавершённый экран {card.unfinished_screen}"
         row = [
             card.resume_id,
             alias_by_hash.get(card.resume_id, "—"),
             card.title or "—",
-            _format_status(card.status),
+            status_cell,
         ]
         if with_status:
             if hasattr(card, "is_searchable"):
@@ -194,7 +198,14 @@ def run(args: argparse.Namespace) -> None:
         has_login_form,
         launch_context,
     )
-    from ..copy_resume import ResumeListIndeterminate, list_resume_cards
+
+    # Осознанный private-кросс-импорт: предикат принадлежит common.py (его
+    # write-гейтам), здесь — тот же детектор, чтобы не плодить второй.
+    # Прецедент в кодовой базе: commands/probe.py импортирует
+    # _build_letter_provider из ._common. Если таких импортов станет больше —
+    # вынести в маленький публичный хелпер.
+    from ..common import _on_wizard_common
+    from ..copy_resume import ResumeListIndeterminate, list_resume_cards, list_wizard_drafts
 
     with launch_context(
         config.storage_state_file, headless=args.headless, user_agent=config.user_agent
@@ -226,8 +237,19 @@ def run(args: argparse.Namespace) -> None:
                 "при наличии hhtoken). Выполните login."
             )
             return
+        # Живой факт 2026-09-07 (marketing, census на my_resumes): на аккаунте
+        # с единственным незавершённым черновиком hh.ru рендерит на my_resumes
+        # ЭКРАН ДОЗАПОЛНЕНИЯ визарда (resume-profile-screen_common) — карточек
+        # [data-qa='resume'] нет вовсе, и list_resume_cards падает по
+        # 30-секундному таймауту. Экран приходит SSR-разметкой (census видел
+        # его сразу после загрузки), поэтому мгновенной проверки достаточно:
+        # опоздавший рендер уйдёт в прежний путь с его честным отказом.
+        wizard_mode = _on_wizard_common(page)
         try:
-            cards = list_resume_cards(page, navigate=False)
+            if wizard_mode:
+                cards = list_wizard_drafts(page)
+            else:
+                cards = list_resume_cards(page, navigate=False)
         except ResumeListIndeterminate as e:
             # Timeout/интерстишл/дрейф селектора — не подтверждённо пустой
             # аккаунт. Не выдаём это за «резюме не найдено» (см. copy_resume.py);
@@ -240,7 +262,9 @@ def run(args: argparse.Namespace) -> None:
         print("[INFO] На hh.ru не найдено ни одного резюме.")
         return
 
-    if not any(c.title for c in cards):
+    if not any(c.title for c in cards) and not wizard_mode:
+        # В визард-ветке title приходит identity-bound readback'ом (не селектором
+        # карточек) — это предупреждение про другой механизм чтения там ложно.
         print(
             "[INFO] Название резюме не удалось прочитать (селектор заголовка "
             "не подтверждён) — колонка «название» может быть неточной."
@@ -262,6 +286,15 @@ def run(args: argparse.Namespace) -> None:
         header += ["можно bump", "последний bump"]
     print()
     print(_ascii_table(header, _live_rows(cards, alias_by_hash, args.status, throttle, history)))
+
+    if wizard_mode:
+        print()
+        print(
+            "[INFO] hh.ru открыл экран дозаполнения визарда вместо списка "
+            "карточек (незавершённый черновик). Черновик выше прочитан из URL "
+            "визарда + страницы резюме. Дозаполнение: common --resume "
+            "<resume_id> ... / wizard-next --resume <resume_id>."
+        )
 
     hidden_published = [
         card

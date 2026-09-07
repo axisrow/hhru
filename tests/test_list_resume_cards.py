@@ -354,6 +354,104 @@ def test_non_dict_ssr_state_marks_unavailable(monkeypatch, raw_state):
     assert cards[0].ssr_unavailable
 
 
+# --- list_wizard_drafts (экран дозаполнения вместо списка, 2026-09-07) ---------
+
+
+class _WizardPage:
+    """Страница визарда: URL переписан на /profile/resume/common?resume=<id>,
+    SSR applicantResumes отсутствует (живой probe 2026-09-07), карточек нет.
+
+    ``land_on(resume_id, markup)`` подменяет content() — как реальная
+    навигация open_confirmed_resume меняет страницу на страницу резюме."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self._content = ""
+        self.landed: list[str] = []
+        self.settled_polls = 0
+
+    def wait_for_timeout(self, ms):
+        # первый poll «дожидается» SPA-редиректа: URL получает resume=<id>
+        self.settled_polls += 1
+        if "?resume=" not in self.url:
+            self.url = f"{self.url.split('?')[0]}?resume={ID_A}"
+
+    def locator(self, selector):
+        raise AssertionError(f"list_wizard_drafts не читает локаторы: {selector}")
+
+    def content(self):
+        return self._content
+
+    def land_on(self, resume_id: str, markup: str) -> None:
+        self._content = markup
+        self.landed.append(resume_id)
+
+
+_RESUME_MARKUP = json.dumps(
+    {
+        "resumes": [
+            {
+                # nextIncompleteScreenId живёт в identity-записи (_attributes),
+                # title — в теле элемента (живой shape bootstrap, resume_state.py)
+                "_attributes": {
+                    "hash": ID_A,
+                    "status": "not_finished",
+                    "nextIncompleteScreenId": "common",
+                },
+                "title": [{"string": "Тестировщик программного обеспечения"}],
+            }
+        ]
+    },
+    ensure_ascii=False,
+)
+
+
+def test_list_wizard_drafts_reads_title_and_screen_from_readback(monkeypatch):
+    """Черновик из URL-формы ``resume=`` (живой факт 2026-09-07: hh.ru
+    переписывает URL на /profile/resume/common?resume=<id>) + identity-bound
+    readback: title/статус/nextIncompleteScreenId дочитываются со страницы
+    резюме — тот же путь, что доказывает черновик в create-resume."""
+    page = _WizardPage(f"https://hh.ru/profile/resume/common?resume={ID_A}")
+    monkeypatch.setattr(
+        cr, "open_confirmed_resume", lambda p, rid, **_kw: p.land_on(rid, _RESUME_MARKUP)
+    )
+
+    cards = cr.list_wizard_drafts(page)
+
+    assert page.landed == [ID_A]
+    assert page.settled_polls == 0  # id был в URL сразу — poll не понадобился
+    assert len(cards) == 1
+    assert cards[0].resume_id == ID_A
+    assert cards[0].title == "Тестировщик программного обеспечения"
+    assert cards[0].status == "not_finished"
+    assert cards[0].unfinished_screen == "common"
+    assert cards[0].url == f"https://hh.ru/resume/{ID_A}"
+
+
+def test_list_wizard_drafts_waits_for_late_url_settle(monkeypatch):
+    """SPA-редирект на визард догоняет после load: id появляется в URL не сразу —
+    бюджет poll'а снимает гонку (паттерн «commit не значит отрисовано»)."""
+    page = _WizardPage("https://hh.ru/applicant/my_resumes")
+    monkeypatch.setattr(
+        cr, "open_confirmed_resume", lambda p, rid, **_kw: p.land_on(rid, _RESUME_MARKUP)
+    )
+
+    cards = cr.list_wizard_drafts(page)
+
+    assert page.settled_polls == 1
+    assert cards[0].resume_id == ID_A
+
+
+def test_list_wizard_drafts_fails_closed_when_url_never_settles():
+    """Визард открыт, но resume= в URL так и не появился — прежняя таксономия:
+    indeterminate, не «резюме нет» и не пустой список за факт."""
+    page = _WizardPage("https://hh.ru/applicant/my_resumes")
+    page.wait_for_timeout = lambda ms: None  # URL не меняется никогда
+
+    with pytest.raises(cr.ResumeListIndeterminate, match="resume_id не появился в URL"):
+        cr.list_wizard_drafts(page)
+
+
 # --- resolve_numeric_resume_ids (#212) ----------------------------------------
 #
 # Маппинг «хэш резюме → числовой id» из SSR /applicant/resumes: Applicant

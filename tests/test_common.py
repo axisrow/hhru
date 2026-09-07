@@ -52,7 +52,8 @@ def test_missing_required_lists_only_blank_fields():
     assert missing_required(current) == ["last_name", "birthday", "gender", "citizenship"]
 
 
-def test_apply_common_fills_inputs_and_selects_gender():
+def test_apply_common_fills_inputs_checks_gender_and_types_phone(monkeypatch):
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)
     page = MagicMock()
     locators = {}
     for selector in (
@@ -60,10 +61,12 @@ def test_apply_common_fills_inputs_and_selects_gender():
         common.LAST_NAME,
         common.BIRTHDAY,
         common.GENDER,
+        common.GENDER_FEMALE,
         common.PHONE,
     ):
         locators[selector] = MagicMock()
         locators[selector].count.return_value = 1
+    locators[common.PHONE].first.input_value.return_value = "+7 900 111-22-33"
     page.locator.side_effect = lambda selector: locators[selector]
 
     apply_common(
@@ -71,7 +74,6 @@ def test_apply_common_fills_inputs_and_selects_gender():
         CommonValues(
             first_name="Ada",
             last_name="Lovelace",
-            birthday="1815-12-10",
             gender="female",
             phone="+7",
         ),
@@ -79,9 +81,117 @@ def test_apply_common_fills_inputs_and_selects_gender():
 
     locators[common.FIRST_NAME].first.fill.assert_called_once_with("Ada")
     locators[common.LAST_NAME].first.fill.assert_called_once_with("Lovelace")
-    locators[common.BIRTHDAY].first.fill.assert_called_once_with("1815-12-10")
     locators[common.PHONE].first.fill.assert_called_once_with("+7")
-    locators[common.GENDER].first.select_option.assert_called_once_with("female")
+    # #1030-цепочка (2026-09-08): пол — radio-чип, check(), НЕ select_option
+    locators[common.GENDER_FEMALE].first.check.assert_called_once()
+    locators[common.GENDER].first.select_option.assert_not_called()
+
+
+def test_apply_birthday_fills_day_and_magritte_month_year(monkeypatch):
+    """DD.MM.YYYY: день в input, месяц/год — activator-клик + опция по data-qa
+    (месяц с ведущим нулём: magritte-select-option-06)."""
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)
+    page = MagicMock()
+    calls: list[tuple[str, str]] = []
+
+    def locator_for(selector):
+        loc = MagicMock()
+        loc.count.return_value = 1
+        if "[data-qa='magritte-select-activator']" in selector:
+            calls.append(("activator", selector.split(" ")[0]))
+        if selector.startswith("[data-qa='magritte-select-option-"):
+            calls.append(("option", selector))
+        return loc
+
+    page.locator.side_effect = locator_for
+
+    common._apply_birthday(page, "10.06.1995")
+
+    assert ("activator", common.BIRTHDAY_MONTH) in calls
+    assert ("activator", common.BIRTHDAY_YEAR) in calls
+    assert ("option", "[data-qa='magritte-select-option-06']") in calls
+    assert ("option", "[data-qa='magritte-select-option-1995']") in calls
+
+
+def test_apply_birthday_day_only_skips_comboboxes(monkeypatch):
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    page.locator.side_effect = lambda selector: loc
+
+    common._apply_birthday(page, "10")
+
+    loc.first.fill.assert_called_once_with("10")
+    assert loc.first.click.call_count == 0  # комбобоксы не открывались
+
+
+@pytest.mark.parametrize("bad", ["июнь", "10.13.1995", "10.06.95x", "10..1995"])
+def test_apply_birthday_rejects_garbage_before_clicks(bad):
+    """Мусорная дата — отказ ДО открытия комбобоксов (fail-closed)."""
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    page.locator.side_effect = lambda selector: loc
+
+    with pytest.raises(RuntimeError, match="рождения"):
+        common._apply_birthday(page, bad)
+
+    assert loc.first.click.call_count == 0
+
+
+@pytest.mark.parametrize("bad_year", ["10.06.1899", "10.06.2013"])
+def test_apply_birthday_rejects_year_out_of_catalog_range_before_any_input(bad_year):
+    """Год вне каталога комбобокса (1900..2012) — отказ ДО fill дня: отказ
+    полностью безмутирующий, экран не тронут вовсе."""
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    page.locator.side_effect = lambda selector: loc
+
+    with pytest.raises(RuntimeError, match="год рождения вне"):
+        common._apply_birthday(page, bad_year)
+
+    assert loc.first.fill.call_count == 0
+    assert loc.first.click.call_count == 0
+
+
+def test_apply_phone_falls_back_to_sequential_typing(monkeypatch):
+    """Маска сбросила fill -> посимвольный набор; если и он не принялся — отказ."""
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    loc.first.input_value.side_effect = ["", "+7 900 111-22-33"]
+    page.locator.side_effect = lambda selector: loc
+
+    common._apply_phone(page, "+7 900 111-22-33")
+
+    loc.first.fill.assert_any_call("+7 900 111-22-33")
+    loc.first.fill.assert_any_call("")
+    loc.first.press_sequentially.assert_called_once()
+
+
+def test_apply_phone_fails_closed_when_mask_rejects_value(monkeypatch):
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: True)
+    page = MagicMock()
+    loc = MagicMock()
+    loc.count.return_value = 1
+    loc.first.input_value.return_value = ""
+    page.locator.side_effect = lambda selector: loc
+
+    with pytest.raises(RuntimeError, match="не приняло значение"):
+        common._apply_phone(page, "+7 900 111-22-33")
+
+
+def test_apply_common_refuses_fill_into_unhydrated_field(monkeypatch):
+    """#858/#991: ввод в негидратированное поле React отбрасывает при монтировании
+    (живой факт 2026-09-08: value=\"\" в post-save дампе) — отказ ДО ввода."""
+    monkeypatch.setattr(common, "wait_for_react_hydration", lambda *_a, **_k: False)
+    page = MagicMock()
+
+    with pytest.raises(RuntimeError, match="не гидратирован"):
+        apply_common(page, CommonValues(first_name="Ada"))
 
 
 @pytest.mark.browser_unit
@@ -899,6 +1009,52 @@ def test_wizard_read_work_ticket_from_container(monkeypatch):
     result = common._read_common(_WizardShapePage())
     assert result.work_ticket == ""
     assert result.work_permit == "Россия"
+
+
+class _BirthdayWizardPage(_WizardShapePage):
+    """Визард с комбобоксами ДР: month_text/year_text — текст activator'ов
+    (плейсхолдеры «Месяц»/«Год» или выбранные «Июнь»/«1995»)."""
+
+    def __init__(self, month_text, year_text, day=""):
+        super().__init__()
+        self._day = day
+
+        def activator_container(text):
+            m = MagicMock()
+            m.count.return_value = 1
+            act = MagicMock()
+            act.count.return_value = 1
+            act.first.inner_text.return_value = text
+            m.first.locator.return_value = act
+            return m
+
+        self._month = activator_container(month_text)
+        self._year = activator_container(year_text)
+
+    def locator(self, selector):
+        if selector == common.BIRTHDAY_MONTH:
+            return self._month
+        if selector == common.BIRTHDAY_YEAR:
+            return self._year
+        if selector == common.BIRTHDAY:
+            m = MagicMock()
+            m.count.return_value = 1
+            m.first.input_value.return_value = self._day
+            return m
+        return super().locator(selector)
+
+
+def test_birthday_placeholders_are_not_values():
+    """«Месяц»/«Год» — плейсхолдеры activator'ов, НЕ значения: пустая дата
+    не считается заполненной (иначе merge_prefilled скалил заполнение,
+    живой факт 2026-09-08 — валидация hh.ru отвергала пустую дату)."""
+    result = common._read_common(_BirthdayWizardPage("Месяц", "Год"))
+    assert result.birthday == ""
+
+
+def test_birthday_selected_activators_read_as_values():
+    result = common._read_common(_BirthdayWizardPage("Июнь", "1995", day="15"))
+    assert result.birthday == "15 Июнь 1995"
 
 
 def test_wizard_area_refuses_honestly(monkeypatch):
