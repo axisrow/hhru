@@ -96,6 +96,7 @@ def _run(args: argparse.Namespace, progress) -> bool:
         edit_skills_on_hh,
         parse_manual_skills,
         parse_skill_plan,
+        read_resume_context,
     )
 
     config = load_config_or_exit(args.config)
@@ -150,8 +151,13 @@ def _run(args: argparse.Namespace, progress) -> bool:
                     if urlsplit(page.url).path != f"/resume/{resume.resume_id}":
                         raise RuntimeError("страница нужного резюме не подтверждена")
                     existing = read_skills(page)
+                    # #1005: контекст LLM — текст карточек секций резюме
+                    # (read_resume_context), а не body.inner_text(): тот уносил
+                    # в промпт шапку/меню/футер, и план строился по «полям»,
+                    # которых на форме нет. PageStateIndeterminate — подкласс
+                    # RuntimeError, ниже уже ловится.
                     response = LLMClient(config.ai).chat(
-                        build_skills_prompt(page.locator("body").inner_text(), existing, args.mode),
+                        build_skills_prompt(read_resume_context(page), existing, args.mode),
                         temperature=0,
                     )
                     if not response or not response.content:

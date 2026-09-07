@@ -1029,3 +1029,49 @@ def test_edit_skills_marks_level_mismatch_as_uncertain_not_ok(monkeypatch) -> No
     assert result.acted is True
     assert "Selenium" in result.reason
     assert "Средний" in result.reason
+
+
+# --- #1005: LLM-контекст — карточки секций, не body.inner_text() ---
+
+
+def _fake_locator(texts: list[str]):
+    locator = MagicMock(name="locator")
+    locator.count.return_value = len(texts)
+    locator.nth.side_effect = lambda i: MagicMock(inner_text=MagicMock(return_value=texts[i]))
+    return locator
+
+
+def test_read_resume_context_collects_only_section_cards() -> None:
+    """Контекст собирается из подтверждённых карточек секций (#1005): текст
+    вне карточек (шапка, меню, футер) в промпт не попадает."""
+    page = MagicMock(name="page")
+    cards = {
+        skills_module.resume_page.RESUME_POSITION_CARD: _fake_locator(["Python-разработчик"]),
+        skills_module.resume_page.RESUME_EXPERIENCE_CARD: _fake_locator(["Фриланс 4 года"]),
+        skills_module.resume_page.RESUME_SKILLS_CARD: _fake_locator(["Python"]),
+        skills_module.resume_page.RESUME_ABOUT_CARD: _fake_locator(["", "  "]),
+    }
+    page.locator.side_effect = lambda selector: cards[selector]
+    context = skills_module.read_resume_context(page)
+    assert "Python-разработчик" in context
+    assert "Фриланс 4 года" in context
+    assert "Python" in context
+    assert "=== Ключевые навыки ===" in context
+    # пустые карточки не оставляют пустых секций
+    assert "=== О себе ===" not in context
+
+
+def test_read_resume_context_indeterminate_without_sections() -> None:
+    """Ни одна секция не подтверждена — состояние страницы не подтверждено,
+    а не «пустое резюме» (fail-closed, инвариант PageStateIndeterminate)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    page = MagicMock(name="page")
+    page.locator.return_value.count.return_value = 0
+    with pytest.raises(PageStateIndeterminate):
+        skills_module.read_resume_context(page)
+
+
+def test_prompt_labels_context_as_resume_sections() -> None:
+    prompt = build_skills_prompt("Python backend", (), "fresh")
+    assert "Секции резюме" in prompt[1]["content"]

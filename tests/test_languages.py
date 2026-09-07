@@ -589,3 +589,28 @@ def test_add_form_never_opens_reports_reason_and_dump(monkeypatch):
     assert str(dump_path) in result.reason
     assert "попытка 2" in result.reason
     assert add_button.click.call_count == 2
+
+
+# --- #1005: LLM-контекст — карточка языков, не body.inner_text() ---
+
+
+def test_language_context_reads_confirmed_card() -> None:
+    card = MagicMock(name="card")
+    card.first.inner_text.return_value = "Русский Родной\nАнглийский C1"
+    assert languages.read_language_context(card) == "Русский Родной\nАнглийский C1"
+
+
+def test_language_context_indeterminate_on_empty_card() -> None:
+    """Пустой текст подтверждённой карточки — состояние не подтверждено,
+    а не «языков нет» (fail-closed, инвариант PageStateIndeterminate)."""
+    from hhru_bot.browser import PageStateIndeterminate
+
+    card = MagicMock(name="card")
+    card.first.inner_text.return_value = "   "
+    with pytest.raises(PageStateIndeterminate):
+        languages.read_language_context(card)
+
+
+def test_prompt_labels_context_as_language_card() -> None:
+    prompt = build_languages_prompt("Русский Родной", (), "append")
+    assert "Карточка языков" in prompt[1]["content"]
