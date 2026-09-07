@@ -181,7 +181,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--history", help="Путь к файлу истории (SQLite)")
     parser.add_argument(
         "--account",
-        help="Имя аккаунта (data/accounts/<name>/config.yaml + history.db)",
+        # HHRU_ACCOUNT (#281): env-переменная — дефолт флага, явный --account
+        # в аргументах побеждает (argparse default применяется только когда
+        # флаг не передан). Это тот же контракт, что раньше давал только
+        # scripts/scheduled_run.sh, но теперь для любой команды CLI: плановые
+        # задачи и одноразовые запуски резолвят аккаунт одинаково, без
+        # дублирования перевода env -> --account в обёртках. Осознанно: default
+        # вычисляется в момент build_parser(), а не parse_args() — для
+        # CLI-энтрипоинта это эквивалентно, чтение env после билда не учитывается.
+        default=os.environ.get("HHRU_ACCOUNT") or None,
+        help="Имя аккаунта (data/accounts/<name>/config.yaml + history.db); "
+        "по умолчанию из HHRU_ACCOUNT",
     )
     parser.add_argument(
         "--headless", action="store_true", help="Запустить браузер в headless-режиме"
