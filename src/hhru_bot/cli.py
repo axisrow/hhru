@@ -65,6 +65,7 @@ BROWSER_COMMANDS = frozenset(
         "edit-experience",
         "edit-languages",
         "edit-skills",
+        "export-resume",
         "fill-form",
         "login",
         "login-code",
