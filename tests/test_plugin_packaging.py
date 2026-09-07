@@ -52,7 +52,7 @@ def test_codex_repo_marketplace_points_to_a_release_not_floating_main():
     assert plugin["source"] == {
         "source": "url",
         "url": "https://github.com/axisrow/hhru.git",
-        "ref": "v0.1.0",
+        "ref": f"v{version}",
     }
     assert plugin["policy"] == {
         "installation": "AVAILABLE",
