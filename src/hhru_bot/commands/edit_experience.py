@@ -335,16 +335,34 @@ def _run(args: argparse.Namespace, progress) -> bool:
             # mode edit of an existing row also lands on the shared panel
             # screen and needs the same reconciliation (see
             # experience.py::edit_experience_on_hh docstring).
-            from ..copy_resume import ResumeListIndeterminate, list_resume_cards, list_wizard_drafts
+            from ..browser import goto_hh
+            from ..common import _on_wizard_common
+            from ..copy_resume import (
+                RESUMES_LIST_URL,
+                ResumeListIndeterminate,
+                list_resume_cards,
+                list_wizard_drafts,
+            )
 
-            try:
-                cards = list_resume_cards(page)
-            except ResumeListIndeterminate:
-                # Аккаунт в состоянии «визард вместо списка» (единственный
-                # незавершённый черновик, #1032): карточек нет вовсе, а
+            # #1037: детектор визарда — ДО чтения карточек (как в list-resumes,
+            # #1032): на аккаунте «визард вместо списка» (единственный
+            # незавершённый черновик) list_resume_cards иначе платит полный
+            # COPY_TIMEOUT_MS (30с) за гарантированный отказ, прежде чем
+            # фолбэк доберётся до list_wizard_drafts. Экран common приходит
+            # SSR-разметкой сразу после goto, поэтому мгновенной проверки
+            # достаточно; промах детекта (гонка) уходит в обычный путь.
+            goto_hh(page, RESUMES_LIST_URL)
+            if _on_wizard_common(page):
                 # resume-titles для панели привязки нужны те же — читаем
                 # черновик визард-ридером (URL + identity-readback).
                 cards = list_wizard_drafts(page)
+            else:
+                try:
+                    cards = list_resume_cards(page, navigate=False)
+                except ResumeListIndeterminate:
+                    # Страховка #1036: детект промахнулся, карточки не
+                    # появились — прежний исключение-фолбэк на визард-ридер.
+                    cards = list_wizard_drafts(page)
             resume_titles = {card.resume_id: card.title for card in cards}
             # begin_attempt() right before the real mutation, after the page/
             # context are already open (#465 review): counting the attempt
