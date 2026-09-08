@@ -93,7 +93,11 @@ def test_resume_catalog_reuses_one_leaf_id_across_categories():
 def test_resume_catalog_rejects_non_leaf_or_missing_specialization(
     monkeypatch, value, expected_error
 ):
-    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    # 500мс вместо прежних 50мс: на загруженном shared-раннере под xdist
+    # дерево не успевает отрисоваться за 50мс → SpecializationTreeIndeterminate
+    # (flaky CI 2026-09-08, PR #1065); бюджет сюита остаётся с большим запасом
+    # (CI wall 83s против 240s).
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 500)
     playwright, browser, page = _page()
     try:
         page.locator(resume_position.SPECIALIZATION_ADD).click()
@@ -112,7 +116,11 @@ def test_set_specializations_missing_leaf_refusal_lists_visible_candidates(monke
     непуст…» — новая семантика #954: непустой фильтр не «лист отсутствует»,
     фоллбэк «Другое» на нём не срабатывает; перечисление кандидатов сохранено
     (#836, контракт сообщения — #964)."""
-    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    # 500мс вместо прежних 50мс: на загруженном shared-раннере под xdist
+    # дерево не успевает отрисоваться за 50мс → SpecializationTreeIndeterminate
+    # (flaky CI 2026-09-08, PR #1065); бюджет сюита остаётся с большим запасом
+    # (CI wall 83s против 240s).
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 500)
     playwright, browser, page = _page()
     try:
         page.locator(resume_position.SPECIALIZATION_ADD).click()
@@ -130,7 +138,11 @@ def test_set_specializations_missing_leaf_refusal_lists_visible_candidates(monke
 
 @pytest.mark.browser_unit
 def test_validate_specializations_confirms_exact_leaf_without_submit(monkeypatch):
-    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    # 500мс вместо прежних 50мс: на загруженном shared-раннере под xdist
+    # дерево не успевает отрисоваться за 50мс → SpecializationTreeIndeterminate
+    # (flaky CI 2026-09-08, PR #1065); бюджет сюита остаётся с большим запасом
+    # (CI wall 83s против 240s).
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 500)
     playwright, browser, page = _page()
     try:
         refusals = resume_position.validate_specializations_against_tree(
@@ -147,7 +159,11 @@ def test_validate_specializations_confirms_exact_leaf_without_submit(monkeypatch
 
 @pytest.mark.browser_unit
 def test_validate_specializations_refusal_lists_filtered_candidates(monkeypatch):
-    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    # 500мс вместо прежних 50мс: на загруженном shared-раннере под xdist
+    # дерево не успевает отрисоваться за 50мс → SpecializationTreeIndeterminate
+    # (flaky CI 2026-09-08, PR #1065); бюджет сюита остаётся с большим запасом
+    # (CI wall 83s против 240s).
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 500)
     playwright, browser, page = _page()
     try:
         checks = resume_position.validate_specializations_against_tree(
@@ -172,7 +188,11 @@ def test_validate_specializations_empty_filter_is_fallback_eligible(monkeypatch)
     """#954: позитивный empty-state (контейнер прикреплён и пуст) —
     единственный случай, в котором боевой --fallback-other подставит
     «Другое»; dry-run помечает такой чек fallback-eligible."""
-    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 50)
+    # 500мс вместо прежних 50мс: на загруженном shared-раннере под xdist
+    # дерево не успевает отрисоваться за 50мс → SpecializationTreeIndeterminate
+    # (flaky CI 2026-09-08, PR #1065); бюджет сюита остаётся с большим запасом
+    # (CI wall 83s против 240s).
+    monkeypatch.setattr(resume_position, "_CONTROL_WAIT_TIMEOUT_MS", 500)
     playwright, browser, page = _page()
     try:
         checks = resume_position.validate_specializations_against_tree(page, ["qqqzzz-нет"])
