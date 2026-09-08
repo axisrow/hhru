@@ -1232,6 +1232,28 @@ selectors:
     verified_flow: authenticated_negotiations_chat_read_only (probe --negotiations --topic, chatik.hh.ru/chat/5574052518)
     verified_by: human
     status: intentionally local
+  negotiations.CHAT_MESSAGE_TIME:
+    value: '[data-qa=''chat-buble-display-time'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/negotiations.py:93
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - chat-buble-display-time
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: src/hhru_bot/selector_groups/negotiations.py:93
+      note: 'Live-подтверждено 2026-09-08: census живых чатов (probe --negotiations --topic, hh.ru/chat/5610561242 и др.)
+        показывает span data-qa="chat-buble-display-time" в subtree каждого сообщения со временем пузыря («12:24», только
+        HH:MM — суточное окно). «buble» — опечатка самого data-qa hh.ru, не проекта. Питает time_text эвристики скорости ответа
+        детекта роботов.'
+    last_verified_at: '2026-09-08'
+    verified_flow: authenticated_negotiations_chat_read_only (probe --negotiations --topic, hh.ru/chat/5610561242)
+    verified_by: human
   negotiations.LEGACY_NEGOTIATION_CHAT_LINK:
     value: '[data-qa=''negotiations-item__messages-link'']'
     criticality: write
@@ -5767,11 +5789,10 @@ selectors:
     verification: browser_observed
     evidence:
       source: approved battle save 2026-09-08 (probe scripts/explore_saved_search_save_1052.py)
-      note: Button state "Сохранён" — the search bar button IMMEDIATELY after a successful save in
-        the same session (replaces vacancy-saved-search-create). The click on the email channel
-        saved the autosearch instantly with no further screen. Positive success marker. NOT a
-        persistent duplicate signal - a later census on the exact saved query (new session) shows
-        the create button again; reliable duplicate detection must read the autosearch list.
+      note: Button state "Сохранён" — the search bar button IMMEDIATELY after a successful save in the same session (replaces
+        vacancy-saved-search-create). The click on the email channel saved the autosearch instantly with no further screen.
+        Positive success marker. NOT a persistent duplicate signal - a later census on the exact saved query (new session)
+        shows the create button again; reliable duplicate detection must read the autosearch list.
     last_verified_at: '2026-09-08'
     verified_flow: approved_battle_save_on_search_vacancy
     verified_by: browser

@@ -58,6 +58,7 @@ VALUES: dict[str, str] = {
     "negotiations.CHAT_MESSAGE_ROOT": "[data-qa^='chatik-chat-message-']",
     "negotiations.CHAT_MESSAGE_SEND": "button[data-qa='chatik-chat-message-send']",
     "negotiations.CHAT_MESSAGE_TEXT": "[data-qa^=\"chatik-chat-message-\"][data-qa$=\"-text\"]:not([data-qa=\"chatik-chat-message-applicant-action-text\"])",
+    "negotiations.CHAT_MESSAGE_TIME": "[data-qa='chat-buble-display-time']",
     "negotiations.LEGACY_NEGOTIATION_CHAT_LINK": "[data-qa='negotiations-item__messages-link']",
     "negotiations.LEGACY_NEGOTIATION_DATE": "[data-qa='negotiations-item__date']",
     "negotiations.LEGACY_NEGOTIATION_EMPLOYER": "[data-qa='negotiations-item__employer']",

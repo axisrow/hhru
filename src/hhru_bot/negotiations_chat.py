@@ -28,6 +28,7 @@ from .selector_groups.negotiations import (
     CHAT_MESSAGE_OTHER_MARKER,
     CHAT_MESSAGE_SEND,
     CHAT_MESSAGE_TEXT,
+    CHAT_MESSAGE_TIME,
     QUICK_REPLY_BUTTON,
     QUICK_REPLY_BUTTONS_WRAPPER,
 )
@@ -36,28 +37,32 @@ logger = logging.getLogger("hhru_bot.negotiations_chat")
 
 # #1044: единый браузерный резолвер автора сообщения. Маркеры — префиксы имён
 # классов (CSS-модули добавляют ``--hash``): совпадение это точное имя ИЛИ
-# ``marker + '--<hash>'``. Возвращает сериализуемое [author, label]:
-# author — 'me'|'employer'|null, label — подпись автора с размеченного узла.
-CHAT_AUTHOR_JS = """(el, markers) => {
-  for (let node = el; node; node = node.parentElement) {
+# ``marker + '--<hash>'``. Возвращает сериализуемое [author, label, time_text]:
+# author — 'me'|'employer'|null, label — подпись автора с размеченного узла,
+# time_text — время пузыря («12:24», HH:MM) для эвристики скорости ответа.
+CHAT_MESSAGE_META_JS = f"""(el, markers) => {{
+  for (let node = el; node; node = node.parentElement) {{
     const classes = String(node.className).split(/\\s+/);
     const hit = (list) => list.some(
       (prefix) => classes.includes(prefix)
         || classes.some((c) => c.startsWith(prefix + '--')));
     const author = hit(markers.my) ? 'me' : hit(markers.other) ? 'employer' : null;
-    if (author) {
+    if (author) {{
       const labelNode = node.querySelector(
         '[data-qa*="author"], [class*="author"], [aria-label], [title]');
-      return [author, labelNode && (labelNode.getAttribute('aria-label')
-        || labelNode.getAttribute('title') || labelNode.textContent || '').trim()];
-    }
-  }
-  return [null, null];
-}"""
+      const timeNode = node.querySelector("{CHAT_MESSAGE_TIME}");
+      return [author,
+              labelNode && (labelNode.getAttribute('aria-label')
+                || labelNode.getAttribute('title') || labelNode.textContent || '').trim(),
+              timeNode ? (timeNode.textContent || '').trim() : ''];
+    }}
+  }}
+  return [null, null, ''];
+}}"""
 
 
 def author_markers() -> dict[str, list[str]]:
-    """Prefix lists for CHAT_AUTHOR_JS (kept in Python for tests)."""
+    """Prefix lists for CHAT_MESSAGE_META_JS (kept in Python for tests)."""
     return {
         "my": [CHAT_MESSAGE_MY_MARKER],
         "other": [
@@ -81,7 +86,7 @@ def matches_marker(cls: str, marker: str) -> bool:
 
 
 def author_from_ancestors(class_chain: Sequence[str]) -> str | None:
-    """Python-зеркало CHAT_AUTHOR_JS для тестов: цепь классов предков
+    """Python-зеркало автора из CHAT_MESSAGE_META_JS для тестов: цепь классов предков
     сообщения (снизу вверх) → 'me' | 'employer' | None."""
     markers = author_markers()
     for classes in class_chain:
@@ -138,6 +143,9 @@ class ChatMessage:
     text: str = ""
     author_label: str | None = None
     conversation: tuple[ChatMessage, ...] = ()
+    # Время пузыря («12:24», HH:MM, суточное окно) — топливо эвристики
+    # скорости ответа; пустая строка = время не прочитано/не распознано.
+    time_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,6 +160,12 @@ _ROBOT_AUTHOR_RE = re.compile(
     r"(?<!\w)(?:автоматический(?:\s+бот)?|автобот|робот|robot|bot)(?!\w)", re.I
 )
 _SENTENCE_END_RE = re.compile(r"[.!?]+[\"»”’'’)]*(?=\s|$)", re.U)
+_BUBBLE_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
+# Живые факты 2026-09-08: шаблонные боты отвечают за 0/0/14 минут (Сбер
+# ГигаРекрутер ×2, Яндекс Крауд), человек-образный ответ — 2ч14м (Найди.Про,
+# «Миллер Алиса»). Живой рекрутер, ответивший быстрее порога, теряет ровно
+# одно: попадает в ручную очередь robot-queue до отметки robot-mark --human.
+_ROBOT_FAST_REPLY_MINUTES = 15
 
 
 def _question_sentence_count(text: str) -> int:
@@ -159,12 +173,48 @@ def _question_sentence_count(text: str) -> int:
     return sum("?" in match.group(0) for match in _SENTENCE_END_RE.finditer(text))
 
 
+def _bubble_minutes(time_text: str) -> int | None:
+    """«12:24» → минуты от полуночи; всё иное (нет времени, чужой формат) → None."""
+    match = _BUBBLE_TIME_RE.match((time_text or "").strip())
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def _fast_reply_is_robot(messages: Sequence[ChatMessage]) -> bool:
+    """Смежная пара (наше сообщение → ответ работодателя) быстрее порога.
+
+    Пузырь несёт только HH:MM (суточное окно): непарсящееся время или
+    отрицательная дельта (переход через полночь) — пара молча пропускается
+    (fail-open: классификация остаётся за остальными сигналами детектора).
+    """
+    threshold = _ROBOT_FAST_REPLY_MINUTES
+    for ours, theirs in zip(messages, messages[1:], strict=False):
+        if ours.author != "me" or theirs.author != "employer":
+            continue
+        ours_at, theirs_at = _bubble_minutes(ours.time_text), _bubble_minutes(theirs.time_text)
+        if ours_at is None or theirs_at is None:
+            continue
+        if 0 <= theirs_at - ours_at < threshold:
+            return True
+    return False
+
+
 def is_robot_questionnaire(messages: Sequence[ChatMessage]) -> bool:
-    """Return true for an explicit bot author or two consecutive bot questions."""
+    """Robot detection: bot author label, 2+ bot questions, or a too-fast reply.
+
+    Все сигналы — догадки эвристики; вердикт пользователя
+    (``robot_verdicts``) в гейтах выше и эту функцию перекрывает.
+    """
     if any(
         message.author_label and _ROBOT_AUTHOR_RE.search(message.author_label)
         for message in messages
     ):
+        return True
+    if _fast_reply_is_robot(messages):
         return True
     run = 0
     for message in messages:
@@ -239,9 +289,15 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
     for index in range(messages.count()):
         item = messages.nth(index)
         item_marker = _message_id(item.get_attribute("data-qa"))
-        item_author, item_label = item.evaluate(CHAT_AUTHOR_JS, author_markers())
+        item_author, item_label, item_time = item.evaluate(CHAT_MESSAGE_META_JS, author_markers())
         all_messages.append(
-            ChatMessage(item_author, item_marker, item.inner_text().strip(), item_label)
+            ChatMessage(
+                item_author,
+                item_marker,
+                item.inner_text().strip(),
+                item_label,
+                time_text=item_time or "",
+            )
         )
     message = all_messages[-1]
     return ChatMessage(
@@ -250,6 +306,7 @@ def read_last_message(page: Page, chat_id: str) -> ChatMessage | None:
         message.text,
         message.author_label,
         conversation=tuple(all_messages[-20:]),
+        time_text=message.time_text,
     )
 
 
@@ -339,7 +396,7 @@ def read_employer_messages(page: Page, chat_id: str) -> list[str]:
     texts: list[str] = []
     for index in range(messages.count() - 1, -1, -1):
         message = messages.nth(index)
-        author, _label = message.evaluate(CHAT_AUTHOR_JS, author_markers())
+        author, _label, _time = message.evaluate(CHAT_MESSAGE_META_JS, author_markers())
         if author != "me":
             text = message.inner_text().strip()
             if text:
@@ -472,7 +529,7 @@ def wait_reply_confirmation(page: Page, timeout_ms: int = 10_000, *, min_count: 
         count = count_visible_messages(page)
         if count >= min_count:
             message = messages.nth(count - 1)
-            author, _label = message.evaluate(CHAT_AUTHOR_JS, author_markers())
+            author, _label, _time = message.evaluate(CHAT_MESSAGE_META_JS, author_markers())
             if author == "me":
                 logger.debug("Отправка в чате подтверждена: последнее сообщение наше")
                 return True
