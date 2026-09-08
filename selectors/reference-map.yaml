@@ -5587,6 +5587,215 @@ selectors:
     verified_flow: authenticated_resume_edit_visibility_screen
     verified_by: human
     status: intentionally local
+  saved_search.AUTOSEARCH_EMPTY:
+    value: '[data-qa=''empty-favorites-saved-search-block'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:45
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - empty-favorites-saved-search-block
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08, authenticated session, /applicant/autosearch
+      note: Empty state of the saved-searches list ("Ничего нет. В поиске выберите фильтры и нажмите на значок поиска с сердечком...").
+        Observed live both empty (before the approved battle save) and absent (after it).
+    last_verified_at: '2026-09-08'
+    verified_flow: census_read_only_on_applicant_autosearch
+    verified_by: browser
+  saved_search.AUTOSEARCH_ITEM:
+    value: '[data-qa=''favorites-saved-search-item'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:48
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-item
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch (probe scripts/explore_saved_search_save_1052.py,
+        html dump data/logs/saved_search_autosearch_readback_1052_*)
+      note: Card of one saved search in the list. Text like "8 сентября python Москва 999+ вакансий" (creation date, name,
+        area, counter). Contains the name checkbox and the serp link.
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
+    verified_by: browser
+  saved_search.AUTOSEARCH_NAME_CHECKBOX:
+    value: '[data-qa=''favorites-saved-search-checkbox'']'
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:51
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-checkbox
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch
+      note: Checkbox of a saved-search row; aria-label carries the autosearch name assigned by hh.ru (equals the query text
+        — the save UI never asks for a name). The visible <span class="saved-search-name--…"> is a CSS-module class, not a
+        stable contract; read the aria-label instead.
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
+    verified_by: browser
+  saved_search.AUTOSEARCH_URL_LINK:
+    value: a[data-qa='favorites-saved-search-counter-total']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:54
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-saved-search-counter-total
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live readback 2026-09-08 after the approved battle save, /applicant/autosearch
+      note: '"N вакансий" link of a saved-search row; href is the autosearch serp with its parameters, e.g. /search/vacancy?text=python&area=1&saved_search_id=…&L_is_autosearch=true&hhtmFrom=favorites.
+        Service params (saved_search_id, hhtmFrom, L_is_autosearch, no_magic) are ignored when parsing the URL into SearchFilters.'
+    last_verified_at: '2026-09-08'
+    verified_flow: readback_after_approved_battle_save
+    verified_by: browser
+  saved_search.FAVORITES_SEARCHES_TAB:
+    value: a[data-qa='favorites-tab-searches']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:37
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - favorites-tab-searches
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08, authenticated session, /applicant/autosearch
+      note: Tab "Поиски" inside "Избранное" on /applicant/autosearch (role=tab, visible). The URL itself opens the searches
+        tab directly; the selector marks that the right tab is rendered.
+    last_verified_at: '2026-09-08'
+    verified_flow: census_read_only_on_applicant_autosearch
+    verified_by: browser
+  saved_search.SEARCH_SAVE_BUTTON:
+    value: button[data-qa='vacancy-saved-search-create']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:26
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-create
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live census 2026-09-08 + one approved exploratory click, authenticated main account, /search/vacancy?text=python&area=1
+        (probe scripts/explore_saved_search_1052.py, html dump data/logs/saved_search_popup_1052_*)
+      note: 'Button "Сохранить поиск" next to "Найти" (#1052). The click does NOT mutate hh.ru: it opens a Magritte tooltip
+        "Куда присылать новые вакансии по этому поиску?" with channel buttons; /applicant/autosearch stayed empty after the
+        click. There is NO name input in the UI — hh.ru names the autosearch itself. Escape does not close the tooltip. Clicking
+        a channel button is the unexplored mutating boundary.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_and_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CHANNEL_EMAIL:
+    value: button[data-qa='vacancy-saved-search-email']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:31
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-email
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Button "На почту" inside the save-search tooltip. NOT clicked: choosing a notification channel is the presumed
+        mutating step that actually creates the autosearch; the next screen after it is unexplored.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CHANNEL_MESSENGERS:
+    value: button[data-qa='vacancy-saved-search-messengers']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:34
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-messengers
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Button "В мессенджер" inside the save-search tooltip. NOT clicked: the messenger-picker screen after it is unexplored;
+        treated as the mutating boundary.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_CREATED:
+    value: button[data-qa='vacancy-saved-search-created']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:39
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - vacancy-saved-search-created
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: approved battle save 2026-09-08 (probe scripts/explore_saved_search_save_1052.py)
+      note: Button state "Сохранён" — the search bar button IMMEDIATELY after a successful save in
+        the same session (replaces vacancy-saved-search-create). The click on the email channel
+        saved the autosearch instantly with no further screen. Positive success marker. NOT a
+        persistent duplicate signal - a later census on the exact saved query (new session) shows
+        the create button again; reliable duplicate detection must read the autosearch list.
+    last_verified_at: '2026-09-08'
+    verified_flow: approved_battle_save_on_search_vacancy
+    verified_by: browser
+  saved_search.SEARCH_SAVE_DROPDOWN:
+    value: div[data-qa='drop-base'][role='tooltip']
+    criticality: write
+    declared_at: src/hhru_bot/selector_groups/saved_search.py:29
+    decision: live_dom
+    sources: {}
+    live_matches:
+    - drop-base
+    active: true
+    bindings: {}
+    coverage_status: intentionally_local
+    origin: browser_dom
+    verification: browser_observed
+    evidence:
+      source: live exploratory click 2026-09-08 (probe scripts/explore_saved_search_1052.py)
+      note: 'Tooltip container rendered only after clicking SEARCH_SAVE_BUTTON: div data-qa=drop-base role=tooltip, visible
+        text "Куда присылать новые вакансии по этому поиску? На почту В мессенджер". Absent from the resting DOM. role=tooltip
+        disambiguates from the drop-base panel of the apply-form resume picker.'
+    last_verified_at: '2026-09-08'
+    verified_flow: census_after_single_exploratory_click_on_search_vacancy
+    verified_by: browser
   search_page.COMPANY_RATING_REVIEWS_COUNT:
     value: '[data-qa=''company-review-rating-reviews-count'']'
     criticality: write
