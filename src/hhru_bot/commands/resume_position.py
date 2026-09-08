@@ -127,20 +127,14 @@ def _print_classification(role, *, reason: str = "", queries: list[str] | None =
 
 
 def _click_save_and_wait(page) -> None:
-    """Click the editor SAVE button and wait for the form to close.
+    """Клик SAVE editor-формы позиции и ожидание её закрытия.
 
-    Shared by the pure-editor path and the wizard-minimum fallback (#890):
-    both end up applying the plan through ``apply_position`` on the same
-    ``/resume/edit/{id}/position`` form and must confirm the same way. Any
-    failure here is a grey-zone post-click failure — the caller wraps it in
-    ``_SaveConfirmationUncertain`` once the mutating click has landed.
+    Тонкая переадресация на общий браузерный механизм ``click_save_and_wait``
+    (#1049; приватное имя сохранено — тесты команды патчат именно его).
     """
-    from ..resume_position import SAVE
+    from ..resume_position import click_save_and_wait
 
-    if page.locator(SAVE).count() != 1:
-        raise RuntimeError("кнопка сохранения формы не подтверждена")
-    page.locator(SAVE).click()
-    page.locator("[data-qa='resume-edit-position-form']").wait_for(state="hidden", timeout=10_000)
+    click_save_and_wait(page)
 
 
 def _run(args: argparse.Namespace, progress) -> bool:

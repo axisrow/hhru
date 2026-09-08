@@ -73,7 +73,11 @@ def test_registry_covers_command_modules_that_call_launch_context() -> None:
         if "launch_context" in path.read_text()
     }
 
-    assert direct_browser_commands - {"list-resumes", "whoami"} <= cli.BROWSER_COMMANDS
+    # import-service — прикладной сервис import-resume (#1049), не CLI-команда:
+    # браузерный доступ оплачен регистрацией самой команды import-resume.
+    assert direct_browser_commands - {"list-resumes", "whoami", "import-service"} <= (
+        cli.BROWSER_COMMANDS
+    )
 
 
 @pytest.mark.parametrize(
