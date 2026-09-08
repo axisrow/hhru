@@ -84,7 +84,10 @@ def bump_resume(page: Page, resume: ResumeConfig, dry_run: bool) -> BumpResult:
         return BumpResult(
             resume.id, False, "ошибка при поиске карточки резюме в списке — поднятие отменено"
         )
-    card = card_link.locator("xpath=ancestor::div[@data-qa='resume'][1]")
+    # ancestor-резолв от того же .first, что и ожидание выше: якорь уникален по
+    # resume_id, но единый locator убирает рассинхрон, если шаблон когда-нибудь
+    # станет множественным (ревью #1064).
+    card = card_link.first.locator("xpath=ancestor::div[@data-qa='resume'][1]")
 
     # #139: гонка рендера — раньше hint читался сразу через count() > 0, без
     # ожидания. Непрогрузившаяся страница давала 0 совпадений (не

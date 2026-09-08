@@ -42,6 +42,7 @@ from ..browser import (
     has_login_form,
     subtree_controls_census,
 )
+from ..bump import RESUMES_LIST_URL
 from ..config import is_resume_url_placeholder
 from ..exit_codes import CommandExitCode
 from ..history import CommandRunBusy, History
@@ -437,7 +438,10 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
         spec.append(
             (
                 "resume",
-                "https://hh.ru/applicant/resumes",
+                # Тот же источник URL, что и у самого bump: дублировать литерал
+                # нельзя — healthcheck и bump молча разъедутся при смене базы
+                # (ревью #1064, «можно сгенерировать — не хардкодить»).
+                RESUMES_LIST_URL,
                 [
                     ("RESUME_BUMP_BUTTON", resume_page.RESUME_BUMP_BUTTON, True),
                 ],
