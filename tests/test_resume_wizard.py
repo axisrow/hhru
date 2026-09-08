@@ -256,6 +256,72 @@ def test_uncertain_reason_carries_click_error(monkeypatch):
     assert dumps == ["wizard_next_failure"]
 
 
+def test_submit_publishing_screen_timeout_with_published_readback_is_success(monkeypatch):
+    """#1038: финальный NEXT (experience) публикует, редирект не наступает как
+    navigation — readback подтверждает публикацию, это success, не uncertain."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="experience"),
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
+    )
+    monkeypatch.setattr(
+        rw, "read_resume_state", lambda p, rid: ResumeState(status="finished", is_searchable=True)
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "experience")
+    assert result.success and result.acted and not result.uncertain
+    assert "readback" in result.reason and "#1038" in result.reason
+    assert page.clicks == 1
+
+
+def test_submit_publishing_screen_timeout_with_unpublished_readback_stays_uncertain(monkeypatch):
+    """#1038: readback не показал публикацию — таймаут остаётся uncertain
+    (fail-closed #176), клик мог не дойти."""
+    dumps = _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="experience"),
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
+    )
+    monkeypatch.setattr(
+        rw, "read_resume_state", lambda p, rid: ResumeState(status="not_finished")
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "experience")
+    assert not result.success and result.acted and result.uncertain
+    assert dumps == ["wizard_next_failure"]
+
+
+def test_submit_publishing_screen_timeout_with_failing_readback_stays_uncertain(monkeypatch):
+    """#1038: нечитаемый readback не опровергает таймаут — uncertain."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(next_screen="experience"),
+        final_url=f"https://hh.ru/profile/resume/experience?resume={RESUME_ID}",
+    )
+
+    def _boom(page, rid):
+        raise RuntimeError("page closed")
+
+    monkeypatch.setattr(rw, "read_resume_state", _boom)
+    result = rw.submit_wizard_screen(page, _resume(), "experience")
+    assert not result.success and result.acted and result.uncertain
+
+
+def test_submit_intermediate_screen_timeout_does_not_readback(monkeypatch):
+    """#1038: readback-спасение только для публикующего экрана — промежуточный
+    таймаут остаётся uncertain, readback не вызывается вовсе."""
+    _install_nav_stubs(monkeypatch)
+    page = _WizardPage(
+        _markup(),
+        final_url=f"https://hh.ru/profile/resume/educations?resume={RESUME_ID}",
+    )
+    calls = []
+    monkeypatch.setattr(
+        rw, "read_resume_state", lambda p, rid: calls.append(rid) or ResumeState()
+    )
+    result = rw.submit_wizard_screen(page, _resume(), "educations")
+    assert not result.success and result.acted and result.uncertain
+    assert calls == []
+
+
 def test_submit_refuses_when_wizard_stands_on_other_screen(monkeypatch):
     """#999: редирект ушёл на чужой экран — отказ ДО before_click."""
     _install_nav_stubs(monkeypatch)

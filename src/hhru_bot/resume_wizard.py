@@ -266,6 +266,29 @@ def submit_wizard_screen(
             dump_page_html(page, "wizard_next_failure")
         except Exception:  # noqa: BLE001 — диагностика не должна заменять исходную ошибку
             pass
+        # #1038: на публикующем экране (#1012: experience — последний) hh.ru
+        # завершает сабмит публикацией, и финальный редирект может не
+        # наступать как navigation до 'commit' в бюджете (наблюдалось дважды
+        # подряд: резюме опубликовано, а таймаут записал uncertain и
+        # заблокировал повтор). Локальный таймаут здесь ничего не доказывает —
+        # внешний источник истины тот же, что у readback'а команды:
+        # identity-bound состояние резюме. Публикация подтверждена — честный
+        # success; не подтверждена или не читается — остаётся uncertain
+        # (fail-closed, #176). Только для публикующего экрана: промежуточный
+        # сабмит публикацию не создаёт, и readback нечем опровергнуть таймаут.
+        if is_publishing_screen(target):
+            try:
+                after = read_resume_state(page, resume.resume_id)
+            except Exception:  # noqa: BLE001 — нечитаемый readback не опровергает таймаут
+                after = None
+            if after is not None and is_published(after):
+                return WizardAdvanceResult(
+                    target,
+                    True,
+                    f"экран «{target}» подтверждён readback'ом: hh.ru опубликовал резюме "
+                    "несмотря на таймаут навигации (#1038)",
+                    acted=True,
+                )
         # #990: текст падения клика сохраняется — иначе «дошёл ли клик»
         # недиагностируем (см. save_common).
         reason = f"переход с экрана «{target}» не подтверждён: {exc}"
