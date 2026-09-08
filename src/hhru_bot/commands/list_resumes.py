@@ -268,7 +268,9 @@ def run(args: argparse.Namespace) -> None:
             return
 
     if not cards:
-        print("[INFO] На hh.ru не найдено ни одного резюме.")
+        # #1039: пустой список — подтверждённое состояние (список пуст ЛИБО
+        # hh.ru показал стартовый экран визарда создания), а не сбой чтения.
+        print("[INFO] На аккаунте нет ни одного резюме. Создание: create-resume.")
         return
 
     if not any(c.title for c in cards) and not wizard_mode:
