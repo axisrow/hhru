@@ -60,7 +60,7 @@ def _print_saved_searches(entries: list) -> None:
     print(_ascii_table(["Имя", "URL выдачи"], rows))
 
 
-def _run_saved_search_modes(args: argparse.Namespace, config, history: History) -> bool | None:
+def _run_saved_search_modes(args: argparse.Namespace, config) -> bool | None:
     """Обработка --list-saved/--saved/--save: отдельные режимы команды search.
 
     Возвращает None, если ни один из этих флагов не задан (обычный поиск),
@@ -72,7 +72,6 @@ def _run_saved_search_modes(args: argparse.Namespace, config, history: History) 
         SavedSearchListIndeterminate,
         list_saved_searches,
         save_search_on_hh,
-        saved_search_query_key,
     )
 
     list_saved = getattr(args, "list_saved", False)
@@ -86,6 +85,9 @@ def _run_saved_search_modes(args: argparse.Namespace, config, history: History) 
 
     if list_saved and (saved or save):
         print("[FAIL] --list-saved не сочетается с --saved/--save")
+        return True
+    if save and saved:
+        print("[FAIL] --save не сочетается с --saved (сохранение и прогон по автопоиску)")
         return True
     if force and not save:
         print("[FAIL] --force имеет смысл только вместе с --save")
@@ -133,20 +135,19 @@ def _run_saved_search_modes(args: argparse.Namespace, config, history: History) 
                     "Снимите census непустого списка и дополните selector_groups/saved_search.py"
                 )
                 return True
-            print(f"[INFO] Автопоиск '{saved}' найден; параметры прогона: {entry.url}")
+            # Задел на снятую строку списка: даже с URL применение параметров
+            # автопоиска к прогону пока не реализовано — честный отказ, а не
+            # тихий пропуск поиска.
+            print(
+                f"[FAIL] Автопоиск '{saved}' найден ({entry.url}), но применение "
+                "параметров автопоиска к прогону не реализовано (#1052)"
+            )
             return True
 
-        # --save
+        # --save. Uncertain-гейт появится вместе с боевым путём (сейчас
+        # before_click не вызывается и actions-строки save_search не пишутся).
         resume = resumes[0]
         dry_run = not force
-        if not dry_run:
-            query_key = saved_search_query_key(resume.search)
-            if history.has_unresolved_uncertain(query_key, "save_search"):
-                print(
-                    "[FAIL] предыдущее сохранение этого поиска не подтверждено (uncertain). "
-                    "Проверьте список автопоисков на hh.ru вручную перед повтором."
-                )
-                return True
         try:
             result = save_search_on_hh(page, resume, name, dry_run)
         except NotAuthenticated as exc:
@@ -313,7 +314,7 @@ def run(args: argparse.Namespace) -> bool:
 
     config = load_config_or_exit(args.config)
     history = History(args.history)
-    saved_mode_failed = _run_saved_search_modes(args, config, history)
+    saved_mode_failed = _run_saved_search_modes(args, config)
     if saved_mode_failed is not None:
         # Режимы --save/--saved/--list-saved завершают команду: обычный поиск
         # в тех же прогонах не выполняется.

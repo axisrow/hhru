@@ -126,11 +126,13 @@ def test_dry_run_uses_explicit_name(monkeypatch):
 
 
 def test_missing_button_fails_closed(monkeypatch):
+    # count=0: wait_for(visible) первым исчерпывает бюджет гидратации и
+    # только затем отказ — порядок «wait, потом count» (#858).
     _patch_navigation(monkeypatch)
     page = Page(counts={SEARCH_SAVE_BUTTON: 0})
     result = ss.save_search_on_hh(cast(PlaywrightPage, page), _resume(), None, dry_run=True)
     assert result.success is False
-    assert "не найдена" in result.reason
+    assert "не подтвердилась" in result.reason
 
 
 def test_ambiguous_button_fails_closed(monkeypatch):
@@ -193,3 +195,37 @@ def test_list_not_authenticated_raises(monkeypatch):
     _patch_navigation(monkeypatch, login_form=True)
     with pytest.raises(ss.NotAuthenticated):
         ss.list_saved_searches(cast(PlaywrightPage, Page()))
+
+
+# --- режимы команды search (#1052) ---
+
+
+def _mode_args(**overrides):
+    import argparse
+
+    defaults = {"list_saved": False, "saved": None, "save": False, "force": False}
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def test_save_with_saved_is_rejected(capsys, monkeypatch):
+    from hhru_bot.commands.search import _run_saved_search_modes
+
+    launched = []
+
+    class _FakeContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def new_page(self):
+            launched.append(True)
+            raise AssertionError("браузер не должен открываться для ошибок сочетания флагов")
+
+    monkeypatch.setattr("hhru_bot.browser.launch_context", lambda *a, **k: _FakeContext())
+    failed = _run_saved_search_modes(_mode_args(save=True, saved="x"), object())
+    assert failed is True
+    assert "[FAIL] --save не сочетается с --saved" in capsys.readouterr().out
+    assert launched == []

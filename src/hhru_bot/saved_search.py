@@ -233,23 +233,21 @@ def save_search_on_hh(
         raise NotAuthenticated("страница поиска содержит форму входа — сессия отвергнута")
 
     try:
+        # Гидратационный race (#858, «commit не значит отрисовано»): строгая
+        # проверка count() до wait_for видела бы count=0 на негидратированном
+        # DOM и ошибочно отказывала до истечения бюджета. Сначала ждём видимости
+        # первого вхождения, только потом читаем count — тот же порядок, что у
+        # FAVORITES_SEARCHES_TAB в list_saved_searches.
         buttons = page.locator(SEARCH_SAVE_BUTTON)
-        count = buttons.count()
-        if count > 1:
-            return SaveSearchResult(
-                query_key,
-                resolved_name,
-                success=False,
-                reason=f"кнопка «Сохранить поиск» неоднозначна (найдено {count})",
-            )
-        if count == 0:
-            return SaveSearchResult(
-                query_key,
-                resolved_name,
-                success=False,
-                reason="кнопка «Сохранить поиск» не найдена на выдаче",
-            )
         buttons.first.wait_for(state="visible", timeout=SEARCH_BAR_RENDER_TIMEOUT_MS)
+        count = buttons.count()
+        if count != 1:
+            return SaveSearchResult(
+                query_key,
+                resolved_name,
+                success=False,
+                reason=f"кнопка «Сохранить поиск» неоднозначна или не найдена (найдено {count})",
+            )
     except (PlaywrightTimeoutError, PlaywrightError) as exc:
         return SaveSearchResult(
             query_key,
