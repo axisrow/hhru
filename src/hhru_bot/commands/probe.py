@@ -42,6 +42,7 @@ from ..browser import (
     has_login_form,
     subtree_controls_census,
 )
+from ..bump import RESUMES_LIST_URL
 from ..config import is_resume_url_placeholder
 from ..exit_codes import CommandExitCode
 from ..history import CommandRunBusy, History
@@ -428,15 +429,19 @@ def _healthcheck_spec(config) -> list[tuple[str, str, list[tuple[str, str, bool]
         ),
     ]
 
-    # Страница резюме — только если в конфиге есть resume_url (URL для goto).
-    # resume_id здесь — id РЕЗЮМЕ (хвост resume_url), это корректный сегмент
-    # /resume/<id>, а НЕ id вакансии.
+    # Кнопка поднятия проверяется на СПИСКЕ резюме — живой факт 2026-09-08:
+    # со страницы резюме она мигрировала на /applicant/resumes (census).
+    # Условие «в конфиге есть resume_url» сохранено: у аккаунта без резюме
+    # кнопки не существует в принципе, проверять нечего.
     resume_url = _first_resume_url(config)
     if resume_url:
         spec.append(
             (
                 "resume",
-                resume_url,
+                # Тот же источник URL, что и у самого bump: дублировать литерал
+                # нельзя — healthcheck и bump молча разъедутся при смене базы
+                # (ревью #1064, «можно сгенерировать — не хардкодить»).
+                RESUMES_LIST_URL,
                 [
                     ("RESUME_BUMP_BUTTON", resume_page.RESUME_BUMP_BUTTON, True),
                 ],

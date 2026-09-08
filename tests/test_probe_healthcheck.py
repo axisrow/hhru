@@ -389,11 +389,12 @@ def test_check_selectors_marks_optional_via_spec_tuple(monkeypatch):
 
 
 def test_healthcheck_spec_no_fake_vacancy_url():
-    """Codex F1: resume_id — это id РЕЗЮМЕ (/resume/<id>), НЕ вакансии. Раньше spec
-    строил /vacancy/<resume_id> (404 → все vacancy-селекторы NOT_FOUND на здоровом
-    аккаунте). Фикс: spec НЕ содержит страниц, требующих id вакансии, которого у
-    healthcheck нет (vacancy / apply_form). Только search/negotiations/resume —
-    URL, доступные без контекста конкретной вакансии."""
+    """Codex F1: spec НЕ содержит страниц, требующих id вакансии, которого у
+    healthcheck нет (vacancy / apply_form). Только search/negotiations/resume.
+
+    Поток 2026-09-08: bump-чек переехал на СПИСОК резюме — кнопка поднятия
+    мигрировала туда со страницы /resume/<id> (census /applicant/resumes);
+    URL списка аккаунто-уровневый, контекст конкретного резюме не нужен."""
     from hhru_bot.config import ResumeConfig
 
     config = _StubConfig(
@@ -407,9 +408,9 @@ def test_healthcheck_spec_no_fake_vacancy_url():
     # vacancy/apply_form убраны: нет валидного id вакансии для goto
     assert "vacancy" not in names
     assert "apply_form" not in names
-    # resume-страница использует корректный resume_id (id резюме, не вакансии)
+    # resume-страница healthcheck — список резюме (там живёт кнопка поднятия)
     resume_entry = next(p for p in spec if p[0] == "resume")
-    assert resume_entry[1] == "https://hh.ru/resume/12345"
+    assert resume_entry[1] == "https://hh.ru/applicant/resumes"
 
 
 def test_healthcheck_spec_marks_obsolete_and_conditional_optional():

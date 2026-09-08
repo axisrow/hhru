@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from _fakes import _DOMNode, _parse_root
 from hhru_bot import browser as browser_module
@@ -99,6 +100,17 @@ class _ClassTextLocator:
         return len(self._nodes)
 
 
+class _MissingCardLinkLocator:
+    """Якорь карточки резюме, которого нет в списке: wait_for → таймаут."""
+
+    @property
+    def first(self) -> _MissingCardLinkLocator:
+        return self
+
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+        raise PlaywrightTimeoutError("resume card not visible")
+
+
 class _FakeContext:
     def cookies(self) -> list[dict[str, str]]:
         return [{"name": "hhtoken", "value": "fake"}]
@@ -129,6 +141,11 @@ class FakeBannerPage:
         # читаются; форма входа обязана быть пустой (сессия жива, #972).
         if selector == browser_module.LOGIN_FORM:
             return _ClassTextLocator([])
+        # Поток bump 2026-09-08 резолвит карточку резюме на /applicant/resumes:
+        # у недоступного резюме карточки в списке нет — wait_for ждёт таймаута
+        # (легитимное отсутствие), а не AttributeError на незнакомом локаторе.
+        if selector.startswith("a[data-qa='resume-card-link-"):
+            return _MissingCardLinkLocator()
         return _ClassTextLocator([])
 
 
@@ -223,13 +240,18 @@ def test_open_confirmed_resume_fails_fast_on_banner():
 
 def test_bump_reports_unavailable_resume_before_button_search():
     """bump: внятный отказ вместо «кнопка поднятия не найдена»; acted=False и
-    uncertain=False — клика не было, actions/пауза не нужны (#163/#176)."""
+    uncertain=False — клика не было, actions/пауза не нужны (#163/#176).
+
+    Поток 2026-09-08: кнопка поднятия живёт на /applicant/resumes, и
+    недоступное резюме (#972-баннер на странице резюме) в списке просто
+    ОТСУТСТВУЕТ — отказ приходит от отсутствия карточки, а не от баннера.
+    """
     page = FakeBannerPage()
 
     result = bump_resume(page, _resume(), dry_run=False)
 
     assert result.success is False
-    assert result.reason == RESUME_UNAVAILABLE_REASON
+    assert "не найдено в списке" in result.reason
     assert result.acted is False
     assert result.uncertain is False
 

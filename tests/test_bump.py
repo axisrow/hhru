@@ -86,20 +86,71 @@ class _FakeLocator:
             self._click_log.append(self._name)
 
 
+class _FakeCard:
+    """Карточка резюме div[data-qa='resume']: скоуп для hint/кнопки поднятия."""
+
+    def __init__(self, page: FakeBumpPage):
+        self._page = page
+
+    def locator(self, selector: str):
+        if selector == resume_page.RESUME_BUMP_DISABLED_HINT:
+            return _FakeLocator(
+                self._page._hint_present,
+                self._page.click_log,
+                "hint",
+                render_delayed=self._page._hint_render_delayed,
+                wait_error=self._page._hint_wait_error,
+            )
+        if selector == resume_page.RESUME_BUMP_BUTTON:
+            return _FakeLocator(
+                self._page._button_present,
+                self._page.click_log,
+                "button",
+                click_error=self._page._button_click_error,
+            )
+        return _FakeLocator(False)
+
+
+class _FakeCardLink:
+    """Якорь карточки resume-card-link-<id>: .first.wait_for + ancestor-резолв."""
+
+    def __init__(self, page: FakeBumpPage):
+        self._page = page
+
+    @property
+    def first(self) -> _FakeCardLink:
+        return self
+
+    def wait_for(self, *, state: str = "visible", timeout: float = 0) -> None:  # noqa: ARG002
+        if not self._page._card_present:
+            raise PlaywrightTimeoutError("resume card not visible")
+
+    def locator(self, selector: str):
+        # bump_resume поднимается от якоря к div[data-qa='resume'] предком.
+        assert selector.startswith("xpath=ancestor::"), selector
+        return _FakeCard(self._page)
+
+
 class FakeBumpPage:
-    """Имитация Page для bump_resume. hint/button присутствие настраивается отдельно."""
+    """Имитация Page для bump_resume (поток 2026-09-08: список резюме).
+
+    Навигация идёт на /applicant/resumes; карточка резюме резолвится якорем
+    resume-card-link-<id>, hint/кнопка — внутри карточки.
+    """
 
     def __init__(
         self,
         *,
         hint_present: bool,
         button_present: bool = True,
+        card_present: bool = True,
         hint_render_delayed: bool = False,
         hint_wait_error: bool = False,
         button_click_error: bool = False,
     ):
         self.goto_calls: list[str] = []
         self.click_log: list[str] = []
+        self._card_present = card_present
         self._hint_present = hint_present
         self._button_present = button_present
         self._hint_render_delayed = hint_render_delayed
@@ -110,21 +161,8 @@ class FakeBumpPage:
         self.goto_calls.append(url)
 
     def locator(self, selector: str):
-        if selector == resume_page.RESUME_BUMP_DISABLED_HINT:
-            return _FakeLocator(
-                self._hint_present,
-                self.click_log,
-                "hint",
-                render_delayed=self._hint_render_delayed,
-                wait_error=self._hint_wait_error,
-            )
-        if selector == resume_page.RESUME_BUMP_BUTTON:
-            return _FakeLocator(
-                self._button_present,
-                self.click_log,
-                "button",
-                click_error=self._button_click_error,
-            )
+        if selector.startswith("a[data-qa='resume-card-link-"):
+            return _FakeCardLink(self)
         return _FakeLocator(False)
 
 
@@ -262,3 +300,29 @@ def test_bump_click_error_is_uncertain_acted_not_traceback():
     assert result.acted is True
     assert result.uncertain is True
     assert "неопределён" in result.reason
+
+
+# --- поток 2026-09-08: кнопка поднятия на СПИСКЕ резюме -----------------------
+
+
+def test_bump_navigates_to_resumes_list_not_resume_page():
+    """Живой факт 2026-09-08: кнопка мигрировала со страницы резюме на
+    /applicant/resumes — поток обязан открывать список, не /resume/<id>."""
+    page = FakeBumpPage(hint_present=False, button_present=True)
+
+    bump_resume(page, _resume(), dry_run=False)
+
+    assert page.goto_calls == [bump_module.RESUMES_LIST_URL]
+
+
+def test_bump_card_missing_refuses_without_click():
+    """Резюме нет в списке (удалено/недоступно) — внятный отказ, не таймаут
+    на поиске кнопки; преемник banner-чека #972 для списочного потока."""
+    page = FakeBumpPage(hint_present=False, button_present=True, card_present=False)
+
+    result = bump_resume(page, _resume(), dry_run=False)
+
+    assert result.success is False
+    assert "не найдено в списке" in result.reason
+    assert page.click_log == []
+    assert result.acted is False
